@@ -445,7 +445,13 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             "end".to_string(),
             res_cap(crate::registry::SPEC_HTTP_RES_END),
         ),
-        ("statusCode".to_string(), Value::Number(200.0)),
+        (
+            "statusCode".to_string(),
+            Value::Number(200.0),
+        ),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("headersSent".to_string(), Value::Boolean(false)),
+        ("finished".to_string(), Value::Boolean(false)),
         (RES_ID_PROP.to_string(), Value::Number(id as f64)),
     ]);
     Ok((res, id))
