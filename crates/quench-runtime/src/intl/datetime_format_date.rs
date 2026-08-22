@@ -84,13 +84,19 @@ fn compose_date_string(
         parts.push(y);
     }
     if month_is_name {
+        // Component options are independent; never assume a month implies
+        // both day and year. Preserve the locale order without indexing
+        // absent components.
         let mut out = String::new();
-        out.push_str(parts[0].as_str());
-        out.push(' ');
-        out.push_str(parts[1].as_str());
-        if parts.len() >= 3 {
-            out.push_str(", ");
-            out.push_str(parts[2].as_str());
+        for (index, part) in parts.iter().enumerate() {
+            if index > 0 {
+                if index == 2 && parts.len() >= 3 {
+                    out.push_str(", ");
+                } else {
+                    out.push(' ');
+                }
+            }
+            out.push_str(part);
         }
         return out;
     }

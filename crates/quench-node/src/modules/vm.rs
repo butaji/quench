@@ -21,7 +21,7 @@ pub fn run_in_new_context(
     if let Some(sandbox @ Value::Object(_)) = args.get(1) {
         for key in execute::own_enumerable_keys(sandbox) {
             let value = execute::get_property_result(sandbox, &key)?;
-            context = context.with_host_value(key, value);
+            context = Rc::new((*context).clone().with_host_value(key, value));
         }
     }
     let mut registers = Vec::new();
