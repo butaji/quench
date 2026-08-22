@@ -352,11 +352,4 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
             .map_err(|error| error.render().into())
     }
 
-    fn poll_jobs(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        Ok(false)
-    }
-
-    fn has_pending_jobs(&self) -> bool {
-        false
-    }
 }
