@@ -122,11 +122,7 @@ fn info_props_argv(argv: &[String]) -> Vec<(&'static str, Value)> {
         ),
         (
             "argv0",
-            Value::String(
-                argv.first()
-                    .cloned()
-                    .unwrap_or_else(|| "quench".to_string()),
-            ),
+            Value::String(argv.first().cloned().unwrap_or_default()),
         ),
     ]
 }
