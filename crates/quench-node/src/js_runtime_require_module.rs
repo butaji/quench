@@ -351,6 +351,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "process" || name == "node:process" {
             return Ok(process_module());
         }
+        if name == "os" || name == "node:os" {
+            return Ok(os_module());
+        }
         if name == "buffer" || name == "node:buffer" {
             let buffer = buffer_module();
             let constants = quench_runtime::execute::get_property_result(&buffer, "constants")
