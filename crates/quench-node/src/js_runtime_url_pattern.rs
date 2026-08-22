@@ -16,8 +16,20 @@ fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
         None | Some(Value::Null) | Some(Value::Undefined) => None,
         Some(Value::Object(options)) => Some(Value::Object(options.clone())),
         Some(Value::String(value)) => {
-            let parsed =
-                url::Url::parse(value).map_err(|error| VmError::EvalError(error.to_string()))?;
+            let parsed = match url::Url::parse(value) {
+                Ok(parsed) => parsed,
+                Err(_) if matches!(arguments.get(1), Some(Value::String(_))) => {
+                    let base = arguments.get(1).and_then(|base| match base {
+                        Value::String(base) => Some(base.as_str()),
+                        _ => None,
+                    }).unwrap();
+                    let base = url::Url::parse(base)
+                        .map_err(|error| VmError::EvalError(error.to_string()))?;
+                    base.join(value)
+                        .map_err(|error| VmError::EvalError(error.to_string()))?
+                }
+                Err(error) => return Err(VmError::EvalError(error.to_string())),
+            };
             Some(Value::object(vec![
                 (
                     "hostname".into(),

@@ -134,10 +134,13 @@ fn file_handle_props() -> Vec<(&'static str, Value)> {
 }
 
 fn file_handle(fd: i32) -> Result<Value, VmError> {
-    let mut obj = crate::host::namespace_object_from_pairs(vec![(
-        FD_PROP.to_string(),
-        Value::Number(fd as f64),
-    )]);
+    let mut obj = crate::host::namespace_object_from_pairs(vec![
+        (FD_PROP.to_string(), Value::Number(fd as f64)),
+        // Node exposes the operating-system descriptor as a read-only
+        // FileHandle.fd property. Keep the internal slot separate so host
+        // methods cannot be forged by user code.
+        ("fd".to_string(), Value::Number(fd as f64)),
+    ]);
     for (name, cap) in file_handle_props() {
         let desc = quench_runtime::host_api::object(vec![
             ("value".to_string(), cap),
@@ -147,6 +150,14 @@ fn file_handle(fd: i32) -> Result<Value, VmError> {
         ]);
         obj = quench_runtime::execute::define_property(obj, name, desc)?;
     }
+    // `fd` is exposed by Node as a non-writable, non-enumerable property.
+    let desc = quench_runtime::host_api::object(vec![
+        ("value".to_string(), Value::Number(fd as f64)),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(false)),
+    ]);
+    obj = quench_runtime::execute::define_property(obj, "fd", desc)?;
     Ok(obj)
 }
 
