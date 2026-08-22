@@ -44,3 +44,12 @@ Float read/write offsets now use Node-compatible validation messages and error
 codes, covered by `tests/node-compat/stage-500`.
 Invalid `Buffer.from()` received-value diagnostics and `ERR_INVALID_ARG_TYPE`
 are covered by `tests/node-compat/stage-1026`.
+
+## Definition-of-done evidence
+
+- Focused gate: `cargo run -p quench-node-test --bin run-compat -- --quiet`
+  — **80 passed, 0 failed, 80 total** (2026-08-21).
+- Upstream Node fixture gate: `cargo run -p quench-node-test --bin run-parallel`
+  — **276 passed, 0 failed, 276 total** (2026-08-21).
+- Remaining gap: these aggregate gates do not provide a per-task differential
+  attribution; the compatibility matrix remains the release-level evidence.

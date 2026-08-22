@@ -1,10 +1,10 @@
 # Quench
 
 Node-compatible JavaScript runtime built in Rust on top of
-[rquickjs](https://github.com/DelSkayn/rquickjs), with readable JavaScript
-polyfills and a staged compatibility harness. Its implementation strategy is
-data-first: compact API declarations generate repetitive wrappers, registration,
-validation, and tests; handwritten code is reserved for irreducible behavior.
+`quench-runtime`, with readable JavaScript polyfills and a staged compatibility
+harness. Its implementation strategy is data-first: compact API declarations
+generate repetitive wrappers, registration, validation, and tests; handwritten
+code is reserved for irreducible behavior.
 See [`docs/data-first-minimal-runtime.md`](docs/data-first-minimal-runtime.md).
 
 The governing principle is: **AST is data. Types are data. Shapes are data.
@@ -150,12 +150,9 @@ signatures, and regressions. These metrics measure test progress, not the
 percentage of the Node API surface. Release acceptance additionally requires
 zero application-gate failures and no manifest regressions.
 
-## Runtime boundary
-
-`quench-node` uses `rquickjs` as its JavaScript engine and Rust host boundary.
-There is no `quench-runtime` crate in this repository, and compatibility work
-must not add or restore one. Keep engine integration in the `quench-node` crate
-and API behavior in the JavaScript polyfills.
+`quench-node` uses `quench-runtime` as its sole JavaScript engine and Rust host
+boundary. Keep engine integration in the `quench-node` crate and API behavior
+in the JavaScript polyfills.
 
 ## License
 

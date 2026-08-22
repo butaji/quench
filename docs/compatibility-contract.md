@@ -42,8 +42,7 @@ access, environment access, and resource limits are part of the contract.
 ## Implementation boundary
 
 API declarations and generated JavaScript adapters own ordinary Node semantics.
-Handwritten JavaScript owns only irreducible behavior. Rust remains limited to
-the declaration/IR generator, QuickJS integration, and unsafe or OS-bound
-primitives. Do not introduce or depend on a separate `quench-runtime` crate.
-The minimum-maintainable-LOC architecture is documented in
+Handwritten JavaScript owns only irreducible behavior. Rust integrates the sole
+`quench-runtime` engine and provides unsafe or OS-bound primitives. Keep the
+minimum-maintainable-LOC architecture documented in
 `data-first-minimal-runtime.md`.

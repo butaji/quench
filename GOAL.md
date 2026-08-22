@@ -3,7 +3,7 @@
 Build a portable JavaScript runtime for Node-compatible applications by
 separating JavaScript engine semantics from Node compatibility semantics.
 The finish line is the **complete** Node API test suite running green on
-both the default runtime and the rquickjs plugin.
+the sole quench-runtime implementation.
 
 ## Architecture
 
@@ -127,10 +127,8 @@ Everything Node-specific = Facade
 ## Runtime independence
 
 `JsRuntime` is the engine-independent interface used by the application.
-Engine implementations are plugins:
-
-- `quench-runtime` is the default implementation.
-- `rquickjs` is selected only through `--quickjs`.
+The sole implementation is `quench-runtime`; there is no alternate runtime
+selection.
 
 The Node compatibility layer must depend only on `JsRuntime` and capability
 interfaces. It must not make direct engine calls or require a particular
@@ -158,14 +156,9 @@ in `quench-node`.
   examples. Every test in `tests/node/test/parallel` (and any other Node
   test directory the repository tracks) passes through the default runtime;
   no test is silently skipped, narrowed, or marked expected-to-fail.
-- The QuickJS option executes through the rquickjs plugin only. The same
-  Node API test suite also passes through `--quickjs`; no Node test is
-  exempt from the QuickJS path.
-- Both runtime plugins expose equivalent behavior through `JsRuntime`. The
-  Node API test suite passes identically (same set of green tests) on the
-  default and `--quickjs` paths.
-- No direct rquickjs calls exist in the default runtime path, and no
-  quench-runtime calls exist in the QuickJS path.
+- The sole quench-runtime executes the **complete** Node API test suite; no
+  alternate runtime path or Node test exemption exists.
+- No direct engine calls exist in the Node compatibility layer.
 - Node API tests are sourced from the upstream Node.js submodule. Test
   bodies are not rewritten, narrowed, or stubbed to make them pass — the
   NodeFacade must satisfy the upstream contract, not the other way around.
