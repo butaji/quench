@@ -133,5 +133,17 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 ),
             ]));
         }
+        if name == "node:https" || name == "https" {
+            return Some(Value::object(vec![
+                (
+                    "request".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpGet)),
+                ),
+                (
+                    "get".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpGet)),
+                ),
+            ]));
+        }
     None
 }
