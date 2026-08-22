@@ -190,7 +190,13 @@ class NodeEventEmitter {
     this._captureRejectionHandled = false;
   }
   on(event, listener) {
+    if (typeof listener !== "function") {
+      throw new TypeError("The listener must be a function");
+    }
     this._events ||= Object.create(null);
+    // Node emits `newListener` before installing the listener. This allows
+    // observers to prepend a listener by registering it from that callback.
+    this.emit("newListener", event, listener);
     const current = this._events[event];
     this._events[event] = current === undefined
       ? listener
