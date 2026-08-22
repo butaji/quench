@@ -328,6 +328,9 @@ impl CapabilityName {
     const TimersPromisesSchedulerWait: u16 = 2348;
     const TimersPromisesSchedulerYield: u16 = 2349;
     const TimersPromisesSchedulerConstructor: u16 = 2350;
+    const TtyIsatty: u16 = 0x0900;
+    const TtyReadStream: u16 = 0x2001;
+    const TtyWriteStream: u16 = 0x2002;
     const HttpServer: u16 = 11;
     const HttpGet: u16 = 12;
     const HttpRequestOn: u16 = 401;
