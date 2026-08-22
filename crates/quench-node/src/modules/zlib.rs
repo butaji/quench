@@ -12,16 +12,36 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 
 fn bytes_of(value: &Value) -> Result<Vec<u8>, VmError> {
-    match value {
-        Value::String(s) => Ok(s.as_bytes().to_vec()),
-        Value::Uint8Array(view) => Ok(view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length]
-            .to_vec()),
-        other => Err(execute::type_error(&format!(
+    let bytes = match value {
+        Value::String(s) => return Ok(s.as_bytes().to_vec()),
+        Value::ArrayBuffer(buffer) => {
+            if *buffer.detached.borrow() {
+                return Err(execute::type_error("zlib: input ArrayBuffer is detached"));
+            }
+            buffer.bytes.borrow().clone()
+        }
+        Value::DataView(view) => {
+            if *view.buffer.detached.borrow() {
+                return Err(execute::type_error("zlib: input DataView buffer is detached"));
+            }
+            view.buffer.bytes.borrow()
+                [view.byte_offset..view.byte_offset + view.byte_length]
+                .to_vec()
+        }
+        Value::Uint8Array(view) => {
+            if *view.buffer.detached.borrow() {
+                return Err(execute::type_error("zlib: input Uint8Array buffer is detached"));
+            }
+            view.buffer.bytes.borrow()
+                [view.byte_offset..view.byte_offset + view.length]
+                .to_vec()
+        }
+        other => return Err(execute::type_error(&format!(
             "zlib: expected Buffer or string, got {}",
             crate::modules::util::invalid_arg_received(other)
         ))),
-    }
+    };
+    Ok(bytes)
 }
 
 fn output(bytes: Vec<u8>) -> Value {
