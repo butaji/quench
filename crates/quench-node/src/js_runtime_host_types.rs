@@ -116,6 +116,8 @@ struct StreamState {
     source: Vec<Value>,
     need_drain: bool,
     destroyed: bool,
+    destroy_scheduled: bool,
+    close_emitted: bool,
     errored: Option<Value>,
 }
 

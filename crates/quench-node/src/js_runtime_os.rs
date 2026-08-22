@@ -83,10 +83,46 @@ fn os_module() -> Value {
         ),
         (
             "constants".into(),
-            quench_runtime::host_api::object(vec![
+            immutable_object(vec![
+                (
+                    "signals".into(),
+                    immutable_object(vec![
+                        ("SIGHUP".into(), Value::Number(1.0)),
+                        ("SIGINT".into(), Value::Number(2.0)),
+                        ("SIGQUIT".into(), Value::Number(3.0)),
+                        ("SIGILL".into(), Value::Number(4.0)),
+                        ("SIGTRAP".into(), Value::Number(5.0)),
+                        ("SIGABRT".into(), Value::Number(6.0)),
+                        ("SIGIOT".into(), Value::Number(6.0)),
+                        ("SIGBUS".into(), Value::Number(10.0)),
+                        ("SIGFPE".into(), Value::Number(8.0)),
+                        ("SIGKILL".into(), Value::Number(9.0)),
+                        ("SIGUSR1".into(), Value::Number(30.0)),
+                        ("SIGSEGV".into(), Value::Number(11.0)),
+                        ("SIGUSR2".into(), Value::Number(31.0)),
+                        ("SIGPIPE".into(), Value::Number(13.0)),
+                        ("SIGALRM".into(), Value::Number(14.0)),
+                        ("SIGTERM".into(), Value::Number(15.0)),
+                        ("SIGCHLD".into(), Value::Number(20.0)),
+                        ("SIGCONT".into(), Value::Number(19.0)),
+                        ("SIGSTOP".into(), Value::Number(17.0)),
+                        ("SIGTSTP".into(), Value::Number(18.0)),
+                        ("SIGTTIN".into(), Value::Number(21.0)),
+                        ("SIGTTOU".into(), Value::Number(22.0)),
+                        ("SIGURG".into(), Value::Number(16.0)),
+                        ("SIGXCPU".into(), Value::Number(24.0)),
+                        ("SIGXFSZ".into(), Value::Number(25.0)),
+                        ("SIGVTALRM".into(), Value::Number(26.0)),
+                        ("SIGPROF".into(), Value::Number(27.0)),
+                        ("SIGWINCH".into(), Value::Number(28.0)),
+                        ("SIGIO".into(), Value::Number(23.0)),
+                        ("SIGINFO".into(), Value::Number(29.0)),
+                        ("SIGSYS".into(), Value::Number(12.0)),
+                    ]),
+                ),
                 (
                     "priority".into(),
-                    quench_runtime::host_api::object(vec![
+                    immutable_object(vec![
                         ("PRIORITY_LOW".into(), Value::Number(19.0)),
                         ("PRIORITY_NORMAL".into(), Value::Number(0.0)),
                         ("PRIORITY_HIGHEST".into(), Value::Number(-20.0)),
@@ -94,7 +130,7 @@ fn os_module() -> Value {
                 ),
                 (
                     "errno".into(),
-                    quench_runtime::host_api::object(vec![
+                    immutable_object(vec![
                         ("EPERM".into(), Value::Number(1.0)),
                         ("ENOENT".into(), Value::Number(2.0)),
                         ("EINTR".into(), Value::Number(4.0)),
@@ -109,14 +145,40 @@ fn os_module() -> Value {
                         ("ERANGE".into(), Value::Number(34.0)),
                     ]),
                 ),
-            ],
-        )),
+            ]),
+        ),
     ]);
+    let constants = quench_runtime::execute::get_property_result(&module, "constants")
+        .unwrap_or(Value::Undefined);
+    let descriptor = quench_runtime::host_api::object(vec![
+        ("value".into(), constants),
+        ("writable".into(), Value::Boolean(false)),
+        ("enumerable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(false)),
+    ]);
+    module = quench_runtime::execute::define_property(module, "constants", descriptor)
+        .expect("os constants property definition");
     let env = NODE_PROCESS_ENV
         .with(|current| current.borrow().clone())
         .unwrap_or_else(|| quench_runtime::host_api::object(vec![]));
     module = quench_runtime::execute::set_property(module, "\0env", env);
     module
+}
+
+fn immutable_object(properties: Vec<(String, Value)>) -> Value {
+    let object = quench_runtime::host_api::object(vec![]);
+    properties
+        .into_iter()
+        .fold(object, |object, (key, value)| {
+            let descriptor = quench_runtime::host_api::object(vec![
+                ("value".into(), value),
+                ("writable".into(), Value::Boolean(false)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(false)),
+            ]);
+            quench_runtime::execute::define_property(object, &key, descriptor)
+                .expect("os constants property definition")
+        })
 }
 
 fn os_numeric_function(kind: u16) -> Value {
