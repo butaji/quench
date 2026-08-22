@@ -287,10 +287,7 @@ pub fn can_parse(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> bool {
 }
 
 /// `URL.parse(input[, base])` returns a URL instance or null.
-pub fn parse_static(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+pub fn parse_static(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let Some(first) = args.first() else {
         return Ok(Value::Null);
     };

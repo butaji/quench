@@ -201,15 +201,25 @@ fn dispatch(
         )));
     }
     match cap {
-        2348 => dispatch(2346, state, None, &[
-            args.first().cloned().unwrap_or(Value::Number(0.0)),
-            Value::Undefined,
-            args.get(1).cloned().unwrap_or(Value::Undefined),
-        ]),
-        2349 => dispatch(2347, state, None, &[
-            Value::Undefined,
-            args.first().cloned().unwrap_or(Value::Undefined),
-        ]),
+        2348 => dispatch(
+            2346,
+            state,
+            None,
+            &[
+                args.first().cloned().unwrap_or(Value::Number(0.0)),
+                Value::Undefined,
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            ],
+        ),
+        2349 => dispatch(
+            2347,
+            state,
+            None,
+            &[
+                Value::Undefined,
+                args.first().cloned().unwrap_or(Value::Undefined),
+            ],
+        ),
         2350 => Err(VmError::Thrown(scheduler_error(
             "ERR_ILLEGAL_CONSTRUCTOR",
             "Illegal constructor",

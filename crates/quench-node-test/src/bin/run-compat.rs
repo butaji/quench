@@ -36,7 +36,9 @@ fn main() -> ExitCode {
         println!("  --list           enumerate the suite instead of running it");
         println!("  --filter NAME    only run scripts whose name contains NAME");
         println!("  --quiet          skip per-test output, only the summary");
-        println!("  DIR              compat suite root (default: crates/quench-node-test/node-tests)");
+        println!(
+            "  DIR              compat suite root (default: crates/quench-node-test/node-tests)"
+        );
         return ExitCode::SUCCESS;
     }
     let mut args = args.into_iter().skip(1);
@@ -123,7 +125,11 @@ fn run_suite(
         let result = Command::new(&exe)
             .arg("--fixture-one")
             .arg(fixture)
-            .stdout(if quiet { Stdio::null() } else { Stdio::inherit() })
+            .stdout(if quiet {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            })
             .stderr(Stdio::piped())
             .output();
         let (passed, skipped, reason) = match result {
@@ -134,7 +140,11 @@ fn run_suite(
                 false,
                 Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
             ),
-            Err(error) => (false, false, format!("spawn fixture process: {error}").into()),
+            Err(error) => (
+                false,
+                false,
+                format!("spawn fixture process: {error}").into(),
+            ),
         };
         if skipped {
             summary.skipped += 1;
@@ -144,9 +154,11 @@ fn run_suite(
             }
             summary.passed += 1;
         } else {
-            let reason = reason.filter(|reason| !reason.is_empty()).unwrap_or_else(|| {
-                "fixture process terminated abnormally (isolated from suite)".into()
-            });
+            let reason = reason
+                .filter(|reason| !reason.is_empty())
+                .unwrap_or_else(|| {
+                    "fixture process terminated abnormally (isolated from suite)".into()
+                });
             println!("FAIL  {}: {reason}", fixture.display());
             summary.failed += 1;
             summary.failed_names.push(fixture.display().to_string());

@@ -1,7 +1,11 @@
 // Regression: node:crypto exposes callable WebCrypto exportKey/importKey.
-const subtle = require('node:crypto').subtle;
+const crypto = require('node:crypto');
+const subtle = crypto.subtle;
 if (!subtle || typeof subtle.generateKey !== 'function' || typeof subtle.importKey !== 'function' || typeof subtle.exportKey !== 'function') {
   throw new Error('crypto.subtle export/import surface is not callable');
+}
+if (!crypto.webcrypto || crypto.webcrypto.subtle !== subtle || typeof crypto.webcrypto.subtle.exportKey !== 'function') {
+  throw new Error('crypto.webcrypto.subtle exportKey surface is not callable');
 }
 (async () => {
   const key = await subtle.generateKey({ name: 'AES-GCM', length: 128 }, true, ['encrypt', 'decrypt']);
