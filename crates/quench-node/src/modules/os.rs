@@ -249,7 +249,35 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
         "devNull".to_string(),
         Value::String(if cfg!(windows) { "NUL" } else { "/dev/null" }.into()),
     ));
+    out.push(("constants".to_string(), constants()));
 }
+
+fn constants() -> Value {
+    host_api::object(vec![
+        (
+            "signals".to_string(),
+            host_api::object(vec![
+                ("SIGHUP".to_string(), Value::Number(1.0)),
+                ("SIGINT".to_string(), Value::Number(2.0)),
+                ("SIGQUIT".to_string(), Value::Number(3.0)),
+                ("SIGILL".to_string(), Value::Number(4.0)),
+                ("SIGABRT".to_string(), Value::Number(6.0)),
+                ("SIGKILL".to_string(), Value::Number(9.0)),
+                ("SIGTERM".to_string(), Value::Number(15.0)),
+                ("SIGSTOP".to_string(), Value::Number(17.0)),
+            ]),
+        ),
+        (
+            "priority".to_string(),
+            host_api::object(vec![
+                ("PRIORITY_LOW".to_string(), Value::Number(19.0)),
+                ("PRIORITY_NORMAL".to_string(), Value::Number(0.0)),
+                ("PRIORITY_HIGHEST".to_string(), Value::Number(-20.0)),
+            ]),
+        ),
+    ])
+}
+
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
     os_identity_caps(out);

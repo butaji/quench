@@ -143,6 +143,7 @@ fn info_props_dynamic() -> Vec<(&'static str, Value)> {
         ("sourceMapsEnabled", Value::Boolean(false)),
         ("execArgv", host_api::array(vec![])),
         ("features", host_api::object(vec![])),
+        ("stdin", std_stream_input()),
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
     ]
@@ -254,6 +255,20 @@ fn std_stream(is_error: bool) -> Value {
                 if is_error { 0x0A0A } else { 0x0A09 },
             )),
         ),
+    ])
+}
+
+/// `process.stdin` is always present in Node, even when the host is not
+/// attached to a terminal.  Expose the descriptor and readable-state flags
+/// expected by code that probes standard streams before consuming input.
+fn std_stream_input() -> Value {
+    crate::host::namespace_object_from_pairs(vec![
+        ("isTTY".to_string(), Value::Boolean(false)),
+        ("isRawTTY".to_string(), Value::Boolean(false)),
+        ("fd".to_string(), Value::Number(0.0)),
+        ("readable".to_string(), Value::Boolean(true)),
+        ("readableEnded".to_string(), Value::Boolean(false)),
+        ("readableFlowing".to_string(), Value::Boolean(false)),
     ])
 }
 #[path = "process_method_props.rs"]
