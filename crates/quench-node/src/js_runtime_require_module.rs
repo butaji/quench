@@ -36,32 +36,39 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ("Socket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
         ]));
     }
+    if name == "dns/promises" || name == "node:dns/promises" {
+        return Ok(Value::object(vec![
+            (
+                "lookup".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DnsPromiseLookup,
+                )),
+            ),
+            (
+                "resolve4".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DnsPromiseResolve4,
+                )),
+            ),
+            (
+                "resolve".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DnsPromiseResolve4,
+                )),
+            ),
+        ]));
+    }
     if name == "dns" || name == "node:dns" {
         let promises = quench_runtime::host_api::object(vec![(
             "lookupService".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)),
         )]);
         return Ok(quench_runtime::host_api::object(vec![
-            (
-                "setServers".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers)),
-            ),
-            (
-                "getServers".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsGetServers)),
-            ),
-            (
-                "resolve".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolve)),
-            ),
-            (
-                "lookupService".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)),
-            ),
-            (
-                "resolveMx".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx)),
-            ),
+            ("setServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers))),
+            ("getServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsGetServers))),
+            ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolve))),
+            ("lookupService".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService))),
+            ("resolveMx".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx))),
             ("promises".into(), promises),
         ]));
     }
