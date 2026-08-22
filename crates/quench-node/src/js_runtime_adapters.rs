@@ -73,6 +73,27 @@ for (const name of ["URL", "URLSearchParams"]) {
   }
 }
 */
+if (typeof globalThis.URL === "function") {
+  if (typeof globalThis.URL.canParse !== "function") {
+    globalThis.URL.canParse = function(input, base) {
+      try {
+        new globalThis.URL(input, base);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+  }
+  if (typeof globalThis.URL.parse !== "function") {
+    globalThis.URL.parse = function(input, base) {
+      try {
+        return new globalThis.URL(input, base);
+      } catch (_) {
+        return null;
+      }
+    };
+  }
+}
 const __quench_import_meta = { url: __quench_module_url, dirname: __filename.replace(/[^/\\]*$/, ""), filename: __filename, resolve(specifier, parent) { return new URL(specifier, parent || __quench_module_url).href; } };
 Object.defineProperty(globalThis, "import_meta", { configurable: true, value: __quench_import_meta });
 let __quench_import_meta_alias = __quench_import_meta;
