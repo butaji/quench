@@ -158,6 +158,14 @@ fn require_cached(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<V
 }
 fn require_special(_state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
     match spec {
+        "internal/errors" => Some(Ok(namespace_of(vec![
+            (
+                "codes",
+                namespace_of(vec![
+                    ("ERR_OUT_OF_RANGE", Value::Builtin(quench_runtime::ops::Builtin::RangeError)),
+                ]),
+            ),
+        ]))),
         "module" | "node:module" => {
             let names = [
                 "assert",
@@ -255,9 +263,7 @@ fn resolve_compat_module(
             crate::modules::compat_extra::domain(state)
         })),
         "v8" => Some(crate::modules::compat_extra::v8(state)),
-        "inspector" | "inspector/promises" => {
-            Some(crate::modules::compat_extra::inspector(state))
-        }
+        "inspector" | "inspector/promises" => Some(crate::modules::compat_extra::inspector(state)),
         "repl" => Some(crate::modules::compat_extra::repl(state)),
         "wasi" => Some(crate::modules::compat_extra::wasi(state)),
         "worker_threads" => Some(crate::modules::compat_extra::worker_threads(state)),
