@@ -348,7 +348,7 @@ pub(crate) fn collect_call_arguments(
     args: &[u16],
     spreads: &[bool],
 ) -> Result<Vec<Value>, VmError> {
-    let mut arguments = Vec::new();
+    let mut arguments = Vec::with_capacity(args.len());
     for (i, index) in args.iter().enumerate() {
         push_argument_value(
             &mut arguments,
