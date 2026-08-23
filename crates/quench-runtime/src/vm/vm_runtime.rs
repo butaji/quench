@@ -170,7 +170,7 @@ pub(crate) fn bare_call_receiver(
     function: &crate::value::FunctionValue,
     this_value: &Value,
 ) -> Value {
-    if matches!(function.kind, FunctionKind::Ordinary)
+    if !matches!(function.kind, FunctionKind::Arrow)
         && matches!(function.strictness, FunctionStrictness::Sloppy)
     {
         let realm = function
