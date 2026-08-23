@@ -62,7 +62,15 @@ fn run_dynamic_import(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
     else {
         return Ok(());
     };
-    let specifier = crate::conversion::to_string(&crate::execute::read_register(registers, *specifier)?)?;
+    let specifier_value = crate::execute::read_register(registers, *specifier)?;
+    let specifier = match crate::conversion::to_string(&specifier_value) {
+        Ok(specifier) => specifier,
+        Err(crate::execute::VmError::Thrown(reason)) => {
+            write_value(registers, *dst, rejected_promise(reason));
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     let value = crate::module_bindings::resolve_dynamic_import(&specifier, *deferred)
         .unwrap_or_else(|| Value::String(specifier));
     let value = if let Some(thrown) = crate::module_bindings::take_pending_throw() {
