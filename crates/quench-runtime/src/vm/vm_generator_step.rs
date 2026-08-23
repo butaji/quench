@@ -44,8 +44,15 @@ fn run_generator_steps(
             continue;
         }
         let result = run_generator_op(registers, op, context, pc + offset)?;
-        if let Some(completion) = result {
-            return Ok(completion);
+        if let Some(step) = result {
+            // Ordinary calls are nested VM transitions, not suspensions of
+            // the generator itself. Consume their continuation here so the
+            // body continues until an explicit yield/await boundary.
+            if let crate::completion::Completion::Call(continuation) = step.completion {
+                crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+                continue;
+            }
+            return Ok(step);
         }
     }
     crate::vm::flush_global_declaration_batch(registers);
