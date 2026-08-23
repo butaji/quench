@@ -88,7 +88,7 @@ impl Host for QuenchNodeHost {
             return require_module(arguments);
         }
         if capability.kind == HostCapabilityKind::Custom(0x0F0F) {
-            return crate::js_runtime_internal_binding::internal_view_has_buffer(arguments);
+            return crate::js_runtime::internal_view_has_buffer(arguments);
         }
         if capability.kind == HostCapabilityKind::Custom(0x070D) {
             return Ok(Value::Undefined);
