@@ -406,13 +406,13 @@ fn function_var_is_per_activation() {
         "void 0;\n",
     );
     let program = quench_runtime::reduce::reduce_source(source).expect("reduce");
-    let _ = quench_runtime::vm::execute_with_context(program.ops(), &quench_runtime::vm::VmContext::isolated())
+    let _ = quench_runtime::vm::execute_code_with_context(program.code(), &quench_runtime::vm::VmContext::isolated())
         .expect("execute");
     let again = quench_runtime::reduce::reduce_source(
         "function f(){ var x; if(x===undefined){x=0;}else{x=1;} return x; } return [f(), f()];",
     )
     .expect("reduce2");
-    let value = quench_runtime::vm::execute_with_context(again.ops(), &quench_runtime::vm::VmContext::isolated())
+    let value = quench_runtime::vm::execute_code_with_context(again.code(), &quench_runtime::vm::VmContext::isolated())
         .expect("execute2");
     let Value::Array(items) = value else {
         panic!("expected array, got {value:?}");

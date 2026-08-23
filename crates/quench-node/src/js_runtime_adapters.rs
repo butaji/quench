@@ -352,7 +352,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                     CapabilityName::DgramDrainCallbacks,
                 )),
             );
-        quench_runtime::execute::execute_with_context(program.ops(), &context)
+        quench_runtime::execute::execute_code_with_context(program.code(), &context)
             .map(|_| ())
             .map_err(|error| error.render().into())
     }

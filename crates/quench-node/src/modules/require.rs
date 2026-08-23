@@ -132,7 +132,7 @@ fn execute_module(
     // Re-entrant execution: `execute_with_context` would reset the
     // runtime's locals state and corrupt the frame that called `require`.
     let mut registers = Vec::new();
-    quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)?;
+    quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)?;
     let module = module.unwrap_or(Value::Undefined);
     quench_runtime::execute::get_property_result(&module, "exports")
 }

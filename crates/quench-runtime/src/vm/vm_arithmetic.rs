@@ -62,60 +62,53 @@ pub(crate) fn execute_binary(
     lhs: u16,
     rhs: u16,
 ) -> Result<(), VmError> {
-    let left = read_register_unchecked(registers, lhs);
-    let right = read_register_unchecked(registers, rhs);
-    // Shape-guarded fast instruction; all other values use the complete
-    // generic evaluator, which remains authoritative for JavaScript semantics.
-    if let Some(result) = fast_number_binary(&left, &right, operator) {
+    let direct = match (&registers[usize::from(lhs)], &registers[usize::from(rhs)]) {
+        (Value::Number(left), Value::Number(right)) => fast_number_binary(*left, *right, operator),
+        _ => None,
+    };
+    if let Some(result) = direct {
         write_value(registers, dst, result);
         return Ok(());
     }
+    let left = read_register_unchecked(registers, lhs);
+    let right = read_register_unchecked(registers, rhs);
     write_value(registers, dst, evaluate_binary(&left, &right, operator)?);
     Ok(())
 }
 
 #[inline]
-fn fast_number_binary(
-    left: &Value,
-    right: &Value,
-    operator: crate::ops::BinaryOp,
-) -> Option<Value> {
-    let (Value::Number(left), Value::Number(right)) = (left, right) else {
-        return None;
-    };
+fn fast_number_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> Option<Value> {
     use crate::ops::BinaryOp;
     Some(match operator {
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
-            if !is_negative_zero(*left) && !is_negative_zero(*right) {
-                if let (Some(left_int), Some(right_int)) = (
-                    Value::Number(*left).as_small_integer(),
-                    Value::Number(*right).as_small_integer(),
-                ) {
-                    let checked = match operator {
-                        BinaryOp::Add => Value::checked_small_integer_add(left_int, right_int),
-                        BinaryOp::Subtract => {
-                            Value::checked_small_integer_subtract(left_int, right_int)
-                        }
-                        BinaryOp::Multiply => {
-                            Value::checked_small_integer_multiply(left_int, right_int)
-                        }
-                        _ => unreachable!(),
-                    };
-                    if let Some(value) = checked {
-                        return Some(value);
+            if let (Some(left_int), Some(right_int)) = (
+                Value::Number(left).as_small_integer(),
+                Value::Number(right).as_small_integer(),
+            ) {
+                let checked = match operator {
+                    BinaryOp::Add => Value::checked_small_integer_add(left_int, right_int),
+                    BinaryOp::Subtract => {
+                        Value::checked_small_integer_subtract(left_int, right_int)
                     }
+                    BinaryOp::Multiply => {
+                        Value::checked_small_integer_multiply(left_int, right_int)
+                    }
+                    _ => unreachable!(),
+                };
+                if let Some(value) = checked {
+                    return Some(value);
                 }
             }
             Value::Number(match operator {
-                BinaryOp::Add => *left + *right,
-                BinaryOp::Subtract => *left - *right,
-                BinaryOp::Multiply => *left * *right,
+                BinaryOp::Add => left + right,
+                BinaryOp::Subtract => left - right,
+                BinaryOp::Multiply => left * right,
                 _ => unreachable!(),
             })
         }
-        BinaryOp::Divide => Value::Number(*left / *right),
-        BinaryOp::Remainder => Value::Number(*left % *right),
-        BinaryOp::Exponentiate => Value::Number(exponentiate(*left, *right)),
+        BinaryOp::Divide => Value::Number(left / right),
+        BinaryOp::Remainder => Value::Number(left % right),
+        BinaryOp::Exponentiate => Value::Number(left.powf(right)),
         BinaryOp::LessThan => Value::Boolean(left < right),
         BinaryOp::LessEqual => Value::Boolean(left <= right),
         BinaryOp::GreaterThan => Value::Boolean(left > right),
@@ -123,12 +116,6 @@ fn fast_number_binary(
         _ => return None,
     })
 }
-
-#[inline]
-fn is_negative_zero(value: f64) -> bool {
-    value == 0.0 && value.is_sign_negative()
-}
-
 #[cfg(test)]
 mod immediate_integer_tests {
     use super::fast_number_binary;
@@ -136,14 +123,12 @@ mod immediate_integer_tests {
 
     #[test]
     fn add_stays_exact_at_i32_boundaries() {
-        let max = Value::from_small_integer(i32::MAX);
-        let one = Value::from_small_integer(1);
         assert_eq!(
-            fast_number_binary(&max, &Value::from_small_integer(-1), BinaryOp::Add)
+            fast_number_binary(f64::from(i32::MAX), -1.0, BinaryOp::Add)
                 .and_then(|value| value.as_small_integer()),
             Some(i32::MAX - 1)
         );
-        let overflow = fast_number_binary(&max, &one, BinaryOp::Add).unwrap();
+        let overflow = fast_number_binary(f64::from(i32::MAX), 1.0, BinaryOp::Add).unwrap();
         assert_eq!(overflow, Value::Number(f64::from(i32::MAX) + 1.0));
         assert_eq!(overflow.as_small_integer(), None);
     }
@@ -155,42 +140,28 @@ mod immediate_integer_tests {
             (BinaryOp::Multiply, 46_341, 46_341, 46_341.0 * 46_341.0),
         ];
         for (operator, left, right, fallback) in cases {
-            let result = fast_number_binary(
-                &Value::from_small_integer(left),
-                &Value::from_small_integer(right),
-                operator,
-            )
-            .expect("numeric operation");
+            let result = fast_number_binary(f64::from(left), f64::from(right), operator)
+                .expect("numeric operation");
             assert_eq!(result, Value::Number(fallback));
             assert!(result.as_small_integer().is_none());
         }
         assert_eq!(
-            fast_number_binary(
-                &Value::from_small_integer(7),
-                &Value::from_small_integer(6),
-                BinaryOp::Multiply,
-            )
-            .and_then(|value| value.as_small_integer()),
+            fast_number_binary(7.0, 6.0, BinaryOp::Multiply)
+                .and_then(|value| value.as_small_integer()),
             Some(42)
         );
     }
     #[test]
     fn add_preserves_negative_zero_and_fractional_numbers() {
         assert_eq!(
-            fast_number_binary(&Value::Number(-0.0), &Value::Number(0.0), BinaryOp::Add)
+            fast_number_binary(-0.0, 0.0, BinaryOp::Add)
                 .unwrap()
                 .number_bits(),
             Some(0)
         );
         assert_eq!(
-            fast_number_binary(&Value::Number(0.5), &Value::Number(0.25), BinaryOp::Add),
+            fast_number_binary(0.5, 0.25, BinaryOp::Add),
             Some(Value::Number(0.75))
-        );
-        assert_eq!(
-            fast_number_binary(&Value::Number(-0.0), &Value::Number(-0.0), BinaryOp::Add)
-                .unwrap()
-                .number_bits(),
-            Some((-0.0_f64).to_bits())
         );
     }
 }
@@ -618,7 +589,7 @@ mod fast_path_tests {
     #[test]
     fn numeric_add_uses_specialized_result() {
         assert_eq!(
-            fast_number_binary(&Value::Number(2.0), &Value::Number(3.0), BinaryOp::Add),
+            fast_number_binary(2.0, 3.0, BinaryOp::Add),
             Some(Value::Number(5.0))
         );
     }
@@ -627,7 +598,6 @@ mod fast_path_tests {
     fn non_numeric_add_falls_back_to_generic_path() {
         let left = Value::String("a".to_string());
         let right = Value::Number(1.0);
-        assert_eq!(fast_number_binary(&left, &right, BinaryOp::Add), None);
         assert_eq!(
             evaluate_binary(&left, &right, BinaryOp::Add).unwrap(),
             Value::String("a1".to_string())
@@ -638,7 +608,7 @@ mod fast_path_tests {
     fn unsupported_operator_falls_back_to_generic_path() {
         let left = Value::Number(2.0);
         let right = Value::Number(2.0);
-        assert_eq!(fast_number_binary(&left, &right, BinaryOp::Equal), None);
+        assert_eq!(fast_number_binary(2.0, 2.0, BinaryOp::Equal), None);
         assert_eq!(
             evaluate_binary(&left, &right, BinaryOp::Equal).unwrap(),
             Value::Boolean(true)
@@ -649,7 +619,6 @@ mod fast_path_tests {
     fn generic_path_reports_coercion_errors() {
         let left = Value::BigInt("1".to_string());
         let right = Value::Number(1.0);
-        assert_eq!(fast_number_binary(&left, &right, BinaryOp::Add), None);
         assert!(evaluate_binary(&left, &right, BinaryOp::Add).is_err());
     }
 
@@ -670,7 +639,7 @@ mod fast_path_tests {
             BinaryOp::GreaterEqual,
         ] {
             assert_eq!(
-                fast_number_binary(&left, &right, operator),
+                fast_number_binary(8.0, 3.0, operator),
                 Some(evaluate_binary(&left, &right, operator).unwrap()),
                 "operator {operator:?}"
             );

@@ -40,29 +40,17 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    let frame = CallFrame::new(
-        std::rc::Rc::clone(function),
-        this_value.clone(),
-        arguments.to_vec(),
-    );
     if is_class_constructor(function) {
         return Err(crate::value::error::throw_type_error(
             "Class constructor cannot be invoked without 'new'",
         ));
     }
+    let receiver = crate::vm::bare_call_receiver(function, this_value);
     if matches!(function.kind, FunctionKind::Generator) {
-        return crate::generator::create(function, &frame.receiver, arguments);
+        return crate::generator::create(function, &receiver, arguments);
     }
     if function.is_async {
-        // Async function parameter evaluation is part of the async call's
-        // completion. A failure while creating the generator (for example, a
-        // SyntaxError from a default-parameter eval) rejects the returned
-        // promise instead of escaping as a synchronous call error.
-        let generator = match (crate::generator::create(function, &frame.receiver, arguments)) {
-            Ok(generator) => generator,
-            Err(error) => return Ok(crate::promise::from_async_completion(Err(error))),
-        };
-        let generator = match generator {
+        let generator = match crate::generator::create(function, &receiver, arguments)? {
             crate::value::Value::Generator(generator) => generator,
             _ => unreachable!("generator creation must return a generator"),
         };
@@ -75,9 +63,29 @@ pub(crate) fn execute(
             generator,
         ));
     }
-    execute_frames(frame)
+
+    // Ordinary calls enter the same explicit machine loop used by top-level
+    // execution.  Keeping function entry here (rather than routing through the
+    // old frame trampoline) means every nested JS call is represented
+    // by a VM continuation and never by Rust recursion.
+    let (mut registers, environment) =
+        build_registers(function, &receiver, arguments);
+    let _private_environment = crate::private_environment::Guard::install_environment(
+        function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(function, &receiver);
+    let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
+    crate::vm::execute_code_in_environment(
+        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
+        &mut registers,
+        crate::vm::current_context().as_ref(),
+        environment,
+    )
 }
 
+// Shared call-entry data for receiver-update paths.  Execution itself is
+// driven by `vm::execute_in_environment`; this record only keeps the
+// normalized receiver and argument slice together while installing guards.
 struct CallFrame {
     function: std::rc::Rc<crate::value::FunctionValue>,
     receiver: crate::value::Value,
@@ -90,99 +98,10 @@ impl CallFrame {
         receiver: crate::value::Value,
         arguments: Vec<crate::value::Value>,
     ) -> Self {
-        let receiver = crate::vm::bare_call_receiver(&function, &receiver);
         Self {
+            receiver: crate::vm::bare_call_receiver(&function, &receiver),
             function,
-            receiver,
             arguments,
         }
     }
-}
-
-enum TailTarget {
-    Frame(CallFrame),
-    Value(crate::value::Value),
-}
-
-fn execute_frames(mut frame: CallFrame) -> Result<crate::value::Value, crate::execute::VmError> {
-    loop {
-        match execute_frame_completion(&frame)? {
-            crate::completion::Completion::TailCall(request) => {
-                match resolve_tail_target(request)? {
-                    TailTarget::Frame(next) => frame = next,
-                    TailTarget::Value(value) => return Ok(value),
-                }
-            }
-            completion => return crate::vm::completion_result(completion),
-        }
-    }
-}
-
-fn execute_frame_value(frame: &CallFrame) -> Result<crate::value::Value, crate::execute::VmError> {
-    crate::vm::completion_result(execute_frame_completion(frame)?)
-}
-
-fn execute_frame_completion(
-    frame: &CallFrame,
-) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let _private_environment = crate::private_environment::Guard::install_environment(
-        frame.function.private_environment.clone(),
-    );
-    let _home = crate::super_scope::Guard::install(&frame.function, &frame.receiver);
-    let _with_scope = crate::with_scope::FunctionGuard::install(&frame.function.with_captures);
-    let (mut registers, environment) =
-        build_registers(&frame.function, &frame.receiver, &frame.arguments);
-    let context = crate::vm::current_context_or_default();
-    crate::vm::execute_frame_completion(frame.function.ops(), &mut registers, &context, environment)
-}
-
-fn resolve_tail_target(
-    request: crate::completion::TailCallRequest,
-) -> Result<TailTarget, crate::execute::VmError> {
-    let (target, receiver, arguments) =
-        flatten_bound_target(request.callee, request.receiver, request.arguments);
-    match target {
-        crate::value::Value::Function(function) => {
-            resolve_function_target(function, receiver, arguments)
-        }
-        crate::value::Value::Builtin(builtin) => {
-            execute_builtin_target(builtin, Some(&receiver), &arguments).map(TailTarget::Value)
-        }
-        crate::value::Value::Proxy(_) => {
-            crate::proxy::proxy_apply(&target, &receiver, &arguments).map(TailTarget::Value)
-        }
-        _ => Err(crate::execute::VmError::NotCallable),
-    }
-}
-
-fn flatten_bound_target(
-    mut target: crate::value::Value,
-    mut receiver: crate::value::Value,
-    mut arguments: Vec<crate::value::Value>,
-) -> (
-    crate::value::Value,
-    crate::value::Value,
-    Vec<crate::value::Value>,
-) {
-    while let crate::value::Value::BoundFunction(bound) = target {
-        let mut combined = bound.arguments.clone();
-        combined.append(&mut arguments);
-        arguments = combined;
-        receiver = bound.receiver.clone();
-        target = bound.target.clone();
-    }
-    (target, receiver, arguments)
-}
-
-fn resolve_function_target(
-    function: std::rc::Rc<crate::value::FunctionValue>,
-    receiver: crate::value::Value,
-    arguments: Vec<crate::value::Value>,
-) -> Result<TailTarget, crate::execute::VmError> {
-    if function.is_async || matches!(function.kind, FunctionKind::Generator) {
-        return execute(&function, &receiver, &arguments).map(TailTarget::Value);
-    }
-    Ok(TailTarget::Frame(CallFrame::new(
-        function, receiver, arguments,
-    )))
 }
