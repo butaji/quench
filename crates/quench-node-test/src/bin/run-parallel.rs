@@ -15,6 +15,8 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
 const PARALLEL_REL: &str = "tests/node/test/parallel";
 const MANIFEST_REL: &str = "crates/quench-node-test/node-tests/parallel.txt";
 
@@ -30,6 +32,7 @@ fn repo_root() -> PathBuf {
 }
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let timeout_secs = timeout_secs(&args);
     if let Some(path) = args
         .iter()
         .position(|a| a == "--triage-one")
@@ -47,14 +50,14 @@ fn main() -> ExitCode {
             .iter()
             .position(|a| a == "--filter")
             .and_then(|i| args.get(i + 1));
-        return triage(filter, true);
+        return triage(filter, true, timeout_secs);
     }
     if args.iter().any(|a| a == "--triage") {
         let filter = args
             .iter()
             .position(|a| a == "--filter")
             .and_then(|i| args.get(i + 1));
-        return triage(filter, false);
+        return triage(filter, false, timeout_secs);
     }
     run_manifest()
 }
@@ -118,7 +121,16 @@ fn run_manifest() -> ExitCode {
     }
 }
 
-fn triage(filter: Option<&String>, gate: bool) -> ExitCode {
+fn timeout_secs(args: &[String]) -> u64 {
+    args.iter()
+        .position(|arg| arg == "--timeout-secs")
+        .and_then(|index| args.get(index + 1))
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
+}
+
+fn triage(filter: Option<&String>, gate: bool, timeout_secs: u64) -> ExitCode {
     let parallel_dir = repo_root().join(PARALLEL_REL);
     let mut entries: Vec<PathBuf> = quench_node_test::stages::discover_fixtures(&parallel_dir)
         .into_iter()
@@ -135,7 +147,7 @@ fn triage(filter: Option<&String>, gate: bool) -> ExitCode {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;
     for path in &entries {
-        if triage_one(&exe, path) {
+        if triage_one(&exe, path, timeout_secs) {
             println!("{}", path.file_name().unwrap().to_string_lossy());
             passed += 1;
         }
@@ -150,7 +162,7 @@ fn triage(filter: Option<&String>, gate: bool) -> ExitCode {
 
 /// Run one fixture in a child process (crash isolation) with a
 /// 30-second timeout; report pass only on a clean zero exit.
-fn triage_one(exe: &PathBuf, path: &PathBuf) -> bool {
+fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> bool {
     use std::process::{Command, Stdio};
     let Ok(mut child) = Command::new(exe)
         .arg("--triage-one")
@@ -161,11 +173,15 @@ fn triage_one(exe: &PathBuf, path: &PathBuf) -> bool {
     else {
         return false;
     };
-    for _ in 0..600 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50))
+            }
             Err(_) => return false,
+            Ok(None) => break,
         }
     }
     let _ = child.kill();
