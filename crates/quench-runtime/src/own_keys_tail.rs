@@ -163,7 +163,10 @@ fn builtin_keys(builtin: crate::ops::Builtin, symbols: bool) -> Vec<String> {
         }
     }
     keys.into_iter()
-        .filter(|key| key.contains('\0') == symbols)
+        .filter(|key| {
+            let is_symbol = key.contains('\0') || key.starts_with("Symbol.");
+            is_symbol == symbols
+        })
         .filter(
             |key| match crate::builtins::read_intrinsic_override(builtin, key) {
                 Some(descriptor) => descriptor_is_enumerable(&descriptor),
