@@ -119,7 +119,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                 &Value::Object(properties.clone()),
             ));
         }
-        return Some(value.clone());
+        return Some(property_value(value));
     }
     if let Some(value) = global_object_property(properties, key) {
         return Some(value);
