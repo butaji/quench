@@ -37,8 +37,8 @@ fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
             }
         }
         Value::Array(values) => {
-            for value in values.iter() {
-                retarget_nested_alias(value, old, new);
+            for value in values.snapshot() {
+                retarget_nested_alias(&value, old, new);
             }
         }
         Value::Object(values) => {
@@ -57,6 +57,7 @@ fn contains_nested(value: &Value, target: &Value) -> bool {
         Value::BindingCell(cell) => contains_nested(&cell.borrow(), target),
         Value::ObjectAlias(alias) => alias_targets(alias, target),
         Value::Array(values) => values
+            .snapshot()
             .iter()
             .any(|value| same_identity(value, target) || contains_nested(value, target)),
         Value::Object(values) => {

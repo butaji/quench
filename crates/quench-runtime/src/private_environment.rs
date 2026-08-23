@@ -95,7 +95,7 @@ pub(crate) fn resolve(name: PrivateNameId) -> Option<PrivateName> {
 }
 
 pub(crate) fn execute_scope(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<Completion, VmError> {
     let Op::PrivateScope {

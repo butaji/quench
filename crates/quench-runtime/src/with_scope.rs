@@ -41,7 +41,10 @@ impl Drop for ScopeGuard {
     }
 }
 
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion, VmError> {
+pub(crate) fn execute(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<Completion, VmError> {
     let Op::With { object, body } = op else {
         return Err(VmError::MissingReturn);
     };
@@ -63,7 +66,10 @@ pub(crate) fn capture() -> Vec<Value> {
     OBJECTS.with(|objects| objects.borrow().clone())
 }
 
-pub(crate) fn execute_resolve_global(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute_resolve_global(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::ResolveGlobal { dst, object, key } = op else {
         return Err(VmError::MissingReturn);
     };
@@ -89,7 +95,10 @@ pub(crate) fn execute_resolve_global(registers: &mut Vec<Value>, op: &Op) -> Res
     Ok(())
 }
 
-pub(crate) fn execute_name(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute_name(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     match op {
         Op::ResolveName { dst, key } => resolve_name(registers, *dst, key),
         Op::SetName { key, src, strict } => set_name(registers, key, *src, *strict),
@@ -99,7 +108,7 @@ pub(crate) fn execute_name(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
 }
 
 pub(crate) fn set_resolved(
-    registers: &mut [Value],
+    registers: &mut crate::register_file::RegisterFile,
     target_register: u16,
     key: &str,
     src: u16,
@@ -169,12 +178,16 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
         )));
     }
     let updated = crate::builtins::set_property(global.clone(), key, value);
-    crate::vm::synchronize_global_object(&mut Vec::new(), &global, &updated);
+    crate::vm::synchronize_global_object(
+        &mut crate::register_file::RegisterFile::new(),
+        &global,
+        &updated,
+    );
     Ok(())
 }
 
 pub(crate) fn execute_delete_name(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     key: &str,
     strict: bool,
@@ -221,7 +234,11 @@ fn delete_from_global(key: &str) -> Option<bool> {
     Some(deleted)
 }
 
-fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), VmError> {
+fn resolve_name(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    key: &str,
+) -> Result<(), VmError> {
     if crate::locals::is_initializing_class_name(key) {
         return Err(crate::value::error::throw_reference_error(&format!(
             "Cannot access '{key}' before initialization"
@@ -279,7 +296,12 @@ fn global_builtin_deleted(global: &Value, key: &str) -> bool {
     properties.iter().any(|(name, _)| name == &marker)
 }
 
-fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Result<(), VmError> {
+fn set_name(
+    registers: &mut crate::register_file::RegisterFile,
+    key: &str,
+    src: u16,
+    strict: bool,
+) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, src)?;
     if crate::locals::is_immutable_name(key) {
         return Err(crate::value::error::throw_type_error(
@@ -469,7 +491,10 @@ fn primitive_boxed_prototype(value: &Value) -> Option<Value> {
     })
 }
 
-pub(crate) fn execute_has_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute_has_property(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::HasPropertyDynamic { dst, object, key } = op else {
         return Err(VmError::MissingReturn);
     };
@@ -486,7 +511,10 @@ pub(crate) fn execute_has_property(registers: &mut Vec<Value>, op: &Op) -> Resul
     Ok(())
 }
 
-pub(crate) fn execute_has_private(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute_has_private(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::HasPrivate { dst, object, name } = op else {
         return Err(VmError::MissingReturn);
     };

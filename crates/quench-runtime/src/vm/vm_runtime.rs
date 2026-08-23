@@ -1,13 +1,13 @@
 include!("vm_generator_step.rs");
 include!("vm_completion_step.rs");
 
-fn run_ops(ops: &[Op], registers: &mut Vec<Value>, context: &VmContext) -> Result<Value, VmError> {
+fn run_ops(ops: &[Op], registers: &mut crate::register_file::RegisterFile, context: &VmContext) -> Result<Value, VmError> {
     completion_result(run_ops_completion(ops, registers, context)?)
 }
 
 fn run_ops_completion(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
     Ok(run_ops_completion_step(ops, registers, context)?.completion)
@@ -16,7 +16,7 @@ fn run_ops_completion(
 pub(crate) fn execute_ops_from(
     ops: &[Op],
     start: usize,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<(crate::completion::Completion, usize), VmError> {
@@ -30,7 +30,7 @@ pub(crate) fn execute_ops_from(
 pub(crate) fn execute_code_from(
     code: crate::machine::CodeView<'_>,
     start: usize,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<(crate::completion::Completion, usize), VmError> {
@@ -43,7 +43,7 @@ pub(crate) fn execute_code_from(
 
 fn run_ops_completion_step(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
     run_ops_completion_step_from(ops, 0, registers, context)
@@ -52,7 +52,7 @@ fn run_ops_completion_step(
 fn run_ops_completion_step_from(
     ops: &[Op],
     start: usize,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
     let executable = crate::machine::ExecutableCode::from_ops(ops.to_vec());
@@ -63,7 +63,7 @@ fn run_ops_completion_step_from(
 fn run_code_completion_step_from(
     code: crate::machine::CodeView<'_>,
     start: usize,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
     let mut pc = start;
@@ -84,7 +84,7 @@ fn run_code_completion_step_from(
 fn run_instruction(
     code: crate::machine::CodeView<'_>,
     instruction: crate::ir::Instruction,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::ir::Opcode;
@@ -108,12 +108,50 @@ fn run_instruction(
             vm_arithmetic::execute_binary(registers, instruction.a, operator, instruction.b, instruction.c)?;
             Ok(None)
         }
-        Opcode::GetProperty => {
+        Opcode::GetProperty | Opcode::AGetI => {
+            if instruction.opcode == Opcode::AGetI {
+                let index = registers.read_array_index(usize::from(instruction.c));
+                let number = index.and_then(|index| {
+                    registers
+                        .read_array(usize::from(instruction.b))
+                        .filter(|array| array.is_packed_ordinary())
+                        .and_then(|array| array.dense_number_at(index))
+                });
+                if let Some(number) = number {
+                    registers.write_number(usize::from(instruction.a), number);
+                    return Ok(None);
+                }
+            }
             let object = read_register(registers, instruction.b)?;
             let key = read_register(registers, instruction.c)?;
             let key = crate::properties::dynamic_property_key(&key)?;
             let value = get_property_result(&object, &key)?;
             write_value(registers, instruction.a, value);
+            Ok(None)
+        }
+        Opcode::ASetI => {
+            let index = registers.read_array_index(usize::from(instruction.b));
+            let number = registers.read_number(usize::from(instruction.c));
+            let stored = index.zip(number).is_some_and(|(index, number)| {
+                registers
+                    .read_array(usize::from(instruction.a))
+                    .is_some_and(|array| {
+                        array.set_existing_f64(index, number)
+                            || array.append_preallocated_f64(index, number)
+                    })
+            });
+            if stored {
+                return Ok(None);
+            }
+            crate::properties::execute_set_property(
+                registers,
+                &crate::ops::Op::SetPropertyDynamic {
+                    object: instruction.a,
+                    key: instruction.b,
+                    src: instruction.c,
+                    strict: instruction.flags != 0,
+                },
+            )?;
             Ok(None)
         }
         Opcode::Return => read_register(registers, instruction.a)
@@ -135,7 +173,7 @@ fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmE
 
 #[cold]
 fn completion_step_after_error(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     error: VmError,
     next: usize,
 ) -> Result<CompletionStep, VmError> {
@@ -145,7 +183,7 @@ fn completion_step_after_error(
 
 #[cold]
 fn completion_step_after_transition(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     completion: crate::completion::Completion,
     next: usize,
 ) -> Result<CompletionStep, VmError> {

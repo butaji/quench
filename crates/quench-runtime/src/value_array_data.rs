@@ -20,9 +20,9 @@ impl ArrayKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayData {
-    values: Vec<Value>,
+    values: DenseElements,
     length: usize,
-    kind: ArrayKind,
+    kind: std::cell::Cell<ArrayKind>,
     properties: Vec<(String, Value)>,
     descriptors: Vec<(String, Value)>,
     arguments: bool,
@@ -31,6 +31,143 @@ pub struct ArrayData {
     deleted: Vec<bool>,
     prototype: std::cell::RefCell<Option<Value>>,
     argument_live: Option<Rc<RefCell<ArgumentLive>>>,
+}
+
+/// The one authoritative dense element store. Numeric arrays carry only IEEE
+/// words; generic JavaScript values appear only after a semantic transition.
+/// `Cell<f64>` permits value-only mutation through shared array identity while
+/// preserving structural COW for growth, holes, descriptors, and mappings.
+#[derive(Debug, Clone, PartialEq)]
+enum DenseElements {
+    Numbers(Rc<RefCell<Vec<std::cell::Cell<f64>>>>),
+    Values(Vec<Value>),
+}
+
+impl DenseElements {
+    fn from_values(values: Vec<Value>) -> Self {
+        if values.iter().all(|value| matches!(value, Value::Number(_))) {
+            return Self::Numbers(Rc::new(RefCell::new(
+                values
+                    .into_iter()
+                    .map(|value| match value {
+                        Value::Number(number) => std::cell::Cell::new(number),
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )));
+        }
+        Self::Values(values)
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Numbers(values) => values.borrow().len(),
+            Self::Values(values) => values.len(),
+        }
+    }
+
+    fn capacity(&self) -> usize {
+        match self {
+            Self::Numbers(values) => values.borrow().capacity(),
+            Self::Values(values) => values.capacity(),
+        }
+    }
+
+    fn truncate(&mut self, length: usize) {
+        match self {
+            Self::Numbers(values) => values.borrow_mut().truncate(length),
+            Self::Values(values) => values.truncate(length),
+        }
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        match self {
+            Self::Numbers(values) => values.borrow_mut().reserve(additional),
+            Self::Values(values) => values.reserve(additional),
+        }
+    }
+
+    fn resize_undefined(&mut self, length: usize) {
+        self.materialize_values().resize(length, Value::Undefined);
+    }
+
+    fn set(&mut self, index: usize, value: Value) {
+        if let (Self::Numbers(values), Value::Number(number)) = (&*self, &value) {
+            values.borrow()[index].set(*number);
+            return;
+        }
+        self.materialize_values()[index] = value;
+    }
+
+    fn kind_with_holes(&self, deleted: &[bool], length: usize) -> ArrayKind {
+        if length > self.len().saturating_mul(2).max(32) {
+            return ArrayKind::Sparse;
+        }
+        if deleted.iter().any(|deleted| *deleted) || length > self.len() {
+            return ArrayKind::Holey;
+        }
+        match self {
+            Self::Numbers(values) if values.borrow().iter().all(|value| value.get().fract() == 0.0) => {
+                ArrayKind::PackedInt
+            }
+            Self::Numbers(_) => ArrayKind::PackedDouble,
+            Self::Values(_) => ArrayKind::PackedValue,
+        }
+    }
+
+    fn number_at(&self, index: usize) -> Option<f64> {
+        match self {
+            Self::Numbers(values) => values.borrow().get(index).map(std::cell::Cell::get),
+            Self::Values(values) => match values.get(index)? {
+                Value::Number(number) => Some(*number),
+                _ => None,
+            },
+        }
+    }
+
+    fn value_at(&self, index: usize) -> Option<Value> {
+        match self {
+            Self::Numbers(values) => values.borrow().get(index).map(|value| Value::Number(value.get())),
+            Self::Values(values) => values.get(index).cloned(),
+        }
+    }
+
+    fn set_existing_number(&self, index: usize, number: f64) -> bool {
+        let Self::Numbers(values) = self else { return false };
+        let values = values.borrow();
+        let Some(slot) = values.get(index) else { return false };
+        slot.set(number);
+        true
+    }
+
+    fn append_number(&mut self, number: f64) -> bool {
+        let Self::Numbers(values) = self else { return false };
+        values.borrow_mut().push(std::cell::Cell::new(number));
+        true
+    }
+
+    fn append_number_shared(&self, number: f64) -> bool {
+        let Self::Numbers(values) = self else { return false };
+        values.borrow_mut().push(std::cell::Cell::new(number));
+        true
+    }
+
+    fn materialize_values(&mut self) -> &mut Vec<Value> {
+        if let Self::Numbers(numbers) = self {
+            let values = numbers
+                .borrow()
+                .iter()
+                .map(|number| Value::Number(number.get()))
+                .collect();
+            *self = Self::Values(values);
+        }
+        let Self::Values(values) = self else { unreachable!() };
+        values
+    }
+
+    fn snapshot(&self) -> Vec<Value> {
+        (0..self.len()).filter_map(|index| self.value_at(index)).collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,9 +186,10 @@ pub struct ArgumentLive {
 impl ArrayData {
     pub fn new(values: Vec<Value>) -> Self {
         let length = values.len();
+        let kind = classify_kind(&values);
         Self {
-            kind: classify_kind(&values),
-            values,
+            kind: std::cell::Cell::new(kind),
+            values: DenseElements::from_values(values),
             length,
             properties: Vec::new(),
             descriptors: Vec::new(),
@@ -69,7 +207,7 @@ impl ArrayData {
         data.arguments = true;
         data.strict_arguments = strict;
         data.argument_live = Some(Rc::new(RefCell::new(ArgumentLive {
-            values: data.values.clone(),
+            values: data.values.snapshot(),
             length: data.length,
             mapped: data.mapped.clone(),
             deleted: data.deleted.clone(),
@@ -78,7 +216,7 @@ impl ArrayData {
         data
     }
     pub(crate) fn kind(&self) -> ArrayKind {
-        self.kind
+        self.kind.get()
     }
 
     pub(crate) fn is_arguments(&self) -> bool {
@@ -96,14 +234,14 @@ impl ArrayData {
     /// Callers must derive all fast-path decisions from this tuple; no shadow
     /// length or element cache is permitted.
     #[inline]
-    pub(crate) fn hot_storage(&self) -> (&[Value], usize, ArrayKind) {
-        (&self.values, self.logical_len(), self.kind)
+    pub(crate) fn hot_storage(&self) -> (Vec<Value>, usize, ArrayKind) {
+        (self.values.snapshot(), self.logical_len(), self.kind.get())
     }
 
 
     #[inline]
     pub(crate) fn is_packed(&self) -> bool {
-        self.kind.is_packed()
+        self.kind.get().is_packed()
     }
 
     pub fn logical_len(&self) -> usize {
@@ -112,9 +250,25 @@ impl ArrayData {
             .map_or(self.length, |live| live.borrow().length)
     }
 
+    pub fn len(&self) -> usize {
+        self.logical_len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.logical_len() == 0
+    }
+
+    pub fn get(&self, index: usize) -> Option<Value> {
+        self.get_index(index)
+    }
+
+    pub fn first(&self) -> Option<Value> {
+        self.get_index(0)
+    }
+
     #[inline]
     pub(crate) fn is_holey(&self) -> bool {
-        matches!(self.kind, ArrayKind::Holey)
+        matches!(self.kind.get(), ArrayKind::Holey)
     }
     /// Header-resident logical length; does not traverse element storage.
     #[inline]
@@ -160,16 +314,16 @@ impl ArrayData {
 
     #[inline]
     pub(crate) fn is_sparse(&self) -> bool {
-        matches!(self.kind, ArrayKind::Sparse)
+        matches!(self.kind.get(), ArrayKind::Sparse)
     }
     pub(crate) fn is_dense(&self) -> bool {
-        !matches!(self.kind, ArrayKind::Sparse)
+        !matches!(self.kind.get(), ArrayKind::Sparse)
     }
 
 
     #[inline]
     pub(crate) fn is_numeric_packed(&self) -> bool {
-        matches!(self.kind, ArrayKind::PackedInt | ArrayKind::PackedDouble)
+        matches!(self.kind.get(), ArrayKind::PackedInt | ArrayKind::PackedDouble)
     }
 
     /// Whether mutation may use the dense backing store without consulting
@@ -184,6 +338,7 @@ impl ArrayData {
             && !self.arguments
             && self.argument_live.is_none()
     }
+
     /// Borrow the live argument data without consuming `self`.
     /// `argument_live` field is shared between the original and any
     /// `Rc::make_mut` clones of this data, so overrides stored via
@@ -216,13 +371,13 @@ impl ArrayData {
             self.descriptors.retain(|(key, _)| keep_index(key, length));
         }
         self.length = length;
-        self.kind = monotonic_kind(self.kind, classify_kind_with_holes(&self.values, &self.deleted, length));
+        self.kind.set(monotonic_kind(
+            self.kind.get(),
+            self.values.kind_with_holes(&self.deleted, length),
+        ));
     }
 
     pub fn set_index(&mut self, index: usize, value: Value) {
-        // Sparse arrays keep indexed entries in the property store even when
-        // a later write happens to be adjacent to the dense prefix. Once a
-        // representation has transitioned, never re-expand its backing Vec.
         if self.is_sparse() && index >= self.values.len() {
             self.set_sparse_index(index, value);
             return;
@@ -238,19 +393,23 @@ impl ArrayData {
         if let Some(Some(binding)) = self.mapped.get(index) {
             *binding.borrow_mut() = value.clone();
         }
+        let appended_number = index == self.values.len()
+            && matches!(&value, Value::Number(number) if self.values.append_number(*number));
         if self.values.len() <= index {
             self.grow_dense_storage(index.saturating_add(1));
         }
-        self.values[index] = value;
+        if !appended_number {
+            self.values.set(index, value);
+        }
         if self.deleted.len() <= index {
             self.deleted.resize(index.saturating_add(1), false);
         }
         self.deleted[index] = false;
         self.length = self.length.max(index.saturating_add(1));
-        self.kind = monotonic_kind(
-            self.kind,
-            classify_kind_with_holes(&self.values, &self.deleted, self.length),
-        );
+        self.kind.set(monotonic_kind(
+            self.kind.get(),
+            self.values.kind_with_holes(&self.deleted, self.length),
+        ));
     }
 
     /// Grow dense storage geometrically so sequential appends do not
@@ -258,7 +417,7 @@ impl ArrayData {
     fn grow_dense_storage(&mut self, required: usize) {
         let current = self.values.len();
         if required <= self.values.capacity() {
-            self.values.resize(required, Value::Undefined);
+            self.values.resize_undefined(required);
             return;
         }
         // Base the next boundary on capacity, not only on the current prefix:
@@ -270,7 +429,7 @@ impl ArrayData {
             .max(4)
             .max(required);
         self.values.reserve(target.saturating_sub(current));
-        self.values.resize(required, Value::Undefined);
+        self.values.resize_undefined(required);
         debug_assert!(self.values.len() >= required);
         debug_assert!(self.values.capacity() >= self.values.len());
     }
@@ -283,7 +442,7 @@ impl ArrayData {
             live.length = live.length.max(length);
         }
         self.length = self.length.max(length);
-        self.kind = ArrayKind::Sparse;
+        self.kind.set(ArrayKind::Sparse);
     }
     pub(crate) fn append_live(&self, values: &[Value]) {
         let Some(live) = &self.argument_live else {
@@ -302,7 +461,7 @@ impl ArrayData {
     }
 
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
-        &mut self.values
+        self.values.materialize_values()
     }
 
     pub(crate) fn get_index(&self, index: usize) -> Option<Value> {
@@ -319,7 +478,7 @@ impl ArrayData {
             .get(index)
             .and_then(Option::as_ref)
             .map(|binding| binding.borrow().clone())
-            .or_else(|| self.values.get(index).cloned())
+            .or_else(|| self.values.value_at(index))
             .or_else(|| self.property(&index.to_string()))
     }
 
@@ -330,11 +489,9 @@ impl ArrayData {
     /// `get_index`, which remains the authoritative Value-producing path.
     #[inline]
     pub(crate) fn dense_number_at(&self, index: usize) -> Option<f64> {
-        let value = self.dense_value_at(index)?;
-        match value {
-            Value::Number(number) => Some(*number),
-            _ => None,
-        }
+        (index < self.logical_len() && self.deleted.get(index) != Some(&true))
+            .then(|| self.values.number_at(index))
+            .flatten()
     }
 
     /// Store an unboxed numeric slot while retaining canonical `Value`
@@ -344,20 +501,62 @@ impl ArrayData {
         self.set_index(index, Value::Number(number));
     }
 
+    /// Mutate an existing packed numeric slot through shared JS array
+    /// identity. This changes no structural fact and performs one checked
+    /// pointer-plus-index store.
+    #[inline(always)]
+    pub(crate) fn set_existing_number(&self, index: usize, value: &Value) -> bool {
+        let Value::Number(number) = value else { return false };
+        self.set_existing_f64(index, *number)
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_existing_f64(&self, index: usize, number: f64) -> bool {
+        self.is_packed_ordinary()
+            && index < self.logical_len()
+            && self.values.set_existing_number(index, number)
+    }
+
+    /// Extend a pre-sized holey array in index order without cloning its
+    /// identity. Structural uncertainty remains slow; this accepts only the
+    /// next missing slot of the canonical numeric prefix.
     #[inline]
-    pub(crate) fn dense_value_at(&self, index: usize) -> Option<&Value> {
+    pub(crate) fn append_preallocated_number(&self, index: usize, value: &Value) -> bool {
+        let Value::Number(number) = value else { return false };
+        self.append_preallocated_f64(index, *number)
+    }
+
+    #[inline(always)]
+    pub(crate) fn append_preallocated_f64(&self, index: usize, number: f64) -> bool {
+        let rejected = index != self.physical_len()
+            || index >= self.logical_len()
+            || !self.properties.is_empty()
+            || !self.descriptors.is_empty()
+            || self.prototype.borrow().is_some()
+            || self.arguments
+            || self.argument_live.is_some();
+        if rejected {
+            return false;
+        }
+        if !self.values.append_number_shared(number) { return false; }
+        let derived = self.values.kind_with_holes(&self.deleted, self.length);
+        self.kind.set(derived);
+        true
+    }
+
+    #[inline]
+    pub(crate) fn dense_value_at(&self, index: usize) -> Option<Value> {
         if index >= self.logical_len()
             || index >= self.values.len()
             || self.deleted.get(index) == Some(&true)
         {
             return None;
         }
-        // SAFETY: the explicit checks above prove `index < self.values.len()`.
-        Some(unsafe { self.values.get_unchecked(index) })
+        self.values.value_at(index)
     }
 
     #[inline]
-    pub(crate) fn last_dense_value(&self) -> Option<&Value> {
+    pub(crate) fn last_dense_value(&self) -> Option<Value> {
         self.values
             .len()
             .checked_sub(1)
@@ -371,8 +570,7 @@ impl ArrayData {
         {
             return None;
         }
-        // SAFETY: the explicit checks above prove `index < self.values.len()`.
-        Some(unsafe { self.values.get_unchecked_mut(index) })
+        self.values.materialize_values().get_mut(index)
     }
 
 
@@ -417,17 +615,11 @@ impl ArrayData {
             return false;
         }
 
-        // Value is not Copy, so Vec::copy_within is unavailable.  Clone in
-        // memmove order instead, avoiding a temporary allocation while still
-        // preserving the source values for overlapping ranges.
-        if dst > src && dst < src_end {
-            for offset in (0..len).rev() {
-                self.values[dst + offset] = self.values[src + offset].clone();
-            }
-        } else {
-            for offset in 0..len {
-                self.values[dst + offset] = self.values[src + offset].clone();
-            }
+        let source: Vec<Value> = (src..src_end)
+            .filter_map(|index| self.values.value_at(index))
+            .collect();
+        for (offset, value) in source.into_iter().enumerate() {
+            self.values.set(dst + offset, value);
         }
         true
     }
@@ -451,6 +643,10 @@ impl ArrayData {
         (0..self.length)
             .map(|index| self.get_index(index).unwrap_or(Value::Undefined))
             .collect()
+    }
+
+    pub fn to_vec(&self) -> Vec<Value> {
+        self.snapshot()
     }
 
     pub(crate) fn map_index(&mut self, index: usize, binding: Rc<RefCell<Value>>) {
@@ -555,7 +751,7 @@ impl ArrayData {
             self.disconnect_index(index);
             self.deleted.resize(index.saturating_add(1), false);
             self.deleted[index] = true;
-            self.kind = ArrayKind::Holey;
+            self.kind.set(ArrayKind::Holey);
             if let Some(live) = &self.argument_live {
                 let mut live = live.borrow_mut();
                 live.deleted.resize(index.saturating_add(1), false);
@@ -631,14 +827,6 @@ fn live_index(live: &ArgumentLive, index: usize) -> Option<Value> {
         .and_then(Option::as_ref)
         .map(|binding| binding.borrow().clone())
         .or_else(|| live.values.get(index).cloned())
-}
-
-impl std::ops::Deref for ArrayData {
-    type Target = [Value];
-
-    fn deref(&self) -> &Self::Target {
-        &self.values
-    }
 }
 
 #[cfg(test)]
@@ -727,6 +915,15 @@ mod array_data_tests {
         assert_eq!(data.dense_number_at(0), None);
         assert_eq!(data.get_index(0), Some(Value::Boolean(true)));
     }
+
+    #[test]
+    fn shared_numeric_write_updates_one_canonical_ieee_slot() {
+        let data = std::rc::Rc::new(ArrayData::new(vec![Value::Number(1.0)]));
+        let alias = std::rc::Rc::clone(&data);
+        assert!(data.set_existing_number(0, &Value::Number(9.5)));
+        assert_eq!(alias.dense_number_at(0), Some(9.5));
+        assert_eq!(alias.storage_capacity(), data.storage_capacity());
+    }
     #[test]
     fn packed_numeric_storage_is_borrowed_until_value_access() {
         let data = ArrayData::new(vec![Value::Number(1.25), Value::Number(2.5)]);
@@ -736,7 +933,7 @@ mod array_data_tests {
         // The dense fast path exposes the canonical slot directly; it does
         // not construct a second numeric representation or allocate.
         let slot = data.dense_value_at(1).expect("packed slot");
-        assert!(matches!(slot, Value::Number(value) if *value == 2.5));
+        assert!(matches!(slot, Value::Number(value) if value == 2.5));
         assert_eq!(data.storage_capacity(), capacity);
 
         // Public element semantics intentionally convert on access by
