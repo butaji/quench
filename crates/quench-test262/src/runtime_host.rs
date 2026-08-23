@@ -67,7 +67,21 @@ impl LinkedModuleGraph {
             } else if unit.kind == ModuleKind::Bytes {
                 LinkedModule::compile_bytes(&unit.bytes)?
             } else {
-                LinkedModule::compile(&unit.source)?
+                match LinkedModule::compile(&unit.source) {
+                    Ok(module) => module,
+                    Err(error) if graph.is_dynamic_target(unit.id) => {
+                        let message = error
+                            .strip_prefix("SyntaxError: ")
+                            .unwrap_or(&error);
+                        let source = format!(
+                            "throw new SyntaxError({});",
+                            serde_json::to_string(message)
+                                .map_err(|serialize| serialize.to_string())?
+                        );
+                        LinkedModule::compile(&source)?
+                    }
+                    Err(error) => return Err(error),
+                }
             };
             units.insert(unit.id, module);
         }
