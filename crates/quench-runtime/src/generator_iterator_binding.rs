@@ -118,6 +118,9 @@ fn resume_iterator_frame(
     let Some(frame) = iterator_frame_resume(generator) else {
         return Ok(None);
     };
+    if suspended_iterator_conditional(generator, state).is_some() {
+        return resume_iterator_conditional_frame(generator, state, resume, &frame).map(Some);
+    }
     if !matches!(resume, crate::completion::Completion::Normal) {
         set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
         return finish_iterator_frame(generator, state, &frame, resume).map(Some);
@@ -141,6 +144,42 @@ fn resume_iterator_frame(
     }
     set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
     finish_iterator_frame(generator, state, &frame, completion).map(Some)
+}
+
+fn resume_iterator_conditional_frame(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    resume: crate::completion::Completion,
+    frame: &IteratorFrameResume,
+) -> Result<crate::completion::Completion, VmError> {
+    let Some(suspension) = suspended_iterator_conditional(generator, state) else {
+        return Ok(resume);
+    };
+    if !matches!(resume, crate::completion::Completion::Normal) {
+        set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
+        return finish_iterator_frame(generator, state, frame, resume);
+    }
+    let completion = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_in_place(
+            &suspension.branch[suspension.yield_index + 1..],
+            registers,
+        )
+    })?;
+    let crate::completion::Completion::Return(value) = completion else {
+        set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
+        return finish_iterator_frame(generator, state, frame, completion);
+    };
+    write_conditional_result(suspension.conditional, &mut registers_mut(generator), value)?;
+    let completion = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_in_place(
+            &suspension.body[suspension.body_index + 1..],
+            registers,
+        )
+    })?;
+    set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
+    let completion = close_iterator_frame(frame, completion)?;
+    generator.machine.borrow_mut().pop_frame();
+    resume_after_iterator(generator, state, frame.resume, completion)
 }
 
 fn finish_iterator_frame(
