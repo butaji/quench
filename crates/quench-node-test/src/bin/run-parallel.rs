@@ -52,6 +52,13 @@ fn manifest_names() -> Vec<String> {
 }
 
 fn run_manifest() -> ExitCode {
+    if !std::path::Path::new(PARALLEL_DIR).is_dir() {
+        eprintln!(
+            "error: upstream Node fixture directory is missing: {PARALLEL_DIR}\n\
+             initialize the tests/node submodule before running run-parallel"
+        );
+        return ExitCode::from(2);
+    }
     let names = manifest_names();
     if names.is_empty() {
         eprintln!("read {MANIFEST}: missing or empty manifest");
@@ -91,6 +98,13 @@ fn run_manifest() -> ExitCode {
 }
 
 fn triage(filter: Option<&String>) -> ExitCode {
+    if !std::path::Path::new(PARALLEL_DIR).is_dir() {
+        eprintln!(
+            "error: upstream Node fixture directory is missing: {PARALLEL_DIR}\n\
+             initialize the tests/node submodule before running triage"
+        );
+        return ExitCode::from(2);
+    }
     let mut entries: Vec<PathBuf> = std::fs::read_dir(PARALLEL_DIR)
         .map(|dir| {
             dir.filter_map(|entry| entry.ok())
