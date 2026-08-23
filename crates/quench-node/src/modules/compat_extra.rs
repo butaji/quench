@@ -36,15 +36,12 @@ fn empty_namespace() -> Value {
 
 pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("cluster.js"))
-        .or_else(|_| Ok(empty_namespace()))
 }
 pub fn domain(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("domain.js"))
-        .or_else(|_| Ok(empty_namespace()))
 }
 pub fn diagnostics_channel(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("diagnostics_channel.js"))
-        .or_else(|_| Ok(empty_namespace()))
 }
 pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("v8.js")).or_else(|_| Ok(empty_namespace()))
