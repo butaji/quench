@@ -163,6 +163,7 @@ fn fs_mkdtemp(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn response_object(base: u16) -> Value {
     Value::object(vec![
+        ("statusCode".into(), Value::Number(200.0)),
         (
             "end".into(),
             capability_function(HostCapabilityKind::Custom(base + 4)),
