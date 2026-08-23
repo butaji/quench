@@ -220,7 +220,6 @@
         st.buffer.push(normalizeReadableChunk(this, chunk));
       }
       scheduleFlow(this);
-      if (chunk === null && st.flowing) nextTick(() => flowReadable(this));
       return !st.ended;
     }
 
