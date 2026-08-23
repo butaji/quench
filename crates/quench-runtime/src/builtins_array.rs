@@ -205,6 +205,17 @@ fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(Strin
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "writable").then_some(value));
+    let ordinary_dense_index = crate::arrays::array_index(key).is_some()
+        && !accessor
+        && writable == Some(&Value::Boolean(true))
+        && descriptor.iter().rev().find_map(|(name, value)| (name == "enumerable").then_some(value)) == Some(&Value::Boolean(true))
+        && descriptor.iter().rev().find_map(|(name, value)| (name == "configurable").then_some(value)) == Some(&Value::Boolean(true));
+    // A default indexed data descriptor is the dense element itself. Keeping
+    // a second heap object for it duplicates a semantic fact and disables the
+    // packed O(1) path on the very next write.
+    if ordinary_dense_index {
+        return;
+    }
     if accessor || writable == Some(&Value::Boolean(false)) {
         if let Some(index) = crate::arrays::array_index(key) {
             Rc::make_mut(&mut values).disconnect_index(index as usize);
@@ -408,6 +419,11 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         return Value::Array(values);
     };
     let index = index as usize;
+    let existing_number = values.set_existing_number(index, &value);
+    let appended_number = !existing_number && values.append_preallocated_number(index, &value);
+    if existing_number || appended_number {
+        return Value::Array(values);
+    }
     if index
         > values
             .logical_len()

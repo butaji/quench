@@ -6,7 +6,7 @@ pub(crate) struct GeneratorStep {
 
 pub(crate) fn execute_generator_step(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     environment: Rc<crate::environment::Environment>,
     pc: usize,
     resume: crate::completion::Completion,
@@ -20,7 +20,7 @@ pub(crate) fn execute_generator_step(
 
 pub(crate) fn execute_generator_code_step(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     environment: Rc<crate::environment::Environment>,
     pc: usize,
     resume: crate::completion::Completion,
@@ -34,7 +34,7 @@ pub(crate) fn execute_generator_code_step(
 
 fn run_generator_code_steps(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     pc: usize,
     resume: crate::completion::Completion,
     context: &VmContext,
@@ -69,7 +69,7 @@ fn run_generator_code_steps(
 
 fn run_generator_steps(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     pc: usize,
     resume: crate::completion::Completion,
     context: &VmContext,
@@ -106,7 +106,7 @@ fn run_generator_steps(
 }
 
 fn run_yield_star_step(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
     resume: &crate::completion::Completion,
     next: usize,
@@ -136,7 +136,7 @@ fn run_yield_star_step(
 }
 
 fn run_generator_op(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
     context: &VmContext,
     next: usize,

@@ -262,7 +262,7 @@ fn eval_scriptlet(source: &str) -> Result<Value, VmError> {
     let program = quench_runtime::reduce::reduce_global_script_source(source)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let context = quench_runtime::vm::current_context();
-    let mut registers = Vec::new();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
     quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
 }
 

@@ -263,7 +263,7 @@ fn for_in_slot(
 }
 
 pub(crate) fn execute_for_in(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let data = unpack_for_in(registers, op)?;
@@ -271,7 +271,7 @@ pub(crate) fn execute_for_in(
 }
 
 pub(crate) fn execute_for_of(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, slot, body, per_iteration, iterable, dst) = unpack_for_of(registers, op)?;
@@ -340,7 +340,7 @@ type ForOfLoopData<'a> = (
 );
 
 fn unpack_for_in<'a>(
-    registers: &mut [crate::value::Value],
+    registers: &mut crate::register_file::RegisterFile,
     op: &'a Op,
 ) -> Result<ForInLoopData<'a>, crate::execute::VmError> {
     let Op::ForIn {
@@ -370,7 +370,7 @@ fn for_in_keys(value: &crate::value::Value) -> Vec<String> {
 }
 
 fn iterate_loop_keys(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     data: ForInLoopData<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, slot, body, per_iteration, keys, dst, object) = data;
@@ -404,7 +404,7 @@ fn iterate_loop_keys(
 }
 
 fn attach_loop_completion(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     dst: u16,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
@@ -413,7 +413,7 @@ fn attach_loop_completion(
 }
 
 fn unpack_for_of<'a>(
-    registers: &mut [crate::value::Value],
+    registers: &mut crate::register_file::RegisterFile,
     op: &'a Op,
 ) -> Result<ForOfLoopData<'a>, crate::execute::VmError> {
     let Op::ForOf {
@@ -432,7 +432,7 @@ fn unpack_for_of<'a>(
 }
 
 fn iterate_loop_values(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     label: &Option<String>,
     slot: u16,
     body: &crate::machine::FunctionCode,
@@ -494,7 +494,7 @@ fn bind_iteration(
 }
 
 fn execute_loop_body(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     label: &Option<String>,
     body: crate::machine::CodeView<'_>,
 ) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {

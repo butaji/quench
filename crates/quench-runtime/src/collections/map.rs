@@ -156,7 +156,7 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
                 prototype: std::cell::RefCell::new(None),
             })));
         }
-        Some(Value::Array(entries)) => entries.iter().cloned().collect(),
+        Some(Value::Array(entries)) => entries.snapshot(),
         Some(Value::Object(_)) => crate::collections::iterator::collect_iterable(
             arguments.first().cloned().unwrap_or(Value::Undefined),
         )?,
@@ -224,8 +224,8 @@ fn populate_weak_map(map: Value, setter: Value, entries: Vec<Value>) -> Result<V
                 "Iterator value is not an entry object",
             ));
         };
-        let key = pair.first().cloned().unwrap_or(Value::Undefined);
-        let value = pair.get(1).cloned().unwrap_or(Value::Undefined);
+        let key = pair.first().unwrap_or(Value::Undefined);
+        let value = pair.get(1).unwrap_or(Value::Undefined);
         let result = crate::functions::execute_target(&setter, &map, &[key, value])?;
         if matches!(result, Value::Map(_)) {
             map = result;

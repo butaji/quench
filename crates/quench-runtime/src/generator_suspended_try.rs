@@ -50,7 +50,7 @@ fn resume_suspended_try(
 
 fn complete_suspended_try(
     op: &Op,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
     let Op::Try {
@@ -76,7 +76,7 @@ fn complete_suspended_try(
 }
 
 fn handle_suspended_throw(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     handler: &Option<crate::machine::FunctionCode>,
     catch_slot: Option<u16>,
     completion: crate::completion::Completion,

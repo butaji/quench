@@ -1,5 +1,5 @@
 fn append_private_field(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     field: &AppendInstanceFieldOp,
     id: crate::facts::PrivateNameId,
 ) -> Result<(), crate::execute::VmError> {
@@ -14,7 +14,7 @@ fn append_private_field(
 }
 
 fn define_static_private_field(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     field: &AppendInstanceFieldOp,
     constructor: crate::value::Value,
     id: crate::facts::PrivateNameId,
@@ -37,7 +37,7 @@ fn define_static_private_field(
 }
 
 fn define_instance_private_field(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     field: &AppendInstanceFieldOp,
     function: &crate::value::Value,
     id: crate::facts::PrivateNameId,

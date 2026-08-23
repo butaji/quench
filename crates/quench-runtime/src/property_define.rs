@@ -4,7 +4,10 @@ use crate::{
     value::Value,
 };
 
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {
+pub(crate) fn execute(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &crate::ops::Op,
+) -> Result<(), VmError> {
     let crate::ops::Op::DefineProperty {
         object,
         key,
@@ -250,9 +253,7 @@ fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
 }
 
 fn field_key(descriptor_key: &str) -> &str {
-    descriptor_key
-        .strip_prefix(&crate::builtins::descriptor_key(""))
-        .unwrap_or(descriptor_key)
+    crate::builtins::descriptor_public_key(descriptor_key)
 }
 
 fn descriptor_field(descriptor: &Value, field: &str) -> Option<Value> {

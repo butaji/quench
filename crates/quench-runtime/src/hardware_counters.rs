@@ -8,8 +8,14 @@
 
 /// Stable wire-order names for the counter fields.
 pub const COUNTER_NAMES: [&str; 8] = [
-    "cycles", "instructions", "branches", "branch_misses",
-    "cache_misses", "tlb_faults", "allocations", "copies",
+    "cycles",
+    "instructions",
+    "branches",
+    "branch_misses",
+    "cache_misses",
+    "tlb_faults",
+    "allocations",
+    "copies",
 ];
 
 /// Version of the JSON counter snapshot contract.
@@ -156,7 +162,10 @@ mod tests {
         assert_eq!(json["cycles"], 0);
         assert!(json["cache_misses"].is_null());
         assert_eq!(json["counter_contract"]["version"], COUNTER_SCHEMA_VERSION);
-        assert_eq!(json["counter_contract"]["fields"].as_array().unwrap().len(), 8);
+        assert_eq!(
+            json["counter_contract"]["fields"].as_array().unwrap().len(),
+            8
+        );
         assert_eq!(json["counter_contract"]["unavailable_count"], 7);
     }
     #[test]

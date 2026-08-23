@@ -369,6 +369,7 @@ fn format_inspected(value: &Value) -> String {
         Value::Array(values) => format!(
             "[ {} ]",
             values
+                .to_vec()
                 .iter()
                 .map(format_inspected)
                 .collect::<Vec<_>>()

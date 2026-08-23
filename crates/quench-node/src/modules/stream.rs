@@ -48,7 +48,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     let program = quench_runtime::reduce::reduce_global_script_source(PRELUDE)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let context = quench_runtime::vm::current_context();
-    let mut registers = Vec::new();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
     let factory = quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
     })?;

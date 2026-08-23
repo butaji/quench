@@ -15,6 +15,7 @@ pub(crate) fn to_string_value(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Undefined => "undefined".to_string(),
         Value::Array(values) => values
+            .snapshot()
             .iter()
             .map(to_string_value)
             .collect::<Vec<_>>()

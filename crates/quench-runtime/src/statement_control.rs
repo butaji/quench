@@ -80,7 +80,7 @@ fn reduce_with(
 }
 
 pub(crate) fn execute_label(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Op::Label { name, body } = op else {

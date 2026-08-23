@@ -135,11 +135,13 @@ fn primitive_source(holder: &Value, key: &str, value: &Value) -> Option<String> 
     let Value::Array(pair) = stored else {
         return None;
     };
-    if pair.len() != 2 || !crate::builtins::same_value_zero(value, &pair[0]) {
+    if pair.len() != 2
+        || !crate::builtins::same_value_zero(value, &pair.get(0).unwrap_or(Value::Undefined))
+    {
         return None;
     }
-    match &pair[1] {
-        Value::String(source) => Some(source.clone()),
+    match pair.get(1) {
+        Some(Value::String(source)) => Some(source),
         _ => None,
     }
 }

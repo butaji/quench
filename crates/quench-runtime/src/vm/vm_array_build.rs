@@ -1,5 +1,5 @@
 fn execute_array_plan(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     elements: &[crate::ops::ArrayElement],
 ) -> Result<(), VmError> {
@@ -24,6 +24,6 @@ fn execute_array_plan(
     Ok(())
 }
 
-fn collect_spread(registers: &[Value], src: u16) -> Result<Vec<Value>, VmError> {
+fn collect_spread(registers: &crate::register_file::RegisterFile, src: u16) -> Result<Vec<Value>, VmError> {
     crate::collections::iterator::collect_iterable(read_register(registers, src)?)
 }

@@ -3,7 +3,7 @@ use crate::{
     ops::{FunctionKind, Op},
 };
 
-pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
+pub(crate) fn write_op(registers: &mut crate::register_file::RegisterFile, op: &Op) {
     match op {
         Op::MakeFunction {
             dst,
@@ -41,7 +41,7 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
 }
 
 fn write_non_ordinary(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     function: (u16, &crate::machine::FunctionCode, u16, u16),
     metadata: (
         crate::ops::FunctionKind,
@@ -66,7 +66,7 @@ fn write_non_ordinary(
 }
 
 fn write_kind(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     function: (u16, &crate::machine::FunctionCode, u16, u16),
     metadata: FunctionMetadata,
 ) {
@@ -75,7 +75,7 @@ fn write_kind(
 }
 
 fn write_ordinary(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     function: (u16, &crate::machine::FunctionCode, u16, u16, u16),
     strictness: crate::ops::FunctionStrictness,
     is_async: bool,

@@ -158,7 +158,10 @@ impl SlotStore {
         self.bridges()
             .get(index)
             .and_then(Option::as_ref)
-            .map_or_else(|| self.values()[index].clone(), |cell| cell.borrow().clone())
+            .map_or_else(
+                || self.values()[index].clone(),
+                |cell| cell.borrow().clone(),
+            )
     }
 
     fn store(&self, index: usize, value: Value) {
@@ -182,7 +185,6 @@ impl SlotStore {
         cell
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 struct BindingRef {

@@ -9,7 +9,9 @@ impl LinkedModule {
         }
         self.evaluating.set(true);
         let start = self.resume_pc.get();
-        let mut registers = self.resume_registers.borrow().clone();
+        let mut registers = quench_runtime::register_file::RegisterFile::from_values(
+            self.resume_registers.borrow().clone(),
+        );
         let result = self.scope.execute_code_from(
             self.program.code(),
             start,
@@ -17,7 +19,7 @@ impl LinkedModule {
             &host_context(),
         );
         self.evaluating.set(false);
-        self.complete_execute(result, registers)
+        self.complete_execute(result, registers.into_values())
     }
 
     fn complete_execute(
