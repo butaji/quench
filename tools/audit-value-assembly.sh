@@ -17,7 +17,7 @@ for contract in \
   "Canonical JavaScript value representation." \
   "Ownership is explicit:" \
   "lifecycle is therefore governed" \
-  "Invalid states are rejected"; do
+  "rejected at construction or operation boundaries"; do
   grep -Fq "$contract" "$source" || {
     echo "missing Value source contract: $contract" >&2
     exit 1
