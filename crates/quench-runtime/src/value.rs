@@ -505,7 +505,7 @@ pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 /// anchor; `original_prototype == None` means no captured prototype. An object
 /// with empty properties is valid, while a slot index outside the
 /// metadata-filtered projection is invalid and must return `None`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ObjectData {
     identity: u64,
     replacement: RefCell<Option<Rc<ObjectData>>>,
@@ -520,6 +520,19 @@ pub struct ObjectData {
     pub(crate) private_slots: PrivateSlots,
     original_prototype: RefCell<Option<Value>>,
     pub(crate) created: Vec<PropertyName>,
+}
+
+impl Clone for ObjectData {
+    fn clone(&self) -> Self {
+        Self {
+            identity: self.identity,
+            replacement: RefCell::new(None),
+            properties: self.properties.clone(),
+            private_slots: Rc::clone(&self.private_slots),
+            original_prototype: RefCell::new(self.original_prototype()),
+            created: self.created.clone(),
+        }
+    }
 }
 
 impl ObjectData {

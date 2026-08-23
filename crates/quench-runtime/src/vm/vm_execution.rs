@@ -69,11 +69,7 @@ pub fn current_context() -> Rc<VmContext> {
 }
 
 /// Call a function value from host code through the current context.
-pub fn call_value(
-    target: &Value,
-    receiver: &Value,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
+pub fn call_value(target: &Value, receiver: &Value, arguments: &[Value]) -> Result<Value, VmError> {
     crate::functions::execute_target(target, receiver, arguments)
 }
 
@@ -125,8 +121,7 @@ pub fn execute_in_place_context(
 ) -> Result<Value, VmError> {
     prepare_register_stack(registers);
     let parent = crate::locals::current();
-    let environment =
-        crate::environment::Environment::in_place_child(&parent, registers.clone());
+    let environment = crate::environment::Environment::in_place_child(&parent, registers.clone());
     execute_in_environment(ops, registers, context, environment)
 }
 
@@ -138,6 +133,22 @@ fn execute_completion_in_place_context(
     prepare_register_stack(registers);
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
+    drive_completion(ops, registers, context)
+}
+
+pub(crate) fn execute_completion_in_current_frame(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+) -> Result<crate::completion::Completion, VmError> {
+    let context = current_context_or_default();
+    drive_completion(ops, registers, &context)
+}
+
+fn drive_completion(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<crate::completion::Completion, VmError> {
     let mut pc = 0;
     loop {
         let step = run_ops_completion_step_from(ops, pc, registers, context)?;
@@ -153,7 +164,6 @@ fn execute_completion_in_place_context(
             completion => return preserve_frame_completion(completion),
         }
     }
-
 }
 fn preserve_frame_completion(
     completion: crate::completion::Completion,
@@ -300,8 +310,9 @@ mod tests {
             if (descend(32) !== 7) throw "bounded ordinary call returned the wrong value";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
-            .expect("bounded ordinary calls run");
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+                .expect("bounded ordinary calls run");
         assert_eq!(result, Value::Undefined);
     }
 
@@ -312,11 +323,9 @@ mod tests {
             if (Math.random() !== 1) throw "Math must resolve while globals are staged";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(
-            program.ops(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("Math assignment runs");
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+                .expect("Math assignment runs");
         assert_eq!(result, Value::Undefined);
     }
     #[test]
@@ -331,15 +340,11 @@ mod tests {
             }
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(
-            program.ops(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("stateful Math.random assignment runs");
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+                .expect("stateful Math.random assignment runs");
         assert_eq!(result, Value::Undefined);
     }
-
-
 
     #[test]
     fn call_rhs_preserves_member_assignment_target() {
@@ -350,11 +355,9 @@ mod tests {
             if (target.answer !== 42) throw "call RHS lost assignment target";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(
-            program.ops(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("member assignment with call RHS runs");
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+                .expect("member assignment with call RHS runs");
         assert_eq!(result, Value::Undefined);
     }
 
@@ -366,11 +369,9 @@ mod tests {
             if (middle(20) !== 41) throw "nested ordinary call returned the wrong value";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(
-            program.ops(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("nested calls run");
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+                .expect("nested calls run");
         assert_eq!(result, Value::Undefined);
     }
 
@@ -385,11 +386,9 @@ mod tests {
             }
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(
-            program.ops(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("receiver call runs");
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+                .expect("receiver call runs");
         assert_eq!(result, Value::Undefined);
     }
 
@@ -401,11 +400,12 @@ mod tests {
             wrapper();
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(
-            program.ops(),
-            &crate::vm::VmContext::default(),
-        );
-        assert!(matches!(result, Err(crate::vm::VmError::Thrown(Value::Number(17.0)))));
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default());
+        assert!(matches!(
+            result,
+            Err(crate::vm::VmError::Thrown(Value::Number(17.0)))
+        ));
     }
 
     #[test]
@@ -418,11 +418,9 @@ mod tests {
             if (add(33) !== 42) throw "closure call returned the wrong value";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(
-            program.ops(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("closure call runs");
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+                .expect("closure call runs");
         assert_eq!(result, Value::Undefined);
     }
 
@@ -434,23 +432,28 @@ mod tests {
         );
         let mut remaining = 10_000;
         let completion = machine
-            .run_until_complete(crate::completion::Completion::Normal, |_, _|
-                -> Result<crate::completion::Completion, ()> {
-                if remaining == 0 {
-                    Ok(crate::completion::Completion::Return(Value::Number(7.0)))
-                } else {
-                    remaining -= 1;
-                    Ok(crate::completion::Completion::TailCall(
-                        crate::completion::TailCallRequest {
-                            callee: Value::Undefined,
-                            receiver: Value::Undefined,
-                            arguments: Vec::new(),
-                        },
-                    ))
-                }
-            })
+            .run_until_complete(
+                crate::completion::Completion::Normal,
+                |_, _| -> Result<crate::completion::Completion, ()> {
+                    if remaining == 0 {
+                        Ok(crate::completion::Completion::Return(Value::Number(7.0)))
+                    } else {
+                        remaining -= 1;
+                        Ok(crate::completion::Completion::TailCall(
+                            crate::completion::TailCallRequest {
+                                callee: Value::Undefined,
+                                receiver: Value::Undefined,
+                                arguments: Vec::new(),
+                            },
+                        ))
+                    }
+                },
+            )
             .expect("tail-call loop completes");
-        assert_eq!(completion, crate::completion::Completion::Return(Value::Number(7.0)));
+        assert_eq!(
+            completion,
+            crate::completion::Completion::Return(Value::Number(7.0))
+        );
         assert_eq!(machine.frame_count(), 0);
     }
 
@@ -474,11 +477,9 @@ mod tests {
             "benchmark must contain a meaningful dispatch sequence"
         );
         let started = Instant::now();
-        let result = crate::vm::execute_with_context(
-            program.ops(),
-            &crate::vm::VmContext::default(),
-        )
-        .expect("dispatch benchmark runs");
+        let result =
+            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+                .expect("dispatch benchmark runs");
         let elapsed = started.elapsed();
         assert_eq!(result, Value::Undefined);
         // Generous wall-clock guard: this is evidence against pathological
@@ -490,7 +491,10 @@ mod tests {
     }
     #[test]
     fn cold_not_callable_error_renders_canonical_type_error() {
-        assert_eq!(super::not_callable().render(), "TypeError: value is not callable");
+        assert_eq!(
+            super::not_callable().render(),
+            "TypeError: value is not callable"
+        );
     }
 
     #[test]
