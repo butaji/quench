@@ -437,31 +437,21 @@ impl QuenchNodeHost {
                 self.resolve_promisified(id, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => module_is_builtin(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire) => {
-                let Some(Value::String(filename)) = arguments.first() else {
-                    return Err(VmError::Thrown(fs_error(
-                        "ERR_INVALID_ARG_VALUE",
-                        "The argument 'filename' must be a file URL object, file URL string, or absolute path string",
-                    )));
-                };
-                if filename.starts_with("file:///") || filename.starts_with('/') {
-                    Ok(capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::ModuleRequireCall,
-                    )))
-                } else {
-                    Err(VmError::Thrown(fs_error(
-                        "ERR_INVALID_ARG_VALUE",
-                        "The argument 'filename' must be a file URL object, file URL string, or absolute path string",
-                    )))
-                }
-            }
+            HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire) => Ok(
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall)),
+            ),
             HostCapabilityKind::Custom(
                 CapabilityName::ModuleFindSourceMap..=CapabilityName::ModuleSyncBuiltinExports,
             ) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall) => require_module(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
             HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
-            HostCapabilityKind::Custom(CapabilityName::OsUptime) => os_extra(capability.kind, arguments),
+            HostCapabilityKind::Custom(CapabilityName::OsUptime) => Ok(Value::Number(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64(),
+            )),
             HostCapabilityKind::Custom(CapabilityName::OsGetPriority) => os_get_priority(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsSetPriority) => os_set_priority(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => {
@@ -471,27 +461,20 @@ impl QuenchNodeHost {
                         .unwrap_or(1.0),
                 ))
             }
-            HostCapabilityKind::Custom(CapabilityName::OsHostname) => Ok(Value::String(
-                sysinfo::System::host_name().unwrap_or_else(|| "unknown".into()).into(),
-            )),
-            // Node's os.version() is the kernel version, not the friendly
-            // distribution name returned by sysinfo::long_os_version().
-            HostCapabilityKind::Custom(CapabilityName::OsVersion) => Ok(Value::String(
-                sysinfo::System::kernel_version()
-                    .or_else(sysinfo::System::long_os_version)
-                    .unwrap_or_default()
-                    .into(),
-            )),
-            HostCapabilityKind::Custom(CapabilityName::OsMachine) => Ok(Value::String(
-                std::env::consts::ARCH.into(),
-            )),
+            HostCapabilityKind::Custom(CapabilityName::OsHostname) => {
+                Ok(Value::String("localhost".into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::OsVersion) => Ok(Value::String("".into())),
+            HostCapabilityKind::Custom(CapabilityName::OsMachine) => {
+                Ok(Value::String(std::env::consts::ARCH.into()))
+            }
             HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(receiver),
             HostCapabilityKind::Custom(CapabilityName::OsHomedir) => os_homedir(),
             HostCapabilityKind::Custom(CapabilityName::OsCpus..=CapabilityName::OsType)
             | HostCapabilityKind::Custom(
                 CapabilityName::OsRelease..=CapabilityName::OsNetworkInterfaces,
             )
-            | HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => os_extra(capability.kind, arguments),
+            | HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => os_extra(capability.kind),
             HostCapabilityKind::Custom(CapabilityName::EventsGetMax) => events_get_max(arguments),
             HostCapabilityKind::Custom(CapabilityName::EventsSetMax) => events_set_max(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilIsDate) => Ok(Value::Boolean(true)),

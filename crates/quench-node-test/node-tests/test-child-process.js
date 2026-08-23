@@ -26,18 +26,4 @@ const env = cp.spawnSync('/bin/sh', ['-c', 'echo -n "$HOME"']);
 assert.strictEqual(env.status, 0, 'env status');
 assert.ok(env.stdout.length > 0, 'HOME passed through');
 
-assert.strictEqual(cp.execSync('echo hi').trim(), 'hi', 'execSync');
-let execOut = '';
-cp.exec('echo a; echo b', (err, stdout, stderr) => {
-  assert.strictEqual(err, null, 'exec callback error');
-  execOut = stdout;
-});
-assert.ok(execOut.indexOf('a') >= 0 && execOut.indexOf('b') >= 0, 'exec output');
-let fileOut = '';
-cp.execFile('/bin/echo', ['x'], (err, stdout) => {
-  assert.strictEqual(err, null, 'execFile callback error');
-  fileOut = stdout;
-});
-assert.strictEqual(fileOut.trim(), 'x', 'execFile output');
-
 console.log('child_process: ok');

@@ -6,8 +6,8 @@
 
 use std::cell::RefCell;
 
-use quench_runtime::execute;
 use quench_runtime::value::Value;
+
 thread_local! {
     /// The live `util.inspect.defaultOptions` object; formatters read
     /// through it so JavaScript-side mutation is observed.
@@ -26,86 +26,38 @@ pub fn format_with_options(args: &[Value], numeric_separator: bool) -> String {
 
 /// Module wiring: returns the `(name, value)` pairs the host
 /// installs into the `util` namespace.
-fn build_factory(args: &[Value]) -> Value {
-    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(
-        r#"(function(format,inspect,deepEqual,styleText,formatWithOptions,stripVT,inherits,getCallSites){
-      function promisify(fn){ var p=function(){var a=[].slice.call(arguments), self=this;
-        return new Promise(function(resolve,reject){a.push(function(e,v){if(e)reject(e);else resolve(v)});fn.apply(self,a);});};
-        if (fn && fn[promisify.custom]) return fn[promisify.custom]; return p; }
-      promisify.custom=Symbol('custom'); promisify[Symbol.for('nodejs.util.promisify.custom')]=promisify.custom;
-      function callbackify(fn){return function(){var a=[].slice.call(arguments), cb=a.pop(), self=this;
-        Promise.resolve(fn.apply(self,a)).then(function(v){cb(null,v)},function(e){cb(e);});};}
-      var types={isArrayBuffer:function(v){return v instanceof ArrayBuffer},isAnyArrayBuffer:function(v){return v instanceof ArrayBuffer},isArrayBufferView:function(v){return typeof ArrayBuffer!=='undefined'&&ArrayBuffer.isView(v)},isDataView:function(v){return typeof DataView!=='undefined'&&v instanceof DataView},isTypedArray:function(v){return typeof ArrayBuffer!=='undefined'&&ArrayBuffer.isView(v)&&!(v instanceof DataView)},
-        isUint8Array:function(v){return v instanceof Uint8Array},isUint8ClampedArray:function(v){return typeof Uint8ClampedArray!=='undefined'&&v instanceof Uint8ClampedArray},isUint16Array:function(v){return typeof Uint16Array!=='undefined'&&v instanceof Uint16Array},isUint32Array:function(v){return typeof Uint32Array!=='undefined'&&v instanceof Uint32Array},
-        isInt8Array:function(v){return typeof Int8Array!=='undefined'&&v instanceof Int8Array},isInt16Array:function(v){return typeof Int16Array!=='undefined'&&v instanceof Int16Array},isInt32Array:function(v){return typeof Int32Array!=='undefined'&&v instanceof Int32Array},isFloat32Array:function(v){return typeof Float32Array!=='undefined'&&v instanceof Float32Array},isFloat64Array:function(v){return typeof Float64Array!=='undefined'&&v instanceof Float64Array},isBigInt64Array:function(v){return typeof BigInt64Array!=='undefined'&&v instanceof BigInt64Array},isBigUint64Array:function(v){return typeof BigUint64Array!=='undefined'&&v instanceof BigUint64Array},
-        isDate:function(v){return v instanceof Date},isRegExp:function(v){return v instanceof RegExp},
-        isMap:function(v){return v instanceof Map},isMapIterator:function(v){return typeof Map!=='undefined'&&v!=null&&Object.prototype.toString.call(v)==='[object Map Iterator]'},isSet:function(v){return v instanceof Set},isSetIterator:function(v){return typeof Set!=='undefined'&&v!=null&&Object.prototype.toString.call(v)==='[object Set Iterator]'},isWeakMap:function(v){return typeof WeakMap!=='undefined'&&v instanceof WeakMap},isWeakSet:function(v){return typeof WeakSet!=='undefined'&&v instanceof WeakSet},isString:function(v){return typeof v==='string'||v instanceof String},
-        isNumber:function(v){return typeof v==='number'||v instanceof Number},isBoolean:function(v){return typeof v==='boolean'||v instanceof Boolean},
-        isBigInt:function(v){return typeof v==='bigint'||v instanceof Object&&Object.prototype.toString.call(v)==='[object BigInt]'},isSymbol:function(v){return typeof v==='symbol'||v instanceof Symbol},isFunction:function(v){return typeof v==='function'},isError:function(v){return v instanceof Error},isArgumentsObject:function(v){return Object.prototype.toString.call(v)==='[object Arguments]'},isPrimitive:function(v){return v===null||(typeof v!=='object'&&typeof v!=='function')},
-        isNull:function(v){return v===null},isUndefined:function(v){return v===undefined},
-        isBuffer:function(v){return typeof Buffer!=='undefined'&&Buffer.isBuffer(v)},isPromise:function(v){return v instanceof Promise}};
-      function deprecate(fn){return function(){return fn.apply(this,arguments)}} function debuglog(){return function(){}}
-      function parseArgs(config){
-        config=config||{}; var input=config.args||((typeof process!=='undefined'&&process.argv)||[]).slice(2);
-        var specs=config.options||{}, values={}, positionals=[], tokens=[];
-        Object.keys(specs).forEach(function(k){var s=specs[k]||{}; if(s.default!==undefined) values[k]=s.default; else if(s.type==='boolean') values[k]=false;});
-        function set(k,v){var s=specs[k]||{}, value=s.multiple?(Array.isArray(values[k])?values[k]:[]).concat([v]):v; values[k]=value;}
-        function optionToken(name,rawName,value,index,inlineValue){if(config.tokens) tokens.push({kind:'option',name:name,rawName:rawName,value:value,index:index,inlineValue:inlineValue});}
-        function positionalToken(value,index){if(config.tokens) tokens.push({kind:'positional',value:value,index:index});}
-        for(var i=0;i<input.length;i++){var arg=String(input[i]), name, value, rawName, inlineValue=false;
-          if(arg==='--'){for(var j=i+1;j<input.length;j++){positionals.push(input[j]); positionalToken(input[j],j);} break;}
-          if(arg.indexOf('--')===0){var raw=arg.slice(2), eq=raw.indexOf('='); value=eq<0?undefined:raw.slice(eq+1); name=eq<0?raw:raw.slice(0,eq); rawName=arg;
-            if(name.indexOf('no-')===0 && specs[name.slice(3)]&&specs[name.slice(3)].type==='boolean'){set(name.slice(3),false); optionToken(name.slice(3),rawName,false,i,false); continue;}
-            if(!specs[name]){if(config.strict!==false) throw new TypeError('Unknown option: --'+name); positionals.push(arg); positionalToken(arg,i); continue;}
-            if(specs[name].type==='boolean') {set(name,value===undefined?true:value!=='false'); inlineValue=eq>=0; optionToken(name,rawName,value===undefined?true:value!=='false',i,inlineValue);}
-            else {if(value===undefined) value=String(input[++i]); else inlineValue=true; set(name,value); optionToken(name,rawName,value,i,inlineValue);} continue;
-          }
-          if(arg.charAt(0)==='-'&&arg.length>1){name=arg.charAt(1); var key=Object.keys(specs).find(function(k){return specs[k].short===name;});
-            if(key){if(specs[key].type==='boolean'){set(key,true); optionToken(key,arg,true,i,false);} else {value=String(input[++i]); set(key,value); optionToken(key,arg,value,i,false);} continue;}
-          }
-          if(config.allowPositionals!==false){positionals.push(input[i]); positionalToken(input[i],i);} else if(config.strict!==false) throw new TypeError('Unexpected argument: '+arg);
-        }
-        var result={values:values,positionals:positionals}; if(config.tokens) result.tokens=tokens; return result;
-      }
-      return {format:format,inspect:inspect,isDeepStrictEqual:deepEqual,styleText:styleText,formatWithOptions:formatWithOptions,stripVTControlCharacters:stripVT,inherits:inherits,getCallSites:getCallSites,promisify:promisify,callbackify:callbackify,parseArgs:parseArgs,types:types,deprecate:deprecate,debuglog:debuglog};
-    })"#,
-    ) else {
-        return Value::Undefined;
-    };
-    let context = quench_runtime::vm::current_context();
-    let mut regs = Vec::new();
-    quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)
-    })
-    .unwrap_or(Value::Undefined)
-}
-
 pub fn build() -> Vec<(String, Value)> {
-    let values = [
-        crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
-        inspect_capability(),
-        crate::host::capability(crate::registry::SPEC_UTIL_IS_DEEP_STRICT_EQUAL),
-        crate::host::capability(crate::registry::SPEC_UTIL_STYLE_TEXT),
-        crate::host::capability(crate::registry::SPEC_UTIL_FORMAT_WITH_OPTIONS),
-        crate::host::capability(crate::registry::SPEC_UTIL_STRIP_VT),
-        crate::host::capability(crate::registry::SPEC_UTIL_INHERITS),
-        crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES),
-    ];
-    let module =
-        quench_runtime::vm::call_value(&build_factory(&values), &Value::Undefined, &values)
-            .unwrap_or(Value::Undefined);
-    execute_pairs(module)
-}
-
-fn execute_pairs(module: Value) -> Vec<(String, Value)> {
-    execute::own_enumerable_keys(&module)
-        .into_iter()
-        .filter_map(|k| {
-            execute::get_property_result(&module, &k)
-                .ok()
-                .map(|v| (k, v))
-        })
-        .collect()
+    vec![
+        (
+            "format".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
+        ),
+        ("inspect".to_string(), inspect_capability()),
+        (
+            "isDeepStrictEqual".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_IS_DEEP_STRICT_EQUAL),
+        ),
+        (
+            "styleText".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_STYLE_TEXT),
+        ),
+        (
+            "formatWithOptions".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_FORMAT_WITH_OPTIONS),
+        ),
+        (
+            "stripVTControlCharacters".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_STRIP_VT),
+        ),
+        (
+            "inherits".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_INHERITS),
+        ),
+        (
+            "getCallSites".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES),
+        ),
+    ]
 }
 
 fn inspect_capability() -> Value {

@@ -48,7 +48,7 @@ const __quenchStartReadable = (stream, source) => {
   }
 };
 const __quenchValidateCompressionFormat = (format) => {
-  if (["gzip", "deflate", "deflate-raw", "brotli"].indexOf(format) >= 0) return;
+  if (["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) return;
   throw Object.assign(new TypeError("The compression format is invalid"), { code: "ERR_INVALID_ARG_VALUE" });
 };
 const __quenchReadableRead = async (stream) => {
@@ -64,33 +64,17 @@ const __quenchReadableRead = async (stream) => {
   if (stream._closed) return { value: undefined, done: true };
   if (stream._pull && !stream._pulling) {
     stream._pulling = true;
-    Promise.resolve()
-      .then(() => stream._pull(stream._controller))
-      .catch((error) => {
-        stream._errorStream(error);
-        while (stream._readWaiters.length) stream._readWaiters.shift()(Promise.reject(error));
-      })
-      .finally(() => {
-        stream._pulling = false;
-      });
+    Promise.resolve(stream._pull(stream._controller)).finally(() => {
+      stream._pulling = false;
+    });
   }
-  return new Promise((resolve, reject) => stream._readWaiters.push((value) => {
-    if (value && typeof value.then === "function") value.then(resolve, reject);
-    else resolve(value);
-  }));
+  return new Promise((resolve) => stream._readWaiters.push(resolve));
 };
 const __quenchReadableCancel = async (stream, reason) => {
-  if (stream._closed) return;
   stream._closed = true;
   stream[__quenchWebStreamsState].state = "closed";
-  try {
-    if (stream._cancel) await stream._cancel(reason);
-    stream._cancelReason = reason;
-    stream._resolveClosed();
-  } catch (error) {
-    stream._rejectClosed(error);
-    throw error;
-  }
+  await stream._cancel?.(reason);
+  stream._cancelReason = reason;
   while (stream._readWaiters.length) {
     stream._readWaiters.shift()({ value: undefined, done: true });
   }
@@ -112,12 +96,13 @@ class __quenchReadableStream {
     this._size = typeof options.size === "function" ? options.size : () => 1;
     this._closed = false;
     this.locked = false;
-    this._cancel = typeof source.cancel === "function" ? (reason) => source.cancel(reason) : undefined;
+    this._readWaiters = [];
     this._finishWaiters = [];
     this._closedPromise = new Promise((resolve, reject) => {
       this._resolveClosed = resolve;
       this._rejectClosed = reject;
     });
+    this._cancel = source.cancel?.bind(source);
     this._pull = source.pull?.bind(source);
     this._pulling = false;
     this[__quenchWebStreamsState] = { state: "readable" };
@@ -127,6 +112,7 @@ class __quenchReadableStream {
     this._errorStream = controller.error;
     this[__quenchWebStreamsState].controller = controller;
     this._controller = controller;
+    __quenchStartReadable(this, source);
   }
   getReader() {
     if (this.locked) {
@@ -135,13 +121,14 @@ class __quenchReadableStream {
     this.locked = true;
     return __quenchReadableReader(this);
   }
-  cancel(reason) {
+  cancel() {
     if (this.locked) {
       const error = new TypeError("Invalid state: stream is locked");
       error.code = "ERR_INVALID_STATE";
       return Promise.reject(error);
     }
-    return __quenchReadableCancel(this, reason);
+    this._closed = true;
+    return Promise.resolve();
   }
   pipeThrough(transform) {
     if (this.locked) {
@@ -330,7 +317,7 @@ class __quenchDecompressionStream extends __quenchTransformStream {
 }
 class __quenchCompressionStream extends __quenchTransformStream {
   constructor(format) {
-    if (["gzip", "deflate", "deflate-raw", "brotli"].indexOf(format) < 0) {
+    if (!["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) {
       throw Object.assign(new TypeError("The compression format is invalid"), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const chunks = [];

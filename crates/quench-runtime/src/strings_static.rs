@@ -105,8 +105,17 @@ pub(crate) fn source_value(source: &str) -> Value {
 
 /// Whether two string values hold identical UTF-16 code units.
 pub(crate) fn units_equal(left: &Value, right: &Value) -> bool {
-    match (units_of(left), units_of(right)) {
-        (Some(left), Some(right)) => left == right,
+    match (left, right) {
+        (Value::String(left), Value::String(right)) => {
+            left.encode_utf16().eq(right.encode_utf16())
+        }
+        (Value::String(left), Value::StringUnits(right)) => {
+            left.encode_utf16().eq(right.iter().copied())
+        }
+        (Value::StringUnits(left), Value::String(right)) => {
+            left.iter().copied().eq(right.encode_utf16())
+        }
+        (Value::StringUnits(left), Value::StringUnits(right)) => left == right,
         _ => false,
     }
 }

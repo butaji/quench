@@ -1,6 +1,5 @@
-// HTTPS request surface remains callable in sole QuenchRuntime.
-const assert = require('node:assert');
+// Node compat: https stub.
 const https = require('node:https');
-assert.strictEqual(typeof https.request, 'function');
-assert.strictEqual(typeof https.get, 'function');
+if (typeof https.request !== 'function') throw new Error('request: ' + typeof https.request);
+if (typeof https.get !== 'function') throw new Error('get: ' + typeof https.get);
 console.log('https: ok');

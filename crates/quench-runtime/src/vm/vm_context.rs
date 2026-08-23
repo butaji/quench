@@ -129,15 +129,17 @@ impl Default for VmContext {
     }
 }
 thread_local! {
-    static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
+    static CURRENT_CONTEXT: RefCell<Option<Rc<VmContext>>> = const { RefCell::new(None) };
     static GLOBAL_OBJECT: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
 }
 struct ContextGuard {
-    previous: Option<VmContext>,
+    previous: Option<Rc<VmContext>>,
 }
 impl ContextGuard {
     fn install(context: &VmContext) -> Self {
-        let previous = CURRENT_CONTEXT.with(|current| current.replace(Some(context.clone())));
+        let previous = CURRENT_CONTEXT.with(|current| {
+            current.replace(Some(Rc::new(context.clone())))
+        });
         Self { previous }
     }
 }
@@ -223,45 +225,19 @@ impl VmContext {
 
     /// A new realm and host bindings for one top-level evaluation.
     pub fn isolated() -> Self {
-        let parent_context = current_context_or_default();
-        let parent = Self {
-            capabilities: vec![
+        let parent = Self::for_realm(
+            RealmId::ROOT,
+            vec![
                 HostCapabilityKind::GetGlobal,
                 HostCapabilityKind::CreateRealm,
                 HostCapabilityKind::EvalScript,
                 HostCapabilityKind::DetachArrayBuffer,
                 HostCapabilityKind::IsHTMLDDA,
-            ]
-            .into_iter()
-            .map(|kind| HostCapabilityRef {
-                realm: RealmId::ROOT,
-                kind,
-            })
-            .collect(),
-            ..parent_context
-        };
+            ],
+        );
         let realm = realm::create(&parent);
         realm::context(realm).unwrap_or(parent)
     }
-    /// Use `global` as this realm's actual global object.
-    ///
-    /// This is intentionally separate from host bindings: properties created
-    /// by global declarations and assignments must remain owned by the caller's
-    /// sandbox object.
-    pub fn with_global_object(self, global: &Value) -> Self {
-        let object = match global {
-            Value::Object(object) => Some(object.clone()),
-            Value::ObjectAlias(alias) => alias.0.borrow().upgrade(),
-            _ => None,
-        };
-        if let Some(object) = object {
-            if let Some(token) = realm::token(self.realm) {
-                realm::register_global(&token, object);
-            }
-        }
-        self
-    }
-
 
     pub fn realm(&self) -> RealmId {
         self.realm

@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{RefCell, UnsafeCell},
     collections::{HashMap, HashSet},
     rc::Rc,
 };
@@ -61,7 +61,7 @@ impl TdzCells {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug)]
 struct SlotStore {
     // SAFETY invariant: SlotStore is only reached through Rc and the VM is
     // single-threaded. `values` and `bridges` are mutated only by these
@@ -166,7 +166,7 @@ impl SlotStore {
         if let Some(Some(cell)) = self.bridges().get(index) {
             *cell.borrow_mut() = value;
         } else {
-            self.values.borrow_mut()[index] = value;
+            self.values_mut()[index] = value;
         }
         self.invariant();
     }
@@ -255,7 +255,6 @@ impl Environment {
     }
 
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
-        let captured_len = captures.slots.borrow().len() as u16;
         let store = SlotStore::from_values(values);
         let mut combined = captures.slots.borrow().clone();
         combined.extend((0..store.len()).map(|index| BindingRef::new(Rc::clone(&store), index)));
@@ -269,24 +268,15 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        let uninitialized = clone_tdz(&captures.uninitialized.borrow());
-        if let Some(slots) = &uninitialized {
-            slots
-                .borrow_mut()
-                .retain(|slot| *slot < captured_len);
-        }
-        environment.uninitialized.replace(uninitialized);
+        environment
+            .uninitialized
+            .replace(clone_tdz(&captures.uninitialized.borrow()));
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
-        let immutable_slots = captures.immutable_slots.borrow().as_ref().map(|slots| {
-            slots
-                .iter()
-                .copied()
-                .filter(|slot| *slot < captured_len)
-                .collect()
-        });
-        environment.immutable_slots.replace(immutable_slots);
+        environment
+            .immutable_slots
+            .replace(captures.immutable_slots.borrow().clone());
         environment
     }
 

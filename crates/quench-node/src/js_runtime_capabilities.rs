@@ -1,7 +1,6 @@
 #[allow(non_upper_case_globals)]
 impl CapabilityName {
     const Require: u16 = 1;
-    const RequireFor: u16 = 0x1f04;
     const PathBasename: u16 = 2;
     const ConsoleLog: u16 = 4;
     const Cwd: u16 = 6;
@@ -14,7 +13,6 @@ impl CapabilityName {
     const EventEmitter: u16 = 70;
     const BufferByteLength: u16 = 9;
     const BufferFrom: u16 = 30;
-    const BufferNew: u16 = 1325;
     const BufferHasInstance: u16 = 1326;
     const BufferInspectMaxBytesGet: u16 = 1327;
     const BufferInspectMaxBytesSet: u16 = 1328;
@@ -43,6 +41,7 @@ impl CapabilityName {
     const ProcessEmit: u16 = 2091;
     const ProcessCpuUsage: u16 = 2110;
     const ProcessHrtime: u16 = 2111;
+    const ProcessHrtimeBigint: u16 = 2125;
     const ProcessActiveResourcesInfo: u16 = 2112;
     const ProcessPermissionHas: u16 = 2114;
     const UtilIsDate: u16 = 2130;
@@ -60,9 +59,6 @@ impl CapabilityName {
     const DnsResolve: u16 = 2134;
     const DnsLookupService: u16 = 2135;
     const DnsResolveMx: u16 = 2136;
-    const DnsPromiseLookup: u16 = 2353;
-    const DnsPromiseResolve4: u16 = 2354;
-    const AsyncHooksEnabledHooksExist: u16 = 2355;
     const DgramCreateSocket: u16 = 2137;
     const DgramBind: u16 = 2138;
     const DgramClose: u16 = 2139;
@@ -148,7 +144,6 @@ impl CapabilityName {
     const StringDecoderCall: u16 = 2080;
     const VmRunInNewContext: u16 = 2055;
     const CryptoRandomBytes: u16 = 2056;
-    const CryptoTimingSafeEqual: u16 = 0x2105;
     const CryptoRandomFillSync: u16 = 2057;
     const CryptoPbkdf2Sync: u16 = 2203;
     const CryptoPbkdf2: u16 = 2204;
@@ -330,18 +325,8 @@ impl CapabilityName {
     const ModuleRequireCall: u16 = 2344;
     const TimersPromisesSetTimeout: u16 = 2346;
     const TimersPromisesSetImmediate: u16 = 2347;
-    const TimersPromisesSchedulerWait: u16 = 2348;
-    const TimersPromisesSchedulerYield: u16 = 2349;
-    const TimersPromisesSchedulerConstructor: u16 = 2350;
-    const TtyIsatty: u16 = 0x0900;
-    const TtyReadStream: u16 = 0x2001;
-    const TtyWriteStream: u16 = 0x2002;
     const HttpServer: u16 = 11;
-    const ConsoleCreateTask: u16 = 2351;
-    const ConsoleTaskRun: u16 = 2352;
     const HttpGet: u16 = 12;
-    // Execute an HTTP client request (kept separate from request event/end/write).
-    const HttpRequest: u16 = 404;
     const HttpRequestOn: u16 = 401;
     const HttpRequestEnd: u16 = 402;
     const HttpRequestWrite: u16 = 403;
@@ -399,7 +384,6 @@ impl CapabilityName {
     const ChildStdoutToString: u16 = 2197;
     const ReplServer: u16 = 2202;
     const ChildFork: u16 = 1601;
-    const ChildForkOnce: u16 = 1604;
     const ChildEmit: u16 = 1602;
     const ChildSend: u16 = 1603;
     const CommonMustCall: u16 = 1700;

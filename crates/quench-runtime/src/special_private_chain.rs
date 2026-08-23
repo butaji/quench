@@ -12,36 +12,9 @@ fn reduce_private_chain(
         }
     }
     let object = crate::reduce::reduce_expression(&member.object, ops, facts, next, locals)?;
-    Some(emit_reduced_private_access(
-        ops,
-        next,
-        object,
-        name,
-        member.optional,
-    ))
-}
-
-fn emit_reduced_private_access(
-    ops: &mut Vec<Op>,
-    next: &mut u16,
-    object: u16,
-    name: crate::facts::PrivateNameId,
-    optional: bool,
-) -> u16 {
     let dst = *next;
     *next = next.saturating_add(1);
-    emit_private_access(ops, dst, object, name, optional);
-    dst
-}
-
-fn emit_private_access(
-    ops: &mut Vec<Op>,
-    dst: u16,
-    object: u16,
-    name: crate::facts::PrivateNameId,
-    optional: bool,
-) {
-    if optional {
+    if member.optional {
         emit_optional_private(ops, dst, object, name);
     } else {
         ops.push(Op::GetPrivate {
@@ -50,6 +23,7 @@ fn emit_private_access(
             name,
         });
     }
+    Some(dst)
 }
 
 fn reduce_private_after_optional_member(
@@ -76,24 +50,7 @@ fn reduce_private_after_optional_member(
     }];
     let property = *next;
     *next = next.saturating_add(1);
-    let else_ops = private_else_ops(member, base, property, dst, name);
-    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![then_ops, else_ops]);
-    ops.push(Op::Branch {
-        condition,
-        then_ops: branches.remove(0),
-        else_ops: branches.remove(0),
-    });
-    Some(dst)
-}
-
-fn private_else_ops(
-    member: &oxc::ast::ast::StaticMemberExpression<'_>,
-    base: u16,
-    property: u16,
-    dst: u16,
-    name: crate::facts::PrivateNameId,
-) -> Vec<Op> {
-    vec![
+    let else_ops = vec![
         Op::GetProperty {
             dst: property,
             object: base,
@@ -104,7 +61,14 @@ fn private_else_ops(
             object: property,
             name,
         },
-    ]
+    ];
+    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![then_ops, else_ops]);
+    ops.push(Op::Branch {
+        condition,
+        then_ops: branches.remove(0),
+        else_ops: branches.remove(0),
+    });
+    Some(dst)
 }
 
 fn emit_optional_private(

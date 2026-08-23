@@ -34,7 +34,7 @@ const add = (rank, area, finding, action, evidence) =>
   findings.push({ rank, area, finding, action, evidence });
 
 const tasks = readJson(path.join(root, "tasks/index.json"));
-const taskRows = tasks?.tasks || [];
+const taskRows = tasks?.tasks || tasks?.items || [];
 const unfinished = taskRows.filter((task) => task.status !== "complete");
 if (unfinished.length) {
   add(
