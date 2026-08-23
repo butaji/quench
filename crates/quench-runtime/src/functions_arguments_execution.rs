@@ -54,9 +54,18 @@ pub(crate) fn execute(
         return crate::generator::create(function, &frame.receiver, arguments);
     }
     if function.is_async {
-        return Ok(crate::promise::from_async_completion(execute_frame_value(
-            &frame,
-        )));
+        let generator = match crate::generator::create(function, &frame.receiver, arguments)? {
+            crate::value::Value::Generator(generator) => generator,
+            _ => unreachable!("generator creation must return a generator"),
+        };
+        let completion = crate::generator::resume(
+            &generator,
+            crate::generator::Resume::Next(crate::value::Value::Undefined),
+        );
+        return Ok(crate::promise::from_async_generator_completion(
+            completion,
+            generator,
+        ));
     }
     execute_frames(frame)
 }

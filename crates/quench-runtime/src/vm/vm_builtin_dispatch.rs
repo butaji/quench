@@ -37,17 +37,23 @@ fn is_function_builtin(builtin: Builtin) -> bool {
         Builtin::FunctionCall
             | Builtin::FunctionApply
             | Builtin::FunctionBind
-            | Builtin::ArrayJoin
-            | Builtin::ArrayPush
-            | Builtin::ArrayShift
-            | Builtin::ArrayReverse
-            | Builtin::ArrayPop
-            | Builtin::ArrayUnshift
-            | Builtin::ArrayFill
-            | Builtin::ArrayCopyWithin
-            | Builtin::ArrayFindLast
-            | Builtin::ArrayFindLastIndex
-            | Builtin::ArrayToSorted
+        | Builtin::ArrayJoin
+        | Builtin::ArrayPush
+        | Builtin::ArrayShift
+        | Builtin::ArrayReverse
+        | Builtin::ArrayPop
+        | Builtin::ArrayUnshift
+        | Builtin::ArrayFill
+        | Builtin::ArrayCopyWithin
+        | Builtin::ArrayFindLast
+        | Builtin::ArrayFindLastIndex
+        | Builtin::ArrayToSorted
+        | Builtin::ArrayIterator
+        | Builtin::ArrayKeys
+        | Builtin::ArrayEntries
+        | Builtin::ObjectGetOwnPropertyDescriptor
+        | Builtin::ObjectGetOwnPropertyNames
+        | Builtin::ObjectDefineProperty
     )
 }
 pub(crate) fn execute_function_apply(

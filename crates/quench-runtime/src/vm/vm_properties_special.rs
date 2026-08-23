@@ -30,6 +30,11 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if let Some(result) = constructor_property(builtin, key, property.clone()) {
         return result;
     }
+    // Static Promise methods need the constructor as [[This]] when called
+    // through a property reference; prototype methods are bound below.
+    if builtin == Builtin::Promise && matches!(property, Value::Builtin(_)) {
+        return bind_method(value, property);
+    }
     if !matches!(property, Value::Undefined) {
         return property;
     }
@@ -297,13 +302,22 @@ fn number_format_bound_properties() -> Vec<(String, Value)> {
     .collect()
 }
 fn promise_property(value: &Value, key: &str) -> Value {
-    // Per ES §27.2.5 `Promise.prototype.then` is a single function
-    // object stored on the prototype. `Get(p, "then")` walks the
-    // prototype chain and returns that function — it must NOT be
-    // eagerly bound to the receiver, otherwise `p.then` would not
-    // match `Promise.prototype.then` by reference.
+    // Promise instances always inherit the realm's Promise.prototype. During
+    // early realm/bootstrap (and while a user constructor prototype is being
+    // materialized) that intrinsic can transiently resolve to null. Keep the
+    // standard prototype methods available rather than exposing that
+    // bootstrap sentinel as `promise.then`.
     let _ = value;
-    crate::builtins::property(Builtin::PromisePrototype, key)
+    let property = crate::builtins::property(Builtin::PromisePrototype, key);
+    if !matches!(property, Value::Null) {
+        return property;
+    }
+    match key {
+        "then" => Value::Builtin(Builtin::PromiseThen),
+        "catch" => Value::Builtin(Builtin::PromiseCatch),
+        "finally" => Value::Builtin(Builtin::PromiseFinally),
+        _ => Value::Undefined,
+    }
 }
 include!("vm_typed_array_properties.rs");
 fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Value> {

@@ -20,7 +20,10 @@ pub(crate) fn write_value_unchecked(registers: &mut [Value], index: u16, value: 
 
 #[inline]
 pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
-    registers.get(usize::from(index)).cloned().ok_or(VmError::MissingReturn)
+    registers
+        .get(usize::from(index))
+        .cloned()
+        .ok_or(VmError::MissingReturn)
 }
 
 /// Unchecked variant for hot arithmetic paths where the compiler already
@@ -348,7 +351,9 @@ fn function_inherited_property(
     properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0function_prototype" || name == "\0prototype").then(|| property_value(value)))
+        .find_map(|(name, value)| {
+            (name == "\0function_prototype" || name == "\0prototype").then(|| property_value(value))
+        })
         .map_or_else(
             || function_prototype_property(function, key),
             |prototype| get_property(&prototype, key),
@@ -393,4 +398,3 @@ fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
 include!("vm_properties_resolution.rs");
 include!("vm_properties_special.rs");
 use crate::value::Value::{HostCapability, Promise};
-

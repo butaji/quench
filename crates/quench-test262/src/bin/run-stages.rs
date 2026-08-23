@@ -222,19 +222,20 @@ fn run_stages(root: &Path, stages: Vec<ResolvedStage>, args: &Args) -> ExitCode 
             Ok(report) => report,
             Err(error) => return fail(error),
         };
+        accumulate_stage_report(&mut overall, &report);
         if report.failed > 0 {
             has_failure = true;
             print_stage_failures(stage, &report, args);
             if !args.continue_on_failure {
+                print_stage_totals(stages.len(), overall);
                 return ExitCode::from(1);
             }
         }
-        accumulate_stage_report(&mut overall, &report);
     }
+    print_stage_totals(stages.len(), overall);
     if has_failure {
         return ExitCode::from(1);
     }
-    print_stage_totals(stages.len(), overall);
     ExitCode::SUCCESS
 }
 
