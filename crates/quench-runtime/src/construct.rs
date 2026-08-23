@@ -459,6 +459,16 @@ include!("construct_instance_fields.rs");
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,
 ) -> Result<Value, crate::execute::VmError> {
+    // An ordinary function may have its function object prototype reassigned
+    // (for example `Object.setPrototypeOf(F, ArrayBuffer)`) without becoming
+    // a derived class constructor. The parser/IR records actual `extends`
+    // semantics explicitly; only those functions participate in super
+    // construction and the uninitialised-`this` check.
+    if !crate::functions::is_derived_constructor(function) {
+        return Err(crate::value::error::throw_reference_error(
+            "super is unavailable",
+        ));
+    }
     let proto = crate::builtins::object::get_prototype_of(Some(&crate::value::Value::Function(
         std::rc::Rc::new(function.clone()),
     )))?;
