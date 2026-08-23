@@ -233,7 +233,11 @@ pub fn dispatch_event(
                 &[Value::String(event_type.clone()), listener.callback.clone()],
             )?;
         }
-        execute::call(&listener.callback, receiver, std::slice::from_ref(event))?;
+        let mut callback = listener.callback.clone();
+        while let Value::BindingCell(cell) = callback {
+            callback = cell.borrow().clone();
+        }
+        execute::call(&callback, receiver, std::slice::from_ref(event))?;
     }
     Ok(Value::Boolean(true))
 }

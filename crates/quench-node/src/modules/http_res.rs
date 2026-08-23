@@ -181,6 +181,17 @@ pub fn res_end(
         let _ = execute::set_property(response.clone(), "finished", Value::Boolean(true));
         let _ = execute::set_property(response.clone(), "writable", Value::Boolean(false));
     }
+    // Callback values crossing reduced global bindings can still be wrapped
+    // in a BindingCell. Resolve the cell before entering the VM call path.
+    if let Some(callback) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
+        let mut callback = callback.clone();
+        while let Value::BindingCell(cell) = callback {
+            callback = cell.borrow().clone();
+        }
+        if quench_runtime::is_callable(&callback) {
+            execute::call(&callback, &receiver.cloned().unwrap_or(Value::Undefined), &[])?;
+        }
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 

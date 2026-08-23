@@ -195,6 +195,8 @@ fn invoke_with_receiver(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    // Dispatch host capabilities directly; callback values may be BindingCells,
+    // but ordinary callbacks must not be re-entered through their receiver.
     if let Value::BoundFunction(bound) = callee_value {
         if let Value::HostCapability(capability) = &bound.target {
             let mut combined = bound.arguments.clone();
@@ -241,15 +243,6 @@ fn invoke_with_receiver(
             );
         }
     }
-    eprintln!(
-        "[http-trace] {}:{} invoke callee_variant={} receiver_variant={} callee={:?} args={:?}",
-        file!(),
-        line!(),
-        value_variant(Some(callee_value)),
-        value_variant(Some(receiver)),
-        callee_value,
-        arguments
-    );
     let callee_detail = match callee_value {
         Value::BoundFunction(bound) => match &bound.target {
             Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
