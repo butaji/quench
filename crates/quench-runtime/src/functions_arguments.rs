@@ -446,7 +446,7 @@ pub(crate) fn execute_target(
             crate::vm::execute_host_capability_with_receiver(
                 kind,
                 Some(&capability_receiver),
-                Some(&bound.receiver),
+                Some(receiver),
                 &combined,
             )
         }
