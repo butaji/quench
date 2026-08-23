@@ -6,45 +6,41 @@ fn locale_slot(locale: &Locale) -> Value {
         ),
         ("base".to_string(), Value::String(locale.base_name())),
     ];
-    if let Some(script) = &locale.script {
-        properties.push(("script".to_string(), Value::String(script.clone())));
-    }
-    if let Some(region) = &locale.region {
-        properties.push(("region".to_string(), Value::String(region.clone())));
-    }
+    push_optional_property(&mut properties, "script", locale.script.as_ref());
+    push_optional_property(&mut properties, "region", locale.region.as_ref());
     if !locale.variants.is_empty() {
         properties.push((
             "variants".to_string(),
             Value::String(locale.variants.join("-")),
         ));
     }
-    if let Some(calendar) = &locale.calendar {
-        properties.push(("calendar".to_string(), Value::String(calendar.clone())));
-    }
-    if let Some(collation) = &locale.collation {
-        properties.push(("collation".to_string(), Value::String(collation.clone())));
-    }
-    if let Some(hour_cycle) = &locale.hour_cycle {
-        properties.push(("hourCycle".to_string(), Value::String(hour_cycle.clone())));
-    }
-    if let Some(case_first) = &locale.case_first {
-        properties.push(("caseFirst".to_string(), Value::String(case_first.clone())));
-    }
-    if let Some(numbering_system) = &locale.numbering_system {
-        properties.push((
-            "numberingSystem".to_string(),
-            Value::String(numbering_system.clone()),
-        ));
-    }
-    if let Some(first_day) = &locale.first_day_of_week {
-        properties.push((
-            "firstDayOfWeek".to_string(),
-            Value::String(first_day.clone()),
-        ));
-    }
+    push_optional_property(&mut properties, "calendar", locale.calendar.as_ref());
+    push_optional_property(&mut properties, "collation", locale.collation.as_ref());
+    push_optional_property(&mut properties, "hourCycle", locale.hour_cycle.as_ref());
+    push_optional_property(&mut properties, "caseFirst", locale.case_first.as_ref());
+    push_optional_property(
+        &mut properties,
+        "numberingSystem",
+        locale.numbering_system.as_ref(),
+    );
+    push_optional_property(
+        &mut properties,
+        "firstDayOfWeek",
+        locale.first_day_of_week.as_ref(),
+    );
     properties.push(("numeric".to_string(), Value::Boolean(locale.numeric)));
     properties.push(("full".to_string(), Value::String(slot_full(locale))));
     make_object(properties)
+}
+
+fn push_optional_property(
+    properties: &mut Vec<(String, Value)>,
+    name: &str,
+    value: Option<&String>,
+) {
+    if let Some(value) = value {
+        properties.push((name.to_string(), Value::String(value.clone())));
+    }
 }
 
 fn slot_full(locale: &Locale) -> String {

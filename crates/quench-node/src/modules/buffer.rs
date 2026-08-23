@@ -51,6 +51,11 @@ fn static_pairs() -> Vec<(String, Value)> {
     pairs.push(("poolSize".to_string(), Value::Number(8192.0)));
     pairs.push(("kMaxLength".to_string(), Value::Number(MAX_LENGTH)));
     pairs.push((
+        "kStringMaxLength".to_string(),
+        Value::Number(MAX_STRING_LENGTH),
+    ));
+    pairs.push(("constants".to_string(), constants_object()));
+    pairs.push((
         "prototype".to_string(),
         crate::modules::buffer_proto::buffer_prototype(),
     ));
@@ -65,11 +70,6 @@ pub fn buffer_constructor() -> Value {
         quench_runtime::execute::set_property(constructor.clone(), &key, value);
     }
     constructor
-}
-
-/// Kept for `build_module` compatibility; pairs of the statics.
-pub fn build() -> Vec<(String, Value)> {
-    static_pairs()
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

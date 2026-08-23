@@ -67,7 +67,11 @@ pub(crate) trait JsRuntime {
         host: &dyn NodeHost,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
+    fn poll_jobs(&self) -> Result<bool, Box<dyn std::error::Error>>;
+
+    fn has_pending_jobs(&self) -> bool;
 }
+
 pub(crate) struct QuenchRuntime;
 
 struct QuenchNodeHost {
@@ -115,6 +119,8 @@ struct StreamState {
     source: Vec<Value>,
     need_drain: bool,
     destroyed: bool,
+    destroy_scheduled: bool,
+    close_emitted: bool,
     errored: Option<Value>,
 }
 
@@ -123,6 +129,7 @@ struct HttpState {
     body: String,
     data_callback: Option<Value>,
     end_callback: Option<Value>,
+    client_callback: Option<Value>,
 }
 
 impl Default for QuenchNodeHost {
@@ -135,12 +142,13 @@ impl Default for QuenchNodeHost {
             next_dgram: Cell::new(1),
             streams: RefCell::new(HashMap::new()),
             next_hash: Cell::new(100),
-            next_stream: Cell::new(200),
+            next_stream: Cell::new(1000),
             http: RefCell::new(HttpState {
                 server_callback: None,
                 body: String::new(),
                 data_callback: None,
                 end_callback: None,
+                client_callback: None,
             }),
             urls: RefCell::new(HashMap::new()),
             url_objects: RefCell::new(HashMap::new()),

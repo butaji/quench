@@ -87,21 +87,86 @@ pub fn exists(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let callback = super::fs::require_callback(args.get(1))?;
+    // `fs.exists` never throws and never warns for unsupported path
+    // types; it invokes the callback with `false` (Node's lenient,
+    // historically-deprecated signature).
     let exists = match args.first() {
         Some(Value::String(path)) => std::path::Path::new(path).exists(),
-        other => {
-            if !matches!(other, Some(Value::String(_))) {
-                crate::modules::process::emit_warning(
-                    state,
-                    "DeprecationWarning",
-                    "Passing invalid argument types to fs.exists is deprecated",
-                    Some("DEP0187"),
-                    true,
-                );
-            }
-            false
-        }
+        _ => false,
     };
     defer(state, &callback, vec![Value::Boolean(exists)]);
+
+    Ok(Value::Undefined)
+}
+/// Run a fd sync op from its async wrapper: argument/type errors throw
+/// synchronously (Node), while I/O/runtime errors defer to the callback.
+fn run_fd_op(
+    state: &Rc<RefCell<HostState>>,
+    cb: &Value,
+    sync: impl FnOnce(&Rc<RefCell<HostState>>, Option<&Value>, &[Value]) -> Result<Value, VmError>,
+    leading: &[Value],
+) -> Result<Value, VmError> {
+    let result = sync(state, None, leading);
+    if let Err(err) = &result {
+        if is_validation_error(err) {
+            return Err(err.clone());
+        }
+    }
+    super::fs::defer(
+        state,
+        cb,
+        vec![
+            super::fs::err_value(&result),
+            result.unwrap_or(Value::Undefined),
+        ],
+    );
+    Ok(Value::Undefined)
+}
+
+/// True for synchronous argument/type errors Node throws up-front rather
+/// than routing through the callback.
+fn is_validation_error(err: &VmError) -> bool {
+    use quench_runtime::value::Value;
+    match err {
+        VmError::Thrown(Value::Object(o)) => o.iter().any(|(k, v)| {
+            k == "code"
+                && matches!(
+                    v,
+                    Value::String(s) if s == "ERR_INVALID_ARG_TYPE" || s == "ERR_INVALID_ARG_VALUE"
+                )
+        }),
+        _ => false,
+    }
+}
+
+pub fn open(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (a, cb) = super::fs::async_args(args)?;
+    run_fd_op(state, &cb, super::fs_sync::open_sync, a)
+}
+pub fn fstat(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (a, cb) = super::fs::async_args(args)?;
+    run_fd_op(state, &cb, super::fs_sync::fstat_sync, a)
+}
+pub fn close(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (a, cb) = super::fs::async_args(args)?;
+    let result = super::fs_sync::close_sync(state, None, a);
+    if let Err(err) = &result {
+        if is_validation_error(err) {
+            return Err(err.clone());
+        }
+    }
+    super::fs::defer(state, &cb, vec![super::fs::err_value(&result)]);
     Ok(Value::Undefined)
 }

@@ -12,26 +12,37 @@ fn promise_combinator(
             return Ok(Value::Promise(result));
         }
     };
+    run_promise_aggregate(kind, constructor, arguments, &result, &resolve);
+    Ok(Value::Promise(result))
+}
+
+fn run_promise_aggregate(
+    kind: PromiseAggregateKind,
+    constructor: &Value,
+    arguments: &[Value],
+    result: &Rc<PromiseData>,
+    resolve: &Value,
+) {
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let values = match crate::collections::iterator::collect_iterable(source) {
         Ok(values) => values,
         Err(error) => {
-            reject_with_completion(&result, error);
-            return Ok(Value::Promise(result));
+            reject_with_completion(result, error);
+            return;
         }
     };
     let aggregate = Rc::new(PromiseAggregate {
         kind,
-        result: Rc::clone(&result),
+        result: Rc::clone(result),
         remaining: RefCell::new(values.len()),
         values: RefCell::new(vec![Value::Undefined; values.len()]),
         settled: RefCell::new(false),
     });
     for (index, value) in values.into_iter().enumerate() {
-        let value = match crate::functions::execute_target(&resolve, constructor, &[value]) {
+        let value = match crate::functions::execute_target(resolve, constructor, &[value]) {
             Ok(value) => value,
             Err(error) => {
-                reject_with_completion(&result, error);
+                reject_with_completion(result, error);
                 break;
             }
         };
@@ -40,9 +51,8 @@ fn promise_combinator(
     if *aggregate.remaining.borrow() == 0 {
         finish_empty_aggregate(&aggregate);
     }
-    Ok(Value::Promise(result))
-}
 
+}
 fn promise_keyed_combinator(
     kind: PromiseAggregateKind,
     receiver: Option<&Value>,
