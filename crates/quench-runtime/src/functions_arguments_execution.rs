@@ -54,7 +54,15 @@ pub(crate) fn execute(
         return crate::generator::create(function, &frame.receiver, arguments);
     }
     if function.is_async {
-        let generator = match crate::generator::create(function, &frame.receiver, arguments)? {
+        // Async function parameter evaluation is part of the async call's
+        // completion. A failure while creating the generator (for example, a
+        // SyntaxError from a default-parameter eval) rejects the returned
+        // promise instead of escaping as a synchronous call error.
+        let generator = match (crate::generator::create(function, &frame.receiver, arguments)) {
+            Ok(generator) => generator,
+            Err(error) => return Ok(crate::promise::from_async_completion(Err(error))),
+        };
+        let generator = match generator {
             crate::value::Value::Generator(generator) => generator,
             _ => unreachable!("generator creation must return a generator"),
         };
