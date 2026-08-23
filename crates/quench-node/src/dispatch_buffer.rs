@@ -26,6 +26,7 @@ const BUFFER_TABLE: &[(u16, CallHandler)] = &[
     (0x0813, m::copy),
     (0x0814, m::fill),
     (0x0815, m::slice),
+    (0x0820, m::subarray),
     (0x0816, m::swap16),
     (0x0817, m::swap32),
     (0x0818, m::swap64),
