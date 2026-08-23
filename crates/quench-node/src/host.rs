@@ -17,13 +17,11 @@ use quench_runtime::vm::{Host, OutputSink, VmContext};
 use crate::registry::{CapId, NodeSpec};
 
 pub fn scheduler_capability(kind: u16) -> Value {
+    let kind = if kind == 0x1200 { 1 } else { kind };
     quench_runtime::host_api::capability_function(HostCapabilityRef {
         realm: RealmId::ROOT,
         kind: HostCapabilityKind::Custom(kind),
     })
-}
-pub struct NodeHost {
-    state: Rc<RefCell<HostState>>,
 }
 
 pub struct HostState {
@@ -89,6 +87,10 @@ pub struct PendingModule {
     pub dirname: String,
 }
 
+pub struct NodeHost {
+    state: Rc<RefCell<HostState>>,
+}
+
 impl NodeHost {
     pub fn new(realm: RealmId, argv: Vec<String>) -> Self {
         let state = HostState {
@@ -152,7 +154,13 @@ impl Host for NodeHost {
         receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        // Legacy CJS require handles are Custom(1); execute the loader directly
+        // so the bound handle preserves its argument list and ambient state.
+        if capability.kind == HostCapabilityKind::Custom(1) {
+            return crate::modules::require::require(&self.state, arguments);
+        }
         let cap = match capability.kind {
+            HostCapabilityKind::Custom(1563) => 0x0808,
             HostCapabilityKind::Custom(c) => c,
             _ => return Err(VmError::NotCallable),
         };
@@ -367,7 +375,39 @@ fn install_web_globals(mut context: VmContext) -> VmContext {
 
 /// Build a capability call descriptor for the host.
 pub fn capability(spec: NodeSpec) -> Value {
-    host_api::custom_function(RealmId::ROOT, spec.cap)
+    // Buffer.prototype methods are installed through the legacy NodeSpec
+    // registry, but the active JsRuntime dispatch uses the dedicated
+    // capability enum.  Keep this alias at the boundary so Buffer.prototype
+    // does not expose an unhandled numeric capability (0x0808).
+    let kind = if spec.cap == crate::registry::SPEC_BUFFER_TOSTRING.cap {
+        HostCapabilityKind::Custom(1563)
+    } else {
+        // Legacy HTTP registry IDs are still emitted by bootstrap method
+        // installation; translate them to the active host capability IDs.
+        let cap = match spec.cap {
+            0x1200 => 1,
+            0x0F00 => 404,
+            0x0F01 => 12,
+            0x0F02 => 11,
+            0x0F03 => 501,
+            0x0F04 => 502,
+            0x0F05 => 503,
+            0x0F06 => 504,
+            0x0F07 => 507,
+            0x0F08 => 508,
+            0x0F09 => 509,
+            0x0F0A => 510,
+            0x0F0B => 511,
+            0x0F0C => 512,
+            0x0F0D => 513,
+            other => other,
+        };
+        HostCapabilityKind::Custom(cap)
+    };
+    host_api::capability_function(HostCapabilityRef {
+        realm: RealmId::ROOT,
+        kind,
+    })
 }
 
 /// Build a properly-described namespace object. Each named

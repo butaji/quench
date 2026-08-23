@@ -37,7 +37,9 @@ pub struct ClientReq {
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let opts = request_options(args.first())?;
-    let (req, id) = build_req_object(state)?;
+    let (mut req, id) = build_req_object(state)?;
+    req = execute::set_property(req, "method", Value::String(opts.2.clone()));
+    req = execute::set_property(req, "path", Value::String(opts.3.clone()));
     let mut guard = state.borrow_mut();
     guard.http.clientreqs.insert(
         id,
@@ -340,14 +342,10 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
 }
 
 fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
+    // Store callable host capabilities directly; descriptor-backed binding
+    // cells are not callable in all method retrieval paths.
     for (key, value) in props {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, &key, descriptor)?;
+        object = execute::set_property(object, &key, value);
     }
     Ok(object)
 }

@@ -466,3 +466,10 @@ fn set_function_property(
 include!("builtins/function_name.rs");
 include!("builtins_prototype.rs");
 include!("builtins_value_string.rs");
+pub fn define_own_property_public(
+    target: &Value,
+    key: &str,
+    descriptor: &[(String, Value)],
+) -> Result<Value, crate::execute::VmError> {
+    define_own_property(target, key, descriptor)
+}

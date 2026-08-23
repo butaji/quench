@@ -76,7 +76,6 @@ impl Completion {
             VmError::Thrown(value) => Self::Throw(value),
             VmError::Break(label) => Self::Break { label, value: None },
             VmError::Continue(label) => Self::Continue { label, value: None },
-            VmError::Suspended(promise) => Self::Suspend(promise),
             VmError::NotCallable => {
                 let VmError::Thrown(value) = crate::execute::not_callable() else {
                     return Err(VmError::NotCallable);

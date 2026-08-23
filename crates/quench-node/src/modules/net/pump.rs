@@ -200,8 +200,11 @@ fn poll_listening(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         }
     }
     for server in announce {
-        let js = server.borrow().js.clone();
-        emit(state, &js, "listening", Vec::new())?;
+        let (js, args) = {
+            let server = server.borrow();
+            (server.js.clone(), server.listen_args.clone())
+        };
+        emit(state, &js, "listening", args)?;
     }
     Ok(())
 }

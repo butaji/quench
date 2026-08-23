@@ -12,6 +12,14 @@
     on(name, fn) {
       this._emitter.on(name, fn);
       if (name === "data" && this._readableState) this.resume();
+      // A stream may finish synchronously while a pipe/end callback is being
+      // installed. Preserve Node's observable completion guarantee for those
+      // late listeners by delivering the already-emitted terminal event.
+      if (name === "end" && this._readableState && this._readableState.endEmitted) {
+        nextTick(() => fn.call(this));
+      } else if (name === "finish" && this._writableState && this._writableState.finished) {
+        nextTick(() => fn.call(this));
+      }
       return this;
     },
     addListener(name, fn) {
@@ -79,7 +87,7 @@
   // ---- Readable ----
 
   function initReadable(stream, options) {
-    stream._emitter = new EventEmitter();
+    if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._readableState = {
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
@@ -89,10 +97,12 @@
       reading: false,
       ended: false,
       endEmitted: false,
-      errored: null
+      errored: null,
+      closeEmitted: false
     };
     stream.readable = true;
     stream.destroyed = false;
+    stream.closed = false;
     if (options.read) stream._read = options.read;
     if (options.destroy) stream._destroy = options.destroy;
   }
@@ -101,6 +111,7 @@
     const st = stream._readableState;
     if (st.buffer.length > 0 && stream.listenerCount("readable") > 0) {
       stream._emitter.emit("readable");
+      if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
     }
     if (st.flowing) {
       while (st.flowing && st.buffer.length > 0) {
@@ -199,16 +210,27 @@
 
     read() {
       const st = this._readableState;
-      if (st.buffer.length > 0) return st.buffer.shift();
+      const finishIfEnded = () => {
+        if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
+          st.endEmitted = true;
+          this._emitter.emit("end");
+        }
+      };
+      if (st.buffer.length > 0) {
+        const chunk = st.buffer.shift();
+        finishIfEnded();
+        return chunk;
+      }
       if (!st.ended && !st.reading) {
         st.reading = true;
         this._read(st.highWaterMark);
       }
-      if (st.buffer.length > 0) return st.buffer.shift();
-      if (st.ended && !st.endEmitted) {
-        st.endEmitted = true;
-        this._emitter.emit("end");
+      if (st.buffer.length > 0) {
+        const chunk = st.buffer.shift();
+        finishIfEnded();
+        return chunk;
       }
+      finishIfEnded();
       return null;
     }
 
@@ -295,7 +317,12 @@
     const stream = this;
     const destroy = this._destroy;
     nextTick(() => {
+      let finished = false;
       const finish = () => {
+        if (finished || stream._readableState.closeEmitted) return;
+        finished = true;
+        stream._readableState.closeEmitted = true;
+        stream.closed = true;
         if (error) stream._emitter.emit("error", error);
         stream._emitter.emit("close");
       };

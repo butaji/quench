@@ -329,6 +329,14 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     let Some(function) = args.first() else {
         return Err(VmError::NotCallable);
     };
+    // Host/global bindings may arrive through a BindingCell when the wrapper
+    // is invoked from a reduced global script.  Resolve it before entering
+    // the host-side call path; `call_value` deliberately expects a callable
+    // target rather than a lexical cell.
+    let function = match function {
+        Value::BindingCell(cell) => cell.borrow().clone(),
+        value => value.clone(),
+    };
     let Some(pending) = state.borrow_mut().pending_modules.pop() else {
         return Err(VmError::EvalError("cjs wrap without pending module".into()));
     };
@@ -336,7 +344,7 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     state.borrow_mut().dir_stack.push(pending.dirname.clone());
     let require_fn = module_require(state, &pending.dirname)?;
     let result = quench_runtime::vm::call_value(
-        function,
+        &function,
         &Value::Undefined,
         &[
             exports,
@@ -350,21 +358,12 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     result
 }
 
-fn module_require(_state: &Rc<RefCell<HostState>>, dirname: &str) -> Result<Value, VmError> {
-    let source = "(function(cap, d) { return function(s) { return cap(d, s); }; })";
-    let ops = quench_runtime::reduce::reduce_global_script_source(source)
-        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let context = quench_runtime::vm::current_context();
-    let mut registers = Vec::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_in_place_context(ops.ops(), &mut registers, &context)
-    })?;
-    let require_for = crate::host::capability(crate::registry::SPEC_REQUIRE_FOR);
-    quench_runtime::vm::call_value(
-        &factory,
-        &Value::Undefined,
-        &[require_for, Value::String(dirname.to_string())],
-    )
+fn module_require(_state: &Rc<RefCell<HostState>>, _dirname: &str) -> Result<Value, VmError> {
+    // The CJS wrapper already scopes resolution with `dir_stack`.  Returning
+    // the canonical host require capability avoids constructing a JS-bound
+    // RequireFor wrapper in a context that may not have its host handle
+    // registered (notably the zlib worker's reduced context).
+    Ok(crate::host::capability(crate::registry::SPEC_REQUIRE))
 }
 
 /// Build a namespace object from a list of static capability specs.

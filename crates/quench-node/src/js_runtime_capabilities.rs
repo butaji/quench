@@ -1,6 +1,7 @@
 #[allow(non_upper_case_globals)]
 impl CapabilityName {
     const Require: u16 = 1;
+    const RequireFor: u16 = 0x1f04;
     const PathBasename: u16 = 2;
     const ConsoleLog: u16 = 4;
     const Cwd: u16 = 6;
@@ -13,6 +14,7 @@ impl CapabilityName {
     const EventEmitter: u16 = 70;
     const BufferByteLength: u16 = 9;
     const BufferFrom: u16 = 30;
+    const BufferNew: u16 = 1325;
     const BufferHasInstance: u16 = 1326;
     const BufferInspectMaxBytesGet: u16 = 1327;
     const BufferInspectMaxBytesSet: u16 = 1328;
@@ -338,6 +340,8 @@ impl CapabilityName {
     const ConsoleCreateTask: u16 = 2351;
     const ConsoleTaskRun: u16 = 2352;
     const HttpGet: u16 = 12;
+    // Execute an HTTP client request (kept separate from request event/end/write).
+    const HttpRequest: u16 = 404;
     const HttpRequestOn: u16 = 401;
     const HttpRequestEnd: u16 = 402;
     const HttpRequestWrite: u16 = 403;

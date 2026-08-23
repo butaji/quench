@@ -408,16 +408,16 @@ pub fn uptime(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, 
     Ok(Value::Number(elapsed.as_secs_f64()))
 }
 
-/// `process.memoryUsage()` — sysinfo returns total/free in bytes; report
-/// `rss` as a defensible estimate of used system memory.
+/// `process.memoryUsage()` — report resident memory for this process.
+///
+/// `sysinfo::System::used_memory()` is host-wide memory and is not a valid
+/// value for Node's `rss` field.  `getrusage(RUSAGE_SELF)` provides a
+/// process-scoped resident-set high-water mark on the supported Unix hosts.
+/// macOS reports `ru_maxrss` in bytes while Linux reports KiB.
 pub fn memory_usage(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    let mut sys = sysinfo::System::new();
-    sys.refresh_memory();
-    let total = sys.total_memory() as f64;
-    let free = sys.free_memory() as f64;
-    let used = (total - free).max(0.0);
+    let rss = process_rss_bytes();
     Ok(host_api::object(vec![
-        ("rss".to_string(), Value::Number(used)),
+        ("rss".to_string(), Value::Number(rss as f64)),
         ("heapTotal".to_string(), Value::Number(0.0)),
         ("heapUsed".to_string(), Value::Number(0.0)),
         ("external".to_string(), Value::Number(0.0)),
@@ -425,30 +425,79 @@ pub fn memory_usage(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<
     ]))
 }
 
-/// `process.resourceUsage()` — stable POSIX-shaped counters for the host.
+fn process_rss_bytes() -> u64 {
+    #[cfg(unix)]
+    {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } == 0 {
+            let rss = unsafe { usage.assume_init() }.ru_maxrss;
+            #[cfg(target_os = "linux")]
+            { return (rss.max(0) as u64).saturating_mul(1024); }
+            #[cfg(not(target_os = "linux"))]
+            { return rss.max(0) as u64; }
+        }
+    }
+    0
+}
+
+/// `process.resourceUsage()` — counters reported by the host operating system.
 pub fn resource_usage(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    let usage = process_rusage();
     Ok(host_api::object(vec![
-        ("userCPUTime".into(), Value::Number(0.0)),
-        ("systemCPUTime".into(), Value::Number(0.0)),
-        ("maxRSS".into(), Value::Number(0.0)),
-        ("sharedMemorySize".into(), Value::Number(0.0)),
-        ("unsharedDataSize".into(), Value::Number(0.0)),
-        ("unsharedStackSize".into(), Value::Number(0.0)),
-        ("minorPageFault".into(), Value::Number(0.0)),
-        ("majorPageFault".into(), Value::Number(0.0)),
-        ("swappedOut".into(), Value::Number(0.0)),
-        ("fsRead".into(), Value::Number(0.0)),
-        ("fsWrite".into(), Value::Number(0.0)),
-        ("ipcSent".into(), Value::Number(0.0)),
-        ("ipcReceived".into(), Value::Number(0.0)),
-        ("signalsCount".into(), Value::Number(0.0)),
-        ("voluntaryContextSwitches".into(), Value::Number(0.0)),
-        ("involuntaryContextSwitches".into(), Value::Number(0.0)),
+        ("userCPUTime".into(), Value::Number(usage.user as f64)),
+        ("systemCPUTime".into(), Value::Number(usage.system as f64)),
+        ("maxRSS".into(), Value::Number(usage.max_rss as f64)),
+        ("sharedMemorySize".into(), Value::Number(usage.shared as f64)),
+        ("unsharedDataSize".into(), Value::Number(usage.data as f64)),
+        ("unsharedStackSize".into(), Value::Number(usage.stack as f64)),
+        ("minorPageFault".into(), Value::Number(usage.minor as f64)),
+        ("majorPageFault".into(), Value::Number(usage.major as f64)),
+        ("swappedOut".into(), Value::Number(usage.swapped as f64)),
+        ("fsRead".into(), Value::Number(usage.fs_read as f64)),
+        ("fsWrite".into(), Value::Number(usage.fs_write as f64)),
+        ("ipcSent".into(), Value::Number(usage.ipc_sent as f64)),
+        ("ipcReceived".into(), Value::Number(usage.ipc_received as f64)),
+        ("signalsCount".into(), Value::Number(usage.signals as f64)),
+        ("voluntaryContextSwitches".into(), Value::Number(usage.voluntary as f64)),
+        ("involuntaryContextSwitches".into(), Value::Number(usage.involuntary as f64)),
     ]))
 }
 
-/// `process.cpuUsage()` — returns the Node result shape in microseconds.
+struct ProcessRusage {
+    user: i64, system: i64, max_rss: i64, shared: i64, data: i64, stack: i64,
+    minor: i64, major: i64, swapped: i64, fs_read: i64, fs_write: i64,
+    ipc_sent: i64, ipc_received: i64, signals: i64, voluntary: i64, involuntary: i64,
+}
+
+fn process_rusage() -> ProcessRusage {
+    // getrusage is available on every Unix target supported by quench-node.
+    #[cfg(unix)]
+    {
+        let mut r = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, r.as_mut_ptr()) } == 0 {
+            let r = unsafe { r.assume_init() };
+            let micros = |t: libc::timeval| t.tv_sec as i64 * 1_000_000 + t.tv_usec as i64;
+            return ProcessRusage {
+                user: micros(r.ru_utime), system: micros(r.ru_stime),
+                max_rss: r.ru_maxrss as i64, shared: r.ru_ixrss as i64,
+                data: r.ru_idrss as i64, stack: r.ru_isrss as i64,
+                minor: r.ru_minflt as i64, major: r.ru_majflt as i64,
+                swapped: r.ru_nswap as i64, fs_read: r.ru_inblock as i64,
+                fs_write: r.ru_oublock as i64, ipc_sent: r.ru_msgsnd as i64,
+                ipc_received: r.ru_msgrcv as i64, signals: r.ru_nsignals as i64,
+                voluntary: r.ru_nvcsw as i64, involuntary: r.ru_nivcsw as i64,
+            };
+        }
+    }
+    ProcessRusage { user: 0, system: 0, max_rss: 0, shared: 0, data: 0, stack: 0,
+        minor: 0, major: 0, swapped: 0, fs_read: 0, fs_write: 0, ipc_sent: 0,
+        ipc_received: 0, signals: 0, voluntary: 0, involuntary: 0 }
+}
+
+/// `process.cpuUsage()` — returns cumulative process CPU time in microseconds.
 pub fn cpu_usage(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let usage = process_rusage();
+    let (mut user, mut system) = (usage.user, usage.system);
     if let Some(previous) = args.first() {
         if !matches!(previous, Value::Object(_)) {
             return Err(cpu_type_error("prevValue", previous));
@@ -456,18 +505,16 @@ pub fn cpu_usage(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         for field in ["user", "system"] {
             let value = execute::get_property_result(previous, field).unwrap_or(Value::Undefined);
             match value {
-                Value::Number(number) if number.is_finite() && number >= 0.0 => {}
-                Value::Number(number) if !number.is_finite() || number < 0.0 => {
-                    return Err(cpu_value_error(field, number));
+                Value::Number(number) if number.is_finite() && number >= 0.0 => {
+                    if field == "user" { user -= number as i64; } else { system -= number as i64; }
                 }
+                Value::Number(number) if !number.is_finite() || number < 0.0 => return Err(cpu_value_error(field, number)),
                 _ => return Err(cpu_field_error(field, &value)),
             }
         }
     }
-    Ok(host_api::object(vec![
-        ("user".into(), Value::Number(0.0)),
-        ("system".into(), Value::Number(0.0)),
-    ]))
+    Ok(host_api::object(vec![("user".into(), Value::Number(user.max(0) as f64)),
+        ("system".into(), Value::Number(system.max(0) as f64))]))
 }
 
 fn cpu_type_error(name: &str, value: &Value) -> VmError {

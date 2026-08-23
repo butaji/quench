@@ -49,6 +49,8 @@ pub struct NetServer {
     pub listener: Option<TcpListener>,
     pub bind_addr: Option<SocketAddr>,
     pub js: Value,
+    /// Arguments supplied to `listen`, retained for the deferred callback.
+    pub listen_args: Vec<Value>,
     pub listening: bool,
     pub announced: bool,
     pub closed: bool,
@@ -130,13 +132,7 @@ fn new_net_object(
 
 fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
     for (key, value) in props {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, &key, descriptor)?;
+        object = execute::set_property(object, &key, value);
     }
     Ok(object)
 }
@@ -255,6 +251,7 @@ fn register_server(
             listener,
             bind_addr,
             js: js.clone(),
+            listen_args: Vec::new(),
             listening: is_listening,
             announced: false,
             closed: false,
@@ -345,6 +342,17 @@ pub(crate) fn emit(
         return Ok(());
     }
     for listener in &listeners {
+        let mut callback = listener.callback.clone();
+        while let Value::BindingCell(cell) = callback {
+            callback = cell.borrow().clone();
+        }
+        eprintln!(
+            "[http-trace] {}:{} emit={event} callback_kind={:?} callback={:?}",
+            file!(),
+            line!(),
+            callback,
+            callback
+        );
         if listener.once {
             if let Some(id) = emitter_id(receiver) {
                 if let Some(emitter) = state.borrow().emitters.get(id) {
@@ -352,7 +360,7 @@ pub(crate) fn emit(
                 }
             }
         }
-        execute::call(&listener.callback, receiver, &args)?;
+        execute::call(&callback, receiver, &args)?;
     }
     Ok(())
 }

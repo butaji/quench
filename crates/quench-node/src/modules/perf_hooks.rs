@@ -14,11 +14,13 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     let factory = quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
     })?;
-    let module = quench_runtime::vm::call_value(
-        &factory,
-        &Value::Undefined,
-        &[quench_runtime::host_api::object(vec![])],
-    )?;
+    let module = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::call_value(
+            &factory,
+            &Value::Undefined,
+            &[quench_runtime::host_api::object(vec![])],
+        )
+    })?;
     state.borrow_mut().perf_hooks_module = Some(module.clone());
     Ok(module)
 }

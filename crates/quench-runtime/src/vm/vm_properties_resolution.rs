@@ -242,7 +242,31 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
         Value::Builtin(builtin) => {
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
         }
-        _ => Err(crate::vm::not_callable()),
+        Value::HostCapability(capability) => {
+            let capability_receiver =
+                crate::vm::realm_token(crate::vm::current_context_or_default().realm())
+                    .ok_or_else(crate::vm::not_callable)?;
+            crate::vm::execute_host_capability_with_receiver(
+                capability.descriptor.kind,
+                Some(&capability_receiver),
+                Some(receiver),
+                &[],
+            )
+        }
+        _ => Err(crate::value::error::throw_type_error(&format!(
+            "value is not callable [property accessor variant={}]",
+            match getter {
+                Value::Undefined => "undefined",
+                Value::Null => "null",
+                Value::Object(_) => "object",
+                Value::Array(_) => "array",
+                Value::HostCapability(_) => "host",
+                Value::Builtin(_) => "builtin",
+                Value::Function(_) => "function",
+                Value::BoundFunction(_) => "bound",
+                _ => "other",
+            }
+        ))),
     }
 }
 

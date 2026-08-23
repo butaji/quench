@@ -40,6 +40,15 @@ fn get_property_value(value: &Value, key: &str) -> Value {
     if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
         return found;
     }
+    // Typed-array instances can carry an ordinary custom [[Prototype]] (for
+    // example Node's Buffer.prototype).  Resolve it before the built-in
+    // typed-array dispatch so all view variants honor setPrototypeOf.
+    if let Some(prototype) = value.typed_array_meta().and_then(|meta| meta.prototype()) {
+        let inherited = get_property(&prototype, key);
+        if !matches!(inherited, Undefined) {
+            return inherited;
+        }
+    }
     match value {
         Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
             bind_callable_property(
