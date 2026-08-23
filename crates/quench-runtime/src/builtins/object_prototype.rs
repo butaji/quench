@@ -54,7 +54,11 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::SyntaxErrorPrototype
             | Builtin::URIErrorPrototype,
         ) => Value::Builtin(Builtin::ErrorPrototype),
-        Value::Builtin(Builtin::AsyncFunctionPrototype) => {
+        Value::Builtin(
+            Builtin::AsyncFunctionPrototype
+            | Builtin::GeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorFunctionPrototype,
+        ) => {
             Value::Builtin(Builtin::FunctionPrototype)
         }
         Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
