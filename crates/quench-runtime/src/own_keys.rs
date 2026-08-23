@@ -563,8 +563,8 @@ mod tests {
             panic!("own names result is not an array");
         };
         assert_eq!(
-            &names[..],
-            &[
+            names.snapshot(),
+            vec![
                 Value::String("0".into()),
                 Value::String("1".into()),
                 Value::String("length".into())

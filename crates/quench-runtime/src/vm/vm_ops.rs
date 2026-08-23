@@ -6,7 +6,7 @@ use crate::value::Value;
 use crate::vm::VmError;
 
 pub fn execute_call(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     callee: u16,
     receiver: Option<u16>,
@@ -54,13 +54,13 @@ fn peel_binding_cell(mut value: Value) -> Value {
 }
 
 pub fn execute_call_continuation(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     continuation: crate::completion::CallContinuation,
 ) -> Result<(), VmError> {
     struct ActiveCall {
         continuation: crate::completion::CallContinuation,
         code: crate::machine::FunctionCode,
-        registers: Vec<Value>,
+        registers: crate::register_file::RegisterFile,
         environment: std::rc::Rc<crate::environment::Environment>,
         pc: usize,
     }
@@ -83,7 +83,7 @@ pub fn execute_call_continuation(
         Ok(Some(ActiveCall {
             code: function.code.clone(),
             continuation,
-            registers: callee_registers,
+            registers: crate::register_file::RegisterFile::from_values(callee_registers),
             environment,
             pc: 0,
         }))
@@ -238,7 +238,7 @@ pub fn execute_call_continuation(
     Ok(())
 }
 pub fn execute_optional_call(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     callee: u16,
     receiver: Option<u16>,
@@ -271,7 +271,7 @@ pub fn execute_optional_call(
 }
 
 pub fn prepare_tail_call(
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     callee: u16,
     args: &[u16],
     spreads: &[bool],
@@ -285,7 +285,7 @@ pub fn prepare_tail_call(
 }
 
 fn propagate_object_mutation(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     callee: &Value,
     args: &[u16],
     arguments: &[Value],
@@ -302,7 +302,11 @@ fn propagate_object_mutation(
 }
 
 /// Resolve an await operand, suspending only for a pending Promise.
-pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
+pub fn execute_await(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    src: u16,
+) -> Result<(), VmError> {
     let value = super::read_register(registers, src)?;
     let value = crate::promise::promise_resolve(std::slice::from_ref(&value));
     match value {
@@ -346,7 +350,7 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
 }
 
 pub(crate) fn collect_call_arguments(
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     args: &[u16],
     spreads: &[bool],
 ) -> Result<Vec<Value>, VmError> {

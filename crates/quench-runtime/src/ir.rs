@@ -309,6 +309,15 @@ impl Instruction {
             c: key,
         }
     }
+    pub const fn array_set(object: Register, key: Register, src: Register, strict: bool) -> Self {
+        Self {
+            opcode: Opcode::ASetI,
+            flags: strict as u8,
+            a: object,
+            b: key,
+            c: src,
+        }
+    }
     pub const fn call_zero_args(dst: Register, callee: Register) -> Self {
         Self {
             opcode: Opcode::Call,
@@ -413,8 +422,14 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
             rhs,
         } => Some(Instruction::binary(Opcode::Div, *dst, *lhs, *rhs)),
         Op::GetPropertyDynamic { dst, object, key } => {
-            Some(Instruction::get_property(*dst, *object, *key))
+            Some(Instruction::binary(Opcode::AGetI, *dst, *object, *key))
         }
+        Op::SetPropertyDynamic {
+            object,
+            key,
+            src,
+            strict,
+        } => Some(Instruction::array_set(*object, *key, *src, *strict)),
         Op::Return { src } => Some(Instruction::ret(*src)),
         _ => None,
     }
@@ -666,7 +681,7 @@ impl Program {
     /// second semantic model; the Op VM remains the slow-path authority.
     pub fn execute(
         &self,
-        registers: &mut Vec<crate::value::Value>,
+        registers: &mut crate::register_file::RegisterFile,
     ) -> Result<crate::value::Value, crate::vm::VmError> {
         self.validate()
             .map_err(|message| crate::vm::VmError::EvalError(message.into()))?;
@@ -675,7 +690,6 @@ impl Program {
             let read = |id: Register| {
                 registers
                     .get(usize::from(id))
-                    .cloned()
                     .ok_or(crate::vm::VmError::RegisterOutOfBounds(id))
             };
             match instruction.opcode {
@@ -687,13 +701,13 @@ impl Program {
                         .ok_or(crate::vm::VmError::EvalError("missing constant".into()))?;
                     let dst = usize::from(instruction.a);
                     registers.resize(registers.len().max(dst + 1), crate::value::Value::Undefined);
-                    registers[dst] = (&value).into();
+                    registers.write(dst, (&value).into());
                 }
                 Opcode::Move => {
                     let value = read(instruction.b)?;
                     let dst = usize::from(instruction.a);
                     registers.resize(registers.len().max(dst + 1), crate::value::Value::Undefined);
-                    registers[dst] = value;
+                    registers.write(dst, value);
                 }
                 Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div | Opcode::AddConst => {
                     let left = read(instruction.b)?;
@@ -723,7 +737,7 @@ impl Program {
                     };
                     let dst = usize::from(instruction.a);
                     registers.resize(registers.len().max(dst + 1), crate::value::Value::Undefined);
-                    registers[dst] = crate::value::Value::Number(result);
+                    registers.write(dst, crate::value::Value::Number(result));
                 }
                 Opcode::Return => return read(instruction.a),
                 _ => {
@@ -747,7 +761,7 @@ mod tests {
         program.load_constant(1, Constant::Number(3.0));
         program.instructions.push(Instruction::add(2, 0, 1));
         program.instructions.push(Instruction::ret(2));
-        let mut registers = Vec::new();
+        let mut registers = crate::register_file::RegisterFile::new();
         assert_eq!(
             program.execute(&mut registers),
             Ok(crate::value::Value::Number(5.0))
@@ -813,6 +827,15 @@ mod tests {
                 rhs: 2
             }),
             Some(Instruction::binary(Opcode::Add, 3, 1, 2))
+        );
+        assert_eq!(
+            lower_compact(&Op::SetPropertyDynamic {
+                object: 4,
+                key: 5,
+                src: 6,
+                strict: true,
+            }),
+            Some(Instruction::array_set(4, 5, 6, true))
         );
         assert_eq!(
             lower_compact(&Op::Call {

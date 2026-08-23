@@ -147,7 +147,7 @@ fn reduce_dynamic_get(
     Some(dst)
 }
 pub(crate) fn execute_get_dynamic(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
     let Op::GetPropertyDynamic { dst, object, key } = op else {
@@ -161,7 +161,7 @@ pub(crate) fn execute_get_dynamic(
     Ok(())
 }
 pub(crate) fn execute_set_property(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
     let (object, key, src, strict) = set_property_parts(registers, op)?;
@@ -200,7 +200,7 @@ pub(crate) fn execute_set_property(
 }
 
 fn finish_set_property(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     object: u16,
     target: &crate::value::Value,
     key: &str,
@@ -278,7 +278,7 @@ fn inherits_error_prototype(target: &crate::value::Value) -> bool {
     }
 }
 fn set_property_parts(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(u16, String, u16, bool), crate::execute::VmError> {
     match op {
@@ -427,7 +427,7 @@ fn reject_nullish_property_write(
 include!("properties_function_name.rs");
 
 fn set_builtin_property(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     object: u16,
     target: &crate::value::Value,
     key: &str,
@@ -534,7 +534,7 @@ pub(crate) fn prevent_extensions(
     let result = mark_non_extensible(target);
     crate::locals::replace_value(target, &result);
     if crate::vm::is_global_object(target) {
-        let mut registers = Vec::new();
+        let mut registers = crate::register_file::RegisterFile::new();
         crate::vm::synchronize_global_object(&mut registers, target, &result);
     }
     Ok(result)

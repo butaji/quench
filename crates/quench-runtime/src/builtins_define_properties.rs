@@ -15,7 +15,7 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
     let Value::Array(keys) = keys else {
         return Ok(target);
     };
-    keys.iter().try_fold(target, |target, key| {
+    keys.snapshot().iter().try_fold(target, |target, key| {
         let key = crate::conversion::to_property_key(key)?;
         let Some(descriptor) = property_descriptor(&properties, &key)? else {
             return Ok(target);

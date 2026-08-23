@@ -1,5 +1,5 @@
 pub(crate) fn execute_copy_data_properties(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
     let Op::CopyDataProperties {
@@ -62,7 +62,7 @@ fn assign_property(
 }
 
 fn excluded_keys(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     excluded: &[u16],
 ) -> Result<Vec<String>, crate::execute::VmError> {
     excluded
@@ -106,7 +106,7 @@ fn key_strings(value: crate::value::Value) -> Result<Vec<String>, crate::execute
     let crate::value::Value::Array(keys) = value else {
         return Ok(Vec::new());
     };
-    keys.iter().map(dynamic_property_key).collect()
+    keys.snapshot().iter().map(dynamic_property_key).collect()
 }
 
 fn own_property_is_enumerable(
@@ -123,7 +123,7 @@ fn own_property_is_enumerable(
 }
 
 fn copy_data_property(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     target_register: u16,
     source: &crate::value::Value,
     key: &str,

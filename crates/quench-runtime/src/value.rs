@@ -1680,7 +1680,7 @@ mod array_growth_tests {
     #[test]
     fn dense_bounds_check_returns_only_in_range_values() {
         let array = ArrayData::new(vec![Value::Number(7.0)]);
-        assert_eq!(array.dense_value_at(0), Some(&Value::Number(7.0)));
+        assert_eq!(array.dense_value_at(0), Some(Value::Number(7.0)));
         assert_eq!(array.dense_value_at(1), None);
     }
     #[test]
@@ -1739,7 +1739,7 @@ mod array_growth_tests {
     fn dense_mutation_uses_checked_slot() {
         let mut array = ArrayData::new(vec![Value::Number(1.0)]);
         *array.dense_value_at_mut(0).expect("dense slot") = Value::Number(2.0);
-        assert_eq!(array.dense_value_at(0), Some(&Value::Number(2.0)));
+        assert_eq!(array.dense_value_at(0), Some(Value::Number(2.0)));
         assert!(array.dense_value_at_mut(1).is_none());
     }
     #[test]
@@ -1757,7 +1757,7 @@ mod array_growth_tests {
     #[test]
     fn last_dense_value_is_a_hot_tail_path() {
         let array = ArrayData::new(vec![Value::Number(1.0), Value::Number(2.0)]);
-        assert_eq!(array.last_dense_value(), Some(&Value::Number(2.0)));
+        assert_eq!(array.last_dense_value(), Some(Value::Number(2.0)));
     }
     #[test]
     fn dense_copy_supports_overlap_without_holes() {

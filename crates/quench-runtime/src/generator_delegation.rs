@@ -1,5 +1,5 @@
 pub(crate) fn execute_yield_star(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
     resume: crate::completion::Completion,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
@@ -21,7 +21,7 @@ pub(crate) fn execute_yield_star(
 }
 
 fn ongoing_delegation(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     result: crate::collections::iterator::DelegationResult,
 ) -> Result<crate::completion::Completion, VmError> {
@@ -33,7 +33,7 @@ fn ongoing_delegation(
     Ok(crate::completion::Completion::Yield(Value::Undefined))
 }
 
-fn delegation_record(registers: &mut Vec<Value>, source: u16, slot: u16) -> Result<Value, VmError> {
+fn delegation_record(registers: &mut crate::register_file::RegisterFile, source: u16, slot: u16) -> Result<Value, VmError> {
     let current = crate::execute::read_register(registers, slot)?;
     if !matches!(current, Value::Undefined) {
         return Ok(current);

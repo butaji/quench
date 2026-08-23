@@ -111,6 +111,7 @@ pub(crate) fn execute_construct(
         function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(function, this_value);
+    let mut registers = crate::register_file::RegisterFile::from_values(registers);
     let result = crate::vm::execute_code_in_environment(
         function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
         &mut registers,
