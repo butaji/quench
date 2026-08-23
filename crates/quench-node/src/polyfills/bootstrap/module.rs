@@ -133,6 +133,14 @@ const __quenchRequireFilename = (filename, pathApi) => {
   );
   return { isFileUrl, raw, isFileUrlObject };
 };
+const __quenchResolvePaths = (specifier, directory) => {
+  const value = String(specifier);
+  const builtin = value.replace(/^node:/, "");
+  if (__quenchBuiltinModules.includes(builtin)) return null;
+  const pathApi = __quenchOriginalRequireWithModule("path");
+  const base = directory === undefined ? process.cwd() : directory;
+  return nodeModulePaths(base);
+};
 const __quenchCreatedRequire = (directory, pathApi) => (specifier) => {
   const value = String(specifier);
   return value.startsWith(".")
@@ -201,6 +209,8 @@ const __quenchModule = {
       if (!value.startsWith(".") && !value.startsWith("/")) return value;
       return pathApi.resolve(directory, value);
     };
+    created.resolve.paths = (specifier) =>
+      __quenchResolvePaths(specifier, directory);
     return created;
   },
   isBuiltin: (name) =>
@@ -231,5 +241,7 @@ __quenchRequire.resolve = (specifier) => {
   error.code = "MODULE_NOT_FOUND";
   throw error;
 };
+__quenchRequire.resolve.paths = (specifier) =>
+  __quenchResolvePaths(specifier, process.cwd());
 globalThis.require = __quenchRequire;
 "#);
