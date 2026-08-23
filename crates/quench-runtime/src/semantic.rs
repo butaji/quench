@@ -76,6 +76,15 @@ fn analyze_with_context(
     context: EvalGrammarContext,
 ) -> Result<Analysis, Vec<String>> {
     crate::semantic_early::validate(program)?;
+    for statement in &program.body {
+        if matches!(
+            statement,
+            oxc::ast::ast::Statement::BreakStatement(_)
+                | oxc::ast::ast::Statement::ContinueStatement(_)
+        ) {
+            return Err(vec!["SyntaxError: break or continue outside of loop".into()]);
+        }
+    }
     let semantic = SemanticBuilder::new()
         .with_check_syntax_error(true)
         .build(program);
