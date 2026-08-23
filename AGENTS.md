@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repository implements Node-compatible APIs on rquickjs. Treat API shape,
+This repository implements Node-compatible APIs on JavaScript engine. Treat API shape,
 validation, errors, calling conventions, exports, and evidence as data. Generate
 repetitive Rust registration and JavaScript wrappers from that data; keep only
 irreducible behavior handwritten. Optimize for the minimum maintainable LOC.

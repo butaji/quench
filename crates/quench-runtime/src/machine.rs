@@ -11,10 +11,17 @@
 pub use crate::identity::{CodeId, CodeRange, EnvironmentRef, FrameId, PackedCompletion};
 use crate::{
     completion::Completion,
+    ir::ConstantKey,
     ops::{Constant, Op},
     value::Value,
 };
-use std::{rc::Rc, sync::OnceLock};
+use std::{collections::HashMap, rc::Rc, sync::OnceLock};
+
+// Code stores are isolate-local and never shared across runtime threads. The
+// OnceLock is retained only for the construction cycle: nested FunctionCode
+// values must point at their eventual immutable store before that store exists.
+// Replacing it with a lock-free RefCell would either expose a borrow across
+// `ops()`'s returned slice or require a second representation of the store.
 
 /// Immutable metadata kept beside executable instructions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,23 +41,45 @@ impl InstructionMeta {
     }
 }
 
-/// Per-code constant table. Instructions can use stable integer IDs when a
-/// lowering pass chooses pooled constants, while the legacy `Op::Const` form
-/// remains valid for generic paths.
+/// Per-code canonical constant table.
+///
+/// `values` owns one entry per [`ConstantKey`], and `ids` is the complete
+/// inverse index. IDs are assigned in first-use order and are never truncated:
+/// construction fails if the table cannot be represented by `u16` IDs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstantPool {
     values: Rc<[Constant]>,
+    ids: HashMap<ConstantKey, u16>,
 }
-
 impl ConstantPool {
-    pub fn new(values: Vec<Constant>) -> Self {
-        Self {
-            values: values.into(),
+    pub fn try_new(values: Vec<Constant>) -> Result<Self, &'static str> {
+        let mut canonical = Vec::with_capacity(values.len());
+        let mut ids = HashMap::with_capacity(values.len());
+        for value in values {
+            let key = ConstantKey::from(&value);
+            if ids.contains_key(&key) {
+                continue;
+            }
+            let id = u16::try_from(canonical.len()).map_err(|_| "constant pool exceeds u16 IDs")?;
+            canonical.push(value);
+            ids.insert(key, id);
         }
+        Ok(Self {
+            values: canonical.into(),
+            ids,
+        })
+    }
+
+    pub fn new(values: Vec<Constant>) -> Self {
+        Self::try_new(values).expect("constant pool exceeds u16 IDs")
     }
 
     pub fn empty() -> Self {
         Self::new(Vec::new())
+    }
+
+    pub fn id(&self, value: &Constant) -> Option<u16> {
+        self.ids.get(&ConstantKey::from(value)).copied()
     }
 
     pub fn get(&self, id: u16) -> Option<&Constant> {
@@ -69,8 +98,38 @@ impl ConstantPool {
 pub struct CodeArena {
     ops: Vec<Op>,
     ranges: Vec<(u32, u32)>,
+    metadata: Vec<Vec<InstructionMeta>>,
 }
 
+fn metadata_for(op: &Op) -> InstructionMeta {
+    let name = match op {
+        Op::CheckInitialized { name, .. }
+        | Op::DeclareEvalBinding { name, .. }
+        | Op::DeclareGlobalLexicalBinding { name, .. }
+        | Op::DeleteEvalBinding { name, .. }
+        | Op::DeleteName { name, .. }
+        | Op::CheckGlobalFunction { name }
+        | Op::CheckGlobalVar { name, .. }
+        | Op::CreateGlobalFunction { name, .. }
+        | Op::ResolveBindingTarget { name, .. }
+        | Op::InitializeResolvedBinding { name, .. }
+        | Op::SetResolvedLocalBinding { name, .. }
+        | Op::LoadResolvedLocalBinding { name, .. }
+        | Op::LoadBinding { name, .. } => Some(Rc::<str>::from(name.as_str())),
+        _ => None,
+    };
+    InstructionMeta {
+        source: None,
+        name,
+        flags: u16::from(matches!(op, Op::CheckInitialized { .. })),
+    }
+}
+
+/// Canonical register storage for the active frame.
+///
+/// `count` is the declared register width and `values.len()` is always exactly
+/// that width. `base` is the frame-local offset and is never used as a second
+/// copy of register contents.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegisterWindow {
     pub base: u32,
@@ -93,6 +152,10 @@ impl RegisterWindow {
             count,
             values: vec![Value::Undefined; usize::from(count)],
         }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.values.len() == usize::from(self.count)
     }
 }
 
@@ -222,33 +285,37 @@ impl FrameStack {
     pub fn frame_at(&self, offset: u16) -> Option<&Frame> {
         self.frames.get(usize::from(offset))
     }
+    /// Mutably access a frame by its stable stack offset.
+    #[inline]
+    pub fn frame_at_mut(&mut self, offset: u16) -> Option<&mut Frame> {
+        self.frames.get_mut(usize::from(offset))
+    }
 }
 
 impl CodeArena {
     pub fn new() -> Self {
         Self::default()
     }
-
-    pub fn append(&mut self, body: Vec<Op>) -> CodeRange {
-        self.append_slice(&body)
-    }
-
     fn append_tree(&mut self, mut body: Vec<Op>, store: &Rc<OnceLock<Rc<CodeStore>>>) -> CodeRange {
         for op in &mut body {
             op.rehome_bodies(self, store);
         }
         self.append(body)
     }
-
     pub fn append_slice(&mut self, body: &[Op]) -> CodeRange {
         let nested = body.iter().map(Op::body_count).sum::<usize>();
         self.ranges.reserve(nested.saturating_add(1));
         let code = CodeId(self.ranges.len() as u32);
         let start = self.ops.len() as u32;
         self.ops.extend_from_slice(body);
+        self.metadata.push(body.iter().map(metadata_for).collect());
         let end = self.ops.len() as u32;
         self.ranges.push((start, end));
         CodeRange { code, start, end }
+    }
+
+    pub fn append(&mut self, body: Vec<Op>) -> CodeRange {
+        self.append_slice(&body)
     }
 
     pub fn append_function(&mut self, function: &FunctionCode) -> Option<CodeRange> {
@@ -261,20 +328,17 @@ impl CodeArena {
         (range.start >= start && range.end <= end)
             .then(|| &self.ops[range.start as usize..range.end as usize])
     }
-    /// Build the compact pool used by lowering and diagnostics.
     pub fn constant_pool(&self, range: CodeRange) -> ConstantPool {
-        let mut values = Vec::new();
-        if let Some(ops) = self.get(range) {
-            for op in ops {
-                let Op::Const { value, .. } = op else {
-                    continue;
-                };
-                if !values.iter().any(|item| item == value) {
-                    values.push(value.clone());
-                }
-            }
-        }
-        ConstantPool::new(values)
+        ConstantPool::new(
+            self.get(range)
+                .into_iter()
+                .flat_map(|ops| ops.iter())
+                .filter_map(|op| match op {
+                    Op::Const { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
+                .collect(),
+        )
     }
 
     pub fn len(&self) -> usize {
@@ -289,6 +353,7 @@ impl CodeArena {
         Rc::new(CodeStore {
             ops: self.ops.into_boxed_slice().into(),
             ranges: self.ranges.into_boxed_slice().into(),
+            metadata: self.metadata.into_boxed_slice().into(),
         })
     }
 }
@@ -297,6 +362,7 @@ impl CodeArena {
 pub struct CodeStore {
     ops: Rc<[Op]>,
     ranges: Rc<[(u32, u32)]>,
+    metadata: Rc<[Vec<InstructionMeta>]>,
 }
 
 impl CodeStore {
@@ -304,6 +370,10 @@ impl CodeStore {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
         (range.start >= start && range.end <= end)
             .then(|| &self.ops[range.start as usize..range.end as usize])
+    }
+    /// Rare metadata lives out of line from hot instructions.
+    pub fn metadata(&self, range: CodeRange) -> Option<&[InstructionMeta]> {
+        self.metadata.get(range.code.0 as usize).map(Vec::as_slice)
     }
     /// Build the compact pool used by lowering and diagnostics.
     pub fn constant_pool(&self, range: CodeRange) -> ConstantPool {
@@ -517,6 +587,8 @@ pub struct Machine {
     environment_data: Option<Rc<crate::environment::Environment>>,
     pub(crate) completion: Completion,
     pub(crate) frames: FrameStack,
+    /// Suspended callers waiting for a non-tail call to complete.
+    pub(crate) call_frames: Vec<crate::completion::CallContinuation>,
 }
 
 impl Machine {
@@ -530,9 +602,9 @@ impl Machine {
             environment_data: None,
             completion: Completion::Normal,
             frames: FrameStack::new(),
+            call_frames: Vec::new(),
         }
     }
-
     pub fn with_function(
         function: &FunctionCode,
         environment: EnvironmentRef,
@@ -600,11 +672,73 @@ impl Machine {
     }
 
     pub fn pop_await_frame(&mut self) -> bool {
-        if !matches!(self.frames.frames.last(), Some(Frame::Await { .. })) {
+        let Some(offset) = self.frames.top_offset() else {
+            return false;
+        };
+        if !matches!(self.frames.frame_at(offset), Some(Frame::Await { .. })) {
             return false;
         }
         self.frames.pop();
         true
+    }
+
+    /// Capture the active caller state at an ordinary call boundary.
+    ///
+    /// The register window is moved (rather than cloned) so a callee can use
+    /// the machine's storage directly.  The immutable caller code is retained
+    /// by the continuation for the dispatch loop to resume.
+    pub(crate) fn suspend_call(
+        &mut self,
+        callee: Value,
+        receiver: Value,
+        arguments: Vec<Value>,
+        destination: u16,
+        guards: crate::completion::ContinuationGuards,
+    ) {
+        let caller_ops = self
+            .store
+            .as_ref()
+            .and_then(|store| store.get(self.code_range()))
+            .map(Rc::from)
+            .unwrap_or_else(|| Rc::from([]));
+        let continuation = crate::completion::CallContinuation {
+            callee,
+            receiver,
+            arguments,
+            caller_ops,
+            caller_pc: self.pc,
+            caller_registers: self.take_registers(),
+            caller_environment: self.environment,
+            destination,
+            guards,
+        };
+        self.push_call_frame(continuation);
+        self.environment_data = None;
+    }
+
+    /// Restore the most recently suspended caller and deliver its result.
+    pub(crate) fn resume_call(
+        &mut self,
+        value: Value,
+    ) -> Option<crate::completion::CallContinuation> {
+        let continuation = self.pop_call_frame()?;
+        self.restore_registers(continuation.caller_registers.clone());
+        self.environment = continuation.caller_environment;
+        self.pc = continuation.caller_pc;
+        self.environment_data = None;
+        crate::execute::write_value(&mut self.registers.values, continuation.destination, value);
+        Some(continuation)
+    }
+    /// Save a caller continuation while a non-tail call executes.
+    #[inline]
+    pub(crate) fn push_call_frame(&mut self, frame: crate::completion::CallContinuation) {
+        self.call_frames.push(frame);
+    }
+
+    /// Resume the most recently suspended caller.
+    #[inline]
+    pub(crate) fn pop_call_frame(&mut self) -> Option<crate::completion::CallContinuation> {
+        self.call_frames.pop()
     }
 
     pub fn frame_count(&self) -> u16 {
@@ -636,14 +770,57 @@ impl Machine {
     }
 
     pub(crate) fn restore_registers(&mut self, registers: Vec<Value>) {
+        let count = u16::try_from(registers.len()).expect("register window exceeds u16 capacity");
+        self.registers.count = count;
         self.registers.values = registers;
     }
 
     pub fn iterator_phase(&self) -> Option<&IteratorPhase> {
-        let Some(Frame::Iterator { phase, .. }) = self.frames.frames.last() else {
+        let offset = self.frames.top_offset()?;
+        let Some(Frame::Iterator { phase, .. }) = self.frames.frame_at(offset) else {
             return None;
         };
         Some(phase)
+    }
+    /// The active frame is represented only by the top frame-stack offset.
+    /// `None` is the canonical no-frame state; callers must not retain a
+    /// frame reference across a push or pop.
+    pub fn current_frame(&self) -> Option<&Frame> {
+        self.frames
+            .top_offset()
+            .and_then(|offset| self.frames.frame_at(offset))
+    }
+
+    /// Constants are canonicalized from the immutable code store; no mutable
+    /// per-machine copy exists.
+    pub fn constants(&self) -> Option<ConstantPool> {
+        self.store
+            .as_ref()
+            .map(|store| store.constant_pool(self.code_range()))
+    }
+
+    fn code_range(&self) -> CodeRange {
+        CodeRange::new(
+            self.code,
+            0,
+            self.store
+                .as_ref()
+                .and_then(|s| s.range_len(self.code))
+                .unwrap_or(0),
+        )
+        .expect("machine code range must be ordered")
+    }
+
+    /// Checks the state invariants at VM transition boundaries.
+    pub fn state_is_valid(&self) -> bool {
+        self.registers.is_valid()
+            && self.current_frame().is_some() == (self.frame_count() != 0)
+            && self.pc
+                <= self
+                    .store
+                    .as_ref()
+                    .and_then(|s| s.range_len(self.code))
+                    .unwrap_or(u32::MAX)
     }
     /// Borrow the contiguous register storage used by the active frame.
     #[inline]
@@ -658,7 +835,10 @@ impl Machine {
     }
 
     pub(crate) fn set_iterator_phase(&mut self, next: IteratorPhase) -> bool {
-        let Some(Frame::Iterator { phase, .. }) = self.frames.frames.last_mut() else {
+        let Some(offset) = self.frames.top_offset() else {
+            return false;
+        };
+        let Some(Frame::Iterator { phase, .. }) = self.frames.frame_at_mut(offset) else {
             return false;
         };
         *phase = next;
@@ -666,14 +846,20 @@ impl Machine {
     }
 
     pub(crate) fn advance_frame_resume(&mut self, resume: CodeRange, yield_dst: u16) -> bool {
-        let Some(frame) = self.frames.frames.last_mut() else {
+        let Some(offset) = self.frames.top_offset() else {
+            return false;
+        };
+        let Some(frame) = self.frames.frame_at_mut(offset) else {
             return false;
         };
         frame.advance_resume(resume, yield_dst)
     }
 
     pub(crate) fn set_try_finally_resume(&mut self, resume: CodeRange, yield_dst: u16) -> bool {
-        let Some(frame) = self.frames.frames.last_mut() else {
+        let Some(offset) = self.frames.top_offset() else {
+            return false;
+        };
+        let Some(frame) = self.frames.frame_at_mut(offset) else {
             return false;
         };
         frame.set_finally_resume(resume, yield_dst)
@@ -685,6 +871,7 @@ mod tests {
     use super::{EnvironmentRef, FrameStack, Machine, RegisterWindow};
     use crate::completion::{Completion, TailCallRequest};
     use crate::value::Value;
+    use std::rc::Rc;
 
     #[test]
     fn code_ranges_validate_and_measure_offsets() {
@@ -706,6 +893,47 @@ mod tests {
         let invalid = super::CodeRange::new(range.code, 0, 2).unwrap();
         assert!(store.get(invalid).is_none());
     }
+    #[test]
+    fn frozen_code_store_owns_metadata_after_builder_drop() {
+        let (store, range) = {
+            let mut arena = super::CodeArena::new();
+            let range = arena.append_slice(&[super::Op::CheckInitialized {
+                slot: 1,
+                name: "owned_name".to_string(),
+            }]);
+            (arena.freeze(), range)
+        };
+        let metadata = store.metadata(range).expect("metadata remains live");
+        assert_eq!(metadata[0].name.as_deref(), Some("owned_name"));
+        assert_eq!(Rc::strong_count(&store), 1);
+    }
+
+    #[test]
+    fn constant_pool_clones_share_immutable_values() {
+        let pool = super::ConstantPool::new(vec![super::Constant::String("stable".into())]);
+        let clone = pool.clone();
+        assert!(Rc::ptr_eq(&pool.values, &clone.values));
+        assert_eq!(clone.id(&super::Constant::String("stable".into())), Some(0));
+        assert_eq!(clone.get(0), pool.get(0));
+    }
+    #[test]
+    fn check_initialized_metadata_is_out_of_line() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::CheckInitialized {
+            slot: 3,
+            name: "temporal_name".to_string(),
+        }]);
+        let store = arena.freeze();
+
+        let instructions = store.get(range).expect("code range must resolve");
+        assert_eq!(instructions.len(), 1);
+        assert_eq!(store.range_len(range.code), Some(1));
+
+        let metadata = store.metadata(range).expect("metadata must resolve");
+        assert_eq!(metadata.len(), instructions.len());
+        assert_eq!(metadata[0].name.as_deref(), Some("temporal_name"));
+        assert_eq!(metadata[0].flags, 1);
+    }
 
     #[test]
     fn machine_exposes_flat_execution_state() {
@@ -714,6 +942,22 @@ mod tests {
         assert_eq!(machine.program_counter(), 0);
         assert_eq!(machine.register_count(), 5);
         assert_eq!(machine.frame_count(), 0);
+    }
+    #[test]
+    fn machine_state_has_one_canonical_view() {
+        let machine = Machine::with_register_count(super::CodeId(7), EnvironmentRef(3), 5);
+        assert_eq!(machine.program_counter(), 0);
+        assert_eq!(machine.register_count(), 5);
+        assert!(machine.current_frame().is_none());
+        assert!(machine.constants().is_none());
+        assert!(machine.state_is_valid());
+    }
+    #[test]
+    fn restoring_registers_preserves_width_invariant() {
+        let mut machine = Machine::with_register_count(super::CodeId(7), EnvironmentRef(3), 5);
+        machine.restore_registers(vec![Value::Undefined; 2]);
+        assert_eq!(machine.register_count(), 2);
+        assert!(machine.state_is_valid());
     }
     #[test]
     fn tail_calls_reuse_one_machine_dispatch_loop() {
@@ -737,16 +981,6 @@ mod tests {
     }
 
     #[test]
-    fn machine_exposes_direct_pc_and_register_storage() {
-        let mut machine = Machine::with_register_count(super::CodeId(1), EnvironmentRef(0), 2);
-        machine.set_program_counter(9);
-        machine.registers_mut()[0] = Value::Number(3.0);
-        assert_eq!(machine.program_counter(), 9);
-        assert_eq!(machine.register_count(), 2);
-        assert_eq!(machine.take_registers()[0], Value::Number(3.0));
-    }
-
-    #[test]
     fn frame_offsets_track_contiguous_storage() {
         let mut stack = FrameStack::with_capacity(2);
         let range = super::CodeRange::new(super::CodeId(0), 0, 1).unwrap();
@@ -760,6 +994,43 @@ mod tests {
             .unwrap();
         assert_eq!(stack.top_offset(), Some(0));
         assert!(stack.frame_at(0).is_some());
+        assert!(stack.frame_at_mut(0).is_some());
+        assert_eq!(stack.top_offset(), Some(0));
+    }
+    #[test]
+    fn frame_stack_grows_geometrically_without_crossing_limit() {
+        let mut stack = FrameStack::with_capacity_and_limit(1, 5);
+        assert_eq!(stack.capacity(), 1);
+        assert!(stack.try_reserve_for(4));
+        assert_eq!(stack.capacity(), 4);
+        assert_eq!(stack.remaining(), 5);
+        let range = super::CodeRange::new(super::CodeId(0), 0, 1).unwrap();
+        for _ in 0..5 {
+            stack
+                .try_push(super::Frame::Await {
+                    phase: 0,
+                    resume: range,
+                })
+                .unwrap();
+        }
+        assert_eq!(stack.depth(), 5);
+        assert!(stack.capacity() >= 5);
+        assert_eq!(stack.remaining(), 0);
+        let rejected = stack.try_push(super::Frame::Await {
+            phase: 0,
+            resume: range,
+        });
+        assert!(rejected.is_err());
+        assert_eq!(stack.depth(), 5);
+        assert!(stack.capacity() >= 5);
+    }
+
+    #[test]
+    fn frame_stack_rejects_reservation_before_allocating_past_limit() {
+        let mut stack = FrameStack::with_capacity_and_limit(2, 3);
+        assert!(!stack.try_reserve_for(4));
+        assert_eq!(stack.capacity(), 2);
+        assert_eq!(stack.remaining(), 3);
     }
 
     include!("machine_tests.rs");

@@ -1,25 +1,7 @@
-use std::cell::RefCell;
+use oxc::ast::ast::IdentifierReference;
 use std::collections::HashMap;
 
-use oxc::ast::ast::IdentifierReference;
-
 use crate::{facts::ProgramDb, globals, ops::Op};
-
-thread_local! {
-    static IDENTIFIERS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
-}
-
-fn intern_identifier(name: &str) -> String {
-    IDENTIFIERS.with(|table| {
-        let mut table = table.borrow_mut();
-        if let Some(existing) = table.get(name) {
-            return existing.clone();
-        }
-        let owned = name.to_owned();
-        table.insert(owned.clone(), owned.clone());
-        owned
-    })
-}
 
 pub(crate) fn reduce(
     identifier: &IdentifierReference<'_>,
@@ -36,7 +18,7 @@ pub(crate) fn reduce(
     if let Some(register) = reduce_local(identifier, ops, facts, next_register, locals) {
         return Some(register);
     }
-    resolve_name(identifier, ops, next_register)
+    resolve_name(identifier, ops, facts, next_register)
 }
 
 fn reduce_global(
@@ -52,17 +34,18 @@ fn reduce_global(
 fn reduce_local(
     identifier: &IdentifierReference<'_>,
     ops: &mut Vec<Op>,
-    facts: &ProgramDb,
+    facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let slot = *locals.get(identifier.name.as_str())?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
+    let name = interned_name(facts, identifier.name.as_str());
     ops.push(Op::LoadBinding {
         dst: register,
         slot,
-        name: intern_identifier(identifier.name.as_str()),
+        name,
         dynamic: facts.in_function && slot < facts.eval_var_scope_start,
     });
     Some(register)
@@ -71,29 +54,53 @@ fn reduce_local(
 fn resolve_name(
     identifier: &IdentifierReference<'_>,
     ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
     next_register: &mut u16,
 ) -> Option<u16> {
     let dst = allocate_register(next_register);
-    ops.push(Op::ResolveName {
-        dst,
-        key: intern_identifier(identifier.name.as_str()),
-    });
+    let key = interned_name(facts, identifier.name.as_str());
+    ops.push(Op::ResolveName { dst, key });
     Some(dst)
+}
+
+fn interned_name(facts: &mut ProgramDb, name: &str) -> String {
+    let id = facts.identifier_names.intern(name);
+    facts
+        .identifier_names
+        .resolve(id)
+        .expect("newly interned identifier")
+        .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interner_reuses_ids_and_preserves_content() {
+        let mut table = crate::facts::IdentifierInterner::default();
+        let first = table.intern("alpha");
+        assert_eq!(table.intern("alpha"), first);
+        let other = table.intern("beta");
+        assert_ne!(first, other);
+        assert_eq!(table.resolve(first), Some("alpha"));
+        assert_eq!(table.resolve(other), Some("beta"));
+        assert_eq!(table.resolve(u32::MAX), None);
+    }
+
+    #[test]
+    fn separate_program_databases_do_not_share_identifier_ids() {
+        let mut left = ProgramDb::default();
+        let mut right = ProgramDb::default();
+        assert_eq!(left.identifier_names.intern("same"), 0);
+        assert_eq!(right.identifier_names.intern("same"), 0);
+        assert_eq!(left.identifier_names.resolve(0), Some("same"));
+        assert_eq!(right.identifier_names.resolve(0), Some("same"));
+    }
 }
 
 fn allocate_register(next_register: &mut u16) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     register
-}
-
-#[cfg(test)]
-mod tests {
-    use super::intern_identifier;
-
-    #[test]
-    fn identifier_interning_preserves_name_content() {
-        assert_eq!(intern_identifier("alpha"), "alpha");
-        assert_eq!(intern_identifier("alpha"), "alpha");
-    }
 }

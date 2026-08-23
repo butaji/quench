@@ -1,4 +1,26 @@
 /// Shared byte storage for ArrayBuffer and typed-array views.
+///
+/// The byte vector is the canonical native-owned allocation. `external_bytes`
+/// reports the current allocation size for isolate accounting; callers charge
+/// once when they create an owner and release the same value when that owner
+/// is destroyed. Detaching transfers ownership of zero bytes to this object
+/// (the vector is cleared), while `Rc` clones keep the allocation alive until
+/// the final owner is dropped. The accounting source is therefore the vector,
+/// never a copied length cached in an arena slot.
+///
+/// This is an explicit non-moving ownership boundary: an arena slot may hold
+/// an `Rc<ArrayBufferData>`, but it is only a handle and never owns, traverses,
+/// or relocates the byte allocation. Slot reuse, collection, and any future
+/// compaction must preserve this distinction; moving the handle cannot move
+/// the native allocation. The only invalid state is a detached buffer, whose
+/// canonical vector is empty and whose `external_bytes()` is zero.
+///
+/// The heap is currently non-moving and has no compaction/pinning API.
+/// `bytes` is therefore the canonical native-owned backing store: ArrayBuffer
+/// values and views retain it through `Rc`, while arena slot reuse cannot move
+/// or invalidate the allocation. Heap external-byte accounting, when used,
+/// describes this storage but does not own or traverse it; the final `Rc` owner
+/// releases it through normal Rust destruction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayBufferData {
     pub shared: bool,
@@ -51,6 +73,14 @@ impl ArrayBufferData {
         let mut buffer = Self::new(byte_length);
         buffer.max_byte_length = Some(max_byte_length);
         buffer
+    }
+    /// Current native backing-store size to charge to isolate accounting.
+    ///
+    /// This deliberately aliases `byte_length`: detached buffers and resized
+    /// buffers cannot leave stale external-byte charges behind.
+    #[inline]
+    pub fn external_bytes(&self) -> usize {
+        self.byte_length()
     }
 
     pub fn byte_length(&self) -> usize {
@@ -481,9 +511,54 @@ fn f64_to_half(value: f64) -> u16 {
     }
     let half_exponent = (unbiased + 15) as u16;
     if significand == 0x0400 {
-        return sign | ((half_exponent + 1) << 10);
+        significand = 0;
+        let half_exponent = half_exponent + 1;
+        if half_exponent >= 0x1f {
+            return sign | 0x7c00;
+        }
+        return sign | (half_exponent << 10);
     }
     sign | (half_exponent << 10) | significand
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ArrayBufferData;
+    use crate::heap::{HeapArena, LifetimeDomain, RootRegistry};
+    use crate::value::Value;
+    use std::rc::Rc;
+
+    #[test]
+    fn external_bytes_follow_detach_resize_and_transfer_lifecycle() {
+        let buffer = ArrayBufferData::new_resizable(4, 8);
+        assert_eq!(buffer.external_bytes(), 4);
+        buffer.resize(7).unwrap();
+        assert_eq!(buffer.external_bytes(), 7);
+        buffer.detach();
+        assert_eq!(buffer.external_bytes(), 0);
+
+        let source = ArrayBufferData::new(3);
+        let immutable = source.transfer_to_immutable();
+        assert_eq!(source.external_bytes(), 0);
+        assert_eq!(immutable.external_bytes(), 3);
+    }
+
+    #[test]
+    fn native_backing_survives_arena_slot_reuse() {
+        let buffer = Rc::new(ArrayBufferData::new(4));
+        let bytes_ptr = Rc::as_ptr(&buffer.bytes);
+        let mut arena = HeapArena::new();
+        let slot = arena.allocate(Value::ArrayBuffer(Rc::clone(&buffer)));
+        let mut roots = RootRegistry::new();
+        roots.add(LifetimeDomain::Request, slot);
+        assert_eq!(arena.collect_unrooted(&roots), 0);
+        roots.clear(LifetimeDomain::Request);
+        assert_eq!(arena.collect_unrooted(&roots), 1);
+        let reused = arena.allocate(Value::Number(1.0));
+        assert_eq!(slot, reused);
+        assert_eq!(Rc::as_ptr(&buffer.bytes), bytes_ptr);
+        assert_eq!(buffer.external_bytes(), 4);
+    }
 }
 
 include!("value_buffer_half.rs");

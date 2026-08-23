@@ -12,24 +12,118 @@ pub fn execute_call(
     receiver: Option<u16>,
     args: &[u16],
     spreads: &[bool],
-) -> Result<(), VmError> {
+) -> Result<crate::completion::Completion, VmError> {
     let arguments = collect_call_arguments(registers, args, spreads)?;
     let callee_value = super::read_register(registers, callee)?;
-    let value = match receiver {
-        Some(receiver) => {
-            let this_value = super::read_register(registers, receiver)?;
-            invoke_with_receiver(&callee_value, &this_value, &arguments)?
-        }
-        None => match crate::with_scope::receiver_for_callable(&callee_value) {
-            Some(this_value) => invoke_with_receiver(&callee_value, &this_value, &arguments)?,
-            None => invoke_callee(&callee_value, &arguments)?,
-        },
+    let receiver_value = match receiver {
+        Some(receiver) => super::read_register(registers, receiver)?,
+        None => crate::with_scope::receiver_for_callable(&callee_value).unwrap_or(Value::Undefined),
     };
-    propagate_object_mutation(registers, &callee_value, args, &arguments, &value);
-    super::write_value(registers, dst, value);
-    Ok(())
+    Ok(crate::completion::Completion::Call(
+        crate::completion::CallContinuation {
+            callee: callee_value,
+            receiver: receiver_value,
+            arguments,
+            caller_ops: std::rc::Rc::from([]),
+            caller_pc: 0,
+            caller_registers: std::mem::take(registers),
+            caller_environment: crate::identity::EnvironmentRef(0),
+            destination: dst,
+            guards: crate::completion::ContinuationGuards::default(),
+        },
+    ))
 }
 
+pub fn execute_call_continuation(
+    registers: &mut Vec<Value>,
+    continuation: crate::completion::CallContinuation,
+) -> Result<(), VmError> {
+    struct ActiveCall {
+        continuation: crate::completion::CallContinuation,
+        ops: std::rc::Rc<[crate::ops::Op]>,
+        registers: Vec<Value>,
+        environment: std::rc::Rc<crate::environment::Environment>,
+        pc: usize,
+    }
+    fn start(
+        continuation: crate::completion::CallContinuation,
+    ) -> Result<Option<ActiveCall>, VmError> {
+        let Value::Function(function) = &continuation.callee else {
+            return Ok(None);
+        };
+        let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
+        let (callee_registers, environment) =
+            crate::functions::build_registers(function, &receiver, &continuation.arguments);
+        Ok(Some(ActiveCall {
+            ops: std::rc::Rc::from(function.ops()),
+            continuation,
+            registers: callee_registers,
+            environment,
+            pc: 0,
+        }))
+    }
+    let mut stack = Vec::new();
+    let mut current = match start(continuation.clone())? {
+        Some(active) => active,
+        None => {
+            let value = invoke_with_receiver(
+                &continuation.callee,
+                &continuation.receiver,
+                &continuation.arguments,
+            )?;
+            *registers = continuation.caller_registers;
+            super::write_value(registers, continuation.destination, value);
+            return Ok(());
+        }
+    };
+    let context = crate::vm::current_context_or_default();
+    let value = loop {
+        let (completion, next) = crate::vm::execute_ops_from(
+            &current.ops,
+            current.pc,
+            &mut current.registers,
+            &context,
+            current.environment.clone(),
+        )?;
+        current.pc = next;
+        let result = match completion {
+            crate::completion::Completion::Normal => Some(Value::Undefined),
+            crate::completion::Completion::Return(value) => Some(value),
+            crate::completion::Completion::Call(nested) => {
+                stack.push(current);
+                current = match start(nested.clone())? {
+                    Some(active) => active,
+                    None => {
+                        let value = invoke_with_receiver(
+                            &nested.callee,
+                            &nested.receiver,
+                            &nested.arguments,
+                        )?;
+                        let mut parent = stack.pop().expect("caller frame just pushed");
+                        super::write_value(&mut parent.registers, nested.destination, value);
+                        parent
+                    }
+                };
+                None
+            }
+            other => Some(crate::vm::completion_result(other)?),
+        };
+        let Some(value) = result else { continue };
+        if let Some(mut parent) = stack.pop() {
+            super::write_value(
+                &mut parent.registers,
+                current.continuation.destination,
+                value,
+            );
+            current = parent;
+        } else {
+            break value;
+        }
+    };
+    *registers = current.continuation.caller_registers;
+    super::write_value(registers, current.continuation.destination, value);
+    Ok(())
+}
 pub fn execute_optional_call(
     registers: &mut Vec<Value>,
     dst: u16,

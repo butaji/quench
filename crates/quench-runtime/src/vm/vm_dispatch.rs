@@ -1,12 +1,43 @@
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DispatchClass {
+    Call,
+    Global,
+    Simple,
+    Control,
+    Host,
+}
+const _: () = assert!(std::mem::size_of::<DispatchClass>() <= 1);
+
+
+/// Keep the inline entry point limited to classification and handoff.
+/// Semantic decoding stays in the independently measurable handlers below.
+#[inline(always)]
+fn classify_dispatch(op: &Op) -> DispatchClass {
+    if matches!(op, Op::Call { .. }) {
+        DispatchClass::Call
+    } else if is_global_declaration_op(op) {
+        DispatchClass::Global
+    } else {
+        // The existing handlers remain authoritative; this classification is
+        // deliberately conservative and avoids duplicating their opcode sets.
+        DispatchClass::Host
+    }
+}
+
+#[inline(always)]
 fn run_op(
     registers: &mut Vec<Value>,
     op: &Op,
     _context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
-    if is_global_declaration_op(op) {
-        crate::vm::begin_global_declaration_batch();
-    } else if crate::vm::is_global_declaration_batch_active() {
-        crate::vm::flush_global_declaration_batch(registers);
+    match classify_dispatch(op) {
+        DispatchClass::Call => return run_call_completion(registers, op).map(Some),
+        DispatchClass::Global => crate::vm::begin_global_declaration_batch(),
+        DispatchClass::Simple | DispatchClass::Control | DispatchClass::Host => {
+            if crate::vm::is_global_declaration_batch_active() {
+                crate::vm::flush_global_declaration_batch(registers);
+            }
+        }
     }
     if let Some(result) = run_simple_op(registers, op)? {
         return Ok(result.map(crate::completion::Completion::Return));
@@ -15,6 +46,29 @@ fn run_op(
         return Ok(Some(result));
     }
     run_dispatch_op(registers, op).map(|value| value.map(crate::completion::Completion::Return))
+}
+
+#[cold]
+#[inline(never)]
+fn malformed_call_completion() -> crate::completion::Completion {
+    crate::completion::Completion::Normal
+}
+
+fn run_call_completion(
+    registers: &mut Vec<Value>,
+    op: &Op,
+) -> Result<crate::completion::Completion, VmError> {
+    let Op::Call {
+        dst,
+        callee,
+        receiver,
+        args,
+        spreads,
+    } = op
+    else {
+        return Ok(malformed_call_completion());
+    };
+    vm_ops::execute_call(registers, *dst, *callee, *receiver, args, spreads)
 }
 
 include!("run_simple_op.rs");
@@ -148,8 +202,9 @@ fn run_control_op(
         StaticBlock { .. } => crate::classes::execute_static_block(registers, op).map(Some),
         Try { .. } => crate::exceptions::execute(registers, op).map(Some),
         WithDispose { .. } => crate::using_scope::execute(registers, op).map(Some),
-        IteratorBinding { .. } => crate::collections::iterator::execute_binding(registers, op)
-            .map(Some),
+        IteratorBinding { .. } => {
+            crate::collections::iterator::execute_binding(registers, op).map(Some)
+        }
         Loop { .. } => crate::loops::execute(registers, op).map(Some),
         Eval { .. } => run_eval_completion(registers, op),
         Switch { .. } => crate::switch::execute(registers, op).map(Some),
@@ -195,9 +250,7 @@ fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>,
         CallMethod { .. }
         | CallSuperMethod { .. }
         | CallSuperConstructor { .. }
-        | Construct { .. } => {
-            run_method_or_construct(registers, op)?
-        }
+        | Construct { .. } => run_method_or_construct(registers, op)?,
         _ => {}
     }
     Ok(None)
@@ -236,10 +289,7 @@ fn run_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     Ok(())
 }
 
-fn run_tail_call(
-    registers: &[Value],
-    op: &Op,
-) -> Result<crate::completion::Completion, VmError> {
+fn run_tail_call(registers: &[Value], op: &Op) -> Result<crate::completion::Completion, VmError> {
     let Op::TailCall {
         callee,
         args,
@@ -287,26 +337,41 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
         OptionalGet { .. } => crate::properties::execute_optional_get(registers, op)?,
-        OptionalGetPrivate { .. } => crate::properties::execute_optional_get_private(registers, op)?,
-        OptionalGetDynamic { .. } => crate::properties::execute_optional_get_dynamic(registers, op)?,
+        OptionalGetPrivate { .. } => {
+            crate::properties::execute_optional_get_private(registers, op)?
+        }
+        OptionalGetDynamic { .. } => {
+            crate::properties::execute_optional_get_dynamic(registers, op)?
+        }
         GetPrivate { .. } => crate::private_slots::execute_get(registers, op)?,
-        GetSuperProperty { .. } | GetSuperPropertyDynamic { .. } => crate::super_scope::execute_get(registers, op)?,
+        GetSuperProperty { .. } | GetSuperPropertyDynamic { .. } => {
+            crate::super_scope::execute_get(registers, op)?
+        }
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
         HasPrivate { .. } => crate::with_scope::execute_has_private(registers, op)?,
-        ResolveName { .. } | SetName { .. } | SetResolvedBinding { .. } | CheckStrictName { .. } => {
-            run_name_property(registers, op)?
-        }
+        ResolveName { .. }
+        | SetName { .. }
+        | SetResolvedBinding { .. }
+        | CheckStrictName { .. } => run_name_property(registers, op)?,
         SetFunctionName { .. } => crate::properties::execute_set_function_name(registers, op)?,
-        SetFunctionNameDynamic { .. } => crate::properties::execute_set_function_name_dynamic(registers, op)?,
-        ResolveNameOrUndefined { dst, name } => {
-            write_value(registers, *dst, crate::locals::resolve_name_or_undefined(name)?)
+        SetFunctionNameDynamic { .. } => {
+            crate::properties::execute_set_function_name_dynamic(registers, op)?
         }
+        ResolveNameOrUndefined { dst, name } => write_value(
+            registers,
+            *dst,
+            crate::locals::resolve_name_or_undefined(name)?,
+        ),
         ToPropertyKey { dst, src } => to_property_key(registers, *dst, *src)?,
-        SetProperty { .. } | SetPropertyDynamic { .. } => crate::properties::execute_set_property(registers, op)?,
+        SetProperty { .. } | SetPropertyDynamic { .. } => {
+            crate::properties::execute_set_property(registers, op)?
+        }
         SetPrototype { .. } => crate::properties::execute_set_prototype(registers, op)?,
-        SetSuperProperty { .. } | SetSuperPropertyDynamic { .. } => crate::super_scope::execute_set(registers, op)?,
+        SetSuperProperty { .. } | SetSuperPropertyDynamic { .. } => {
+            crate::super_scope::execute_set(registers, op)?
+        }
         SetPrivate { .. } => crate::private_slots::execute_set(registers, op)?,
         DefinePrivate { .. } => crate::private_slots::execute_define(registers, op)?,
         DefineProperty { .. } => crate::property_define::execute(registers, op)?,
@@ -352,6 +417,8 @@ fn run_conditional(
     crate::conditional::execute(registers, op)
 }
 
+#[cold]
+#[inline(never)]
 fn render_thrown(value: &Value) -> String {
     if let Value::Object(properties) = value {
         let name = property_string(properties, "name");
@@ -367,12 +434,10 @@ fn render_thrown(value: &Value) -> String {
         to_string(Some(value))
     }
 }
-
+#[cold]
+#[inline(never)]
 fn constructor_name(value: &Value) -> String {
-    match crate::vm::get_property(
-        &crate::vm::get_property(value, "constructor"),
-        "name",
-    ) {
+    match crate::vm::get_property(&crate::vm::get_property(value, "constructor"), "name") {
         Value::String(name) if !name.is_empty() => name,
         _ => "[object Object]".to_string(),
     }
@@ -425,14 +490,22 @@ fn builtin_property(builtin: crate::ops::Builtin, key: &str) -> Value {
 fn typed_array_element_size(builtin: Builtin) -> Option<f64> {
     use Builtin::*;
     Some(match builtin {
-        Float64Array | Float64ArrayPrototype => crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64,
-        Float32Array | Float32ArrayPrototype => crate::value::Float32ArrayData::BYTES_PER_ELEMENT as f64,
+        Float64Array | Float64ArrayPrototype => {
+            crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64
+        }
+        Float32Array | Float32ArrayPrototype => {
+            crate::value::Float32ArrayData::BYTES_PER_ELEMENT as f64
+        }
         Int8Array | Int8ArrayPrototype => crate::value::Int8ArrayData::BYTES_PER_ELEMENT as f64,
         Int16Array | Int16ArrayPrototype => crate::value::Int16ArrayData::BYTES_PER_ELEMENT as f64,
-        Uint16Array | Uint16ArrayPrototype => crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64,
+        Uint16Array | Uint16ArrayPrototype => {
+            crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64
+        }
         Int32Array | Int32ArrayPrototype => crate::value::Int32ArrayData::BYTES_PER_ELEMENT as f64,
         Uint8Array | Uint8ArrayPrototype => crate::value::Uint8ArrayData::BYTES_PER_ELEMENT as f64,
-        Uint32Array | Uint32ArrayPrototype => crate::value::Uint32ArrayData::BYTES_PER_ELEMENT as f64,
+        Uint32Array | Uint32ArrayPrototype => {
+            crate::value::Uint32ArrayData::BYTES_PER_ELEMENT as f64
+        }
         Uint8ClampedArray | Uint8ClampedArrayPrototype => {
             crate::value::Uint8ClampedArrayData::BYTES_PER_ELEMENT as f64
         }
@@ -482,11 +555,10 @@ pub(crate) fn string_units_property(units: &[u16], key: &str) -> Value {
 }
 
 fn number_property(_value: f64, key: &str) -> Value {
-    use crate::ops::Builtin::*;
+    use crate::ops::Builtin::{NumberToExponential, NumberToFixed, NumberToPrecision};
     match key {
-        "toLocaleString" => Value::Builtin(NumberToLocaleString),
-        "toString" => Value::Builtin(NumberToString),
-        "valueOf" => Value::Builtin(NumberValueOf),
+        "toString" => Value::Builtin(Builtin::NumberToString),
+        "valueOf" => Value::Builtin(Builtin::NumberValueOf),
         "toFixed" => Value::Builtin(NumberToFixed),
         "toPrecision" => Value::Builtin(NumberToPrecision),
         "toExponential" => Value::Builtin(NumberToExponential),
@@ -499,5 +571,30 @@ fn boolean_property(_value: bool, key: &str) -> Value {
         "toString" => Value::Builtin(Builtin::BooleanToString),
         "valueOf" => Value::Builtin(Builtin::BooleanValueOf),
         _ => Value::Undefined,
+    }
+}
+
+#[cfg(test)]
+mod dispatcher_tests {
+    use super::{classify_dispatch, malformed_call_completion, DispatchClass};
+    use crate::completion::Completion;
+    use crate::ops::Op;
+
+    #[test]
+    fn malformed_call_record_uses_cold_normal_completion() {
+        assert!(matches!(malformed_call_completion(), Completion::Normal));
+    }
+
+    #[test]
+    fn classifier_keeps_call_handoff_compact() {
+        let call = Op::Call {
+            dst: 0,
+            callee: 1,
+            receiver: None,
+            args: Vec::new(),
+            spreads: Vec::new(),
+        };
+        assert_eq!(classify_dispatch(&call), DispatchClass::Call);
+        assert!(std::mem::size_of::<DispatchClass>() <= 1);
     }
 }

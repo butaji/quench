@@ -264,15 +264,25 @@ fn prepare_array_length_definition(
     if key != "length" {
         return Ok(None);
     }
-    let Some(Value::Number(new_length)) = array_descriptor_value(descriptor, "value") else {
+    let Some(value) = array_descriptor_value(descriptor, "value") else {
         return Ok(None);
     };
-    // The "length" of an Array object can be set to a number that exceeds
-    // the number of actually-stored elements. In that case there is
-    // nothing to delete below the physical length, so the iteration must
-    // be bounded by the physical length, not the logical one.
-    let old_length = values.physical_len();
+    // ArraySetLength performs ToUint32 and ToNumber separately. The first
+    // coercion is done by validate_array_length_descriptor; repeat it here
+    // for the NumberLen value used by the rest of the algorithm.
+    let new_length = crate::conversion::to_number(&value)?;
+    if !new_length.is_finite()
+        || new_length < 0.0
+        || new_length.fract() != 0.0
+        || new_length > u32::MAX as f64
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
     let new_length = new_length as usize;
+    // Bound deletion by physically stored elements, not the logical length.
+    let old_length = values.physical_len();
     if new_length >= old_length {
         if array_descriptor_flag(values, key, "writable") != Some(false) {
             let mut values = Rc::clone(values);
