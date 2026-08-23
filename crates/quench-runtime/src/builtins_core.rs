@@ -197,8 +197,12 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
     };
     if values.is_packed_ordinary() {
         let mut updated = std::rc::Rc::clone(values);
-        std::rc::Rc::make_mut(&mut updated).extend_dense(arguments);
-        let length = updated.logical_len();
+        let data = std::rc::Rc::make_mut(&mut updated);
+        let start = data.logical_len();
+        for (offset, value) in arguments.iter().cloned().enumerate() {
+            data.set_index(start + offset, value);
+        }
+        let length = data.logical_len();
         crate::locals::replace_value(receiver, &Value::Array(updated));
         return Value::Number(length as f64);
     }
