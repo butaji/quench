@@ -11,9 +11,20 @@ pub(crate) fn execute_delete_property(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let target = crate::locals::resolved_replacement(
-        crate::execute::read_register(registers, *object)?.clone(),
-    );
+    let raw_target = crate::execute::read_register(registers, *object)?.clone();
+    let target = crate::locals::resolved_replacement(raw_target.clone());
+    let target = match target {
+        crate::value::Value::ObjectAlias(alias) if alias.target().is_none() => {
+            // Top-level `this` aliases are weak COW views. If their replaced
+            // storage has been collected, re-anchor the operation to the
+            // active realm global before publishing the deletion.
+            let raw_global = crate::vm::current_global_object();
+            let global = crate::locals::resolved_replacement(raw_global.clone());
+            crate::vm::replace_global_object(&raw_global, &global);
+            global
+        }
+        target => target,
+    };
     if matches!(
         target,
         crate::value::Value::Null | crate::value::Value::Undefined
@@ -48,7 +59,7 @@ pub(crate) fn execute_delete_property(
         ));
     }
     crate::locals::replace_value(&target, &result);
-    crate::vm::synchronize_global_object(registers, &target, &result);
+    crate::vm::synchronize_global_object(registers, &raw_target, &result);
     crate::execute::write_value(registers, *object, result);
     crate::execute::write_value(registers, *dst, crate::value::Value::Boolean(deleted));
     Ok(())

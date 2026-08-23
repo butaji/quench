@@ -41,6 +41,25 @@ fn strict_non_extensible_write_throws() {
 }
 
 #[test]
+fn deleted_global_property_keeps_strict_reference_error_semantics() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var count = 0; var global = this;\n\
+         Object.defineProperty(this, 'x', { configurable: true, value: 1 });\n\
+         (function() {\n\
+           'use strict';\n\
+           var threw = false;\n\
+           try { count++; x = (delete global.x, 2); count++; }\n\
+           catch (error) { if (!(error instanceof ReferenceError)) throw error; threw = true; }\n\
+           if (!threw) throw new Error('missing ReferenceError');\n\
+           count++;\n\
+         })();\n\
+         if (count !== 2 || ('x' in this) || ('x' in global)) throw new Error('stale global alias');",
+    )
+    .expect("global aliases must follow copy-on-write replacement");
+}
+
+#[test]
 fn symbols_are_unique_and_format_descriptions() {
     let mut host = super::RuntimeHost;
     host.run_script(
