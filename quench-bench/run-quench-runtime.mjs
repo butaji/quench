@@ -18,7 +18,9 @@ const fixtures = [
 ];
 const runner = `
 let __quenchBenchSucceeded = true;
-const __quenchBenchPrint = typeof print === "function" ? print : console.log;
+const __quenchBenchPrint = typeof console !== "undefined" && typeof console.log === "function"
+  ? console.log
+  : print;
 BenchmarkSuite.RunSuites({
   NotifyResult(name, result) { __quenchBenchPrint(name + ": " + result); },
   NotifyError(name, error) { __quenchBenchSucceeded = false; __quenchBenchPrint(name + ": " + error); },
