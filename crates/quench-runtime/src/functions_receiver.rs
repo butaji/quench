@@ -29,7 +29,6 @@ pub(crate) fn execute_target_with_receiver(
     crate::execute::VmError,
 > {
     let crate::value::Value::Function(function) = target else {
-        eprintln!("TRACE receiver_not_function target_variant={} receiver_variant={}", value_variant(target), value_variant(receiver));
         let result = execute_target(target, receiver, arguments)?;
         return Ok((result, receiver.clone()));
     };
@@ -54,19 +53,4 @@ pub(crate) fn execute_target_with_receiver(
     let result = crate::vm::completion_result(completion)?;
     let slot = frame.function.captures.len() as u16 + frame.function.params + 1;
     Ok((result, environment.get(slot)))
-}
-fn value_variant(value: &crate::value::Value) -> u32 {
-    match value {
-        crate::value::Value::Undefined => 0,
-        crate::value::Value::Null => 1,
-        crate::value::Value::Boolean(_) => 2,
-        crate::value::Value::Number(_) => 3,
-        crate::value::Value::String(_) => 4,
-        crate::value::Value::HostCapability(_) => 5,
-        crate::value::Value::Builtin(_) => 6,
-        crate::value::Value::Function(_) => 7,
-        crate::value::Value::BoundFunction(_) => 8,
-        crate::value::Value::Proxy(_) => 9,
-        _ => 10,
-    }
 }

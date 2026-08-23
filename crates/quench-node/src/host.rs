@@ -302,7 +302,25 @@ pub fn install_script(
     let exec_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    install_with_argv(realm, sink, vec![exec_path, script.to_string()])
+    let (host, mut context) =
+        install_with_argv(realm, sink, vec![exec_path, script.to_string()]);
+    let exports = host_api::object(vec![]);
+    let module = host_api::object(vec![("exports".to_string(), exports.clone())]);
+    let path = std::path::Path::new(script);
+    let filename = path.to_string_lossy().into_owned();
+    let dirname = path
+        .parent()
+        .map(|parent| parent.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/".to_string());
+    for (name, value) in [
+        ("exports", exports),
+        ("module", module),
+        ("__filename", Value::String(filename)),
+        ("__dirname", Value::String(dirname)),
+    ] {
+        context = context.with_host_value(name.to_string(), value);
+    }
+    (host, context)
 }
 
 /// Same as `install`, but provides a host-side output sink that

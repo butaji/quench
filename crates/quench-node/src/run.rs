@@ -66,8 +66,7 @@ pub fn run_script_with_sink(
         host.set_main_dir(dir.to_string_lossy().into_owned());
     }
 
-    let wrapped = crate::modules::require::wrap_cjs(&host.state(), &script_str, source);
-    let ops = match reduce(&wrapped) {
+    let ops = match reduce(source) {
         Ok(ops) => ops,
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };

@@ -20,7 +20,6 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
     };
     let receiver = read_register(registers, *object)?;
     let callee = resolved_callee(registers, *callee, &receiver, key)?;
-    eprintln!("TRACE METHOD key={} callee={:?} receiver={:?} argc={}", key, callee, receiver, args.len());
     let arguments = crate::vm::vm_ops::collect_call_arguments(registers, args, spreads)?;
     let propagates = matches!(
         callee,
