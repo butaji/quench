@@ -1029,6 +1029,10 @@ let __quenchHttpModule;
           this.__unrefed = true;
           return this;
         },
+        setNoDelay(enable = true) {
+          this.noDelay = enable;
+          return this;
+        },
         setKeepAlive(enable = false, initialDelay) {
           this.keepAlive = enable;
           this.keepAliveInitialDelay = initialDelay;
@@ -1650,6 +1654,10 @@ let __quenchHttpModule;
         writable: true,
         writableHighWaterMark: 16 * 1024,
         writableCorked: 0,
+        setNoDelay(enable = true) {
+          this.noDelay = enable;
+          return this;
+        },
         setTimeout(msecs) {
           this.timeout = msecs;
           if (this.__timeoutTimer !== undefined) {
@@ -1668,6 +1676,11 @@ let __quenchHttpModule;
           return this;
         },
         setEncoding: () => request.socket,
+        setKeepAlive(enable = false, initialDelay) {
+          this.keepAlive = enable;
+          this.keepAliveInitialDelay = initialDelay;
+          return this;
+        },
         destroy() {
           if (this.destroyed) return this;
           this.destroyed = true;
