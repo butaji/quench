@@ -21,10 +21,12 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
-    if let Some(override_value) =
-        crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
-    {
-        return bind_method(value, override_value);
+    if callable_builtin_value(value) && key != "prototype" {
+        if let Some(override_value) =
+            crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
+        {
+            return bind_method(value, override_value);
+        }
     }
     let property = builtin_property(builtin, key);
     if let Some(result) = constructor_property(builtin, key, property.clone()) {
@@ -82,20 +84,32 @@ fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
     if crate::builtin_meta::is_prototype(builtin) || builtin == Builtin::Temporal {
         return inherit_prototype_property(builtin, key);
     }
-    if let Some(override_value) =
-        crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
-    {
-        return bind_method(value, override_value);
-    }
-    let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
-    if !matches!(inherited, Value::Undefined) {
-        return bind_method(value, inherited);
+    if callable_builtin_value(value) {
+        if let Some(override_value) =
+            crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
+        {
+            return bind_method(value, override_value);
+        }
+        let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
+        if !matches!(inherited, Value::Undefined) {
+            return bind_method(value, inherited);
+        }
     }
     bind_method(
         value,
         crate::builtins::property(Builtin::ObjectPrototype, key),
     )
 }
+
+fn callable_builtin_value(value: &Value) -> bool {
+    match value {
+        Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => {
+            crate::conversion::is_callable(&bound.target)
+        }
+        _ => crate::conversion::is_callable(value),
+    }
+}
+
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
         "apply" => Builtin::FunctionApply,
