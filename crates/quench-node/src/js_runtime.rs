@@ -286,25 +286,44 @@ impl QuenchNodeHost {
                 Ok(request)
             }
             HostCapabilityKind::Custom(CapabilityName::HttpRequestOn) => {
-                // ClientRequest.on registers the response listener; the
-                // callback must run only once a response is produced.
+                // Keep the response callback independent from error (and
+                // server) listeners.  Node permits registering an error
+                // listener on a ClientRequest after its response callback;
+                // that listener must not replace the callback used for the
+                // eventual 'response' event.
+                let event = arguments.first().and_then(|value| match value {
+                    Value::String(name) => Some(name.as_str()),
+                    _ => None,
+                });
                 let is_client = receiver
                     .and_then(|value| quench_runtime::execute::get_property_result(value, "method").ok())
                     .is_some();
                 if is_client {
-                    if let Some(callback) = arguments.last() {
-                        let mut callback = callback.clone();
-                        while let Value::BindingCell(cell) = callback {
-                            callback = cell.borrow().clone();
+                    if event == Some("response") {
+                        if let Some(callback) = arguments.get(1) {
+                            let mut callback = callback.clone();
+                            while let Value::BindingCell(cell) = callback {
+                                callback = cell.borrow().clone();
+                            }
+                            self.http.borrow_mut().client_callback = Some(callback);
                         }
-                        self.http.borrow_mut().client_callback = Some(callback);
                     }
-                    return Ok(Value::Undefined);
+                    // Error listeners are retained by the JS emitter in the
+                    // normal path; this legacy HTTP adapter has no error
+                    // dispatch, but must never overwrite response state.
+                    return Ok(receiver.cloned().unwrap_or(Value::Undefined));
                 }
-                if let Some(callback) = arguments.last() {
-                    quench_runtime::execute::call(callback, &Value::Undefined, &[])?;
+                if event == Some("error") {
+                    return Ok(receiver.cloned().unwrap_or(Value::Undefined));
                 }
-                Ok(Value::Undefined)
+                if let Some(callback) = arguments.get(1) {
+                    let mut callback = callback.clone();
+                    while let Value::BindingCell(cell) = callback {
+                        callback = cell.borrow().clone();
+                    }
+                    quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
+                }
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
             }
             HostCapabilityKind::Custom(CapabilityName::HttpRequestEnd) => {
                 let is_client = receiver
@@ -322,16 +341,44 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::HttpRequest) => {
                 let (server, callback) = {
                     let state = self.http.borrow();
-                    (state.server_callback.clone().ok_or(VmError::NotCallable)?,
-                     state.client_callback.clone().ok_or(VmError::NotCallable)?)
+                    (
+                        state.server_callback.clone().ok_or(VmError::NotCallable)?,
+                        state.client_callback.clone().ok_or(VmError::NotCallable)?,
+                    )
                 };
                 let request = Value::object(vec![
                     ("method".into(), Value::String("GET".into())),
                     ("url".into(), Value::String("/".into())),
                 ]);
-                let response = response_object(200);
-                quench_runtime::execute::call(&server, &Value::Undefined, &[request, response.clone()])?;
+                let response = response_object(500);
+                quench_runtime::execute::call(
+                    &server,
+                    &Value::Undefined,
+                    &[request, response.clone()],
+                )?;
                 quench_runtime::execute::call(&callback, &Value::Undefined, &[response])?;
+                // `http.request` delivers the response body asynchronously,
+                // after the response callback has had a chance to register
+                // its `data` and `end` listeners.  The old path stopped after
+                // the response callback, leaving the fixture waiting forever.
+                let (body, data, end) = {
+                    let state = self.http.borrow();
+                    (
+                        state.body.clone(),
+                        state.data_callback.clone(),
+                        state.end_callback.clone(),
+                    )
+                };
+                if let Some(data) = data {
+                    quench_runtime::execute::call(
+                        &data,
+                        &Value::Undefined,
+                        &[node_buffer(body.as_bytes())],
+                    )?;
+                }
+                if let Some(end) = end {
+                    quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
+                }
                 Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::HttpRequestWrite) => {
@@ -351,9 +398,17 @@ impl QuenchNodeHost {
                     4 => self.http.borrow_mut().body = arguments.first().map(value_to_string).unwrap_or_default(),
                     5 => {
                         if matches!(arguments.first(), Some(Value::String(event)) if event == "data") {
-                            self.http.borrow_mut().data_callback = arguments.get(1).cloned();
+                            let mut callback = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+                            while let Value::BindingCell(cell) = callback {
+                                callback = cell.borrow().clone();
+                            }
+                            self.http.borrow_mut().data_callback = Some(callback);
                         } else if matches!(arguments.first(), Some(Value::String(event)) if event == "end") {
-                            self.http.borrow_mut().end_callback = arguments.get(1).cloned();
+                            let mut callback = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+                            while let Value::BindingCell(cell) = callback {
+                                callback = cell.borrow().clone();
+                            }
+                            self.http.borrow_mut().end_callback = Some(callback);
                         }
                     }
                     _ => {}

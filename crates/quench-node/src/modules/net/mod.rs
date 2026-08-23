@@ -346,13 +346,6 @@ pub(crate) fn emit(
         while let Value::BindingCell(cell) = callback {
             callback = cell.borrow().clone();
         }
-        eprintln!(
-            "[http-trace] {}:{} emit={event} callback_kind={:?} callback={:?}",
-            file!(),
-            line!(),
-            callback,
-            callback
-        );
         if listener.once {
             if let Some(id) = emitter_id(receiver) {
                 if let Some(emitter) = state.borrow().emitters.get(id) {

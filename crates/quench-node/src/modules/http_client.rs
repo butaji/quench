@@ -317,27 +317,23 @@ pub fn res_end_handler(
 // ---- helpers ----
 
 fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmError> {
-    let mut object = crate::modules::events::new_emitter_object(state)?;
     let id = {
         let mut guard = state.borrow_mut();
         let id = guard.http.next_client;
         guard.http.next_client += 1;
         id
     };
-    object = install_methods(
-        object,
-        vec![
-            (
-                "write".to_string(),
-                crate::host::capability(crate::registry::SPEC_HTTP_REQ_WRITE),
-            ),
-            (
-                "end".to_string(),
-                crate::host::capability(crate::registry::SPEC_HTTP_REQ_END),
-            ),
-            (CLIENT_ID_PROP.to_string(), Value::Number(id as f64)),
-        ],
-    )?;
+    let emitter = crate::modules::events::new_emitter_object(state)?;
+    let emitter_id = quench_runtime::vm::get_property(&emitter, "\0quench:events:id");
+    let object = host_api::object(vec![
+        ("\0quench:events:id".to_string(), emitter_id),
+        ("on".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102))),
+        ("addListener".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102))),
+        ("emit".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103))),
+        ("write".to_string(), crate::host::capability(crate::registry::SPEC_HTTP_REQ_WRITE)),
+        ("end".to_string(), crate::host::capability(crate::registry::SPEC_HTTP_REQ_END)),
+        (CLIENT_ID_PROP.to_string(), Value::Number(id as f64)),
+    ]);
     Ok((object, id))
 }
 
@@ -404,14 +400,17 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
         }
     }
     let res = crate::modules::events::new_emitter_object(state)?;
-    let props = vec![
+    let emitter_id = quench_runtime::vm::get_property(&res, "\0quench:events:id");
+    let all_props = vec![
+        ("\0quench:events:id".to_string(), emitter_id),
+        ("on".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102))),
+        ("addListener".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102))),
+        ("once".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:once", 0x0105))),
+        ("emit".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103))),
         ("statusCode".to_string(), Value::Number(status as f64)),
         ("statusMessage".to_string(), Value::String(message)),
         ("httpVersion".to_string(), Value::String("1.1".to_string())),
         ("headers".to_string(), host_api::object(headers)),
-        // IncomingMessage.resume() switches a response into flowing mode. The
-        // client socket already drains data as it arrives; returning the
-        // response preserves the Node chainable-stream contract.
         (
             "resume".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(
@@ -420,7 +419,9 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
             )),
         ),
     ];
-    install_methods(res, props)
+    // Construct directly: generic property assignment can expose a
+    // BindingCell instead of the callable host capability.
+    Ok(host_api::object(all_props))
 }
 
 /// `IncomingMessage.resume()` — response data is already pumped by the host.

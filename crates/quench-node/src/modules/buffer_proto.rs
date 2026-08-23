@@ -162,13 +162,18 @@ fn finish_view(mut view: Value, buffer: &Rc<ArrayBufferData>, byte_offset: usize
     // Keep the callable entry point directly on host-created views as well;
     // this remains visible if typed-array prototype chaining is represented
     // by a proxy/replacement value.
-    // Keep the dispatch entry on the returned view itself. `set_property`
-    // returns the replacement view used by host-created typed arrays, while
-    // define-own-property can leave a stale Value variant behind.
-    view = quench_runtime::execute::set_property(
-        view,
+    // Keep the callable entry point directly on host-created views.  Defining
+    // it through the ordinary setter can return the backing ArrayBuffer for
+    // host-created aliases, losing the view as the method receiver.
+    let _ = quench_runtime::builtins::define_own_property_public(
+        &view,
         "toString",
-        crate::host::capability(r::SPEC_BUFFER_TOSTRING),
+        &[
+            ("value".into(), crate::host::capability(r::SPEC_BUFFER_TOSTRING)),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ],
     );
     let _ = quench_runtime::builtins::define_own_property_public(
         &view,

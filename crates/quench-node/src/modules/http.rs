@@ -437,23 +437,14 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         guard.http.next_res += 1;
         id
     };
+    // Keep method capabilities as direct properties.  The generic setter
+    // represents host callables as binding cells; response methods are invoked
+    // from event callbacks and must not acquire a self-referential cell.
     let res = host_api::object(vec![
-        (
-            "setHeader".to_string(),
-            res_cap(crate::registry::SPEC_HTTP_RES_SET_HEADER),
-        ),
-        (
-            "writeHead".to_string(),
-            res_cap(crate::registry::SPEC_HTTP_RES_WRITE_HEAD),
-        ),
-        (
-            "write".to_string(),
-            res_cap(crate::registry::SPEC_HTTP_RES_WRITE),
-        ),
-        (
-            "end".to_string(),
-            res_cap(crate::registry::SPEC_HTTP_RES_END),
-        ),
+        ("setHeader".to_string(), res_cap(crate::registry::SPEC_HTTP_RES_SET_HEADER)),
+        ("writeHead".to_string(), res_cap(crate::registry::SPEC_HTTP_RES_WRITE_HEAD)),
+        ("write".to_string(), res_cap(crate::registry::SPEC_HTTP_RES_WRITE)),
+        ("end".to_string(), res_cap(crate::registry::SPEC_HTTP_RES_END)),
         ("statusCode".to_string(), Value::Number(200.0)),
         ("writable".to_string(), Value::Boolean(true)),
         ("headersSent".to_string(), Value::Boolean(false)),

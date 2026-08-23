@@ -87,6 +87,10 @@ fn object_inherited_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     let Value::Object(properties) = value else {
+        if let Value::ObjectAlias(alias) = value {
+            let object = alias.0.borrow().upgrade().map(|object| Value::Object(object))?;
+            return object_inherited_property_result(&object, key, receiver);
+        }
         return None;
     };
     if properties.iter().any(|(name, _)| name == key) {
