@@ -16,6 +16,9 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = array_property_result(value, key, receiver) {
         return result;
     }
+    if let Some(result) = typed_array_prototype_result(value, key, receiver) {
+        return result;
+    }
     if let Some(result) = function_inherited_property_result(value, key, receiver) {
         return result;
     }
@@ -32,6 +35,19 @@ pub(crate) fn get_property_with_receiver(
         return result;
     }
     finish_property_access(value, key, receiver)
+}
+
+fn typed_array_prototype_result(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    let prototype = value.typed_array_meta()?.prototype()?;
+    let property = match get_property_with_receiver(&prototype, key, receiver) {
+        Ok(property) => property,
+        Err(error) => return Some(Err(error)),
+    };
+    (!matches!(property, Value::Undefined)).then_some(Ok(property))
 }
 
 fn function_inherited_property_result(
