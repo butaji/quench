@@ -450,8 +450,10 @@ fn resolve_dispatch_network(state: &Rc<RefCell<HostState>>, name: &str) -> Optio
 fn resolve_dispatch_compat_modules(state: &Rc<RefCell<HostState>>, name: &str) -> Option<Value> {
     match name {
         "cluster" | "node:cluster" => crate::modules::compat_extra::cluster(state).ok(),
-        "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
-        "domain" => Some(
+        "diagnostics_channel" | "node:diagnostics_channel" => {
+            crate::modules::compat_extra::diagnostics_channel(state).ok()
+        }
+        "domain" | "node:domain" => Some(
             cached_module(state, "domain", || {
                 crate::modules::compat_extra::domain(state)
             })
