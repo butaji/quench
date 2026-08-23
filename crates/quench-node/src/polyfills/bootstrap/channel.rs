@@ -74,7 +74,6 @@ const __quenchDiagnostics = {
   Channel: __QuenchChannelClass,
   channel: __quenchChannel,
   hasSubscribers: (name) => __quenchChannel(name).hasSubscribers,
-  channelNames: () => [...__quenchChannels.keys()],
   subscribe: (name, callback) => __quenchChannel(name).subscribe(callback),
   unsubscribe: (name, callback) => __quenchChannel(name).unsubscribe(callback),
   BoundedChannel: class BoundedChannel {

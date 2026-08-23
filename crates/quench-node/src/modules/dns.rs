@@ -1,159 +1,57 @@
-//! DNS compatibility helpers with deterministic local resolution.
-use crate::host::HostState;
-use quench_runtime::execute;
-use quench_runtime::host_api;
-use quench_runtime::value::{PromiseData, PromiseState, Value};
+//! `dns` module — `lookup` returning the first address.
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
-fn host(args: &[Value]) -> String {
-    args.first().map(value_to_string).unwrap_or_default()
+use quench_runtime::execute::VmError;
+use quench_runtime::host_api;
+use quench_runtime::value::Value;
+
+use crate::host::HostState;
+
+pub fn lookup(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let host = args.first().map(value_to_string).unwrap_or_default();
+    let cb = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let resolved = resolve_address(&host);
+    let _ = cb;
+    Ok(resolved)
 }
-fn value_to_string(v: &Value) -> String {
-    match v {
+
+pub fn resolve4(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let host = args.first().map(value_to_string).unwrap_or_default();
+    let resolved = resolve_address(&host);
+    Ok(resolved)
+}
+
+fn resolve_address(host: &str) -> Value {
+    use std::net::ToSocketAddrs;
+    let mut iter = (host, 0u16).to_socket_addrs().ok();
+    match iter.as_mut().and_then(|it| it.next()) {
+        Some(addr) => host_api::array(vec![
+            Value::String(addr.ip().to_string()),
+            Value::Number(addr.port() as f64),
+        ]),
+        None => host_api::array(Vec::new()),
+    }
+}
+
+fn value_to_string(value: &Value) -> String {
+    match value {
         Value::String(s) => s.clone(),
         _ => String::new(),
     }
 }
-fn address(name: &str) -> Option<String> {
-    if name == "localhost" {
-        return Some("127.0.0.1".into());
-    }
-    if name == "ip6-localhost" {
-        return Some("::1".into());
-    }
-    name.parse::<std::net::IpAddr>().ok().map(|x| x.to_string())
-}
-fn callback_index(args: &[Value]) -> Option<usize> {
-    args.iter().rposition(quench_runtime::is_callable)
-}
-fn dns_error(hostname: &str) -> Value {
-    host_api::object(vec![
-        ("code".into(), Value::String("ENOTFOUND".into())),
-        ("syscall".into(), Value::String("getaddrinfo".into())),
-        ("hostname".into(), Value::String(hostname.into())),
-    ])
-}
-fn callback(cb: Option<&Value>, args: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
-    if let Some(cb) = cb.filter(|v| quench_runtime::is_callable(v)) {
-        execute::call(cb, &Value::Undefined, args)?;
-    }
-    Ok(Value::Undefined)
-}
-fn fulfilled(value: Value) -> Value {
-    Value::Promise(Rc::new(PromiseData::new(PromiseState::Fulfilled(value))))
-}
-pub fn lookup(
-    _state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, quench_runtime::execute::VmError> {
-    let hostname = host(args);
-    let cb = callback_index(args).and_then(|i| args.get(i));
-    let requested_family = args.iter().find_map(|v| match v {
-        Value::Number(n) if *n == 4.0 || *n == 6.0 => Some(*n),
-        _ => None,
-    });
-    let ip = address(&hostname).filter(|ip| requested_family.is_none_or(|family| {
-        (family == 4.0 && ip.parse::<std::net::Ipv4Addr>().is_ok())
-            || (family == 6.0 && ip.parse::<std::net::Ipv6Addr>().is_ok())
-    }));
-    let Some(ip) = ip else {
-        return callback(cb, &[dns_error(&hostname), Value::Undefined, Value::Undefined]);
-    };
-    let family = if ip.parse::<std::net::Ipv6Addr>().is_ok() { 6.0 } else { 4.0 };
-    callback(cb, &[Value::Null, Value::String(ip), Value::Number(family)])
-}
 
-pub fn resolve4(
-    _state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, quench_runtime::execute::VmError> {
-    let values = address(&host(args))
-        .filter(|x| x.parse::<std::net::Ipv4Addr>().is_ok())
-        .map(|x| vec![Value::String(x)])
-        .unwrap_or_default();
-    let result = host_api::array(values);
-    if args.get(1).is_some() {
-        callback(args.get(1), &[Value::Null, result.clone()])?;
-        Ok(Value::Undefined)
-    } else {
-        Ok(result)
-    }
-}
-pub fn promise_lookup(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, quench_runtime::execute::VmError> {
-    let ip = address(&host(args)).unwrap_or_else(|| "127.0.0.1".into());
-    let family = if ip.parse::<std::net::Ipv6Addr>().is_ok() {
-        6.0
-    } else {
-        4.0
-    };
-    let _ = state;
-    Ok(fulfilled(host_api::object(vec![
-        ("address".into(), Value::String(ip)),
-        ("family".into(), Value::Number(family)),
-    ])))
-}
-pub fn promise_resolve4(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, quench_runtime::execute::VmError> {
-    Ok(fulfilled(resolve4(state, args)?))
-}
-pub fn promise_reverse(
-    _state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, quench_runtime::execute::VmError> {
-    let address = host(args);
-    let hostname = match address.as_str() {
-        "127.0.0.1" => "localhost",
-        "::1" => "ip6-localhost",
-        _ => {
-            return Ok(Value::Promise(Rc::new(PromiseData::new(
-                PromiseState::Rejected(dns_error(&address)),
-            ))));
-        }
-    };
-    Ok(fulfilled(host_api::array(vec![Value::String(hostname.into())])))
-}
-pub fn empty_promise(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, quench_runtime::execute::VmError> {
-    Ok(fulfilled(host_api::array(Vec::new())))
-}
 pub fn build() -> Value {
-    let p = crate::host::namespace_object_from_pairs(vec![
+    crate::host::namespace_object(vec![
         (
-            "lookup".into(),
-            crate::host::capability(crate::registry::NodeSpec::new("dns:promise_lookup", 0x0E02)),
-        ),
-        (
-            "resolve4".into(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "dns:promise_resolve4",
-                0x0E03,
-            )),
-        ),
-        (
-            "reverse".into(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "dns:promise_reverse",
-                0x0E04,
-            )),
-        ),
-    ]);
-    crate::host::namespace_object_from_pairs(vec![
-        (
-            "lookup".into(),
+            "lookup",
             crate::host::capability(crate::registry::SPEC_DNS_LOOKUP),
         ),
         (
-            "resolve4".into(),
+            "resolve4",
             crate::host::capability(crate::registry::SPEC_DNS_RESOLVE4),
         ),
-        ("promises".into(), p),
     ])
+    .unwrap_or_else(|_| Value::Undefined)
 }

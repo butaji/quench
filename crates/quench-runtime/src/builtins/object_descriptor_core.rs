@@ -16,7 +16,7 @@ fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
     {
         *value = Value::Boolean(true);
     }
-    Some(Value::Object(Rc::new(ObjectData::new(properties))))
+    Some(Value::Object(Rc::new(ObjectData::from_shared_properties(properties))))
 }
 fn buffer_descriptor(buffer: &crate::value::ArrayBufferData, key: &str) -> Option<Value> {
     buffer
@@ -114,7 +114,10 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         .find(|(name, _)| name == key)
         .map(|(_, value)| descriptor_object(value))
 }
-fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
+fn object_descriptor(
+    properties: &[(crate::value::PropertyName, Value)],
+    key: &str,
+) -> Option<Value> {
     if let Some(Value::String(value)) = properties
         .iter()
         .rev()
@@ -127,11 +130,7 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
             return Some(descriptor);
         }
     }
-    if let Some((_, metadata)) = properties
-        .iter()
-        .rev()
-        .find(|(name, _)| name == &super::descriptor_key(key))
-    {
+    if let Some(metadata) = super::descriptor_metadata(properties, key) {
         let live = properties
             .iter()
             .rev()
@@ -298,25 +297,6 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = builtin_special_descriptor(builtin, key) {
         return Some(descriptor);
     }
-    if let Some(descriptor) = builtin_function_descriptor(builtin, key) {
-        return Some(descriptor);
-    }
-    if key == "BYTES_PER_ELEMENT" {
-        if let Some(size) = typed_array_bytes_per_element(builtin) {
-            return Some(descriptor_object_with_flags(
-                Value::Number(size),
-                false,
-                false,
-                false,
-            ));
-        }
-    }
-    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
-        return Some(descriptor);
-    }
-    builtin_descriptor_tail(builtin, key)
-}
-fn builtin_function_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
         return Some(descriptor_object_with_flags(
             crate::builtins::generator_prototype(),
@@ -341,7 +321,20 @@ fn builtin_function_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             return Some(descriptor_object_with_flags(property, false, false, true));
         }
     }
-    None
+    if key == "BYTES_PER_ELEMENT" {
+        if let Some(size) = typed_array_bytes_per_element(builtin) {
+            return Some(descriptor_object_with_flags(
+                Value::Number(size),
+                false,
+                false,
+                false,
+            ));
+        }
+    }
+    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
+        return Some(descriptor);
+    }
+    builtin_descriptor_tail(builtin, key)
 }
 
 fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
@@ -355,6 +348,10 @@ fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
     }
     if builtin == Builtin::SymbolPrototype && key == "description" {
         return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
+    }
+    if builtin == Builtin::ArrayPrototype && key == "Symbol.unscopables" {
+        return super::special_property(builtin, key)
+            .map(|property| descriptor_object_with_flags(property, false, false, true));
     }
     if builtin == Builtin::Symbol && key == "unscopables" {
         return super::special_property(builtin, key)
@@ -501,4 +498,8 @@ include!("object_accessor_descriptor.rs");
 include!("object_property_flags.rs");
 include!("object_array_descriptor.rs");
 include!("object_descriptor_values.rs");
-include!("object_descriptor_tests_mod.rs");
+#[cfg(test)]
+mod tests {
+    include!("object_descriptor_tests.rs");
+    include!("object_tests.rs");
+}

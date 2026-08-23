@@ -1,134 +1,90 @@
-fn dns_promises_module() -> Value {
-    NODE_DNS_PROMISES_MODULE.with(|module| {
-        module
-            .borrow_mut()
-            .get_or_insert_with(|| {
-                quench_runtime::host_api::object(vec![
-                    (
-                        "lookup".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::DnsPromiseLookup,
-                        )),
-                    ),
-                    (
-                        "resolve4".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::DnsPromiseResolve4,
-                        )),
-                    ),
-                    (
-                        "resolve".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::DnsPromiseResolve4,
-                        )),
-                    ),
-                    (
-                        "lookupService".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::DnsLookupService,
-                        )),
-                    ),
-                ])
-            })
-            .clone()
-    })
-}
-
-fn async_hooks_module() -> Result<Value, VmError> {
-    if let Some(module) = NODE_ASYNC_HOOKS_MODULE.with(|cached| cached.borrow().clone()) {
-        return Ok(module);
-    }
-    let program = quench_runtime::reduce::reduce_global_script_source(include_str!("modules/async_hooks.js"))
-        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let context = quench_runtime::vm::current_context();
-    let mut registers = Vec::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
-    })?;
-    let module = quench_runtime::vm::call_value(
-        &factory,
-        &Value::Undefined,
-        &[quench_runtime::host_api::object(vec![])],
-    )?;
-    NODE_ASYNC_HOOKS_MODULE.with(|cached| *cached.borrow_mut() = Some(module.clone()));
-    Ok(module)
-}
-fn myers_diff_module() -> Result<Value, VmError> {
-    let program = quench_runtime::reduce::reduce_global_script_source(
-        include_str!("modules/myers_diff.js"),
-    )
-    .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let context = quench_runtime::vm::current_context();
-    let mut registers = Vec::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
-    })?;
-    // Some compatibility modules are source-level value expressions rather
-    // than CommonJS factories. Preserve those values instead of attempting
-    // to call them (which would surface as an unrelated "value is not
-    // callable" error to the requiring module).
-    if quench_runtime::is_callable(&factory) {
-        quench_runtime::vm::call_value(&factory, &Value::Undefined, &[])
-    } else {
-        Ok(factory)
-    }
-}
-
 fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
-    if name == "internal/assert/myers_diff" || name == "node:internal/assert/myers_diff" {
-        return myers_diff_module();
-    }
     if let Some(value) = require_early_module(name)? {
         return Ok(value);
     }
-    if name == "internal/async_hooks" || name == "node:internal/async_hooks" {
-        return Ok(Value::object(vec![(
-            "enabledHooksExist".into(),
-            capability_function(HostCapabilityKind::Custom(
-                CapabilityName::AsyncHooksEnabledHooksExist,
-            )),
+    if let Some(value) = require_common_module(name) {
+        return Ok(value);
+    }
+    if name == "internal/fs/utils" {
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "validateRmOptionsSync".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::FsValidateRmOptions,
+                )),
+            ),
+            (
+                "stringToFlags".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsStringToFlags)),
+            ),
+        ]));
+    }
+    if name == "internal/test/binding" {
+        return Ok(quench_runtime::host_api::object(vec![(
+            "internalBinding".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
         )]));
     }
-    if name == "dns/promises" || name == "node:dns/promises" {
-        return Ok(dns_promises_module());
-    }
     if name == "dns" || name == "node:dns" {
-        let promises = dns_promises_module();
+        let promises = quench_runtime::host_api::object(vec![(
+            "lookupService".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)),
+        )]);
         return Ok(quench_runtime::host_api::object(vec![
-            ("setServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers))),
-            ("getServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsGetServers))),
-            ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolve))),
-            ("lookupService".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService))),
-            ("resolveMx".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx))),
+            (
+                "setServers".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers)),
+            ),
+            (
+                "getServers".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsGetServers)),
+            ),
+            (
+                "resolve".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolve)),
+            ),
+            (
+                "lookupService".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)),
+            ),
+            (
+                "resolveMx".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx)),
+            ),
             ("promises".into(), promises),
         ]));
     }
-    if name == "tty" || name == "node:tty" {
-        return Ok(Value::object(vec![
-            ("isatty".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyIsatty))),
-            ("ReadStream".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyReadStream))),
-            ("WriteStream".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
-            ("Socket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
-        ]));
-    }
     if name == "zlib" || name == "node:zlib" {
-        return Ok(quench_node::modules::zlib::build());
+        let gzip = Value::Builtin(quench_runtime::ops::Builtin::Object);
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "createGzip".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGzip)),
+            ),
+            (
+                "createGunzip".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGunzip)),
+            ),
+            (
+                "createUnzip".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateUnzip)),
+            ),
+            ("Gzip".into(), gzip),
+            (
+                "gzipSync".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync)),
+            ),
+            (
+                "deflateSync".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibDeflateSync)),
+            ),
+        ]));
     }
     if name == "tls" || name == "node:tls" {
         return Ok(quench_runtime::host_api::object(vec![
-            (
-                "DEFAULT_MIN_VERSION".into(),
-                Value::String("TLSv1.2".into()),
-            ),
-            (
-                "DEFAULT_MAX_VERSION".into(),
-                Value::String("TLSv1.3".into()),
-            ),
-            ("CLIENT_RENEG_LIMIT".into(), Value::Number(3.0)),
-            ("CLIENT_RENEG_WINDOW".into(), Value::Number(600.0)),
             (
                 "getCiphers".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers)),
@@ -338,9 +294,6 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "process" || name == "node:process" {
             return Ok(process_module());
         }
-        if name == "os" || name == "node:os" {
-            return Ok(os_module());
-        }
         if name == "buffer" || name == "node:buffer" {
             let buffer = buffer_module();
             let constants = quench_runtime::execute::get_property_result(&buffer, "constants")
@@ -348,7 +301,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             let module = Value::object(vec![
                 ("Buffer".into(), buffer),
                 ("constants".into(), constants),
-                ("kMaxLength".into(), Value::Number(9_007_199_254_740_991.0)),
+                ("kMaxLength".into(), Value::Number(4_294_967_296.0)),
                 ("kStringMaxLength".into(), Value::Number(536_870_888.0)),
                 (
                     "isAscii".into(),
@@ -461,6 +414,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 "internalBinding".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
             )]));
+        }
+        if name == "os" || name == "node:os" {
+            return Ok(os_module());
         }
         if name == "repl" || name == "node:repl" {
             return Ok(quench_runtime::host_api::object(vec![(

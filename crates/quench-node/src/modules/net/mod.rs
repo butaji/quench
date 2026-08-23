@@ -25,10 +25,9 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    connect, create_server, server_address, server_close, server_get_connections, server_listen,
-    server_ref, server_set_max_connections, server_unref, socket_address, socket_destroy,
-    socket_end, socket_pause, socket_ref, socket_resume, socket_set_encoding,
-    socket_set_keep_alive, socket_set_no_delay, socket_set_timeout, socket_unref, socket_write,
+    connect, create_server, server_address, server_close, server_listen, socket_address,
+    socket_destroy, socket_end, socket_pause, socket_resume, socket_set_encoding,
+    socket_set_keep_alive, socket_set_no_delay, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -49,13 +48,10 @@ pub struct NetServer {
     pub listener: Option<TcpListener>,
     pub bind_addr: Option<SocketAddr>,
     pub js: Value,
-    /// Arguments supplied to `listen`, retained for the deferred callback.
-    pub listen_args: Vec<Value>,
     pub listening: bool,
     pub announced: bool,
     pub closed: bool,
     pub close_emitted: bool,
-    pub max_connections: u64,
 }
 
 pub struct NetSocket {
@@ -69,8 +65,6 @@ pub struct NetSocket {
     pub close_emitted: bool,
     pub connect_announced: bool,
     pub encoding: Option<String>,
-    pub bytes_read: u64,
-    pub bytes_written: u64,
 }
 
 pub struct NetState {
@@ -132,7 +126,13 @@ fn new_net_object(
 
 fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
     for (key, value) in props {
-        object = execute::set_property(object, &key, value);
+        let descriptor = host_api::object(vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]);
+        object = execute::define_property(object, &key, descriptor)?;
     }
     Ok(object)
 }
@@ -162,48 +162,21 @@ fn net_info_props(peer: SocketAddr, local: Option<SocketAddr>) -> Vec<(String, V
     }
     props
 }
+
 fn server_props() -> Vec<(&'static str, Value)> {
     vec![
         ("listen", cap(crate::registry::SPEC_NET_SERVER_LISTEN)),
         ("close", cap(crate::registry::SPEC_NET_SERVER_CLOSE)),
         ("address", cap(crate::registry::SPEC_NET_SERVER_ADDRESS)),
-        (
-            "getConnections",
-            cap(crate::registry::NodeSpec::new(
-                "net:server:getConnections",
-                0x1019,
-            )),
-        ),
-        (
-            "ref",
-            cap(crate::registry::NodeSpec::new("net:server:ref", 0x101A)),
-        ),
-        (
-            "unref",
-            cap(crate::registry::NodeSpec::new("net:server:unref", 0x101B)),
-        ),
-        ("maxConnections", Value::Number(0.0)),
-        ("timeout", Value::Number(0.0)),
-        ("keepAliveTimeout", Value::Number(5000.0)),
-        ("headersTimeout", Value::Number(60000.0)),
-        ("requestTimeout", Value::Number(0.0)),
-        ("connectionsCheckingInterval", Value::Number(30000.0)),
     ]
 }
+
 fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
         ("destroy", cap(crate::registry::SPEC_NET_SOCKET_DESTROY)),
         ("address", cap(crate::registry::SPEC_NET_SOCKET_ADDRESS)),
-        (
-            "ref",
-            cap(crate::registry::NodeSpec::new("net:socket:ref", 0x101C)),
-        ),
-        (
-            "unref",
-            cap(crate::registry::NodeSpec::new("net:socket:unref", 0x101D)),
-        ),
         (
             "setNoDelay",
             cap(crate::registry::SPEC_NET_SOCKET_SET_NO_DELAY),
@@ -216,17 +189,8 @@ fn socket_props() -> Vec<(&'static str, Value)> {
             "setEncoding",
             cap(crate::registry::SPEC_NET_SOCKET_SET_ENCODING),
         ),
-        (
-            "setTimeout",
-            cap(crate::registry::SPEC_NET_SOCKET_SET_TIMEOUT),
-        ),
-        ("timeout", Value::Number(0.0)),
         ("pause", cap(crate::registry::SPEC_NET_SOCKET_PAUSE)),
         ("resume", cap(crate::registry::SPEC_NET_SOCKET_RESUME)),
-        ("bytesRead", Value::Number(0.0)),
-        ("bytesWritten", Value::Number(0.0)),
-        ("connecting", Value::Boolean(false)),
-        ("readyState", Value::String("open".into())),
     ]
 }
 
@@ -251,12 +215,10 @@ fn register_server(
             listener,
             bind_addr,
             js: js.clone(),
-            listen_args: Vec::new(),
             listening: is_listening,
             announced: false,
             closed: false,
             close_emitted: false,
-            max_connections: 0,
         })),
     );
     Ok(id)
@@ -342,10 +304,6 @@ pub(crate) fn emit(
         return Ok(());
     }
     for listener in &listeners {
-        let mut callback = listener.callback.clone();
-        while let Value::BindingCell(cell) = callback {
-            callback = cell.borrow().clone();
-        }
         if listener.once {
             if let Some(id) = emitter_id(receiver) {
                 if let Some(emitter) = state.borrow().emitters.get(id) {
@@ -353,7 +311,7 @@ pub(crate) fn emit(
                 }
             }
         }
-        execute::call(&callback, receiver, &args)?;
+        execute::call(&listener.callback, receiver, &args)?;
     }
     Ok(())
 }

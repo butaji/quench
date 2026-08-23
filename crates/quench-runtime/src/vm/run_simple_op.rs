@@ -11,18 +11,15 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
     run_simple_single_op(registers, op)
 }
 
-
 fn run_simple_single_op(
     registers: &mut Vec<Value>,
     op: &Op,
 ) -> Result<Option<Option<Value>>, VmError> {
-    run_simple_single_op_inner(registers, op)
-}
-fn run_simple_single_op_inner(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
     use Op::*;
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),
         MakeArray { .. } | BuildArray { .. } => run_make_array(registers, op)?,
+        TemplateObject { .. } => crate::templates::execute_tagged_template(registers, op)?,
         MakeObject { .. } => run_make_object(registers, op)?,
         MakeBuiltin { .. } => run_make_builtin(registers, op),
         RequireObjectCoercible { .. }
@@ -66,7 +63,15 @@ fn run_dynamic_import(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
     else {
         return Ok(());
     };
-    let specifier = crate::conversion::to_string(&crate::execute::read_register(registers, *specifier)?)?;
+    let specifier_value = crate::execute::read_register(registers, *specifier)?;
+    let specifier = match crate::conversion::to_string(&specifier_value) {
+        Ok(specifier) => specifier,
+        Err(crate::execute::VmError::Thrown(reason)) => {
+            write_value(registers, *dst, rejected_promise(reason));
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     let value = crate::module_bindings::resolve_dynamic_import(&specifier, *deferred)
         .unwrap_or_else(|| Value::String(specifier));
     let value = if let Some(thrown) = crate::module_bindings::take_pending_throw() {

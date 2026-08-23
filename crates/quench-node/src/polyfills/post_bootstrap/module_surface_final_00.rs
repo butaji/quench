@@ -59,55 +59,6 @@ const __quenchApplyFinalModule00 = (name, result, originalRequire) => {
         result[name] = globalThis.__nodeFs.promises[name];
       }
     }
-    if (typeof result.watch !== "function" && typeof globalThis.__nodeFs?.watch === "function") {
-      result.watch = (path, options = {}) => {
-        const queue = [];
-        let pending;
-        let closed = false;
-        const watcher = globalThis.__nodeFs.watch(path, options, (eventType, filename) => {
-          const value = { eventType, filename };
-          if (pending) {
-            pending.resolve({ value, done: false });
-            pending = undefined;
-          } else {
-            queue.push(value);
-          }
-        });
-        const abort = () => {
-          const error = new Error("The operation was aborted");
-          error.name = "AbortError";
-          error.code = "ABORT_ERR";
-          closed = true;
-          watcher.close();
-          if (pending) {
-            pending.reject(error);
-            pending = undefined;
-          }
-        };
-        if (options.signal) {
-          if (options.signal.aborted) abort();
-          else options.signal.addEventListener("abort", abort, { once: true });
-        }
-        const iterator = {
-          next() {
-            if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
-            if (closed) return Promise.resolve({ done: true, value: undefined });
-            return new Promise((resolve, reject) => { pending = { resolve, reject }; });
-          },
-          return() {
-            closed = true;
-            watcher.close();
-            if (pending) {
-              pending.resolve({ done: true, value: undefined });
-              pending = undefined;
-            }
-            return Promise.resolve({ done: true, value: undefined });
-          },
-        };
-        iterator[Symbol.asyncIterator] = () => iterator;
-        return iterator;
-      };
-    }
     result.FileHandle ||= function FileHandle() {};
     result.mkdtempDisposable ||= async (prefix, options) => {
       const path = globalThis.__nodeFs.mkdtempSync(prefix, options);

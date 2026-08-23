@@ -23,7 +23,7 @@ pub(crate) fn includes(
 /// The UTF-16 code units of the receiver, unwrapping boxed strings.
 fn receiver_units(receiver: Option<&Value>) -> Result<Vec<u16>, crate::execute::VmError> {
     if let Some(Value::StringUnits(units)) = receiver {
-        return Ok((**units).clone());
+        return Ok((**units).to_vec());
     }
     Ok(string_receiver(receiver)?.encode_utf16().collect())
 }

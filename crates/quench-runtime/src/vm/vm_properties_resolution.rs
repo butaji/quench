@@ -1,5 +1,16 @@
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
+    // A materialized global binding can transiently leave the receiver nullish
+    // while lowering a member assignment.  Recover only when the requested
+    // property is a real Math intrinsic; this preserves ordinary nullish
+    // property errors and does not mask setters or depend on a register id.
+    let value = if matches!(value, Value::Null | Value::Undefined)
+        && (crate::math::property(key).is_some() || crate::math::constant(key).is_some())
+    {
+        crate::vm::realm_intrinsic(crate::ops::Builtin::Math)
+    } else {
+        value
+    };
     let result = get_property_with_receiver(&value, key, &value)?;
     Ok(crate::locals::resolved_replacement(result))
 }
@@ -10,13 +21,13 @@ pub(crate) fn get_property_with_receiver(
     receiver: &Value,
 ) -> Result<Value, VmError> {
     crate::module_bindings::exports(value, key)?;
+    if let Some(value) = proven_own_data(value, key) {
+        return Ok(value);
+    }
     if let Some(result) = early_property_result(value, key, receiver) {
         return result;
     }
     if let Some(result) = array_property_result(value, key, receiver) {
-        return result;
-    }
-    if let Some(result) = typed_array_prototype_result(value, key, receiver) {
         return result;
     }
     if let Some(result) = function_inherited_property_result(value, key, receiver) {
@@ -37,17 +48,45 @@ pub(crate) fn get_property_with_receiver(
     finish_property_access(value, key, receiver)
 }
 
-fn typed_array_prototype_result(
-    value: &Value,
-    key: &str,
-    receiver: &Value,
-) -> Option<Result<Value, VmError>> {
-    let prototype = value.typed_array_meta()?.prototype()?;
-    let property = match get_property_with_receiver(&prototype, key, receiver) {
-        Ok(property) => property,
-        Err(error) => return Some(Err(error)),
+fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
+    let Value::Object(properties) = value else {
+        return None;
     };
-    (!matches!(property, Value::Undefined)).then_some(Ok(property))
+    if crate::vm::is_global_object(value) {
+        return None;
+    }
+    let deleted = crate::builtins::deleted_key(key);
+    let descriptor = crate::builtins::descriptor_key(key);
+    let mut own = None;
+    let mut metadata = None;
+    for (name, value) in properties.iter().rev() {
+        if name == &deleted {
+            return None;
+        }
+        if own.is_none() && name == key {
+            own = Some(value);
+        }
+        if metadata.is_none() && name == &descriptor {
+            metadata = Some(value);
+        }
+    }
+    let own = own?;
+    if matches!(own, Value::Null) && crate::vm::global_builtin_exists(key) {
+        return None;
+    }
+    if metadata.is_some_and(accessor_descriptor) {
+        return None;
+    }
+    Some(property_value(own))
+}
+
+fn accessor_descriptor(value: &Value) -> bool {
+    let Value::Object(fields) = value else {
+        return true;
+    };
+    fields
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "get" | "set"))
 }
 
 fn function_inherited_property_result(
@@ -58,6 +97,17 @@ fn function_inherited_property_result(
     let Value::Function(function) = value else {
         return None;
     };
+    if let Some(builtin) = match key {
+        "apply" => Some(crate::ops::Builtin::FunctionApply),
+        "call" => Some(crate::ops::Builtin::FunctionCall),
+        "bind" => Some(crate::ops::Builtin::FunctionBind),
+        _ => None,
+    } {
+        return Some(Ok(crate::vm::bind_receiver_property(
+            Value::Builtin(builtin),
+            receiver,
+        )));
+    }
     let properties = function.properties.borrow();
     if properties.iter().any(|(name, _)| name == key) {
         return None;
@@ -103,10 +153,6 @@ fn object_inherited_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     let Value::Object(properties) = value else {
-        if let Value::ObjectAlias(alias) = value {
-            let object = alias.0.borrow().upgrade().map(|object| Value::Object(object))?;
-            return object_inherited_property_result(&object, key, receiver);
-        }
         return None;
     };
     if properties.iter().any(|(name, _)| name == key) {
@@ -118,14 +164,28 @@ fn object_inherited_property_result(
     if let Some(value) = boxed_string_property(properties, key) {
         return Some(Ok(value));
     }
-    let prototype = properties
+    // Ordinary object literals inherit from Object.prototype even though
+    // their compact representation stores no prototype entry.  An explicit
+    // entry still wins, including `null` for a null-prototype object.  Only
+    // claim a default inherited property when Object.prototype actually has
+    // it; host objects use the fall-through lookup paths below for their own
+    // dynamic surface.
+    let explicit = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value));
+    let prototype = match explicit {
+        Some(prototype) => prototype.clone(),
+        None => Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+    };
     if matches!(prototype, Value::Null) {
         return Some(Ok(Value::Undefined));
     }
-    Some(get_property_with_receiver(prototype, key, receiver))
+    let inherited = get_property_with_receiver(&prototype, key, receiver);
+    if explicit.is_none() && matches!(&inherited, Ok(Value::Undefined)) {
+        return None;
+    }
+    Some(inherited)
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
@@ -255,56 +315,20 @@ fn descriptor_property_result(
 /// `OrdinaryCallEvaluate` semantics handle ToObject coercion for sloppy
 /// functions; strict functions keep the receiver as-is.
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
+    // Accessor descriptors may retain a live global/module binding cell.
+    // Resolve the cell before applying the getter's callable dispatch.
+    if let Value::BindingCell(cell) = getter {
+        let value = cell.borrow().clone();
+        return invoke_accessor(&value, receiver);
+    }
     match getter {
-        Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                Value::Builtin(crate::ops::Builtin::HostCapability(_))
-            ) => {
-            let Value::HostCapability(token) = &bound.receiver else {
-                return Err(crate::vm::not_callable());
-            };
-            let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
-                unreachable!();
-            };
-            crate::vm::execute_host_capability_with_receiver(
-                kind,
-                Some(&Value::HostCapability(token.clone())),
-                Some(receiver),
-                &[],
-            )
-        }
         Value::Function(_) | Value::BoundFunction(_) => {
             crate::functions::execute_target(getter, receiver, &[])
         }
         Value::Builtin(builtin) => {
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
         }
-        Value::HostCapability(capability) => {
-            let capability_receiver =
-                crate::vm::realm_token(crate::vm::current_context_or_default().realm())
-                    .ok_or_else(crate::vm::not_callable)?;
-            crate::vm::execute_host_capability_with_receiver(
-                capability.descriptor.kind,
-                Some(&capability_receiver),
-                Some(receiver),
-                &[],
-            )
-        }
-        _ => Err(crate::value::error::throw_type_error(&format!(
-            "value is not callable [property accessor variant={}]",
-            match getter {
-                Value::Undefined => "undefined",
-                Value::Null => "null",
-                Value::Object(_) => "object",
-                Value::Array(_) => "array",
-                Value::HostCapability(_) => "host",
-                Value::Builtin(_) => "builtin",
-                Value::Function(_) => "function",
-                Value::BoundFunction(_) => "bound",
-                _ => "other",
-            }
-        ))),
+        _ => Err(crate::vm::not_callable()),
     }
 }
 
@@ -417,4 +441,38 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
     }
     let name = crate::builtins::builtin_name(builtin);
     name.starts_with("get ") || name.starts_with("set ")
+}
+
+#[cfg(test)]
+mod proven_own_data_tests {
+    use super::proven_own_data;
+    use crate::value::{ObjectData, Value};
+    use std::rc::Rc;
+
+    fn object(entries: Vec<(String, Value)>) -> Value {
+        Value::Object(Rc::new(ObjectData::new(entries)))
+    }
+
+    #[test]
+    fn returns_plain_own_data() {
+        let value = object(vec![("field".into(), Value::Number(7.0))]);
+        assert_eq!(proven_own_data(&value, "field"), Some(Value::Number(7.0)));
+        assert_eq!(proven_own_data(&value, "missing"), None);
+    }
+
+    #[test]
+    fn rejects_deleted_and_accessor_properties() {
+        let deleted = object(vec![
+            ("field".into(), Value::Number(7.0)),
+            (crate::builtins::deleted_key("field"), Value::Undefined),
+        ]);
+        assert_eq!(proven_own_data(&deleted, "field"), None);
+
+        let getter = object(vec![("get".into(), Value::Undefined)]);
+        let accessor = object(vec![
+            ("field".into(), Value::Number(7.0)),
+            (crate::builtins::descriptor_key("field"), getter),
+        ]);
+        assert_eq!(proven_own_data(&accessor, "field"), None);
+    }
 }

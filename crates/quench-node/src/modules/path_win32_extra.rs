@@ -1,5 +1,6 @@
-//! `path.win32` extended: `relative`, `dirname`, `basename`,
-//! `extname`, `parse`, `format`, `join`, `matches_glob`.
+//! `path.win32` continued — `relative`, `toNamespacedPath`,
+//! `dirname`, `basename`, `extname`, `parse`, `format`,
+//! `matchesGlob`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -87,7 +88,6 @@ fn relative_split(from_orig: &str, to_orig: &str) -> String {
     )
 }
 
-use crate::modules::path_win32_extra_util::common_prefix_len;
 fn relative_scan(from_orig: &str, to_orig: &str, from: &str, to: &str) -> String {
     let f: Vec<char> = from.chars().collect();
     let t: Vec<char> = to.chars().collect();
@@ -98,7 +98,17 @@ fn relative_scan(from_orig: &str, to_orig: &str, from: &str, to: &str) -> String
     let from_len = from_end - from_start;
     let to_len = to_end - to_start;
     let length = from_len.min(to_len);
-    let (mut last_common_sep, i) = common_prefix_len(&f, &t, from_start, to_start, length);
+    let mut last_common_sep: isize = -1;
+    let mut i = 0usize;
+    while i < length {
+        if f[from_start + i] != t[to_start + i] {
+            break;
+        }
+        if f[from_start + i] == '\\' {
+            last_common_sep = i as isize;
+        }
+        i += 1;
+    }
     if i != length {
         if last_common_sep == -1 {
             return to_orig.to_string();

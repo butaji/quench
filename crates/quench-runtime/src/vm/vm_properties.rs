@@ -3,6 +3,7 @@ pub fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
     write_value(registers, dst, value);
     Ok(())
 }
+#[inline]
 pub fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     let index = usize::from(index);
     if registers.len() <= index {
@@ -10,22 +11,67 @@ pub fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     }
     registers[index] = value;
 }
+/// Unchecked variant for hot arithmetic paths where the compiler already
+/// guarantees the register index is in bounds.
+#[inline]
+pub(crate) fn write_value_unchecked(registers: &mut [Value], index: u16, value: Value) {
+    registers[usize::from(index)] = value;
+}
+
+#[inline]
 pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
     registers
         .get(usize::from(index))
         .cloned()
         .map(crate::locals::resolved_replacement)
-        .ok_or(VmError::RegisterOutOfBounds(index))
+        .ok_or(VmError::MissingReturn)
+}
+
+/// Unchecked variant for hot arithmetic paths where the compiler already
+/// guarantees the register index is in bounds.
+#[inline]
+pub(crate) fn read_register_unchecked(registers: &[Value], index: u16) -> Value {
+    let value = registers
+        .get(usize::from(index))
+        .expect("register index out of bounds")
+        .clone();
+    crate::locals::resolved_replacement(value)
 }
 pub fn get_property(value: &Value, key: &str) -> Value {
-    crate::module_bindings::exports(value, key).ok();
+    // Deferred module namespaces are the only values for which export lookup
+    // can have an effect. Avoid entering the module-binding machinery for the
+    // overwhelmingly common primitive/builtin/array property reads.
+    if matches!(value, Value::Object(_) | Value::BindingCell(_)) {
+        crate::module_bindings::exports(value, key).ok();
+    }
     if let Value::BindingCell(cell) = value {
         return get_property(&cell.borrow(), key);
     }
     if matches!(value, Value::Proxy(_)) {
         return crate::proxy::proxy_get(value, key, Some(value)).unwrap_or(Value::Undefined);
     }
-    crate::locals::resolved_replacement(direct_or_primitive_property(value, key))
+    // Property lookup must observe the latest physical object for this
+    // semantic identity. Resolving only the result reads stale scalar fields
+    // after an immutable object transition (for example `this.x++`).
+    let owner = match value {
+        Value::Array(_)
+        | Value::Object(_)
+        | Value::ObjectAlias(_)
+        | Value::Function(_)
+        | Value::BindingCell(_) => crate::locals::resolved_replacement(value.clone()),
+        _ => value.clone(),
+    };
+    let result = direct_or_primitive_property(&owner, key);
+    // Primitive results cannot participate in replacement aliases. Avoid the
+    // thread-local replacement lookup on the very common scalar property path.
+    match result {
+        Value::Array(_)
+        | Value::Object(_)
+        | Value::ObjectAlias(_)
+        | Value::Function(_)
+        | Value::BindingCell(_) => crate::locals::resolved_replacement(result),
+        _ => result,
+    }
 }
 
 fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
@@ -39,15 +85,6 @@ fn get_property_value(value: &Value, key: &str) -> Value {
     use Value::*;
     if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
         return found;
-    }
-    // Typed-array instances can carry an ordinary custom [[Prototype]] (for
-    // example Node's Buffer.prototype).  Resolve it before the built-in
-    // typed-array dispatch so all view variants honor setPrototypeOf.
-    if let Some(prototype) = value.typed_array_meta().and_then(|meta| meta.prototype()) {
-        let inherited = get_property(&prototype, key);
-        if !matches!(inherited, Undefined) {
-            return inherited;
-        }
     }
     match value {
         Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
@@ -342,7 +379,9 @@ fn function_inherited_property(
     properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0function_prototype" || name == "\0prototype").then(|| property_value(value)))
+        .find_map(|(name, value)| {
+            (name == "\0function_prototype" || name == "\0prototype").then(|| property_value(value))
+        })
         .map_or_else(
             || function_prototype_property(function, key),
             |prototype| get_property(&prototype, key),

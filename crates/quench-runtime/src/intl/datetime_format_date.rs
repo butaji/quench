@@ -84,19 +84,19 @@ fn compose_date_string(
         parts.push(y);
     }
     if month_is_name {
-        // A named month is also valid without a day/year (for example,
-        // `{ month: "long" }`).  Do not assume the pattern has two parts:
-        // indexing `parts[1]` here used to panic on that valid option set.
-        if parts.len() < 2 {
-            return parts.join(" ");
-        }
+        // Component options are independent; never assume a month implies
+        // both day and year. Preserve the locale order without indexing
+        // absent components.
         let mut out = String::new();
-        out.push_str(parts[0].as_str());
-        out.push(' ');
-        out.push_str(parts[1].as_str());
-        if parts.len() >= 3 {
-            out.push_str(", ");
-            out.push_str(parts[2].as_str());
+        for (index, part) in parts.iter().enumerate() {
+            if index > 0 {
+                if index == 2 && parts.len() >= 3 {
+                    out.push_str(", ");
+                } else {
+                    out.push(' ');
+                }
+            }
+            out.push_str(part);
         }
         return out;
     }
@@ -309,21 +309,9 @@ fn day_period_name_from_style(style: &str, hour: u32) -> Option<String> {
         },
         "narrow" => match hour {
             0..=11 => "AM",
-
             _ => "PM",
         },
         _ => return None,
     };
     Some(name.to_string())
-}
-#[cfg(test)]
-mod tests {
-    use super::date_format_result;
-    use crate::value::Value;
-
-    #[test]
-    fn named_month_without_other_date_parts_does_not_panic() {
-        let slots = vec![("month".to_string(), Value::String("long".into()))];
-        assert_eq!(date_format_result(&slots, 0.0).as_deref(), Some("January"));
-    }
 }

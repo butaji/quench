@@ -40,7 +40,7 @@ pub(crate) fn names(metadata: &TestMetadata) -> Vec<&str> {
     if metadata.is_raw {
         return Vec::new();
     }
-    let mut names = vec!["sta.js", "assert.js"];
+    let mut names = vec!["assert.js", "sta.js"];
     if metadata.is_async {
         names.push("doneprintHandle.js");
     }

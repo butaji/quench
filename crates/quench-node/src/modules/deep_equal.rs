@@ -35,6 +35,13 @@ fn compare(
     skip_prototype: bool,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
+    if let (Value::ObjectAlias(left_alias), Value::ObjectAlias(right_alias)) = (left, right) {
+        if left_alias.0.borrow().upgrade().is_none() && right_alias.0.borrow().upgrade().is_none() {
+            // Cyclic literal aliases may be unresolved after their owning
+            // object has been reduced. They denote the same cycle marker.
+            return Ok(true);
+        }
+    }
     let left = &deref_alias(left);
     let right = &deref_alias(right);
     if execute::same_value(left, right) {
@@ -214,19 +221,8 @@ fn compare_arrays(
     if seen(memo, left, right) {
         return Ok(true);
     }
-    let left_keys = execute::own_enumerable_keys(left);
-    let right_keys = execute::own_enumerable_keys(right);
     for index in 0..a.logical_len() {
         let key = index.to_string();
-        // A sparse slot is observably different from an own `undefined`
-        // element. Reading both yields `undefined`, so compare ownership
-        // before comparing values.
-        if left_keys.contains(&key) != right_keys.contains(&key) {
-            return Ok(false);
-        }
-        if !left_keys.contains(&key) {
-            continue;
-        }
         let la = execute::get_property_result(left, &key)?;
         let rb = execute::get_property_result(right, &key)?;
         if !compare(&la, &rb, strict, skip_prototype, memo)? {

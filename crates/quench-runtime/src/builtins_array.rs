@@ -117,20 +117,20 @@ fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -
             Value::BindingCell(cell) => Some(Rc::clone(cell)),
             _ => None,
         });
-    let mut values: Vec<(String, Value)> = properties
+    let mut values: crate::value::ObjectProperties = properties
         .iter()
         .filter(|(name, _)| name != key && name != &descriptor_key(key))
         .cloned()
         .collect();
     if let Some(cell) = cell {
-        values.push((crate::builtins::deleted_key(key), Value::BindingCell(cell)));
+        values.push((crate::builtins::deleted_key(key).into(), Value::BindingCell(cell)));
     }
     if crate::vm::is_global_object(&Value::Object(Rc::clone(&properties)))
         && crate::vm::global_builtin_exists(key)
     {
-        values.push((crate::builtins::deleted_key(key), Value::Boolean(true)));
+        values.push((crate::builtins::deleted_key(key).into(), Value::Boolean(true)));
     }
-    Value::Object(Rc::new(crate::value::ObjectData::with_private_slots(
+    Value::Object(Rc::new(crate::value::ObjectData::with_shared_properties(
         values,
         Rc::clone(&properties.private_slots),
     )))
@@ -182,6 +182,22 @@ const MAX_DENSE_ARRAY_INDEX_GAP: usize = 1024;
 fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(String, Value)>) {
     let Value::Array(values) = target else { return };
     let mut values = Rc::clone(values);
+    let mut descriptor = descriptor;
+    if key == "length" {
+        // Array length is always a complete data descriptor.  An empty or
+        // partial defineProperty descriptor preserves the omitted attributes;
+        // retaining only the supplied fields would make a writable length
+        // appear non-writable to subsequent assignments.
+        if !descriptor.iter().any(|(name, _)| name == "writable") {
+            descriptor.push(("writable".to_string(), Value::Boolean(true)));
+        }
+        if !descriptor.iter().any(|(name, _)| name == "enumerable") {
+            descriptor.push(("enumerable".to_string(), Value::Boolean(false)));
+        }
+        if !descriptor.iter().any(|(name, _)| name == "configurable") {
+            descriptor.push(("configurable".to_string(), Value::Boolean(false)));
+        }
+    }
     let accessor = descriptor
         .iter()
         .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
@@ -264,13 +280,37 @@ fn prepare_array_length_definition(
     if key != "length" {
         return Ok(None);
     }
-    let Some(Value::Number(new_length)) = array_descriptor_value(descriptor, "value") else {
+    // The arguments exotic object's `length` is an ordinary writable data
+    // property, not ArraySetLength. Preserve its value without applying
+    // array-length coercion (which would incorrectly throw for strings).
+    if values.is_arguments() {
+        return Ok(None);
+    }
+    let Some(value) = array_descriptor_value(descriptor, "value") else {
         return Ok(None);
     };
-    let old_length = values.physical_len();
+    // ArraySetLength performs ToUint32 and ToNumber separately. The first
+    // coercion is done by validate_array_length_descriptor; repeat it here
+    // for the NumberLen value used by the rest of the algorithm.
+    let new_length = crate::conversion::to_number(&value)?;
+    if !new_length.is_finite()
+        || new_length < 0.0
+        || new_length.fract() != 0.0
+        || new_length > u32::MAX as f64
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
     let new_length = new_length as usize;
+    // Bound deletion by physically stored elements, not the logical length.
+    let old_length = values.physical_len();
     if new_length >= old_length {
-        if array_descriptor_flag(values, key, "writable") != Some(false) {
+        // Restoration may widen a length that was temporarily made
+        // non-writable by verifyWritable.  The descriptor being applied is
+        // authoritative here; consulting the current (temporary) metadata
+        // would leave the logical length unchanged.
+        if array_descriptor_value(descriptor, "writable") != Some(Value::Boolean(false)) {
             let mut values = Rc::clone(values);
             Rc::make_mut(&mut values).set_length(new_length);
             let mut partial = Value::Array(values);
@@ -285,17 +325,6 @@ fn prepare_array_length_definition(
             "Cannot assign to read only array length",
         ));
     }
-    prepare_array_length_shrink(target, values, key, descriptor, old_length, new_length)
-}
-
-fn prepare_array_length_shrink(
-    target: &Value,
-    values: &Rc<crate::value::ArrayData>,
-    key: &str,
-    descriptor: &[(String, Value)],
-    old_length: usize,
-    new_length: usize,
-) -> Result<Option<Value>, crate::execute::VmError> {
     let mut values = Rc::clone(values);
     let data = Rc::make_mut(&mut values);
     for index in (new_length..old_length).rev() {
@@ -306,7 +335,10 @@ fn prepare_array_length_shrink(
         if array_descriptor_flag(data, &index_key, "configurable") == Some(false) {
             data.set_length(index + 1);
             return Err(commit_failed_array_length(
-                target, values, descriptor, index + 1,
+                target,
+                values,
+                descriptor,
+                index + 1,
             ));
         }
         data.delete_property(&index_key);
@@ -367,16 +399,14 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
     }
     if key == "length" {
         if values.is_arguments() {
-            // Per spec 10.6 / Annex 10.6, arguments.length's descriptor is
-            // { DontEnum } (writable defaults to true). The assignment to
-            // arguments.length is a plain value-property write — store
-            // the value verbatim on the live argument data so every
-            // reference to the arguments object observes the override.
+            // Per spec 10.6 / Annex 10.6, arguments.length's descriptor is a plain
+            // value property. Keep the live override visible through every alias.
             Rc::make_mut(&mut values).set_arguments_length_override(value.clone());
             return Value::Array(values);
         }
         let length = array_length_number(&value) as usize;
-        Rc::make_mut(&mut values).set_length(length);
+        let data = Rc::make_mut(&mut values);
+        data.set_length(length);
         return Value::Array(values);
     }
     let Some(index) = crate::arrays::array_index(key) else {

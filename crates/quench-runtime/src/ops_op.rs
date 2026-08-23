@@ -162,6 +162,12 @@ pub enum Op {
         dst: u16,
         elements: Vec<u16>,
     },
+    TemplateObject {
+        dst: u16,
+        cooked: u16,
+        raw: u16,
+        site: u64,
+    },
     BuildArray {
         dst: u16,
         elements: Vec<ArrayElement>,
@@ -501,6 +507,7 @@ pub enum Op {
         slot: u16,
         body: crate::machine::FunctionCode,
         per_iteration: bool,
+        r#await: bool,
         dst: u16,
     },
     Switch {

@@ -15,6 +15,8 @@
 //! compact representations (`Value`, `HeapRef`, `Shape`, `Frame`, `Code`,
 //! `Fact`, and `Continuation`) before adding breadth.
 
+pub mod build_profile;
+
 mod arrays;
 mod atomics;
 pub mod benchmark;
@@ -33,7 +35,7 @@ mod construct;
 mod continuation;
 mod control_flow;
 mod conversion;
-pub use conversion::{is_callable, to_number};
+pub use conversion::is_callable;
 pub mod date;
 mod disposable_stack;
 mod environment;
@@ -42,7 +44,6 @@ mod exceptions;
 pub mod execute;
 pub mod facts;
 mod finalization_registry;
-pub mod frame_stack;
 mod function_code;
 mod function_parameters;
 mod functions;
@@ -51,6 +52,7 @@ mod functions_write;
 mod generator;
 mod global_environment;
 mod globals;
+pub mod hardware_counters;
 pub mod heap;
 pub mod host_api;
 mod identifiers;
@@ -58,6 +60,7 @@ pub mod identity;
 mod intl;
 mod json;
 pub use json::parse as parse_json;
+pub mod ir;
 mod literal;
 mod locals;
 mod logical;

@@ -17,40 +17,24 @@ pub fn run_in_new_context(
     let source = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))?;
     let program = quench_runtime::reduce::reduce_global_script_source(&source)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    // A new context must have its own realm/global object. Reusing the
-    // caller's context makes global `var` declarations mutate the host.
-    let mut context = quench_runtime::vm::VmContext::isolated();
-    if matches!(args.get(1), Some(Value::Object(_) | Value::ObjectAlias(_))) {
-        context = context.with_global_object(args.get(1).unwrap());
-    }
-    if source.trim() == "this" {
-        if let Some(global) = args.get(1) {
-            return Ok(global.clone());
+    let mut context = quench_runtime::vm::current_context();
+    if let Some(sandbox @ Value::Object(_)) = args.get(1) {
+        for key in execute::own_enumerable_keys(sandbox) {
+            let value = execute::get_property_result(sandbox, &key)?;
+            context = Rc::new((*context).clone().with_host_value(key, value));
         }
     }
-    quench_runtime::vm::execute_with_context(program.ops(), &context)
+    let mut registers = Vec::new();
+    quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
+    })
 }
+
 pub fn build() -> Value {
     let run = crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT);
-    let source = r#"(function(run){
-      function runThis(code){return run(code);}
-      function createContext(o){return o||{}}
-      function isContext(o){return !!o}
-      function Script(code){this.code=String(code)}
-      Script.prototype.runInNewContext=function(s){return run(this.code,s)};
-      Script.prototype.runInContext=function(s){return run(this.code,s)};
-      Script.prototype.runInThisContext=function(){return run(this.code)};
-      function compileFunction(code,params){params=params||[];return eval('(function('+params.join(',')+'){'+code+'})')}
-      return {runInNewContext:run,runInContext:run,runInThisContext:runThis,Script:Script,createContext:createContext,isContext:isContext,compileFunction:compileFunction};
-    })"#;
-    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else {
-        return Value::Undefined;
-    };
-    let context = quench_runtime::vm::current_context();
-    let mut regs = Vec::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)
-    })
-    .unwrap_or(Value::Undefined);
-    quench_runtime::vm::call_value(&factory, &Value::Undefined, &[run]).unwrap_or(Value::Undefined)
+    crate::host::namespace_object(vec![
+        ("runInNewContext", run.clone()),
+        ("runInContext", run),
+    ])
+    .unwrap_or_else(|_| Value::Undefined)
 }

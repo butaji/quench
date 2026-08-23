@@ -12,7 +12,7 @@ use quench_runtime::reduce::{
     inspect_module_source, reduce_module_sequence, reduce_module_source, reduce_script_sources,
     reduce_source, ScriptSource,
 };
-use quench_runtime::vm::{execute_with_context, ExecutionScope, VmContext};
+use quench_runtime::vm::{execute_code_with_context, ExecutionScope, VmContext};
 
 use crate::module_graph::{ModuleGraph, ModuleId, ModuleKind};
 use crate::Test262Host;
@@ -67,7 +67,21 @@ impl LinkedModuleGraph {
             } else if unit.kind == ModuleKind::Bytes {
                 LinkedModule::compile_bytes(&unit.bytes)?
             } else {
-                LinkedModule::compile(&unit.source)?
+                match LinkedModule::compile(&unit.source) {
+                    Ok(module) => module,
+                    Err(error) if graph.is_dynamic_target(unit.id) => {
+                        let message = error
+                            .strip_prefix("SyntaxError: ")
+                            .unwrap_or(&error);
+                        let source = format!(
+                            "throw new SyntaxError({});",
+                            serde_json::to_string(message)
+                                .map_err(|serialize| serialize.to_string())?
+                        );
+                        LinkedModule::compile(&source)?
+                    }
+                    Err(error) => return Err(error),
+                }
             };
             units.insert(unit.id, module);
         }
@@ -393,7 +407,8 @@ impl Test262Host for RuntimeHost {
             LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), harness)?;
         quench_runtime::builtins::reset_intrinsic_prototype_state();
         quench_runtime::execute::reset_replacements();
-        linked.execute(&graph, entry)
+        let context = fresh_context();
+        quench_runtime::vm::with_current_context(&context, || linked.execute(&graph, entry))
     }
 }
 
@@ -407,38 +422,40 @@ fn run_source(source: &str) -> Result<(), String> {
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
-    execute_with_context(program.ops(), host_context())
+    let context = fresh_context();
+    let result = execute_code_with_context(program.code(), &context)
         .map(|_| ())
-        .map_err(|error| format!("residual VM error: {}", error.render()))
+        .map_err(|error| format!("residual VM error: {}", error.render()));
+    // Promise reactions (including asyncHelpers' $DONE handler) are queued
+    // during script execution and must settle before the host reports success.
+    quench_runtime::module_bindings::drain_jobs();
+    result
 }
 
-fn host_context() -> &'static VmContext {
-    thread_local! {
-        static CONTEXT: std::cell::OnceCell<&'static VmContext> = const { std::cell::OnceCell::new() };
-    }
-    CONTEXT.with(|context| {
-        *context.get_or_init(|| {
-            Box::leak(Box::new(
-                VmContext::for_realm(
-                    quench_runtime::ops::RealmId::ROOT,
-                    vec![
-                        quench_runtime::ops::HostCapabilityKind::GetGlobal,
-                        quench_runtime::ops::HostCapabilityKind::CreateRealm,
-                        quench_runtime::ops::HostCapabilityKind::EvalScript,
-                        quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
-                        quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
-                    ],
-                )
-                .with_host_capability(
-                    "$262",
-                    quench_runtime::ops::HostCapabilityRef {
-                        realm: quench_runtime::ops::RealmId::ROOT,
-                        kind: quench_runtime::ops::HostCapabilityKind::GetGlobal,
-                    },
-                ),
-            ))
-        })
-    })
+fn fresh_context() -> VmContext {
+    // Harness constructors and intrinsic values must remain in the canonical
+    // realm; creating a child realm here gives Array.from a constructor whose
+    // identity does not match the harness's Test262Error value.
+    let context = VmContext::for_realm(
+        quench_runtime::ops::RealmId::ROOT,
+        vec![
+            quench_runtime::ops::HostCapabilityKind::GetGlobal,
+            quench_runtime::ops::HostCapabilityKind::CreateRealm,
+            quench_runtime::ops::HostCapabilityKind::EvalScript,
+            quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
+            quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
+        ],
+    );
+    context.with_host_capability(
+        "$262",
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::GetGlobal,
+        },
+    )
+}
+fn host_context() -> VmContext {
+    quench_runtime::vm::current_context().as_ref().clone()
 }
 
 fn run_module_source(source: &str) -> Result<(), String> {

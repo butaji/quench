@@ -10,65 +10,16 @@ impl QuenchNodeHost {
         let result = (|| -> Result<Value, VmError> {
             match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::Require) => {
-                if matches!(
-                    arguments.first(),
-                    Some(Value::String(name))
-                        if name.trim_start_matches("node:") == "string_decoder"
-                ) {
+                if matches!(arguments.first(), Some(Value::String(name)) if name.trim_start_matches("node:") == "string_decoder")
+                {
                     Ok(string_decoder_module())
                 } else {
                     require_module(arguments)
                 }
             }
-            HostCapabilityKind::Custom(CapabilityName::RequireFor) => {
-                require_module(arguments)
+            HostCapabilityKind::Custom(CapabilityName::EventEmitter) => {
+                self.construct(capability, arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::ConsoleCreateTask) => {
-                Ok(Value::object(vec![
-                    (
-                        "name".into(),
-                        match arguments.first().unwrap_or(&Value::Undefined) {
-                            Value::String(value) => Value::String(value.clone()),
-                            value => Value::String(format!("{value:?}")),
-                        },
-                    ),
-                    (
-                        "run".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::ConsoleTaskRun,
-                        )),
-                    ),
-                ]))
-            }
-            HostCapabilityKind::Custom(CapabilityName::ConsoleTaskRun) => {
-                let callback = arguments.first().cloned().ok_or(VmError::NotCallable)?;
-                quench_runtime::execute::call(
-                    &callback,
-                    &Value::Undefined,
-                    &arguments[1..],
-                )
-            }
-            HostCapabilityKind::Custom(CapabilityName::AsyncHooksEnabledHooksExist) => {
-                Ok(Value::Boolean(false))
-            }
-            HostCapabilityKind::Custom(CapabilityName::DnsPromiseLookup) => Ok(fulfilled(
-                quench_runtime::host_api::array(vec![
-                    Value::String("127.0.0.1".into()),
-                    Value::Number(4.0),
-                ]),
-            )),
-            HostCapabilityKind::Custom(CapabilityName::DnsPromiseResolve4) => Ok(fulfilled(
-                quench_runtime::host_api::array(vec![Value::String("127.0.0.1".into())]),
-            )),
-            HostCapabilityKind::Custom(
-                CapabilityName::TtyReadStream | CapabilityName::TtyWriteStream,
-            ) => Ok(Value::object(vec![
-                (
-                    "fd".into(),
-                    arguments.first().cloned().unwrap_or(Value::Number(0.0)),
-                ),
-                ("isTTY".into(), Value::Boolean(false)),
-            ])),
             HostCapabilityKind::Custom(
                 CapabilityName::StreamReadable
                 | CapabilityName::StreamWritable
@@ -101,7 +52,9 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
-            HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => fs_access_sync(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => {
+                fs_access_sync(arguments).map_err(invalid_path_error)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync) => {
                 self.fs_write_file(arguments)
             }
@@ -179,19 +132,6 @@ impl QuenchNodeHost {
                 format!("{}\n", std::env::args().next().unwrap_or_default()).into(),
             )),
             HostCapabilityKind::Custom(CapabilityName::ChildFork) => child_fork(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ChildForkOnce) => {
-                let receiver = receiver.ok_or(VmError::NotCallable)?;
-                if matches!(arguments.first(), Some(Value::String(event)) if event == "exit") {
-                    if let Some(callback) = arguments.get(1) {
-                        quench_runtime::execute::call(
-                            callback,
-                            &Value::Undefined,
-                            &[Value::Number(0.0), Value::Undefined],
-                        )?;
-                    }
-                }
-                Ok(receiver.clone())
-            }
             HostCapabilityKind::Custom(CapabilityName::ChildEmit) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::ChildSend) => Err(VmError::EvalError(
                 "message argument must be specified".into(),

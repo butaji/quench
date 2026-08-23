@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
     let failed = |message: &str| Err(VmError::EvalError(format!("AssertionError: {message}")));
     match id {
@@ -47,7 +45,7 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
             };
             match quench_runtime::execute::call(callback, &Value::Undefined, &[]) {
                 Ok(_) => Ok(Value::Undefined),
-                Err(_) => failed("Got unwanted exception"),
+                Err(error) => Err(error),
             }
         }
         19 => {
@@ -86,21 +84,16 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
                 failed("values are equal")
             }
         }
-        36 => {
-            let message = arguments
-                .first()
-                .filter(|value| !matches!(value, Value::Undefined))
-                .map(safe_value_string)
-                .unwrap_or_else(|| "Failed".into());
-            failed(&message)
-        }
+        35 => Ok(Value::Undefined),
+        36 => failed("failed"),
         37 => {
             let string = arguments.first().map(safe_value_string).unwrap_or_default();
             let pattern = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-            if regex_matches(&pattern, &string) {
-                Ok(Value::Undefined)
+            let matched = regex_matches(&pattern, &string);
+            if matched {
+                failed("The input did not match the regular expression")
             } else {
-                failed("The input did not match the pattern")
+                Ok(Value::Undefined)
             }
         }
         38 => {
@@ -126,9 +119,6 @@ fn is_callable_value(value: &Value) -> bool {
 }
 
 fn regex_matches(pattern: &Value, string: &str) -> bool {
-    if matches!(pattern, Value::String(_) | Value::StringUnits(_)) {
-        return string.contains(&safe_value_string(pattern));
-    }
     let Ok(test) = quench_runtime::execute::get_property_result(pattern, "test") else {
         return false;
     };
@@ -164,38 +154,41 @@ fn assertion_strict_equal(actual: &Value, expected: &Value) -> bool {
 }
 
 fn deep_value_equal(actual: &Value, expected: &Value) -> bool {
-    fn compare(actual: &Value, expected: &Value, seen: &mut HashSet<(usize, usize)>) -> bool {
-        if let (Some(left), Some(right)) = (url_identity(actual), url_identity(expected)) {
-            return left == right;
-        }
-        match (actual, expected) {
-            (Value::Array(left), Value::Array(right)) => {
-                if !seen.insert((left.as_ref() as *const _ as usize, right.as_ref() as *const _ as usize)) {
-                    return true;
-                }
-                let left_value = Value::Array(left.clone());
-                let right_value = Value::Array(right.clone());
-                let length = array_length(&left_value);
-                length == array_length(&right_value) && (0..length).all(|index| {
-                    let l = quench_runtime::execute::get_property_result(&left_value, &index.to_string());
-                    let r = quench_runtime::execute::get_property_result(&right_value, &index.to_string());
-                    matches!((l, r), (Ok(l), Ok(r)) if compare(&l, &r, seen))
-                })
-            }
-            (Value::Object(left), Value::Object(right)) => {
-                if !seen.insert((left.as_ref() as *const _ as usize, right.as_ref() as *const _ as usize)) {
-                    return true;
-                }
-                let lp = left.iter().filter(|(k, _)| !k.starts_with('\0')).collect::<Vec<_>>();
-                let rp = right.iter().filter(|(k, _)| !k.starts_with('\0')).collect::<Vec<_>>();
-                lp.len() == rp.len() && lp.iter().all(|(key, value)| {
-                    rp.iter().find(|(other, _)| other == key).is_some_and(|(_, other)| compare(value, other, seen))
-                })
-            }
-            _ => actual == expected,
-        }
+    if let (Some(left), Some(right)) = (url_identity(actual), url_identity(expected)) {
+        return left == right;
     }
-    compare(actual, expected, &mut HashSet::new())
+    match (actual, expected) {
+        (Value::Array(left), Value::Array(right)) => {
+            let left_value = Value::Array(left.clone());
+            let right_value = Value::Array(right.clone());
+            let left_length = array_length(&left_value);
+            left_length == array_length(&right_value) && (0..left_length).all(|index| {
+                let left =
+                    quench_runtime::execute::get_property_result(&left_value, &index.to_string());
+                let right =
+                    quench_runtime::execute::get_property_result(&right_value, &index.to_string());
+                matches!((left, right), (Ok(left), Ok(right)) if deep_value_equal(&left, &right))
+            })
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            let left_properties = left
+                .iter()
+                .filter(|(key, _)| !key.starts_with('\0'))
+                .collect::<Vec<_>>();
+            let right_properties = right
+                .iter()
+                .filter(|(key, _)| !key.starts_with('\0'))
+                .collect::<Vec<_>>();
+            left_properties.len() == right_properties.len()
+                && left_properties.iter().all(|(key, value)| {
+                    right_properties
+                        .iter()
+                        .find(|(other_key, _)| other_key == key)
+                        .is_some_and(|(_, other)| deep_value_equal(value, other))
+                })
+        }
+        _ => actual == expected,
+    }
 }
 
 fn assertion_error_value(message: &str) -> Value {

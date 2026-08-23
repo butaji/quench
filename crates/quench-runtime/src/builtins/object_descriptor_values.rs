@@ -30,7 +30,7 @@ fn live_descriptor(descriptor: &Value, live: Option<Value>) -> Value {
     if let Some((_, value)) = properties.iter_mut().find(|(name, _)| name == "value") {
         *value = live;
     }
-    Value::Object(Rc::new(ObjectData::new(properties)))
+    Value::Object(Rc::new(ObjectData::from_shared_properties(properties)))
 }
 
 fn public_descriptor(descriptor: &Value) -> Value {
@@ -41,7 +41,7 @@ fn public_descriptor(descriptor: &Value) -> Value {
     if let Some((_, value)) = properties.iter_mut().find(|(name, _)| name == "value") {
         *value = public_value(value);
     }
-    Value::Object(Rc::new(ObjectData::new(properties)))
+    Value::Object(Rc::new(ObjectData::from_shared_properties(properties)))
 }
 
 fn public_value(value: &Value) -> Value {

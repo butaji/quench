@@ -85,26 +85,24 @@ impl NodeRunner {
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
-        // `quench-runtime` owns the CJS execution boundary for script
-        // reduction. The host supplies the module facts and bindings.
-        let ops = match reduce_script(&fixture.source) {
-            Ok(ops) => ops,
+        // The main script runs as a CJS module: `__filename`,
+        // `__dirname`, `require`, `module`/`exports` are in scope.
+        let source =
+            quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture.source);
+        let program = match reduce_script(&source) {
+            Ok(program) => program,
             Err(error) => {
                 return NodeOutcome::Fail {
                     reason: format!("reduce: {error}"),
                 };
             }
         };
-        let result = quench_runtime::vm::execute_with_context(&ops, &self.context)
-            .and_then(|_| self.drive("globalThis.__quench_run_loop__();"));
-        let result = self.route_uncaught(result).and_then(|_| {
-            self.drive(
-                "if (typeof globalThis.__quench_verify_calls__ === 'function') globalThis.__quench_verify_calls__();",
-            )
-        });
+        let result = quench_runtime::vm::execute_code_with_context(program.code(), &self.context)
+            .and_then(|_| self.drive("__quench_run_loop__();"));
+        let result = self.route_uncaught(result);
         // `process.exit` unwinds with an error; `exit` handlers still run.
         let result = match result {
-            Err(error) => match self.drive("globalThis.__quench_run_exit__();") {
+            Err(error) => match self.drive("__quench_run_exit__();") {
                 Ok(_) => Err(error),
                 Err(exit_error) => Err(exit_error),
             },
@@ -123,8 +121,8 @@ impl NodeRunner {
             Err(error) => {
                 match quench_node::modules::pump::handle_uncaught(&self.host.state(), error) {
                     Ok(()) => self
-                        .drive("globalThis.__quench_uncaught__();")
-                        .and_then(|_| self.drive("globalThis.__quench_run_loop__();"))
+                        .drive("__quench_uncaught__();")
+                        .and_then(|_| self.drive("__quench_run_loop__();"))
                         .map(|_| ()),
                     Err(error) => Err(error),
                 }
@@ -159,13 +157,15 @@ impl NodeRunner {
         &self,
         source: &str,
     ) -> Result<quench_runtime::value::Value, quench_runtime::vm::VmError> {
-        let ops = reduce_script(source).map_err(quench_runtime::vm::VmError::EvalError)?;
-        quench_runtime::vm::execute_with_context(&ops, &self.context)
+        let program = reduce_script(source).map_err(quench_runtime::vm::VmError::EvalError)?;
+        quench_runtime::vm::execute_code_with_context(program.code(), &self.context)
     }
 }
 
-fn reduce_script(source: &str) -> Result<Vec<quench_runtime::ops::Op>, String> {
+fn reduce_script(
+    source: &str,
+) -> Result<quench_runtime::reduce::reduce_statements::ResidualProgram, String> {
     use quench_runtime::reduce::reduce_source;
     let program = reduce_source(source).map_err(|errors| errors.join("; "))?;
-    Ok(program.ops().to_vec())
+    Ok(program)
 }

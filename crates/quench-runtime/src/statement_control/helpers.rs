@@ -175,7 +175,7 @@ fn reduce_labeled(
         let body = ops.split_off(start);
         ops.push(Op::Label {
             name: statement.label.name.to_string(),
-            body: crate::machine::FunctionCode::from_ops(body),
+            body: crate::machine::FunctionCode::pending(body),
         });
     }
     Ok(result)

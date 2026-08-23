@@ -31,7 +31,11 @@ pub(crate) fn has_restricted_function_property(value: &Value, key: &str) -> bool
     is_restricted && !properties.iter().any(|(name, _)| name == key)
 }
 
-fn object_prototype_property(receiver: &Value, properties: &[(String, Value)], key: &str) -> Value {
+fn object_prototype_property(
+    receiver: &Value,
+    properties: &[(crate::value::PropertyName, Value)],
+    key: &str,
+) -> Value {
     properties
         .iter()
         .rev()
@@ -68,19 +72,28 @@ pub(crate) fn object_property(
     object_builtin_property(properties, key)
 }
 
-fn object_builtin_property(properties: &[(String, Value)], key: &str) -> Value {
+fn object_builtin_property(properties: &[(crate::value::PropertyName, Value)], key: &str) -> Value {
     crate::builtins::property(object_prototype(properties), key)
 }
 
 fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
-    if properties
-        .iter()
-        .any(|(name, _)| name == &crate::builtins::deleted_key(key))
-    {
-        return Some(Value::Undefined);
+    let deleted_key = crate::builtins::deleted_key(key);
+    let mut direct = None;
+    for (name, value) in properties.iter().rev() {
+        if name == &deleted_key {
+            return Some(Value::Undefined);
+        }
+        if direct.is_none() && name == key {
+            direct = Some(value);
+        }
     }
-    if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
-        let value = property_value(value);
+    if let Some(value) = direct {
+        if matches!(value, Value::Null)
+            && crate::vm::global_builtin_exists(key)
+            && global_object_property(properties, key).is_some()
+        {
+            return global_object_property(properties, key);
+        }
         if key == "format"
             && matches!(
                 value,
@@ -91,7 +104,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
             )
         {
             return Some(crate::vm::bind_receiver_property(
-                value,
+                value.clone(),
                 &Value::Object(properties.clone()),
             ));
         }
@@ -102,11 +115,11 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
             )
         {
             return Some(crate::vm::bind_receiver_property(
-                value,
+                value.clone(),
                 &Value::Object(properties.clone()),
             ));
         }
-        return Some(value);
+        return Some(property_value(value));
     }
     if let Some(value) = global_object_property(properties, key) {
         return Some(value);
@@ -128,13 +141,13 @@ fn global_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
     if let Some(realm) = realm::id_for_global(properties) {
         return Some(global_property(properties, key, Some(realm)));
     }
-    GLOBAL_OBJECT.with(|global| {
+    (GLOBAL_OBJECT.with(|global| {
         global
             .borrow()
             .as_ref()
             .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
-            .then(|| global_property(properties, key, None))
-    })
+    }) || crate::vm::is_global_object(&Value::Object(properties.clone())))
+    .then(|| global_property(properties, key, None))
 }
 
 pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
@@ -157,7 +170,7 @@ pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, k
     }
 }
 
-fn object_prototype(properties: &[(String, Value)]) -> Builtin {
+fn object_prototype(properties: &[(crate::value::PropertyName, Value)]) -> Builtin {
     if let Some((_, value)) = properties.iter().find(|(name, _)| name == "_value") {
         return match value {
             Value::String(value) if value.contains('\0') => Builtin::SymbolPrototype,
@@ -179,28 +192,6 @@ fn object_prototype(properties: &[(String, Value)]) -> Builtin {
     }
 }
 
-fn resolve_host_global(key: &str) -> Option<Value> {
-    if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
-        return Some(value);
-    }
-    if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
-        let token = Value::HostCapability(Rc::new(
-            crate::value::HostCapabilityValue::new(binding),
-        ));
-        if matches!(binding.kind, crate::ops::HostCapabilityKind::Custom(1)) {
-            return Some(Value::BoundFunction(Rc::new(
-                crate::value::BoundFunctionValue::new(
-                    binding.realm,
-                    Value::Builtin(Builtin::HostCapability(binding.kind)),
-                    token,
-                ),
-            )));
-        }
-        return Some(token);
-    }
-    None
-}
-
 fn global_property(
     properties: &Rc<crate::value::ObjectData>,
     key: &str,
@@ -216,15 +207,31 @@ fn global_property(
             })
             .unwrap_or_else(|| crate::builtins::property(Builtin::ObjectPrototype, key));
     }
-    if let Some(value) = resolve_host_global(key) {
+    if let Some(value) = crate::globals::immutable_value(key) {
         return value;
+    }
+    if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
+        return value;
+    }
+    if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
+        let token = Value::HostCapability(Rc::new(
+            crate::value::HostCapabilityValue::new(binding),
+        ));
+        if matches!(binding.kind, crate::ops::HostCapabilityKind::Custom(1)) {
+            return Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue::new(
+                binding.realm,
+                Value::Builtin(Builtin::HostCapability(binding.kind)),
+                token,
+            )));
+        }
+        return token;
     }
     realm::global_builtin(key).map_or_else(
         || crate::builtins::property(Builtin::ObjectPrototype, key),
         |builtin| {
             realm.map_or_else(
-                || Value::Builtin(builtin),
-                |realm| realm::intrinsic(realm, builtin).unwrap_or(Value::Undefined),
+                || crate::vm::realm_intrinsic_for(RealmId::ROOT, builtin),
+                |realm| crate::vm::realm_intrinsic_for(realm, builtin),
             )
         },
     )
@@ -235,9 +242,108 @@ fn current_host_capability(kind: HostCapabilityKind) -> Value {
         context
             .borrow()
             .as_ref()
-            .map_or(RealmId::ROOT, VmContext::realm)
+            .map_or(RealmId::ROOT, |rc| rc.realm())
     });
     Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
         HostCapabilityRef { realm, kind },
     )))
+}
+
+#[cfg(test)]
+mod canonical_lookup_tests {
+    use super::direct_object_property;
+    use crate::value::{ObjectData, Value};
+    use std::rc::Rc;
+
+    fn object(properties: Vec<(String, Value)>) -> Rc<ObjectData> {
+        Rc::new(ObjectData::new(properties))
+    }
+
+    fn named(name: &str, value: Value) -> (String, Value) {
+        (name.to_string(), value)
+    }
+
+    #[test]
+    fn ordinary_lookup_returns_visible_value() {
+        let properties = object(vec![
+            named("first", Value::Number(1.0)),
+            named("second", Value::String("hit".into())),
+        ]);
+        assert_eq!(
+            direct_object_property(&properties, "second"),
+            Some(Value::String("hit".into()))
+        );
+    }
+
+    #[test]
+    fn lookup_preserves_descriptor_and_deleted_entries() {
+        let descriptor = crate::builtins::descriptor_key("value");
+        let deleted = crate::builtins::deleted_key("gone");
+        let properties = object(vec![
+            named("value", Value::Number(1.0)),
+            (descriptor, Value::Boolean(true)),
+            (deleted, Value::Undefined),
+            named("gone", Value::Number(2.0)),
+        ]);
+        assert_eq!(
+            direct_object_property(&properties, "value"),
+            Some(Value::Number(1.0))
+        );
+        assert_eq!(
+            direct_object_property(&properties, "gone"),
+            Some(Value::Undefined)
+        );
+    }
+
+    #[test]
+    fn lookup_preserves_last_duplicate_value() {
+        let properties = object(vec![
+            named("key", Value::Number(1.0)),
+            named("key", Value::Number(2.0)),
+        ]);
+        assert_eq!(
+            direct_object_property(&properties, "key"),
+            Some(Value::Number(2.0))
+        );
+    }
+    #[test]
+    fn dictionary_mode_uses_canonical_vector_after_crossing_boundary() {
+        let mut entries = (0..=crate::value::DICTIONARY_SLOT_THRESHOLD)
+            .map(|index| named(&format!("key{index}"), Value::Number(index as f64)))
+            .collect::<Vec<_>>();
+        let properties = object(entries.clone());
+        assert!(properties.is_dictionary());
+        assert_eq!(
+            direct_object_property(&properties, "key0"),
+            Some(Value::Number(0.0))
+        );
+        assert_eq!(
+            direct_object_property(&properties, "key32"),
+            Some(Value::Number(32.0))
+        );
+
+        // A later write is represented in the same vector; dictionary mode
+        // must not consult a stale slot/cache or lose last-write-wins order.
+        entries.retain(|(name, _)| name != "key7");
+        entries.push(("key7".into(), Value::String("mutated".into())));
+        let mutated = object(entries);
+        assert_eq!(
+            direct_object_property(&mutated, "key7"),
+            Some(Value::String("mutated".into()))
+        );
+    }
+
+    #[test]
+    fn private_entries_do_not_push_ordinary_object_into_dictionary_mode() {
+        let mut entries = (0..crate::value::DICTIONARY_SLOT_THRESHOLD)
+            .map(|index| named(&format!("key{index}"), Value::Undefined))
+            .collect::<Vec<_>>();
+        entries.push(("\0descriptor".into(), Value::Boolean(true)));
+        let properties = object(entries);
+        assert!(!properties.is_dictionary());
+        assert_eq!(
+            direct_object_property(&properties, "key31"),
+            Some(Value::Undefined)
+        );
+    }
 }

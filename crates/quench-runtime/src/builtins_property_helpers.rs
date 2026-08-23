@@ -83,7 +83,8 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let Some(target) = arguments.first() else {
         return Ok(Value::Undefined);
     };
-    if !crate::value::is_object(target) {
+    let target = crate::locals::resolved_replacement(target.clone());
+    if !crate::value::is_object(&target) {
         return Err(crate::value::error::throw_type_error(
             "Object.defineProperty target must be an object",
         ));
@@ -91,7 +92,7 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
     if matches!(target, Value::Proxy(_)) {
         return crate::proxy::proxy_define_property(
-            target,
+            &target,
             &key,
             arguments.get(2).unwrap_or(&Value::Undefined),
         );
@@ -105,8 +106,8 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
         ));
     }
     let descriptor = descriptor_fields(descriptor)?;
-    let result = define_own_property(target, &key, &descriptor)?;
-    crate::locals::replace_value(target, &result);
+    let result = define_own_property(&target, &key, &descriptor)?;
+    crate::locals::replace_value(&target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
 }
@@ -115,31 +116,28 @@ pub(crate) fn define_own_property(
     key: &str,
     descriptor: &[(String, Value)],
 ) -> Result<Value, crate::execute::VmError> {
+    let target = crate::locals::resolved_replacement(target.clone());
     if matches!(target, Value::Proxy(_)) {
         let desc = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
-        let result = crate::proxy::proxy_define_property(target, key, &desc)?;
+        let result = crate::proxy::proxy_define_property(&target, key, &desc)?;
         if !crate::execute::is_truthy(&result) {
             return Err(crate::value::error::throw_type_error(
                 "Proxy defineProperty returned false",
             ));
         }
-        return Ok(target.clone());
+        return Ok(target);
     }
-    validate_descriptor_kind(descriptor)?;
-    let key_value = Value::String(key.to_string());
-    let current = ordinary_own_descriptor(target, key, &key_value)?;
-    if matches!(current, Value::Undefined) && crate::properties::rejects_new_property(target, key) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot define a property on a non-extensible object",
-        ));
-    }
-    validate_redefinition(&current, descriptor)?;
-    validate_array_length_descriptor(target, key, descriptor)?;
-    validate_array_index_length(target, key)?;
-    let descriptor = complete_descriptor(descriptor, &current);
-    if let Some(result) = prepare_array_length_definition(target, key, &descriptor)? {
+    // ArraySetLength coerces its value before reading the current length
+    // descriptor; the coercion may mutate the array.
+    validate_array_length_descriptor(&target, key, descriptor)?;
+    validate_array_index_length(&target, key)?;
+    if let Some(result) = prepare_array_length_definition(&target, key, descriptor)? {
         return Ok(result);
     }
+    let key_value = Value::String(key.to_string());
+    let current = ordinary_own_descriptor(&target, key, &key_value)?;
+    validate_redefinition(&current, descriptor)?;
+    let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
         .iter()
         .rev()
@@ -153,7 +151,7 @@ pub(crate) fn define_own_property(
     // disconnects the parameter mapping. Skip the placeholder write in
     // that case so the placeholder value (`Undefined`) does not flow
     // through the parameter binding.
-    let is_arguments = matches!(target, Value::Array(values) if values.is_arguments());
+    let is_arguments = matches!(&target, Value::Array(values) if values.is_arguments());
     let needs_disconnect = is_arguments
         && (accessor
             || descriptor
@@ -170,7 +168,7 @@ pub(crate) fn define_own_property(
         } else {
             define_accessor_placeholder(target.clone(), key)
         }
-    } else if let Some(updated) = crate::typed_array_ops::set_property(target, key, &value) {
+    } else if let Some(updated) = crate::typed_array_ops::set_property(&target, key, &value) {
         updated?
     } else {
         define_property_value(target.clone(), key, value)
@@ -237,7 +235,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
         Value::Object(properties) => {
             let properties = Rc::make_mut(properties);
             properties.retain(|(name, _)| name != &descriptor_key);
-            properties.push((descriptor_key, metadata));
+            properties.push((descriptor_key.into(), metadata));
         }
         Value::Function(function) => {
             let mut properties = function.properties.borrow_mut();
