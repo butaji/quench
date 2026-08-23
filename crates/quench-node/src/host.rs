@@ -302,8 +302,7 @@ pub fn install_script(
     let exec_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let (host, mut context) =
-        install_with_argv(realm, sink, vec![exec_path, script.to_string()]);
+    let (host, mut context) = install_with_argv(realm, sink, vec![exec_path, script.to_string()]);
     let exports = host_api::object(vec![]);
     let module = host_api::object(vec![("exports".to_string(), exports.clone())]);
     let path = std::path::Path::new(script);
@@ -404,20 +403,7 @@ pub fn capability(spec: NodeSpec) -> Value {
         // installation; translate them to the active host capability IDs.
         let cap = match spec.cap {
             0x1200 => 1,
-            0x0F00 => 404,
-            0x0F01 => 12,
-            0x0F02 => 11,
-            0x0F03 => 501,
-            0x0F04 => 502,
-            0x0F05 => 503,
-            0x0F06 => 504,
-            0x0F07 => 507,
-            0x0F08 => 508,
-            0x0F09 => 509,
-            0x0F0A => 510,
-            0x0F0B => 511,
-            0x0F0C => 512,
-            0x0F0D => 513,
+            0x0F00..=0x0F0D => spec.cap,
             other => other,
         };
         HostCapabilityKind::Custom(cap)
