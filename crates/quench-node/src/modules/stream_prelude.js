@@ -462,7 +462,12 @@
       st.writing = true;
       let called = false;
       const done = (error) => {
-        if (called) return;
+        if (called) {
+          const multiple = new Error("callback called multiple times");
+          multiple.code = "ERR_MULTIPLE_CALLBACK";
+          nextTick(() => this._emitter.emit("error", multiple));
+          return;
+        }
         called = true;
         st.buffered -= chunkLength;
         st.writing = false;
