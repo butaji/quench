@@ -140,6 +140,9 @@ pub(crate) fn execute_bound(
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     match &bound.target {
+        crate::value::Value::BindingCell(_) => {
+            crate::functions::execute_target(&bound.target, &bound.receiver, &combined)
+        }
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(&bound.target) => {
             execute_bound_builtin(*builtin, bound, &combined)
         }
@@ -279,6 +282,10 @@ pub(crate) fn execute_target(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match target {
+        crate::value::Value::BindingCell(cell) => {
+            let value = cell.borrow().clone();
+            execute_target(&value, receiver, arguments)
+        }
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(target) => {
             execute_builtin_target(*builtin, Some(receiver), arguments)
         }
@@ -305,10 +312,14 @@ pub(crate) fn execute_target(
             let crate::value::Value::Builtin(builtin) = bound.target else {
                 unreachable!()
             };
+            // A bound intrinsic keeps its captured receiver.  The receiver
+            // supplied by the caller is only relevant to an unbound method;
+            // using it here made method properties (and host capabilities)
+            // fail with "not callable" or an incompatible-receiver error.
             crate::vm::with_realm(bound.realm, || {
-                execute_builtin_target(builtin, Some(receiver), arguments)
+                execute_builtin_target(builtin, Some(&bound.receiver), arguments)
             })
-            .unwrap_or_else(|| execute_builtin_target(builtin, Some(receiver), arguments))
+            .unwrap_or_else(|| execute_builtin_target(builtin, Some(&bound.receiver), arguments))
         }
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
@@ -385,6 +396,18 @@ fn execute_function_call_in_realm(
             }
             return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
         }
+    }
+    // Function.prototype.call invokes static Object helpers with their
+    // receiver as the first argument, rather than as a `this` receiver.
+    if let crate::value::Value::Builtin(
+        crate::ops::Builtin::ObjectDefineProperty
+        | crate::ops::Builtin::ObjectGetOwnPropertyDescriptor,
+    ) = receiver
+    {
+        let mut call_arguments = Vec::with_capacity(arguments.len());
+        call_arguments.push(this);
+        call_arguments.extend_from_slice(arguments.get(1..).unwrap_or_default());
+        return execute_target(receiver, &crate::value::Value::Undefined, &call_arguments);
     }
     execute_target(receiver, &this, arguments.get(1..).unwrap_or_default())
 }

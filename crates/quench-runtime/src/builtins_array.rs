@@ -182,6 +182,22 @@ const MAX_DENSE_ARRAY_INDEX_GAP: usize = 1024;
 fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(String, Value)>) {
     let Value::Array(values) = target else { return };
     let mut values = Rc::clone(values);
+    let mut descriptor = descriptor;
+    if key == "length" {
+        // Array length is always a complete data descriptor.  An empty or
+        // partial defineProperty descriptor preserves the omitted attributes;
+        // retaining only the supplied fields would make a writable length
+        // appear non-writable to subsequent assignments.
+        if !descriptor.iter().any(|(name, _)| name == "writable") {
+            descriptor.push(("writable".to_string(), Value::Boolean(true)));
+        }
+        if !descriptor.iter().any(|(name, _)| name == "enumerable") {
+            descriptor.push(("enumerable".to_string(), Value::Boolean(false)));
+        }
+        if !descriptor.iter().any(|(name, _)| name == "configurable") {
+            descriptor.push(("configurable".to_string(), Value::Boolean(false)));
+        }
+    }
     let accessor = descriptor
         .iter()
         .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
@@ -284,7 +300,11 @@ fn prepare_array_length_definition(
     // Bound deletion by physically stored elements, not the logical length.
     let old_length = values.physical_len();
     if new_length >= old_length {
-        if array_descriptor_flag(values, key, "writable") != Some(false) {
+        // Restoration may widen a length that was temporarily made
+        // non-writable by verifyWritable.  The descriptor being applied is
+        // authoritative here; consulting the current (temporary) metadata
+        // would leave the logical length unchanged.
+        if array_descriptor_value(descriptor, "writable") != Some(Value::Boolean(false)) {
             let mut values = Rc::clone(values);
             Rc::make_mut(&mut values).set_length(new_length);
             let mut partial = Value::Array(values);
@@ -373,16 +393,14 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
     }
     if key == "length" {
         if values.is_arguments() {
-            // Per spec 10.6 / Annex 10.6, arguments.length's descriptor is
-            // { DontEnum } (writable defaults to true). The assignment to
-            // arguments.length is a plain value-property write — store
-            // the value verbatim on the live argument data so every
-            // reference to the arguments object observes the override.
+            // Per spec 10.6 / Annex 10.6, arguments.length's descriptor is a plain
+            // value property. Keep the live override visible through every alias.
             Rc::make_mut(&mut values).set_arguments_length_override(value.clone());
             return Value::Array(values);
         }
         let length = array_length_number(&value) as usize;
-        Rc::make_mut(&mut values).set_length(length);
+        let data = Rc::make_mut(&mut values);
+        data.set_length(length);
         return Value::Array(values);
     }
     let Some(index) = crate::arrays::array_index(key) else {

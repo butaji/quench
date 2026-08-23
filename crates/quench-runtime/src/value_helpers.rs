@@ -111,6 +111,25 @@ impl Value {
             _ => None,
         }
     }
+    /// Recognize typed-array values through binding-cell indirection used by
+    /// native wrappers and environment bindings.
+    pub(crate) fn is_typed_array(&self) -> bool {
+        match self {
+            Self::BindingCell(cell) => Self::is_typed_array(&cell.borrow()),
+            Self::Float64Array(_)
+            | Self::Float32Array(_)
+            | Self::Int8Array(_)
+            | Self::Int16Array(_)
+            | Self::Int32Array(_)
+            | Self::BigInt64Array(_)
+            | Self::BigUint64Array(_)
+            | Self::Uint32Array(_)
+            | Self::Uint8Array(_)
+            | Self::Uint8ClampedArray(_)
+            | Self::Uint16Array(_) => true,
+            _ => false,
+        }
+    }
 
     #[inline(always)]
     #[must_use]

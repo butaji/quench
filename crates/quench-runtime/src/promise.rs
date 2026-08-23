@@ -63,7 +63,7 @@ fn process_then_actions(
             PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => value.clone(),
             PromiseState::Pending => continue,
         };
-        let Some(handler) = action.filter(crate::conversion::is_callable) else {
+        let Some(handler) = action.map(peel_binding_cell).filter(crate::conversion::is_callable) else {
             propagate_default(&result_promise, state, value);
             continue;
         };
@@ -74,6 +74,13 @@ fn process_then_actions(
             Err(_) => reject_promise(&result_promise, Value::Undefined),
         }
     }
+}
+
+fn peel_binding_cell(mut value: Value) -> Value {
+    while let Value::BindingCell(cell) = value {
+        value = cell.borrow().clone();
+    }
+    value
 }
 
 fn process_continuation(continuation: PromiseContinuation, state: &PromiseState) {
@@ -128,6 +135,7 @@ fn process_async_continuation(
 fn process_thenable(target: Rc<PromiseData>, thenable: Value, then: Value) {
     let resolve = bound_settler(Builtin::PromiseResolve, &target, 1.0);
     let reject = bound_settler(Builtin::PromiseReject, &target, 1.0);
+    let then = peel_binding_cell(then);
     match crate::functions::execute_target(&then, &thenable, &[resolve, reject]) {
         Ok(_) => {}
         Err(VmError::Thrown(reason)) => reject_promise(&target, reason),
