@@ -34,7 +34,11 @@ fn early_dispatch(
 fn is_function_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::FunctionCall
+        Builtin::Function
+            | Builtin::AsyncFunction
+            | Builtin::GeneratorFunction
+            | Builtin::AsyncGeneratorFunction
+            | Builtin::FunctionCall
             | Builtin::FunctionApply
             | Builtin::FunctionBind
         | Builtin::ArrayJoin
