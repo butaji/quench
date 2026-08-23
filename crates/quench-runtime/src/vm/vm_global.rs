@@ -1,4 +1,4 @@
-use crate::value::ObjectData;
+
 
 pub(crate) fn current_global_object() -> Value {
     if let Some(global) = batched_global_object() {
@@ -46,8 +46,22 @@ pub(crate) fn begin_global_declaration_batch() {
     let Some(current) = current_global_base() else {
         return;
     };
-    let staged = Rc::new(ObjectData::with_private_slots(
-        current.properties.clone(),
+    let mut properties = current.properties.clone();
+    if let Some(math) = realm::intrinsic(current_realm(), crate::ops::Builtin::Math) {
+        if let Some((_, value)) = properties.iter_mut().rev().find(|(name, _)| name == "Math") {
+            match value {
+                Value::BindingCell(cell) => *cell.borrow_mut() = math,
+                value => *value = Value::BindingCell(Rc::new(RefCell::new(math))),
+            }
+        } else {
+            properties.push((
+                "Math".to_string(),
+                Value::BindingCell(Rc::new(RefCell::new(math))),
+            ));
+        }
+    }
+    let staged = Rc::new(crate::value::ObjectData::with_private_slots(
+        properties,
         Rc::new(RefCell::new(current.private_slots.borrow().clone())),
     ));
     GLOBAL_DECLARATION_BASE.with(|base| base.replace(Some(current)));
@@ -140,6 +154,18 @@ fn replace_register_aliases(
 }
 
 fn current_realm() -> RealmId {
+    // During declaration staging the VM context can still describe the
+    // caller while GLOBAL_OBJECT is already the active realm's object.
+    // Resolve the realm from that object first so intrinsic seeding uses the
+    // same realm as the global binding cell.
+    if let Some(realm) = GLOBAL_OBJECT.with(|global| {
+        global
+            .borrow()
+            .as_ref()
+            .and_then(realm::id_for_global)
+    }) {
+        return realm;
+    }
     CURRENT_CONTEXT.with(|context| {
         context
             .borrow()
@@ -200,7 +226,7 @@ impl SharedGlobal {
     pub fn install() -> Self {
         let previous = GLOBAL_OBJECT.with(|global| global.borrow().clone());
         if previous.is_none() {
-            let created = std::rc::Rc::new(ObjectData::new(Vec::new()));
+            let created = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
             initialize_global_object(&Value::Object(created));
         }
         SHARED_GLOBAL.with(|count| count.set(count.get().saturating_add(1)));

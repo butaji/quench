@@ -12,6 +12,10 @@ pub(crate) fn set_with_receiver(
     {
         return Ok(false);
     }
+    let resolved_target = crate::locals::resolved_replacement(target.clone());
+    if key == "length" && crate::regexp::has_regexp_internal_slot(&resolved_target) {
+        return set_receiver_data(receiver, key, value);
+    }
     let descriptor = inherited_descriptor(target, key)?;
     match descriptor {
         Some(descriptor) if descriptor_field_exists(&descriptor, "set") => {
@@ -83,8 +87,9 @@ fn set_receiver_data(
             crate::value::Value::Boolean(true)
         ));
     }
+    let receiver_resolved = crate::locals::resolved_replacement(receiver.clone());
     let current = crate::builtins::object::descriptor(
-        Some(receiver),
+        Some(&receiver_resolved),
         Some(&crate::value::Value::String(key.to_string())),
     )?;
     if !matches!(current, crate::value::Value::Undefined) {

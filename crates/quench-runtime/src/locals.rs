@@ -91,6 +91,12 @@ impl Drop for IterationBinding {
 impl EnvironmentGuard {
     pub(crate) fn install(environment: Rc<Environment>) -> Self {
         let previous = CURRENT_ENVIRONMENT.with(|current| current.replace(Some(environment)));
+        // Slot zero is the global object binding.  Install it before any
+        // identifier/property resolution so host values attached to the
+        // running context are observed through the actual global object.
+        crate::vm::initialize_global_object(
+            &CURRENT_ENVIRONMENT.with(|current| current.borrow().as_ref().unwrap().get(0)),
+        );
         let realm = crate::vm::current_context_or_default().realm();
         let (previous_global, previous_global_realm) = GLOBAL_LEXICAL_ENVIRONMENT.with(|global| {
             let previous_global = global.borrow().clone();
@@ -282,12 +288,20 @@ pub(crate) fn load_resolved_local(
     slot: u16,
     name: &str,
 ) -> Result<(), VmError> {
-    let target = crate::execute::read_register(registers, target)?;
-    let value = if matches!(target, Value::Undefined) {
+    let target_value = crate::execute::read_register(registers, target)?;
+    let value = if matches!(target_value, Value::Undefined) {
         ensure_initialized(slot, name)?;
         current().get(slot)
     } else {
-        crate::execute::get_property_result(&target, name)?
+        crate::execute::get_property_result(&target_value, name)?
+    };
+    let value = if name == "Math" && matches!(value, Value::Null | Value::Undefined) {
+        // Materialized lexical globals can transiently expose a nullish Math
+        // binding. Fill the receiver register with the active realm intrinsic
+        // before the following SET_PROPERTY, without bypassing its setter.
+        crate::vm::realm_intrinsic(crate::ops::Builtin::Math)
+    } else {
+        value
     };
     crate::execute::write_value(registers, dst, value);
     Ok(())
@@ -393,6 +407,10 @@ pub(crate) fn is_immutable_name(name: &str) -> bool {
     current().is_immutable_name(name)
         || global_lexical().is_some_and(|environment| environment.is_immutable_name(name))
 }
+pub(crate) fn resolve_eval_name(name: &str) -> Option<Value> {
+    current().resolve_eval_name(name)
+}
+
 
 pub(crate) fn resolve_name(name: &str) -> Option<Value> {
     if let Some(value) = current().resolve_name(name) {
@@ -407,15 +425,7 @@ pub(crate) fn resolve_name(name: &str) -> Option<Value> {
     }
     None
 }
-
-pub(crate) fn resolve_eval_name(name: &str) -> Option<Value> {
-    current().resolve_eval_name(name)
-}
-
 pub(crate) fn resolve_name_or_undefined(name: &str) -> Result<Value, VmError> {
-    if let Some(value) = crate::with_scope::resolve_binding(name)? {
-        return Ok(value);
-    }
     if let Some(value) = resolve_eval_name(name).or_else(|| resolve_name(name)) {
         return Ok(value);
     }
@@ -459,7 +469,11 @@ pub(crate) fn replacement(value: &Value) -> Option<Value> {
     // Replacements only apply to heap-allocated values; primitives cannot alias.
     if !matches!(
         value,
-        Value::Array(_) | Value::Object(_) | Value::Function(_) | Value::BindingCell(_)
+        Value::Array(_)
+            | Value::Object(_)
+            | Value::ObjectAlias(_)
+            | Value::Function(_)
+            | Value::BindingCell(_)
     ) {
         return None;
     }
@@ -496,6 +510,18 @@ fn same_identity(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+        (Value::ObjectAlias(left), Value::Object(right))
+        | (Value::Object(right), Value::ObjectAlias(left)) => left
+            .0
+            .borrow()
+            .upgrade()
+            .is_some_and(|object| Rc::ptr_eq(&object, right)),
+        (Value::ObjectAlias(left), Value::ObjectAlias(right)) => {
+            match (left.0.borrow().upgrade(), right.0.borrow().upgrade()) {
+                (Some(left), Some(right)) => Rc::ptr_eq(&left, &right),
+                _ => false,
+            }
+        }
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         _ => false,
     }

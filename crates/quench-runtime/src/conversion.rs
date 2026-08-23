@@ -3,15 +3,19 @@ use crate::{execute::VmError, value::Value};
 pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
     if let Value::Builtin(builtin) = value {
         if let Some(name) = crate::intl::tolocale::symbol::name(*builtin) {
-            if *builtin == crate::ops::Builtin::SymbolUnscopables {
-                return Ok(format!("{name}\0"));
-            }
             return Ok(name.to_string());
         }
     }
     let primitive = to_primitive(value, "string")?;
     match primitive {
-        Value::String(value) => Ok(value),
+        Value::String(value) => {
+            let name = value.trim_end_matches('\0');
+            if value.ends_with('\0') && well_known_symbol(name).is_some() {
+                Ok(name.to_string())
+            } else {
+                Ok(value)
+            }
+        }
         Value::Number(value) => Ok(number_to_string(value)),
         Value::BigInt(value) => Ok(value),
         value => Ok(crate::intl::tolocale::value::to_string(Some(&value))),
@@ -127,6 +131,9 @@ pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
     if let Value::BigInt(value) = primitive {
         return Ok(value);
     }
+    if let Some(value) = crate::strings::materialize(&primitive) {
+        return Ok(value);
+    }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
 
@@ -135,16 +142,30 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
     if let Value::BigInt(value) = primitive {
         return Ok(value);
     }
+    if let Some(value) = crate::strings::materialize(&primitive) {
+        return Ok(value);
+    }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
 
+/// Convert an already-primitive value without routing common immediate values
+/// through the generic Intl conversion layer. `to_number` still performs
+/// `ToPrimitive` first; this is the authoritative primitive conversion.
+#[inline]
 pub(crate) fn primitive_to_number(value: &Value) -> Result<f64, VmError> {
-    if is_symbol(value) || matches!(value, Value::BigInt(_)) {
-        return Err(crate::value::error::throw_type_error(
+    match value {
+        Value::Number(number) => Ok(*number),
+        Value::Boolean(boolean) => Ok(if *boolean { 1.0 } else { 0.0 }),
+        Value::Null => Ok(0.0),
+        Value::Undefined => Ok(f64::NAN),
+        Value::BigInt(_) => Err(crate::value::error::throw_type_error(
             "Cannot convert value to number",
-        ));
+        )),
+        _ if is_symbol(value) => Err(crate::value::error::throw_type_error(
+            "Cannot convert value to number",
+        )),
+        _ => Ok(crate::intl::tolocale::value::to_number(Some(value))),
     }
-    Ok(crate::intl::tolocale::value::to_number(Some(value)))
 }
 
 pub(crate) fn is_symbol(value: &Value) -> bool {
@@ -291,5 +312,67 @@ pub fn is_callable(value: &Value) -> bool {
         Value::BoundFunction(_) => true,
         Value::Proxy(proxy) => is_callable(&proxy.target),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{primitive_to_number, to_number};
+    use crate::value::Value;
+
+    fn generic(value: &Value) -> Result<f64, crate::execute::VmError> {
+        if super::is_symbol(value) || matches!(value, Value::BigInt(_)) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert value to number",
+            ));
+        }
+        Ok(crate::intl::tolocale::value::to_number(Some(value)))
+    }
+
+    #[test]
+    fn immediate_decoding_matches_generic_conversion() {
+        let values = [
+            Value::Number(-0.0),
+            Value::Number(f64::INFINITY),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Null,
+            Value::Undefined,
+            Value::String("42.5".into()),
+        ];
+        for value in &values {
+            let fast = primitive_to_number(value);
+            let slow = generic(value);
+            match (fast, slow) {
+                (Ok(left), Ok(right)) => assert_eq!(left.to_bits(), right.to_bits()),
+                (Err(_left), Err(_right)) => {}
+                (left, right) => panic!("conversion mismatch: {left:?} vs {right:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn direct_number_conversion_preserves_negative_zero_and_nan_payload() {
+        let negative_zero = primitive_to_number(&Value::Number(-0.0)).unwrap();
+        assert_eq!(negative_zero.to_bits(), (-0.0_f64).to_bits());
+
+        let nan = f64::from_bits(0x7ff8_0000_0000_0042);
+        let converted = primitive_to_number(&Value::Number(nan)).unwrap();
+        assert_eq!(converted.to_bits(), nan.to_bits());
+    }
+
+    #[test]
+    fn number_coercion_preserves_primitive_semantics() {
+        assert_eq!(to_number(&Value::Null).unwrap(), 0.0);
+        assert_eq!(to_number(&Value::Boolean(true)).unwrap(), 1.0);
+        assert_eq!(to_number(&Value::String(" 42.5 ".into())).unwrap(), 42.5);
+        assert!(to_number(&Value::Undefined).unwrap().is_nan());
+    }
+
+    #[test]
+    fn primitive_decoder_rejects_bigint_like_generic_path() {
+        let value = Value::BigInt("7".into());
+        assert!(primitive_to_number(&value).is_err());
+        assert!(generic(&value).is_err());
     }
 }

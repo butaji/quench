@@ -1,6 +1,12 @@
 use crate::{completion::Completion, execute::VmError, ops::Op, value::Value};
 use std::collections::HashMap;
 
+#[cold]
+#[inline(never)]
+fn missing_return() -> Result<Completion, VmError> {
+    Err(VmError::MissingReturn)
+}
+
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion, VmError> {
     let Op::Branch {
         condition,
@@ -8,18 +14,63 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
         else_ops,
     } = op
     else {
-        return Err(VmError::MissingReturn);
+        return missing_return();
     };
     let value = crate::execute::read_register(registers, *condition)?;
+    // Truthy conditions are the common path for conditionals. Keep that arm
+    // as the fall-through arm; malformed branch bodies stay out of line.
     let selected = if crate::execute::is_truthy(&value) {
         then_ops
     } else {
         else_ops
     };
     let Some(selected) = selected.ops() else {
-        return Err(VmError::MissingReturn);
+        return missing_return();
     };
     crate::execute::execute_completion_in_place(selected, registers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn branch_value(condition: Value) -> Value {
+        let then_ops = crate::machine::FunctionCode::from_ops(vec![Op::Return { src: 1 }]);
+        let else_ops = crate::machine::FunctionCode::from_ops(vec![Op::Return { src: 2 }]);
+        let op = Op::Branch {
+            condition: 0,
+            then_ops,
+            else_ops,
+        };
+        // Keep the selected values in registers so both arms exercise the
+        // same completion machinery and only truthiness chooses the path.
+        let mut registers = vec![
+            condition,
+            Value::String("then".into()),
+            Value::String("else".into()),
+        ];
+        let completion = execute(&mut registers, &op).expect("branch completes");
+        match completion {
+            Completion::Return(value) => value,
+            other => panic!("unexpected completion: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn truthy_branch_is_the_fall_through_semantic_path() {
+        assert_eq!(
+            branch_value(Value::Boolean(true)),
+            Value::String("then".into())
+        );
+    }
+
+    #[test]
+    fn falsy_branch_still_selects_the_alternate() {
+        assert_eq!(
+            branch_value(Value::Boolean(false)),
+            Value::String("else".into())
+        );
+    }
 }
 
 pub(crate) fn reduce(

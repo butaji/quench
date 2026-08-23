@@ -20,11 +20,7 @@ pub(crate) fn write_value_unchecked(registers: &mut [Value], index: u16, value: 
 
 #[inline]
 pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
-    registers
-        .get(usize::from(index))
-        .cloned()
-        .map(crate::locals::resolved_replacement)
-        .ok_or(VmError::RegisterOutOfBounds(index))
+    registers.get(usize::from(index)).cloned().ok_or(VmError::MissingReturn)
 }
 
 /// Unchecked variant for hot arithmetic paths where the compiler already

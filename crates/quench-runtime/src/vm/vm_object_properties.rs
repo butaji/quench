@@ -73,6 +73,28 @@ fn object_builtin_property(properties: &[(String, Value)], key: &str) -> Value {
 }
 
 fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
+    // A declaration batch materializes a fresh global object while preserving
+    // the old shape metadata.  Its shape slot can therefore still point at
+    // the pre-materialization value (notably `Math`), so use the authoritative
+    // property vector for the active global rather than the shape hint.
+    let use_shape_hint = !crate::vm::is_global_object(&Value::Object(properties.clone()));
+    if use_shape_hint
+        && !properties.is_dictionary()
+        && !key.starts_with('\0')
+        && !properties.iter().any(|(name, _)| {
+            name == &crate::builtins::deleted_key(key)
+                || name == &crate::builtins::descriptor_key(key)
+        })
+        && properties.iter().filter(|(name, _)| name == key).count() == 1
+    {
+        if let Some(slot) = properties.slot_for(key) {
+            if let Some(value) =
+                properties.value_for_shape_slot(properties.shape_id(), slot)
+            {
+                return Some(property_value(value));
+            }
+        }
+    }
     if properties
         .iter()
         .any(|(name, _)| name == &crate::builtins::deleted_key(key))
@@ -80,7 +102,12 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
         return Some(Value::Undefined);
     }
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
-        let value = property_value(value);
+        if matches!(value, Value::Null)
+            && crate::vm::global_builtin_exists(key)
+            && global_object_property(properties, key).is_some()
+        {
+            return global_object_property(properties, key);
+        }
         if key == "format"
             && matches!(
                 value,
@@ -91,7 +118,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
             )
         {
             return Some(crate::vm::bind_receiver_property(
-                value,
+                value.clone(),
                 &Value::Object(properties.clone()),
             ));
         }
@@ -102,11 +129,11 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
             )
         {
             return Some(crate::vm::bind_receiver_property(
-                value,
+                value.clone(),
                 &Value::Object(properties.clone()),
             ));
         }
-        return Some(value);
+        return Some(value.clone());
     }
     if let Some(value) = global_object_property(properties, key) {
         return Some(value);
@@ -128,13 +155,13 @@ fn global_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
     if let Some(realm) = realm::id_for_global(properties) {
         return Some(global_property(properties, key, Some(realm)));
     }
-    GLOBAL_OBJECT.with(|global| {
+    (GLOBAL_OBJECT.with(|global| {
         global
             .borrow()
             .as_ref()
             .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
-            .then(|| global_property(properties, key, None))
-    })
+    }) || crate::vm::is_global_object(&Value::Object(properties.clone())))
+    .then(|| global_property(properties, key, None))
 }
 
 pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
@@ -214,7 +241,7 @@ fn global_property(
         || crate::builtins::property(Builtin::ObjectPrototype, key),
         |builtin| {
             realm.map_or_else(
-                || Value::Builtin(builtin),
+                || crate::vm::realm_intrinsic_for(RealmId::ROOT, builtin),
                 |realm| realm::intrinsic(realm, builtin).unwrap_or(Value::Undefined),
             )
         },
@@ -231,4 +258,103 @@ fn current_host_capability(kind: HostCapabilityKind) -> Value {
     Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
         HostCapabilityRef { realm, kind },
     )))
+}
+
+#[cfg(test)]
+mod shape_slot_tests {
+    use super::direct_object_property;
+    use crate::value::{ObjectData, Value};
+    use std::rc::Rc;
+
+    fn object(properties: Vec<(String, Value)>) -> Rc<ObjectData> {
+        Rc::new(ObjectData::new(properties))
+    }
+
+    fn named(name: &str, value: Value) -> (String, Value) {
+        (name.to_string(), value)
+    }
+
+    #[test]
+    fn ordinary_shape_slot_hit_returns_visible_value() {
+        let properties = object(vec![
+            named("first", Value::Number(1.0)),
+            named("second", Value::String("hit".into())),
+        ]);
+        assert_eq!(
+            direct_object_property(&properties, "second"),
+            Some(Value::String("hit".into()))
+        );
+    }
+
+    #[test]
+    fn shape_slot_falls_back_for_descriptor_and_deleted_entries() {
+        let descriptor = crate::builtins::descriptor_key("value");
+        let deleted = crate::builtins::deleted_key("gone");
+        let properties = object(vec![
+            named("value", Value::Number(1.0)),
+            (descriptor, Value::Boolean(true)),
+            (deleted, Value::Undefined),
+            named("gone", Value::Number(2.0)),
+        ]);
+        assert_eq!(
+            direct_object_property(&properties, "value"),
+            Some(Value::Number(1.0))
+        );
+        assert_eq!(
+            direct_object_property(&properties, "gone"),
+            Some(Value::Undefined)
+        );
+    }
+
+    #[test]
+    fn shape_slot_falls_back_for_duplicate_keys() {
+        let properties = object(vec![
+            named("key", Value::Number(1.0)),
+            named("key", Value::Number(2.0)),
+        ]);
+        assert_eq!(
+            direct_object_property(&properties, "key"),
+            Some(Value::Number(2.0))
+        );
+    }
+    #[test]
+    fn dictionary_mode_uses_canonical_vector_after_crossing_boundary() {
+        let mut entries = (0..=crate::value::DICTIONARY_SLOT_THRESHOLD)
+            .map(|index| named(&format!("key{index}"), Value::Number(index as f64)))
+            .collect::<Vec<_>>();
+        let properties = object(entries.clone());
+        assert!(properties.is_dictionary());
+        assert_eq!(
+            direct_object_property(&properties, "key0"),
+            Some(Value::Number(0.0))
+        );
+        assert_eq!(
+            direct_object_property(&properties, "key32"),
+            Some(Value::Number(32.0))
+        );
+
+        // A later write is represented in the same vector; dictionary mode
+        // must not consult a stale slot/cache or lose last-write-wins order.
+        entries.retain(|(name, _)| name != "key7");
+        entries.push(("key7".into(), Value::String("mutated".into())));
+        let mutated = object(entries);
+        assert_eq!(
+            direct_object_property(&mutated, "key7"),
+            Some(Value::String("mutated".into()))
+        );
+    }
+
+    #[test]
+    fn private_entries_do_not_push_ordinary_object_into_dictionary_mode() {
+        let mut entries = (0..crate::value::DICTIONARY_SLOT_THRESHOLD)
+            .map(|index| named(&format!("key{index}"), Value::Undefined))
+            .collect::<Vec<_>>();
+        entries.push(("\0descriptor".into(), Value::Boolean(true)));
+        let properties = object(entries);
+        assert!(!properties.is_dictionary());
+        assert_eq!(
+            direct_object_property(&properties, "key31"),
+            Some(Value::Undefined)
+        );
+    }
 }

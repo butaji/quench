@@ -125,21 +125,17 @@ pub(crate) fn define_own_property(
         }
         return Ok(target.clone());
     }
-    validate_descriptor_kind(descriptor)?;
-    let key_value = Value::String(key.to_string());
-    let current = ordinary_own_descriptor(target, key, &key_value)?;
-    if matches!(current, Value::Undefined) && crate::properties::rejects_new_property(target, key) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot define a property on a non-extensible object",
-        ));
-    }
-    validate_redefinition(&current, descriptor)?;
+    // ArraySetLength coerces its value before reading the current length
+    // descriptor; the coercion may mutate the array.
     validate_array_length_descriptor(target, key, descriptor)?;
     validate_array_index_length(target, key)?;
-    let descriptor = complete_descriptor(descriptor, &current);
-    if let Some(result) = prepare_array_length_definition(target, key, &descriptor)? {
+    if let Some(result) = prepare_array_length_definition(target, key, descriptor)? {
         return Ok(result);
     }
+    let key_value = Value::String(key.to_string());
+    let current = ordinary_own_descriptor(target, key, &key_value)?;
+    validate_redefinition(&current, descriptor)?;
+    let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
         .iter()
         .rev()

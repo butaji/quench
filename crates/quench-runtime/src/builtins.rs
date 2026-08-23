@@ -256,6 +256,20 @@ pub(crate) fn descriptor_key(key: &str) -> String {
 pub(crate) fn is_descriptor_key(key: &str) -> bool {
     key.starts_with(DESCRIPTOR_PREFIX)
 }
+/// Look up cold descriptor metadata without exposing the storage key to
+/// ordinary property-slot callers. The metadata vector is authoritative;
+/// this helper is deliberately a projection, not a second semantic record.
+pub(crate) fn descriptor_metadata<'a>(
+    properties: &'a [(String, Value)],
+    key: &str,
+) -> Option<&'a Value> {
+    let metadata_key = descriptor_key(key);
+    properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &metadata_key)
+        .map(|(_, value)| value)
+}
 pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Value> {
     overrides::read(builtin, key)
 }
@@ -373,6 +387,8 @@ pub(crate) fn math_pow(arguments: &[Value]) -> Result<Value, crate::execute::VmE
 }
 
 include!("builtins_object_core.rs");
+#[cold]
+#[inline(never)]
 pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let (name, constructor, prototype) = error_parts(builtin);
     let constructor_builtin = constructor;
@@ -464,5 +480,26 @@ fn set_function_property(
 }
 
 include!("builtins/function_name.rs");
+#[cfg(test)]
+mod tests {
+    use super::error;
+    use crate::{execute::get_property, ops::Builtin, value::Value};
+
+    #[test]
+    fn error_constructor_keeps_throw_shape_on_cold_path() {
+        let value = error(
+            Builtin::TypeError,
+            &[Value::String("bad input".to_string())],
+        );
+        assert_eq!(
+            get_property(&value, "name"),
+            Value::String("TypeError".to_string())
+        );
+        assert_eq!(
+            get_property(&value, "message"),
+            Value::String("bad input".to_string())
+        );
+    }
+}
 include!("builtins_prototype.rs");
 include!("builtins_value_string.rs");

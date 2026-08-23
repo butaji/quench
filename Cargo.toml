@@ -13,6 +13,7 @@ members = [
 opt-level = 3
 
 [profile.release]
+opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
@@ -21,3 +22,10 @@ panic = "abort"
 [profile.release-thin]
 inherits = "release"
 lto = "thin"
+
+[profile.production]
+inherits = "release"
+# Production artifacts use whole-program optimization and one codegen unit.
+# Keep this profile explicit so release policy cannot drift by accident.
+lto = "fat"
+codegen-units = 1

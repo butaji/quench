@@ -142,9 +142,10 @@ fn assign_prepared(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
-    let Some(place) = place else {
+    let Some(mut place) = place else {
         return assign_maybe_default(target, source, ops, facts, next, locals);
     };
+    crate::reduce::reduce_assignments::preserve_property_target(&mut place, ops, next);
     let value = match target {
         AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => default_value(
             source,

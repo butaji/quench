@@ -393,7 +393,8 @@ impl Test262Host for RuntimeHost {
             LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), harness)?;
         quench_runtime::builtins::reset_intrinsic_prototype_state();
         quench_runtime::execute::reset_replacements();
-        linked.execute(&graph, entry)
+        let context = fresh_context();
+        quench_runtime::vm::with_current_context(&context, || linked.execute(&graph, entry))
     }
 }
 
@@ -407,38 +408,36 @@ fn run_source(source: &str) -> Result<(), String> {
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
-    execute_with_context(program.ops(), host_context())
+    let context = fresh_context();
+    execute_with_context(program.ops(), &context)
         .map(|_| ())
         .map_err(|error| format!("residual VM error: {}", error.render()))
 }
 
-fn host_context() -> &'static VmContext {
-    thread_local! {
-        static CONTEXT: std::cell::OnceCell<&'static VmContext> = const { std::cell::OnceCell::new() };
-    }
-    CONTEXT.with(|context| {
-        *context.get_or_init(|| {
-            Box::leak(Box::new(
-                VmContext::for_realm(
-                    quench_runtime::ops::RealmId::ROOT,
-                    vec![
-                        quench_runtime::ops::HostCapabilityKind::GetGlobal,
-                        quench_runtime::ops::HostCapabilityKind::CreateRealm,
-                        quench_runtime::ops::HostCapabilityKind::EvalScript,
-                        quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
-                        quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
-                    ],
-                )
-                .with_host_capability(
-                    "$262",
-                    quench_runtime::ops::HostCapabilityRef {
-                        realm: quench_runtime::ops::RealmId::ROOT,
-                        kind: quench_runtime::ops::HostCapabilityKind::GetGlobal,
-                    },
-                ),
-            ))
-        })
-    })
+fn fresh_context() -> VmContext {
+    // Harness constructors and intrinsic values must remain in the canonical
+    // realm; creating a child realm here gives Array.from a constructor whose
+    // identity does not match the harness's Test262Error value.
+    let context = VmContext::for_realm(
+        quench_runtime::ops::RealmId::ROOT,
+        vec![
+            quench_runtime::ops::HostCapabilityKind::GetGlobal,
+            quench_runtime::ops::HostCapabilityKind::CreateRealm,
+            quench_runtime::ops::HostCapabilityKind::EvalScript,
+            quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
+            quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
+        ],
+    );
+    context.with_host_capability(
+        "$262",
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::GetGlobal,
+        },
+    )
+}
+fn host_context() -> VmContext {
+    quench_runtime::vm::current_context().as_ref().clone()
 }
 
 fn run_module_source(source: &str) -> Result<(), String> {

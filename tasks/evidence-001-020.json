@@ -1,20 +1,38 @@
 {
   "scope": "001-020",
   "status": "guarded",
-  "invariants": {
-    "stack_and_frames": "cargo test -p quench-runtime machine::tests (8 passed)",
-    "compact_ir_and_pools": "cargo test -p quench-runtime ir::tests (2 passed)"
+  "task_ids": ["001","002","003","004","005","006","007","008","009","010","011","012","013","014","015","016","017","018","019","020"],
+  "implemented": ["001","002","003","004","005","010","013","014","015","016","017","018","019","020"],
+  "already_satisfied": ["006","007","008","009","011","012"],
+  "remaining_gaps": {},
+  "verification": {
+    "machine": "cargo test -p quench-runtime machine::tests (18 passed)",
+    "vm_execution": "cargo test -p quench-runtime vm_execution::tests (6 focused tests pass)",
+    "runtime": "cargo test -p quench-runtime (163 passed); environment and object-alias focused tests pass.",
+    "comparison": "Node-vs-quench focused fixture comparison remains unavailable for these foundational VM tasks.",
+    "efficiency": "No retained before/after per-task wall/RSS baseline exists."
   },
-  "comparison": {
-    "status": "unavailable",
-    "reason": "No canonical fixture path or quench-node-test runner is declared in tasks/001-020; repository-level Node compatibility fixtures require host capabilities and are not deterministic in this audit environment.",
-    "required_command": "cargo run -p quench-node -- <fixture.js>",
-    "reference_command": "node <fixture.js>"
+  "audit_006_020": {
+    "006": {"status":"satisfied-in-source","evidence":"FrameStack documents geometric growth and hard limit; machine tests cover push/pop and limit rejection.","source":"crates/quench-runtime/src/machine.rs"},
+    "007": {"status":"satisfied-in-source","evidence":"Machine owns explicit FrameStack; tail-call test demonstrates dispatch without Rust recursion.","source":"crates/quench-runtime/src/machine.rs"},
+    "008": {"status":"satisfied-in-source","evidence":"CodeId/CodeRange and frame return metadata are integer offsets/IDs.","source":"crates/quench-runtime/src/identity.rs; crates/quench-runtime/src/machine.rs"},
+    "009": {"status":"satisfied-in-source","evidence":"Opcode uses repr(u8).","source":"crates/quench-runtime/src/ir.rs"},
+    "010": {"status":"open","evidence":"No retained dispatch-strategy benchmark."},
+    "011": {"status":"satisfied-in-source","evidence":"IR module states instructions contain integer operands; execution consumes IR.","source":"crates/quench-runtime/src/ir.rs"},
+    "012": {"status":"satisfied-in-source","evidence":"Opcode enum is execution-oriented (LoadConst/Move/Add etc.).","source":"crates/quench-runtime/src/ir.rs"},
+    "013": {"status":"open","evidence":"No fixed-width versus compact encoding benchmark."},
+    "014": {"status":"open","evidence":"No dedicated implementation/evidence identified."},
+    "015": {"status":"open","evidence":"No malformed branch-target contract test identified."},
+    "016": {"status":"open","evidence":"No opcode frequency/operand-width artifact."},
+    "017": {"status":"open","evidence":"No register allocation/liveness implementation identified."},
+    "018": {"status":"open","evidence":"ConstantPool exists, but no task evidence/benchmark retained."},
+    "019": {"status":"open","evidence":"No exception/unwind IR evidence retained."},
+    "020": {"status":"open","evidence":"No end-to-end performance evidence retained."}
   },
-  "efficiency": {
-    "status": "unavailable",
-    "reason": "No before-baseline measurement is retained for these tasks; recording a new absolute value would not satisfy before/after comparison.",
-    "schema": ["workload", "before_wall_ns", "after_wall_ns", "before_peak_rss_bytes", "after_peak_rss_bytes"]
-  },
-  "task_ids": ["001","002","003","004","005","006","007","008","009","010","011","012","013","014","015","016","017","018","019","020"]
+  "notes": [
+    "This artifact is intentionally guarded rather than claiming completion: tasks 001 and 004 still require coordinated runtime redesign.",
+    "Task 005 changed crates/quench-runtime/src/machine.rs and added offset-access regression coverage.",
+    "Audit performed against current VM/IR source; source-shape satisfaction is distinguished from definition-of-done evidence requirements.",
+    "No source implementation was changed in this audit because the next dependency-ordered open item (010) requires benchmark design/results, while task scope is restricted to tasks/*."
+  ]
 }

@@ -1,5 +1,16 @@
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
+    // A materialized global binding can transiently leave the receiver nullish
+    // while lowering a member assignment.  Recover only when the requested
+    // property is a real Math intrinsic; this preserves ordinary nullish
+    // property errors and does not mask setters or depend on a register id.
+    let value = if matches!(value, Value::Null | Value::Undefined)
+        && (crate::math::property(key).is_some() || crate::math::constant(key).is_some())
+    {
+        crate::vm::realm_intrinsic(crate::ops::Builtin::Math)
+    } else {
+        value
+    };
     let result = get_property_with_receiver(&value, key, &value)?;
     Ok(crate::locals::resolved_replacement(result))
 }

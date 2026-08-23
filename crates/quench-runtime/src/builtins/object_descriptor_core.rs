@@ -127,11 +127,7 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
             return Some(descriptor);
         }
     }
-    if let Some((_, metadata)) = properties
-        .iter()
-        .rev()
-        .find(|(name, _)| name == &super::descriptor_key(key))
-    {
+    if let Some(metadata) = super::descriptor_metadata(properties, key) {
         let live = properties
             .iter()
             .rev()
@@ -349,6 +345,10 @@ fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
     }
     if builtin == Builtin::SymbolPrototype && key == "description" {
         return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
+    }
+    if builtin == Builtin::ArrayPrototype && key == "Symbol.unscopables" {
+        return super::special_property(builtin, key)
+            .map(|property| descriptor_object_with_flags(property, false, false, true));
     }
     if builtin == Builtin::Symbol && key == "unscopables" {
         return super::special_property(builtin, key)

@@ -1,4 +1,33 @@
 #[test]
+fn call_frame_suspend_and_resume_restores_caller_state() {
+    let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+    let mut machine = super::Machine::with_function(&function, super::EnvironmentRef(7), 2);
+    machine.set_program_counter(1);
+    machine.registers_mut()[0] = super::Value::Number(11.0);
+    machine.suspend_call(
+        super::Value::Undefined,
+        super::Value::Undefined,
+        vec![super::Value::Number(3.0)],
+        1,
+        crate::completion::ContinuationGuards::new(9),
+    );
+    assert_eq!(machine.call_frames.len(), 1);
+    assert!(machine.registers_mut().is_empty());
+
+    let continuation = machine
+        .resume_call(super::Value::Number(42.0))
+        .expect("suspended caller");
+    assert_eq!(continuation.caller_pc, 1);
+    assert_eq!(continuation.caller_environment, super::EnvironmentRef(7));
+    assert_eq!(continuation.destination, 1);
+    assert_eq!(continuation.guards.flags, 9);
+    assert_eq!(machine.program_counter(), 1);
+    assert_eq!(machine.registers_mut()[0], super::Value::Number(11.0));
+    assert_eq!(machine.registers_mut()[1], super::Value::Number(42.0));
+    assert!(machine.call_frames.is_empty());
+}
+
+#[test]
 fn machine_resolves_frame_ranges_from_its_function_store() {
     let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
     let machine = Machine::with_function(&function, EnvironmentRef(0), 1);
@@ -162,4 +191,19 @@ fn constant_pool_deduplicates_instruction_constants() {
     let pool = code.store().constant_pool(code.entry());
     assert_eq!(pool.len(), 1);
     assert_eq!(pool.get(0), Some(&super::Constant::Number(2.0)));
+}
+
+#[test]
+fn constant_pool_assigns_canonical_first_use_ids() {
+    let pool = super::ConstantPool::new(vec![
+        super::Constant::String("a".into()),
+        super::Constant::Number(1.0),
+        super::Constant::String("a".into()),
+        super::Constant::Boolean(true),
+    ]);
+    assert_eq!(pool.len(), 3);
+    assert_eq!(pool.id(&super::Constant::String("a".into())), Some(0));
+    assert_eq!(pool.id(&super::Constant::Number(1.0)), Some(1));
+    assert_eq!(pool.id(&super::Constant::Boolean(true)), Some(2));
+    assert_eq!(pool.get(2), Some(&super::Constant::Boolean(true)));
 }

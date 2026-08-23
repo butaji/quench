@@ -2,18 +2,28 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.global = globalThis;
 if (typeof Array.fromAsync !== "function") {
-  Array.fromAsync = async function (source, mapFn) {
-    const result = [];
-    let index = 0;
-    if (source != null && source[Symbol.asyncIterator]) {
-      for await (const value of source) {
-        result.push(mapFn ? await mapFn(value, index++) : value);
-      }
-    } else {
-      for (const value of source || []) {
-        result.push(mapFn ? await mapFn(value, index++) : value);
-      }
+  Array.fromAsync = async function fromAsync(items, mapFn) {
+    if (items == null) throw new TypeError("Array.fromAsync requires an object");
+    if (mapFn !== undefined && typeof mapFn !== "function") {
+      throw new TypeError("Array.fromAsync mapper must be a function");
     }
+    const C = this;
+    if (typeof C !== "function") throw new TypeError("Array.fromAsync called on non-constructor");
+    const result = new C();
+    let index = 0;
+    const add = async (value) => {
+      result[index] = mapFn === undefined ? value : await mapFn(value, index);
+      index++;
+    };
+    if (items[Symbol.asyncIterator] != null) {
+      for await (const value of items) await add(value);
+    } else if (items[Symbol.iterator] != null) {
+      for (const value of items) await add(value);
+    } else {
+      const length = Math.min(Math.max(Number(items.length) || 0, 0), 2 ** 53 - 1);
+      for (let i = 0; i < length; i++) await add(items[i]);
+    }
+    result.length = index;
     return result;
   };
 }

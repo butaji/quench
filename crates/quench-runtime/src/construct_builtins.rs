@@ -3,7 +3,7 @@ fn construct_builtin_match(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     match builtin {
-        crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
+        crate::ops::Builtin::Array => crate::builtins::array(arguments),
         crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
         crate::ops::Builtin::SharedArrayBuffer => construct_shared_array_buffer(arguments),
         crate::ops::Builtin::DataView => construct_data_view(arguments),
