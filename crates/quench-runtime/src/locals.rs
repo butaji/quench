@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
+    hash::{BuildHasherDefault, Hasher},
     rc::Rc,
 };
 
@@ -10,19 +11,60 @@ thread_local! {
     static CURRENT_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_REALM: RefCell<Option<crate::ops::RealmId>> = const { RefCell::new(None) };
-    static REPLACEMENTS: RefCell<HashMap<ReplacementIdentity, Replacement>> = RefCell::new(HashMap::new());
-    static REPLACEMENT_ROOTS: RefCell<HashMap<ReplacementIdentity, ReplacementIdentity>> = RefCell::new(HashMap::new());
+    static REPLACEMENTS: RefCell<ReplacementMap<Replacement>> = RefCell::new(ReplacementMap::default());
+    static REPLACEMENT_ROOTS: RefCell<ReplacementMap<ReplacementIdentity>> = RefCell::new(ReplacementMap::default());
     static REPLACEMENTS_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static STRICT_EVAL: RefCell<bool> = const { RefCell::new(false) };
     static ACTIVE_EVAL: RefCell<bool> = const { RefCell::new(false) };
     static INITIALIZING_CLASS_NAMES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+type ReplacementMap<T> = HashMap<ReplacementIdentity, T, BuildHasherDefault<ReplacementHasher>>;
+
+#[derive(Default)]
+struct ReplacementHasher(u64);
+
+impl Hasher for ReplacementHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = self.0.rotate_left(5) ^ u64::from(*byte);
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.0 = self.0.rotate_left(7) ^ value.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReplacementIdentity {
     Array(usize),
     Object(u64),
     Function(usize),
+}
+
+impl std::hash::Hash for ReplacementIdentity {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let (value, tag) = match *self {
+            Self::Array(value) => (value as u64, 0),
+            Self::Object(value) => (value, 1),
+            Self::Function(value) => (value as u64, 2),
+        };
+        state.write_u64(value.wrapping_mul(3).wrapping_add(tag));
+    }
 }
 
 struct Replacement {
