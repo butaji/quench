@@ -97,8 +97,7 @@ fn is_callable(value: &Value) -> bool {
 
 /// RegExp detection via the internal slot's observable parts.
 fn is_regexp(value: &Value) -> bool {
-    matches!(execute::get_property(value, "source"), Value::String(_))
-        && matches!(execute::get_property(value, "flags"), Value::String(_))
+    quench_runtime::regexp::has_regexp_internal_slot(value)
 }
 
 fn error_text(error: &Value) -> String {

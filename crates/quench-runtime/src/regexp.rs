@@ -353,7 +353,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
 }
 
-pub(crate) fn has_regexp_internal_slot(value: &Value) -> bool {
+pub fn has_regexp_internal_slot(value: &Value) -> bool {
     let Value::Object(properties) = value else {
         return false;
     };
