@@ -727,6 +727,10 @@ pub fn subtle_export_key(
         ));
     }
     let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let extractable = execute::get_property(&key, "extractable");
+    if matches!(extractable, Value::Boolean(false)) {
+        return Err(execute::type_error("exportKey: key is not extractable"));
+    }
     let secret = crypto_key_bytes(&key)?;
     Ok(fulfilled(crate::modules::buffer_proto::make_buffer(
         &secret,
