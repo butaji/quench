@@ -28,6 +28,17 @@ pub fn events_method_emit(
 pub fn events_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::events::new_emitter(state, args)
 }
+pub fn events_call(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        crate::modules::events::initialize_emitter(state, receiver)?;
+        return Ok(receiver.clone());
+    }
+    crate::modules::events::new_emitter(state, &[])
+}
 
 // ---- console ----
 pub fn console_log(

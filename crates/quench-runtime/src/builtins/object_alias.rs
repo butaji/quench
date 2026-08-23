@@ -27,6 +27,7 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         record_created(&mut created, key);
         ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
+    object.set_original_prototype(properties.original_prototype());
     Value::Object(object)
 }
 
