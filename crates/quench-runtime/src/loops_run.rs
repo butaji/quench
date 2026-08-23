@@ -110,7 +110,7 @@ fn loop_test(
     test: &[Op],
     registers: &mut Vec<crate::value::Value>,
 ) -> Result<bool, crate::execute::VmError> {
-    match crate::execute::execute_completion_in_place(test, registers)? {
+    match crate::vm::execute_completion_in_current_frame(test, registers)? {
         crate::completion::Completion::Return(value) => Ok(crate::execute::is_truthy(&value)),
         crate::completion::Completion::Normal => Ok(false),
         completion => completion
@@ -128,7 +128,7 @@ fn run_fragment(
     if ops.is_empty() {
         return Ok(());
     }
-    match crate::execute::execute_completion_in_place(ops, registers)? {
+    match crate::vm::execute_completion_in_current_frame(ops, registers)? {
         // Loop fragments use Return as their local value carrier. They are
         // not function boundaries, so consume that marker while preserving
         // the current lexical environment for the next fragment.
