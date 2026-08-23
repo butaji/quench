@@ -223,6 +223,7 @@ pub(crate) fn reduce_for_of(
         slot,
         body: crate::machine::FunctionCode::pending(body),
         per_iteration,
+        r#await: statement.r#await,
         dst,
     });
     Ok(Some(dst))
@@ -274,9 +275,19 @@ pub(crate) fn execute_for_of(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, iterable, dst) = unpack_for_of(registers, op)?;
+    let (label, slot, body, per_iteration, await_values, iterable, dst) =
+        unpack_for_of(registers, op)?;
     let iterator = crate::collections::iterator::open(iterable)?;
-    iterate_loop_values(registers, label, slot, body, per_iteration, iterator, dst)
+    iterate_loop_values(
+        registers,
+        label,
+        slot,
+        body,
+        per_iteration,
+        await_values,
+        iterator,
+        dst,
+    )
 }
 
 /// Active `for-of` iterators are execution bookkeeping, never observable
@@ -334,6 +345,7 @@ type ForOfLoopData<'a> = (
     &'a Option<String>,
     u16,
     &'a crate::machine::FunctionCode,
+    bool,
     bool,
     crate::value::Value,
     u16,
@@ -422,13 +434,14 @@ fn unpack_for_of<'a>(
         slot,
         body,
         per_iteration,
+        r#await,
         dst,
     } = op
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let iterable = crate::execute::read_register(registers, *iterable)?;
-    Ok((label, *slot, body, *per_iteration, iterable, *dst))
+    Ok((label, *slot, body, *per_iteration, *r#await, iterable, *dst))
 }
 
 fn iterate_loop_values(
@@ -437,19 +450,19 @@ fn iterate_loop_values(
     slot: u16,
     body: &crate::machine::FunctionCode,
     per_iteration: bool,
+    await_values: bool,
     iterator: crate::value::Value,
     dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let mut qdebug_count: u64 = 0;
     loop {
-        qdebug_count += 1;
-        if qdebug_count == 40 && std::env::var_os("QDEBUG").is_some() {
-            panic!("QDEBUG: for-of spun 40 iterations, iterator={iterator:?}");
-        }
-        let value = match crate::collections::iterator::step_value(&iterator) {
+        let value = match if await_values {
+            crate::collections::iterator::step_value_await(&iterator)
+        } else {
+            crate::collections::iterator::step_value(&iterator)
+        } {
             Ok(value) => value,
             Err(crate::execute::VmError::Thrown(reason)) => {
                 return Ok(crate::completion::Completion::Throw(reason));
