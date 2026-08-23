@@ -33,14 +33,26 @@ fn search(receiver: Option<&Value>, args: &[Value], mode: Search) -> HandlerResu
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     let haystack = view_bytes(&view).to_vec();
     let needle = search_needle(&value, args)?;
+    let end = search_end(args.get(2), haystack.len());
     let utf16 = args
         .get(2)
-        .or_else(|| args.get(1).filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_))))
-        .and_then(|value| match value { Value::String(s) => Some(s), _ => None })
-        .is_some_and(|encoding| matches!(encoding.to_ascii_lowercase().as_str(), "ucs2" | "ucs-2" | "utf16le" | "utf-16le"));
+        .or_else(|| {
+            args.get(1)
+                .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+        })
+        .and_then(|value| match value {
+            Value::String(s) => Some(s),
+            _ => None,
+        })
+        .is_some_and(|encoding| {
+            matches!(
+                encoding.to_ascii_lowercase().as_str(),
+                "ucs2" | "ucs-2" | "utf16le" | "utf-16le"
+            )
+        });
     let found = match needle {
-        Needle::Byte(byte) => search_byte(&haystack, byte, args.get(1), &mode),
-        Needle::Bytes(bytes) => search_bytes(&haystack, &bytes, args.get(1), &mode, utf16),
+        Needle::Byte(byte) => search_byte(&haystack, byte, args.get(1), end, &mode),
+        Needle::Bytes(bytes) => search_bytes(&haystack, &bytes, args.get(1), end, &mode, utf16),
     };
     Ok(match mode {
         Search::Includes => Value::Boolean(found >= 0),
@@ -61,7 +73,11 @@ fn search_needle(value: &Value, args: &[Value]) -> Result<Needle, VmError> {
         Value::String(_) | Value::StringUnits(_) => {
             let encoding = args
                 .get(2)
-                .or_else(|| args.get(1).filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_))))
+                .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+                .or_else(|| {
+                    args.get(1)
+                        .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+                })
                 .map(|v| encoding_arg(Some(v)))
                 .transpose()?
                 .unwrap_or_else(|| "utf8".to_string());
@@ -71,6 +87,7 @@ fn search_needle(value: &Value, args: &[Value]) -> Result<Needle, VmError> {
             let bytes = view_bytes(view).to_vec();
             if let Some(encoding) = args
                 .get(2)
+                .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
                 .map(|value| encoding_arg(Some(value)))
                 .transpose()?
             {
@@ -97,21 +114,52 @@ fn search_needle(value: &Value, args: &[Value]) -> Result<Needle, VmError> {
 }
 
 fn search_offset(arg: Option<&Value>, len: usize, last: bool) -> i64 {
-    let raw = to_offset(arg) as i64;
+    if last && matches!(arg, None | Some(Value::Undefined) | Some(Value::Object(_))) {
+        return len as i64 - 1;
+    }
+    if last && matches!(arg, Some(Value::Number(value)) if value.is_nan()) {
+        return len as i64 - 1;
+    }
+    let raw_value = to_offset(arg);
+    if last && raw_value.is_nan() {
+        return len as i64 - 1;
+    }
+    let raw = raw_value as i64;
     if arg.is_none() {
         return if last { len as i64 - 1 } else { 0 };
     }
     if raw < 0 {
+        if last && raw < -(len as i64) {
+            return -1;
+        }
         (len as i64 + raw).max(0)
     } else {
         raw
     }
 }
 
-fn search_byte(haystack: &[u8], byte: u8, offset: Option<&Value>, mode: &Search) -> i64 {
+fn search_end(arg: Option<&Value>, len: usize) -> usize {
+    match arg {
+        Some(Value::Number(value)) if value.is_finite() => {
+            (*value as i64).clamp(0, len as i64) as usize
+        }
+        _ => len,
+    }
+}
+
+fn search_byte(
+    haystack: &[u8],
+    byte: u8,
+    offset: Option<&Value>,
+    end: usize,
+    mode: &Search,
+) -> i64 {
     match mode {
         Search::LastIndexOf => {
-            let start = search_offset(offset, haystack.len(), true).min(haystack.len() as i64 - 1);
+            let start = search_offset(offset, haystack.len(), true).min(end as i64 - 1);
+            if start < 0 {
+                return -1;
+            }
             (0..=start.max(-1) as usize)
                 .rev()
                 .find(|&i| haystack.get(i) == Some(&byte))
@@ -119,23 +167,33 @@ fn search_byte(haystack: &[u8], byte: u8, offset: Option<&Value>, mode: &Search)
         }
         _ => {
             let start = search_offset(offset, haystack.len(), false) as usize;
-            (start..haystack.len())
+            (start..end)
                 .find(|&i| haystack[i] == byte)
                 .map_or(-1, |i| i as i64)
         }
     }
 }
 
-fn search_bytes(haystack: &[u8], needle: &[u8], offset: Option<&Value>, mode: &Search, utf16: bool) -> i64 {
+fn search_bytes(
+    haystack: &[u8],
+    needle: &[u8],
+    offset: Option<&Value>,
+    end: usize,
+    mode: &Search,
+    utf16: bool,
+) -> i64 {
     if needle.is_empty() {
         return match mode {
-            Search::LastIndexOf => search_offset(offset, haystack.len(), true),
-            _ => search_offset(offset, haystack.len(), false).min(haystack.len() as i64),
+            Search::LastIndexOf => search_offset(offset, haystack.len(), true).min(end as i64),
+            _ => search_offset(offset, haystack.len(), false).min(end as i64),
         };
     }
     match mode {
         Search::LastIndexOf => {
-            let start = search_offset(offset, haystack.len(), true);
+            let start = search_offset(offset, haystack.len(), true).min(end as i64 - 1);
+            if start < 0 {
+                return -1;
+            }
             (0..=start)
                 .rev()
                 .find(|&i| (!utf16 || i % 2 == 0) && ends_at(haystack, needle, i as usize))
@@ -143,7 +201,7 @@ fn search_bytes(haystack: &[u8], needle: &[u8], offset: Option<&Value>, mode: &S
         }
         _ => {
             let start = search_offset(offset, haystack.len(), false) as usize;
-            (start..haystack.len())
+            (start..end)
                 .find(|&i| (!utf16 || i % 2 == 0) && ends_at(haystack, needle, i))
                 .map_or(-1, |i| i as i64)
         }
