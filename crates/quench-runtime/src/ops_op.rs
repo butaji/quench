@@ -162,6 +162,12 @@ pub enum Op {
         dst: u16,
         elements: Vec<u16>,
     },
+    TemplateObject {
+        dst: u16,
+        cooked: u16,
+        raw: u16,
+        site: u64,
+    },
     BuildArray {
         dst: u16,
         elements: Vec<ArrayElement>,
