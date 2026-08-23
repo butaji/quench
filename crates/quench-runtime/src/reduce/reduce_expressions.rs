@@ -586,6 +586,20 @@ pub fn reduce_atom(
             let slot = *locals.get(NEW_TARGET_SLOT)?;
             return Some(emit_load_local(ops, next_register, slot));
         }
+        if property.meta.name == "import" && property.property.name == "meta" {
+            let object = take_register(next_register);
+            ops.push(Op::MakeObject {
+                dst: object,
+                properties: Vec::new(),
+            });
+            let prototype = take_register(next_register);
+            ops.push(Op::Const {
+                dst: prototype,
+                value: crate::ops::Constant::Null,
+            });
+            ops.push(Op::SetPrototype { object, prototype });
+            return Some(object);
+        }
     }
     if let Some(value) = reduce_literal(expression) {
         return Some(reduce_literal_atom(value, ops, facts, next_register));
