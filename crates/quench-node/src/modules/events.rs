@@ -172,12 +172,6 @@ pub fn method_emit(
         while let Value::BindingCell(cell) = callback {
             callback = cell.borrow().clone();
         }
-        eprintln!(
-            "[http-trace] {}:{} event={event} callback_kind={:?}",
-            file!(),
-            line!(),
-            callback
-        );
         execute::call(&callback, receiver, &rest)?;
     }
     Ok(Value::Boolean(true))
