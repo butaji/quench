@@ -126,6 +126,7 @@ struct HttpState {
     body: String,
     data_callback: Option<Value>,
     end_callback: Option<Value>,
+    client_callback: Option<Value>,
 }
 
 impl Default for QuenchNodeHost {
@@ -138,12 +139,13 @@ impl Default for QuenchNodeHost {
             next_dgram: Cell::new(1),
             streams: RefCell::new(HashMap::new()),
             next_hash: Cell::new(100),
-            next_stream: Cell::new(200),
+            next_stream: Cell::new(1000),
             http: RefCell::new(HttpState {
                 server_callback: None,
                 body: String::new(),
                 data_callback: None,
                 end_callback: None,
+                client_callback: None,
             }),
             urls: RefCell::new(HashMap::new()),
             url_objects: RefCell::new(HashMap::new()),

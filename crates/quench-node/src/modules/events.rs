@@ -32,11 +32,21 @@ fn event_name(value: Option<&Value>) -> Result<String, VmError> {
 }
 
 fn expect_listener(args: &[Value]) -> Result<Value, VmError> {
-    match args.get(1) {
-        Some(value) if quench_runtime::is_callable(value) => Ok(value.clone()),
-        _ => Err(execute::type_error(
+    let Some(value) = args.get(1) else {
+        return Err(execute::type_error(
             "The \"listener\" argument must be of type function",
-        )),
+        ));
+    };
+    let mut callback = value.clone();
+    while let Value::BindingCell(cell) = callback {
+        callback = cell.borrow().clone();
+    }
+    if quench_runtime::is_callable(&callback) {
+        Ok(callback)
+    } else {
+        Err(execute::type_error(
+            "The \"listener\" argument must be of type function",
+        ))
     }
 }
 
@@ -158,7 +168,17 @@ pub fn method_emit(
         if listener.once {
             emitter.borrow_mut().remove(&event, &listener.callback);
         }
-        execute::call(&listener.callback, receiver, &rest)?;
+        let mut callback = listener.callback.clone();
+        while let Value::BindingCell(cell) = callback {
+            callback = cell.borrow().clone();
+        }
+        eprintln!(
+            "[http-trace] {}:{} event={event} callback_kind={:?}",
+            file!(),
+            line!(),
+            callback
+        );
+        execute::call(&callback, receiver, &rest)?;
     }
     Ok(Value::Boolean(true))
 }
@@ -330,14 +350,11 @@ pub fn new_emitter_object(state: &Rc<RefCell<HostState>>) -> Result<Value, VmErr
 }
 
 fn install_emitter_props(mut object: Value) -> Result<Value, VmError> {
+    // Keep host capabilities as direct property values.  Defining a
+    // descriptor introduces a binding cell, and method-call bytecode can
+    // otherwise observe the cell rather than the callable capability.
     for (key, value) in emitter_props() {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, key, descriptor)?;
+        object = execute::set_property(object, key, value);
     }
     Ok(object)
 }

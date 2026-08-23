@@ -295,6 +295,7 @@ fn extract_last_index(receiver: &Value) -> Result<usize, VmError> {
     Ok(to_length(number))
 }
 
+
 fn to_length(value: f64) -> usize {
     if value.is_nan() || value <= 0.0 {
         return 0;
@@ -302,7 +303,6 @@ fn to_length(value: f64) -> usize {
     let value = value.floor();
     value.min(9_007_199_254_740_991.0) as usize
 }
-
 fn set_last_index(receiver: &Value, index: f64) -> Result<(), VmError> {
     set_last_index_value(receiver, Value::Number(index))?;
     Ok(())

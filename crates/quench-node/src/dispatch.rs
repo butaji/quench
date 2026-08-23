@@ -18,6 +18,7 @@ use dispatch_caps::*;
 pub fn lookup(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     let h = match cap {
+        0x1200 => node_require,
         0x1a00 => crate::modules::compat_extra::sea_is_sea,
         CAP_EVENTS_FROM => events_from,
         CAP_EVENTS_EMIT => events_method_emit,

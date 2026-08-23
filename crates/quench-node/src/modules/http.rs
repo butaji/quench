@@ -372,13 +372,7 @@ fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64, keep
 
 fn install_req_props(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
     for (key, value) in props {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(true)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, &key, descriptor)?;
+        object = execute::set_property(object, &key, value);
     }
     Ok(object)
 }

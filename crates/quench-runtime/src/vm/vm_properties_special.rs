@@ -210,6 +210,15 @@ fn bound_builtin_property(bound: &crate::value::BoundFunctionValue, key: &str) -
             );
         }
     }
+    let property = builtin_property(builtin, key);
+    if !matches!(property, Value::Undefined) {
+        return Some(match property {
+            Value::Builtin(target) if crate::builtin_meta::constructor_name(target).is_some() => {
+                realm::intrinsic(bound.realm, target).unwrap_or(Value::Builtin(target))
+            }
+            property => property,
+        });
+    }
     let intrinsic = match (builtin, key) {
         (Builtin::GeneratorFunctionPrototype, "constructor") => Some(Builtin::GeneratorFunction),
         (Builtin::AsyncGeneratorFunctionPrototype, "constructor") => {
@@ -223,6 +232,18 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
+    // Host capabilities are callable values, not ordinary prototype methods.
+    // A missing receiver can occur while resolving a returned require/module
+    // factory through a reduced context; retain the realm host token rather
+    // than creating a BoundFunction whose receiver is `undefined`.
+    let receiver = if matches!(builtin, Builtin::HostCapability(_))
+        && matches!(receiver, Value::Undefined)
+    {
+        crate::vm::realm_token(crate::vm::current_context_or_default().realm())
+            .unwrap_or_else(|| receiver.clone())
+    } else {
+        receiver.clone()
+    };
     let properties = match builtin {
         Builtin::IntlNumberFormatFormat => RefCell::new(number_format_bound_properties()),
         Builtin::IntlDateTimeFormatFormat => RefCell::new(datetime_format_bound_properties()),
@@ -232,7 +253,7 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
-        receiver: receiver.clone(),
+        receiver,
         arguments: Vec::new(),
         properties,
     }))
