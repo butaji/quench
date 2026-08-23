@@ -164,14 +164,28 @@ fn object_inherited_property_result(
     if let Some(value) = boxed_string_property(properties, key) {
         return Some(Ok(value));
     }
-    let prototype = properties
+    // Ordinary object literals inherit from Object.prototype even though
+    // their compact representation stores no prototype entry.  An explicit
+    // entry still wins, including `null` for a null-prototype object.  Only
+    // claim a default inherited property when Object.prototype actually has
+    // it; host objects use the fall-through lookup paths below for their own
+    // dynamic surface.
+    let explicit = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value));
+    let prototype = match explicit {
+        Some(prototype) => prototype.clone(),
+        None => Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+    };
     if matches!(prototype, Value::Null) {
         return Some(Ok(Value::Undefined));
     }
-    Some(get_property_with_receiver(prototype, key, receiver))
+    let inherited = get_property_with_receiver(&prototype, key, receiver);
+    if explicit.is_none() && matches!(&inherited, Ok(Value::Undefined)) {
+        return None;
+    }
+    Some(inherited)
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
