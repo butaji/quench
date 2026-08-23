@@ -21,14 +21,21 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
-    if let Some(override_value) =
-        crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
-    {
-        return bind_method(value, override_value);
+    if callable_builtin_value(value) && key != "prototype" {
+        if let Some(override_value) =
+            crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
+        {
+            return bind_method(value, override_value);
+        }
     }
     let property = builtin_property(builtin, key);
     if let Some(result) = constructor_property(builtin, key, property.clone()) {
         return result;
+    }
+    // Static Promise methods need the constructor as [[This]] when called
+    // through a property reference; prototype methods are bound below.
+    if builtin == Builtin::Promise && matches!(property, Value::Builtin(_)) {
+        return bind_method(value, property);
     }
     if !matches!(property, Value::Undefined) {
         return property;
@@ -77,20 +84,32 @@ fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
     if crate::builtin_meta::is_prototype(builtin) || builtin == Builtin::Temporal {
         return inherit_prototype_property(builtin, key);
     }
-    if let Some(override_value) =
-        crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
-    {
-        return bind_method(value, override_value);
-    }
-    let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
-    if !matches!(inherited, Value::Undefined) {
-        return bind_method(value, inherited);
+    if callable_builtin_value(value) {
+        if let Some(override_value) =
+            crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
+        {
+            return bind_method(value, override_value);
+        }
+        let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
+        if !matches!(inherited, Value::Undefined) {
+            return bind_method(value, inherited);
+        }
     }
     bind_method(
         value,
         crate::builtins::property(Builtin::ObjectPrototype, key),
     )
 }
+
+fn callable_builtin_value(value: &Value) -> bool {
+    match value {
+        Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => {
+            crate::conversion::is_callable(&bound.target)
+        }
+        _ => crate::conversion::is_callable(value),
+    }
+}
+
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
         "apply" => Builtin::FunctionApply,
@@ -183,8 +202,25 @@ fn bound_function_fallback(
     if shadow_wrapper {
         return function_prototype_property_for_builtin(Builtin::FunctionPrototype, key);
     }
-    if let Some(value) = bound_builtin_property(bound, key) {
-        return value;
+    if let Value::Builtin(builtin) = bound.target {
+        if key == "prototype" {
+            if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
+                return realm::intrinsic(bound.realm, prototype)
+                    .unwrap_or(Value::Builtin(prototype));
+            }
+        }
+        let intrinsic = match (builtin, key) {
+            (Builtin::GeneratorFunctionPrototype, "constructor") => {
+                Some(Builtin::GeneratorFunction)
+            }
+            (Builtin::AsyncGeneratorFunctionPrototype, "constructor") => {
+                Some(Builtin::AsyncGeneratorFunction)
+            }
+            _ => None,
+        };
+        if let Some(intrinsic) = intrinsic {
+            return realm::intrinsic(bound.realm, intrinsic).unwrap_or(Value::Builtin(intrinsic));
+        }
     }
     let result = get_property(&bound.target, key);
     if let Value::Builtin(constructor) = &result {
@@ -198,51 +234,9 @@ fn bound_function_fallback(
         result
     }
 }
-
-fn bound_builtin_property(bound: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
-    let Value::Builtin(builtin) = bound.target else {
-        return None;
-    };
-    if key == "prototype" {
-        if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
-            return Some(
-                realm::intrinsic(bound.realm, prototype).unwrap_or(Value::Builtin(prototype)),
-            );
-        }
-    }
-    let property = builtin_property(builtin, key);
-    if !matches!(property, Value::Undefined) {
-        return Some(match property {
-            Value::Builtin(target) if crate::builtin_meta::constructor_name(target).is_some() => {
-                realm::intrinsic(bound.realm, target).unwrap_or(Value::Builtin(target))
-            }
-            property => property,
-        });
-    }
-    let intrinsic = match (builtin, key) {
-        (Builtin::GeneratorFunctionPrototype, "constructor") => Some(Builtin::GeneratorFunction),
-        (Builtin::AsyncGeneratorFunctionPrototype, "constructor") => {
-            Some(Builtin::AsyncGeneratorFunction)
-        }
-        _ => None,
-    }?;
-    Some(realm::intrinsic(bound.realm, intrinsic).unwrap_or(Value::Builtin(intrinsic)))
-}
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
-    };
-    // Host capabilities are callable values, not ordinary prototype methods.
-    // A missing receiver can occur while resolving a returned require/module
-    // factory through a reduced context; retain the realm host token rather
-    // than creating a BoundFunction whose receiver is `undefined`.
-    let receiver = if matches!(builtin, Builtin::HostCapability(_))
-        && matches!(receiver, Value::Undefined)
-    {
-        crate::vm::realm_token(crate::vm::current_context_or_default().realm())
-            .unwrap_or_else(|| receiver.clone())
-    } else {
-        receiver.clone()
     };
     let properties = match builtin {
         Builtin::IntlNumberFormatFormat => RefCell::new(number_format_bound_properties()),
@@ -253,7 +247,7 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
-        receiver,
+        receiver: receiver.clone(),
         arguments: Vec::new(),
         properties,
     }))
@@ -322,13 +316,22 @@ fn number_format_bound_properties() -> Vec<(String, Value)> {
     .collect()
 }
 fn promise_property(value: &Value, key: &str) -> Value {
-    // Per ES §27.2.5 `Promise.prototype.then` is a single function
-    // object stored on the prototype. `Get(p, "then")` walks the
-    // prototype chain and returns that function — it must NOT be
-    // eagerly bound to the receiver, otherwise `p.then` would not
-    // match `Promise.prototype.then` by reference.
+    // Promise instances always inherit the realm's Promise.prototype. During
+    // early realm/bootstrap (and while a user constructor prototype is being
+    // materialized) that intrinsic can transiently resolve to null. Keep the
+    // standard prototype methods available rather than exposing that
+    // bootstrap sentinel as `promise.then`.
     let _ = value;
-    crate::builtins::property(Builtin::PromisePrototype, key)
+    let property = crate::builtins::property(Builtin::PromisePrototype, key);
+    if !matches!(property, Value::Null) {
+        return property;
+    }
+    match key {
+        "then" => Value::Builtin(Builtin::PromiseThen),
+        "catch" => Value::Builtin(Builtin::PromiseCatch),
+        "finally" => Value::Builtin(Builtin::PromiseFinally),
+        _ => Value::Undefined,
+    }
 }
 include!("vm_typed_array_properties.rs");
 fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Value> {

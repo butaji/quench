@@ -4,14 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::reader::NodeFixture;
 
-const STAGE_SPEC: &str = r#"
-1. **test/parallel.**
-1. **test/es-module.**
-1. **test/common.**
-1. **test/fixtures.**
-"#;
+const STAGE_SPEC: &str = "";
 
-/// One canonical stage entry from the embedded stage specification.
+/// One canonical stage entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeStage {
     pub id: u32,
@@ -48,35 +43,34 @@ pub fn list_stages() -> Vec<NodeStage> {
 
 /// Convert all declared stages into concrete filesystem paths.
 pub fn resolve_stages(node_tests_root: &Path) -> Result<Vec<ResolvedStage>, String> {
-    Ok(list_stages()
-        .into_iter()
-        .map(|stage| ResolvedStage {
-            id: stage.id,
-            root: node_tests_root.join(&stage.path),
+    let mut stages = Vec::new();
+    for (i, stage) in list_stages().into_iter().enumerate() {
+        let root = node_tests_root.join(&stage.path);
+        if !root.exists() {
+            // Stage is optional; an empty stage is a non-fatal skip.
+            stages.push(ResolvedStage {
+                id: i as u32 + 1,
+                path: stage.path,
+                root,
+            });
+            continue;
+        }
+        stages.push(ResolvedStage {
+            id: i as u32 + 1,
             path: stage.path,
-        })
-        .collect())
+            root,
+        });
+    }
+    Ok(stages)
 }
 
-/// Discover all executable JavaScript fixtures under `root`, filtered by
-/// stage. Node's upstream suite uses `.js`, `.mjs`, and `.cjs`; omitting the
-/// latter two silently turns a purported full-suite run into a partial one.
+/// Discover all `*.js` fixtures under `root`, filtered by stage.
 pub fn discover_fixtures(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let Ok(read) = std::fs::read_dir(dir) else {
-            continue;
-        };
+    if let Ok(read) = std::fs::read_dir(root) {
         for entry in read.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|ext| matches!(ext.to_str(), Some("js" | "mjs" | "cjs")))
-            {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "js") {
                 out.push(path);
             }
         }

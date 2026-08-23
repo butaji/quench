@@ -96,9 +96,9 @@ fn fixed_write(
 /// Resolve the overloaded `write` tail; validates offsets.
 fn write_args(args: &[Value], len: usize) -> Result<(usize, Option<usize>, String), VmError> {
     let mut tail: &[Value] = &args[1..];
-    if let Some(encoding) = encoding_arg(tail.first()) {
+    if let Some(Value::String(s)) = tail.first() {
         if args.len() == 2 {
-            return Ok((0, None, encoding_name(&encoding)?));
+            return Ok((0, None, encoding_name(s)?));
         }
         // write(string, 'utf8', 0) — offset must be a number.
         return Err(enc::invalid_arg_type(format!(
@@ -122,14 +122,6 @@ fn write_args(args: &[Value], len: usize) -> Result<(usize, Option<usize>, Strin
     Ok((offset as usize, length, encoding))
 }
 
-fn encoding_arg(value: Option<&Value>) -> Option<String> {
-    match value {
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::StringUnits(units)) => Some(String::from_utf16_lossy(units)),
-        _ => None,
-    }
-}
-
 fn encoding_name(raw: &str) -> Result<String, VmError> {
     enc::canonical_encoding(raw)
         .map(str::to_string)
@@ -140,14 +132,12 @@ fn encoding_name(raw: &str) -> Result<String, VmError> {
 fn write_tail(tail: &[Value]) -> Result<(Option<usize>, String), VmError> {
     match tail.first() {
         None => Ok((None, "utf8".to_string())),
-        Some(first) if encoding_arg(Some(first)).is_some() => {
-            Ok((None, encoding_name(&encoding_arg(Some(first)).unwrap())?))
-        }
+        Some(Value::String(s)) => Ok((None, encoding_name(s)?)),
         Some(first) => {
             let length = Some(to_offset(Some(first)).max(0.0) as usize);
-            match encoding_arg(tail.get(1)) {
-                Some(s) => Ok((length, encoding_name(&s)?)),
-                None => Ok((length, "utf8".to_string())),
+            match tail.get(1) {
+                Some(Value::String(s)) => Ok((length, encoding_name(s)?)),
+                _ => Ok((length, "utf8".to_string())),
             }
         }
     }

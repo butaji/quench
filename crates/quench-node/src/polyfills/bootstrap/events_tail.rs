@@ -216,25 +216,6 @@ const __nodeStreamExports = {
   isDisturbed: (stream) => Boolean(stream?._readableState?.dataEmitted),
   isErrored: (stream) =>
     Boolean(stream?.errored || stream?._readableState?.errored),
-  isReadable: (stream) =>
-    Boolean(
-      stream &&
-        typeof stream === "object" &&
-        stream.readable !== false &&
-        stream._readableState &&
-        stream._readableState.readable !== false &&
-        stream._readableState.flowing !== false &&
-        !stream.destroyed
-    ),
-  isWritable: (stream) =>
-    Boolean(
-      stream &&
-        typeof stream === "object" &&
-        stream.writable !== false &&
-        stream._writableState &&
-        stream._writableState.writable !== false &&
-        !stream.destroyed
-    ),
 };
 globalThis.__nodeStreamInitialized = false;
 globalThis.__nodeStream = new Proxy(__nodeStreamExports, {

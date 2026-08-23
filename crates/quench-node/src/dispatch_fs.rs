@@ -40,13 +40,6 @@ const CAP_FS_CHMODSYNC: u16 = 0x1121;
 const CAP_FS_TRUNCATESYNC: u16 = 0x1122;
 const CAP_FS_MKDIRSYNC: u16 = 0x1123;
 const CAP_FS_UNLINKSYNC: u16 = 0x1124;
-const CAP_FS_OPEN: u16 = 0x1160;
-const CAP_FS_FSTAT: u16 = 0x1161;
-const CAP_FS_CLOSE: u16 = 0x1162;
-const CAP_FS_OPENSYNC: u16 = 0x1163;
-const CAP_FS_FSTATSYNC: u16 = 0x1164;
-const CAP_FS_CLOSESYNC: u16 = 0x1165;
-const CAP_FS_STATS: u16 = 0x1166;
 const CAP_FS_STAT_ISFILE: u16 = 0x1130;
 const CAP_FS_STAT_ISDIR: u16 = 0x1131;
 const CAP_FS_STAT_ISSYMLINK: u16 = 0x1132;
@@ -61,7 +54,6 @@ const CAP_FSP_WRITEFILE: u16 = 0x1141;
 const CAP_FSP_APPENDFILE: u16 = 0x1142;
 const CAP_FSP_STAT: u16 = 0x1143;
 const CAP_FSP_LSTAT: u16 = 0x1144;
-const CAP_FSP_STATFS: u16 = 0x1152;
 const CAP_FSP_READDIR: u16 = 0x1145;
 const CAP_FSP_MKDIR: u16 = 0x1146;
 const CAP_FSP_UNLINK: u16 = 0x1147;
@@ -75,24 +67,6 @@ const CAP_FSP_READLINK: u16 = 0x114E;
 const CAP_FSP_CHMOD: u16 = 0x114F;
 const CAP_FSP_TRUNCATE: u16 = 0x1150;
 const CAP_FSP_REALPATH: u16 = 0x1151;
-const CAP_FSP_OPEN: u16 = 0x1170;
-const CAP_FSP_FILEHANDLE_STAT: u16 = 0x1171;
-const CAP_FSP_FILEHANDLE_CLOSE: u16 = 0x1172;
-const CAP_FSP_FILEHANDLE_TRUNCATE: u16 = 0x1173;
-const CAP_FSP_FILEHANDLE_DATASYNC: u16 = 0x1174;
-const CAP_FSP_FILEHANDLE_SYNC: u16 = 0x1175;
-const CAP_FSP_FILEHANDLE_WRITE: u16 = 0x1176;
-const CAP_FSP_FILEHANDLE_READ: u16 = 0x1177;
-const CAP_FSP_FILEHANDLE_CHMOD: u16 = 0x1178;
-const CAP_FSP_FILEHANDLE_CHOWN: u16 = 0x1179;
-const CAP_FSP_FILEHANDLE_UTIMES: u16 = 0x117A;
-const CAP_FSP_CHOWN: u16 = 0x117B;
-const CAP_FSP_UTIMES: u16 = 0x117C;
-const CAP_FSP_LINK: u16 = 0x117D;
-const CAP_FSP_SYMLINK: u16 = 0x117E;
-const CAP_FSP_LUTIMES: u16 = 0x117F;
-const CAP_FSP_LCHOWN: u16 = 0x1180;
-const CAP_FSP_LCHMOD: u16 = 0x1181;
 
 pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
     Some(match cap {
@@ -109,10 +83,6 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_READDIRSYNC => fs_sync::readdir_sync,
         CAP_FS_EXISTSSYNC => fs_sync::exists_sync,
         CAP_FS_REALSYNC => fs_sync::realpath_sync,
-        CAP_FS_OPENSYNC => fs_sync::open_sync,
-        CAP_FS_FSTATSYNC => fs_sync::fstat_sync,
-        CAP_FS_CLOSESYNC => fs_sync::close_sync,
-        CAP_FS_STATS => fs_sync::stats_constructor,
         _ => return fs_dispatch_more(cap),
     })
 }
@@ -149,9 +119,6 @@ fn fs_dispatch_more(cap: u16) -> Option<CallHandler> {
         CAP_FS_STAT_ISBLOCK => fs_stats::is_block,
         CAP_FS_STAT_ISCHAR => fs_stats::is_char,
         CAP_FS_STAT_ISFIFO => fs_stats::is_fifo,
-        CAP_FS_OPEN => fs_async::open,
-        CAP_FS_FSTAT => fs_async::fstat,
-        CAP_FS_CLOSE => fs_async::close,
         CAP_FS_STAT_ISSOCKET => fs_stats::is_socket,
         _ => return fs_dispatch_promises(cap),
     })
@@ -160,19 +127,11 @@ fn fs_dispatch_more(cap: u16) -> Option<CallHandler> {
 fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
     Some(match cap {
         CAP_FS_REALPATH => fs_async::realpath,
-        _ => fs_dispatch_promises_core(cap)?,
-    })
-}
-
-fn fs_dispatch_promises_core(cap: u16) -> Option<CallHandler> {
-    Some(match cap {
         CAP_FSP_READFILE => fs_promises::read_file,
         CAP_FSP_WRITEFILE => fs_promises::write_file,
         CAP_FSP_APPENDFILE => fs_promises::append_file,
         CAP_FSP_STAT => fs_promises::stat,
         CAP_FSP_LSTAT => fs_promises::lstat,
-        CAP_FSP_STATFS => fs_promises::statfs,
-        CAP_FSP_OPEN => fs_promises::open,
         CAP_FSP_READDIR => fs_promises::readdir,
         CAP_FSP_MKDIR => fs_promises::mkdir,
         CAP_FSP_UNLINK => fs_promises::unlink,
@@ -186,29 +145,6 @@ fn fs_dispatch_promises_core(cap: u16) -> Option<CallHandler> {
         CAP_FSP_CHMOD => fs_promises::chmod,
         CAP_FSP_TRUNCATE => fs_promises::truncate,
         CAP_FSP_REALPATH => fs_promises::realpath,
-        CAP_FSP_CHOWN => fs_promises::chown,
-        CAP_FSP_UTIMES => fs_promises::utimes,
-        CAP_FSP_LINK => fs_promises::link,
-        CAP_FSP_SYMLINK => fs_promises::symlink,
-        CAP_FSP_LUTIMES => fs_promises::lutimes,
-        CAP_FSP_LCHOWN => fs_promises::lchown,
-        CAP_FSP_LCHMOD => fs_promises::lchmod,
-        _ => fs_dispatch_filehandle(cap)?,
-    })
-}
-
-fn fs_dispatch_filehandle(cap: u16) -> Option<CallHandler> {
-    Some(match cap {
-        CAP_FSP_FILEHANDLE_STAT => fs_promises::filehandle_stat,
-        CAP_FSP_FILEHANDLE_CLOSE => fs_promises::filehandle_close,
-        CAP_FSP_FILEHANDLE_TRUNCATE => fs_promises::filehandle_truncate,
-        CAP_FSP_FILEHANDLE_DATASYNC => fs_promises::filehandle_datasync,
-        CAP_FSP_FILEHANDLE_SYNC => fs_promises::filehandle_sync,
-        CAP_FSP_FILEHANDLE_WRITE => fs_promises::filehandle_write,
-        CAP_FSP_FILEHANDLE_READ => fs_promises::filehandle_read,
-        CAP_FSP_FILEHANDLE_CHMOD => fs_promises::filehandle_chmod,
-        CAP_FSP_FILEHANDLE_CHOWN => fs_promises::filehandle_chown,
-        CAP_FSP_FILEHANDLE_UTIMES => fs_promises::filehandle_utimes,
         _ => return crate::dispatch::assert_dispatch(cap),
     })
 }

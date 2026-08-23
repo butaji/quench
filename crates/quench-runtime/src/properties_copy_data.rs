@@ -18,8 +18,13 @@ pub(crate) fn execute_copy_data_properties(
         return Ok(());
     }
     let excluded = excluded_keys(registers, excluded)?;
-    let keys = enumerable_own_keys(&source)?;
-    for key in keys.into_iter().filter(|key| !excluded.contains(key)) {
+    // CopyDataProperties tests the excluded list before GetOwnProperty.  This
+    // ordering is observable through Proxy traps: excluded keys must not even
+    // ask the source for an enumerable descriptor.
+    for key in own_keys(&source)? {
+        if excluded.contains(&key) || !own_property_is_enumerable(&source, &key)? {
+            continue;
+        }
         copy_data_property(registers, *target, &source, &key)?;
     }
     Ok(())

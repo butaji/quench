@@ -2,7 +2,7 @@ use crate::value::Value;
 
 pub(super) fn array_like_length(value: &Value) -> usize {
     let length = match value {
-        Value::Array(values) => values.len() as f64,
+        Value::Array(values) => values.logical_len() as f64,
         Value::Object(properties) => properties
             .iter()
             .rev()
@@ -15,7 +15,7 @@ pub(super) fn array_like_length(value: &Value) -> usize {
 
 pub(super) fn array_like_value(value: &Value, index: usize) -> Value {
     match value {
-        Value::Array(values) => values.get(index).cloned().unwrap_or(Value::Undefined),
+        Value::Array(values) => values.get_index(index).unwrap_or(Value::Undefined),
         Value::Object(properties) => properties
             .iter()
             .rev()

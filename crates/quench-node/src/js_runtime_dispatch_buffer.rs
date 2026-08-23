@@ -5,14 +5,8 @@ impl QuenchNodeHost {
         receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Option<Result<Value, VmError>> {
-        let kind = match capability.kind {
-            HostCapabilityKind::Custom(1563) => {
-                HostCapabilityKind::Custom(CapabilityName::BufferToString)
-            }
-            kind => kind,
-        };
         let result = (|| -> Result<Value, VmError> {
-            match kind {
+            match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::BufferToString) => {
                 buffer_to_string(receiver, arguments)
             }

@@ -16,12 +16,8 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDnsFallbacks 
 if (globalThis.require) {
   const originalRequire = globalThis.require;
   globalThis.require = (name) => {
-    const normalized = String(name).replace(/^node:/, "");
-    if (normalized === "dns/promises") {
-      return __quenchDnsFallbacks(originalRequire("dns")).promises;
-    }
     const result = originalRequire(name);
-    if (normalized === "dns") {
+    if (String(name).replace(/^node:/, "") === "dns") {
       return __quenchDnsFallbacks(result);
     }
     return result;

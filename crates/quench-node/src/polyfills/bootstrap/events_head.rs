@@ -1,6 +1,6 @@
 //! Polyfill: `events-head`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"for (const method of "addListener removeListener off removeAllListeners listeners listenerCount".split(
+pub const JS: &str = quench_js_check::checked_js!(r#"for (const method of "on addListener once emit removeListener off removeAllListeners listeners listenerCount".split(
   " "
 )) {
   globalThis.process[method] = NodeEventEmitter.prototype[method];

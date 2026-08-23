@@ -190,13 +190,7 @@ class NodeEventEmitter {
     this._captureRejectionHandled = false;
   }
   on(event, listener) {
-    if (typeof listener !== "function") {
-      throw new TypeError("The listener must be a function");
-    }
     this._events ||= Object.create(null);
-    // Node emits `newListener` before installing the listener. This allows
-    // observers to prepend a listener by registering it from that callback.
-    this.emit("newListener", event, listener);
     const current = this._events[event];
     this._events[event] = current === undefined
       ? listener
@@ -213,7 +207,6 @@ class NodeEventEmitter {
       this.removeListener(event, wrapped);
       listener(...args);
     };
-    wrapped.listener = listener;
     return this.on(event, wrapped);
   }
   emit(event, ...args) {
@@ -231,24 +224,15 @@ class NodeEventEmitter {
       : Array.isArray(listeners)
       ? listeners
       : [listeners];
-    if (event === "error" && values.length === 0) {
-      if (this.domain) {
-        const error = args[0];
-        if (error && typeof error === "object") {
-          error.domain = this.domain;
-          error.domainEmitter = this;
-          error.domainThrown = false;
-        }
-        this.domain.emit("error", error);
-        return true;
+    if (event === "error" && values.length === 0 && this.domain) {
+      const error = args[0];
+      if (error && typeof error === "object") {
+        error.domain = this.domain;
+        error.domainEmitter = this;
+        error.domainThrown = false;
       }
-      const error = args[0] instanceof Error
-        ? args[0]
-        : Object.assign(
-            new Error(`Unhandled error. (${String(args[0])})`),
-            { code: "ERR_UNHANDLED_ERROR", context: args[0] },
-          );
-      throw error;
+      this.domain.emit("error", error);
+      return true;
     }
     values.slice().filter((listener) => typeof listener === "function").forEach(
       (listener) => {

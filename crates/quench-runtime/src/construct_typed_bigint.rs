@@ -5,10 +5,14 @@ pub(crate) fn construct_bigint64_array(
 ) -> Result<Value, crate::execute::VmError> {
     match arguments.first() {
         None | Some(Value::Undefined) => bigint64_with_length(0),
+        Some(Value::Number(length)) => bigint64_with_length(to_index(*length)?),
         Some(Value::ArrayBuffer(buffer)) => view_bigint64_array(buffer, arguments),
         Some(Value::BigInt64Array(view)) => copy_bigint64_array(view),
         Some(Value::Array(values)) => values_bigint64_array(values),
-        Some(Value::Number(length)) => bigint64_with_length(to_index(*length)?),
+        Some(value) if value.is_typed_array() => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_bigint64_array(&values)
+        }
         Some(Value::Object(properties)) => {
             bigint_object_values(properties, "BigInt64Array")
                 .and_then(|values| values_bigint64_array(&values))
@@ -22,10 +26,14 @@ pub(crate) fn construct_biguint64_array(
 ) -> Result<Value, crate::execute::VmError> {
     match arguments.first() {
         None | Some(Value::Undefined) => biguint64_with_length(0),
+        Some(Value::Number(length)) => biguint64_with_length(to_index(*length)?),
         Some(Value::ArrayBuffer(buffer)) => view_biguint64_array(buffer, arguments),
         Some(Value::BigUint64Array(view)) => copy_biguint64_array(view),
         Some(Value::Array(values)) => values_biguint64_array(values),
-        Some(Value::Number(length)) => biguint64_with_length(to_index(*length)?),
+        Some(value) if value.is_typed_array() => {
+            let values = crate::collections::iterator::collect_iterable(value.clone())?;
+            values_biguint64_array(&values)
+        }
         Some(Value::Object(properties)) => {
             bigint_object_values(properties, "BigUint64Array")
                 .and_then(|values| values_biguint64_array(&values))
@@ -73,9 +81,7 @@ fn bigint_object_values(
     name: &str,
 ) -> Result<Vec<Value>, crate::execute::VmError> {
     let object = Value::Object(properties.clone());
-    let values = object_array_like(properties)?
-        .or_else(|| crate::collections::iterator::collect_iterable(object).ok())
-        .ok_or_else(|| type_error(&format!("{name} source must be iterable or a buffer")))?;
+    let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => values, Err(_) => object_array_like(properties)?.ok_or_else(|| type_error(&format!("{name} source must be iterable or a buffer")))?, };
     Ok(values)
 }
 

@@ -4,6 +4,24 @@ impl StatementReducer {
         if source_type.is_module() {
             self.locals.remove(SCRIPT_THIS_SLOT);
             self.locals.insert(MODULE_THIS_SLOT.to_string(), 0);
+            let slot = self.next_slot;
+            self.next_slot = self.next_slot.saturating_add(1);
+            self.locals
+                .insert(super::reduce_statements::IMPORT_META_SLOT.to_string(), slot);
+            let object = self.next_register;
+            self.next_register = self.next_register.saturating_add(1);
+            self.ops.push(Op::MakeObject {
+                dst: object,
+                properties: Vec::new(),
+            });
+            let prototype = self.next_register;
+            self.next_register = self.next_register.saturating_add(1);
+            self.ops.push(Op::Const {
+                dst: prototype,
+                value: crate::ops::Constant::Null,
+            });
+            self.ops.push(Op::SetPrototype { object, prototype });
+            self.ops.push(Op::StoreLocal { slot, src: object });
         }
     }
 
@@ -18,13 +36,17 @@ impl StatementReducer {
             slot: 0,
             src: next_register,
         });
-        Self {
+        let mut state = Self {
             locals,
             ops,
             next_slot: 1,
             next_register: next_register.saturating_add(1),
             script: source_type.is_script(),
+        };
+        if source_type.is_module() {
+            state.set_source_type(source_type);
         }
+        state
     }
 
     pub(super) fn append(

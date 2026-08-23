@@ -276,24 +276,17 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
         out.insert("query".into(), rest[i + 1..].to_string());
         rest = &rest[..i];
     }
-    let (auth_host, pathname) = match rest.find("://") {
-        Some(protocol_end) => {
-            let authority_start = protocol_end + 3;
-            let suffix = &rest[authority_start..];
-            let slash = suffix.find('/').map(|i| authority_start + i);
-            let end = slash.unwrap_or(rest.len());
-            out.insert("protocol".into(), rest[..protocol_end + 1].to_string());
-            (
-                &rest[authority_start..end],
-                slash.map_or_else(String::new, |i| rest[i..].to_string()),
-            )
-        }
-        None => match rest.find('/') {
-            Some(i) => (&rest[..i], rest[i..].to_string()),
-            None => (rest, String::new()),
-        },
+    let (auth_host, pathname) = match rest.find('/') {
+        Some(i) => (&rest[..i], rest[i..].to_string()),
+        None => (rest, String::new()),
     };
-    let after_protocol = auth_host;
+    let after_protocol = match auth_host.find("://") {
+        Some(i) => {
+            out.insert("protocol".into(), auth_host[..i + 3].to_string());
+            &auth_host[i + 3..]
+        }
+        None => auth_host,
+    };
     if let Some(at) = after_protocol.find('@') {
         let (a, host) = after_protocol.split_at(at);
         out.insert("auth".into(), a.to_string());
@@ -307,14 +300,6 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
     }
     if let Some(s) = out.get("search") {
         out.insert("query".into(), s.trim_start_matches('?').to_string());
-    }
-    if out.contains_key("pathname") {
-        let path = format!(
-            "{}{}",
-            out.get("pathname").cloned().unwrap_or_default(),
-            out.get("search").cloned().unwrap_or_default()
-        );
-        out.insert("path".into(), path);
     }
     out
 }

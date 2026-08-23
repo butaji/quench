@@ -858,7 +858,7 @@
           "req_per_sec": 594177
         }
       },
-      "note": "Re-baseline taken before any 2026-08-10 optimization changes. Route-load is already within ~5% of Node in the release profile; props-json and ssr-response remain dominated by JavaScript engine throughput (JSON.stringify and template-string evaluation, not host boundary crossings). LOC count includes every .rs and .js file under crates/quench-node/src and crates/quench-node/polyfills; 39181 here is the immediately-current tree and not the published 39399 (which counted only files then listed in the snapshot cause).",
+      "note": "Re-baseline taken before any 2026-08-10 optimization changes. Route-load is already within ~5% of Node in the release profile; props-json and ssr-response remain dominated by JavaScript engine engine throughput (JSON.stringify and template-string evaluation, not host boundary crossings). LOC count includes every .rs and .js file under crates/quench-node/src and crates/quench-node/polyfills; 39181 here is the immediately-current tree and not the published 39399 (which counted only files then listed in the snapshot cause).",
       "cause": "Independent re-baseline on the release profile before any new experiment; this is the published target line for subsequent candidate measurements."
     },
     {
@@ -1044,7 +1044,7 @@
           "req_per_sec": 587372
         }
       },
-      "note": "Baseline before the 2026-08-10 improvement cycle. Wall time is dominated by process startup; workload_ms is the in-process loop. Quench workload for route-load is already ~5% faster than Node; props-json and ssr-response are dominated by JavaScript engine throughput (14x and 6x slower respectively than V8). Startup gap is ~15-22ms across scenarios.",
+      "note": "Baseline before the 2026-08-10 improvement cycle. Wall time is dominated by process startup; workload_ms is the in-process loop. Quench workload for route-load is already ~5% faster than Node; props-json and ssr-response are dominated by JavaScript engine engine throughput (14x and 6x slower respectively than V8). Startup gap is ~15-22ms across scenarios.",
       "cause": "Baseline measurement for the improvement cycle."
     },
     {
@@ -1225,6 +1225,51 @@
       },
       "note": "Per-polyfill .rs abstraction (one file per polyfill with a `PolyfillImpl` trait + module path lookup) was attempted and reverted. The build failed with bootstrap JavaScript exceptions caused by lookup resolution problems with rust keywords (ref, etc.) and module resolution edge cases. The single-file `polyfill_js.rs` data table from commit 7dc5294f1 remains the working state. The trait pattern in `polyfill_codegen.rs` (DirectCallable hook) is kept as a forward-compatibility sketch for future native-rust hot-path implementations.",
       "cause": "Per-polyfill abstraction attempt reverted; reverted to single-file polyfill data table."
+    },
+    {
+      "id": "task-099-real-workloads",
+      "commit": null,
+      "build": "release",
+      "scenario": "v8-v7-compatible-fixtures",
+      "fixtures": {
+        "richards.js": {
+          "status": 0,
+          "output_equal": true,
+          "node_wall_ms_median": 23.9,
+          "quench_node_wall_ms_median": 12.7,
+          "node_peak_rss_mib": 41.6,
+          "quench_node_peak_rss_mib": 17.0
+        },
+        "deltablue.js": {
+          "status": 0,
+          "output_equal": true,
+          "node_wall_ms_median": 23.7,
+          "quench_node_wall_ms_median": 14.7,
+          "node_peak_rss_mib": 41.7,
+          "quench_node_peak_rss_mib": 18.1
+        },
+        "crypto.js": {
+          "status": 0,
+          "output_equal": true,
+          "node_wall_ms_median": 22.9,
+          "quench_node_wall_ms_median": 42.7,
+          "node_peak_rss_mib": 42.2,
+          "quench_node_peak_rss_mib": 33.0
+        },
+        "raytrace.js": {
+          "status": 0,
+          "output_equal": true,
+          "node_wall_ms_median": 22.9,
+          "quench_node_wall_ms_median": 14.8,
+          "node_peak_rss_mib": 41.8,
+          "quench_node_peak_rss_mib": 18.9
+        }
+      },
+      "budget": {
+        "wall_ms": 1000,
+        "peak_rss_mib": 100
+      },
+      "note": "Three runner repetitions were deterministic in status/output for these four fixtures. Peak RSS is one /usr/bin/time -l run per command; remaining fixtures were not recorded because the suite exceeded the measurement timeout."
     }
   ],
   "runtime_change_ledger": [
@@ -1290,7 +1335,7 @@
     {
       "commit": null,
       "change": "Profiled 5,000,000 repeated route reads.",
-      "cause": "macOS sample attributed the long-running path primarily to the Rust fs callback, open/read syscalls, host callback conversion, and utf8_scan. A raw-byte host return with JS TextDecoder was tested and rejected because route workload rose from about 33 ms to 3,345 ms. A path cache was not attempted because it would change readFileSync freshness semantics."
+      "cause": "macOS sample attributed the long-running path primarily to the Rust fs callback, open/read syscalls, JavaScript engine callback conversion, and utf8_scan. A raw-byte host return with JS TextDecoder was tested and rejected because route workload rose from about 33 ms to 3,345 ms. A path cache was not attempted because it would change readFileSync freshness semantics."
     },
     {
       "commit": null,
@@ -1309,7 +1354,7 @@
     },
     {
       "commit": null,
-      "change": "Deferred runtime parallel-feature experiment.",
+      "change": "Deferred JavaScript engine parallel-feature experiment.",
       "cause": "A feature-disabled build passed examples, but the benchmark harness rejected two attempts because unrelated host load was 12.87 and 16.08 on 10 CPUs. The feature was restored and no performance claim was made."
     },
     {

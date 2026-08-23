@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "quench-bench",
     "crates/quench-js-check",
     "crates/quench-node",
     "crates/quench-node-test",
@@ -10,3 +11,27 @@ members = [
 
 [profile.dev]
 opt-level = 3
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.release-thin]
+inherits = "release"
+lto = "thin"
+
+[profile.production]
+inherits = "release"
+# Production artifacts use whole-program optimization and one codegen unit.
+# Keep this profile explicit so release policy cannot drift by accident.
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.bench-throughput]
+inherits = "production"
+debug = 1
+strip = "none"

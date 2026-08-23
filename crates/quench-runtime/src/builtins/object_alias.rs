@@ -3,13 +3,20 @@ use std::{cell::RefCell, rc::Rc};
 use crate::value::{ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Value, WeakObject};
 
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
-    if let Some(result) = set_existing_alias(&properties, key, &value) {
-        return result;
-    }
     let object = Rc::new_cyclic(|weak| {
         let mut values = properties.properties.clone();
+        // A subsequent define/set resurrects a property removed through the
+        // COW object path. Remove the deletion marker before rebuilding the
+        // property so own-property and descriptor lookups see the new state.
+        let deleted = super::deleted_key(key);
+        values.retain(|(name, _)| name != &deleted);
         for (name, value) in &mut values {
-            if !super::is_descriptor_key(name) && name != crate::intl::SLOT {
+            if name == crate::intl::SLOT {
+                continue;
+            }
+            if super::is_descriptor_key(name) {
+                retarget_descriptor(value, &properties, weak);
+            } else {
                 retarget(value, &properties, weak);
             }
         }
@@ -19,7 +26,7 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         if let Some((_, current)) = values.iter_mut().rev().find(|(name, _)| name == key) {
             *current = value;
         } else {
-            values.push((key.to_string(), value));
+            values.push((key.into(), value));
         }
         sync_descriptor_value(&mut values, key);
         reattach_function_homes(&values, weak);
@@ -27,50 +34,17 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         record_created(&mut created, key);
         ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
-    object.set_original_prototype(properties.original_prototype());
     Value::Object(object)
 }
 
-fn set_existing_alias(properties: &Rc<ObjectData>, key: &str, value: &Value) -> Option<Value> {
-    if !value_targets(value, properties) {
-        return None;
-    }
-    let parent_alias = alias(properties);
-    let parent = unsafe { &mut *(Rc::as_ptr(properties) as *mut ObjectData) };
-    if let Some((_, current)) = parent
-        .properties
-        .iter_mut()
-        .rev()
-        .find(|(name, _)| name == key)
-    {
-        *current = parent_alias;
-    } else {
-        parent.properties.push((key.to_string(), parent_alias));
-    }
-    record_created(&mut parent.created, key);
-    Some(Value::Object(Rc::clone(properties)))
-}
-
-fn value_targets(value: &Value, parent: &Rc<ObjectData>) -> bool {
-    match value {
-        Value::Object(object) => Rc::ptr_eq(object, parent),
-        Value::ObjectAlias(alias) => alias
-            .0
-            .borrow()
-            .upgrade()
-            .is_some_and(|object| Rc::ptr_eq(&object, parent)),
-        _ => false,
-    }
-}
-
-pub(crate) fn record_created(created: &mut Vec<String>, key: &str) {
+pub(crate) fn record_created(created: &mut Vec<crate::value::PropertyName>, key: &str) {
     if key.starts_with('\0') || created.iter().any(|name| name == key) {
         return;
     }
-    created.push(key.to_string());
+    created.push(key.into());
 }
 
-fn sync_descriptor_value(values: &mut [(String, Value)], key: &str) {
+fn sync_descriptor_value(values: &mut [(crate::value::PropertyName, Value)], key: &str) {
     let value = values
         .iter()
         .rev()
@@ -92,7 +66,7 @@ fn sync_descriptor_value(values: &mut [(String, Value)], key: &str) {
 
 /// Re-anchor `\0home_object` aliases inside the clone's method values so `super`
 /// always resolves to the live prototype rather than a stale clone.
-fn reattach_function_homes(values: &[(String, Value)], new_home: &WeakObject) {
+fn reattach_function_homes(values: &[(crate::value::PropertyName, Value)], new_home: &WeakObject) {
     for (_, value) in values.iter() {
         let Value::Function(function) = value else {
             continue;
@@ -132,16 +106,32 @@ fn retarget_optional(value: &mut Option<Value>, old: &Rc<ObjectData>, new: &Weak
         retarget(value, old, new);
     }
 }
+fn retarget_descriptor(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
+    let Value::Object(properties) = value else {
+        return;
+    };
+    for (name, field) in &mut Rc::make_mut(properties).properties {
+        if !matches!(name.as_str(), "value" | "get" | "set") {
+            continue;
+        }
+        retarget(field, old, new);
+    }
+}
 
 fn retarget(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
     let targets_old = match value {
         Value::Object(object) if Rc::ptr_eq(object, old) => true,
         Value::Object(_) => false,
         Value::ObjectAlias(alias) => alias
-            .0
-            .borrow()
-            .upgrade()
+            .target()
             .is_some_and(|object| Rc::ptr_eq(&object, old)),
+        Value::BindingCell(cell) => {
+            // Binding cells can be layered (notably for accessor metadata and
+            // symbol-keyed properties). Propagate the COW home through every
+            // layer rather than only rewriting a directly-held object.
+            retarget(&mut cell.borrow_mut(), old, new);
+            false
+        }
         _ => false,
     };
     if targets_old {

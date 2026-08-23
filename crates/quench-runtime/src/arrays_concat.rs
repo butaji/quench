@@ -26,14 +26,6 @@ pub(crate) fn concat(
         }
         return Ok(Value::Array(std::rc::Rc::new(data)));
     }
-    finish_concat(species, elements, holes)
-}
-
-fn finish_concat(
-    species: Option<Value>,
-    elements: Vec<Value>,
-    holes: Vec<usize>,
-) -> Result<Value, crate::execute::VmError> {
     let hole = |index: usize| holes.contains(&index);
     let mut target = species.unwrap_or_else(|| Value::array(Vec::new()));
     let length = elements.len();
@@ -111,11 +103,12 @@ fn spread_concat_element(
     holes: &mut Vec<usize>,
     item: &Value,
 ) -> Result<(), crate::execute::VmError> {
-    if !is_concat_spreadable(item)? {
-        elements.push(item.clone());
+    let item = crate::locals::resolved_replacement(item.clone());
+    if !is_concat_spreadable(&item)? {
+        elements.push(item);
         return Ok(());
     }
-    let length = concat_array_like_length(item)?;
+    let length = concat_array_like_length(&item)?;
     if elements.len() + length > 9_007_199_254_740_991 {
         return Err(crate::value::error::throw_type_error(
             "Maximum array size exceeded",
@@ -123,8 +116,8 @@ fn spread_concat_element(
     }
     for index in 0..length {
         let key = index.to_string();
-        let value = if crate::with_scope::has_property(item, &key)? {
-            crate::execute::get_property_result(item, &key)?
+        let value = if crate::with_scope::has_property(&item, &key)? {
+            crate::execute::get_property_result(&item, &key)?
         } else {
             holes.push(elements.len());
             Value::Undefined

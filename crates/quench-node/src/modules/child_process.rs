@@ -26,57 +26,48 @@ pub fn spawn_sync(
     let child_args = args.get(1).and_then(string_args).unwrap_or_default();
     let mut cmd = std::process::Command::new(&command);
     cmd.args(&child_args);
-    let input = apply_options(&mut cmd, args.get(2));
-    let mut child = match spawn_piped(cmd) {
+
+    let mut input: Option<String> = None;
+    if let Some(options) = args.get(2) {
+        if let Some(cwd) = opt_str(options, "cwd") {
+            cmd.current_dir(cwd);
+        }
+        if let Some(env) = opt_env(options) {
+            cmd.env_clear().envs(env);
+        }
+        input = opt_str(options, "input");
+    }
+
+    let mut child = match cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
         Ok(child) => child,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
     let pid = child.id();
-    pipe_input(&mut child, input.as_deref());
+    if let Some(data) = input {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(data.as_bytes());
+        }
+    }
     let output = match child.wait_with_output() {
         Ok(output) => output,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
-    Ok(spawn_result_object(
-        pid,
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    ))
-}
-
-fn spawn_piped(mut cmd: std::process::Command) -> std::io::Result<std::process::Child> {
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-}
-
-fn apply_options(cmd: &mut std::process::Command, options: Option<&Value>) -> Option<String> {
-    let Some(options) = options else {
-        return None;
-    };
-    if let Some(cwd) = opt_str(options, "cwd") {
-        cmd.current_dir(cwd);
-    }
-    if let Some(env) = opt_env(options) {
-        cmd.env_clear().envs(env);
-    }
-    opt_str(options, "input")
-}
-
-fn pipe_input(child: &mut std::process::Child, data: Option<&str>) {
-    let Some(data) = data else { return };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(data.as_bytes());
-    }
-}
-
-fn spawn_result_object(pid: u32, status: Option<i32>, stdout: String, stderr: String) -> Value {
-    let status_value = status.map_or(Value::Null, |c| Value::Number(c as f64));
-    host_api::object(vec![
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    Ok(host_api::object(vec![
         ("pid".to_string(), Value::Number(pid as f64)),
-        ("status".to_string(), status_value),
+        (
+            "status".to_string(),
+            output
+                .status
+                .code()
+                .map_or(Value::Null, |c| Value::Number(c as f64)),
+        ),
         ("signal".to_string(), Value::Null),
         ("stdout".to_string(), Value::String(stdout.clone())),
         ("stderr".to_string(), Value::String(stderr.clone())),
@@ -84,7 +75,7 @@ fn spawn_result_object(pid: u32, status: Option<i32>, stdout: String, stderr: St
             "output".to_string(),
             host_api::array(vec![Value::String(stdout), Value::String(stderr)]),
         ),
-    ])
+    ]))
 }
 
 fn spawn_error_result(code: &str, message: &str) -> Value {
@@ -184,170 +175,4 @@ fn opt_env(value: &Value) -> Option<std::collections::HashMap<String, String>> {
         }
     }
     Some(env)
-}
-/// Execute a shell command and return Node's synchronous stdout contract.
-pub fn exec_sync(
-    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let command = args.first().map(value_to_string).unwrap_or_default();
-    if command.is_empty() {
-        return Ok(Value::String(String::new()));
-    }
-    let mut cmd = std::process::Command::new("sh");
-    cmd.args(["-c", &command]);
-    let input = apply_options(&mut cmd, args.get(1));
-    let mut child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|_| execute::type_error("failed to spawn command"))?;
-    pipe_input(&mut child, input.as_deref());
-    let output = child
-        .wait_with_output()
-        .map_err(|_| execute::type_error("failed waiting for command"))?;
-    if !output.status.success() {
-        return Err(execute::type_error("command failed"));
-    }
-    Ok(Value::String(
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-    ))
-}
-
-/// Execute a command asynchronously, invoking the supplied callback eagerly.
-pub fn exec(
-    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let command = args.first().map(value_to_string).unwrap_or_default();
-    let callback = args
-        .iter()
-        .rev()
-        .find(|v| quench_runtime::is_callable(v))
-        .cloned();
-    let mut cmd = std::process::Command::new("sh");
-    cmd.args(["-c", &command])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let result = exec_output(&mut cmd);
-    if let Some(cb) = callback {
-        execute::call(
-            &cb,
-            &Value::Undefined,
-            &[result.0, Value::String(result.1), Value::String(result.2)],
-        )?;
-    }
-    Ok(Value::Undefined)
-}
-
-fn exec_output(cmd: &mut std::process::Command) -> (Value, String, String) {
-    match cmd.output() {
-        Ok(output) => {
-            let out = String::from_utf8_lossy(&output.stdout).into_owned();
-            let err = String::from_utf8_lossy(&output.stderr).into_owned();
-            (
-                if output.status.success() {
-                    Value::Null
-                } else {
-                    // Node exposes the process exit status as the callback
-                    // error's numeric `code`, rather than a generic failure
-                    // marker. Preserve that distinction for callers that
-                    // need to handle different command failures.
-                    exec_failed_error(output.status.code().unwrap_or(1))
-                },
-                out,
-                err,
-            )
-        }
-        Err(error) => (
-            coded_error(raw_code(&error), &error.to_string()),
-            String::new(),
-            String::new(),
-        ),
-    }
-}
-fn exec_failed_error(code: i32) -> Value {
-    host_api::object(vec![
-        ("name".to_string(), Value::String("Error".to_string())),
-        (
-            "message".to_string(),
-            Value::String("command failed".to_string()),
-        ),
-        ("code".to_string(), Value::Number(code as f64)),
-        ("cmd".to_string(), Value::String("".to_string())),
-    ])
-}
-
-/// Execute a file directly (without a shell), with optional callback.
-pub fn exec_file(
-    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let file = args.first().map(value_to_string).unwrap_or_default();
-    let (file_args, options) = file_args_and_options(args);
-    let callback = args.iter().rev().find(|v| quench_runtime::is_callable(v)).cloned();
-    let mut command = std::process::Command::new(&file);
-    command.args(file_args);
-    apply_options(&mut command, options);
-    let result = match command.output() {
-        Ok(output) => (
-            if output.status.success() {
-                Value::Null
-            } else {
-                // execFile callbacks receive the numeric exit status in error.code.
-                exec_failed_error(output.status.code().unwrap_or(1))
-            },
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ),
-        Err(error) => (
-            coded_error(raw_code(&error), &error.to_string()),
-            String::new(),
-            String::new(),
-        ),
-    };
-    if let Some(cb) = callback {
-        execute::call(
-            &cb,
-            &Value::Undefined,
-            &[result.0, Value::String(result.1), Value::String(result.2)],
-        )?;
-    }
-    Ok(Value::Undefined)
-}
-
-/// Synchronous direct-file variant.
-pub fn exec_file_sync(
-    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let file = args.first().map(value_to_string).unwrap_or_default();
-    let (file_args, options) = file_args_and_options(args);
-    let mut command = std::process::Command::new(file);
-    command.args(file_args);
-    apply_options(&mut command, options);
-    let output = command
-        .output()
-        .map_err(|error| execute::type_error(&format!("failed to execute file: {}", error)))?;
-    if !output.status.success() {
-        return Err(execute::type_error(&format!(
-            "file command failed with status {}",
-            output.status.code().unwrap_or(1)
-        )));
-    }
-    Ok(Value::String(
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-    ))
-}
-
-/// Normalize Node's optional `args`/`options` positions. In particular,
-/// `execFile(file, options, callback)` must not treat the options object as
-/// an argument list.
-fn file_args_and_options(args: &[Value]) -> (Vec<String>, Option<&Value>) {
-    if matches!(args.get(1), Some(Value::Array(_))) {
-        (args.get(1).and_then(string_args).unwrap_or_default(), args.get(2))
-    } else {
-        (Vec::new(), args.get(1))
-    }
 }

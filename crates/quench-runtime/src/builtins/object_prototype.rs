@@ -5,6 +5,7 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
     }
     Ok(prototype_for_value(value))
 }
+
 fn prototype_for_value(value: &Value) -> Value {
     if let Value::Function(function) = value {
         if let Some((_, prototype)) = function
@@ -43,12 +44,8 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::DisposableStackPrototype
             | Builtin::AsyncDisposableStackPrototype,
         ) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
-        }
-        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
-        }
+        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => Value::Builtin(Builtin::TypedArray),
+        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => Value::Builtin(Builtin::TypedArray),
         Value::Builtin(
             Builtin::RangeErrorPrototype
             | Builtin::TypeErrorPrototype
@@ -57,7 +54,11 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::SyntaxErrorPrototype
             | Builtin::URIErrorPrototype,
         ) => Value::Builtin(Builtin::ErrorPrototype),
-        Value::Builtin(Builtin::AsyncFunctionPrototype) => {
+        Value::Builtin(
+            Builtin::AsyncFunctionPrototype
+            | Builtin::GeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorFunctionPrototype,
+        ) => {
             Value::Builtin(Builtin::FunctionPrototype)
         }
         Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
@@ -81,6 +82,7 @@ fn prototype_for_value(value: &Value) -> Value {
         _ => prototype_for_value_tail(value),
     }
 }
+
 fn function_prototype(function: &crate::value::FunctionValue) -> Value {
     if function.is_async {
         if let Some((_, prototype)) = function
@@ -214,11 +216,11 @@ fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
     )
 }
 
-fn internal_prototype(properties: &[(String, Value)], fallback: Builtin) -> Value {
+fn internal_prototype<K: AsRef<str>>(properties: &[(K, Value)], fallback: Builtin) -> Value {
     properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+        .find_map(|(name, value)| (name.as_ref() == "\0prototype").then(|| value.clone()))
         .unwrap_or(Value::Builtin(fallback))
 }
 
@@ -433,14 +435,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::ObjectPrototype
-            | Builtin::ArrayPrototype
-            | Builtin::FunctionPrototype
             | Builtin::DatePrototype
-            | Builtin::RegExpPrototype
-            | Builtin::PromisePrototype
-            | Builtin::IteratorPrototype
-            | Builtin::ArrayBufferPrototype
-            | Builtin::DataViewPrototype
             | Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
@@ -449,13 +444,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakMapPrototype
             | Builtin::WeakSetPrototype
             | Builtin::SharedArrayBufferPrototype
-    ) || is_intrinsic_prototype_tail(builtin)
-}
-
-fn is_intrinsic_prototype_tail(builtin: Builtin) -> bool {
-    matches!(
-        builtin,
-        Builtin::WeakRefPrototype
+            | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
             | Builtin::ErrorPrototype

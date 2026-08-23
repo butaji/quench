@@ -357,4 +357,3 @@ periodically fetch `main` and `test262`, then integrate only changes whose
 semantic facts can be reconciled. If a merge conflicts in canonical runtime or
 dispatch files, stop and resolve the fact model deliberately rather than
 silently accepting either fork.
-

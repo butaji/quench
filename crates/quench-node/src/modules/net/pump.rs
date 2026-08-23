@@ -83,8 +83,6 @@ fn accept_one(
         close_emitted: false,
         connect_announced: true,
         encoding: None,
-        bytes_read: 0,
-        bytes_written: 0,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
     let server_js = state
@@ -200,11 +198,8 @@ fn poll_listening(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         }
     }
     for server in announce {
-        let (js, args) = {
-            let server = server.borrow();
-            (server.js.clone(), server.listen_args.clone())
-        };
-        emit(state, &js, "listening", args)?;
+        let js = server.borrow().js.clone();
+        emit(state, &js, "listening", Vec::new())?;
     }
     Ok(())
 }

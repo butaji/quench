@@ -31,7 +31,7 @@ pub(crate) fn reduce_assignment(
     let left_ops = vec![Op::Return { src: left }];
     let (consequent, alternate) = assignment_branches(operator, right_ops, left_ops)?;
     let dst = take_register(next);
-    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
+    let mut branches = crate::machine::FunctionCode::pending_many(vec![consequent, alternate]);
     let alternate = branches.pop()?;
     let consequent = branches.pop()?;
     ops.push(Op::Conditional {
@@ -130,7 +130,7 @@ fn reduce_dynamic(
     let (consequent, alternate) = dynamic_branches(logical.operator, left, right, right_ops)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
+    let mut branches = crate::machine::FunctionCode::pending_many(vec![consequent, alternate]);
     let alternate = branches.pop()?;
     let consequent = branches.pop()?;
     ops.push(Op::Conditional {

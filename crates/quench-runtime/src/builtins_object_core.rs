@@ -49,11 +49,24 @@ fn is_odd_integer(value: f64) -> bool {
         && value as i64 % 2 != 0
 }
 
-pub(crate) fn is_array(value: Option<&Value>) -> Value {
-    Value::Boolean(matches!(
-        value,
-        Some(Value::Array(_)) | Some(Value::Builtin(Builtin::ArrayPrototype))
-    ))
+pub(crate) fn is_array(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let Some(value) = value else {
+        return Ok(Value::Boolean(false));
+    };
+    let is_array = match value {
+        Value::Array(values) => !values.is_arguments(),
+        Value::Proxy(proxy) => {
+            if crate::proxy::is_revoked(proxy) {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot perform operation on revoked proxy",
+                ));
+            }
+            return is_array(Some(&proxy.target));
+        }
+        Value::Builtin(Builtin::ArrayPrototype) => true,
+        _ => false,
+    };
+    Ok(Value::Boolean(is_array))
 }
 
 pub(crate) fn object(arguments: &[Value]) -> Value {

@@ -88,12 +88,12 @@ fn argument_property_flag(
     })
 }
 
-fn descriptor_flag_in(properties: &[(String, Value)], key: &str, field: &str) -> Option<bool> {
+fn descriptor_flag_in<K: AsRef<str>>(properties: &[(K, Value)], key: &str, field: &str) -> Option<bool> {
     let metadata_key = descriptor_key(key);
     let (_, Value::Object(descriptor)) = properties
         .iter()
         .rev()
-        .find(|(name, _)| name == &metadata_key)?
+        .find(|(name, _)| name.as_ref() == metadata_key)?
     else {
         return None;
     };
@@ -163,43 +163,33 @@ fn validate_redefinition(
     {
         return Err(cannot_redefine());
     }
-    validate_accessor_redefinition(current, requested)?;
+    if descriptor_value(current, "get").is_some()
+        && descriptor_value_in(requested, "get").is_some_and(|requested_get| {
+            !crate::builtins::same_value(Some(requested_get), descriptor_value(current, "get"))
+        })
+    {
+        return Err(cannot_redefine());
+    }
+    if descriptor_value(current, "set").is_some()
+        && descriptor_value_in(requested, "set").is_some_and(|requested_set| {
+            !crate::builtins::same_value(Some(requested_set), descriptor_value(current, "set"))
+        })
+    {
+        return Err(cannot_redefine());
+    }
     if descriptor_value(current, "enumerable") != descriptor_value_in(requested, "enumerable")
         && descriptor_value_in(requested, "enumerable").is_some()
     {
         return Err(cannot_redefine());
     }
-    validate_data_redefinition(current, requested)
-}
-
-fn validate_accessor_redefinition(
-    current: &Value,
-    requested: &[(String, Value)],
-) -> Result<(), crate::execute::VmError> {
-    for field in ["get", "set"] {
-        if descriptor_value(current, field).is_some()
-            && descriptor_value_in(requested, field).is_some_and(|value| {
-                !crate::builtins::same_value(Some(value), descriptor_value(current, field))
-            })
-        {
-            return Err(cannot_redefine());
-        }
-    }
-    Ok(())
-}
-
-fn validate_data_redefinition(
-    current: &Value,
-    requested: &[(String, Value)],
-) -> Result<(), crate::execute::VmError> {
     if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
         && descriptor_value_in(requested, "writable") == Some(&Value::Boolean(true))
     {
         return Err(cannot_redefine());
     }
     if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
-        && descriptor_value_in(requested, "value").is_some_and(|value| {
-            !crate::builtins::same_value(Some(value), descriptor_value(current, "value"))
+        && descriptor_value_in(requested, "value").is_some_and(|requested_value| {
+            !crate::builtins::same_value(Some(requested_value), descriptor_value(current, "value"))
         })
     {
         return Err(cannot_redefine());
@@ -224,11 +214,14 @@ fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value>
     descriptor_value_in(properties, field)
 }
 
-fn descriptor_value_in<'a>(descriptor: &'a [(String, Value)], field: &str) -> Option<&'a Value> {
+fn descriptor_value_in<'a, K: AsRef<str>>(
+    descriptor: &'a [(K, Value)],
+    field: &str,
+) -> Option<&'a Value> {
     descriptor
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == field).then_some(value))
+        .find_map(|(name, value)| (name.as_ref() == field).then_some(value))
 }
 
 fn cannot_redefine() -> crate::execute::VmError {

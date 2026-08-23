@@ -36,6 +36,7 @@ fn array_method_tail(key: &str) -> Option<Builtin> {
         "push" => Some(ArrayPush),
         "shift" => Some(ArrayShift),
         "reverse" => Some(ArrayReverse),
+        "sort" => Some(ArraySort),
         "pop" => Some(ArrayPop),
         "unshift" => Some(ArrayUnshift),
         "fill" => Some(ArrayFill),
