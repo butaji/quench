@@ -169,13 +169,19 @@ pub(crate) fn execute_set_property(
     let target = crate::execute::read_register(registers, object)?.clone();
     reject_nullish_property_write(&target)?;
     reject_restricted_property_write(&target, &key)?;
+    let value = crate::execute::read_register(registers, src)?.clone();
+    if crate::typed_array_ops::is_view(&target) && crate::typed_array_ops::is_index_key(&key) {
+        if let Some(result) = crate::typed_array_ops::set_property(&target, &key, &value) {
+            crate::execute::write_value(registers, object, result.unwrap_or(target));
+            return Ok(());
+        }
+    }
     if crate::module_bindings::is_namespace(&target) {
         return write_failure(strict);
     }
     if rejects_new_property(&target, &key) {
         return write_failure(strict);
     }
-    let value = crate::execute::read_register(registers, src)?.clone();
     if matches!(target, crate::value::Value::Proxy(_)) {
         return assign_proxy_set(registers, object, &target, &key, value);
     }
