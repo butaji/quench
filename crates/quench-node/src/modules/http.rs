@@ -133,9 +133,20 @@ pub fn connection_handler(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let socket = args.first().cloned().unwrap_or(Value::Undefined);
-    let Some(socket_id) = net::net_id(&socket) else {
+    let incoming_socket = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(socket_id) = net::net_id(&incoming_socket) else {
         return Ok(Value::Undefined);
+    };
+    // The net registry owns the sole JS identity for an accepted socket.
+    // Reuse it before retaining state or attaching HTTP listeners so event
+    // registration and later pump events address the same emitter object.
+    let socket = {
+        let host = state.borrow();
+        host.net
+            .sockets
+            .get(&socket_id)
+            .map(|socket| socket.borrow().js.clone())
+            .unwrap_or(incoming_socket)
     };
     state.borrow_mut().http.conns.insert(
         socket_id,
