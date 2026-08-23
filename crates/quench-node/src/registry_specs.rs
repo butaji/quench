@@ -122,6 +122,9 @@ pub const SPEC_BUFFER_INCLUDES: NodeSpec = NodeSpec::new("buffer.prototype:inclu
 pub const SPEC_BUFFER_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:write", 0x081D);
 pub const SPEC_BUFFER_INSPECT: NodeSpec = NodeSpec::new("buffer.prototype:inspect", 0x081E);
 pub const SPEC_BUFFER_COPY_BYTES_FROM: NodeSpec = NodeSpec::new("buffer:copyBytesFrom", 0x081F);
+pub const SPEC_BUFFER_ASCII_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:asciiWrite", 0x0850);
+pub const SPEC_BUFFER_LATIN1_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:latin1Write", 0x0851);
+pub const SPEC_BUFFER_UTF8_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:utf8Write", 0x0852);
 
 macro_rules! buffer_num_specs {
     ($(($name:ident, $id:expr)),* $(,)?) => {
