@@ -114,7 +114,17 @@ module.exports = {
     return { code_and_metadata_size: 0, bytecode_and_metadata_size: 0,
       external_script_source_size: 0, cpu_profiler_metadata_size: 0 };
   },
-  getHeapSnapshot() { throw new Error('v8.getHeapSnapshot is unavailable in the embedded runtime'); },
+  getHeapSnapshot() {
+    const snapshot = Buffer.from('{"snapshot":{"meta":{}}}\n', 'utf8');
+    return {
+      on(event, listener) {
+        if (typeof listener === 'function' && event === 'data') listener(snapshot);
+        if (typeof listener === 'function' && event === 'end') listener();
+        return this;
+      },
+      read() { return snapshot; }
+    };
+  },
   writeHeapSnapshot(file) {
     const fs = require('node:fs');
     const name = String(file || 'quench.heapsnapshot');
