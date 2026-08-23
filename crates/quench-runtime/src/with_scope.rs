@@ -490,11 +490,8 @@ pub(crate) fn execute_has_private(registers: &mut Vec<Value>, op: &Op) -> Result
             "Private field access on an object without the required brand",
         )
     })?;
-    let result = if let Ok(slots) = crate::private_slots::slots(&object) {
-        Value::Boolean(slots.borrow().iter().any(|(id, _)| id == &name))
-    } else {
-        Value::Boolean(false)
-    };
+    let slots = crate::private_slots::slots(&object)?;
+    let result = Value::Boolean(slots.borrow().iter().any(|(id, _)| id == &name));
     crate::execute::write_value(registers, *dst, result);
     Ok(())
 }
