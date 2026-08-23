@@ -412,10 +412,20 @@ pub fn hash_update(
 ) -> Result<Value, quench_runtime::execute::VmError> {
     let object = receiver.ok_or_else(|| execute::type_error("receiver"))?;
     let mut data = argbytes(&execute::get_property(object, CRYPTO_DATA))?;
-    data.extend(argbytes(
-        args.first()
-            .ok_or_else(|| execute::type_error("data required"))?,
-    )?);
+    let input = args
+        .first()
+        .ok_or_else(|| execute::type_error("data required"))?;
+    let bytes = if matches!(input, Value::String(_) | Value::StringUnits(_)) {
+        let encoding = match args.get(1) {
+            Some(Value::String(value)) => crate::modules::buffer_enc::canonical_encoding(value)
+                .ok_or_else(|| crate::modules::buffer_enc::unknown_encoding(value))?,
+            _ => "utf8",
+        };
+        crate::modules::buffer_enc::encode_value(input, encoding)?
+    } else {
+        argbytes(input)?
+    };
+    data.extend(bytes);
     Ok(execute::set_property(
         object.clone(),
         CRYPTO_DATA,
@@ -458,10 +468,15 @@ pub fn hash_digest(
             _ => sha256_digest(&data).to_vec(),
         }
     };
-    if matches!(args.first(), Some(Value::String(s)) if s == "hex") {
-        return Ok(Value::String(hex::encode(bytes)));
+    let encoding = match args.first() {
+        Some(Value::String(value)) => crate::modules::buffer_enc::canonical_encoding(value)
+            .ok_or_else(|| crate::modules::buffer_enc::unknown_encoding(value))?,
+        _ => "buffer",
+    };
+    match encoding {
+        "buffer" => Ok(crate::modules::buffer_proto::make_buffer(&bytes)),
+        encoding => Ok(crate::modules::buffer_enc::decode_str(&bytes, encoding)),
     }
-    Ok(crate::modules::buffer_proto::make_buffer(&bytes))
 }
 
 fn fulfilled(value: Value) -> Value {
