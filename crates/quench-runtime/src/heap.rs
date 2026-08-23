@@ -55,6 +55,7 @@ const _: () = {
     assert!(SLOT_METADATA_BYTES <= HOT_HEADER_BYTES);
 };
 
+use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
@@ -70,44 +71,88 @@ struct IsolateOwner(PhantomData<Rc<()>>);
 
 // `HeapRef` is only an index; this marker is the ownership/lifecycle boundary.
 
-/// Aggregate allocator counters, copied by value at the public API boundary.
-///
-/// The canonical hot facts are the five byte counters and `live_objects`;
-/// allocation and arithmetic paths read and write those fields directly.
-/// Prototype/debug/finalizer-style diagnostics are cold facts and are updated
-/// only on their owning slow paths.  `HeapStats` is deliberately the single
-/// snapshot representation: no second hot/cold copy exists.
-///
-/// Ownership/lifecycle: `HeapArena` owns the counters for its lifetime and
-/// `stats()` returns a value snapshot.  Invalid states are prevented by the
-/// arena mutators (all decrements saturate); callers cannot mutate arena state
-/// through the snapshot.
-///
-/// Keeping the snapshot flat is an API boundary, not a request to duplicate
-/// storage. `repr(C)` makes field order and size auditable; it does not add
-/// alignment or padding intended to separate writers.
+/// The frequently sampled allocator counters. This is a view into `HeapStats`,
+/// not an additional backing store: `HeapStats` remains the sole snapshot
+/// representation and `HeapArena` remains the owner of all mutable state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HeapHotStats {
+    pub reserved_bytes: u64,
+    pub committed_bytes: u64,
+    pub live_bytes: u64,
+    pub external_bytes: u64,
+    pub allocated_bytes: u64,
+    pub live_objects: usize,
+}
+
+/// Slow-path diagnostics and lifecycle counters. Like [`HeapHotStats`], this
+/// is an observational view with no independent ownership or invalid state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HeapColdStats {
+    pub remembered_writes: u64,
+    pub collections: u64,
+    pub size_classes: [u64; 8],
+    pub promoted_objects: u64,
+    pub nursery_reclaimed: u64,
+}
+
+/// Canonical aggregate allocator snapshot. Mutable ownership stays in
+/// `HeapArena`; this value is copied at the public API boundary.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HeapStats {
-    /// Bytes reserved from the host allocator (page capacity).
     pub reserved_bytes: u64,
-    /// Bytes committed for object storage (size-class slots in use).
     pub committed_bytes: u64,
-    /// Approximate bytes occupied by live objects.
     pub live_bytes: u64,
-    /// Bytes owned by host/native allocations.
     pub external_bytes: u64,
     pub allocated_bytes: u64,
     pub live_objects: usize,
     pub remembered_writes: u64,
     pub collections: u64,
-    /// Number of live allocations in each power-of-two size class.
     pub size_classes: [u64; 8],
-    /// Objects promoted out of the nursery.
     pub promoted_objects: u64,
-    /// Nursery objects reclaimed without surviving a collection.
     pub nursery_reclaimed: u64,
 }
+
+impl HeapStats {
+    /// Project the canonical snapshot into its hot arithmetic fields.
+    #[inline]
+    pub const fn hot(self) -> HeapHotStats {
+        HeapHotStats {
+            reserved_bytes: self.reserved_bytes,
+            committed_bytes: self.committed_bytes,
+            live_bytes: self.live_bytes,
+            external_bytes: self.external_bytes,
+            allocated_bytes: self.allocated_bytes,
+            live_objects: self.live_objects,
+        }
+    }
+
+    /// Project the canonical snapshot into its cold diagnostics.
+    #[inline]
+    pub const fn cold(self) -> HeapColdStats {
+        HeapColdStats {
+            remembered_writes: self.remembered_writes,
+            collections: self.collections,
+            size_classes: self.size_classes,
+            promoted_objects: self.promoted_objects,
+            nursery_reclaimed: self.nursery_reclaimed,
+        }
+    }
+}
+/// Producer of bytes charged outside the arena slot store.
+///
+/// This is provenance, not a second counter: `HeapStats::external_bytes`
+/// remains the sole authoritative total. Producers must charge once when a
+/// backing store is acquired and release the same amount when it is detached
+/// or destroyed. The arena never owns or traverses that storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalMemorySource {
+    /// Bytes belonging to an ArrayBuffer backing store.
+    ArrayBuffer,
+    /// Bytes belonging to a host/native allocation.
+    Native,
+}
+
 /// `HeapStats` is a value snapshot, so this is a size contract rather than a
 /// false-sharing padding request. The arena's `!Send` owner marker prevents
 /// concurrent mutation of these counters across isolates.
@@ -116,6 +161,32 @@ pub const HEAP_STATS_BYTES: usize = 5 * std::mem::size_of::<u64>()
     + 2 * std::mem::size_of::<u64>()
     + std::mem::size_of::<[u64; 8]>()
     + 2 * std::mem::size_of::<u64>();
+/// Bytes occupied by the contiguous, frequently read prefix of `HeapStats`.
+///
+/// The prefix contains allocator pressure and liveness counters only.  Cold
+/// histogram and lifecycle counters follow it, so a hot allocation path never
+/// needs to fetch the latter merely to read the former.  This is a layout
+/// invariant over the canonical snapshot, not a second stored header.
+pub const HEAP_HOT_PREFIX_BYTES: usize =
+    std::mem::size_of::<u64>() * 8;
+const _: () = {
+    assert!(HEAP_HOT_PREFIX_BYTES <= CACHE_LINE_BYTES);
+    assert!(std::mem::offset_of!(HeapStats, reserved_bytes) == 0);
+    assert!(std::mem::offset_of!(HeapStats, live_objects) + std::mem::size_of::<usize>()
+        == HEAP_HOT_PREFIX_BYTES - std::mem::size_of::<u64>() * 2);
+    assert!(std::mem::offset_of!(HeapStats, size_classes) >= HEAP_HOT_PREFIX_BYTES);
+};
+
+
+/// Canonical per-slot allocator metadata snapshot. It is observational only;
+/// liveness remains owned by the arena's value vector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct AllocationMetadata {
+    pub bytes: usize,
+    pub class: usize,
+    pub generation: Generation,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -174,6 +245,7 @@ pub struct HeapArena<T> {
     values: Vec<Option<T>>,
     sizes: Vec<usize>,
     generations: Vec<Generation>,
+    pinned: HashSet<HeapRef>,
     free: Vec<u32>,
     stats: HeapStats,
     nursery_limit: usize,
@@ -183,6 +255,13 @@ pub struct HeapArena<T> {
     gc_threshold: u64,
     bytes_since_gc: u64,
 }
+// Keep the representation and accounting contracts coupled: changing the
+// canonical page quantum without changing the type-level alignment must fail
+// at compile time rather than silently degrading page locality.
+const _: () = {
+    assert!(std::mem::align_of::<HeapArena<()>>() == ARENA_PAGE_BYTES);
+};
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NurseryOverflow;
@@ -214,6 +293,16 @@ impl AllocationFailure {
     }
 }
 
+/// Panic only after a fallible allocation has reached its explicitly cold
+/// failure boundary. Keeping formatting and unwinding here prevents the
+/// infallible convenience API from importing error construction into its hot
+/// instruction path.
+#[cold]
+#[inline(never)]
+fn panic_allocation_failure(operation: &'static str, failure: AllocationFailure) -> ! {
+    panic!("{operation} failed: {failure:?}")
+}
+
 impl<T> Default for HeapArena<T> {
     fn default() -> Self {
         Self {
@@ -221,6 +310,7 @@ impl<T> Default for HeapArena<T> {
             values: Vec::new(),
             sizes: Vec::new(),
             generations: Vec::new(),
+            pinned: HashSet::new(),
             free: Vec::new(),
             stats: HeapStats::default(),
             nursery_limit: ARENA_PAGE_BYTES,
@@ -235,9 +325,21 @@ impl<T> HeapArena<T> {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Set the allocation-pressure threshold that requests a collection.
+    ///
+    /// The threshold is owned by the arena for its lifetime. Zero is invalid
+    /// (it would make every state collect before any useful work), so the
+    /// builder clamps it to one byte. Pressure is compared inclusively:
+    /// reaching the threshold is sufficient to request collection.
     pub fn with_gc_threshold(mut self, bytes: u64) -> Self {
         self.gc_threshold = bytes.max(1);
         self
+    }
+
+    /// Return the canonical threshold used by [`Self::should_collect`].
+    #[inline]
+    pub const fn gc_threshold(&self) -> u64 {
+        self.gc_threshold
     }
 
     pub fn should_collect(&self) -> bool {
@@ -253,32 +355,61 @@ impl<T> HeapArena<T> {
         self.bytes_since_gc
     }
 
+    /// Return the cumulative bytes charged by successful allocations.
+    ///
+    /// This is the canonical request-visible allocation total: it only
+    /// increases when an allocation is committed, is independent of live
+    /// object reclamation, and is never reset by collection. The per-interval
+    /// pressure value is exposed separately by
+    /// [`Self::allocation_bytes_since_collection`].
+    #[inline]
+    pub const fn allocation_bytes_total(&self) -> u64 {
+        self.stats.allocated_bytes
+    }
     pub fn gc_threshold_remaining(&self) -> u64 {
         self.gc_threshold.saturating_sub(self.bytes_since_gc)
     }
 
-    /// Add one allocation-pressure source to the current GC interval.
-    ///
-    /// Both arena allocations and externally owned backing stores consume the
-    /// same isolate budget. Saturation keeps the predicate monotonic even if
-    /// a host reports an accounting value larger than the representable
-    /// interval.
+    /// Add allocation pressure without changing ownership counters.
+    #[inline]
     fn record_pressure(&mut self, bytes: usize) {
         self.bytes_since_gc = self.bytes_since_gc.saturating_add(bytes as u64);
     }
 
-    pub fn charge_external(&mut self, bytes: usize) {
+    /// Charge bytes from a named external producer.
+    ///
+    /// `source` documents ownership at the boundary; totals intentionally
+    /// remain unified so GC pressure cannot omit one producer.
+    #[inline]
+    pub fn charge_external_from(&mut self, _source: ExternalMemorySource, bytes: usize) {
         self.stats.external_bytes = self.stats.external_bytes.saturating_add(bytes as u64);
-        // External backing stores consume the same isolate budget as arena
-        // allocations. Keep the pressure monotonic until a collection gives
-        // the runtime a chance to reclaim unreachable storage.
         self.record_pressure(bytes);
     }
 
-    pub fn release_external(&mut self, bytes: usize) {
+    /// Release bytes previously charged by the named producer.
+    #[inline]
+    pub fn release_external_from(&mut self, _source: ExternalMemorySource, bytes: usize) {
         self.stats.external_bytes = self.stats.external_bytes.saturating_sub(bytes as u64);
     }
 
+    #[inline]
+    pub fn charge_external(&mut self, bytes: usize) {
+        self.charge_external_from(ExternalMemorySource::Native, bytes);
+    }
+
+    #[inline]
+    pub fn release_external(&mut self, bytes: usize) {
+        self.release_external_from(ExternalMemorySource::Native, bytes);
+    }
+
+    /// Sweep every slot that is not reachable from the canonical root source.
+    ///
+    /// The source contract is intentionally concrete: `RootRegistry` owns the
+    /// externally held roots, while `remembered` contributes only old-owner →
+    /// nursery edges whose owner is itself reachable. `values` is the sole
+    /// ownership/liveness store; all other vectors are derived metadata.
+    /// References outside the current slot range, duplicate roots, and
+    /// remembered edges from dead owners are invalid and have no effect.
     pub fn collect_unrooted(&mut self, roots: &RootRegistry) -> usize {
         let mut keep: std::collections::HashSet<_> =
             std::collections::HashSet::with_capacity(roots.root_count());
@@ -298,7 +429,10 @@ impl<T> HeapArena<T> {
         }
         let mut reclaimed = 0;
         for index in 0..self.values.len() {
-            if self.values[index].is_some() && !keep.contains(&HeapRef(index as u32)) {
+            if self.values[index].is_some()
+                && !keep.contains(&HeapRef(index as u32))
+                && !self.pinned.contains(&HeapRef(index as u32))
+            {
                 let size = self.sizes[index];
                 let class_index = Self::size_class_index(size);
                 self.stats.size_classes[class_index] =
@@ -337,6 +471,7 @@ impl<T> HeapArena<T> {
         self.bytes_since_gc = 0;
 
         self.recompute_committed();
+        debug_assert!(self.bump_reuse_invariant());
         reclaimed
     }
 
@@ -378,11 +513,12 @@ impl<T> HeapArena<T> {
     }
 
     pub fn nursery_is_full(&self) -> bool {
+        debug_assert!(self.bump_reuse_invariant());
         self.free.is_empty() && self.values.len() >= self.nursery_limit
     }
     pub fn allocate(&mut self, value: T) -> HeapRef {
         self.try_allocate(value)
-            .expect("heap nursery allocation failed")
+            .unwrap_or_else(|failure| panic_allocation_failure("heap nursery allocation", failure))
     }
     pub fn try_allocate(&mut self, value: T) -> Result<HeapRef, AllocationFailure> {
         self.try_allocate_sized(value, std::mem::size_of::<T>().max(1))
@@ -413,10 +549,10 @@ impl<T> HeapArena<T> {
         Ok(self.allocate_sized(value, bytes))
     }
 
-    /// Allocate immutable metadata directly in the old generation.
     pub fn allocate_immutable(&mut self, value: T) -> HeapRef {
-        self.try_allocate_immutable(value)
-            .expect("immutable metadata allocation failed")
+        self.try_allocate_immutable(value).unwrap_or_else(|failure| {
+            panic_allocation_failure("immutable metadata allocation", failure)
+        })
     }
 
     /// Fallible counterpart used by callers that must turn OOM into isolate
@@ -443,16 +579,40 @@ impl<T> HeapArena<T> {
             self.values[index as usize] = Some(value);
             self.sizes[index as usize] = bytes;
             self.generations[index as usize] = Generation::Nursery;
+            self.pinned.remove(&reused);
             self.recompute_committed();
+            debug_assert!(self.bump_reuse_invariant());
             return reused;
         }
-        let index = u32::try_from(self.values.len()).unwrap_or(u32::MAX);
         self.values.push(Some(value));
         self.sizes.push(bytes);
         self.generations.push(Generation::Nursery);
+        let index = (self.values.len() - 1) as u32;
         self.recompute_committed();
+        debug_assert!(self.bump_reuse_invariant());
         HeapRef(index)
     }
+    /// Validate the single-source slot invariant in debug builds:
+    /// `values.len()` is the bump frontier, all side vectors have exactly the
+    /// same frontier, and every reusable identity names one empty slot.
+    ///
+    /// The free list is deliberately not a second allocation frontier.  It is
+    /// only a reuse queue; an append may occur exclusively when it is empty.
+    #[inline]
+    fn bump_reuse_invariant(&self) -> bool {
+        self.values.len() == self.sizes.len()
+            && self.values.len() == self.generations.len()
+            && self
+                .free
+                .iter()
+                .enumerate()
+                .all(|(position, &index)| {
+                    (index as usize) < self.values.len()
+                        && self.values[index as usize].is_none()
+                        && !self.free[..position].contains(&index)
+                })
+    }
+
 
     fn size_class_index(bytes: usize) -> usize {
         let class = Self::size_class_bytes(bytes);
@@ -463,9 +623,9 @@ impl<T> HeapArena<T> {
     ///
     /// Classes are 8, 16, 32, 64, 128, 256, 512, and 1024 bytes;
     /// allocations larger than 1024 bytes use the final catch-all class,
-    /// whose slot capacity is 4096 bytes. Zero-byte values still occupy the
-    /// smallest slot. This is the same canonical mapping used by both live
-    /// counters and reserved-page accounting.
+    /// whose slot capacity is one arena page. Zero-byte values still occupy
+    /// the smallest slot. This is the same canonical mapping used by both
+    /// live counters and reserved-page accounting.
     pub fn size_class_capacity(bytes: usize) -> usize {
         Self::size_class_bytes(bytes)
     }
@@ -487,7 +647,7 @@ impl<T> HeapArena<T> {
             .max(1)
             .checked_next_power_of_two()
             .unwrap_or(usize::MAX)
-            .min(4096)
+            .min(ARENA_PAGE_BYTES)
     }
 
     pub fn size_class_for(bytes: usize) -> usize {
@@ -513,6 +673,37 @@ impl<T> HeapArena<T> {
         self.stats
             .reserved_bytes
             .div_ceil(self.page_size.max(1) as u64) as usize
+    }
+
+    /// Pin a live slot so a future moving collector must not relocate it.
+    pub fn pin(&mut self, reference: HeapRef) -> bool {
+        if self.values.get(reference.0 as usize).is_some_and(Option::is_some) {
+            self.pinned.insert(reference);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn unpin(&mut self, reference: HeapRef) -> bool {
+        self.pinned.remove(&reference)
+    }
+
+    #[inline]
+    pub fn is_pinned(&self, reference: HeapRef) -> bool {
+        self.pinned.contains(&reference)
+    }
+    /// Validate the page/slab accounting contract from canonical slot metadata.
+    ///
+    /// Every slot reserves one page-rounded size-class capacity, while only
+    /// occupied slots contribute committed bytes. `page_count` is derived from
+    /// that same reserved total; it is never an independent counter.
+    pub fn page_accounting_consistent(&self) -> bool {
+        let page = self.page_size.max(1) as u64;
+        self.stats.reserved_bytes % page == 0
+            && self.stats.committed_bytes <= self.stats.reserved_bytes
+            && self.page_count() == (self.stats.reserved_bytes / page) as usize
+            && self.counters_consistent()
     }
 
     pub fn stats(&self) -> HeapStats {
@@ -559,8 +750,9 @@ impl<T> HeapArena<T> {
     /// The slot, generation, and value checks are one invariant: a stale
     /// `HeapRef` may retain its old generation after reclamation, but it is not
     /// a valid barrier edge. Duplicate edges are intentionally coalesced so
-    /// repeated stores do not inflate remembered-set accounting.
-    pub fn record_write(&mut self, owner: HeapRef, target: HeapRef) {
+    /// repeated stores do not inflate remembered-set accounting. The return
+    /// value reports whether this call added a new edge.
+    pub fn record_write(&mut self, owner: HeapRef, target: HeapRef) -> bool {
         let owner_index = owner.0 as usize;
         let target_index = target.0 as usize;
         let owner_live = self.values.get(owner_index).is_some_and(Option::is_some);
@@ -568,12 +760,14 @@ impl<T> HeapArena<T> {
         let owner_old = self.generations.get(owner_index) == Some(&Generation::Old);
         let target_nursery = self.generations.get(target_index) == Some(&Generation::Nursery);
         if !(owner_live && target_live && owner_old && target_nursery) {
-            return;
+            return false;
         }
-        if !self.remembered.contains(&(owner, target)) {
-            self.remembered.push((owner, target));
-            self.stats.remembered_writes = self.stats.remembered_writes.saturating_add(1);
+        if self.remembered.contains(&(owner, target)) {
+            return false;
         }
+        self.remembered.push((owner, target));
+        self.stats.remembered_writes = self.stats.remembered_writes.saturating_add(1);
+        true
     }
 
     pub fn remembered_len(&self) -> usize {
@@ -586,6 +780,39 @@ impl<T> HeapArena<T> {
 
     pub fn remembered(&self) -> impl Iterator<Item = HeapRef> + '_ {
         self.remembered.iter().map(|(owner, _)| *owner)
+    }
+    /// Iterate the canonical old-owner → nursery-target edges.
+    ///
+    /// The pair is the remembered-set record; [`Self::remembered`] is only the
+    /// owner projection used by diagnostics.  Callers must not retain these
+    /// references across collection because reclamation and slot reuse prune
+    /// stale edges.
+    pub fn remembered_edges(&self) -> impl Iterator<Item = (HeapRef, HeapRef)> + '_ {
+        self.remembered.iter().copied()
+    }
+
+    /// Return metadata only for a live slot. Reclaimed and forged references
+    /// are invalid states and therefore return `None`.
+    ///
+    /// The value vector is checked first and remains the sole ownership
+    /// source; the parallel metadata vectors are only consulted after that
+    /// proof and are required to contain the same slot. This keeps malformed
+    /// metadata from becoming a panic or an alternate liveness model.
+    #[inline]
+    fn metadata_for_index(&self, index: usize) -> Option<AllocationMetadata> {
+        self.values.get(index)?.as_ref()?;
+        let bytes = *self.sizes.get(index)?;
+        let generation = *self.generations.get(index)?;
+        Some(AllocationMetadata {
+            bytes,
+            class: Self::size_class_index(bytes),
+            generation,
+        })
+    }
+
+    #[inline]
+    pub fn allocation_metadata(&self, reference: HeapRef) -> Option<AllocationMetadata> {
+        self.metadata_for_index(reference.0 as usize)
     }
 
     /// Resolve a live slot from the canonical value vector. Keeping the
@@ -614,15 +841,26 @@ impl<T> HeapArena<T> {
             })
     }
 
-    pub fn reclaim(&mut self, reference: HeapRef) -> Option<T> {
+    /// Release the value owned by `reference` and return it to the arena.
+    ///
+    /// `values` is the sole ownership source: a successful free takes the
+    /// value from that vector exactly once, updates all derived accounting,
+    /// and queues the slot for reuse. A stale or out-of-range identity is an
+    /// invalid free and has no effect. The slot metadata remains in place
+    /// until reuse (or an empty-arena trim), preserving stable identities.
+    pub fn free(&mut self, reference: HeapRef) -> Option<T> {
         let index = reference.0 as usize;
         let value = self.values.get_mut(index)?.take()?;
         let size = self.sizes[index];
         let class_index = Self::size_class_index(size);
         self.stats.size_classes[class_index] =
             self.stats.size_classes[class_index].saturating_sub(1);
+        if self.generations[index].is_nursery() {
+            self.stats.nursery_reclaimed = self.stats.nursery_reclaimed.saturating_add(1);
+        }
         self.stats.live_bytes = self.stats.live_bytes.saturating_sub(size as u64);
         self.free.push(reference.0);
+        debug_assert!(self.bump_reuse_invariant());
         self.remembered.retain(|&(owner, target)| {
             self.values
                 .get(owner.0 as usize)
@@ -635,6 +873,12 @@ impl<T> HeapArena<T> {
         self.stats.live_objects = self.live_len();
         self.recompute_committed();
         Some(value)
+    }
+
+    /// Compatibility spelling for collection code; ownership still flows
+    /// through [`Self::free`].
+    pub fn reclaim(&mut self, reference: HeapRef) -> Option<T> {
+        self.free(reference)
     }
 
     pub fn live_len(&self) -> usize {
@@ -758,9 +1002,10 @@ impl RootRegistry {
 #[cfg(test)]
 mod tests {
     use super::{
-        AllocationFailure, Generation, HeapArena, HeapStats, LifetimeDomain, RootRegistry,
-        ARENA_PAGE_BYTES, CACHE_LINE_BYTES, EXTERNAL_METADATA_BYTES, HEAP_STATS_BYTES,
-        HOT_HEADER_BYTES, SLOT_METADATA_BYTES,
+        AllocationFailure, AllocationMetadata, ExternalMemorySource, Generation, HeapArena,
+        HeapStats, LifetimeDomain, RootRegistry, ARENA_PAGE_BYTES, CACHE_LINE_BYTES,
+        EXTERNAL_METADATA_BYTES, HEAP_HOT_PREFIX_BYTES, HEAP_STATS_BYTES, HOT_HEADER_BYTES,
+        SLOT_METADATA_BYTES,
     };
     use crate::identity::HeapRef;
     use std::{
@@ -783,6 +1028,40 @@ mod tests {
         // !Sync, so these checks cannot be weakened to a runtime convention.
         assert_eq!(size_of::<super::IsolateOwner>(), 0);
     }
+    #[test]
+    fn isolate_local_allocator_keeps_lifecycle_and_counters_in_one_owner() {
+        let drops = Rc::new(Cell::new(0));
+        let mut arena = HeapArena::new();
+        let reference = arena.allocate(DropProbe(drops.clone()));
+
+        // Allocation, reclamation, and accounting all happen through the
+        // unique mutable arena owner; no shared/atomic side counter exists.
+        assert_eq!(arena.stats().live_objects, 1);
+        assert_eq!(arena.get(reference).is_some(), true);
+        assert_eq!(arena.reclaim(reference).is_some(), true);
+        assert_eq!(drops.get(), 1);
+        assert_eq!(arena.stats().live_objects, 0);
+        assert!(arena.get(reference).is_none());
+    }
+    #[test]
+    fn stats_are_snapshots_of_the_isolate_owner() {
+        let mut arena = HeapArena::new();
+        let mut snapshot = arena.stats();
+        let reference = arena.allocate_sized(String::from("owned"), 5);
+
+        // Reading a snapshot never creates a second mutable counter owner.
+        // The only state transition is through the unique arena borrow.
+        snapshot.live_objects = 99;
+        snapshot.live_bytes = 99;
+        assert_eq!((snapshot.live_objects, snapshot.live_bytes), (99, 99));
+        assert_eq!(arena.stats().live_objects, 1);
+        assert_eq!(arena.stats().live_bytes, 5);
+
+        assert_eq!(arena.free(reference).as_deref(), Some("owned"));
+        assert_eq!(arena.stats().live_objects, 0);
+        assert_eq!(arena.stats().live_bytes, 0);
+    }
+
 
     #[test]
     fn slot_metadata_has_no_hidden_gc_header() {
@@ -834,6 +1113,37 @@ mod tests {
         assert_eq!(arena.values.len(), arena.generations.len());
         assert_eq!(super::slot_metadata_bytes(arena.values.len()), 0);
     }
+    #[test]
+    fn gc_slot_source_invariant_survives_collect_and_reuse() {
+        let mut arena = HeapArena::new();
+        let first = arena.allocate_sized("first", 24);
+        let second = arena.allocate_sized("second", 48);
+        let roots = RootRegistry::new();
+
+        assert_eq!(arena.collect_unrooted(&roots), 2);
+        assert!(arena.values.is_empty());
+        assert!(arena.sizes.is_empty());
+        assert!(arena.generations.is_empty());
+        assert!(arena.free.is_empty());
+        assert!(arena.allocation_metadata(first).is_none());
+        assert!(arena.allocation_metadata(second).is_none());
+        assert!(arena.bump_reuse_invariant());
+
+        let reused = arena.allocate_sized("reused", 96);
+        assert_eq!(reused, HeapRef(0));
+        assert_eq!(arena.values.len(), 1);
+        assert_eq!(arena.sizes.len(), 1);
+        assert_eq!(arena.generations.len(), 1);
+        assert_eq!(
+            arena.allocation_metadata(reused),
+            Some(AllocationMetadata {
+                bytes: 96,
+                class: 4,
+                generation: Generation::Nursery,
+            })
+        );
+        assert!(arena.bump_reuse_invariant());
+    }
 
     #[test]
     fn root_domains_are_enumerable_and_reclaimable() {
@@ -862,6 +1172,40 @@ mod tests {
         assert_eq!(arena.reclaim(reference).map(|_| ()), Some(()));
         assert_eq!(drops.get(), 1);
         assert!(arena.get(reference).is_none());
+    }
+
+    #[test]
+    fn free_is_single_source_release_and_stale_free_is_inert() {
+        let mut arena = HeapArena::new();
+        let reference = arena.allocate_sized(String::from("owned"), 17);
+        let before = arena.stats();
+
+        assert_eq!(arena.free(reference).as_deref(), Some("owned"));
+        assert_eq!(arena.stats().live_objects, 0);
+        assert_eq!(arena.stats().live_bytes, 0);
+        assert_eq!(arena.stats().allocated_bytes, before.allocated_bytes);
+        assert_eq!(arena.free(reference), None);
+        assert_eq!(arena.stats().live_objects, 0);
+        assert!(arena.bump_reuse_invariant());
+
+        let reused = arena.allocate_sized(String::from("replacement"), 9);
+        assert_eq!(reused, reference);
+        assert_eq!(arena.get(reused).map(String::as_str), Some("replacement"));
+    }
+
+    #[test]
+    fn direct_reclaim_observes_generation_and_invalidates_ownership() {
+        let mut arena = HeapArena::new();
+        let reference = arena.allocate_sized(7u8, 3);
+
+        assert_eq!(arena.generation_counts(), (1, 0));
+        assert_eq!(arena.reclaim(reference), Some(7));
+        assert_eq!(arena.stats().nursery_reclaimed, 1);
+        assert_eq!(arena.live_len(), 0);
+        assert!(arena.get(reference).is_none());
+        // A stale identity is invalid until allocation explicitly reuses it.
+        assert_eq!(arena.reclaim(reference), None);
+        assert!(arena.counters_consistent());
     }
 
     #[test]
@@ -900,6 +1244,49 @@ mod tests {
         assert_eq!(arena.stats().allocated_bytes, 4);
     }
     #[test]
+    fn nursery_bump_frontier_is_single_source_and_overflow_is_transactional() {
+        let mut arena = HeapArena::new().with_nursery_limit(2);
+        let first = arena
+            .try_allocate_sized("first", 7)
+            .expect("first nursery allocation");
+        let second = arena
+            .try_allocate_sized("second", 11)
+            .expect("second nursery allocation");
+        assert_eq!(first, HeapRef(0));
+        assert_eq!(second, HeapRef(1));
+        assert_eq!(arena.nursery_remaining(), 0);
+        assert!(arena.bump_reuse_invariant());
+
+        let before_stats = arena.stats();
+        let before_slots = arena.values.len();
+        let failure = arena
+            .try_allocate_sized("overflow", 13)
+            .expect_err("a full nursery must reject append allocation");
+        assert_eq!(failure, AllocationFailure::NurseryOverflow);
+        assert_eq!(arena.values.len(), before_slots);
+        assert_eq!(arena.stats(), before_stats);
+        assert_eq!(arena.get(first), Some(&"first"));
+        assert_eq!(arena.get(second), Some(&"second"));
+        assert!(arena.bump_reuse_invariant());
+    }
+
+    #[test]
+    fn nursery_reuses_holes_without_moving_the_bump_frontier() {
+        let mut arena = HeapArena::new().with_nursery_limit(2);
+        let first = arena.allocate("first");
+        let second = arena.allocate("second");
+        assert_eq!(arena.values.len(), 2);
+        assert_eq!(arena.reclaim(first), Some("first"));
+        assert_eq!(arena.values.len(), 2);
+
+        let reused = arena.allocate("reused");
+        assert_eq!(reused, first);
+        assert_eq!(arena.values.len(), 2);
+        assert_eq!(arena.get(reused), Some(&"reused"));
+        assert_eq!(arena.get(second), Some(&"second"));
+        assert!(arena.bump_reuse_invariant());
+    }
+    #[test]
     fn remembered_old_owner_keeps_nursery_target_alive() {
         let mut arena = HeapArena::new();
         let owner = arena.allocate(1u8);
@@ -914,32 +1301,29 @@ mod tests {
     #[test]
     fn allocation_counters_track_cumulative_live_and_gc_pressure() {
         let mut arena = HeapArena::new().with_gc_threshold(10);
-        assert_eq!(arena.stats().allocated_bytes, 0);
+        assert_eq!(arena.allocation_bytes_total(), 0);
         assert_eq!(arena.stats().live_bytes, 0);
         assert_eq!(arena.allocation_bytes_since_collection(), 0);
 
         let first = arena.allocate_sized(1u8, 4);
-        assert_eq!(arena.stats().allocated_bytes, 4);
+        assert_eq!(arena.allocation_bytes_total(), 4);
         assert_eq!(arena.stats().live_bytes, 4);
         assert_eq!(arena.allocation_bytes_since_collection(), 4);
 
         let second = arena.allocate_sized(2u8, 7);
-        assert_eq!(arena.stats().allocated_bytes, 11);
+        assert_eq!(arena.allocation_bytes_total(), 11);
         assert_eq!(arena.stats().live_bytes, 11);
         assert_eq!(arena.allocation_bytes_since_collection(), 11);
 
         assert_eq!(arena.reclaim(first), Some(1));
-        assert_eq!(arena.stats().allocated_bytes, 11);
+        assert_eq!(arena.allocation_bytes_total(), 11);
         assert_eq!(arena.stats().live_bytes, 7);
-        // Releasing live storage does not erase allocation pressure; only a
-        // collection establishes the next pressure interval.
-
         assert_eq!(arena.gc_threshold_remaining(), 0);
 
         let mut roots = RootRegistry::new();
         roots.add(LifetimeDomain::Request, second);
         assert_eq!(arena.collect_unrooted(&roots), 0);
-        assert_eq!(arena.stats().allocated_bytes, 11);
+        assert_eq!(arena.allocation_bytes_total(), 11);
         assert_eq!(arena.allocation_bytes_since_collection(), 0);
         assert!(!arena.should_collect());
     }
@@ -966,6 +1350,34 @@ mod tests {
         assert!(arena.counters_consistent());
     }
     #[test]
+    fn collector_uses_only_live_registry_roots_and_valid_remembered_edges() {
+        let mut arena = HeapArena::new();
+        let kept = arena.allocate(1u8);
+        let dropped = arena.allocate(2u8);
+        let mut roots = RootRegistry::new();
+        roots.add(LifetimeDomain::Realm, kept);
+        roots.add(LifetimeDomain::Request, kept);
+        roots.add(LifetimeDomain::Temporary, HeapRef(99_999));
+
+        assert_eq!(arena.collect_unrooted(&roots), 1);
+        assert_eq!(arena.get(kept), Some(&1));
+        assert_eq!(arena.get(dropped), None);
+        assert_eq!(arena.stats().live_objects, 1);
+
+        // A rootless old owner cannot keep a nursery target alive through a
+        // stale remembered edge.
+        let mut arena = HeapArena::new();
+        let owner = arena.allocate(3u8);
+        let mut owner_roots = RootRegistry::new();
+        owner_roots.add(LifetimeDomain::Realm, owner);
+        arena.collect_unrooted(&owner_roots);
+        let target = arena.allocate(4u8);
+        arena.record_write(owner, target);
+        owner_roots.clear(LifetimeDomain::Realm);
+        assert_eq!(arena.collect_unrooted(&owner_roots), 2);
+        assert!(arena.is_empty());
+    }
+    #[test]
     fn write_barrier_requires_live_old_owner_and_nursery_target() {
         let mut arena = HeapArena::new();
         let owner = arena.allocate(1u8);
@@ -974,20 +1386,39 @@ mod tests {
         roots.add(LifetimeDomain::Realm, owner);
         arena.collect_unrooted(&roots);
         let target = arena.allocate(3u8);
-        arena.record_write(owner, target);
-        arena.record_write(owner, target);
+        assert!(arena.record_write(owner, target));
+        assert!(!arena.record_write(owner, target));
         assert_eq!(arena.remembered_len(), 1);
         assert_eq!(arena.stats().remembered_writes, 1);
 
         roots.remove(LifetimeDomain::Realm, owner);
         assert_eq!(arena.reclaim(owner), Some(1));
-        arena.record_write(owner, target);
+        assert!(!arena.record_write(owner, target));
         assert_eq!(arena.remembered_len(), 0);
 
         let live_owner = arena.allocate(4u8);
         arena.collect_unrooted(&RootRegistry::new());
-        arena.record_write(live_owner, discarded);
+        assert!(!arena.record_write(live_owner, discarded));
         assert_eq!(arena.remembered_len(), 0);
+    }
+    #[test]
+    fn remembered_edges_are_canonical_and_pruned_at_collection_boundary() {
+        let mut arena = HeapArena::new();
+        let owner = arena.allocate(1u8);
+        let mut roots = RootRegistry::new();
+        roots.add(LifetimeDomain::Realm, owner);
+        assert_eq!(arena.collect_unrooted(&roots), 0);
+
+        let target = arena.allocate(2u8);
+        assert!(arena.record_write(owner, target));
+        assert_eq!(
+            arena.remembered_edges().collect::<Vec<_>>(),
+            vec![(owner, target)]
+        );
+
+        roots.clear(LifetimeDomain::Realm);
+        assert_eq!(arena.collect_unrooted(&roots), 2);
+        assert!(arena.remembered_edges().next().is_none());
     }
     #[test]
     fn write_barrier_ignores_nursery_old_and_invalid_targets() {
@@ -1143,6 +1574,17 @@ mod tests {
         assert_eq!(arena.stats().nursery_reclaimed, 7);
     }
     #[test]
+    fn zero_gc_threshold_is_clamped_and_boundary_is_inclusive() {
+        let mut arena = HeapArena::<u8>::new().with_gc_threshold(0);
+        assert_eq!(arena.gc_threshold(), 1);
+        assert!(!arena.should_collect());
+
+        arena.allocate_sized(1, 1);
+        assert_eq!(arena.allocation_bytes_since_collection(), 1);
+        assert!(arena.should_collect());
+    }
+
+    #[test]
     fn conditional_collection_resets_threshold_after_reclaim() {
         let mut arena = HeapArena::new().with_gc_threshold(1);
         arena.allocate_sized(1u8, 8);
@@ -1197,6 +1639,19 @@ mod tests {
         assert_eq!(arena.stats().external_bytes, 37);
         arena.release_external(37);
         assert_eq!(arena.stats().external_bytes, 0);
+    }
+    #[test]
+    fn external_source_provenance_shares_one_pressure_account() {
+        let mut arena = HeapArena::<u8>::new().with_gc_threshold(10);
+        arena.charge_external_from(ExternalMemorySource::ArrayBuffer, 6);
+        arena.charge_external_from(ExternalMemorySource::Native, 4);
+        assert_eq!(arena.stats().external_bytes, 10);
+        assert_eq!(arena.allocation_bytes_since_collection(), 10);
+        assert!(arena.should_collect());
+
+        arena.release_external_from(ExternalMemorySource::ArrayBuffer, 6);
+        assert_eq!(arena.stats().external_bytes, 4);
+        assert_eq!(arena.allocation_bytes_since_collection(), 10);
     }
     #[test]
     fn external_pressure_triggers_at_threshold_boundary() {
@@ -1273,6 +1728,15 @@ mod tests {
         assert_eq!(size_of::<HeapStats>(), 144);
         assert_eq!(std::mem::align_of::<HeapStats>(), size_of::<u64>());
         assert!(size_of::<HeapStats>() < CACHE_LINE_BYTES * 3);
+    }
+    #[test]
+    fn heap_stats_hot_prefix_is_contiguous_and_cache_line_bounded() {
+        assert_eq!(std::mem::offset_of!(HeapStats, reserved_bytes), 0);
+        assert_eq!(
+            std::mem::offset_of!(HeapStats, size_classes),
+            HEAP_HOT_PREFIX_BYTES
+        );
+        assert!(HEAP_HOT_PREFIX_BYTES <= CACHE_LINE_BYTES);
     }
     #[test]
     fn heap_stats_snapshots_are_isolate_owned_and_do_not_alias() {
@@ -1358,12 +1822,30 @@ mod tests {
         assert_eq!(arena.live_len(), 0);
         assert_eq!(arena.generation_counts(), (0, 0));
     }
+
+    #[test]
+    fn infallible_allocation_reports_cold_failure_source() {
+        let mut arena = HeapArena::new().with_nursery_limit(0);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            arena.allocate(7u32);
+        }))
+        .expect_err("infallible allocation must panic at the cold failure boundary");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic payload should be a string");
+        assert!(message.contains("heap nursery allocation failed: NurseryOverflow"));
+        assert_eq!(arena.live_len(), 0);
+        assert!(arena.counters_consistent());
+    }
     #[test]
     fn nursery_allocations_are_contiguous_before_reuse() {
         let mut arena = HeapArena::new();
         let first = arena.allocate(1u8);
         let second = arena.allocate(2u8);
         assert_eq!(second.0, first.0 + 1);
+        assert!(arena.bump_reuse_invariant());
         assert_eq!(arena.nursery_remaining(), 4094);
     }
 
@@ -1376,6 +1858,15 @@ mod tests {
         arena.allocate_sized((), ARENA_PAGE_BYTES + 1);
         assert_eq!(arena.stats().reserved_bytes % ARENA_PAGE_BYTES as u64, 0);
         assert_eq!(arena.page_count(), 2);
+    }
+    #[test]
+    fn size_class_catch_all_is_sourced_from_arena_page_quantum() {
+        assert_eq!(HeapArena::<u8>::size_class_capacity(ARENA_PAGE_BYTES), ARENA_PAGE_BYTES);
+        assert_eq!(
+            HeapArena::<u8>::size_class_capacity(ARENA_PAGE_BYTES.saturating_add(1)),
+            ARENA_PAGE_BYTES
+        );
+        assert_eq!(HeapArena::<u8>::size_class_capacity(usize::MAX), ARENA_PAGE_BYTES);
     }
 
     #[test]
@@ -1391,6 +1882,19 @@ mod tests {
         arena.allocate_sized([0u8; 128], 128);
         assert_eq!(arena.page_count(), 1);
         assert!(arena.stats().reserved_bytes >= arena.stats().committed_bytes);
+    }
+    #[test]
+    fn page_accounting_consistency_survives_reclaim_and_reuse() {
+        let mut arena = HeapArena::new();
+        let first = arena.allocate_sized((), 9);
+        let second = arena.allocate_sized((), 2049);
+        assert!(arena.page_accounting_consistent());
+        assert_eq!(arena.reclaim(first), Some(()));
+        assert!(arena.page_accounting_consistent());
+        arena.allocate_sized((), 65);
+        assert!(arena.page_accounting_consistent());
+        assert_eq!(arena.page_count(), 2);
+        assert_eq!(arena.get(second), Some(&()));
     }
     #[test]
     fn reclaimed_page_slot_reuse_preserves_reserved_capacity_and_updates_class() {
@@ -1443,14 +1947,12 @@ mod tests {
         let medium = arena.allocate_sized((), 9);
         let large = arena.allocate_sized((), 4097);
         let reserved = arena.stats().reserved_bytes;
-        assert_eq!(reserved, arena.page_count() as u64 * 4096);
+        assert_eq!(reserved, arena.page_count() as u64 * ARENA_PAGE_BYTES as u64);
         assert_eq!(arena.stats().committed_bytes, reserved);
-
         assert_eq!(arena.reclaim(medium), Some(()));
         assert_eq!(arena.stats().reserved_bytes, reserved);
         assert!(arena.stats().committed_bytes < reserved);
-        assert_eq!(arena.page_count(), (reserved / 4096) as usize);
-
+        assert_eq!(arena.page_count(), (reserved / ARENA_PAGE_BYTES as u64) as usize);
         let replacement = arena.allocate_sized((), 16);
         assert_eq!(replacement, medium);
         assert_eq!(arena.stats().reserved_bytes, reserved);
@@ -1538,6 +2040,59 @@ mod tests {
     }
 
     #[test]
+    fn allocation_metadata_is_live_slot_source_contract() {
+        let mut arena = HeapArena::new();
+        let reference = arena.allocate_sized(7u8, 40);
+        assert_eq!(
+            arena.allocation_metadata(reference),
+            Some(AllocationMetadata {
+                bytes: 40,
+                class: 3,
+                generation: Generation::Nursery,
+            })
+        );
+        assert_eq!(arena.allocation_metadata(HeapRef(u32::MAX)), None);
+        assert_eq!(arena.reclaim(reference), Some(7));
+        assert_eq!(arena.allocation_metadata(reference), None);
+    }
+    #[test]
+    fn allocation_metadata_rejects_incomplete_parallel_indexes() {
+        let mut arena = HeapArena::new();
+        let reference = arena.allocate_sized(7u8, 40);
+        arena.sizes.pop();
+        assert_eq!(arena.allocation_metadata(reference), None);
+    }
+
+
+    #[test]
+    fn pinned_slots_survive_collection_until_explicitly_unpinned() {
+        let mut arena = HeapArena::new();
+        let pinned = arena.allocate(7u8);
+        let discarded = arena.allocate(9u8);
+        assert!(arena.pin(pinned));
+        assert!(arena.is_pinned(pinned));
+        assert_eq!(arena.collect_unrooted(&RootRegistry::new()), 1);
+        assert_eq!(arena.get(pinned), Some(&7));
+        assert_eq!(arena.get(discarded), None);
+        assert!(arena.unpin(pinned));
+        assert_eq!(arena.collect_unrooted(&RootRegistry::new()), 1);
+        assert_eq!(arena.get(pinned), None);
+        assert!(!arena.pin(pinned));
+    }
+
+    #[test]
+    fn stale_pin_cannot_keep_reused_slot_alive() {
+        let mut arena = HeapArena::new();
+        let old = arena.allocate(1u8);
+        assert!(arena.pin(old));
+        assert!(arena.unpin(old));
+        assert_eq!(arena.collect_unrooted(&RootRegistry::new()), 1);
+        let reused = arena.allocate(2u8);
+        assert_eq!(old, reused);
+        assert!(!arena.is_pinned(reused));
+        assert_eq!(arena.collect_unrooted(&RootRegistry::new()), 1);
+    }
+    #[test]
     fn size_classes_grow_monotonically() {
         let sizes = [1, 8, 16, 32, 64, 128, 1024];
         let classes: Vec<_> = sizes
@@ -1545,5 +2100,21 @@ mod tests {
             .map(HeapArena::<u8>::size_class_for)
             .collect();
         assert!(classes.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+    #[test]
+    fn hot_and_cold_views_partition_the_canonical_snapshot() {
+        let mut arena = HeapArena::new();
+        arena.allocate_sized(7u8, 24);
+        let snapshot = arena.stats();
+        let hot = snapshot.hot();
+        let cold = snapshot.cold();
+
+        assert_eq!(hot.live_bytes, snapshot.live_bytes);
+        assert_eq!(hot.live_objects, snapshot.live_objects);
+        assert_eq!(cold.collections, snapshot.collections);
+        assert_eq!(cold.size_classes, snapshot.size_classes);
+        assert_eq!(cold.promoted_objects, snapshot.promoted_objects);
+        assert_eq!(cold.nursery_reclaimed, snapshot.nursery_reclaimed);
+        assert_eq!(snapshot, arena.stats());
     }
 }

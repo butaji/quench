@@ -361,8 +361,5 @@ pub(crate) fn to_index(value: f64) -> Result<usize, crate::execute::VmError> {
 }
 
 fn type_error(message: &str) -> crate::execute::VmError {
-    crate::execute::VmError::Thrown(crate::builtins::error(
-        crate::ops::Builtin::TypeError,
-        &[Value::String(message.to_string())],
-    ))
+    crate::value::error::throw_type_error(message)
 }
