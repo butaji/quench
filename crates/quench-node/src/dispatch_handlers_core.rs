@@ -383,6 +383,12 @@ pub fn buffer_new_construct(
     args: &[Value],
 ) -> Result<Value, VmError> {
     // `new Buffer(value)`: numbers allocate, everything else is `from`.
+    if matches!(args.first(), Some(Value::Number(_))) && args.get(1).is_some_and(|v| !matches!(v, Value::Undefined)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"string\" argument must be of type string.{}",
+            crate::modules::util::invalid_arg_received(args.first().unwrap())
+        )));
+    }
     if matches!(args.first(), Some(Value::Number(_))) {
         crate::modules::buffer::alloc(state, args)
     } else {
