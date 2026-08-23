@@ -292,7 +292,10 @@ fn get_with_receiver(target: &Value, key: &str, receiver: &Value) -> Result<Valu
 
 fn super_own_value(holder: &Value, key: &str, receiver: &Value) -> Result<Option<Value>, VmError> {
     let properties: Vec<(String, Value)> = match holder {
-        Value::Object(properties) => properties.iter().cloned().collect(),
+        Value::Object(properties) => properties
+            .iter()
+            .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
+            .collect(),
         Value::Function(function) => function.properties.borrow().clone(),
         Value::ObjectAlias(alias) => {
             let Some(object) = alias.0.borrow().upgrade() else {

@@ -16,7 +16,7 @@ fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
     {
         *value = Value::Boolean(true);
     }
-    Some(Value::Object(Rc::new(ObjectData::new(properties))))
+    Some(Value::Object(Rc::new(ObjectData::from_shared_properties(properties))))
 }
 fn buffer_descriptor(buffer: &crate::value::ArrayBufferData, key: &str) -> Option<Value> {
     buffer
@@ -114,7 +114,10 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         .find(|(name, _)| name == key)
         .map(|(_, value)| descriptor_object(value))
 }
-fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
+fn object_descriptor(
+    properties: &[(crate::value::PropertyName, Value)],
+    key: &str,
+) -> Option<Value> {
     if let Some(Value::String(value)) = properties
         .iter()
         .rev()

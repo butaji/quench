@@ -117,20 +117,20 @@ fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -
             Value::BindingCell(cell) => Some(Rc::clone(cell)),
             _ => None,
         });
-    let mut values: Vec<(String, Value)> = properties
+    let mut values: crate::value::ObjectProperties = properties
         .iter()
         .filter(|(name, _)| name != key && name != &descriptor_key(key))
         .cloned()
         .collect();
     if let Some(cell) = cell {
-        values.push((crate::builtins::deleted_key(key), Value::BindingCell(cell)));
+        values.push((crate::builtins::deleted_key(key).into(), Value::BindingCell(cell)));
     }
     if crate::vm::is_global_object(&Value::Object(Rc::clone(&properties)))
         && crate::vm::global_builtin_exists(key)
     {
-        values.push((crate::builtins::deleted_key(key), Value::Boolean(true)));
+        values.push((crate::builtins::deleted_key(key).into(), Value::Boolean(true)));
     }
-    Value::Object(Rc::new(crate::value::ObjectData::with_private_slots(
+    Value::Object(Rc::new(crate::value::ObjectData::with_shared_properties(
         values,
         Rc::clone(&properties.private_slots),
     )))

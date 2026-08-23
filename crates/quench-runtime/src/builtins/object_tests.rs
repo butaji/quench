@@ -127,7 +127,7 @@ fn ordinary_object_shape_tracks_public_layout_not_metadata() {
     // Descriptor records are internal metadata and must not alter the visible
     // shape or slot count.
     second.properties.push((
-        "\0quench:descriptor:alpha".to_string(),
+        "\0quench:descriptor:alpha".into(),
         Value::String("non-enumerable".to_string()),
     ));
     assert_eq!(first.shape(), second.shape());

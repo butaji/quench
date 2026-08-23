@@ -125,7 +125,7 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
 }
 
 fn object_enumerable_keys(data: &crate::value::ObjectData) -> Vec<String> {
-    let properties: &[(String, Value)] = data;
+    let properties: &crate::value::ObjectProperties = data;
     if is_boxed_primitive(properties) {
         return enumerable_ordered(properties)
             .into_iter()
@@ -156,9 +156,11 @@ fn object_enumerable_keys(data: &crate::value::ObjectData) -> Vec<String> {
     keys
 }
 
-fn is_boxed_primitive(properties: &[(String, Value)]) -> bool {
-    let has_value = properties.iter().any(|(key, _)| key == "_value");
-    let has_constructor = properties.iter().any(|(key, _)| key == "constructor");
+fn is_boxed_primitive<K: AsRef<str>>(properties: &[(K, Value)]) -> bool {
+    let has_value = properties.iter().any(|(key, _)| key.as_ref() == "_value");
+    let has_constructor = properties
+        .iter()
+        .any(|(key, _)| key.as_ref() == "constructor");
     has_value && has_constructor
 }
 
@@ -173,7 +175,7 @@ fn enumerable_created(data: &crate::value::ObjectData) -> Vec<String> {
     ordered(&properties, false)
 }
 
-fn enumerable_ordered(properties: &[(String, Value)]) -> Vec<String> {
+fn enumerable_ordered<K: AsRef<str>>(properties: &[(K, Value)]) -> Vec<String> {
     ordered(properties, false)
         .into_iter()
         .filter(|key| !key.starts_with('\0'))
@@ -287,8 +289,11 @@ fn owns_string_key(target: &Value, key: &str) -> bool {
             .any(|name| name == key)
 }
 
-fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
-    let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
+fn object_keys<K: AsRef<str>>(properties: &[(K, Value)], symbols: bool) -> Vec<String> {
+    let Some((_, Value::String(value))) = properties
+        .iter()
+        .find(|(key, _)| key.as_ref() == "_value")
+    else {
         let keys = ordered(properties, symbols)
             .into_iter()
             .filter(|key| key != "_value" && key != "timeValue")
@@ -308,13 +313,13 @@ fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
     boxed_string_keys(properties, value, symbols)
 }
 
-fn filter_namespace_symbol_name(
-    properties: &[(String, Value)],
+fn filter_namespace_symbol_name<K: AsRef<str>>(
+    properties: &[(K, Value)],
     symbols: bool,
     mut keys: Vec<String>,
 ) -> Vec<String> {
     let namespace = properties.iter().any(|(key, value)| {
-        key == "\0quench:module_namespace" && matches!(value, Value::Boolean(true))
+        key.as_ref() == "\0quench:module_namespace" && matches!(value, Value::Boolean(true))
     });
     if !namespace {
         return keys;
@@ -322,7 +327,7 @@ fn filter_namespace_symbol_name(
     if symbols {
         if properties
             .iter()
-            .any(|(key, _)| key == "Symbol.toStringTag")
+            .any(|(key, _)| key.as_ref() == "Symbol.toStringTag")
             && !keys.iter().any(|key| key == "Symbol.toStringTag")
         {
             keys.push("Symbol.toStringTag".to_string());
@@ -334,7 +339,11 @@ fn filter_namespace_symbol_name(
         .collect()
 }
 
-fn boxed_string_keys(properties: &[(String, Value)], value: &str, symbols: bool) -> Vec<String> {
+fn boxed_string_keys<K: AsRef<str>>(
+    properties: &[(K, Value)],
+    value: &str,
+    symbols: bool,
+) -> Vec<String> {
     if symbols {
         return ordered(properties, true);
     }
@@ -363,12 +372,12 @@ fn boxed_string_keys(properties: &[(String, Value)], value: &str, symbols: bool)
     keys
 }
 
-fn descriptor_enumerable(properties: &[(String, Value)], key: &str) -> bool {
+fn descriptor_enumerable<K: AsRef<str>>(properties: &[(K, Value)], key: &str) -> bool {
     let metadata = crate::builtins::descriptor_key(key);
     let descriptor = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == &metadata).then_some(value));
+        .find_map(|(name, value)| (name.as_ref() == metadata).then_some(value));
     descriptor_enumerable_value(descriptor)
 }
 
@@ -504,10 +513,11 @@ fn bound_function_keys(bound: &crate::value::BoundFunctionValue, symbols: bool) 
     ordered(&bound.properties.borrow(), symbols)
 }
 
-fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
+fn ordered<K: AsRef<str>>(properties: &[(K, Value)], symbols: bool) -> Vec<String> {
     let mut indices = Vec::new();
     let mut strings = Vec::new();
     for (key, _) in properties {
+        let key = key.as_ref();
         if crate::builtins::is_descriptor_key(key) || key.starts_with('\0') {
             continue;
         }
@@ -515,8 +525,8 @@ fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
             continue;
         }
         match array_index(key) {
-            Some(index) if !symbols => indices.push((index, key.clone())),
-            _ => strings.push(key.clone()),
+            Some(index) if !symbols => indices.push((index, key.to_owned())),
+            _ => strings.push(key.to_owned()),
         }
     }
     indices.sort_by_key(|(index, _)| *index);

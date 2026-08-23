@@ -126,7 +126,9 @@ mod proven_own_data_tests {
         let getter = descriptor(vec![("get", Value::Undefined)]);
         assert!(!plain_writable_own_data(&object(Some(getter)), "field"));
         let mut deleted = object(None);
-        deleted.properties.push((crate::builtins::deleted_key("field"), Value::Undefined));
+        deleted
+            .properties
+            .push((crate::builtins::deleted_key("field").into(), Value::Undefined));
         assert!(!plain_writable_own_data(&deleted, "field"));
         let cell = Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(Value::Undefined)));
         assert!(!plain_writable_own_data(&object(None), "missing"));
