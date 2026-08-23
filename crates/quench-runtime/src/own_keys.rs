@@ -73,7 +73,15 @@ fn descriptor_enumerable_value_opt(descriptor: &Value) -> bool {
 
 fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
     let length = typed_array_length(value)?;
-    Some((0..length).map(|index| index.to_string()).collect())
+    let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
+    if let Some(meta) = value.typed_array_meta() {
+        for (key, _) in meta.own_properties() {
+            if !keys.iter().any(|current| current == &key) {
+                keys.push(key);
+            }
+        }
+    }
+    Some(keys)
 }
 
 fn typed_array_length(value: &Value) -> Option<usize> {
