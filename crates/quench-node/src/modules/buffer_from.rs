@@ -278,6 +278,9 @@ fn index_arg(value: Option<&Value>, name: &str) -> Result<Option<usize>, VmError
     let Some(value) = value else {
         return Ok(None);
     };
+    if matches!(value, Value::Undefined) {
+        return Ok(None);
+    }
     let Value::Number(n) = value else {
         return Err(enc::invalid_arg_type(format!(
             "The \"{name}\" argument must be of type number.{}",
