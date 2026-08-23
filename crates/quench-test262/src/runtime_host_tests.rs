@@ -30,6 +30,17 @@ fn sequential_script_units_share_global_function_bindings() {
 }
 
 #[test]
+fn strict_non_extensible_write_throws() {
+    let mut host = super::RuntimeHost;
+    let result = host.run_harnessed_script(
+        &[],
+        "var obj = {}; Object.preventExtensions(obj); obj.missing = 1;",
+        true,
+    );
+    assert!(result.is_err(), "strict write must reject a new property");
+}
+
+#[test]
 fn symbols_are_unique_and_format_descriptions() {
     let mut host = super::RuntimeHost;
     host.run_script(
