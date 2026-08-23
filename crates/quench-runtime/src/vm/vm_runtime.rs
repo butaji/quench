@@ -77,7 +77,12 @@ fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmE
 pub(crate) fn completion_result(
     completion: crate::completion::Completion,
 ) -> Result<Value, VmError> {
-    completion.into_vm_error()
+    match completion {
+        crate::completion::Completion::TailCall(request) => {
+            crate::functions::execute_target(&request.callee, &request.receiver, &request.arguments)
+        }
+        completion => completion.into_vm_error(),
+    }
 }
 
 struct GlobalObjectGuard {
