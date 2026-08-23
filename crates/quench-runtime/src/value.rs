@@ -518,7 +518,7 @@ pub struct ObjectData {
     // provide an independently managed side allocation.
     pub(crate) private_slots: PrivateSlots,
     original_prototype: RefCell<Option<Value>>,
-    pub(crate) created: Vec<String>,
+    pub(crate) created: Vec<PropertyName>,
 }
 
 impl ObjectData {
@@ -579,7 +579,7 @@ impl ObjectData {
     pub(crate) fn with_creation_order(
         properties: ObjectProperties,
         private_slots: PrivateSlots,
-        created: Vec<String>,
+        created: Vec<PropertyName>,
     ) -> Self {
         Self {
             identity: next_object_identity(),
@@ -616,7 +616,7 @@ impl std::ops::DerefMut for ObjectData {
     }
 }
 
-fn creation_order(properties: &[(PropertyName, Value)]) -> Vec<String> {
+fn creation_order(properties: &[(PropertyName, Value)]) -> Vec<PropertyName> {
     // Bootstrap objects commonly arrive with all properties at once. Reserve
     // the final key count so creation-order storage does not repeatedly grow
     // and retain transient allocator pages during bootstrap.
@@ -625,7 +625,7 @@ fn creation_order(properties: &[(PropertyName, Value)]) -> Vec<String> {
         if key.starts_with('\0') || created.iter().any(|name| name == key.as_str()) {
             continue;
         }
-        created.push(key.as_str().to_owned());
+        created.push(key.clone());
     }
     created
 }
@@ -659,7 +659,16 @@ mod object_identity_tests {
         let name = PropertyName::from("currentTask");
         let clone = name.clone();
         assert!(Rc::ptr_eq(&name.0, &clone.0));
-        assert_eq!(std::mem::size_of::<PropertyName>(), 2 * std::mem::size_of::<usize>());
+        assert_eq!(
+            std::mem::size_of::<PropertyName>(),
+            2 * std::mem::size_of::<usize>()
+        );
+    }
+
+    #[test]
+    fn creation_order_shares_the_canonical_property_name() {
+        let object = ObjectData::new(vec![("currentTask".into(), super::Value::Undefined)]);
+        assert!(Rc::ptr_eq(&object.properties[0].0 .0, &object.created[0].0));
     }
 }
 /// Derived layout facts for ordinary objects. These are never authoritative;
@@ -805,8 +814,7 @@ impl ObjectData {
         // their canonical source remains the property vector and must use the
         // complete property semantics instead of this shape fast path.
         let current = self.shape();
-        (current.id == shape && !current.dictionary)
-            .then(|| self.value_at_slot(slot))?
+        (current.id == shape && !current.dictionary).then(|| self.value_at_slot(slot))?
     }
 }
 
@@ -828,11 +836,15 @@ impl ObjectData {
         }
         let current = self.shape();
         let key_id = crate::identity::property_key_id(property);
-        let visible: Vec<_> = self.properties.iter()
+        let visible: Vec<_> = self
+            .properties
+            .iter()
             .filter(|(name, _)| !name.starts_with('\0'))
             .map(|(name, _)| name.as_str())
             .collect();
-        let slot = visible.iter().position(|name| *name == property)
+        let slot = visible
+            .iter()
+            .position(|name| *name == property)
             .unwrap_or(visible.len());
         let mut next = self.properties.clone();
         if slot == visible.len() {
@@ -1174,8 +1186,8 @@ mod pointer_source_invariants {
 
 mod layout_tests {
     use super::{
-        ObjectData, ObjectShape, Value, IMMEDIATE_WORD_BYTES, SMALL_INTEGER_MAX,
-        SMALL_INTEGER_MIN, SMALL_INTEGER_TAG_BITS, VALUE_ALIGNMENT_BYTES, VALUE_ALIGNMENT_TAG_BITS,
+        ObjectData, ObjectShape, Value, IMMEDIATE_WORD_BYTES, SMALL_INTEGER_MAX, SMALL_INTEGER_MIN,
+        SMALL_INTEGER_TAG_BITS, VALUE_ALIGNMENT_BYTES, VALUE_ALIGNMENT_TAG_BITS,
     };
     use crate::heap::{CACHE_LINE_BYTES, HOT_HEADER_BYTES};
 
@@ -1317,8 +1329,7 @@ mod layout_tests {
             Some(-42)
         );
         assert_eq!(
-            Value::checked_small_integer_multiply(-7, 6)
-                .and_then(|value| value.as_small_integer()),
+            Value::checked_small_integer_multiply(-7, 6).and_then(|value| value.as_small_integer()),
             Some(-42)
         );
         assert!(Value::checked_small_integer_subtract(i32::MIN, 1).is_none());
@@ -1854,7 +1865,10 @@ mod error_tests {
     fn cold_error_helpers_preserve_error_kind_and_message() {
         let cases = [
             (error::throw_type_error("invalid receiver"), "TypeError"),
-            (error::throw_reference_error("missing binding"), "ReferenceError"),
+            (
+                error::throw_reference_error("missing binding"),
+                "ReferenceError",
+            ),
             (error::throw_syntax_error("unexpected token"), "SyntaxError"),
             (error::throw_range_error("out of bounds"), "RangeError"),
             (error::throw_uri_error("bad escape"), "URIError"),
@@ -1863,7 +1877,10 @@ mod error_tests {
             let VmError::Thrown(value) = result else {
                 panic!("error helper must produce a thrown completion");
             };
-            assert_eq!(get_property(&value, "name"), Value::String(name.to_string()));
+            assert_eq!(
+                get_property(&value, "name"),
+                Value::String(name.to_string())
+            );
             let message = match name {
                 "TypeError" => "invalid receiver",
                 "ReferenceError" => "missing binding",
@@ -1872,7 +1889,10 @@ mod error_tests {
                 "URIError" => "bad escape",
                 _ => unreachable!(),
             };
-            assert_eq!(get_property(&value, "message"), Value::String(message.to_string()));
+            assert_eq!(
+                get_property(&value, "message"),
+                Value::String(message.to_string())
+            );
         }
     }
 }
