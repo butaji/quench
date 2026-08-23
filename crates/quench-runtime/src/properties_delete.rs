@@ -1,5 +1,5 @@
 pub(crate) fn execute_delete_property(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
     let Op::DeleteProperty {

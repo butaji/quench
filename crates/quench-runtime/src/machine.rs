@@ -135,7 +135,7 @@ fn metadata_for(op: &Op) -> InstructionMeta {
 pub struct RegisterWindow {
     pub base: u32,
     pub count: u16,
-    pub values: Vec<Value>,
+    pub values: crate::register_file::RegisterFile,
 }
 
 impl RegisterWindow {
@@ -143,7 +143,7 @@ impl RegisterWindow {
         Self {
             base: 0,
             count: 0,
-            values: Vec::new(),
+            values: crate::register_file::RegisterFile::new(),
         }
     }
 
@@ -151,7 +151,10 @@ impl RegisterWindow {
         Self {
             base: 0,
             count,
-            values: vec![Value::Undefined; usize::from(count)],
+            values: crate::register_file::RegisterFile::from_values(vec![
+                Value::Undefined;
+                usize::from(count)
+            ]),
         }
     }
 
@@ -749,7 +752,7 @@ impl Machine {
 
     pub fn step<F, E>(&mut self, input: Completion, execute: F) -> Result<Completion, E>
     where
-        F: FnOnce(&mut Vec<Value>) -> Result<Completion, E>,
+        F: FnOnce(&mut crate::register_file::RegisterFile) -> Result<Completion, E>,
     {
         self.completion = input;
         let completion = execute(&mut self.registers.values)?;
@@ -767,7 +770,7 @@ impl Machine {
         mut execute: F,
     ) -> Result<Completion, E>
     where
-        F: FnMut(&mut Vec<Value>, Completion) -> Result<Completion, E>,
+        F: FnMut(&mut crate::register_file::RegisterFile, Completion) -> Result<Completion, E>,
     {
         loop {
             self.completion = input.clone();
@@ -907,11 +910,11 @@ impl Machine {
         self.environment_data.clone()
     }
 
-    pub(crate) fn take_registers(&mut self) -> Vec<Value> {
+    pub(crate) fn take_registers(&mut self) -> crate::register_file::RegisterFile {
         std::mem::take(&mut self.registers.values)
     }
 
-    pub(crate) fn restore_registers(&mut self, registers: Vec<Value>) {
+    pub(crate) fn restore_registers(&mut self, registers: crate::register_file::RegisterFile) {
         let count = u16::try_from(registers.len()).expect("register window exceeds u16 capacity");
         self.registers.count = count;
         self.registers.values = registers;
@@ -968,7 +971,7 @@ impl Machine {
     /// bookkeeping.  The immutable view keeps readers on the same storage
     /// used by execution and avoids materializing a duplicate register list.
     #[inline]
-    pub fn registers(&self) -> &[Value] {
+    pub fn registers(&self) -> &crate::register_file::RegisterFile {
         &self.registers.values
     }
 
@@ -980,7 +983,7 @@ impl Machine {
 
     /// Borrow the contiguous register storage used by the active frame.
     #[inline]
-    pub fn registers_mut(&mut self) -> &mut Vec<Value> {
+    pub fn registers_mut(&mut self) -> &mut crate::register_file::RegisterFile {
         &mut self.registers.values
     }
 
@@ -1129,7 +1132,9 @@ mod tests {
     #[test]
     fn restoring_registers_preserves_width_invariant() {
         let mut machine = Machine::with_register_count(super::CodeId(7), EnvironmentRef(3), 5);
-        machine.restore_registers(vec![Value::Undefined; 2]);
+        machine.restore_registers(crate::register_file::RegisterFile::from_values(
+            vec![Value::Undefined; 2],
+        ));
         assert_eq!(machine.register_count(), 2);
         assert!(machine.state_is_valid());
     }

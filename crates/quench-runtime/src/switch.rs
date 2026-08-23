@@ -184,7 +184,7 @@ fn prepare_case_functions(
 }
 
 pub(crate) fn execute(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Op::Switch {
@@ -225,7 +225,7 @@ fn match_case(
         crate::machine::FunctionCode,
     )],
     value: &Value,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Option<usize>, crate::execute::VmError> {
     let mut default = None;
     for (index, (test, _)) in cases.iter().enumerate() {
@@ -242,7 +242,7 @@ fn match_case(
 
 fn evaluate_case_test(
     test: &crate::machine::FunctionCode,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, crate::execute::VmError> {
     let Some(ops) = test.code() else {
         return Err(crate::execute::VmError::MissingReturn);

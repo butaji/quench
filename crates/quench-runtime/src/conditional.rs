@@ -51,7 +51,7 @@ fn reduce_branch(
 }
 
 pub(crate) fn execute(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let crate::ops::Op::Conditional {

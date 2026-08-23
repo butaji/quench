@@ -90,6 +90,7 @@ pub(crate) fn execute(
     );
     let _home = crate::super_scope::Guard::install(function, &receiver);
     let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
+    let mut registers = crate::register_file::RegisterFile::from_values(registers);
     crate::vm::execute_code_in_environment(
         function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
         &mut registers,

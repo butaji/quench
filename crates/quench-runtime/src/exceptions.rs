@@ -1,7 +1,10 @@
 use crate::{completion::Completion, execute::VmError, ops::Op, value::Value};
 
 /// Execute a `try`/`catch`/`finally` container.
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion, VmError> {
+pub(crate) fn execute(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<Completion, VmError> {
     let Op::Try {
         body,
         handler,
@@ -40,7 +43,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
 }
 
 fn finish_abrupt_finally(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     finally_dst: Option<u16>,
     abrupt: Completion,
@@ -55,7 +58,7 @@ fn finish_abrupt_finally(
 
 fn run_finalizer(
     finalizer: &Option<crate::machine::FunctionCode>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Option<Completion>, VmError> {
     let Some(finalizer) = finalizer else {
         return Ok(None);
@@ -71,19 +74,23 @@ fn run_finalizer(
 
 pub(crate) fn execute_ops(
     ops: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Completion, VmError> {
     execute_try_body(ops, registers)
 }
 
 fn execute_try_body(
     ops: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Completion, VmError> {
     crate::vm::execute_code_completion_in_current_frame(ops, registers)
 }
 
-fn bind_caught(value: Value, catch_slot: Option<u16>, registers: &mut Vec<Value>) {
+fn bind_caught(
+    value: Value,
+    catch_slot: Option<u16>,
+    registers: &mut crate::register_file::RegisterFile,
+) {
     if let Some(slot) = catch_slot {
         crate::execute::write_value(registers, slot, value.clone());
         crate::locals::write(slot, value);

@@ -8,7 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::{cell::RefCell, rc::Rc};
 type InitialGeneratorState = (
     Option<GeneratorState>,
-    Vec<Value>,
+    crate::register_file::RegisterFile,
     u32,
     Option<Rc<crate::environment::Environment>>,
 );
@@ -69,10 +69,11 @@ fn initialize_parameters(
 ) -> Result<InitialGeneratorState, VmError> {
     let code = function.code.code().ok_or(VmError::MissingReturn)?;
     let Some(marker) = code.position_cold(|op| matches!(op, Op::ParameterEnd)) else {
-        return Ok((None, Vec::new(), 0, None));
+        return Ok((None, crate::register_file::RegisterFile::new(), 0, None));
     };
     let (mut registers, environment) =
         crate::functions::build_registers(function, receiver, arguments);
+    let mut registers = crate::register_file::RegisterFile::from_values(registers);
     let _private_environment = crate::private_environment::Guard::install_environment(
         function.private_environment.clone(),
     );
@@ -98,11 +99,11 @@ fn initialize_parameters(
     ))
 }
 
-fn registers(generator: &GeneratorData) -> &[Value] {
+fn registers(generator: &GeneratorData) -> &crate::register_file::RegisterFile {
     &generator.machine.borrow().registers.values
 }
 
-fn registers_mut(generator: &GeneratorData) -> &mut Vec<Value> {
+fn registers_mut(generator: &GeneratorData) -> &mut crate::register_file::RegisterFile {
     &mut generator.machine.borrow_mut().registers.values
 }
 
@@ -481,7 +482,8 @@ fn initialize_state(generator: &GeneratorData) {
         &generator.receiver,
         &generator.arguments,
     );
-    generator.machine.borrow_mut().registers.values = registers;
+    generator.machine.borrow_mut().registers.values =
+        crate::register_file::RegisterFile::from_values(registers);
     generator.machine.borrow_mut().pc = 0;
     generator
         .machine

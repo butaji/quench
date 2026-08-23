@@ -214,7 +214,7 @@ fn move_stack(receiver: Option<&Value>) -> Result<Value, VmError> {
 }
 
 pub(crate) fn dispose_completion(
-    _registers: &[crate::value::Value],
+    _registers: &crate::register_file::RegisterFile,
     stack_slot: u16,
     completion: crate::completion::Completion,
     _await_using: bool,

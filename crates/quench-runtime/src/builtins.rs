@@ -253,6 +253,18 @@ pub(crate) fn deleted_key(key: &str) -> String {
 pub(crate) fn descriptor_key(key: &str) -> String {
     format!("{DESCRIPTOR_PREFIX}{key}")
 }
+#[inline]
+pub(crate) fn is_deleted_key_for(stored: &str, key: &str) -> bool {
+    stored.strip_prefix(DELETED_PREFIX) == Some(key)
+}
+#[inline]
+pub(crate) fn is_descriptor_key_for(stored: &str, key: &str) -> bool {
+    stored.strip_prefix(DESCRIPTOR_PREFIX) == Some(key)
+}
+#[inline]
+pub(crate) fn descriptor_public_key(stored: &str) -> &str {
+    stored.strip_prefix(DESCRIPTOR_PREFIX).unwrap_or(stored)
+}
 pub(crate) fn is_descriptor_key(key: &str) -> bool {
     key.starts_with(DESCRIPTOR_PREFIX)
 }
@@ -263,11 +275,10 @@ pub(crate) fn descriptor_metadata<'a, K: AsRef<str>>(
     properties: &'a [(K, Value)],
     key: &str,
 ) -> Option<&'a Value> {
-    let metadata_key = descriptor_key(key);
     properties
         .iter()
         .rev()
-        .find(|(name, _)| name.as_ref() == metadata_key)
+        .find(|(name, _)| is_descriptor_key_for(name.as_ref(), key))
         .map(|(_, value)| value)
 }
 pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Value> {

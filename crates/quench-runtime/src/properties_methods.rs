@@ -5,7 +5,7 @@ pub(crate) fn dynamic_property_key(
 }
 
 pub(crate) fn execute_get(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), crate::execute::VmError> {
     let crate::ops::Op::GetProperty { dst, object, key } = op else {

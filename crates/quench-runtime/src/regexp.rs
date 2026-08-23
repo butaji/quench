@@ -3,7 +3,6 @@ include!("regexp_named_groups.rs");
 include!("regexp_surrogates.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
-    validate_literal_ranges(pattern)?;
     validate_flags(flags)?;
     let rewritten = split_surrogate_classes(pattern);
     let reg_flags: Flags = flags.into();
@@ -15,44 +14,11 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
-    validate_literal_ranges(pattern).map_err(|error| format!("SyntaxError: {error}"))?;
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
         .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
         .map(|_| ())
         .map_err(|error| format!("SyntaxError: {error}"))
-}
-
-fn validate_literal_ranges(pattern: &str) -> Result<(), String> {
-    let bytes = pattern.as_bytes();
-    let mut in_class = false;
-    let mut escaped = false;
-    for index in 0..bytes.len().saturating_sub(2) {
-        let byte = bytes[index];
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if byte == b'\\' {
-            escaped = true;
-            continue;
-        }
-        if byte == b'[' {
-            in_class = true;
-            continue;
-        }
-        if byte == b']' {
-            in_class = false;
-            continue;
-        }
-        if in_class && bytes[index + 1] == b'-' && bytes[index + 2] > byte {
-            continue;
-        }
-        if in_class && bytes[index + 1] == b'-' && bytes[index + 2] < byte {
-            return Err("invalid character range".to_string());
-        }
-    }
-    Ok(())
 }
 
 pub fn execute_builtin(
@@ -530,7 +496,12 @@ fn set_last_index(receiver: &Value, index: f64) -> Result<(), VmError> {
 
 fn set_last_index_value(receiver: &Value, value: Value) -> Result<(), VmError> {
     let updated = crate::properties::assign_set_property(receiver, "lastIndex", value)?;
-    crate::properties::propagate_updated_object(&mut Vec::new(), None, receiver, &updated);
+    crate::properties::propagate_updated_object(
+        &mut crate::register_file::RegisterFile::new(),
+        None,
+        receiver,
+        &updated,
+    );
     Ok(())
 }
 
@@ -538,7 +509,7 @@ include!("regexp_tail.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::has_regexp_internal_slot;
+    use super::{compile, has_regexp_internal_slot};
     use crate::value::{ObjectData, Value};
 
     #[test]
@@ -549,5 +520,10 @@ mod tests {
             ObjectData::new(vec![("\0regexp".to_string(), Value::Boolean(true))]).into(),
         );
         assert!(has_regexp_internal_slot(&regexp));
+    }
+
+    #[test]
+    fn unicode_ranges_are_checked_by_the_regex_parser() {
+        compile(r"^[\w\u0128-\uffff*_-]+$", "").expect("valid Unicode range");
     }
 }

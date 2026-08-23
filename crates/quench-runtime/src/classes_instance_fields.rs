@@ -1,5 +1,5 @@
 pub(crate) fn append_instance_field(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
     let Op::AppendInstanceField(field) = op else {
@@ -25,7 +25,7 @@ pub(crate) fn append_instance_field(
 }
 
 pub(crate) fn execute_static_block(
-    registers: &mut [crate::value::Value],
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Op::StaticBlock {
@@ -48,7 +48,7 @@ pub(crate) fn execute_static_block(
         mapped_arguments: false,
     };
     let receiver = crate::execute::read_register(registers, *constructor)?;
-    let mut block_registers = Vec::new();
+    let mut block_registers = crate::register_file::RegisterFile::new();
     crate::functions::write_op(&mut block_registers, &function);
     let block = crate::execute::read_register(&block_registers, 0)?;
     crate::super_scope::attach_home(&block, &receiver);
@@ -61,7 +61,7 @@ type PrivateAccessorValues =
     Option<(Option<crate::value::Value>, Option<crate::value::Value>)>;
 
 fn private_accessor_values(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     field: &AppendInstanceFieldOp,
 ) -> Result<PrivateAccessorValues, crate::execute::VmError> {
     let Some(accessor) = &field.accessor else {
@@ -72,7 +72,7 @@ fn private_accessor_values(
     Ok(Some((get, set)))
 }
 fn private_field_value(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     field: &AppendInstanceFieldOp,
     receiver: &crate::value::Value,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
@@ -85,7 +85,7 @@ fn private_field_value(
     }
 }
 fn define_static_field(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     field: &AppendInstanceFieldOp,
 ) -> Result<(), crate::execute::VmError> {
     let constructor = crate::execute::read_register(registers, field.constructor)?;
@@ -103,7 +103,7 @@ fn define_static_field(
     Ok(())
 }
 fn field_key_value(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     key: &InstanceFieldKeyOp,
 ) -> Result<String, crate::execute::VmError> {
     match key {
@@ -154,7 +154,7 @@ fn define_public_field(
 }
 
 fn instance_field_key(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     key: &InstanceFieldKeyOp,
 ) -> Result<crate::value::InstanceFieldKey, crate::execute::VmError> {
     Ok(match key {

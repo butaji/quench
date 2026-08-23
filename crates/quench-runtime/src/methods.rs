@@ -6,7 +6,10 @@ use crate::{
     value::Value,
 };
 
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::CallMethod {
         dst,
         object,
@@ -34,7 +37,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
 }
 
 fn resolved_callee(
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     callee: Option<u16>,
     receiver: &Value,
     key: &str,
@@ -59,7 +62,7 @@ fn execute_callee(
     receiver: &Value,
     arguments: &[Value],
     args: &[u16],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, VmError> {
     let value = match &callee {
         Value::Builtin(crate::ops::Builtin::String) => {
@@ -103,7 +106,7 @@ fn define_object_properties(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
     args: &[u16],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, VmError> {
     let target = arguments.first().cloned().unwrap_or(Value::Undefined);
     let value = match builtin {
@@ -120,7 +123,7 @@ fn define_object_properties(
 fn execute_mutating_object_builtin(
     arguments: &[Value],
     args: &[u16],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, VmError> {
     let target = arguments.first().cloned().unwrap_or(Value::Undefined);
     let value = crate::builtins::object::set_prototype_of(arguments)?;

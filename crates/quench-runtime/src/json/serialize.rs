@@ -250,14 +250,14 @@ fn proxy_trapped_keys(value: &Value) -> Result<Vec<String>, VmError> {
         return Ok(Vec::new());
     };
     let mut result = Vec::new();
-    for key in keys.iter() {
+    for key in keys.snapshot() {
         let Value::String(key) = key else { continue };
-        if crate::conversion::is_symbol_string(key) {
+        if crate::conversion::is_symbol_string(&key) {
             continue;
         }
-        let descriptor = crate::proxy::proxy_get_own_property_descriptor(value, key)?;
+        let descriptor = crate::proxy::proxy_get_own_property_descriptor(value, &key)?;
         if descriptor_enumerable(&descriptor) {
-            result.push(key.clone());
+            result.push(key);
         }
     }
     Ok(result)

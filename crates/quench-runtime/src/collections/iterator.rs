@@ -101,7 +101,7 @@ fn make_protocol_with_next(iterator: Value, next: Value) -> Value {
     })))
 }
 pub(crate) fn execute(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), crate::execute::VmError> {
     use crate::ops::Op;
@@ -231,7 +231,10 @@ fn close_error(
 fn close_result_error() -> crate::execute::VmError {
     crate::value::error::throw_type_error("iterator return result is not an object")
 }
-fn read(registers: &[Value], index: u16) -> Result<Value, crate::execute::VmError> {
+fn read(
+    registers: &crate::register_file::RegisterFile,
+    index: u16,
+) -> Result<Value, crate::execute::VmError> {
     crate::execute::read_register(registers, index)
 }
 fn require_object_coercible(value: Value) -> Result<(), crate::execute::VmError> {

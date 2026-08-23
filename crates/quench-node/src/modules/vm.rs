@@ -24,7 +24,7 @@ pub fn run_in_new_context(
             context = Rc::new((*context).clone().with_host_value(key, value));
         }
     }
-    let mut registers = Vec::new();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
     quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
     })
