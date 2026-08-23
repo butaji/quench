@@ -77,7 +77,7 @@ pub(crate) fn begin_global_declaration_batch() {
     GLOBAL_DECLARATION_ACTIVE.with(|active| active.set(true));
 }
 
-pub(crate) fn flush_global_declaration_batch(registers: &mut Vec<Value>) {
+pub(crate) fn flush_global_declaration_batch(registers: &mut crate::register_file::RegisterFile) {
     if !GLOBAL_DECLARATION_ACTIVE.with(|active| active.get()) {
         return;
     }
@@ -116,7 +116,7 @@ fn current_global_base() -> Option<ObjectProperties> {
     GLOBAL_OBJECT.with(|global| global.borrow().clone())
 }
 
-pub(crate) fn synchronize_global_object(registers: &mut Vec<Value>, old: &Value, new: &Value) {
+pub(crate) fn synchronize_global_object(registers: &mut crate::register_file::RegisterFile, old: &Value, new: &Value) {
     let (Value::Object(old_object), Value::Object(new_object)) = (old, new) else {
         return;
     };
@@ -147,12 +147,12 @@ pub(crate) fn replace_global_object(old: &Value, new: &Value) {
 }
 
 fn replace_register_aliases(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     old: &ObjectProperties,
     new: &ObjectProperties,
 ) {
     for index in 0..registers.len() {
-        let replace = matches!(&registers[index], Value::Object(object) if Rc::ptr_eq(object, old));
+        let replace = matches!(registers.read(index), Some(Value::Object(object)) if Rc::ptr_eq(&object, old));
         if replace {
             if let Ok(index) = u16::try_from(index) {
                 write_value(registers, index, Value::Object(new.clone()));

@@ -8,7 +8,10 @@ fn missing_return() -> Result<Completion, VmError> {
 }
 
 #[inline]
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion, VmError> {
+pub(crate) fn execute(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<Completion, VmError> {
     let Op::Branch {
         condition,
         then_ops,
@@ -43,11 +46,11 @@ mod tests {
         };
         // Keep the selected values in registers so both arms exercise the
         // same completion machinery and only truthiness chooses the path.
-        let mut registers = vec![
+        let mut registers = crate::register_file::RegisterFile::from_values(vec![
             condition,
             Value::String("then".into()),
             Value::String("else".into()),
-        ];
+        ]);
         let completion = execute(&mut registers, &op).expect("branch completes");
         match completion {
             Completion::Return(value) => value,
@@ -73,7 +76,8 @@ mod tests {
 
     #[test]
     fn non_branch_opcode_uses_cold_error_path() {
-        let mut registers = vec![Value::Boolean(true)];
+        let mut registers =
+            crate::register_file::RegisterFile::from_values(vec![Value::Boolean(true)]);
         let op = Op::Return { src: 0 };
 
         assert_eq!(execute(&mut registers, &op), Err(VmError::MissingReturn));

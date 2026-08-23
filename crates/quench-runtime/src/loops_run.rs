@@ -1,5 +1,5 @@
 pub(crate) fn execute(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, init, test, body, update, post_test, dst, per_iteration) = match op {
@@ -54,7 +54,7 @@ fn run_loop(
     body: crate::machine::CodeView<'_>,
     update: crate::machine::CodeView<'_>,
     config: (bool, u16, &[u16]),
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (post_test, dst, per_iteration) = config;
     run_fragment(init, registers)?;
@@ -97,7 +97,7 @@ fn run_counted_for(
     body: crate::machine::CodeView<'_>,
     update: crate::machine::CodeView<'_>,
     dst: u16,
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
     let environment = crate::locals::current();
     loop {
@@ -200,7 +200,7 @@ fn recognize_counted_update(update: crate::machine::CodeView<'_>, slot: u16) -> 
 }
 
 fn store_loop_value(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     value: Option<crate::value::Value>,
 ) -> Result<(), crate::execute::VmError> {
@@ -212,7 +212,7 @@ fn store_loop_value(
 }
 
 fn update_empty_from(
-    registers: &[crate::value::Value],
+    registers: &crate::register_file::RegisterFile,
     dst: u16,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
@@ -222,7 +222,7 @@ fn update_empty_from(
 
 fn loop_test(
     test: crate::machine::CodeView<'_>,
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<bool, crate::execute::VmError> {
     match crate::vm::execute_code_completion_in_current_frame(test, registers)? {
         crate::completion::Completion::Return(value) => Ok(crate::execute::is_truthy(&value)),
@@ -237,7 +237,7 @@ fn loop_test(
 /// loop) is a no-op; a non-empty fragment must return normally.
 fn run_fragment(
     ops: crate::machine::CodeView<'_>,
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<(), crate::execute::VmError> {
     if ops.is_empty() {
         return Ok(());

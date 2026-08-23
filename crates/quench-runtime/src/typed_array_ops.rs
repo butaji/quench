@@ -339,9 +339,11 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
 }
 
 fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let target = receiver.ok_or_else(|| crate::value::error::throw_type_error(
-        "TypedArray.prototype.set called on incompatible receiver",
-    ))?;
+    let target = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "TypedArray.prototype.set called on incompatible receiver",
+        )
+    })?;
     let Some(target_length) = view_length(target) else {
         return Err(crate::value::error::throw_type_error(
             "TypedArray.prototype.set called on incompatible receiver",
@@ -376,9 +378,11 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let receiver = receiver.ok_or_else(|| crate::value::error::throw_type_error(
-        "TypedArray.prototype.fill called on incompatible receiver",
-    ))?;
+    let receiver = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "TypedArray.prototype.fill called on incompatible receiver",
+        )
+    })?;
     if matches!(receiver, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
         let bits = crate::construct::bigint_bits(
             arguments.first().unwrap_or(&Value::BigInt("0".to_string())),
@@ -401,9 +405,11 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
         Value::Uint16Array(view) => fill_view!(view, number, crate::construct::to_uint16),
         Value::Uint32Array(view) => fill_view!(view, number, crate::construct::to_uint32),
         Value::Uint8ClampedArray(view) => fill_view!(view, number, |value| value),
-        _ => return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.fill called on incompatible receiver",
-        )),
+        _ => {
+            return Err(crate::value::error::throw_type_error(
+                "TypedArray.prototype.fill called on incompatible receiver",
+            ))
+        }
     }
     Ok(receiver.clone())
 }

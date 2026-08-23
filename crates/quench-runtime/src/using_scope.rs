@@ -99,7 +99,7 @@ pub(crate) fn wrap(
 }
 
 pub(crate) fn execute(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Op::WithDispose {

@@ -35,6 +35,7 @@ pub(crate) fn execute_target_with_receiver(
     let (mut registers, environment) =
         build_registers(&frame.function, &frame.receiver, &frame.arguments);
     let context = crate::vm::current_context_or_default();
+    let mut registers = crate::register_file::RegisterFile::from_values(registers);
     let completion = crate::vm::execute_code_frame_completion(
         frame.function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
         &mut registers,

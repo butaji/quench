@@ -78,9 +78,9 @@ pub(crate) fn string_bytes_fit_limit(value: &str) -> bool {
 mod hash_tests {
     use super::{
         encoding_of, for_each_unit, hash_str, hash_units, is_short_string, is_short_units,
-        short_string_layout, source_encoding, StringSourceEncoding, ShortStringLayout,
-        string_byte_len_fits_limit, string_bytes_fit_limit, units_add_fits_limit, units_fit_limit,
-        StringEncoding, Value, MAX_STRING_BYTES, SHORT_STRING_MAX_UNITS,
+        short_string_layout, source_encoding, string_byte_len_fits_limit, string_bytes_fit_limit,
+        units_add_fits_limit, units_fit_limit, ShortStringLayout, StringEncoding,
+        StringSourceEncoding, Value, MAX_STRING_BYTES, SHORT_STRING_MAX_UNITS,
     };
     use crate::value::StringUnitsData;
 
@@ -312,7 +312,6 @@ pub(crate) fn units_to_latin1(units: &[u16]) -> Option<Vec<u8>> {
 pub(crate) fn from_latin1(bytes: &[u8]) -> Value {
     from_units(latin1_to_units(bytes))
 }
-
 
 #[inline]
 pub(crate) fn is_short_units(units: &[u16]) -> bool {
@@ -844,9 +843,10 @@ pub(crate) fn code_point_at(
     Ok(Value::Number(code as f64))
 }
 pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
-    receiver.cloned().unwrap_or_else(|| Value::String(String::new()))
+    receiver
+        .cloned()
+        .unwrap_or_else(|| Value::String(String::new()))
 }
-
 
 include!("strings_tail.rs");
 
@@ -925,7 +925,9 @@ mod tests {
         );
         assert_eq!(
             super::char_at(Some(&value), &[Value::Number(2.0)]).unwrap(),
-            Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(vec![0xde00])))
+            Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(vec![
+                0xde00
+            ])))
         );
         assert_eq!(
             super::char_at(Some(&value), &[Value::Number(3.0)]).unwrap(),
@@ -974,11 +976,15 @@ mod tests {
         );
         assert_eq!(short_string_layout(&Value::String("😀".repeat(12))), None);
         assert_eq!(
-            short_string_layout(&Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(vec![0xd800; 22])))),
+            short_string_layout(&Value::StringUnits(std::rc::Rc::new(
+                crate::value::StringUnitsData::new(vec![0xd800; 22])
+            ))),
             Some(ShortStringLayout::Utf16)
         );
         assert_eq!(
-            short_string_layout(&Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(vec![0xd800; 23])))),
+            short_string_layout(&Value::StringUnits(std::rc::Rc::new(
+                crate::value::StringUnitsData::new(vec![0xd800; 23])
+            ))),
             None
         );
     }
@@ -1018,20 +1024,31 @@ mod tests {
 
     #[test]
     fn borrowed_view_shares_canonical_storage_without_materializing_units() {
-        let value = Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(vec![0xd800, 0x0061])));
+        let value = Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(vec![
+            0xd800, 0x0061,
+        ])));
         let clone = value.clone();
-        assert_eq!(std::rc::Rc::strong_count(match &value {
-            Value::StringUnits(units) => units,
-            _ => unreachable!(),
-        }), 2);
+        assert_eq!(
+            std::rc::Rc::strong_count(match &value {
+                Value::StringUnits(units) => units,
+                _ => unreachable!(),
+            }),
+            2
+        );
         assert_eq!(view_of(&value), Some(StringView::Utf16(&[0xd800, 0x0061])));
-        assert_eq!(view_of(&Value::String("😀".into())), Some(StringView::Utf8("😀")));
+        assert_eq!(
+            view_of(&Value::String("😀".into())),
+            Some(StringView::Utf8("😀"))
+        );
         assert_eq!(view_len_units(view_of(&value).unwrap()), 2);
         drop(clone);
-        assert_eq!(std::rc::Rc::strong_count(match &value {
-            Value::StringUnits(units) => units,
-            _ => unreachable!(),
-        }), 1);
+        assert_eq!(
+            std::rc::Rc::strong_count(match &value {
+                Value::StringUnits(units) => units,
+                _ => unreachable!(),
+            }),
+            1
+        );
     }
     #[test]
     fn concat_flattens_canonical_views_without_replacing_surrogates() {
@@ -1041,7 +1058,10 @@ mod tests {
             &[Value::String("😀".to_string()), Value::Number(7.0)],
         )
         .expect("concat");
-        assert_eq!(units_of(&result), Some(vec![0x41, 0xd800, 0xd83d, 0xde00, 0x37]));
+        assert_eq!(
+            units_of(&result),
+            Some(vec![0x41, 0xd800, 0xd83d, 0xde00, 0x37])
+        );
     }
 
     #[test]
@@ -1069,4 +1089,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
- 

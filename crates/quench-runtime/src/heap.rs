@@ -167,16 +167,16 @@ pub const HEAP_STATS_BYTES: usize = 5 * std::mem::size_of::<u64>()
 /// histogram and lifecycle counters follow it, so a hot allocation path never
 /// needs to fetch the latter merely to read the former.  This is a layout
 /// invariant over the canonical snapshot, not a second stored header.
-pub const HEAP_HOT_PREFIX_BYTES: usize =
-    std::mem::size_of::<u64>() * 8;
+pub const HEAP_HOT_PREFIX_BYTES: usize = std::mem::size_of::<u64>() * 8;
 const _: () = {
     assert!(HEAP_HOT_PREFIX_BYTES <= CACHE_LINE_BYTES);
     assert!(std::mem::offset_of!(HeapStats, reserved_bytes) == 0);
-    assert!(std::mem::offset_of!(HeapStats, live_objects) + std::mem::size_of::<usize>()
-        == HEAP_HOT_PREFIX_BYTES - std::mem::size_of::<u64>() * 2);
+    assert!(
+        std::mem::offset_of!(HeapStats, live_objects) + std::mem::size_of::<usize>()
+            == HEAP_HOT_PREFIX_BYTES - std::mem::size_of::<u64>() * 2
+    );
     assert!(std::mem::offset_of!(HeapStats, size_classes) >= HEAP_HOT_PREFIX_BYTES);
 };
-
 
 /// Canonical per-slot allocator metadata snapshot. It is observational only;
 /// liveness remains owned by the arena's value vector.
@@ -261,7 +261,6 @@ pub struct HeapArena<T> {
 const _: () = {
     assert!(std::mem::align_of::<HeapArena<()>>() == ARENA_PAGE_BYTES);
 };
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NurseryOverflow;
@@ -550,9 +549,10 @@ impl<T> HeapArena<T> {
     }
 
     pub fn allocate_immutable(&mut self, value: T) -> HeapRef {
-        self.try_allocate_immutable(value).unwrap_or_else(|failure| {
-            panic_allocation_failure("immutable metadata allocation", failure)
-        })
+        self.try_allocate_immutable(value)
+            .unwrap_or_else(|failure| {
+                panic_allocation_failure("immutable metadata allocation", failure)
+            })
     }
 
     /// Fallible counterpart used by callers that must turn OOM into isolate
@@ -602,17 +602,12 @@ impl<T> HeapArena<T> {
     fn bump_reuse_invariant(&self) -> bool {
         self.values.len() == self.sizes.len()
             && self.values.len() == self.generations.len()
-            && self
-                .free
-                .iter()
-                .enumerate()
-                .all(|(position, &index)| {
-                    (index as usize) < self.values.len()
-                        && self.values[index as usize].is_none()
-                        && !self.free[..position].contains(&index)
-                })
+            && self.free.iter().enumerate().all(|(position, &index)| {
+                (index as usize) < self.values.len()
+                    && self.values[index as usize].is_none()
+                    && !self.free[..position].contains(&index)
+            })
     }
-
 
     fn size_class_index(bytes: usize) -> usize {
         let class = Self::size_class_bytes(bytes);
@@ -677,7 +672,11 @@ impl<T> HeapArena<T> {
 
     /// Pin a live slot so a future moving collector must not relocate it.
     pub fn pin(&mut self, reference: HeapRef) -> bool {
-        if self.values.get(reference.0 as usize).is_some_and(Option::is_some) {
+        if self
+            .values
+            .get(reference.0 as usize)
+            .is_some_and(Option::is_some)
+        {
             self.pinned.insert(reference);
             true
         } else {
@@ -1061,7 +1060,6 @@ mod tests {
         assert_eq!(arena.stats().live_objects, 0);
         assert_eq!(arena.stats().live_bytes, 0);
     }
-
 
     #[test]
     fn slot_metadata_has_no_hidden_gc_header() {
@@ -1861,12 +1859,18 @@ mod tests {
     }
     #[test]
     fn size_class_catch_all_is_sourced_from_arena_page_quantum() {
-        assert_eq!(HeapArena::<u8>::size_class_capacity(ARENA_PAGE_BYTES), ARENA_PAGE_BYTES);
+        assert_eq!(
+            HeapArena::<u8>::size_class_capacity(ARENA_PAGE_BYTES),
+            ARENA_PAGE_BYTES
+        );
         assert_eq!(
             HeapArena::<u8>::size_class_capacity(ARENA_PAGE_BYTES.saturating_add(1)),
             ARENA_PAGE_BYTES
         );
-        assert_eq!(HeapArena::<u8>::size_class_capacity(usize::MAX), ARENA_PAGE_BYTES);
+        assert_eq!(
+            HeapArena::<u8>::size_class_capacity(usize::MAX),
+            ARENA_PAGE_BYTES
+        );
     }
 
     #[test]
@@ -1947,12 +1951,18 @@ mod tests {
         let medium = arena.allocate_sized((), 9);
         let large = arena.allocate_sized((), 4097);
         let reserved = arena.stats().reserved_bytes;
-        assert_eq!(reserved, arena.page_count() as u64 * ARENA_PAGE_BYTES as u64);
+        assert_eq!(
+            reserved,
+            arena.page_count() as u64 * ARENA_PAGE_BYTES as u64
+        );
         assert_eq!(arena.stats().committed_bytes, reserved);
         assert_eq!(arena.reclaim(medium), Some(()));
         assert_eq!(arena.stats().reserved_bytes, reserved);
         assert!(arena.stats().committed_bytes < reserved);
-        assert_eq!(arena.page_count(), (reserved / ARENA_PAGE_BYTES as u64) as usize);
+        assert_eq!(
+            arena.page_count(),
+            (reserved / ARENA_PAGE_BYTES as u64) as usize
+        );
         let replacement = arena.allocate_sized((), 16);
         assert_eq!(replacement, medium);
         assert_eq!(arena.stats().reserved_bytes, reserved);
@@ -2062,7 +2072,6 @@ mod tests {
         arena.sizes.pop();
         assert_eq!(arena.allocation_metadata(reference), None);
     }
-
 
     #[test]
     fn pinned_slots_survive_collection_until_explicitly_unpinned() {

@@ -27,7 +27,7 @@ pub fn execute_with_registers(ops: &[Op], registers: Vec<Value>) -> Result<Value
     execute_with_registers_context(ops, registers, &context)
 }
 
-pub fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value, VmError> {
+pub fn execute_in_place(ops: &[Op], registers: &mut crate::register_file::RegisterFile) -> Result<Value, VmError> {
     let context = current_context_or_default();
     execute_in_place_context(ops, registers, &context)
 }
@@ -40,7 +40,7 @@ pub(crate) fn current_context_or_default() -> Rc<VmContext> {
 
 pub(crate) fn execute_completion_in_place(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, VmError> {
     let context = current_context_or_default();
     execute_completion_in_place_context(ops, registers, &context)
@@ -68,11 +68,11 @@ pub fn execute_code_with_context(
 ) -> Result<Value, VmError> {
     crate::builtins::reset_intrinsic_prototype_state();
     let result = crate::vm::with_current_context(context, || {
-        let mut registers = Vec::new();
+        let mut registers = crate::register_file::RegisterFile::new();
         prepare_register_stack(&mut registers);
         let environment = crate::environment::Environment::child(
             &crate::environment::Environment::new(),
-            registers.clone(),
+            registers.to_values(),
         );
         execute_code_in_environment(code, &mut registers, context, environment)
     });
@@ -96,7 +96,7 @@ pub fn call_value(target: &Value, receiver: &Value, arguments: &[Value]) -> Resu
 
 pub fn execute_with_registers_context(
     ops: &[Op],
-    mut registers: Vec<Value>,
+    registers: Vec<Value>,
     context: &VmContext,
 ) -> Result<Value, VmError> {
     // Install the caller's context before creating environments or resolving
@@ -104,10 +104,11 @@ pub fn execute_with_registers_context(
     // context; delaying installation until the first VM step lets setup and
     // re-entrant continuations observe the thread's stale/default realm.
     crate::vm::with_current_context(context, || {
+        let mut registers = crate::register_file::RegisterFile::from_values(registers);
         prepare_register_stack(&mut registers);
         let environment = crate::environment::Environment::child(
             &crate::environment::Environment::new(),
-            registers.clone(),
+            registers.to_values(),
         );
         execute_in_environment(ops, &mut registers, context, environment)
     })
@@ -118,7 +119,7 @@ pub fn execute_with_registers_context(
 /// Register indices are u16, so the representable stack limit is fixed.  We
 /// reserve a small hot-path working set up front; subsequent writes use Vec's
 /// geometric growth without introducing a second frame representation.
-fn prepare_register_stack(registers: &mut Vec<Value>) {
+fn prepare_register_stack(registers: &mut crate::register_file::RegisterFile) {
     const INITIAL_REGISTER_CAPACITY: usize = 16;
     const MAX_REGISTER_COUNT: usize = u16::MAX as usize + 1;
     debug_assert!(registers.len() <= MAX_REGISTER_COUNT);
@@ -129,7 +130,7 @@ fn prepare_register_stack(registers: &mut Vec<Value>) {
 /// Execute a fragment inside the currently installed lexical environment.
 pub fn execute_in_current_context(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, VmError> {
     let context = current_context_or_default();
     execute_in_place_context(ops, registers, &context)
@@ -137,29 +138,29 @@ pub fn execute_in_current_context(
 
 pub fn execute_in_place_context(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<Value, VmError> {
     prepare_register_stack(registers);
     let parent = crate::locals::current();
-    let environment = crate::environment::Environment::in_place_child(&parent, registers.clone());
+    let environment = crate::environment::Environment::in_place_child(&parent, registers.to_values());
     execute_in_environment(ops, registers, context, environment)
 }
 
 pub fn execute_code_in_place_context(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<Value, VmError> {
     prepare_register_stack(registers);
     let parent = crate::locals::current();
-    let environment = crate::environment::Environment::in_place_child(&parent, registers.clone());
+    let environment = crate::environment::Environment::in_place_child(&parent, registers.to_values());
     execute_code_in_environment(code, registers, context, environment)
 }
 
 pub(crate) fn execute_code_in_place(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, VmError> {
     let context = current_context_or_default();
     execute_code_in_place_context(code, registers, &context)
@@ -167,7 +168,7 @@ pub(crate) fn execute_code_in_place(
 
 fn execute_completion_in_place_context(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
     prepare_register_stack(registers);
@@ -178,7 +179,7 @@ fn execute_completion_in_place_context(
 
 pub(crate) fn execute_completion_in_current_frame(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, VmError> {
     let context = current_context_or_default();
     drive_completion(ops, registers, &context)
@@ -186,7 +187,7 @@ pub(crate) fn execute_completion_in_current_frame(
 
 pub(crate) fn execute_code_completion_in_current_frame(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, VmError> {
     let context = current_context_or_default();
     drive_code_completion(code, registers, &context)
@@ -194,7 +195,7 @@ pub(crate) fn execute_code_completion_in_current_frame(
 
 fn drive_completion(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
     let mut pc = 0;
@@ -216,7 +217,7 @@ fn drive_completion(
 
 fn drive_code_completion(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
     let mut pc = 0;
@@ -253,7 +254,7 @@ fn tail_call_completion(
 
 pub(crate) fn execute_in_environment(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<Value, VmError> {
@@ -294,7 +295,7 @@ pub(crate) fn execute_in_environment(
 
 pub(crate) fn execute_code_in_environment(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<Value, VmError> {
@@ -315,7 +316,7 @@ pub(crate) fn execute_code_in_environment(
 }
 pub(crate) fn execute_frame_completion(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<crate::completion::Completion, VmError> {
@@ -341,7 +342,7 @@ pub(crate) fn execute_frame_completion(
 
 pub(crate) fn execute_code_frame_completion(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<crate::completion::Completion, VmError> {
@@ -361,7 +362,7 @@ pub(crate) fn execute_indirect_eval(code: crate::machine::CodeView<'_>) -> Resul
     let caller = crate::locals::current();
     let environment = crate::environment::Environment::new();
     environment.set(0, global.clone());
-    let mut registers = Vec::new();
+    let mut registers = crate::register_file::RegisterFile::new();
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let result = execute_code_in_environment(code, &mut registers, &context, environment);
     caller.replace_value(&global, &current_global_object());
