@@ -258,10 +258,21 @@ fn copy_count(
 
 /// `buf.fill(value[, offset[, end]][, encoding])`.
 pub fn fill(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
+    if !matches!(receiver, Some(Value::Uint8Array(_)))
+        && matches!(args.first(), Some(Value::Uint8Array(_)))
+    {
+        let reordered = [
+            args.get(3).cloned().unwrap_or(Value::Undefined),
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+            args.get(2).cloned().unwrap_or(Value::Undefined),
+            args.get(4).cloned().unwrap_or(Value::Undefined),
+        ];
+        return fill(state, args.first(), &reordered);
+    }
     let view = this_view(receiver)?;
     let fill = args.first().cloned().unwrap_or(Value::Undefined);
     let (offset_arg, end_arg, encoding_arg) = fill_args(args);
@@ -270,6 +281,8 @@ pub fn fill(
         None => None,
     };
     let pattern = fill_pattern(&fill, encoding.as_deref())?;
+    validate_fill_bound(args.get(offset_arg), view.length)?;
+    validate_fill_bound(args.get(end_arg), view.length)?;
     let offset = clamp_bounds(args, offset_arg, view.length, 0.0);
     let end = clamp_bounds(args, end_arg, view.length, view.length as f64);
     if !pattern.is_empty() {
@@ -279,6 +292,20 @@ pub fn fill(
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn validate_fill_bound(value: Option<&Value>, length: usize) -> Result<(), VmError> {
+    let Some(Value::Number(value)) = value else {
+        return Ok(());
+    };
+    if !value.is_finite() || *value < 0.0 || *value > length as f64 {
+        return Err(enc::out_of_range(
+            "offset",
+            &format!(">= 0 && <= {length}"),
+            &enc::fmt_num(*value),
+        ));
+    }
+    Ok(())
 }
 
 /// Resolve the overloaded `fill(value, offset, end, encoding)` tail:
@@ -300,13 +327,31 @@ fn encoding_arg_from(value: &Value, fill: &Value) -> Result<String, VmError> {
                 .ok_or_else(|| enc::unknown_encoding(s))
         }
         Value::String(s) => Ok(enc::canonical_encoding(s).unwrap_or("utf8").to_string()),
-        _ => Ok("utf8".to_string()),
+        other => Err(enc::invalid_arg_type(format!(
+            "The \"encoding\" argument must be of type string.{}",
+            crate::modules::util::invalid_arg_received(other)
+        ))),
     }
 }
 
 fn fill_pattern(fill: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError> {
     match fill {
         Value::Number(n) => Ok(vec![*n as i64 as u8]),
+        Value::String(value) if encoding == Some("hex") => {
+            let valid = value.chars().count() % 2 == 0
+                && value.chars().all(|character| character.is_ascii_hexdigit());
+            if !valid {
+                return Err(enc::invalid_arg_value("The argument 'value' is invalid".into()));
+            }
+            Ok(enc::encode_value(fill, "hex")?)
+        }
+        Value::StringUnits(units) if encoding == Some("hex") => {
+            let value = String::from_utf16_lossy(units);
+            if value.chars().count() % 2 != 0 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(enc::invalid_arg_value("The argument 'value' is invalid".into()));
+            }
+            Ok(enc::encode_value(fill, "hex")?)
+        }
         Value::String(_) | Value::StringUnits(_) => {
             enc::encode_value(fill, encoding.unwrap_or("utf8"))
         }
