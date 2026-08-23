@@ -29,9 +29,14 @@ if (!budget || typeof budget !== "object" || Array.isArray(budget)) {
   console.error("performance budget must be a JSON object");
   process.exit(1);
 }
-for (const [name, limit] of Object.entries(budget)) {
-  if (typeof limit !== "number" || !Number.isFinite(limit) || limit < 0) {
-    console.error(`invalid performance budget limit for ${name}`);
+const budgetEntries = Object.entries(budget);
+if (!budgetEntries.length) {
+  console.error("performance budget must define at least one metric");
+  process.exit(1);
+}
+for (const [name, limit] of budgetEntries) {
+  if (!name || typeof limit !== "number" || !Number.isFinite(limit) || limit < 0) {
+    console.error(`invalid performance budget limit for ${name || "<unnamed>"}`);
     process.exit(1);
   }
 }

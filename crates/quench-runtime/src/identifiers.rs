@@ -63,6 +63,14 @@ fn resolve_name(
     Some(dst)
 }
 
+/// Intern a source identifier in the lowering session and return its canonical
+/// spelling for the existing name-bearing operation contract.
+///
+/// The ID is owned by `ProgramDb` for the duration of lowering; runtime
+/// operations continue to own strings, so IDs never cross realms or become
+/// observable. An invalid ID is impossible immediately after `intern` and is
+/// treated as an invariant violation rather than a fallback name.
+#[inline]
 fn interned_name(facts: &mut ProgramDb, name: &str) -> String {
     let id = facts.identifier_names.intern(name);
     facts
@@ -74,7 +82,7 @@ fn interned_name(facts: &mut ProgramDb, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::facts::ProgramDb;
 
     #[test]
     fn interner_reuses_ids_and_preserves_content() {
@@ -86,6 +94,19 @@ mod tests {
         assert_eq!(table.resolve(first), Some("alpha"));
         assert_eq!(table.resolve(other), Some("beta"));
         assert_eq!(table.resolve(u32::MAX), None);
+    }
+
+    #[test]
+    fn interner_handles_boundary_spellings_without_aliasing() {
+        let mut table = crate::facts::IdentifierInterner::default();
+        let names = vec!["".to_string(), "𝛼".to_string(), "a".repeat(1024)];
+        let ids: Vec<_> = names.iter().map(|name| table.intern(name)).collect();
+
+        assert_eq!(ids, vec![0, 1, 2]);
+        for (id, name) in ids.into_iter().zip(names.iter()) {
+            assert_eq!(table.resolve(id), Some(name.as_str()));
+        }
+        assert_ne!(table.intern("𝛼"), table.intern(""));
     }
 
     #[test]
