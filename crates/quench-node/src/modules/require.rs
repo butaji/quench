@@ -93,6 +93,10 @@ fn require_cached_group_a(
             Box::new(|| crate::modules::async_hooks::build(state)),
         ),
         "test" | "node:test" => ("test", Box::new(|| crate::modules::node_test::build(state))),
+        "repl" | "node:repl" => (
+            "repl",
+            Box::new(|| crate::modules::compat_extra::repl(state)),
+        ),
         "punycode" | "node:punycode" => (
             "punycode",
             Box::new(|| crate::modules::punycode::build(state)),
@@ -452,7 +456,7 @@ fn resolve_dispatch_compat_modules(state: &Rc<RefCell<HostState>>, name: &str) -
         ),
         "v8" => crate::modules::compat_extra::v8(state).ok(),
         "inspector" | "inspector/promises" => crate::modules::compat_extra::inspector(state).ok(),
-        "repl" => crate::modules::compat_extra::repl(state).ok(),
+        "repl" | "node:repl" => crate::modules::compat_extra::repl(state).ok(),
         "wasi" => crate::modules::compat_extra::wasi(state).ok(),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         _ => None,
