@@ -120,22 +120,17 @@ fn run_manifest() -> ExitCode {
 
 fn triage(filter: Option<&String>, gate: bool) -> ExitCode {
     let parallel_dir = repo_root().join(PARALLEL_REL);
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(parallel_dir)
-        .map(|dir| {
-            dir.filter_map(|entry| entry.ok())
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| {
-                            name.starts_with("test-")
-                                && name.ends_with(".js")
-                                && filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
-                        })
+    let mut entries: Vec<PathBuf> = quench_node_test::stages::discover_fixtures(&parallel_dir)
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("test-")
+                        && filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
                 })
-                .collect()
         })
-        .unwrap_or_default();
+        .collect();
     entries.sort();
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;
