@@ -1,4 +1,9 @@
 // ---- events ----
+thread_local! {
+    static SMALL_BUFFER_VIEWS_WITH_BUFFER: RefCell<std::collections::HashSet<usize>> =
+        RefCell::new(std::collections::HashSet::new());
+}
+
 pub fn events_from(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -97,7 +102,51 @@ pub fn internal_binding(
             ),
         )]));
     }
+    if name == "util" {
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "arrayBufferViewHasBuffer".into(),
+                quench_runtime::host_api::capability_function(
+                    quench_runtime::ops::HostCapabilityRef {
+                        realm: quench_runtime::ops::RealmId::ROOT,
+                        kind: quench_runtime::ops::HostCapabilityKind::Custom(0x0F0F),
+                    },
+                ),
+            ),
+        ]));
+    }
     Ok(quench_runtime::host_api::object(vec![]))
+}
+
+pub fn internal_view_has_buffer(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let view = args.first().ok_or(VmError::NotCallable)?;
+    let bytes = match view {
+        Value::Uint8Array(view) => view.byte_length(),
+        Value::Uint8ClampedArray(view) => view.byte_length(),
+        Value::Uint16Array(view) => view.byte_length(),
+        Value::Uint32Array(view) => view.byte_length(),
+        Value::Float32Array(view) => view.byte_length(),
+        Value::Float64Array(view) => view.byte_length(),
+        _ => 0,
+    };
+    if bytes >= 64 {
+        return Ok(Value::Boolean(true));
+    }
+    let identity = match view {
+        Value::Uint8Array(view) => Rc::as_ptr(view) as usize,
+        Value::Uint8ClampedArray(view) => Rc::as_ptr(view) as usize,
+        Value::Uint16Array(view) => Rc::as_ptr(view) as usize,
+        Value::Uint32Array(view) => Rc::as_ptr(view) as usize,
+        Value::Float32Array(view) => Rc::as_ptr(view) as usize,
+        Value::Float64Array(view) => Rc::as_ptr(view) as usize,
+        _ => 0,
+    };
+    let materialized = SMALL_BUFFER_VIEWS_WITH_BUFFER.with(|seen| !seen.borrow_mut().insert(identity));
+    Ok(Value::Boolean(materialized))
 }
 
 // ---- url ----
