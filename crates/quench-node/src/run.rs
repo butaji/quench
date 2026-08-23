@@ -7,8 +7,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use quench_runtime::ops::{Op, RealmId};
-use quench_runtime::vm::{execute_with_context, OutputSink, VmContext, VmError};
+use quench_runtime::ops::RealmId;
+use quench_runtime::vm::{execute_code_with_context, OutputSink, VmContext, VmError};
 
 /// One `node <script>` run: the resolved process exit code plus an
 /// optional rendered error for stderr.
@@ -70,7 +70,7 @@ pub fn run_script_with_sink(
         Ok(ops) => ops,
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };
-    let result = execute_with_context(&ops, &context)
+    let result = execute_code_with_context(ops.code(), &context)
         .and_then(|_| drive(&context, "__quench_run_loop__();"));
     let result = route_uncaught(&host, &context, result);
     let result = match result {
@@ -97,7 +97,7 @@ pub fn eval_script(source: &str, sink: OutputSink) -> RunOutcome {
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };
     classify(
-        execute_with_context(&ops, &context).map(|_| ()),
+        execute_code_with_context(ops.code(), &context).map(|_| ()),
         host.exit_code(),
     )
 }
@@ -137,11 +137,9 @@ fn classify(result: Result<(), VmError>, exit_code: Option<i32>) -> RunOutcome {
 /// the run context so the pump runs inside an active execution frame.
 fn drive(context: &VmContext, source: &str) -> Result<quench_runtime::value::Value, VmError> {
     let ops = reduce(source).map_err(VmError::EvalError)?;
-    execute_with_context(&ops, context)
+    execute_code_with_context(ops.code(), context)
 }
 
-fn reduce(source: &str) -> Result<Vec<Op>, String> {
-    let program =
-        quench_runtime::reduce::reduce_source(source).map_err(|errors| errors.join("; "))?;
-    Ok(program.ops().to_vec())
+fn reduce(source: &str) -> Result<quench_runtime::reduce::ResidualProgram, String> {
+    quench_runtime::reduce::reduce_source(source).map_err(|errors| errors.join("; "))
 }

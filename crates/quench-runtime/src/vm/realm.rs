@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    ops::{Builtin, HostCapabilityKind, HostCapabilityRef, Op, RealmId},
+    ops::{Builtin, HostCapabilityKind, HostCapabilityRef, RealmId},
     value::{HostCapabilityValue, ObjectAliasValue, Value, WeakObject},
 };
 
@@ -121,7 +121,7 @@ pub(super) fn id_for_token(token: &HostCapabilityValue) -> Option<RealmId> {
     state.token.same_identity(token).then_some(state.id)
 }
 
-pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
+pub(super) fn execute(id: RealmId, code: crate::machine::CodeView<'_>) -> Result<Value, VmError> {
     let state = state(id).ok_or_else(missing_realm)?;
     let context = state.context.clone();
     let global = Value::Object(state.global.borrow().clone());
@@ -135,7 +135,7 @@ pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
         let _environment = crate::locals::EnvironmentGuard::install(environment);
         let _global_lexical = crate::locals::GlobalLexicalGuard::install(crate::locals::current());
         let _with_scope = crate::with_scope::FunctionGuard::isolate();
-        super::run_ops(ops, &mut registers, &context)
+        super::execute_code_in_place_context(code, &mut registers, &context)
     };
     caller.replace_value(&global, &Value::Object(state.global.borrow().clone()));
     result

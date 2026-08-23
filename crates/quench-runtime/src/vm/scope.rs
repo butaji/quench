@@ -33,6 +33,16 @@ impl ExecutionScope {
         super::execute_ops_from(ops, start, registers, context, Rc::clone(&self.0))
     }
 
+    pub fn execute_code_from(
+        &self,
+        code: crate::machine::CodeView<'_>,
+        start: usize,
+        registers: &mut Vec<Value>,
+        context: &VmContext,
+    ) -> Result<(crate::completion::Completion, usize), crate::execute::VmError> {
+        super::execute_code_from(code, start, registers, context, Rc::clone(&self.0))
+    }
+
     /// Install a live module binding before executing a residual unit.
     pub fn bind_module(&self, name: &str, cell: ModuleBindingCell) {
         self.0.alias_module_binding(name, cell);

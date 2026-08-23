@@ -553,8 +553,23 @@ fn replace_object(old: &Value, new: &Value) -> bool {
     let Some(old) = old else {
         return false;
     };
-    old.replace_with(Rc::clone(new));
+    let old_latest = latest_object(Rc::clone(&old));
+    let new_latest = latest_object(Rc::clone(new));
+    if Rc::ptr_eq(&old_latest, &new_latest) {
+        return true;
+    }
+    old_latest.replace_with(Rc::clone(&new_latest));
+    if !Rc::ptr_eq(&old, &old_latest) {
+        old.replace_with(new_latest);
+    }
     true
+}
+
+fn latest_object(mut object: Rc<crate::value::ObjectData>) -> Rc<crate::value::ObjectData> {
+    while let Some(next) = object.replacement() {
+        object = next;
+    }
+    object
 }
 
 #[inline]
@@ -590,9 +605,12 @@ pub(crate) fn reset_replacements() {
 
 #[inline]
 pub(crate) fn resolved_replacement(value: Value) -> Value {
+    if let Some(resolved) = resolved_object_replacement(&value) {
+        return resolved;
+    }
     let mut value = value;
     while let Some(updated) = replacement(&value) {
-        if same_replacement_storage(&value, &updated) {
+        if replacement_identity(&value) == replacement_identity(&updated) {
             break;
         }
         value = updated;
@@ -600,15 +618,17 @@ pub(crate) fn resolved_replacement(value: Value) -> Value {
     value
 }
 
-fn same_replacement_storage(left: &Value, right: &Value) -> bool {
-    match (left, right) {
-        (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
-        (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
-        (Value::ObjectAlias(left), Value::ObjectAlias(right)) => Rc::ptr_eq(&left.0, &right.0),
-        (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
-        (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),
-        _ => left == right,
+fn resolved_object_replacement(value: &Value) -> Option<Value> {
+    let origin = match value {
+        Value::Object(object) => Rc::clone(object),
+        Value::ObjectAlias(alias) => alias.target()?,
+        _ => return None,
+    };
+    let current = latest_object(origin.replacement()?);
+    if !Rc::ptr_eq(&origin, &current) {
+        origin.replace_with(Rc::clone(&current));
     }
+    Some(Value::Object(current))
 }
 
 #[inline]
@@ -691,6 +711,25 @@ mod replacement_tests {
         let resolved = resolved_replacement(old);
         assert!(
             matches!(resolved, Value::Object(object) if Rc::ptr_eq(&object, match &new { Value::Object(object) => object, _ => unreachable!() }))
+        );
+    }
+
+    #[test]
+    fn resolving_an_object_releases_intermediate_versions() {
+        let old = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        let middle = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        let latest = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        let weak_middle = match &middle {
+            Value::Object(object) => Rc::downgrade(object),
+            _ => unreachable!(),
+        };
+        replace_value(&old, &middle);
+        replace_value(&middle, &latest);
+        let resolved = resolved_replacement(old);
+        drop(middle);
+        assert!(weak_middle.upgrade().is_none());
+        assert!(
+            matches!(resolved, Value::Object(object) if Rc::ptr_eq(&object, match &latest { Value::Object(object) => object, _ => unreachable!() }))
         );
     }
 }
