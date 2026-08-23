@@ -216,6 +216,7 @@ pub(crate) mod value {
 
     fn builtin_type(builtin: crate::ops::Builtin) -> &'static str {
         match builtin {
+            crate::ops::Builtin::FunctionPrototype => "function",
             crate::ops::Builtin::SymbolIterator
             | crate::ops::Builtin::SymbolAsyncIterator
             | crate::ops::Builtin::SymbolDispose
