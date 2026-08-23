@@ -3,22 +3,6 @@ use std::{env, path::PathBuf, process::ExitCode};
 use quench_test262::{discover_js_files, HarnessCache, RuntimeHost, Test262Runner};
 
 fn main() -> ExitCode {
-    const STACK_SIZE: usize = 512 * 1024 * 1024;
-    let handle = match std::thread::Builder::new()
-        .name("run-all-main".to_string())
-        .stack_size(STACK_SIZE)
-        .spawn(run_all_entry)
-    {
-        Ok(handle) => handle,
-        Err(error) => return fail(error.to_string()),
-    };
-    match handle.join() {
-        Ok(code) => code,
-        Err(_) => ExitCode::from(1),
-    }
-}
-
-fn run_all_entry() -> ExitCode {
     let root = test262_root();
     let files = match discover_js_files(root.join("test")) {
         Ok(files) => files,
@@ -26,7 +10,7 @@ fn run_all_entry() -> ExitCode {
     };
     let mut runner = Test262Runner::new(RuntimeHost);
     let mut harness = HarnessCache::new(root.join("harness"));
-    let report = runner.run_files_with_cache_limited(files, &mut harness, 1000);
+    let report = runner.run_files_with_cache(files, &mut harness);
     match report {
         Ok(report) if report.failed == 0 => {
             println!("passed={} failed=0 total={}", report.passed, report.total);

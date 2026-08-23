@@ -85,12 +85,6 @@ pub struct ProgramDb {
     pub scope_count: usize,
     pub symbol_count: usize,
     pub(crate) private_names: HashMap<Span, PrivateNameId>,
-    /// Canonical identifier spellings owned by this lowering session.
-    ///
-    /// IDs are scoped to this `ProgramDb` and are never exposed to runtime
-    /// values. The table is dropped with the database, so names cannot leak
-    /// across programs or realms.
-    pub(crate) identifier_names: IdentifierInterner,
     pub(crate) strict: bool,
     pub(crate) in_function: bool,
     pub(crate) function_name_slot: Option<u16>,
@@ -104,27 +98,6 @@ pub struct ProgramDb {
     pub(crate) epochs: Epochs,
     pub(crate) dynamic_scope_depth: u16,
     pub(crate) reduction_source: String,
-}
-#[derive(Debug, Default, PartialEq)]
-pub(crate) struct IdentifierInterner {
-    ids: HashMap<String, u32>,
-    names: Vec<String>,
-}
-
-impl IdentifierInterner {
-    pub(crate) fn intern(&mut self, name: &str) -> u32 {
-        if let Some(&id) = self.ids.get(name) {
-            return id;
-        }
-        let id = self.names.len() as u32;
-        self.names.push(name.to_owned());
-        self.ids.insert(name.to_owned(), id);
-        id
-    }
-
-    pub(crate) fn resolve(&self, id: u32) -> Option<&str> {
-        self.names.get(id as usize).map(String::as_str)
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

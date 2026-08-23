@@ -168,9 +168,9 @@ fn restore_segment(
         .properties
         .iter()
         .map(|(name, value)| match name.as_str() {
-            "segment" => (name.as_str().to_owned(), segment.clone()),
-            "input" => (name.as_str().to_owned(), input.clone()),
-            _ => (name.as_str().to_owned(), value.clone()),
+            "segment" => (name.clone(), segment.clone()),
+            "input" => (name.clone(), input.clone()),
+            _ => (name.clone(), value.clone()),
         })
         .collect();
     make_object(properties)
@@ -282,11 +282,7 @@ fn word_entry(segment: &str, index: usize, input: &str, word_like: bool) -> Valu
     let Value::Object(object) = value else {
         return value;
     };
-    let mut properties: Vec<(String, Value)> = object
-        .properties
-        .iter()
-        .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
-        .collect();
+    let mut properties = object.properties.clone();
     properties.push(("isWordLike".to_string(), Value::Boolean(word_like)));
     make_object(properties)
 }
@@ -339,11 +335,7 @@ fn segments_containing(receiver: Option<&Value>, arguments: &[Value]) -> Result<
 fn segment_input_length(value: Option<&Value>) -> usize {
     value
         .and_then(|value| crate::execute::get_property_result(value, "input").ok())
-        .map(|value| match value {
-            Value::String(value) => value.encode_utf16().count(),
-            Value::StringUnits(value) => value.len(),
-            _ => 0,
-        })
+        .and_then(|value| crate::strings::units_of(&value).map(|units| units.len()))
         .unwrap_or(0)
 }
 

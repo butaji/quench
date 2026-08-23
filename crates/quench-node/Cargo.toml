@@ -26,6 +26,5 @@ sysinfo = "0.32"
 hex = "0.4"
 encoding_rs = "0.8"
 idna = "1"
-
-[build-dependencies]
-sha2 = "0.10"
+aes-gcm = "0.10"
+rusqlite = { version = "0.31", features = ["bundled"] }

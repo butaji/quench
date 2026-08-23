@@ -2,6 +2,15 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.process) {
+    const env = globalThis.process.env;
+    if (env && !Object.prototype.hasOwnProperty.call(env, "")) {
+      Object.defineProperty(env, "", {
+        configurable: true,
+        enumerable: false,
+        get: () => undefined,
+        set: () => {}
+      });
+    }
     const write = (chunk) => {
       globalThis.__quench_console_write(String(chunk));
       return true;
@@ -57,7 +66,12 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     const setEncoding = function () {
       return this;
     };
-    const end = function () {
+    const end = function (chunk, encoding, callback) {
+      if (chunk !== undefined && chunk !== null) write.call(this, chunk, encoding);
+      this.writableEnded = true;
+      this.writableFinished = true;
+      this.writable = false;
+      if (typeof callback === "function") callback();
       return this;
     };
     const cork = function () {
@@ -174,6 +188,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
       globalThis.process.allowedNodeEnvironmentFlags.size === 0
     ) {
       globalThis.process.allowedNodeEnvironmentFlags.add("--no-warnings");
+    }
+    if (globalThis.process.hrtime) {
+      globalThis.process.hrtime.bigint ||= () => BigInt(Date.now()) * 1000000n;
     }
     const config = (globalThis.process.config ||= {});
     config.variables ||= {};

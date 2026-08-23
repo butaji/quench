@@ -54,7 +54,7 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
-    ) && error_constructor_builtin(value) == Some(constructor)
+    ) && own_constructor(value).as_ref().and_then(intrinsic_builtin) == Some(constructor)
 }
 
 fn intrinsic_builtin(value: &Value) -> Option<Builtin> {
@@ -189,8 +189,8 @@ fn has_property(properties: &crate::value::ObjectData, key: &str) -> bool {
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
-    let (Some(Builtin::Error), Some(actual)) =
-        (intrinsic_builtin(constructor), error_constructor_builtin(value))
+    let (Some(Builtin::Error), Some(Value::Builtin(actual))) =
+        (intrinsic_builtin(constructor), own_constructor(value))
     else {
         return false;
     };
@@ -207,35 +207,8 @@ fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
     )
 }
 
-fn error_constructor_builtin(value: &Value) -> Option<Builtin> {
-    if let Some(constructor) = own_constructor(value).as_ref().and_then(intrinsic_builtin) {
-        return Some(constructor);
-    }
-    let Value::Object(properties) = value else {
-        return None;
-    };
-    let prototype = properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
-    match intrinsic_builtin(prototype)? {
-        Builtin::ErrorPrototype => Some(Builtin::Error),
-        Builtin::RangeErrorPrototype => Some(Builtin::RangeError),
-        Builtin::ReferenceErrorPrototype => Some(Builtin::ReferenceError),
-        Builtin::SyntaxErrorPrototype => Some(Builtin::SyntaxError),
-        Builtin::EvalErrorPrototype => Some(Builtin::EvalError),
-        Builtin::URIErrorPrototype => Some(Builtin::URIError),
-        Builtin::AggregateErrorPrototype => Some(Builtin::AggregateError),
-        Builtin::TypeErrorPrototype => Some(Builtin::TypeError),
-        _ => None,
-    }
-}
-
 fn instanceof_callable(value: &Value) -> bool {
     match value {
-        Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => {
-            instanceof_callable(&bound.target)
-        }
         Value::Builtin(builtin) => !matches!(
             builtin,
             Builtin::Math
@@ -319,7 +292,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         } else {
             Builtin::FunctionPrototype
         })),
-        Value::BoundFunction(_) => crate::builtins::object::get_prototype_of(Some(value)).ok(),
+        Value::BoundFunction(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
         _ => None,
     }
 }

@@ -91,10 +91,6 @@ fn reduce_non_member_delete(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let expression = match expression {
-        Expression::ParenthesizedExpression(parenthesized) => &parenthesized.expression,
-        expression => expression,
-    };
     if !matches!(expression, Expression::Identifier(_)) {
         crate::reduce::reduce_expression(expression, ops, facts, next, locals)?;
         return Some(emit_constant(ops, next, true));

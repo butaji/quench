@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    ops::{Builtin, HostCapabilityKind, HostCapabilityRef, RealmId},
+    ops::{Builtin, HostCapabilityKind, HostCapabilityRef, Op, RealmId},
     value::{HostCapabilityValue, ObjectAliasValue, Value, WeakObject},
 };
 
@@ -26,9 +26,18 @@ struct ExecutionGuard {
 
 thread_local! {
     static REALMS: RefCell<Vec<Option<Rc<RealmState>>>> = const { RefCell::new(Vec::new()) };
+    static ROOT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
     static ROOT_INTRINSICS: RefCell<Vec<(Builtin, Value)>> = const { RefCell::new(Vec::new()) };
     static ROOT_INTL_FALLBACK_SYMBOL: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NEXT_REALM: Cell<u64> = const { Cell::new(1) };
+}
+
+pub(super) fn register_root_context(context: &VmContext) {
+    ROOT_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+}
+
+pub(super) fn root_context() -> Option<VmContext> {
+    ROOT_CONTEXT.with(|slot| slot.borrow().clone())
 }
 
 pub(super) fn create(parent: &VmContext) -> RealmId {
@@ -101,7 +110,7 @@ pub(super) fn initialize_current_global(global: ObjectProperties) {
         context
             .borrow()
             .as_ref()
-            .map_or(RealmId::ROOT, |rc| rc.realm())
+            .map_or(RealmId::ROOT, VmContext::realm)
     });
     if let Some(state) = state(realm) {
         state.global.replace(global);
@@ -109,6 +118,9 @@ pub(super) fn initialize_current_global(global: ObjectProperties) {
 }
 
 pub(super) fn context(id: RealmId) -> Option<VmContext> {
+    if id == RealmId::ROOT {
+        return root_context();
+    }
     state(id).map(|state| state.context.clone())
 }
 
@@ -121,7 +133,7 @@ pub(super) fn id_for_token(token: &HostCapabilityValue) -> Option<RealmId> {
     state.token.same_identity(token).then_some(state.id)
 }
 
-pub(super) fn execute(id: RealmId, code: crate::machine::CodeView<'_>) -> Result<Value, VmError> {
+pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
     let state = state(id).ok_or_else(missing_realm)?;
     let context = state.context.clone();
     let global = Value::Object(state.global.borrow().clone());
@@ -135,7 +147,7 @@ pub(super) fn execute(id: RealmId, code: crate::machine::CodeView<'_>) -> Result
         let _environment = crate::locals::EnvironmentGuard::install(environment);
         let _global_lexical = crate::locals::GlobalLexicalGuard::install(crate::locals::current());
         let _with_scope = crate::with_scope::FunctionGuard::isolate();
-        super::execute_code_in_place_context(code, &mut registers, &context)
+        super::run_ops(ops, &mut registers, &context)
     };
     caller.replace_value(&global, &Value::Object(state.global.borrow().clone()));
     result
@@ -229,7 +241,68 @@ fn root_intrinsic(builtin: Builtin) -> Value {
 }
 
 pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
-    crate::globals::builtin(key)
+    use Builtin::*;
+    Some(match key {
+        "Array" => Array,
+        "Iterator" => Iterator,
+        "ArrayBuffer" => ArrayBuffer,
+        "SharedArrayBuffer" => SharedArrayBuffer,
+        "DataView" => DataView,
+        "Float32Array" => Float32Array,
+        "Float64Array" => Float64Array,
+        "Int8Array" => Int8Array,
+        "Int16Array" => Int16Array,
+        "Int32Array" => Int32Array,
+        "Uint8Array" => Uint8Array,
+        "Uint8ClampedArray" => Uint8ClampedArray,
+        "Uint16Array" => Uint16Array,
+        "Uint32Array" => Uint32Array,
+        "Object" => Object,
+        "Function" => Function,
+        "Promise" => Promise,
+        "RegExp" => RegExp,
+        "Symbol" => Symbol,
+        "Number" => Number,
+        "Boolean" => Boolean,
+        "BigInt" => BigInt,
+        "String" => String,
+        "Date" => Date,
+        "DisposableStack" => DisposableStack,
+        "AsyncDisposableStack" => AsyncDisposableStack,
+        "FinalizationRegistry" => FinalizationRegistry,
+        "ShadowRealm" => ShadowRealm,
+        "Intl" => Intl,
+        _ => return global_builtin_error(key),
+    })
+}
+
+fn global_builtin_error(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match key {
+        "eval" => Eval,
+        "isNaN" => IsNaN,
+        "isFinite" => IsFinite,
+        "JSON" => Json,
+        "Math" => Math,
+        "Atomics" => Atomics,
+        "Reflect" => Reflect,
+        "Map" => Map,
+        "Set" => Set,
+        "WeakMap" => WeakMap,
+        "WeakSet" => WeakSet,
+        "WeakRef" => WeakRef,
+        "Error" => Error,
+        "AggregateError" => AggregateError,
+        "SuppressedError" => SuppressedError,
+        "TypeError" => TypeError,
+        "RangeError" => RangeError,
+        "ReferenceError" => ReferenceError,
+        "SyntaxError" => SyntaxError,
+        "EvalError" => EvalError,
+        "URIError" => URIError,
+        "decodeURI" => DecodeURI,
+        _ => return None,
+    })
 }
 
 pub(super) fn global_builtin_exists(key: &str) -> bool {

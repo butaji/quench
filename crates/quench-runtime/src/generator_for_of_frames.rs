@@ -10,14 +10,14 @@ fn collect_for_of_frames(
     let Some(iterator) = crate::loops::live_for_of() else {
         return Ok(false);
     };
-    let Some(ops) = body.code() else {
+    let Some(ops) = body.ops() else {
         return Err(VmError::MissingReturn);
     };
     collect_loop_body_frames(ops, body.range, iterator, *slot, resume, registers, frames)
 }
 
 fn collect_loop_body_frames(
-    ops: crate::machine::CodeView<'_>,
+    ops: &[Op],
     body: crate::machine::CodeRange,
     iterator: Value,
     slot: u16,
@@ -25,7 +25,7 @@ fn collect_loop_body_frames(
     registers: &[Value],
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
-    for (index, op) in ops.cold_ops() {
+    for (index, op) in ops.iter().enumerate() {
         if let Op::Yield { src } = op {
             frames.push(for_of_repeat_frame(
                 iterator.clone(),
@@ -78,14 +78,14 @@ fn try_contains_yield(op: &Op) -> bool {
     else {
         return false;
     };
-    body.code().is_some_and(ops_contain_yield)
+    body.ops().is_some_and(ops_contain_yield)
         || handler
             .as_ref()
-            .and_then(|body| body.code())
+            .and_then(|body| body.ops())
             .is_some_and(ops_contain_yield)
         || finalizer
             .as_ref()
-            .and_then(|body| body.code())
+            .and_then(|body| body.ops())
             .is_some_and(ops_contain_yield)
 }
 
@@ -107,8 +107,8 @@ fn for_of_repeat_frame(
     )
 }
 
-fn ops_contain_yield(ops: crate::machine::CodeView<'_>) -> bool {
-    ops.cold_ops().any(|(_, op)| matches!(op, Op::Yield { .. }))
+fn ops_contain_yield(ops: &[Op]) -> bool {
+    ops.iter().any(|op| matches!(op, Op::Yield { .. }))
 }
 
 fn collect_iterator_frames(
@@ -125,10 +125,10 @@ fn collect_iterator_frames(
     else {
         return Ok(false);
     };
-    let Some(ops) = body.code() else {
+    let Some(ops) = body.ops() else {
         return Err(VmError::MissingReturn);
     };
-    for (index, op) in ops.cold_ops() {
+    for (index, op) in ops.iter().enumerate() {
         if let Op::Yield { src } = op {
             frames.push(iterator_frame(
                 *iterator,
@@ -196,10 +196,13 @@ fn collect_nested_yield_frame(
     registers: &[Value],
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
-    let Some(ops) = code.code() else {
+    let Some(ops) = code.ops() else {
         return Ok(false);
     };
-    let Some((index, Op::Yield { src })) = ops.find_cold(|op| matches!(op, Op::Yield { .. }))
+    let Some((index, Op::Yield { src })) = ops
+        .iter()
+        .enumerate()
+        .find(|(_, op)| matches!(op, Op::Yield { .. }))
     else {
         return Ok(false);
     };

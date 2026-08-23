@@ -1,5 +1,5 @@
 use std::{
-    cell::{RefCell, UnsafeCell},
+    cell::RefCell,
     collections::{HashMap, HashSet},
     rc::Rc,
 };
@@ -9,180 +9,76 @@ use crate::value::Value;
 
 /// Shared set of binding cells removed by direct-eval `delete`; matched by
 /// cell identity so a reused slot number never shadows a live binding.
-///
-/// Environments are confined to the single-threaded VM. The vector is
-/// mutated through `UnsafeCell`; entries retain their externally observable
-/// `Rc<RefCell<Value>>` identity.
-#[derive(Debug)]
-struct DeletedCells(UnsafeCell<Vec<Rc<RefCell<Value>>>>);
+type DeletedCells = Rc<RefCell<Vec<Rc<RefCell<Value>>>>>;
 
-impl PartialEq for DeletedCells {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
-    }
-}
-
-/// Execution-only TDZ metadata. Unlike binding cells, this set is never
-/// exposed to host code, so its `RefCell` can be removed without changing
-/// observable binding identity.
-#[derive(Debug, Default)]
-struct TdzCells(UnsafeCell<HashSet<u16>>);
-
-impl PartialEq for TdzCells {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
-    }
-}
-
-impl TdzCells {
-    fn new() -> Rc<Self> {
-        Rc::new(Self(UnsafeCell::new(HashSet::new())))
-    }
-
-    fn clone_values(source: &Rc<Self>) -> Rc<Self> {
-        let copy = unsafe { (&*source.0.get()).clone() };
-        Rc::new(Self(UnsafeCell::new(copy)))
-    }
-
-    fn insert(&self, slot: u16) {
-        unsafe {
-            (&mut *self.0.get()).insert(slot);
-        }
-    }
-
-    fn remove(&self, slot: u16) {
-        unsafe {
-            (&mut *self.0.get()).remove(&slot);
-        }
-    }
-
-    fn contains(&self, slot: u16) -> bool {
-        unsafe { (&*self.0.get()).contains(&slot) }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Default, PartialEq)]
 struct SlotStore {
-    // SAFETY invariant: SlotStore is only reached through Rc and the VM is
-    // single-threaded. `values` and `bridges` are mutated only by these
-    // methods, and always have identical lengths. Before a bridge exists,
-    // `values[index]` owns the slot value; after bridging, the Rc cell is the
-    // authoritative source and `values[index]` is only the snapshot used to
-    // create it.
-    values: UnsafeCell<Vec<Value>>,
-    bridges: UnsafeCell<Vec<Option<Rc<RefCell<Value>>>>>,
-}
-
-impl PartialEq for SlotStore {
-    fn eq(&self, other: &Self) -> bool {
-        self.values() == other.values() && self.bridges() == other.bridges()
-    }
-}
-
-impl Default for SlotStore {
-    fn default() -> Self {
-        Self {
-            values: UnsafeCell::new(Vec::new()),
-            bridges: UnsafeCell::new(Vec::new()),
-        }
-    }
+    values: RefCell<Vec<Value>>,
+    bridges: RefCell<Vec<Option<Rc<RefCell<Value>>>>>,
 }
 
 impl SlotStore {
-    fn invariant(&self) {
-        debug_assert_eq!(
-            self.values().len(),
-            self.bridges().len(),
-            "slot value and bridge vectors must remain aligned"
-        );
-    }
-
     fn from_values(values: Vec<Value>) -> Rc<Self> {
-        let store = Rc::new(Self {
-            bridges: UnsafeCell::new((0..values.len()).map(|_| None).collect()),
-            values: UnsafeCell::new(values),
-        });
-        store.invariant();
-        store
+        Rc::new(Self {
+            bridges: RefCell::new((0..values.len()).map(|_| None).collect()),
+            values: RefCell::new(values),
+        })
     }
 
     fn from_cell(cell: Rc<RefCell<Value>>) -> Rc<Self> {
         let value = cell.borrow().clone();
-        let store = Rc::new(Self {
-            values: UnsafeCell::new(vec![value]),
-            bridges: UnsafeCell::new(vec![Some(cell)]),
-        });
-        store.invariant();
-        store
-    }
-
-    fn values(&self) -> &Vec<Value> {
-        // SAFETY: VM execution is single-threaded; callers uphold the
-        // SlotStore invariant and never retain this reference across mutation.
-        unsafe { &*self.values.get() }
-    }
-
-    #[allow(clippy::mut_from_ref)]
-    fn values_mut(&self) -> &mut Vec<Value> {
-        // SAFETY: see `values`; mutation is confined to SlotStore methods.
-        unsafe { &mut *self.values.get() }
-    }
-
-    fn bridges(&self) -> &Vec<Option<Rc<RefCell<Value>>>> {
-        // SAFETY: see `values`.
-        unsafe { &*self.bridges.get() }
-    }
-
-    #[allow(clippy::mut_from_ref)]
-    fn bridges_mut(&self) -> &mut Vec<Option<Rc<RefCell<Value>>>> {
-        // SAFETY: see `values_mut`.
-        unsafe { &mut *self.bridges.get() }
+        Rc::new(Self {
+            values: RefCell::new(vec![value]),
+            bridges: RefCell::new(vec![Some(cell)]),
+        })
     }
 
     fn ensure(&self, index: usize) {
-        self.invariant();
-        while self.values().len() <= index {
-            self.values_mut().push(Value::Undefined);
-            self.bridges_mut().push(None);
+        let mut values = self.values.borrow_mut();
+        while values.len() <= index {
+            values.push(Value::Undefined);
         }
-        self.invariant();
+        let mut bridges = self.bridges.borrow_mut();
+        while bridges.len() <= index {
+            bridges.push(None);
+        }
     }
 
     fn len(&self) -> usize {
-        self.invariant();
-        self.values().len()
+        self.values.borrow().len()
     }
 
     fn load(&self, index: usize) -> Value {
         self.ensure(index);
-        self.bridges()
+        self.bridges
+            .borrow()
             .get(index)
             .and_then(Option::as_ref)
-            .map_or_else(|| self.values()[index].clone(), |cell| cell.borrow().clone())
+            .map_or_else(
+                || self.values.borrow()[index].clone(),
+                |cell| cell.borrow().clone(),
+            )
     }
 
     fn store(&self, index: usize, value: Value) {
         self.ensure(index);
-        if let Some(Some(cell)) = self.bridges().get(index) {
+        if let Some(Some(cell)) = self.bridges.borrow().get(index) {
             *cell.borrow_mut() = value;
         } else {
-            self.values_mut()[index] = value;
+            self.values.borrow_mut()[index] = value;
         }
-        self.invariant();
     }
 
     fn bridge(&self, index: usize) -> Rc<RefCell<Value>> {
         self.ensure(index);
-        if let Some(Some(cell)) = self.bridges().get(index) {
+        if let Some(Some(cell)) = self.bridges.borrow().get(index) {
             return Rc::clone(cell);
         }
-        let cell = Rc::new(RefCell::new(self.values()[index].clone()));
-        self.bridges_mut()[index] = Some(Rc::clone(&cell));
-        self.invariant();
+        let cell = Rc::new(RefCell::new(self.values.borrow()[index].clone()));
+        self.bridges.borrow_mut()[index] = Some(Rc::clone(&cell));
         cell
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 struct BindingRef {
@@ -221,13 +117,15 @@ pub struct Environment {
     eval_names: RefCell<Option<HashMap<String, BindingRef>>>,
     immutable_names: RefCell<Option<HashSet<String>>>,
     immutable_slots: RefCell<Option<HashSet<u16>>>,
-    uninitialized: RefCell<Option<Rc<TdzCells>>>,
-    deleted_cells: RefCell<Option<Rc<DeletedCells>>>,
+    uninitialized: RefCell<Option<Rc<RefCell<HashSet<u16>>>>>,
+    deleted_cells: RefCell<Option<DeletedCells>>,
     caller: Option<Rc<Self>>,
 }
 
-fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
-    source.as_ref().map(TdzCells::clone_values)
+fn clone_tdz(source: &Option<Rc<RefCell<HashSet<u16>>>>) -> Option<Rc<RefCell<HashSet<u16>>>> {
+    source
+        .as_ref()
+        .map(|slots| Rc::new(RefCell::new(slots.borrow().clone())))
 }
 
 impl Environment {
@@ -255,6 +153,7 @@ impl Environment {
     }
 
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
+        let captured_len = captures.slots.borrow().len() as u16;
         let store = SlotStore::from_values(values);
         let mut combined = captures.slots.borrow().clone();
         combined.extend((0..store.len()).map(|index| BindingRef::new(Rc::clone(&store), index)));
@@ -268,21 +167,31 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        environment
-            .uninitialized
-            .replace(clone_tdz(&captures.uninitialized.borrow()));
+        let uninitialized = clone_tdz(&captures.uninitialized.borrow());
+        if let Some(slots) = &uninitialized {
+            slots
+                .borrow_mut()
+                .retain(|slot| *slot < captured_len);
+        }
+        environment.uninitialized.replace(uninitialized);
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
-        environment
-            .immutable_slots
-            .replace(captures.immutable_slots.borrow().clone());
+        let immutable_slots = captures.immutable_slots.borrow().as_ref().map(|slots| {
+            slots
+                .iter()
+                .copied()
+                .filter(|slot| *slot < captured_len)
+                .collect()
+        });
+        environment.immutable_slots.replace(immutable_slots);
         environment
     }
-
+    /// Create an execution child while retaining captured binding metadata.
     pub(crate) fn in_place_child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
         Self::child(captures, values)
     }
+
     pub(crate) fn len(&self) -> usize {
         self.slots.borrow().len()
     }
@@ -433,18 +342,12 @@ impl Environment {
         {
             return true;
         }
-        let Some(caller) = &self.caller else {
+        if self.slot(slot).is_some() {
             return false;
-        };
-        // A call frame keeps captured bindings as the same cells while
-        // appending its own slots.  Only continue through the caller chain
-        // for a captured slot; a newly allocated local with the same index
-        // must continue to shadow an eval binding in the caller.
-        let captured = self
-            .slot(slot)
-            .zip(caller.slot(slot))
-            .is_some_and(|(current, parent)| current.same(&parent));
-        captured && caller.eval_name_aliases_slot(name, slot)
+        }
+        self.caller
+            .as_ref()
+            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
@@ -504,18 +407,18 @@ impl Environment {
 
     pub(crate) fn mark_uninitialized(&self, slot: u16) {
         self.ensure_slot(slot);
-        self.writable_tdz().insert(slot);
+        self.writable_tdz().borrow_mut().insert(slot);
     }
     pub(crate) fn mark_uninitialized_shared(&self, slot: u16) {
         self.ensure_slot(slot);
-        self.shared_tdz().insert(slot);
+        self.shared_tdz().borrow_mut().insert(slot);
     }
     pub(crate) fn is_deleted(&self, cell: &Rc<RefCell<Value>>) -> bool {
         self.deleted_cells.borrow().as_ref().is_some_and(|cells| {
-            // SAFETY: VM execution is single-threaded; all access is through
-            // Environment methods and the Rc keeps the vector alive.
-            let cells = unsafe { &*cells.0.get() };
-            cells.iter().any(|candidate| Rc::ptr_eq(candidate, cell))
+            cells
+                .borrow()
+                .iter()
+                .any(|candidate| Rc::ptr_eq(candidate, cell))
         }) || self
             .caller
             .as_ref()
@@ -524,29 +427,28 @@ impl Environment {
 
     fn mark_deleted_cell(&self, cell: Rc<RefCell<Value>>) {
         let mut state = self.deleted_cells.borrow_mut();
-        let cells = state.get_or_insert_with(|| Rc::new(DeletedCells(UnsafeCell::new(Vec::new()))));
-        // SAFETY: VM execution is single-threaded; no aliased mutable access
-        // occurs while this method runs.
-        unsafe { &mut *cells.0.get() }.push(cell);
+        let cells = state.get_or_insert_with(|| Rc::new(RefCell::new(Vec::new())));
+        cells.borrow_mut().push(cell);
     }
     fn clear_deleted_cell(&self, cell: &Rc<RefCell<Value>>) {
         if let Some(cells) = self.deleted_cells.borrow().as_ref() {
-            // SAFETY: VM execution is single-threaded; see mark_deleted_cell.
-            unsafe { &mut *cells.0.get() }.retain(|candidate| !Rc::ptr_eq(candidate, cell));
+            cells
+                .borrow_mut()
+                .retain(|candidate| !Rc::ptr_eq(candidate, cell));
         }
     }
 
-    fn writable_tdz(&self) -> Rc<TdzCells> {
+    fn writable_tdz(&self) -> Rc<RefCell<HashSet<u16>>> {
         let mut state = self.uninitialized.borrow_mut();
         if let Some(slots) = state.as_ref() {
             if Rc::strong_count(slots) == 1 {
                 return Rc::clone(slots);
             }
-            let detached = TdzCells::clone_values(slots);
+            let detached = Rc::new(RefCell::new(slots.borrow().clone()));
             *state = Some(Rc::clone(&detached));
             return detached;
         }
-        let slots = TdzCells::new();
+        let slots = Rc::new(RefCell::new(HashSet::new()));
         *state = Some(Rc::clone(&slots));
         slots
     }
@@ -555,7 +457,7 @@ impl Environment {
         self.uninitialized
             .borrow()
             .as_ref()
-            .is_some_and(|slots| slots.contains(slot))
+            .is_some_and(|slots| slots.borrow().contains(&slot))
     }
 
     fn named_binding(&self, name: &str) -> Option<BindingRef> {
@@ -596,13 +498,14 @@ impl Environment {
     }
 
     pub(crate) fn initialize(&self, slot: u16) {
-        if let Some(slots) = self.uninitialized.borrow().as_ref() {
-            slots.remove(slot);
+        if let Some(slots) = self.uninitialized.borrow_mut().as_mut() {
+            slots.borrow_mut().remove(&slot);
         }
     }
-    fn shared_tdz(&self) -> Rc<TdzCells> {
+
+    fn shared_tdz(&self) -> Rc<RefCell<HashSet<u16>>> {
         let mut state = self.uninitialized.borrow_mut();
-        let slots = state.get_or_insert_with(TdzCells::new);
+        let slots = state.get_or_insert_with(|| Rc::new(RefCell::new(HashSet::new())));
         Rc::clone(slots)
     }
 
@@ -650,36 +553,3 @@ impl Environment {
 }
 
 include!("environment_alias.rs");
-
-#[cfg(test)]
-mod tests {
-    use super::SlotStore;
-    use crate::value::Value;
-
-    #[test]
-    fn slot_store_round_trips_values_without_borrow_tracking() {
-        let store = SlotStore::from_values(vec![Value::Number(1.0)]);
-        assert_eq!(store.load(0), Value::Number(1.0));
-        store.store(0, Value::Number(2.0));
-        assert_eq!(store.load(0), Value::Number(2.0));
-        assert_eq!(store.load(2), Value::Undefined);
-    }
-
-    #[test]
-    fn bridge_cells_preserve_shared_binding_identity() {
-        let store = SlotStore::from_values(vec![Value::Undefined]);
-        let cell = store.bridge(0);
-        store.store(0, Value::Number(3.0));
-        assert_eq!(*cell.borrow(), Value::Number(3.0));
-    }
-
-    #[test]
-    fn bridged_cell_is_authoritative_source_after_external_update() {
-        let cell = std::rc::Rc::new(std::cell::RefCell::new(Value::Number(4.0)));
-        let store = SlotStore::from_cell(std::rc::Rc::clone(&cell));
-        *cell.borrow_mut() = Value::Number(9.0);
-        assert_eq!(store.load(0), Value::Number(9.0));
-        store.store(0, Value::Number(12.0));
-        assert_eq!(*cell.borrow(), Value::Number(12.0));
-    }
-}

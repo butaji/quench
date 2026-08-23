@@ -7,6 +7,7 @@ use std::rc::Rc;
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::regexp;
 use quench_runtime::value::Value;
+use quench_runtime::host_api;
 
 use super::assert::{arg, assertion_error, custom_message};
 use crate::host::HostState;
@@ -84,6 +85,11 @@ fn invoke(function: &Value) -> Result<Result<(), Value>, VmError> {
     match execute::call(function, &Value::Undefined, &[]) {
         Ok(_) => Ok(Ok(())),
         Err(VmError::Thrown(value)) => Ok(Err(value)),
+        Err(VmError::EvalError(message)) => Ok(Err(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("message".into(), Value::String(message)),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ]))),
         Err(error) => Err(error),
     }
 }
@@ -97,7 +103,8 @@ fn is_callable(value: &Value) -> bool {
 
 /// RegExp detection via the internal slot's observable parts.
 fn is_regexp(value: &Value) -> bool {
-    quench_runtime::regexp::has_regexp_internal_slot(value)
+    matches!(execute::get_property(value, "source"), Value::String(_))
+        && matches!(execute::get_property(value, "flags"), Value::String(_))
 }
 
 fn error_text(error: &Value) -> String {
@@ -188,7 +195,7 @@ fn validate_callable(
     // callables (including ones that happen to have a `prototype`
     // property, like common.mustCall wrappers) are validation functions.
     if is_error_constructor(expected) {
-        if !expected_name.is_empty() && expected_name == name_of(error) {
+        if is_instance_of(error, expected) {
             return Ok(Value::Undefined);
         }
         return Err(invalid_expected(
@@ -235,6 +242,31 @@ fn is_error_constructor(expected: &Value) -> bool {
     }
     false
 }
+/// Check the same prototype-chain relation used by JavaScript `instanceof`.
+/// Comparing names alone incorrectly accepts plain objects that merely expose
+/// an Error-like `name` property.
+fn is_instance_of(value: &Value, constructor: &Value) -> bool {
+    let Ok(expected_proto) = execute::get_property_result(constructor, "prototype") else {
+        return false;
+    };
+    let mut current = match execute::get_prototype_of(value) {
+        Ok(proto) => proto,
+        Err(_) => return false,
+    };
+    for _ in 0..64 {
+        if current == expected_proto {
+            return true;
+        }
+        current = match current {
+            Value::Null => return false,
+            _ => match execute::get_prototype_of(&current) {
+                Ok(next) => next,
+                Err(_) => return false,
+            },
+        };
+    }
+    false
+}
 
 fn name_of(value: &Value) -> String {
     match execute::get_property(value, "name") {
@@ -249,11 +281,15 @@ fn validate_object(
     user_message: Option<String>,
 ) -> Result<Value, VmError> {
     for key in execute::own_enumerable_keys(expected) {
-        let expected_value = execute::get_property_result(expected, &key)?;
-        let actual_value = execute::get_property_result(error, &key)?;
-        if !expected_property_matches(&expected_value, &actual_value)? {
+        let expected_value = execute::get_property(expected, &key);
+        let actual_value = execute::get_property(error, &key);
+        let matches = match (&expected_value, &actual_value) {
+            (Value::String(wanted), Value::String(found)) => wanted == found,
+            _ => expected_property_matches(&expected_value, &actual_value)?,
+        };
+        if !matches {
             return Err(invalid_expected(
-                user_message,
+                user_message.clone(),
                 format!("The error did not match the expected object (key \"{key}\")"),
             ));
         }
