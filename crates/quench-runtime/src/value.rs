@@ -5,7 +5,49 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
+    sync::OnceLock,
 };
+
+#[derive(Debug)]
+pub struct StringUnitsData {
+    units: Vec<u16>,
+    hash: OnceLock<u64>,
+}
+
+impl StringUnitsData {
+    pub fn new(units: Vec<u16>) -> Self {
+        Self {
+            units,
+            hash: OnceLock::new(),
+        }
+    }
+
+    pub fn cached_hash(&self, hash: impl FnOnce(&[u16]) -> u64) -> u64 {
+        *self.hash.get_or_init(|| hash(&self.units))
+    }
+}
+
+impl std::ops::Deref for StringUnitsData {
+    type Target = [u16];
+
+    fn deref(&self) -> &Self::Target {
+        &self.units
+    }
+}
+
+impl PartialEq for StringUnitsData {
+    fn eq(&self, other: &Self) -> bool {
+        self.units == other.units
+    }
+}
+
+impl Eq for StringUnitsData {}
+
+impl Clone for StringUnitsData {
+    fn clone(&self) -> Self {
+        Self::new(self.units.clone())
+    }
+}
 
 use crate::{
     facts::PrivateNameId,
@@ -330,6 +372,46 @@ pub struct GeneratorState {
     pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
 }
 
+/// Canonical out-of-line attributes for an ordinary property.
+///
+/// The value slot owns only the property value; this record owns the three
+/// attributes that describe that slot. `None` means the attribute was not
+/// supplied by a descriptor and must be resolved by the caller's ordinary
+/// property semantics. Accessor properties are represented by `get`/`set`
+/// values in the descriptor object and therefore cannot also carry a data
+/// value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PropertyDescriptor {
+    pub writable: Option<bool>,
+    pub enumerable: Option<bool>,
+    pub configurable: Option<bool>,
+}
+
+impl PropertyDescriptor {
+    #[inline]
+    pub(crate) const fn empty() -> Self {
+        Self {
+            writable: None,
+            enumerable: None,
+            configurable: None,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn data_defaults() -> Self {
+        Self {
+            writable: Some(false),
+            enumerable: Some(false),
+            configurable: Some(false),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn is_empty(self) -> bool {
+        self.writable.is_none() && self.enumerable.is_none() && self.configurable.is_none()
+    }
+}
+
 pub type ObjectProperties = Vec<(String, Value)>;
 pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 
@@ -382,6 +464,15 @@ impl ObjectData {
     #[inline]
     pub(crate) fn hot_properties(&self) -> &ObjectProperties {
         &self.properties
+    }
+    /// Return the address of the canonical property vector.
+    ///
+    /// This is intentionally an address, rather than a copied handle: callers
+    /// that retain a reference-derived cache must prove it points at this
+    /// allocation and invalidate it when the owning `ObjectData` is replaced.
+    #[inline]
+    pub(crate) fn properties_source(&self) -> *const ObjectProperties {
+        &self.properties as *const ObjectProperties
     }
 
     pub(crate) fn new(properties: ObjectProperties) -> Self {
@@ -455,12 +546,17 @@ pub(crate) struct ObjectShape {
     pub(crate) slots: u32,
     pub(crate) dictionary: bool,
 }
-// Keep the derived hot shape record cache-line friendly at compile time.  The
-// shape is a lookup hint only; ObjectData.properties remains authoritative.
-const _: () = {
-    assert!(std::mem::size_of::<ObjectShape>() <= crate::heap::HOT_HEADER_BYTES);
-    assert!(std::mem::align_of::<ObjectShape>() <= crate::heap::HOT_HEADER_BYTES);
-};
+/// A deterministic transition for adding or looking up one public property.
+///
+/// The source object remains authoritative; this record only describes the
+/// derived `(shape_id, property_id)` cache key and its resulting layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ObjectTransition {
+    pub(crate) from: crate::identity::ShapeId,
+    pub(crate) property: crate::identity::PropertyKeyId,
+    pub(crate) to: crate::identity::ShapeId,
+    pub(crate) slot: u32,
+}
 
 pub(crate) const DICTIONARY_SLOT_THRESHOLD: u32 = 32;
 /// Tiny objects stay on the ordinary property vector; this limit is deliberately
@@ -491,6 +587,10 @@ impl ObjectData {
             slots,
             dictionary: slots > DICTIONARY_SLOT_THRESHOLD,
         }
+    }
+    #[inline]
+    pub(crate) fn shape_id(&self) -> crate::identity::ShapeId {
+        self.shape().id
     }
 
     #[inline]
@@ -525,6 +625,10 @@ impl ObjectData {
     /// cannot accidentally grow a second semantic representation.
     #[cfg(debug_assertions)]
     pub(crate) fn assert_canonical_slots(&self) {
+        // Dictionary layouts intentionally do not expose positional slots.
+        if self.shape().dictionary {
+            return;
+        }
         let visible: Vec<_> = self
             .properties
             .iter()
@@ -545,6 +649,22 @@ impl ObjectData {
             .map(|(_, value)| value)
     }
 }
+impl ObjectData {
+    /// Dictionary objects intentionally retain the canonical property vector.
+    /// This accessor is the dictionary representation contract: lookups use
+    /// reverse encounter order (including duplicate writes), while metadata
+    /// remains visible only to the slow-path caller that interprets it.
+    #[inline]
+    pub(crate) fn dictionary_value(&self, key: &str) -> Option<&Value> {
+        if !self.is_dictionary() || key.starts_with('\0') {
+            return None;
+        }
+        self.properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then_some(value))
+    }
+}
 
 impl ObjectData {
     #[inline]
@@ -553,11 +673,14 @@ impl ObjectData {
         shape: crate::identity::ShapeId,
         slot: usize,
     ) -> Option<&Value> {
-        self.has_shape(shape).then(|| self.value_at_slot(slot))?
-    }
-    #[inline]
-    pub(crate) fn shape_id(&self) -> crate::identity::ShapeId {
-        self.shape().id
+        #[cfg(debug_assertions)]
+        self.assert_canonical_slots();
+        // Dictionary layouts deliberately have no positional slot contract;
+        // their canonical source remains the property vector and must use the
+        // complete property semantics instead of this shape fast path.
+        let current = self.shape();
+        (current.id == shape && !current.dictionary)
+            .then(|| self.value_at_slot(slot))?
     }
 }
 
@@ -568,6 +691,34 @@ impl ObjectData {
         property: &str,
     ) -> (crate::identity::ShapeId, crate::identity::PropertyKeyId) {
         (self.shape_id(), crate::identity::property_key_id(property))
+    }
+
+    /// Derive the canonical transition for `property`, without mutating the
+    /// object. Existing properties retain their slot; a new property appends
+    /// one slot. Dictionary layouts intentionally have no positional contract.
+    pub(crate) fn transition_for(&self, property: &str) -> Option<ObjectTransition> {
+        if property.starts_with('\0') || self.is_dictionary() {
+            return None;
+        }
+        let current = self.shape();
+        let key_id = crate::identity::property_key_id(property);
+        let visible: Vec<_> = self.properties.iter()
+            .filter(|(name, _)| !name.starts_with('\0'))
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let slot = visible.iter().position(|name| *name == property)
+            .unwrap_or(visible.len());
+        let mut next = self.properties.clone();
+        if slot == visible.len() {
+            next.push((property.to_string(), Value::Undefined));
+        }
+        let target = ObjectData::new(next).shape();
+        Some(ObjectTransition {
+            from: current.id,
+            property: key_id,
+            to: target.id,
+            slot: slot as u32,
+        })
     }
 }
 pub type WeakObject = std::rc::Weak<ObjectData>;
@@ -698,10 +849,9 @@ pub enum Value {
     Number(f64),
     Boolean(bool),
     String(String),
-    /// A string containing lone surrogates, kept as raw UTF-16 code units.
+    StringUnits(Rc<StringUnitsData>),
     /// Created only when the sequence cannot round-trip through UTF-8; all
     /// lossy boundaries degrade via `String::from_utf16_lossy`.
-    StringUnits(Rc<Vec<u16>>),
     BigInt(String),
     Array(Rc<ArrayData>),
     Object(Rc<ObjectData>),
@@ -741,13 +891,27 @@ pub enum Value {
 pub const IMMEDIATE_WORD_BYTES: usize = std::mem::size_of::<u64>();
 pub const VALUE_SIZE_BUDGET: usize = 32;
 
-/// `Value` is a Rust enum, not an aligned heap pointer. Its alignment must not
-/// be used to infer tag bits or to mask payloads.
+/// Small integers are represented by the canonical `Number(f64)` variant.
+/// They are deliberately bounded to the exactly round-trippable signed 32-bit
+/// domain so a fast-path decode never changes JavaScript number semantics.
+pub const SMALL_INTEGER_MIN: i32 = i32::MIN;
+pub const SMALL_INTEGER_MAX: i32 = i32::MAX;
+/// No integer bits are stolen from a pointer/tag word: `Value` is an enum, not
+/// a tagged pointer. Integer classification must therefore inspect its value.
+pub const SMALL_INTEGER_TAG_BITS: u8 = 0;
+
+/// `Value` is a Rust enum, not a tagged heap pointer.  The alignment of the
+/// enum therefore carries no available tag bits: changing this alignment
+/// cannot change the meaning of any value and must never be used for masking.
+pub const VALUE_ALIGNMENT_BYTES: usize = std::mem::align_of::<Value>();
 pub const VALUE_ALIGNMENT_TAG_BITS: u8 = 0;
 
-// Keep the representation budget enforced at compile time, not only by tests.
+// Keep representation and alignment assumptions enforced at compile time.
 const _: () = assert!(std::mem::size_of::<Value>() <= VALUE_SIZE_BUDGET);
+const _: () = assert!(VALUE_ALIGNMENT_BYTES.is_power_of_two());
 const _: () = assert!(VALUE_ALIGNMENT_TAG_BITS == 0);
+const _: () = assert!(SMALL_INTEGER_TAG_BITS == 0);
+const _: () = assert!(SMALL_INTEGER_MIN < SMALL_INTEGER_MAX);
 impl Value {
     /// Compiler-output contract: these tag-only operations are always inlined
     /// at optimized call sites; the error constructors above remain cold and
@@ -814,15 +978,25 @@ impl Value {
             _ => None,
         }
     }
+    /// Stable source-level tags for the zero-payload primitive variants.
+    ///
+    /// These constants are the sole tag numbering contract. They describe
+    /// `Value` variants, rather than introducing a second runtime
+    /// representation; payload-bearing values remain authoritative in `Value`.
+    pub const BOOLEAN_FALSE_TAG: u8 = 0;
+    pub const BOOLEAN_TRUE_TAG: u8 = 1;
+    pub const NULL_TAG: u8 = 2;
+    pub const UNDEFINED_TAG: u8 = 3;
+
     /// Stable branch-light classification for zero-payload primitive tags.
     #[inline(always)]
     #[must_use]
     pub fn primitive_tag_code(&self) -> Option<u8> {
         match self {
-            Self::Boolean(false) => Some(0),
-            Self::Boolean(true) => Some(1),
-            Self::Null => Some(2),
-            Self::Undefined => Some(3),
+            Self::Boolean(false) => Some(Self::BOOLEAN_FALSE_TAG),
+            Self::Boolean(true) => Some(Self::BOOLEAN_TRUE_TAG),
+            Self::Null => Some(Self::NULL_TAG),
+            Self::Undefined => Some(Self::UNDEFINED_TAG),
             _ => None,
         }
     }
@@ -833,12 +1007,81 @@ impl Value {
     pub fn checked_small_integer_add(left: i32, right: i32) -> Option<Self> {
         left.checked_add(right).map(Self::from_small_integer)
     }
+
+    /// Checked small-integer subtraction; `None` preserves IEEE-754 semantics.
+    #[inline(always)]
+    #[must_use]
+    pub fn checked_small_integer_subtract(left: i32, right: i32) -> Option<Self> {
+        left.checked_sub(right).map(Self::from_small_integer)
+    }
+    #[must_use]
+    pub fn checked_small_integer_multiply(left: i32, right: i32) -> Option<Self> {
+        left.checked_mul(right).map(Self::from_small_integer)
+    }
+}
+#[cfg(test)]
+mod pointer_source_invariants {
+    use super::{ObjectData, Value};
+    use std::rc::Rc;
+
+    #[test]
+    fn hot_reader_and_source_share_one_property_allocation() {
+        let object = ObjectData::new(vec![("answer".into(), Value::Number(42.0))]);
+        let source = object.properties_source();
+        let hot = object.hot_properties() as *const _;
+        assert_eq!(source, hot);
+        assert!(std::ptr::eq(source, &object.properties));
+    }
+
+    #[test]
+    fn cloning_heap_value_preserves_reference_owner() {
+        let value = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        let clone = value.clone();
+        let (Value::Object(left), Value::Object(right)) = (&value, &clone) else {
+            panic!("object value changed variant while cloning");
+        };
+        assert!(Rc::ptr_eq(left, right));
+    }
 }
 
 #[cfg(test)]
+
 mod layout_tests {
-    use super::{ObjectData, ObjectShape, Value, VALUE_ALIGNMENT_TAG_BITS};
+    use super::{
+        ObjectData, ObjectShape, Value, IMMEDIATE_WORD_BYTES, SMALL_INTEGER_MAX,
+        SMALL_INTEGER_MIN, SMALL_INTEGER_TAG_BITS, VALUE_ALIGNMENT_BYTES, VALUE_ALIGNMENT_TAG_BITS,
+    };
     use crate::heap::{CACHE_LINE_BYTES, HOT_HEADER_BYTES};
+
+    #[test]
+    fn value_alignment_is_metadata_only() {
+        assert_eq!(VALUE_ALIGNMENT_BYTES, std::mem::align_of::<Value>());
+        assert!(VALUE_ALIGNMENT_BYTES.is_power_of_two());
+        assert_eq!(VALUE_ALIGNMENT_TAG_BITS, 0);
+        // A Value's address must not be interpreted as a tagged pointer.
+        assert_eq!(std::mem::align_of::<Value>(), std::mem::align_of::<usize>());
+    }
+
+    #[test]
+    fn integer_alignment_contract_is_explicit_and_lossless() {
+        assert_eq!(SMALL_INTEGER_TAG_BITS, 0);
+        assert_eq!(
+            Value::from_small_integer(SMALL_INTEGER_MIN).as_small_integer(),
+            Some(SMALL_INTEGER_MIN)
+        );
+        assert_eq!(
+            Value::from_small_integer(SMALL_INTEGER_MAX).as_small_integer(),
+            Some(SMALL_INTEGER_MAX)
+        );
+        assert_eq!(
+            Value::Number(f64::from(SMALL_INTEGER_MAX) + 1.0).as_small_integer(),
+            None
+        );
+        assert_eq!(
+            Value::Number(f64::from(SMALL_INTEGER_MIN) - 1.0).as_small_integer(),
+            None
+        );
+    }
 
     #[test]
     fn value_layout_stays_within_budget() {
@@ -849,6 +1092,13 @@ mod layout_tests {
         );
         assert_eq!(VALUE_ALIGNMENT_TAG_BITS, 0);
         assert_eq!(std::mem::align_of::<Value>(), std::mem::align_of::<usize>());
+    }
+
+    #[test]
+    fn immediate_payload_contract_is_one_machine_word() {
+        assert_eq!(IMMEDIATE_WORD_BYTES, std::mem::size_of::<u64>());
+        assert_eq!(IMMEDIATE_WORD_BYTES, 8);
+        assert!(std::mem::size_of::<Value>() >= IMMEDIATE_WORD_BYTES);
     }
 
     #[test]
@@ -932,6 +1182,22 @@ mod layout_tests {
         );
         assert!(Value::checked_small_integer_add(i32::MAX, 1).is_none());
     }
+
+    #[test]
+    fn small_integer_subtract_and_multiply_preserve_checked_fallback() {
+        assert_eq!(
+            Value::checked_small_integer_subtract(-40, 2)
+                .and_then(|value| value.as_small_integer()),
+            Some(-42)
+        );
+        assert_eq!(
+            Value::checked_small_integer_multiply(-7, 6)
+                .and_then(|value| value.as_small_integer()),
+            Some(-42)
+        );
+        assert!(Value::checked_small_integer_subtract(i32::MIN, 1).is_none());
+        assert!(Value::checked_small_integer_multiply(i32::MAX, 2).is_none());
+    }
     #[test]
     fn primitive_tags_are_distinct_from_numeric_immediates() {
         assert!(Value::Boolean(true).is_primitive_tag());
@@ -954,11 +1220,39 @@ mod layout_tests {
     }
     #[test]
     fn primitive_tag_codes_are_stable() {
-        assert_eq!(Value::Boolean(false).primitive_tag_code(), Some(0));
-        assert_eq!(Value::Boolean(true).primitive_tag_code(), Some(1));
-        assert_eq!(Value::Null.primitive_tag_code(), Some(2));
-        assert_eq!(Value::Undefined.primitive_tag_code(), Some(3));
+        assert_eq!(
+            [
+                Value::Boolean(false).primitive_tag_code(),
+                Value::Boolean(true).primitive_tag_code(),
+                Value::Null.primitive_tag_code(),
+                Value::Undefined.primitive_tag_code(),
+            ],
+            [
+                Some(Value::BOOLEAN_FALSE_TAG),
+                Some(Value::BOOLEAN_TRUE_TAG),
+                Some(Value::NULL_TAG),
+                Some(Value::UNDEFINED_TAG),
+            ]
+        );
         assert_eq!(Value::Number(0.0).primitive_tag_code(), None);
+    }
+
+    #[test]
+    fn primitive_tag_source_contract_has_unique_codes() {
+        let tags = [
+            Value::BOOLEAN_FALSE_TAG,
+            Value::BOOLEAN_TRUE_TAG,
+            Value::NULL_TAG,
+            Value::UNDEFINED_TAG,
+        ];
+        let mut unique = tags.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), tags.len());
+        assert_eq!(Value::Boolean(false).as_boolean(), Some(false));
+        assert_eq!(Value::Boolean(true).as_boolean(), Some(true));
+        assert!(Value::Null.is_nullish());
+        assert!(Value::Undefined.is_nullish());
     }
     #[test]
     fn nullish_accessor_is_exact() {
@@ -1095,6 +1389,40 @@ mod shape_tests {
             None
         );
     }
+    #[test]
+    fn shape_and_slots_are_derived_from_the_same_public_source() {
+        let mut object = ObjectData::new(vec![
+            ("first".into(), Value::Number(1.0)),
+            ("\0quench:descriptor:first".into(), Value::Boolean(false)),
+            ("second".into(), Value::Number(2.0)),
+        ]);
+        let initial_shape = object.shape().id;
+        assert_eq!(object.shape().slots, 2);
+        assert_eq!(object.slot_for("first"), Some(0));
+        assert_eq!(object.slot_for("second"), Some(1));
+        assert_eq!(
+            object.value_for_shape_slot(initial_shape, 1),
+            Some(&Value::Number(2.0))
+        );
+
+        object.properties[0].1 = Value::Number(9.0);
+        assert_eq!(object.shape().id, initial_shape);
+        assert_eq!(
+            object.value_for_shape_slot(initial_shape, 0),
+            Some(&Value::Number(9.0))
+        );
+        object.properties.push(("third".into(), Value::Null));
+        let expanded_shape = object.shape();
+        assert_ne!(expanded_shape.id, initial_shape);
+        assert_eq!(expanded_shape.slots, 3);
+        assert_eq!(object.slot_for("third"), Some(2));
+        assert_eq!(
+            object.value_for_shape_slot(expanded_shape.id, 2),
+            Some(&Value::Null)
+        );
+        assert_eq!(object.value_for_shape_slot(initial_shape, 2), None);
+    }
+
     #[test]
     fn dictionary_boundary_is_strictly_above_threshold() {
         let at_threshold = (0..super::DICTIONARY_SLOT_THRESHOLD)
@@ -1388,24 +1716,26 @@ mod error_tests {
     #[test]
     fn cold_error_helpers_preserve_error_kind_and_message() {
         let cases = [
-            (error::throw_type_error("type"), "TypeError"),
-            (error::throw_reference_error("reference"), "ReferenceError"),
-            (error::throw_syntax_error("syntax"), "SyntaxError"),
-            (error::throw_range_error("range"), "RangeError"),
-            (error::throw_uri_error("uri"), "URIError"),
+            (error::throw_type_error("invalid receiver"), "TypeError"),
+            (error::throw_reference_error("missing binding"), "ReferenceError"),
+            (error::throw_syntax_error("unexpected token"), "SyntaxError"),
+            (error::throw_range_error("out of bounds"), "RangeError"),
+            (error::throw_uri_error("bad escape"), "URIError"),
         ];
         for (result, name) in cases {
             let VmError::Thrown(value) = result else {
                 panic!("error helper must produce a thrown completion");
             };
-            assert_eq!(
-                get_property(&value, "name"),
-                Value::String(name.to_string())
-            );
-            assert_eq!(
-                get_property(&value, "message"),
-                Value::String(name.trim_end_matches("Error").to_lowercase())
-            );
+            assert_eq!(get_property(&value, "name"), Value::String(name.to_string()));
+            let message = match name {
+                "TypeError" => "invalid receiver",
+                "ReferenceError" => "missing binding",
+                "SyntaxError" => "unexpected token",
+                "RangeError" => "out of bounds",
+                "URIError" => "bad escape",
+                _ => unreachable!(),
+            };
+            assert_eq!(get_property(&value, "message"), Value::String(message.to_string()));
         }
     }
 }

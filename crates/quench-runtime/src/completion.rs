@@ -4,15 +4,16 @@ use crate::value::{PromiseData, Value};
 
 /// State required to resume a caller after a non-tail call completes.
 ///
-/// The payload deliberately owns the caller register window and immutable
-/// instruction slice.  This makes the transition independent of Rust's call
-/// stack and keeps all state needed by the dispatch loop in one value.
+/// `caller_code` and `caller_pc` are compact integer return addresses.  The
+/// isolate's code store is the sole owner of instructions; continuations never
+/// retain an instruction slice or AST/IR allocation.  The address is valid
+/// only while the originating machine/store is alive.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallContinuation {
     pub callee: Value,
     pub receiver: Value,
     pub arguments: Vec<Value>,
-    pub caller_ops: Rc<[crate::ops::Op]>,
+    pub caller_code: crate::identity::CodeId,
     pub caller_pc: u32,
     pub caller_registers: Vec<Value>,
     pub caller_environment: crate::identity::EnvironmentRef,

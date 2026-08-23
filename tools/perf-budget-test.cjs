@@ -65,4 +65,17 @@ result = cp.spawnSync(process.execPath, [gate, invalidBudget, process.execPath, 
 assert.strictEqual(result.status, 1);
 assert.match(result.stderr, /invalid performance budget limit/);
 
-console.log("perf-budget: null, missing, nonfinite, and over-budget metrics verified");
+const emptyBudget = path.join(dir, "empty-budget.json");
+fs.writeFileSync(emptyBudget, "{}");
+result = cp.spawnSync(process.execPath, [gate, emptyBudget, process.execPath, "-e", "console.log('{}')"], { encoding: "utf8" });
+assert.strictEqual(result.status, 1);
+assert.match(result.stderr, /must define at least one metric/);
+
+const negativeBudget = path.join(dir, "negative-budget.json");
+fs.writeFileSync(negativeBudget, JSON.stringify({ cycles: -1 }));
+result = cp.spawnSync(process.execPath, [gate, negativeBudget, process.execPath, "-e", "console.log('{}')"], { encoding: "utf8" });
+assert.strictEqual(result.status, 1);
+assert.match(result.stderr, /invalid performance budget limit/);
+
+console.log("perf-budget: source shape, null, missing, nonfinite, and over-budget metrics verified");
+
