@@ -264,6 +264,7 @@ fn primitive_prototype(value: &Value) -> Option<Value> {
     let builtin = match value {
         Value::Number(_) => Builtin::NumberPrototype,
         Value::Boolean(_) => Builtin::BooleanPrototype,
+        Value::StringUnits(_) => Builtin::StringPrototype,
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             Builtin::StringPrototype
         }

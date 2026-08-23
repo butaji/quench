@@ -50,10 +50,7 @@ fn static_pairs() -> Vec<(String, Value)> {
         .collect();
     // Buffer.of shares the same host capability as the legacy generated
     // constructor table; keep it in the single static-method surface.
-    pairs.push((
-        "of".to_string(),
-        crate::host::scheduler_capability(2044),
-    ));
+    pairs.push(("of".to_string(), crate::host::scheduler_capability(2044)));
     pairs.push(("poolSize".to_string(), Value::Number(8192.0)));
     pairs.push(("kMaxLength".to_string(), Value::Number(MAX_LENGTH)));
     pairs.push((
@@ -233,9 +230,23 @@ pub fn byte_length(
 }
 
 pub fn is_buffer(args: &[Value]) -> bool {
+    let Some(Value::Uint8Array(_)) = args.first() else {
+        return false;
+    };
+    let value = args.first().expect("checked above");
+    let prototype = quench_runtime::execute::get_prototype_of(value).unwrap_or(Value::Undefined);
+    if quench_runtime::execute::same_value(
+        &prototype,
+        &crate::modules::buffer_proto::buffer_prototype(),
+    ) {
+        return true;
+    }
+    // Host-created Buffer views carry the canonical backing-store marker;
+    // ordinary Uint8Array views do not. This preserves Buffer identity even
+    // when a view is returned through a copy-on-write prototype path.
     matches!(
-        args.first().cloned().unwrap_or(Value::Undefined),
-        Value::Uint8Array(_)
+        quench_runtime::execute::get_property(value, "parent"),
+        Value::ArrayBuffer(_)
     )
 }
 
