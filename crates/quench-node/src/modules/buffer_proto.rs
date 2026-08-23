@@ -23,8 +23,20 @@ thread_local! {
 /// Methods installed (non-enumerable) on `Buffer.prototype`.
 const PROTOTYPE_METHODS: &[(&str, NodeSpec)] = &[
     ("toString", r::SPEC_BUFFER_TOSTRING),
+    // Legacy encoding entry points share the canonical codec paths.
+    ("asciiSlice", r::SPEC_BUFFER_TOSTRING),
+    ("base64Slice", r::SPEC_BUFFER_TOSTRING),
+    ("base64urlSlice", r::SPEC_BUFFER_TOSTRING),
+    ("latin1Slice", r::SPEC_BUFFER_TOSTRING),
+    ("hexSlice", r::SPEC_BUFFER_TOSTRING),
+    ("ucs2Slice", r::SPEC_BUFFER_TOSTRING),
+    ("utf8Slice", r::SPEC_BUFFER_TOSTRING),
     ("write", r::SPEC_BUFFER_WRITE),
     ("asciiWrite", r::SPEC_BUFFER_ASCII_WRITE),
+    ("base64Write", r::SPEC_BUFFER_WRITE),
+    ("base64urlWrite", r::SPEC_BUFFER_WRITE),
+    ("hexWrite", r::SPEC_BUFFER_WRITE),
+    ("ucs2Write", r::SPEC_BUFFER_WRITE),
     ("latin1Write", r::SPEC_BUFFER_LATIN1_WRITE),
     ("utf8Write", r::SPEC_BUFFER_UTF8_WRITE),
     ("equals", r::SPEC_BUFFER_EQUALS),
@@ -104,16 +116,6 @@ const PROTOTYPE_METHODS: &[(&str, NodeSpec)] = &[
     ("writeIntLE", r::SPEC_BUF_WRITE_INT_LE),
     ("writeIntBE", r::SPEC_BUF_WRITE_INT_BE),
 ];
-const ITERATOR_METHODS: &[(&str, quench_runtime::ops::Builtin)] = &[
-    (
-        "Symbol.iterator",
-        quench_runtime::ops::Builtin::ArrayIterator,
-    ),
-    ("values", quench_runtime::ops::Builtin::ArrayIterator),
-    ("keys", quench_runtime::ops::Builtin::ArrayKeys),
-    ("entries", quench_runtime::ops::Builtin::ArrayEntries),
-];
-
 pub fn buffer_prototype() -> Value {
     BUFFER_PROTOTYPE.with(|slot| {
         if let Some(prototype) = &*slot.borrow() {
@@ -137,14 +139,15 @@ pub fn buffer_prototype() -> Value {
             .collect();
         let mut prototype = crate::host::namespace_object(methods)
             .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
-        for (name, builtin) in ITERATOR_METHODS {
-            prototype =
-                quench_runtime::execute::set_property(prototype, name, Value::Builtin(*builtin));
-        }
+        prototype = quench_runtime::execute::set_property(
+            prototype,
+            "constructor",
+            crate::host::capability(r::SPEC_BUFFER_NEW),
+        );
         prototype = quench_runtime::execute::set_property(
             prototype,
             "subarray",
-            Value::Builtin(quench_runtime::ops::Builtin::Uint8ArraySubarray),
+            crate::host::capability(r::SPEC_BUFFER_SUBARRAY),
         );
         // `util.inspect.custom` is a global symbol. Store the same function
         // object as the named inspect method so identity and symbol lookup
@@ -202,6 +205,15 @@ fn finish_view(mut view: Value, buffer: &Rc<ArrayBufferData>, byte_offset: usize
         ],
     );
     view
+}
+
+pub(crate) fn finish_view_for_methods(view: Value) -> Value {
+    let Value::Uint8Array(data) = &view else {
+        return view;
+    };
+    let buffer = data.buffer.clone();
+    let offset = data.byte_offset;
+    finish_view(view, &buffer, offset)
 }
 
 /// Construct a Buffer value from raw bytes (Node's `Buffer.from(bytes)`).

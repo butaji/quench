@@ -404,7 +404,9 @@ NodeBuffer.prototype.subarray = function subarray(
   };
   const start = index(begin, 0);
   const finish = Math.max(start, index(end, this.length));
-  return new NodeBuffer(this.buffer, this.byteOffset + start, finish - start);
+  const output = new NodeBuffer(this.buffer, this.byteOffset + start, finish - start);
+  Object.setPrototypeOf(output, NodeBuffer.prototype);
+  return output;
 };
 NodeBuffer.prototype.slice = function slice(start = 0, end = this.length) {
   return this.subarray(start, end);
