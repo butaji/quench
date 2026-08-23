@@ -12,6 +12,7 @@ use std::collections::HashMap;
 const GLOBAL_THIS: &str = "globalThis";
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
 pub(super) const MODULE_THIS_SLOT: &str = "\0module_this";
+pub(super) const IMPORT_META_SLOT: &str = "\0import_meta";
 type ReducedStatements = (Vec<Op>, HashMap<String, u16>);
 type ReducedProgram = (
     ProgramDb,

@@ -54,6 +54,9 @@ pub(crate) fn construct_builtin_in_realm(
 }
 
 fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Value, VmError> {
+    if source.contains("import.meta") {
+        return Err(syntax_error("import.meta is only valid in modules"));
+    }
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
     if parsed.panicked || !parsed.errors.is_empty() {

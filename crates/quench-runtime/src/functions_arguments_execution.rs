@@ -4,6 +4,14 @@ pub(crate) fn function_builtin(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match builtin {
+        crate::ops::Builtin::Function
+        | crate::ops::Builtin::AsyncFunction
+        | crate::ops::Builtin::GeneratorFunction
+        | crate::ops::Builtin::AsyncGeneratorFunction => crate::functions_dynamic::construct_builtin(
+            builtin,
+            arguments,
+        )
+        .unwrap_or_else(|| Err(crate::execute::VmError::NotCallable)),
         crate::ops::Builtin::FunctionCall => execute_function_call(receiver, arguments),
         crate::ops::Builtin::FunctionApply => {
             crate::vm::execute_function_apply(receiver, arguments)
