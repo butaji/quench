@@ -197,6 +197,10 @@ fn require_special(_state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result
             "createInterface",
             capability_value(crate::registry::SPEC_READLINE),
         )]))),
+        "internal/test/binding" => Some(Ok(namespace_of(vec![(
+            "internalBinding",
+            capability_value(crate::registry::NodeSpec::new("internalBinding", 2066)),
+        )]))),
         "sqlite" | "node:sqlite" => Some(cached_module(_state, "node:sqlite", || {
             Ok(namespace_of_owned(vec![(
                 "DatabaseSync".to_string(),
