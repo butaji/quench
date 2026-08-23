@@ -68,6 +68,11 @@ pub(crate) fn to_offset(value: Option<&Value>) -> f64 {
         Some(Value::Boolean(b)) => f64::from(u8::from(*b)),
         Some(Value::String(s)) => s.trim().parse().unwrap_or(0.0),
         Some(Value::BigInt(s)) => s.parse().unwrap_or(0.0),
+        Some(Value::Array(array)) => match array.logical_len() {
+            0 => 0.0,
+            1 => to_offset(array.index_value(0).as_ref()),
+            _ => f64::NAN,
+        },
         _ => 0.0,
     }
 }
@@ -294,7 +299,9 @@ pub fn fill(
     }
     let view = this_view(receiver)?;
     if let Some(receiver) = receiver {
-        if let Ok(Value::Number(length)) = quench_runtime::execute::get_property_result(receiver, "length") {
+        if let Ok(Value::Number(length)) =
+            quench_runtime::execute::get_property_result(receiver, "length")
+        {
             if length != view.length as f64 {
                 return Err(enc::buffer_out_of_bounds(
                     "Attempt to access memory outside buffer bounds",
@@ -323,9 +330,13 @@ pub fn fill(
 }
 
 fn validate_fill_bound(value: Option<&Value>, length: usize, name: &str) -> Result<(), VmError> {
-    let Some(value) = value else { return Ok(()); };
+    let Some(value) = value else {
+        return Ok(());
+    };
     let Value::Number(value) = value else {
-        if matches!(value, Value::Undefined) { return Ok(()); }
+        if matches!(value, Value::Undefined) {
+            return Ok(());
+        }
         return Err(enc::invalid_arg_type(format!(
             "The \"{name}\" argument must be of type number.{}",
             crate::modules::util::invalid_arg_received(value)
@@ -374,14 +385,18 @@ fn fill_pattern(fill: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError
             let valid = value.chars().count() % 2 == 0
                 && value.chars().all(|character| character.is_ascii_hexdigit());
             if !valid {
-                return Err(enc::invalid_arg_value("The argument 'value' is invalid".into()));
+                return Err(enc::invalid_arg_value(
+                    "The argument 'value' is invalid".into(),
+                ));
             }
             Ok(enc::encode_value(fill, "hex")?)
         }
         Value::StringUnits(units) if encoding == Some("hex") => {
             let value = String::from_utf16_lossy(units);
             if value.chars().count() % 2 != 0 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Err(enc::invalid_arg_value("The argument 'value' is invalid".into()));
+                return Err(enc::invalid_arg_value(
+                    "The argument 'value' is invalid".into(),
+                ));
             }
             Ok(enc::encode_value(fill, "hex")?)
         }
