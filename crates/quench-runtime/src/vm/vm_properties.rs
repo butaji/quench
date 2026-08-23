@@ -37,7 +37,12 @@ pub(crate) fn read_register_unchecked(registers: &[Value], index: u16) -> Value 
     crate::locals::resolved_replacement(value)
 }
 pub fn get_property(value: &Value, key: &str) -> Value {
-    crate::module_bindings::exports(value, key).ok();
+    // Deferred module namespaces are the only values for which export lookup
+    // can have an effect. Avoid entering the module-binding machinery for the
+    // overwhelmingly common primitive/builtin/array property reads.
+    if matches!(value, Value::Object(_) | Value::BindingCell(_)) {
+        crate::module_bindings::exports(value, key).ok();
+    }
     if let Value::BindingCell(cell) = value {
         return get_property(&cell.borrow(), key);
     }
