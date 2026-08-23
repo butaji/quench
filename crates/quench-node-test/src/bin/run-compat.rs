@@ -80,6 +80,10 @@ fn run_with_dir(dir: std::path::PathBuf, quiet: bool, list: bool) -> ExitCode {
         return ExitCode::from(2);
     }
     let fixtures = filter_fixtures(fixtures);
+    if fixtures.is_empty() {
+        eprintln!("error: filter selected no `*.js` fixtures under {}", dir.display());
+        return ExitCode::from(2);
+    }
     if list {
         for f in &fixtures {
             println!("{}", f.file_name().unwrap().to_string_lossy());
@@ -89,7 +93,10 @@ fn run_with_dir(dir: std::path::PathBuf, quiet: bool, list: bool) -> ExitCode {
     let mut runner = quench_node_test::NodeTestRunner::new();
     let summary = run_suite(&mut runner, &fixtures, quiet);
     print_summary(&summary, fixtures.len());
-    if summary.failed == 0 {
+    // A skip is not compatibility evidence.  Keep it visible in the
+    // aggregate and fail the gate until the fixture is either supported or
+    // explicitly removed from the selected suite.
+    if summary.failed == 0 && summary.skipped == 0 {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)

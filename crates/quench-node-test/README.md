@@ -2,12 +2,12 @@
 
 Test runner for the [`quench-node`](../quench-node) host. Owns:
 
-- the upstream Node fixture submodule at `node-tests/`
-  (`https://github.com/nodejs/node`, path `test/`);
-- the runner that discovers, composes, and executes those
-  fixtures through the host contract;
-- the completion classifier that maps a host run to pass / fail /
-  skip / crash.
+- the checked-in focused compatibility fixtures under `node-tests/`;
+- the upstream Node.js submodule at `../../tests/node`, exercised by the
+  `run-parallel` manifest runner;
+- the runner that discovers, composes, and executes those fixtures through the
+  host contract;
+- the completion classifier that maps a host run to pass / fail / skip / crash.
 
 ## Boundaries
 
@@ -15,15 +15,14 @@ The runner never:
 
 - re-implements Node's test runner, harness, or assertion library;
 - shims or rewrites Node's `common` test helper;
-- depends on the Node API surface in a way that influences
-  fixture outcomes.
+- depends on the Node API surface in a way that influences fixture outcomes.
 
-It is a pure-JS-execution pipeline: each fixture is parsed
-and reduced by `quench-runtime` and executed by `quench-node`.
+It is a pure-JS-execution pipeline: each fixture is parsed and reduced by
+`quench-runtime` and executed by `quench-node`.
 
 ## Usage
 
-Run the full compat suite:
+Run the focused host/API suite:
 
 ```sh
 cargo run -p quench-node-test --bin run-compat
@@ -47,58 +46,60 @@ Run a single ad-hoc script through the host:
 cargo run -p quench-node-test --bin run -- crates/quench-node-test/node-tests/test-os.js
 ```
 
-## Suite
+## Focused suite
 
-The compat suite is a plain directory of Node compat API
-scripts under `node-tests/` (currently 28 scripts). Each test
-is a self-contained file:
-it requires the relevant `node:` module, runs a small set of
-operations, and throws on failure. There is no `node:test`
-runner, no `common.mustCall`, and no harness. The host must
-satisfy each script's observable behavior.
+This suite is a plain directory of focused Node API scripts under `node-tests/`
+(currently 89 scripts). It is a fast host-regression signal, not a complete Node
+compatibility claim. Each test is a self-contained file: it requires the
+relevant `node:` module, runs a small set of operations, and throws on failure.
+There is no `node:test` runner, no `common.mustCall`, and no harness. The host
+must satisfy each script's observable behavior.
 
-Current coverage (28 scripts):
+The exact inventory is the `*.js` files in `node-tests/`; keep this
+documentation summary aligned when adding a new API family. Current coverage (89
+scripts):
+
+For upstream Node coverage, run `run-parallel`; its manifest is the
+authoritative selected slice of `tests/node/test/parallel`.
 
 - `test-assert.js` — assert.ok function shape
 - `test-buffer.js` — Buffer.from / Buffer.alloc / Buffer.concat
-- `test-child-process.js` — child_process.spawnSync (real subprocess
-  execution, status/stdout/error codes)
+- `test-child-process.js` — child_process.spawnSync (real subprocess execution,
+  status/stdout/error codes)
 - `test-console.js` — console.log/info/warn/error/debug/trace
 - `test-dns.js` — dns.lookup (callback)
 - `test-events.js` — events.EventEmitter round-trip
 - `test-fs.js` — fs.readFileSync / readdirSync
 - `test-modules.js` — every v1 `node:` module resolves
-- `test-http.js` — real HTTP server (createServer/listen) answered by a
-  raw net client request, asserting the parsed req and serialized res
-- `test-http-client.js` — http.request client round-trips against a
-  local http server, parsing the response status and body
-- `test-http-url.js` — http.get accepts a string URL and routes it to a
-  local server, echoing the parsed path
-- `test-readline.js` — readline.createInterface emits 'line' per input
-  line then 'close'
+- `test-http.js` — real HTTP server (createServer/listen) answered by a raw net
+  client request, asserting the parsed req and serialized res
+- `test-http-url.js` — http.get accepts a string URL and routes it to a local
+  server, echoing the parsed path
+- `test-readline.js` — readline.createInterface emits 'line' per input line then
+  'close'
 - `test-zlib-sync.js` — zlib gzip/gunzip, deflateRaw/inflateRaw, and
   deflate/inflate round-trips (flate2-backed, matching Node)
-- `test-http-post.js` — the server streams a Content-Length request body
-  to req 'data'/'end' and echoes it back to an http.request POST
-- `test-http-keepalive.js` — two requests served over one connection,
-  framed by Content-Length with Connection: keep-alive on each response
+- `test-http-post.js` — the server streams a Content-Length request body to req
+  'data'/'end' and echoes it back to an http.request POST
+- `test-http-keepalive.js` — two requests served over one connection, framed by
+  Content-Length with Connection: keep-alive on each response
 - `test-npm-require.js` — require() resolves a bare specifier through
-  node_modules via package.json main, loads a vendored package, and
-  resolves its nested dependency (also manually verified against the
-  published `ms` and `strip-ansi`/`ansi-regex` packages)
-- `test-npm-ms.js` — the vendored, real published `ms` package loads and
-  runs under quench-node, with parse/format output matching Node
-- `test-net.js` — net.isIP family + real loopback TCP (server.listen,
-  socket write/read echo, close) through the event-loop pump
-- `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces plus
-  real type / platform / arch / release / hostname callables
-- `test-path.js` — path.join / normalize / dirname / basename /
-  extname / isAbsolute / relative + posix/win32 subnamespaces
+  node_modules via package.json main, loads a vendored package, and resolves its
+  nested dependency (also manually verified against the published `ms` and
+  `strip-ansi`/`ansi-regex` packages)
+- `test-npm-ms.js` — the vendored, real published `ms` package loads and runs
+  under quench-node, with parse/format output matching Node
+- `test-net.js` — net.isIP family + real loopback TCP (server.listen, socket
+  write/read echo, close) through the event-loop pump
+- `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces plus real type
+  / platform / arch / release / hostname callables
+- `test-path.js` — path.join / normalize / dirname / basename / extname /
+  isAbsolute / relative + posix/win32 subnamespaces
 - `test-process.js` — process.version / platform / arch / pid
 - `test-querystring.js` — querystring.parse / stringify / escape
 - `test-stream.js` — stream module shape (Readable/Writable/...)
-- `test-string-replace.js` — String.prototype.replace works on strings
-  with code-unit/ANSI content (regression for a StringUnits receiver bug)
+- `test-string-replace.js` — String.prototype.replace works on strings with
+  code-unit/ANSI content (regression for a StringUnits receiver bug)
 - `test-util.js` — util.format / util.inspect shape
 - `test-vm.js` — vm + string_decoder shape
 - `test-dgram.js` — dgram shape (createSocket stub)

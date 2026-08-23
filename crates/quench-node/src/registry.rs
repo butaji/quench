@@ -98,6 +98,14 @@ fn push_timer_bindings(out: &mut Vec<(String, quench_runtime::value::Value)>) {
 }
 
 fn push_runtime_bindings(out: &mut Vec<(String, quench_runtime::value::Value)>) {
+    // Bootstrap console helpers use this edge capability directly when a
+    // process stream has not been installed yet. Keep it derived from the
+    // canonical console-log declaration rather than inventing another host
+    // operation.
+    out.push((
+        "__quench_console_write".to_string(),
+        crate::host::capability(crate::registry::SPEC_CONSOLE_LOG),
+    ));
     out.push((
         "queueMicrotask".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("queueMicrotask", 0x0707)),

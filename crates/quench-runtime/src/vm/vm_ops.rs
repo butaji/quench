@@ -231,7 +231,7 @@ fn invoke_with_receiver(
                 crate::ops::HostCapabilityKind::Custom(1)
             ))
         ) {
-            let capability = super::realm_token(bound.realm).ok_or(VmError::NotCallable)?;
+            let capability = bound_capability(bound)?;
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments);
             return crate::vm::execute_legacy_require_direct(&capability, &combined);
@@ -239,7 +239,7 @@ fn invoke_with_receiver(
     }
     if let Value::BoundFunction(bound) = callee_value {
         if let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target {
-            let capability = super::realm_token(bound.realm).ok_or(VmError::NotCallable)?;
+            let capability = bound_capability(bound)?;
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments);
             return crate::vm::execute_host_capability_with_receiver(
@@ -409,6 +409,13 @@ fn invoke_with_receiver(
                 &[Value::String(message)],
             )))
         }
+    }
+}
+
+fn bound_capability(bound: &crate::value::BoundFunctionValue) -> Result<Value, VmError> {
+    match &bound.receiver {
+        Value::HostCapability(_) => Ok(bound.receiver.clone()),
+        _ => super::realm_token(bound.realm).ok_or(VmError::NotCallable),
     }
 }
 fn host_kind_id(kind: crate::ops::HostCapabilityKind) -> u32 {
