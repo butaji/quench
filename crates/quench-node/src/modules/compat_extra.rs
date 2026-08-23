@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 fn load(source: &str) -> Result<Value, VmError> {
     let wrapped = format!("(function(module){{{source};return module.exports;}})");
-    let program = quench_runtime::reduce::reduce_source(&wrapped)
+    let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|e| VmError::EvalError(e.join("; ")))?;
     let context = quench_runtime::vm::current_context();
     let mut regs = Vec::new();
