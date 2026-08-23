@@ -58,7 +58,9 @@ pub fn resolve_stages(node_tests_root: &Path) -> Result<Vec<ResolvedStage>, Stri
         .collect())
 }
 
-/// Discover all `*.js` fixtures under `root`, filtered by stage.
+/// Discover all executable JavaScript fixtures under `root`, filtered by
+/// stage. Node's upstream suite uses `.js`, `.mjs`, and `.cjs`; omitting the
+/// latter two silently turns a purported full-suite run into a partial one.
 pub fn discover_fixtures(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -70,7 +72,11 @@ pub fn discover_fixtures(root: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 pending.push(path);
-            } else if path.is_file() && path.extension().is_some_and(|ext| ext == "js") {
+            } else if path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| matches!(ext.to_str(), Some("js" | "mjs" | "cjs")))
+            {
                 out.push(path);
             }
         }
