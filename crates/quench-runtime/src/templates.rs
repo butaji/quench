@@ -5,6 +5,7 @@ use oxc::ast::ast::TemplateLiteral;
 use crate::{
     facts::ProgramDb,
     ops::{BinaryOp, Constant, Op, UnaryOp},
+    register_file::RegisterFile,
 };
 
 thread_local! {
@@ -14,7 +15,7 @@ thread_local! {
 }
 
 pub(crate) fn execute_tagged_template(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), crate::execute::VmError> {
     let crate::ops::Op::TemplateObject {

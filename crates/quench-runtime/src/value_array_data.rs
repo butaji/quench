@@ -456,7 +456,21 @@ impl ArrayData {
     }
 
     pub(crate) fn append_physical(&mut self, values: &[Value]) {
-        self.values.extend_from_slice(values);
+        match &mut self.values {
+            DenseElements::Numbers(numbers)
+                if values.iter().all(|value| matches!(value, Value::Number(_))) => {
+                    numbers.borrow_mut().extend(values.iter().map(|value| {
+                        let Value::Number(number) = value else { unreachable!() };
+                        std::cell::Cell::new(*number)
+                    }));
+                }
+            DenseElements::Numbers(_) => {
+                let mut current = self.values.materialize_values().to_vec();
+                current.extend_from_slice(values);
+                self.values = DenseElements::Values(current);
+            }
+            DenseElements::Values(current) => current.extend_from_slice(values),
+        }
         self.length = self.length.saturating_add(values.len());
     }
 
