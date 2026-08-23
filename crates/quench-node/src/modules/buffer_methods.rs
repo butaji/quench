@@ -77,6 +77,14 @@ pub(crate) fn to_offset(value: Option<&Value>) -> f64 {
     }
 }
 
+fn to_offset_checked(value: Option<&Value>) -> Result<f64, VmError> {
+    let Some(value) = value else {
+        return Ok(0.0);
+    };
+    let number = quench_runtime::to_number(value)?;
+    Ok(if number.is_nan() { 0.0 } else { number.trunc() })
+}
+
 /// Clamped `start`/`end` slice bounds per Node's `toString`/`slice`.
 fn clamp_bounds(args: &[Value], at: usize, len: usize, default: f64) -> usize {
     let raw = to_offset(args.get(at));
@@ -205,30 +213,30 @@ pub fn copy(
             crate::modules::util::invalid_arg_received(args.first().unwrap_or(&Value::Undefined))
         )));
     };
-    let count = match copy_count(&view, &target, args)? {
-        Some(n) => n,
+    let (target_start, source_start, count) = match copy_count(&view, &target, args)? {
+        Some(range) => range,
         None => return Ok(Value::Number(0.0)),
     };
-    let target_start = to_offset(args.get(1)).max(0.0) as usize;
-    copy_transfer(&view, &target, target_start, count)
+    copy_transfer(&view, &target, target_start, source_start, count)
 }
 
 fn copy_transfer(
     view: &Uint8ArrayData,
     target: &Uint8ArrayData,
     target_start: usize,
+    source_start: usize,
     count: usize,
 ) -> Result<Value, VmError> {
     let mut source_bytes = view.buffer.bytes.borrow_mut();
     let same = Rc::ptr_eq(&view.buffer, &target.buffer);
     if same {
         source_bytes.copy_within(
-            view.byte_offset + target_start..view.byte_offset + target_start + count,
+            view.byte_offset + source_start..view.byte_offset + source_start + count,
             target.byte_offset + target_start,
         );
     } else {
         let chunk: Vec<u8> = source_bytes
-            [view.byte_offset + target_start..view.byte_offset + target_start + count]
+            [view.byte_offset + source_start..view.byte_offset + source_start + count]
             .to_vec();
         drop(source_bytes);
         target.buffer.bytes.borrow_mut()
@@ -242,10 +250,21 @@ fn copy_count(
     view: &Uint8ArrayData,
     target: &Uint8ArrayData,
     args: &[Value],
-) -> Result<Option<usize>, VmError> {
+) -> Result<Option<(usize, usize, usize)>, VmError> {
+    let target_start_raw = to_offset_checked(args.get(1))?;
+    if args.get(1).is_some() && target_start_raw < 0.0 {
+        return Err(enc::out_of_range(
+            "targetStart",
+            ">= 0",
+            &enc::fmt_num(target_start_raw),
+        ));
+    }
     // Node rejects indexes that do not fit in a 32-bit size_t.
     for (at, name) in [(2, "sourceStart"), (3, "sourceEnd")] {
-        let raw = to_offset(args.get(at));
+        let raw = to_offset_checked(args.get(at))?;
+        if args.get(at).is_some() && raw < 0.0 {
+            return Err(enc::out_of_range(name, ">= 0", &enc::fmt_num(raw)));
+        }
         if args.get(at).is_some() && raw > u32::MAX as f64 {
             return Err(enc::out_of_range(
                 name,
@@ -254,15 +273,30 @@ fn copy_count(
             ));
         }
     }
-    let source_start = clamp_bounds(args, 2, view.length, 0.0);
-    let source_end = clamp_bounds(args, 3, view.length, view.length as f64);
-    let target_start = to_offset(args.get(1)).max(0.0) as usize;
+    let source_start_raw = to_offset_checked(args.get(2))?;
+    let source_end_raw = if args.get(3).is_none() {
+        view.length as f64
+    } else {
+        to_offset_checked(args.get(3))?
+    };
+    let source_start = source_start_raw.min(view.length as f64) as usize;
+    let source_end = source_end_raw.min(view.length as f64) as usize;
+    let target_start = target_start_raw.max(0.0) as usize;
+    if args.get(2).is_some() && source_start_raw > view.length as f64 {
+        return Err(enc::out_of_range(
+            "sourceStart",
+            &format!("<= {}", view.length),
+            &enc::fmt_num(source_start_raw),
+        ));
+    }
     if target_start >= target.length || source_start >= source_end {
         return Ok(None);
     }
-    Ok(Some(
+    Ok(Some((
+        target_start,
+        source_start,
         (source_end - source_start).min(target.length - target_start),
-    ))
+    )))
 }
 
 /// `buf.fill(value[, offset[, end]][, encoding])`.
