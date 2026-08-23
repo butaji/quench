@@ -110,10 +110,14 @@ fn filter_fixtures(fixtures: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf>
     match filter {
         Some(name) => fixtures
             .into_iter()
-            .filter(|f| f.file_name().unwrap().to_string_lossy().contains(&name))
+            .filter(|f| fixture_matches(f, &name))
             .collect(),
         None => fixtures,
     }
+}
+
+fn fixture_matches(path: &std::path::Path, filter: &str) -> bool {
+    path.to_string_lossy().contains(filter)
 }
 
 struct SuiteSummary {
@@ -229,7 +233,8 @@ fn print_summary(summary: &SuiteSummary, total: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::SuiteSummary;
+    use super::{fixture_matches, SuiteSummary};
+    use std::path::PathBuf;
 
     #[test]
     fn summary_total_includes_skips_and_failures() {
@@ -240,5 +245,11 @@ mod tests {
             failed_names: vec!["broken.js".into()],
         };
         assert_eq!(summary.total(), 6);
+    }
+
+    #[test]
+    fn filter_matches_nested_fixture_paths() {
+        let fixture = PathBuf::from("node-tests/node_modules/ms/index.js");
+        assert!(fixture_matches(&fixture, "node_modules/ms/index.js"));
     }
 }
