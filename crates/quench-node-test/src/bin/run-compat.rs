@@ -84,6 +84,14 @@ fn run_with_options(options: Options) -> ExitCode {
         return ExitCode::from(2);
     }
     let fixtures = filter_fixtures(fixtures, options.filter.as_deref());
+    if fixtures.is_empty() {
+        if let Some(filter) = options.filter.as_deref() {
+            eprintln!("error: no fixtures match --filter {filter:?}");
+        } else {
+            eprintln!("error: no fixtures remain after discovery");
+        }
+        return ExitCode::from(2);
+    }
     if options.list {
         for f in &fixtures {
             println!("{}", f.file_name().unwrap().to_string_lossy());
