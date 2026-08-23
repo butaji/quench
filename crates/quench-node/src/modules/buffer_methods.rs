@@ -207,7 +207,7 @@ pub fn copy(
     args: &[Value],
 ) -> HandlerResult {
     let view = this_view(receiver)?;
-    let Some(Value::Uint8Array(target)) = args.first() else {
+    let Some(target) = args.first().and_then(as_byte_view) else {
         return Err(enc::invalid_arg_type(format!(
             "The \"target\" argument must be an instance of Buffer or Uint8Array.{}",
             crate::modules::util::invalid_arg_received(args.first().unwrap_or(&Value::Undefined))
@@ -218,6 +218,31 @@ pub fn copy(
         None => return Ok(Value::Number(0.0)),
     };
     copy_transfer(&view, &target, target_start, source_start, count)
+}
+
+fn as_byte_view(value: &Value) -> Option<Rc<Uint8ArrayData>> {
+    macro_rules! view {
+        ($data:expr) => {{ Some(Rc::new(Uint8ArrayData::new(
+            $data.buffer.clone(),
+            $data.byte_offset,
+            $data.byte_length(),
+        ))) }};
+    }
+    match value {
+        Value::Uint8Array(data) => Some(data.clone()),
+        Value::Float64Array(data) => view!(data),
+        Value::Float32Array(data) => view!(data),
+        Value::Int8Array(data) => view!(data),
+        Value::Int16Array(data) => view!(data),
+        Value::Int32Array(data) => view!(data),
+        Value::Uint16Array(data) => view!(data),
+        Value::Uint32Array(data) => view!(data),
+        Value::Uint8ClampedArray(data) => view!(data),
+        Value::BigInt64Array(data) => view!(data),
+        Value::BigUint64Array(data) => view!(data),
+        Value::DataView(data) => view!(data),
+        _ => None,
+    }
 }
 
 fn copy_transfer(

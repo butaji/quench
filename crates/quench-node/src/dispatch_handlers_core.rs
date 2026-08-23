@@ -40,6 +40,14 @@ pub fn events_call(
     crate::modules::events::new_emitter(state, &[])
 }
 
+pub fn buffer_of(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::buffer_from::of(args)
+}
+
 // ---- console ----
 pub fn console_log(
     state: &Rc<RefCell<HostState>>,
