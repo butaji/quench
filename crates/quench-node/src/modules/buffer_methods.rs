@@ -25,7 +25,10 @@ pub fn inspect(
     let view = this_view(receiver)?;
     let bytes = view_bytes(&view);
     let shown: Vec<String> = bytes.iter().take(MAX).map(|b| format!("{b:02x}")).collect();
-    let mut out = format!("<Buffer {}", shown.join(" "));
+    let label = receiver
+        .filter(|value| crate::modules::buffer::is_buffer(std::slice::from_ref(value)))
+        .map_or("Uint8Array", |_| "Buffer");
+    let mut out = format!("<{label} {}", shown.join(" "));
     if bytes.len() > MAX {
         let rest = bytes.len() - MAX;
         let plural = if rest == 1 { "" } else { "s" };
@@ -150,9 +153,20 @@ pub fn equals(
     args: &[Value],
 ) -> HandlerResult {
     let view = this_view(receiver)?;
-    let other = require_buffer(args.first().unwrap_or(&Value::Undefined), "otherBuffer")?;
+    let other = args
+        .first()
+        .and_then(as_byte_view)
+        .ok_or_else(|| {
+            enc::invalid_arg_type(format!(
+                "The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array.{}",
+                crate::modules::util::invalid_arg_received(
+                    args.first().unwrap_or(&Value::Undefined)
+                )
+            ))
+        })?;
     let bytes = view_bytes(&view);
-    Ok(Value::Boolean(bytes[..] == other[..]))
+    let other_bytes = view_bytes(&other);
+    Ok(Value::Boolean(bytes[..] == other_bytes[..]))
 }
 
 fn compare_ranges(a: &[u8], b: &[u8]) -> f64 {
@@ -222,11 +236,13 @@ pub fn copy(
 
 fn as_byte_view(value: &Value) -> Option<Rc<Uint8ArrayData>> {
     macro_rules! view {
-        ($data:expr) => {{ Some(Rc::new(Uint8ArrayData::new(
-            $data.buffer.clone(),
-            $data.byte_offset,
-            $data.byte_length(),
-        ))) }};
+        ($data:expr) => {{
+            Some(Rc::new(Uint8ArrayData::new(
+                $data.buffer.clone(),
+                $data.byte_offset,
+                $data.byte_length(),
+            )))
+        }};
     }
     match value {
         Value::Uint8Array(data) => Some(data.clone()),
@@ -477,10 +493,31 @@ pub fn slice(
     let start = clamp_bounds(args, 0, view.length, 0.0);
     let end = clamp_bounds(args, 1, view.length, view.length as f64);
     let len = end.saturating_sub(start);
-    Ok(crate::modules::buffer_proto::make_view(
+    let raw = Value::Uint8Array(Rc::new(Uint8ArrayData::new(
         view.buffer.clone(),
         view.byte_offset + start,
         len,
+    )));
+    if receiver.is_some_and(|value| crate::modules::buffer::is_buffer(std::slice::from_ref(value)))
+    {
+        Ok(crate::modules::buffer_proto::finish_view_for_methods(raw))
+    } else {
+        Ok(raw)
+    }
+}
+
+pub fn subarray(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> HandlerResult {
+    let view = this_view(receiver)?;
+    let start = clamp_bounds(args, 0, view.length, 0.0);
+    let end = clamp_bounds(args, 1, view.length, view.length as f64);
+    Ok(crate::modules::buffer_proto::make_view(
+        view.buffer.clone(),
+        view.byte_offset + start,
+        end.saturating_sub(start),
     ))
 }
 
