@@ -213,7 +213,7 @@ pub enum Builtin {
     ObjectIsSealed, ObjectIsExtensible,
     ObjectGetPrototypeOf, ObjectSetPrototypeOf,
     FunctionPrototypeToString, FunctionPrototypeValueOf, FunctionPrototypeHasInstance,
-    ArrayToLocaleString, ArrayIterator,
+    ArrayToLocaleString, ArrayIterator, TypedArrayIterator,
     ArrayIteratorPrototype, StringIterator,
     StringIteratorPrototype, StringIteratorNext,
     SetIteratorPrototype, MapIteratorPrototype,

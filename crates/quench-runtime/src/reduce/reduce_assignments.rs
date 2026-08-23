@@ -413,7 +413,10 @@ fn reduce_member_object(
     }
     let object = crate::reduce::reduce_expression(expression, ops, facts, next, locals)?;
     let preserved = take_register(next);
-    ops.push(Op::Move { dst: preserved, src: object });
+    ops.push(Op::Move {
+        dst: preserved,
+        src: object,
+    });
     Some(Some(preserved))
 }
 

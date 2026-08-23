@@ -409,9 +409,13 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
     let context = fresh_context();
-    execute_with_context(program.ops(), &context)
+    let result = execute_with_context(program.ops(), &context)
         .map(|_| ())
-        .map_err(|error| format!("residual VM error: {}", error.render()))
+        .map_err(|error| format!("residual VM error: {}", error.render()));
+    // Promise reactions (including asyncHelpers' $DONE handler) are queued
+    // during script execution and must settle before the host reports success.
+    quench_runtime::module_bindings::drain_jobs();
+    result
 }
 
 fn fresh_context() -> VmContext {

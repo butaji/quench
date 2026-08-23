@@ -246,6 +246,12 @@ fn descriptor_property_result(
 /// `OrdinaryCallEvaluate` semantics handle ToObject coercion for sloppy
 /// functions; strict functions keep the receiver as-is.
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
+    // Accessor descriptors may retain a live global/module binding cell.
+    // Resolve the cell before applying the getter's callable dispatch.
+    if let Value::BindingCell(cell) = getter {
+        let value = cell.borrow().clone();
+        return invoke_accessor(&value, receiver);
+    }
     match getter {
         Value::Function(_) | Value::BoundFunction(_) => {
             crate::functions::execute_target(getter, receiver, &[])

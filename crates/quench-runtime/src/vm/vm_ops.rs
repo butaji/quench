@@ -13,11 +13,17 @@ pub fn execute_call(
     args: &[u16],
     spreads: &[bool],
 ) -> Result<crate::completion::Completion, VmError> {
+    let raw_callee = super::read_register(registers, callee)?;
     let arguments = collect_call_arguments(registers, args, spreads)?;
-    let callee_value = super::read_register(registers, callee)?;
+    let callee_value = peel_binding_cell(raw_callee);
     let receiver_value = match receiver {
-        Some(receiver) => super::read_register(registers, receiver)?,
-        None => crate::with_scope::receiver_for_callable(&callee_value).unwrap_or(Value::Undefined),
+        Some(receiver) => {
+            let value = super::read_register(registers, receiver)?;
+            peel_binding_cell(value)
+        }
+        None => crate::with_scope::receiver_for_callable(&callee_value)
+            .map(peel_binding_cell)
+            .unwrap_or(Value::Undefined),
     };
     Ok(crate::completion::Completion::Call(
         crate::completion::CallContinuation {
@@ -33,6 +39,14 @@ pub fn execute_call(
         },
     ))
 }
+
+fn peel_binding_cell(mut value: Value) -> Value {
+    while let Value::BindingCell(cell) = value {
+        value = cell.borrow().clone();
+    }
+    value
+}
+
 
 pub fn execute_call_continuation(
     registers: &mut Vec<Value>,
@@ -51,6 +65,13 @@ pub fn execute_call_continuation(
         let Value::Function(function) = &continuation.callee else {
             return Ok(None);
         };
+        // Async and generator functions must go through the ordinary invocation
+        // path: it creates the Promise/generator wrapper and performs the
+        // corresponding completion setup. Inlining their raw ops would return
+        // the body value directly and skip that observable protocol.
+        if function.is_async || matches!(function.kind, crate::ops::FunctionKind::Generator) {
+            return Ok(None);
+        }
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
@@ -62,7 +83,7 @@ pub fn execute_call_continuation(
             pc: 0,
         }))
     }
-    let mut stack = Vec::new();
+    let mut stack: Vec<ActiveCall> = Vec::new();
     let mut current = match start(continuation.clone())? {
         Some(active) => active,
         None => {
@@ -78,27 +99,54 @@ pub fn execute_call_continuation(
     };
     let context = crate::vm::current_context_or_default();
     let value = loop {
-        let (completion, next) = crate::vm::execute_ops_from(
+        let (completion, next) = match crate::vm::execute_ops_from(
             &current.ops,
             current.pc,
             &mut current.registers,
             &context,
             current.environment.clone(),
-        )?;
+        ) {
+            Ok(step) => step,
+            Err(error) => {
+                // Calls move the caller's register file into the continuation.
+                // On an abrupt completion, restore the nearest suspended caller
+                // before returning so an enclosing try/assert.throws can observe
+                // the original thrown value instead of an empty register set.
+                if let Some(parent) = stack.last() {
+                    *registers = parent.continuation.caller_registers.clone();
+                } else {
+                    *registers = current.continuation.caller_registers.clone();
+                }
+                return Err(error);
+            }
+        };
         current.pc = next;
         let result = match completion {
             crate::completion::Completion::Normal => Some(Value::Undefined),
             crate::completion::Completion::Return(value) => Some(value),
-            crate::completion::Completion::Call(nested) => {
+            crate::completion::Completion::Call(mut nested) => {
+                // `execute_call` moves the caller frame's registers into the
+                // continuation. Restore them on the suspended parent before
+                // pushing it, so nested results are written into the live
+                // parent frame rather than an empty register vector.
+                current.registers = std::mem::take(&mut nested.caller_registers);
                 stack.push(current);
                 current = match start(nested.clone())? {
                     Some(active) => active,
                     None => {
-                        let value = invoke_with_receiver(
+                        let value = match invoke_with_receiver(
                             &nested.callee,
                             &nested.receiver,
                             &nested.arguments,
-                        )?;
+                        ) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                // A native nested call can throw before a child frame
+                                let parent = stack.pop().expect("caller frame just pushed");
+                                *registers = parent.registers;
+                                return Err(error);
+                            }
+                        };
                         let mut parent = stack.pop().expect("caller frame just pushed");
                         super::write_value(&mut parent.registers, nested.destination, value);
                         parent
@@ -106,7 +154,66 @@ pub fn execute_call_continuation(
                 };
                 None
             }
-            other => Some(crate::vm::completion_result(other)?),
+            crate::completion::Completion::TailCall(request) => {
+                // A reducer may promote the final call in a function body to a
+                // tail call.  Treat it as a frame replacement, not as an
+                // unconsumed completion: otherwise nested assert.throws sees an
+                // internal EvalError instead of the callback's Test262Error.
+                let tail = crate::completion::CallContinuation {
+                    callee: request.callee,
+                    receiver: request.receiver,
+                    arguments: request.arguments,
+                    caller_ops: current.continuation.caller_ops.clone(),
+                    caller_pc: current.continuation.caller_pc,
+                    caller_registers: current.continuation.caller_registers.clone(),
+                    caller_environment: current.continuation.caller_environment.clone(),
+                    destination: current.continuation.destination,
+                    guards: current.continuation.guards,
+                };
+                current = match start(tail.clone()) {
+                    Ok(Some(active)) => active,
+                    Ok(None) => {
+                        let value = match invoke_with_receiver(
+                            &tail.callee,
+                            &tail.receiver,
+                            &tail.arguments,
+                        ) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                if let Some(parent) = stack.last() {
+                                    *registers = parent.registers.clone();
+                                } else {
+                                    *registers = tail.caller_registers.clone();
+                                }
+                                return Err(error);
+                            }
+                        };
+                        *registers = tail.caller_registers;
+                        super::write_value(registers, tail.destination, value);
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        if let Some(parent) = stack.last() {
+                            *registers = parent.registers.clone();
+                        } else {
+                            *registers = tail.caller_registers.clone();
+                        }
+                        return Err(error);
+                    }
+                };
+                continue;
+            }
+            other => match crate::vm::completion_result(other) {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    if let Some(parent) = stack.last() {
+                        *registers = parent.registers.clone();
+                    } else {
+                        *registers = current.continuation.caller_registers.clone();
+                    }
+                    return Err(error);
+                }
+            },
         };
         let Some(value) = result else { continue };
         if let Some(mut parent) = stack.pop() {

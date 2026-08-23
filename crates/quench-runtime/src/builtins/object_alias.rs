@@ -5,8 +5,18 @@ use crate::value::{ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Valu
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
     let object = Rc::new_cyclic(|weak| {
         let mut values = properties.properties.clone();
+        // A subsequent define/set resurrects a property removed through the
+        // COW object path. Remove the deletion marker before rebuilding the
+        // property so own-property and descriptor lookups see the new state.
+        let deleted = super::deleted_key(key);
+        values.retain(|(name, _)| name != &deleted);
         for (name, value) in &mut values {
-            if !super::is_descriptor_key(name) && name != crate::intl::SLOT {
+            if name == crate::intl::SLOT {
+                continue;
+            }
+            if super::is_descriptor_key(name) {
+                retarget_descriptor(value, &properties, weak);
+            } else {
                 retarget(value, &properties, weak);
             }
         }
@@ -96,6 +106,17 @@ fn retarget_optional(value: &mut Option<Value>, old: &Rc<ObjectData>, new: &Weak
         retarget(value, old, new);
     }
 }
+fn retarget_descriptor(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
+    let Value::Object(properties) = value else {
+        return;
+    };
+    for (name, field) in &mut Rc::make_mut(properties).properties {
+        if !matches!(name.as_str(), "value" | "get" | "set") {
+            continue;
+        }
+        retarget(field, old, new);
+    }
+}
 
 fn retarget(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
     let targets_old = match value {
@@ -104,6 +125,14 @@ fn retarget(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
         Value::ObjectAlias(alias) => alias
             .target()
             .is_some_and(|object| Rc::ptr_eq(&object, old)),
+        Value::BindingCell(cell) => {
+            let mut current = cell.borrow_mut();
+            let targets_old = matches!(&*current, Value::Object(object) if Rc::ptr_eq(object, old));
+            if targets_old {
+                *current = Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(new.clone()))));
+            }
+            false
+        }
         _ => false,
     };
     if targets_old {

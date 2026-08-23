@@ -121,6 +121,14 @@ fn is_equality_object(value: &Value) -> bool {
 }
 
 pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
+    // Environment bindings are represented by cells, but ECMAScript equality
+    // compares the values stored in those cells rather than the cell identity.
+    if let Value::BindingCell(cell) = left {
+        return strict_equal(&cell.borrow(), right);
+    }
+    if let Value::BindingCell(cell) = right {
+        return strict_equal(left, &cell.borrow());
+    }
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),

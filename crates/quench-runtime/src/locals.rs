@@ -136,6 +136,7 @@ pub(crate) fn global_lexical() -> Option<Rc<Environment>> {
 
 pub(crate) fn global_has_own_name(name: &str) -> bool {
     global_lexical().is_some_and(|environment| environment.has_own_name(name))
+        || crate::vm::global_builtin_exists(name)
         || matches!(crate::vm::current_global_object(), Value::Object(object) if object
             .iter()
             .any(|(key, _)| key == name))
@@ -306,7 +307,6 @@ pub(crate) fn load_resolved_local(
     crate::execute::write_value(registers, dst, value);
     Ok(())
 }
-
 pub(crate) fn load(registers: &mut Vec<Value>, dst: u16, slot: u16) -> Result<(), VmError> {
     crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
@@ -410,7 +410,6 @@ pub(crate) fn is_immutable_name(name: &str) -> bool {
 pub(crate) fn resolve_eval_name(name: &str) -> Option<Value> {
     current().resolve_eval_name(name)
 }
-
 
 pub(crate) fn resolve_name(name: &str) -> Option<Value> {
     if let Some(value) = current().resolve_name(name) {

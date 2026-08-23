@@ -17,8 +17,6 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
         return missing_return();
     };
     let value = crate::execute::read_register(registers, *condition)?;
-    // Truthy conditions are the common path for conditionals. Keep that arm
-    // as the fall-through arm; malformed branch bodies stay out of line.
     let selected = if crate::execute::is_truthy(&value) {
         then_ops
     } else {
@@ -78,34 +76,51 @@ pub(crate) fn reduce(
     facts: &mut crate::facts::ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
+    let mut next_register = crate::reduce_support::register_base(locals);
+    let mut next_slot = crate::reduce_support::register_base(locals);
+    reduce_with_registers(statement, facts, &mut next_register, &mut next_slot, locals)
+}
+
+pub(crate) fn reduce_with_registers(
+    statement: &oxc::ast::ast::Statement<'_>,
+    facts: &mut crate::facts::ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
     match statement {
         oxc::ast::ast::Statement::BlockStatement(block) => {
-            let mut next_slot = crate::reduce_support::register_base(locals);
             let mut block_locals = locals.clone();
             crate::reduce_support::predeclare_lexicals(
                 &block.body,
                 &mut block_locals,
-                &mut next_slot,
-            );
-            let (ops, last) = crate::reduce::reduce_statements_no_tail_value(
-                &block.body,
-                facts,
-                block_locals,
                 next_slot,
-            )?;
+            );
+            let mut ops = Vec::new();
+            let mut last = None;
+            for child in &block.body {
+                last = crate::reduce::reduce_statement(
+                    child,
+                    &mut ops,
+                    facts,
+                    next_register,
+                    next_slot,
+                    &mut block_locals,
+                )?
+                .or(last);
+            }
+            let (ops, last) = (ops, last);
             Ok((ops, last))
         }
         statement => {
             let mut ops = Vec::new();
-            let mut next_register = crate::reduce_support::register_base(locals);
-            let mut next_slot = crate::reduce_support::register_base(locals);
             let mut locals = locals.clone();
             let last = crate::reduce::reduce_statement(
                 statement,
                 &mut ops,
                 facts,
-                &mut next_register,
-                &mut next_slot,
+                next_register,
+                next_slot,
                 &mut locals,
             )?;
             Ok((ops, last))

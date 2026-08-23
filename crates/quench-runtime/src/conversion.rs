@@ -139,6 +139,20 @@ pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
 
 pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
     let primitive = to_primitive(value, "string")?;
+    if is_symbol(&primitive) {
+        let description = match &primitive {
+            Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin)
+                .map(|name| name.strip_prefix("Symbol.").unwrap_or(name).to_string())
+                .unwrap_or_default(),
+            Value::String(value) => value
+                .strip_prefix("Symbol.")
+                .and_then(|value| value.split('\0').next())
+                .unwrap_or("")
+                .to_string(),
+            _ => String::new(),
+        };
+        return Ok(format!("Symbol({description})"));
+    }
     if let Value::BigInt(value) = primitive {
         return Ok(value);
     }
@@ -284,6 +298,9 @@ pub(crate) fn is_html_dda(value: &Value) -> bool {
 
 /// `IsCallable` — hosts query this to validate callback arguments.
 pub fn is_callable(value: &Value) -> bool {
+    if let Value::BindingCell(cell) = value {
+        return is_callable(&cell.borrow());
+    }
     match value {
         Value::Builtin(
             crate::ops::Builtin::Math
