@@ -85,7 +85,7 @@ Object.getOwnPropertyNames = (value) => {
       }
     }
   }
-  return Array.from(names);
+  return Array.from(names, (name) => String(name));
 };
 const __nodeInvalidCharacter = () => {
   const error = new DOMException(

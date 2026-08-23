@@ -118,6 +118,7 @@ buffer_specs! {
     (SPEC_BUFFER_COPY, "buffer.prototype:copy", 0x0813),
     (SPEC_BUFFER_FILL, "buffer.prototype:fill", 0x0814),
     (SPEC_BUFFER_SLICE, "buffer.prototype:slice", 0x0815),
+    (SPEC_BUFFER_SUBARRAY, "buffer.prototype:subarray", 0x0820),
     (SPEC_BUFFER_SWAP16, "buffer.prototype:swap16", 0x0816),
     (SPEC_BUFFER_SWAP32, "buffer.prototype:swap32", 0x0817),
     (SPEC_BUFFER_SWAP64, "buffer.prototype:swap64", 0x0818),
