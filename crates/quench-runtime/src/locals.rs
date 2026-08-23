@@ -592,12 +592,23 @@ pub(crate) fn reset_replacements() {
 pub(crate) fn resolved_replacement(value: Value) -> Value {
     let mut value = value;
     while let Some(updated) = replacement(&value) {
-        if replacement_identity(&value) == replacement_identity(&updated) {
+        if same_replacement_storage(&value, &updated) {
             break;
         }
         value = updated;
     }
     value
+}
+
+fn same_replacement_storage(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+        (Value::ObjectAlias(left), Value::ObjectAlias(right)) => Rc::ptr_eq(&left.0, &right.0),
+        (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
+        (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),
+        _ => left == right,
+    }
 }
 
 #[inline]
