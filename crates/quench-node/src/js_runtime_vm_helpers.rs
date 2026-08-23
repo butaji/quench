@@ -48,7 +48,22 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(Value::Number(value + amount));
         }
     }
-    Err(VmError::EvalError("unsupported vm expression".into()))
+    // Evaluate ordinary script expressions through the runtime reducer.  Keep
+    // the sandbox values in an isolated VM context so constructors (including
+    // `new String(value)`) use the same realm/builtin semantics as scripts.
+    let program = quench_runtime::reduce::reduce_global_script_source(source)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let mut vm_context = quench_runtime::vm::VmContext::isolated();
+    if let Value::Object(_) = context {
+        for key in quench_runtime::execute::own_enumerable_keys(context) {
+            let value = quench_runtime::execute::get_property_result(context, &key)?;
+            vm_context = vm_context.with_host_value(key, value);
+        }
+    }
+    let mut registers = Vec::new();
+    return quench_runtime::vm::with_current_context(&vm_context, || {
+        quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &vm_context)
+    });
 }
 
 fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
