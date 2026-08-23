@@ -1,6 +1,7 @@
 //! `Buffer.prototype` methods — one host handler per method,
 //! dispatched through the capability table. All of them operate on
 //! the receiver's `Uint8ArrayData` view directly.
+mod buffer_search;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -67,14 +68,31 @@ pub(crate) fn to_offset(value: Option<&Value>) -> f64 {
         Some(Value::Boolean(b)) => f64::from(u8::from(*b)),
         Some(Value::String(s)) => s.trim().parse().unwrap_or(0.0),
         Some(Value::BigInt(s)) => s.parse().unwrap_or(0.0),
+        Some(Value::Array(array)) => match array.logical_len() {
+            0 => 0.0,
+            1 => to_offset(array.index_value(0).as_ref()),
+            _ => f64::NAN,
+        },
         _ => 0.0,
     }
+}
+
+fn to_offset_checked(value: Option<&Value>) -> Result<f64, VmError> {
+    let Some(value) = value else {
+        return Ok(0.0);
+    };
+    let number = quench_runtime::to_number(value)?;
+    Ok(if number.is_nan() { 0.0 } else { number.trunc() })
 }
 
 /// Clamped `start`/`end` slice bounds per Node's `toString`/`slice`.
 fn clamp_bounds(args: &[Value], at: usize, len: usize, default: f64) -> usize {
     let raw = to_offset(args.get(at));
-    let raw = if args.get(at).is_none() { default } else { raw };
+    let raw = if args.get(at).is_none() || matches!(args.get(at), Some(Value::Undefined)) {
+        default
+    } else {
+        raw
+    };
     if raw < 0.0 {
         (len as f64 + raw).max(0.0) as usize
     } else {
@@ -189,30 +207,51 @@ pub fn copy(
     args: &[Value],
 ) -> HandlerResult {
     let view = this_view(receiver)?;
-    let Some(Value::Uint8Array(target)) = args.first() else {
+    let Some(target) = args.first().and_then(as_byte_view) else {
         return Err(enc::invalid_arg_type(format!(
             "The \"target\" argument must be an instance of Buffer or Uint8Array.{}",
             crate::modules::util::invalid_arg_received(args.first().unwrap_or(&Value::Undefined))
         )));
     };
-    let target_start = to_offset(args.get(1)).max(0.0) as usize;
-    // Node rejects indexes that do not fit in a 32-bit size_t.
-    for (at, name) in [(2, "sourceStart"), (3, "sourceEnd")] {
-        let raw = to_offset(args.get(at));
-        if args.get(at).is_some() && raw > u32::MAX as f64 {
-            return Err(enc::out_of_range(
-                name,
-                &format!(">= 0 && <= {}", u32::MAX),
-                &enc::fmt_num(raw),
-            ));
-        }
+    let (target_start, source_start, count) = match copy_count(&view, &target, args)? {
+        Some(range) => range,
+        None => return Ok(Value::Number(0.0)),
+    };
+    copy_transfer(&view, &target, target_start, source_start, count)
+}
+
+fn as_byte_view(value: &Value) -> Option<Rc<Uint8ArrayData>> {
+    macro_rules! view {
+        ($data:expr) => {{ Some(Rc::new(Uint8ArrayData::new(
+            $data.buffer.clone(),
+            $data.byte_offset,
+            $data.byte_length(),
+        ))) }};
     }
-    let source_start = clamp_bounds(args, 2, view.length, 0.0);
-    let source_end = clamp_bounds(args, 3, view.length, view.length as f64);
-    if target_start >= target.length || source_start >= source_end {
-        return Ok(Value::Number(0.0));
+    match value {
+        Value::Uint8Array(data) => Some(data.clone()),
+        Value::Float64Array(data) => view!(data),
+        Value::Float32Array(data) => view!(data),
+        Value::Int8Array(data) => view!(data),
+        Value::Int16Array(data) => view!(data),
+        Value::Int32Array(data) => view!(data),
+        Value::Uint16Array(data) => view!(data),
+        Value::Uint32Array(data) => view!(data),
+        Value::Uint8ClampedArray(data) => view!(data),
+        Value::BigInt64Array(data) => view!(data),
+        Value::BigUint64Array(data) => view!(data),
+        Value::DataView(data) => view!(data),
+        _ => None,
     }
-    let count = (source_end - source_start).min(target.length - target_start);
+}
+
+fn copy_transfer(
+    view: &Uint8ArrayData,
+    target: &Uint8ArrayData,
+    target_start: usize,
+    source_start: usize,
+    count: usize,
+) -> Result<Value, VmError> {
     let mut source_bytes = view.buffer.bytes.borrow_mut();
     let same = Rc::ptr_eq(&view.buffer, &target.buffer);
     if same {
@@ -232,13 +271,103 @@ pub fn copy(
     Ok(Value::Number(count as f64))
 }
 
+fn copy_count(
+    view: &Uint8ArrayData,
+    target: &Uint8ArrayData,
+    args: &[Value],
+) -> Result<Option<(usize, usize, usize)>, VmError> {
+    let target_start_raw = to_offset_checked(args.get(1))?;
+    if args.get(1).is_some() && target_start_raw < 0.0 {
+        return Err(enc::out_of_range(
+            "targetStart",
+            ">= 0",
+            &enc::fmt_num(target_start_raw),
+        ));
+    }
+    // Node rejects indexes that do not fit in a 32-bit size_t.
+    for (at, name) in [(2, "sourceStart"), (3, "sourceEnd")] {
+        let raw = to_offset_checked(args.get(at))?;
+        if args.get(at).is_some() && raw < 0.0 {
+            return Err(enc::out_of_range(name, ">= 0", &enc::fmt_num(raw)));
+        }
+        if args.get(at).is_some() && raw > u32::MAX as f64 {
+            return Err(enc::out_of_range(
+                name,
+                &format!(">= 0 && <= {}", u32::MAX),
+                &enc::fmt_num(raw),
+            ));
+        }
+    }
+    let source_start_raw = to_offset_checked(args.get(2))?;
+    let source_end_raw = if args.get(3).is_none() {
+        view.length as f64
+    } else {
+        to_offset_checked(args.get(3))?
+    };
+    let source_start = source_start_raw.min(view.length as f64) as usize;
+    let source_end = source_end_raw.min(view.length as f64) as usize;
+    let target_start = target_start_raw.max(0.0) as usize;
+    if args.get(2).is_some() && source_start_raw > view.length as f64 {
+        return Err(enc::out_of_range(
+            "sourceStart",
+            &format!("<= {}", view.length),
+            &enc::fmt_num(source_start_raw),
+        ));
+    }
+    if target_start >= target.length || source_start >= source_end {
+        return Ok(None);
+    }
+    Ok(Some((
+        target_start,
+        source_start,
+        (source_end - source_start).min(target.length - target_start),
+    )))
+}
+
 /// `buf.fill(value[, offset[, end]][, encoding])`.
 pub fn fill(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
+    if !matches!(receiver, Some(Value::Uint8Array(_)))
+        && matches!(args.first(), Some(Value::Uint8Array(_)))
+    {
+        let view = match args.first() {
+            Some(Value::Uint8Array(view)) => view,
+            _ => unreachable!(),
+        };
+        validate_fill_bound(args.get(1), view.length, "start")?;
+        validate_fill_bound(args.get(2), view.length, "end")?;
+        if let Some(Value::Number(value)) = args.get(3) {
+            if !value.is_finite() || *value < 0.0 || *value > 255.0 {
+                return Err(enc::out_of_range(
+                    "value",
+                    ">= 0 && <= 255",
+                    &enc::fmt_num(*value),
+                ));
+            }
+        }
+        let reordered = [
+            args.get(3).cloned().unwrap_or(Value::Undefined),
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+            args.get(2).cloned().unwrap_or(Value::Undefined),
+            args.get(4).cloned().unwrap_or(Value::Undefined),
+        ];
+        return fill(state, args.first(), &reordered);
+    }
     let view = this_view(receiver)?;
+    if let Some(receiver) = receiver {
+        if let Ok(Value::Number(length)) =
+            quench_runtime::execute::get_property_result(receiver, "length")
+        {
+            if length != view.length as f64 {
+                return Err(enc::buffer_out_of_bounds(
+                    "Attempt to access memory outside buffer bounds",
+                ));
+            }
+        }
+    }
     let fill = args.first().cloned().unwrap_or(Value::Undefined);
     let (offset_arg, end_arg, encoding_arg) = fill_args(args);
     let encoding = match encoding_arg {
@@ -246,6 +375,8 @@ pub fn fill(
         None => None,
     };
     let pattern = fill_pattern(&fill, encoding.as_deref())?;
+    validate_fill_bound(args.get(offset_arg), view.length, "offset")?;
+    validate_fill_bound(args.get(end_arg), view.length, "end")?;
     let offset = clamp_bounds(args, offset_arg, view.length, 0.0);
     let end = clamp_bounds(args, end_arg, view.length, view.length as f64);
     if !pattern.is_empty() {
@@ -255,6 +386,29 @@ pub fn fill(
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn validate_fill_bound(value: Option<&Value>, length: usize, name: &str) -> Result<(), VmError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let Value::Number(value) = value else {
+        if matches!(value, Value::Undefined) {
+            return Ok(());
+        }
+        return Err(enc::invalid_arg_type(format!(
+            "The \"{name}\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(value)
+        )));
+    };
+    if !value.is_finite() || *value < 0.0 || *value > length as f64 {
+        return Err(enc::out_of_range(
+            name,
+            &format!(">= 0 && <= {length}"),
+            &enc::fmt_num(*value),
+        ));
+    }
+    Ok(())
 }
 
 /// Resolve the overloaded `fill(value, offset, end, encoding)` tail:
@@ -276,13 +430,35 @@ fn encoding_arg_from(value: &Value, fill: &Value) -> Result<String, VmError> {
                 .ok_or_else(|| enc::unknown_encoding(s))
         }
         Value::String(s) => Ok(enc::canonical_encoding(s).unwrap_or("utf8").to_string()),
-        _ => Ok("utf8".to_string()),
+        other => Err(enc::invalid_arg_type(format!(
+            "The \"encoding\" argument must be of type string.{}",
+            crate::modules::util::invalid_arg_received(other)
+        ))),
     }
 }
 
 fn fill_pattern(fill: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError> {
     match fill {
         Value::Number(n) => Ok(vec![*n as i64 as u8]),
+        Value::String(value) if encoding == Some("hex") => {
+            let valid = value.chars().count() % 2 == 0
+                && value.chars().all(|character| character.is_ascii_hexdigit());
+            if !valid {
+                return Err(enc::invalid_arg_value(
+                    "The argument 'value' is invalid".into(),
+                ));
+            }
+            Ok(enc::encode_value(fill, "hex")?)
+        }
+        Value::StringUnits(units) if encoding == Some("hex") => {
+            let value = String::from_utf16_lossy(units);
+            if value.chars().count() % 2 != 0 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(enc::invalid_arg_value(
+                    "The argument 'value' is invalid".into(),
+                ));
+            }
+            Ok(enc::encode_value(fill, "hex")?)
+        }
         Value::String(_) | Value::StringUnits(_) => {
             enc::encode_value(fill, encoding.unwrap_or("utf8"))
         }
@@ -364,7 +540,7 @@ pub fn index_of(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
-    search(receiver, args, Search::IndexOf)
+    buffer_search::index_of(receiver, args)
 }
 
 pub fn last_index_of(
@@ -372,7 +548,7 @@ pub fn last_index_of(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
-    search(receiver, args, Search::LastIndexOf)
+    buffer_search::last_index_of(receiver, args)
 }
 
 pub fn includes(
@@ -380,108 +556,5 @@ pub fn includes(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
-    search(receiver, args, Search::Includes)
-}
-
-enum Search {
-    IndexOf,
-    LastIndexOf,
-    Includes,
-}
-
-fn search(receiver: Option<&Value>, args: &[Value], mode: Search) -> HandlerResult {
-    let view = this_view(receiver)?;
-    let value = args.first().cloned().unwrap_or(Value::Undefined);
-    let haystack = view_bytes(&view).to_vec();
-    let needle = search_needle(&value, args)?;
-    let found = match needle {
-        Needle::Byte(byte) => search_byte(&haystack, byte, args.get(1), &mode),
-        Needle::Bytes(bytes) => search_bytes(&haystack, &bytes, args.get(1), &mode),
-    };
-    Ok(match mode {
-        Search::Includes => Value::Boolean(found >= 0),
-        _ => Value::Number(found as f64),
-    })
-}
-
-enum Needle {
-    Byte(u8),
-    Bytes(Vec<u8>),
-}
-
-fn search_needle(value: &Value, args: &[Value]) -> Result<Needle, VmError> {
-    match value {
-        Value::Number(n) => Ok(Needle::Byte(*n as i64 as u8)),
-        Value::BigInt(s) => Ok(Needle::Byte(s.parse::<i64>().unwrap_or(0) as u8)),
-        Value::String(_) | Value::StringUnits(_) => {
-            let encoding = match args.get(2) {
-                Some(v) => encoding_arg(Some(v))?,
-                None => "utf8".to_string(),
-            };
-            Ok(Needle::Bytes(enc::encode_value(value, &encoding)?))
-        }
-        Value::Uint8Array(view) => Ok(Needle::Bytes(view_bytes(view).to_vec())),
-        _ => Err(enc::invalid_arg_type(format!(
-            "The \"value\" argument must be one of type string, Buffer, TypedArray, or DataView.{}",
-            crate::modules::util::invalid_arg_received(value)
-        ))),
-    }
-}
-
-fn search_offset(arg: Option<&Value>, len: usize, last: bool) -> i64 {
-    let raw = to_offset(arg) as i64;
-    if arg.is_none() {
-        return if last { len as i64 - 1 } else { 0 };
-    }
-    if raw < 0 {
-        (len as i64 + raw).max(0)
-    } else {
-        raw
-    }
-}
-
-fn search_byte(haystack: &[u8], byte: u8, offset: Option<&Value>, mode: &Search) -> i64 {
-    match mode {
-        Search::LastIndexOf => {
-            let start = search_offset(offset, haystack.len(), true).min(haystack.len() as i64 - 1);
-            (0..=start.max(-1) as usize)
-                .rev()
-                .find(|&i| haystack.get(i) == Some(&byte))
-                .map_or(-1, |i| i as i64)
-        }
-        _ => {
-            let start = search_offset(offset, haystack.len(), false) as usize;
-            (start..haystack.len())
-                .find(|&i| haystack[i] == byte)
-                .map_or(-1, |i| i as i64)
-        }
-    }
-}
-
-fn search_bytes(haystack: &[u8], needle: &[u8], offset: Option<&Value>, mode: &Search) -> i64 {
-    if needle.is_empty() {
-        return match mode {
-            Search::LastIndexOf => search_offset(offset, haystack.len(), true),
-            _ => search_offset(offset, haystack.len(), false).min(haystack.len() as i64),
-        };
-    }
-    match mode {
-        Search::LastIndexOf => {
-            let start = search_offset(offset, haystack.len(), true);
-            (0..=start)
-                .rev()
-                .find(|&i| ends_at(haystack, needle, i as usize))
-                .map_or(-1, |i| i)
-        }
-        _ => {
-            let start = search_offset(offset, haystack.len(), false) as usize;
-            (start..haystack.len())
-                .find(|&i| ends_at(haystack, needle, i))
-                .map_or(-1, |i| i as i64)
-        }
-    }
-}
-
-fn ends_at(haystack: &[u8], needle: &[u8], index: usize) -> bool {
-    index + needle.len() <= haystack.len() && &haystack[index..index + needle.len()] == needle
+    buffer_search::includes(receiver, args)
 }
