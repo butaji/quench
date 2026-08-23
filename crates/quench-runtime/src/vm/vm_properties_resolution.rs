@@ -97,6 +97,17 @@ fn function_inherited_property_result(
     let Value::Function(function) = value else {
         return None;
     };
+    if let Some(builtin) = match key {
+        "apply" => Some(crate::ops::Builtin::FunctionApply),
+        "call" => Some(crate::ops::Builtin::FunctionCall),
+        "bind" => Some(crate::ops::Builtin::FunctionBind),
+        _ => None,
+    } {
+        return Some(Ok(crate::vm::bind_receiver_property(
+            Value::Builtin(builtin),
+            receiver,
+        )));
+    }
     let properties = function.properties.borrow();
     if properties.iter().any(|(name, _)| name == key) {
         return None;
