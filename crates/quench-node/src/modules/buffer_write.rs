@@ -50,6 +50,49 @@ pub fn write(
     Ok(Value::Number(count as f64))
 }
 
+macro_rules! fixed_write_method {
+    ($name:ident, $encoding:literal) => {
+        pub fn $name(
+            state: &Rc<RefCell<HostState>>,
+            receiver: Option<&Value>,
+            args: &[Value],
+        ) -> Result<Value, VmError> {
+            fixed_write(state, receiver, args, $encoding)
+        }
+    };
+}
+
+fixed_write_method!(ascii_write, "ascii");
+fixed_write_method!(latin1_write, "latin1");
+fixed_write_method!(utf8_write, "utf8");
+
+fn fixed_write(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+    encoding: &str,
+) -> Result<Value, VmError> {
+    let view = this_view(receiver)?;
+    let offset = args.get(1).map(|value| to_offset(Some(value))).unwrap_or(0.0);
+    let length = args
+        .get(2)
+        .map(|value| to_offset(Some(value)))
+        .unwrap_or(view.length.saturating_sub(offset.max(0.0) as usize) as f64);
+    if !offset.is_finite() || offset < 0.0 || offset as usize > view.length {
+        return Err(enc::buffer_out_of_bounds("\"offset\" is outside of buffer bounds"));
+    }
+    if !length.is_finite() || length < 0.0 || length as usize > view.length - offset as usize {
+        return Err(enc::buffer_out_of_bounds("\"length\" is outside of buffer bounds"));
+    }
+    let mut call_args = vec![args.first().cloned().unwrap_or(Value::Undefined)];
+    call_args.extend([
+        Value::Number(offset),
+        Value::Number(length),
+        Value::String(encoding.to_string()),
+    ]);
+    write(state, receiver, &call_args)
+}
+
 /// Resolve the overloaded `write` tail; validates offsets.
 fn write_args(args: &[Value], len: usize) -> Result<(usize, Option<usize>, String), VmError> {
     let mut tail: &[Value] = &args[1..];

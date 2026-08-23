@@ -157,19 +157,23 @@ fn apply_fill(bytes: &mut [u8], args: &[Value]) -> Result<(), VmError> {
             let encoding = encoding_name(args.get(2))?;
             let encoded = enc::encode_value(&fill, &encoding)?;
             if encoded.is_empty() {
-                return Err(enc::invalid_arg_value(format!(
-                    "The argument 'value' is invalid.{}",
-                    crate::modules::util::invalid_arg_received(&fill)
-                )));
+                if encoding == "hex"
+                    && !matches!(&fill, Value::String(value) if value.is_empty())
+                    && !matches!(&fill, Value::StringUnits(value) if value.is_empty())
+                {
+                    return Err(enc::invalid_arg_value(format!(
+                        "The argument 'value' is invalid. Received {fill:?}"
+                    )));
+                }
+                return Ok(());
             }
             encoded
         }
         Value::Uint8Array(view) => {
             if view.length == 0 {
-                return Err(enc::invalid_arg_value(format!(
-                    "The argument 'value' is invalid.{}",
-                    crate::modules::util::invalid_arg_received(&fill)
-                )));
+                return Err(enc::invalid_arg_value(
+                    "The argument 'value' is invalid. Received an empty buffer".to_string(),
+                ));
             }
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
@@ -243,14 +247,44 @@ pub fn concat(
 ) -> Result<Value, VmError> {
     let list = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(list, Value::Array(_)) {
-        return Err(enc::invalid_arg_type(format!(
-            "The \"list\" argument must be an Array of Buffers.{}",
+        // Node reports a Buffer passed where an Array is required through its
+        // ordinary object classification, even though Buffer is a byte view.
+        let received = if matches!(list, Value::Uint8Array(_)) {
+            " Received an instance of Object".to_string()
+        } else {
             crate::modules::util::invalid_arg_received(&list)
+        };
+        return Err(enc::invalid_arg_type(format!(
+            "The \"list\" argument must be an instance of Array.{}",
+            received
         )));
     }
-    let total = args
-        .get(1)
-        .map(|v| crate::modules::buffer_methods::to_offset(Some(v)));
+    let total = match args.get(1) {
+        None | Some(Value::Undefined) => None,
+        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => {
+            if *value < 0.0 || *value > 9_007_199_254_740_991.0 {
+                return Err(enc::out_of_range(
+                    "length",
+                    ">= 0 && <= 9007199254740991",
+                    &enc::fmt_num(*value),
+                ));
+            }
+            if matches!(&list, Value::Array(array) if array.logical_len() == 0) {
+                return Ok(crate::modules::buffer_proto::make_buffer(&[]));
+            }
+            Some(*value as usize)
+        }
+        Some(value) => {
+            return Err(enc::out_of_range(
+                "length",
+                "an integer",
+                &match value {
+                    Value::Number(number) => enc::fmt_num(*number),
+                    _ => format!("{value:?}"),
+                },
+            ));
+        }
+    };
     let mut all = Vec::new();
     for i in 0..u32::MAX {
         let v = get_property(&list, &i.to_string());
@@ -270,9 +304,9 @@ pub fn concat(
             }
         }
     }
-    if let Some(t) = total {
-        let t = t.max(0.0) as usize;
-        all.truncate(t.min(all.len()));
+    if let Some(total) = total {
+        all.truncate(total.min(all.len()));
+        all.resize(total, 0);
     }
     Ok(crate::modules::buffer_proto::make_buffer(&all))
 }
