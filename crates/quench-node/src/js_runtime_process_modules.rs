@@ -6,8 +6,8 @@ fn assert_module() -> Value {
     for (name, id) in [
         ("strictEqual", CapabilityName::AssertStrictEqual),
         ("deepStrictEqual", CapabilityName::AssertDeepStrictEqual),
+        ("partialDeepStrictEqual", CapabilityName::AssertDeepStrictEqual),
         ("deepEqual", CapabilityName::AssertDeepStrictEqual),
-        ("ok", CapabilityName::AssertOk),
         ("throws", CapabilityName::AssertThrows),
         ("doesNotThrow", CapabilityName::AssertDoesNotThrow),
         ("ifError", CapabilityName::AssertIfError),
@@ -122,18 +122,7 @@ fn process_module() -> Value {
         ),
         (
             "hrtime".into(),
-            quench_runtime::host_api::object(vec![
-                (
-                    "hrtime".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime)),
-                ),
-                (
-                    "bigint".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::ProcessHrtimeBigint,
-                    )),
-                ),
-            ]),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime)),
         ),
         (
             "getActiveResourcesInfo".into(),

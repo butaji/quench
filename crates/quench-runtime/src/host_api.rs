@@ -20,11 +20,19 @@ pub fn array(values: Vec<Value>) -> Value {
 
 pub fn capability_function(capability: HostCapabilityRef) -> Value {
     let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability)));
-    Value::BoundFunction(Rc::new(BoundFunctionValue::new(
+    let function = Rc::new(BoundFunctionValue::new(
         capability.realm,
         Value::Builtin(Builtin::HostCapability(capability.kind)),
         token,
-    )))
+    ));
+    function.properties.borrow_mut().extend([
+        (
+            "\0function_prototype".to_string(),
+            crate::vm::realm_intrinsic_for(capability.realm, Builtin::FunctionPrototype),
+        ),
+        ("call".to_string(), Value::Builtin(Builtin::FunctionCall)),
+    ]);
+    Value::BoundFunction(function)
 }
 
 pub fn custom_function(realm: crate::ops::RealmId, kind: u16) -> Value {

@@ -218,7 +218,12 @@ pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), V
             "Cannot access deleted binding '{slot}'"
         )));
     }
-    if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {
+    let initializing_function_binding = current().get(slot) == Value::Undefined
+        && crate::conversion::is_callable(&value);
+    if current().is_immutable_slot(slot)
+        && !current().is_uninitialized(slot)
+        && !initializing_function_binding
+    {
         if ACTIVE_EVAL.with(|active| *active.borrow())
             && !STRICT_EVAL.with(|strict| *strict.borrow())
         {
@@ -538,7 +543,6 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
         }
         replacement.value = new.clone();
     });
-    REPLACEMENTS_ACTIVE.with(|active| active.set(true));
 }
 
 fn replace_object(old: &Value, new: &Value) -> bool {
@@ -588,7 +592,6 @@ pub(crate) fn reset_replacements() {
     REPLACEMENTS_ACTIVE.with(|active| active.set(false));
 }
 
-#[inline]
 pub(crate) fn resolved_replacement(value: Value) -> Value {
     let mut value = value;
     while let Some(updated) = replacement(&value) {

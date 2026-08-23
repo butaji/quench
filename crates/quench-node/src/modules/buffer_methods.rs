@@ -1,6 +1,7 @@
 //! `Buffer.prototype` methods — one host handler per method,
 //! dispatched through the capability table. All of them operate on
 //! the receiver's `Uint8ArrayData` view directly.
+mod buffer_search;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -195,7 +196,44 @@ pub fn copy(
             crate::modules::util::invalid_arg_received(args.first().unwrap_or(&Value::Undefined))
         )));
     };
+    let count = match copy_count(&view, &target, args)? {
+        Some(n) => n,
+        None => return Ok(Value::Number(0.0)),
+    };
     let target_start = to_offset(args.get(1)).max(0.0) as usize;
+    copy_transfer(&view, &target, target_start, count)
+}
+
+fn copy_transfer(
+    view: &Uint8ArrayData,
+    target: &Uint8ArrayData,
+    target_start: usize,
+    count: usize,
+) -> Result<Value, VmError> {
+    let mut source_bytes = view.buffer.bytes.borrow_mut();
+    let same = Rc::ptr_eq(&view.buffer, &target.buffer);
+    if same {
+        source_bytes.copy_within(
+            view.byte_offset + target_start..view.byte_offset + target_start + count,
+            target.byte_offset + target_start,
+        );
+    } else {
+        let chunk: Vec<u8> = source_bytes
+            [view.byte_offset + target_start..view.byte_offset + target_start + count]
+            .to_vec();
+        drop(source_bytes);
+        target.buffer.bytes.borrow_mut()
+            [target.byte_offset + target_start..target.byte_offset + target_start + count]
+            .copy_from_slice(&chunk);
+    }
+    Ok(Value::Number(count as f64))
+}
+
+fn copy_count(
+    view: &Uint8ArrayData,
+    target: &Uint8ArrayData,
+    args: &[Value],
+) -> Result<Option<usize>, VmError> {
     // Node rejects indexes that do not fit in a 32-bit size_t.
     for (at, name) in [(2, "sourceStart"), (3, "sourceEnd")] {
         let raw = to_offset(args.get(at));
@@ -209,27 +247,13 @@ pub fn copy(
     }
     let source_start = clamp_bounds(args, 2, view.length, 0.0);
     let source_end = clamp_bounds(args, 3, view.length, view.length as f64);
+    let target_start = to_offset(args.get(1)).max(0.0) as usize;
     if target_start >= target.length || source_start >= source_end {
-        return Ok(Value::Number(0.0));
+        return Ok(None);
     }
-    let count = (source_end - source_start).min(target.length - target_start);
-    let mut source_bytes = view.buffer.bytes.borrow_mut();
-    let same = Rc::ptr_eq(&view.buffer, &target.buffer);
-    if same {
-        source_bytes.copy_within(
-            view.byte_offset + source_start..view.byte_offset + source_start + count,
-            target.byte_offset + target_start,
-        );
-    } else {
-        let chunk: Vec<u8> = source_bytes
-            [view.byte_offset + source_start..view.byte_offset + source_start + count]
-            .to_vec();
-        drop(source_bytes);
-        target.buffer.bytes.borrow_mut()
-            [target.byte_offset + target_start..target.byte_offset + target_start + count]
-            .copy_from_slice(&chunk);
-    }
-    Ok(Value::Number(count as f64))
+    Ok(Some(
+        (source_end - source_start).min(target.length - target_start),
+    ))
 }
 
 /// `buf.fill(value[, offset[, end]][, encoding])`.
@@ -364,7 +388,7 @@ pub fn index_of(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
-    search(receiver, args, Search::IndexOf)
+    buffer_search::index_of(receiver, args)
 }
 
 pub fn last_index_of(
@@ -372,7 +396,7 @@ pub fn last_index_of(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
-    search(receiver, args, Search::LastIndexOf)
+    buffer_search::last_index_of(receiver, args)
 }
 
 pub fn includes(
@@ -380,108 +404,5 @@ pub fn includes(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
-    search(receiver, args, Search::Includes)
-}
-
-enum Search {
-    IndexOf,
-    LastIndexOf,
-    Includes,
-}
-
-fn search(receiver: Option<&Value>, args: &[Value], mode: Search) -> HandlerResult {
-    let view = this_view(receiver)?;
-    let value = args.first().cloned().unwrap_or(Value::Undefined);
-    let haystack = view_bytes(&view).to_vec();
-    let needle = search_needle(&value, args)?;
-    let found = match needle {
-        Needle::Byte(byte) => search_byte(&haystack, byte, args.get(1), &mode),
-        Needle::Bytes(bytes) => search_bytes(&haystack, &bytes, args.get(1), &mode),
-    };
-    Ok(match mode {
-        Search::Includes => Value::Boolean(found >= 0),
-        _ => Value::Number(found as f64),
-    })
-}
-
-enum Needle {
-    Byte(u8),
-    Bytes(Vec<u8>),
-}
-
-fn search_needle(value: &Value, args: &[Value]) -> Result<Needle, VmError> {
-    match value {
-        Value::Number(n) => Ok(Needle::Byte(*n as i64 as u8)),
-        Value::BigInt(s) => Ok(Needle::Byte(s.parse::<i64>().unwrap_or(0) as u8)),
-        Value::String(_) | Value::StringUnits(_) => {
-            let encoding = match args.get(2) {
-                Some(v) => encoding_arg(Some(v))?,
-                None => "utf8".to_string(),
-            };
-            Ok(Needle::Bytes(enc::encode_value(value, &encoding)?))
-        }
-        Value::Uint8Array(view) => Ok(Needle::Bytes(view_bytes(view).to_vec())),
-        _ => Err(enc::invalid_arg_type(format!(
-            "The \"value\" argument must be one of type string, Buffer, TypedArray, or DataView.{}",
-            crate::modules::util::invalid_arg_received(value)
-        ))),
-    }
-}
-
-fn search_offset(arg: Option<&Value>, len: usize, last: bool) -> i64 {
-    let raw = to_offset(arg) as i64;
-    if arg.is_none() {
-        return if last { len as i64 - 1 } else { 0 };
-    }
-    if raw < 0 {
-        (len as i64 + raw).max(0)
-    } else {
-        raw
-    }
-}
-
-fn search_byte(haystack: &[u8], byte: u8, offset: Option<&Value>, mode: &Search) -> i64 {
-    match mode {
-        Search::LastIndexOf => {
-            let start = search_offset(offset, haystack.len(), true).min(haystack.len() as i64 - 1);
-            (0..=start.max(-1) as usize)
-                .rev()
-                .find(|&i| haystack.get(i) == Some(&byte))
-                .map_or(-1, |i| i as i64)
-        }
-        _ => {
-            let start = search_offset(offset, haystack.len(), false) as usize;
-            (start..haystack.len())
-                .find(|&i| haystack[i] == byte)
-                .map_or(-1, |i| i as i64)
-        }
-    }
-}
-
-fn search_bytes(haystack: &[u8], needle: &[u8], offset: Option<&Value>, mode: &Search) -> i64 {
-    if needle.is_empty() {
-        return match mode {
-            Search::LastIndexOf => search_offset(offset, haystack.len(), true),
-            _ => search_offset(offset, haystack.len(), false).min(haystack.len() as i64),
-        };
-    }
-    match mode {
-        Search::LastIndexOf => {
-            let start = search_offset(offset, haystack.len(), true);
-            (0..=start)
-                .rev()
-                .find(|&i| ends_at(haystack, needle, i as usize))
-                .map_or(-1, |i| i)
-        }
-        _ => {
-            let start = search_offset(offset, haystack.len(), false) as usize;
-            (start..haystack.len())
-                .find(|&i| ends_at(haystack, needle, i))
-                .map_or(-1, |i| i as i64)
-        }
-    }
-}
-
-fn ends_at(haystack: &[u8], needle: &[u8], index: usize) -> bool {
-    index + needle.len() <= haystack.len() && &haystack[index..index + needle.len()] == needle
+    buffer_search::includes(receiver, args)
 }

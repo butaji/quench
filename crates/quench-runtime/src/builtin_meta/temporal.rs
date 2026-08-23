@@ -18,6 +18,12 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalDurationSignGetter => Some("get sign"),
         Builtin::TemporalDurationBlankGetter => Some("get blank"),
         Builtin::TemporalDurationValueOf => Some("Temporal.Duration.prototype.valueOf"),
+        _ => fn_name_rest(builtin),
+    }
+}
+
+const fn fn_name_rest(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::TemporalPlainDate => Some("Temporal.PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("Temporal.PlainDate.from"),
         Builtin::TemporalPlainDateCompare => Some("Temporal.PlainDate.compare"),
@@ -61,6 +67,12 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalDurationSignGetter => Some("sign"),
         Builtin::TemporalDurationBlankGetter => Some("blank"),
         Builtin::TemporalDurationValueOf => Some("valueOf"),
+        _ => short_name_rest(builtin),
+    }
+}
+
+const fn short_name_rest(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::TemporalPlainDate => Some("PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("from"),
         Builtin::TemporalPlainDateCompare => Some("compare"),
@@ -104,6 +116,12 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalDurationSignGetter => Some(0.0),
         Builtin::TemporalDurationBlankGetter => Some(0.0),
         Builtin::TemporalDurationValueOf => Some(0.0),
+        _ => fn_len_rest(builtin),
+    }
+}
+
+const fn fn_len_rest(builtin: Builtin) -> Option<f64> {
+    match builtin {
         Builtin::TemporalPlainDateFrom => Some(1.0),
         Builtin::TemporalPlainDateCompare => Some(2.0),
         Builtin::TemporalPlainDateWithCalendar => Some(1.0),

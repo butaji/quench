@@ -1,28 +1,7 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ArrayKind {
-    PackedInt,
-    PackedDouble,
-    PackedValue,
-    Holey,
-    Sparse,
-}
-impl ArrayKind {
-    #[inline]
-    pub fn is_packed(self) -> bool {
-        matches!(
-            self,
-            Self::PackedInt | Self::PackedDouble | Self::PackedValue
-        )
-    }
-}
-
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayData {
     values: Vec<Value>,
     length: usize,
-    kind: ArrayKind,
     properties: Vec<(String, Value)>,
     descriptors: Vec<(String, Value)>,
     arguments: bool,
@@ -49,8 +28,8 @@ pub struct ArgumentLive {
 impl ArrayData {
     pub fn new(values: Vec<Value>) -> Self {
         let length = values.len();
+        let live_values = values.clone();
         Self {
-            kind: classify_kind(&values),
             values,
             length,
             properties: Vec::new(),
@@ -60,7 +39,13 @@ impl ArrayData {
             mapped: Vec::new(),
             deleted: Vec::new(),
             prototype: std::cell::RefCell::new(None),
-            argument_live: None,
+            argument_live: Some(Rc::new(RefCell::new(ArgumentLive {
+                values: live_values,
+                length,
+                mapped: Vec::new(),
+                deleted: Vec::new(),
+                length_override: None,
+            }))),
         }
     }
 
@@ -76,9 +61,6 @@ impl ArrayData {
             length_override: None,
         })));
         data
-    }
-    pub(crate) fn kind(&self) -> ArrayKind {
-        self.kind
     }
 
     pub(crate) fn is_arguments(&self) -> bool {
@@ -97,25 +79,10 @@ impl ArrayData {
     }
 
 
-    #[inline]
-    pub(crate) fn is_packed(&self) -> bool {
-        self.kind.is_packed()
-    }
-
     pub fn logical_len(&self) -> usize {
         self.argument_live
             .as_ref()
             .map_or(self.length, |live| live.borrow().length)
-    }
-
-    #[inline]
-    pub(crate) fn is_holey(&self) -> bool {
-        matches!(self.kind, ArrayKind::Holey)
-    }
-    /// Header-resident logical length; does not traverse element storage.
-    #[inline]
-    pub(crate) fn header_length(&self) -> usize {
-        self.logical_len()
     }
 
     /// Return the value of `arguments.length` if a plain-value override
@@ -145,12 +112,6 @@ impl ArrayData {
     /// write that exceeds the existing element count.
     pub(crate) fn physical_len(&self) -> usize {
         self.values.len()
-    }
-    /// Capacity of the dense backing store, exposed for focused allocation
-    /// checks without exposing ownership of the storage itself.
-    #[cfg(test)]
-    pub(crate) fn storage_capacity(&self) -> usize {
-        self.values.capacity()
     }
 
 
@@ -237,7 +198,8 @@ impl ArrayData {
             *binding.borrow_mut() = value.clone();
         }
         if self.values.len() <= index {
-            self.grow_dense_storage(index.saturating_add(1));
+            self.values
+                .resize(index.saturating_add(1), Value::Undefined);
         }
         self.values[index] = value;
         if self.deleted.len() <= index {
@@ -281,8 +243,8 @@ impl ArrayData {
             live.length = live.length.max(length);
         }
         self.length = self.length.max(length);
-        self.kind = ArrayKind::Sparse;
     }
+
     pub(crate) fn append_live(&self, values: &[Value]) {
         let Some(live) = &self.argument_live else {
             return;
@@ -548,35 +510,12 @@ impl ArrayData {
             self.disconnect_index(index);
             self.deleted.resize(index.saturating_add(1), false);
             self.deleted[index] = true;
-            self.kind = ArrayKind::Holey;
             if let Some(live) = &self.argument_live {
                 let mut live = live.borrow_mut();
                 live.deleted.resize(index.saturating_add(1), false);
                 live.deleted[index] = true;
             }
         }
-    }
-}
-fn classify_kind(values: &[Value]) -> ArrayKind {
-    classify_kind_with_holes(values, &[], values.len())
-}
-
-fn classify_kind_with_holes(values: &[Value], deleted: &[bool], length: usize) -> ArrayKind {
-    if length > values.len().saturating_mul(2).max(32) {
-        return ArrayKind::Sparse;
-    }
-    if deleted.iter().any(|deleted| *deleted) || length > values.len() {
-        return ArrayKind::Holey;
-    }
-    if values
-        .iter()
-        .all(|value| matches!(value, Value::Number(number) if number.fract() == 0.0))
-    {
-        ArrayKind::PackedInt
-    } else if values.iter().all(|value| matches!(value, Value::Number(_))) {
-        ArrayKind::PackedDouble
-    } else {
-        ArrayKind::PackedValue
     }
 }
 

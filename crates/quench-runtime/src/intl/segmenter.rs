@@ -339,11 +339,7 @@ fn segments_containing(receiver: Option<&Value>, arguments: &[Value]) -> Result<
 fn segment_input_length(value: Option<&Value>) -> usize {
     value
         .and_then(|value| crate::execute::get_property_result(value, "input").ok())
-        .map(|value| match value {
-            Value::String(value) => value.encode_utf16().count(),
-            Value::StringUnits(value) => value.len(),
-            _ => 0,
-        })
+        .and_then(|value| crate::strings::units_of(&value).map(|units| units.len()))
         .unwrap_or(0)
 }
 

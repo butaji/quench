@@ -137,15 +137,20 @@ fn is_symbol_payload(text: &str) -> bool {
 /// with a `length` property go through the array-like path; anything
 /// else is `ERR_INVALID_ARG_TYPE`.
 fn from_object(value: &Value, encoding_arg: Option<&Value>) -> Result<Value, VmError> {
+    // Arrays are the canonical array-like input for Buffer.from.  Do not run
+    // object string coercion first: Array.prototype.toString is an inherited
+    // method and can be represented as a non-callable host capability in the
+    // minimal runtime, while Node specifies array elements take precedence.
+    if matches!(value, Value::Array(_)) {
+        return from_array_like(value);
+    }
     if let Some(text) = coerce_object_string(value)? {
         let encoding = encoding_name(encoding_arg)?;
         return Ok(crate::modules::buffer_proto::make_buffer(
             &enc::encode_value(&Value::String(text), &encoding)?,
         ));
     }
-    if !matches!(get_property(value, "length"), Value::Undefined)
-        && (matches!(value, Value::Array(_)) || has_own(value, "length"))
-    {
+    if !matches!(get_property(value, "length"), Value::Undefined) && has_own(value, "length") {
         return from_array_like(value);
     }
     // Node accepts `{ buffer, byteOffset?, length? }` view descriptors.
@@ -278,6 +283,9 @@ fn index_arg(value: Option<&Value>, name: &str) -> Result<Option<usize>, VmError
     let Some(value) = value else {
         return Ok(None);
     };
+    if matches!(value, Value::Undefined) {
+        return Ok(None);
+    }
     let Value::Number(n) = value else {
         return Err(enc::invalid_arg_type(format!(
             "The \"{name}\" argument must be of type number.{}",

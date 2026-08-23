@@ -24,10 +24,6 @@ pub struct ContinuationId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CodeId(pub u32);
 
-/// Compact integer program-counter range used by VM continuations.
-///
-/// `code` selects immutable bytecode storage; `start` and `end` are offsets
-/// into that storage. No AST/IR reference participates in a suspended return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CodeRange {
     pub code: CodeId,
@@ -62,7 +58,6 @@ pub struct FrameId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackedCompletion {
     pub tag: u8,
-
     pub flags: u8,
     pub payload: u32,
     pub aux: u32,

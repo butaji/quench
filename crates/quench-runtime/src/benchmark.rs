@@ -103,7 +103,6 @@ pub struct BenchmarkRecord {
     pub workload: String,
     pub commit: String,
     pub samples: u32,
-    pub wall_time_ns: u64,
     pub cycles: u64,
     pub operations: u64,
     pub branches: u64,
@@ -117,10 +116,6 @@ pub struct BenchmarkRecord {
 }
 
 impl BenchmarkRecord {
-    pub fn wall_time_per_operation(&self) -> Option<f64> {
-        (self.operations != 0).then(|| self.wall_time_ns as f64 / self.operations as f64)
-    }
-
     pub fn cycles_per_operation(&self) -> Option<f64> {
         (self.operations != 0).then(|| self.cycles as f64 / self.operations as f64)
     }

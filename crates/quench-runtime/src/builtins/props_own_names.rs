@@ -182,7 +182,19 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
         Builtin::AsyncGeneratorFunctionPrototype => {
             &["constructor", "prototype", "Symbol.toStringTag"]
         }
-        Builtin::Error => &["length", "name", "prototype", "isError"],
+        _ => own_property_names_standard_core_tail(builtin),
+    }
+}
+
+fn own_property_names_standard_core_tail(builtin: Builtin) -> &'static [&'static str] {
+    match builtin {
+        Builtin::Error => &[
+            "length",
+            "name",
+            "prototype",
+            "isError",
+            "captureStackTrace",
+        ],
         Builtin::Promise => &[
             "length",
             "name",
@@ -198,8 +210,8 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
         ],
         Builtin::ThrowTypeError => &["length", "name"],
         _ => &[],
-     }
- }
+    }
+}
 
 fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
@@ -254,6 +266,12 @@ fn own_property_names_tail(builtin: Builtin) -> &'static [&'static str] {
         Builtin::IntlPluralRulesPrototype => &["Symbol.toStringTag"],
         Builtin::IntlRelativeTimeFormatPrototype => &["Symbol.toStringTag"],
         Builtin::IntlDurationFormatPrototype => &["Symbol.toStringTag"],
+        _ => own_property_names_tail_core(builtin),
+    }
+}
+
+fn own_property_names_tail_core(builtin: Builtin) -> &'static [&'static str] {
+    match builtin {
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
             "constructor",
