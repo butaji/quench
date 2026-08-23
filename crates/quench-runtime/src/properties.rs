@@ -445,8 +445,7 @@ fn set_builtin_property(
             fields.push((name.to_string(), crate::value::Value::Boolean(true)));
         }
     }
-    let properties = std::rc::Rc::new(crate::value::ObjectData::new(fields));
-    let updated = crate::builtins::define_own_property(target, key, properties.as_ref())?;
+    let updated = crate::builtins::define_own_property(target, key, &fields)?;
     crate::execute::write_value(registers, object, updated);
     Ok(())
 }
@@ -473,9 +472,11 @@ pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> b
     }
 }
 
-fn marked_without_key(properties: &[(String, crate::value::Value)], key: &str) -> bool {
-    properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
-        && !properties.iter().any(|(name, _)| name == key)
+fn marked_without_key<K: AsRef<str>>(properties: &[(K, crate::value::Value)], key: &str) -> bool {
+    properties
+        .iter()
+        .any(|(name, _)| name.as_ref() == NON_EXTENSIBLE)
+        && !properties.iter().any(|(name, _)| name.as_ref() == key)
 }
 
 pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {

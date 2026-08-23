@@ -795,7 +795,7 @@ mod array_data_tests {
 
 impl Value {
     /// Create an ordinary JavaScript object from own data properties.
-    pub fn object(properties: ObjectProperties) -> Self {
+    pub fn object(properties: Vec<(String, Value)>) -> Self {
         Self::Object(Rc::new(ObjectData::new(properties)))
     }
 

@@ -88,12 +88,12 @@ fn argument_property_flag(
     })
 }
 
-fn descriptor_flag_in(properties: &[(String, Value)], key: &str, field: &str) -> Option<bool> {
+fn descriptor_flag_in<K: AsRef<str>>(properties: &[(K, Value)], key: &str, field: &str) -> Option<bool> {
     let metadata_key = descriptor_key(key);
     let (_, Value::Object(descriptor)) = properties
         .iter()
         .rev()
-        .find(|(name, _)| name == &metadata_key)?
+        .find(|(name, _)| name.as_ref() == metadata_key)?
     else {
         return None;
     };
@@ -214,11 +214,14 @@ fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value>
     descriptor_value_in(properties, field)
 }
 
-fn descriptor_value_in<'a>(descriptor: &'a [(String, Value)], field: &str) -> Option<&'a Value> {
+fn descriptor_value_in<'a, K: AsRef<str>>(
+    descriptor: &'a [(K, Value)],
+    field: &str,
+) -> Option<&'a Value> {
     descriptor
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == field).then_some(value))
+        .find_map(|(name, value)| (name.as_ref() == field).then_some(value))
 }
 
 fn cannot_redefine() -> crate::execute::VmError {

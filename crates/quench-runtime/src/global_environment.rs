@@ -275,17 +275,17 @@ fn define_global(
     Ok(())
 }
 
-fn field(fields: &[(String, Value)], name: &str) -> Option<Value> {
+fn field<K: AsRef<str>>(fields: &[(K, Value)], name: &str) -> Option<Value> {
     fields
         .iter()
         .rev()
-        .find_map(|(key, value)| (key == name).then(|| value.clone()))
+        .find_map(|(key, value)| (key.as_ref() == name).then(|| value.clone()))
 }
 
-fn has_field(fields: &[(String, Value)], name: &str) -> bool {
-    fields.iter().any(|(key, _)| key == name)
+fn has_field<K: AsRef<str>>(fields: &[(K, Value)], name: &str) -> bool {
+    fields.iter().any(|(key, _)| key.as_ref() == name)
 }
 
-fn flag(fields: &[(String, Value)], name: &str) -> bool {
+fn flag<K: AsRef<str>>(fields: &[(K, Value)], name: &str) -> bool {
     matches!(field(fields, name), Some(Value::Boolean(true)))
 }
