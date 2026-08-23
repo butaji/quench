@@ -85,19 +85,32 @@ fn fast_number_binary(
     };
     use crate::ops::BinaryOp;
     Some(match operator {
-        BinaryOp::Add => {
+        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
             if let (Some(left_int), Some(right_int)) = (
                 Value::Number(*left).as_small_integer(),
                 Value::Number(*right).as_small_integer(),
             ) {
-                if let Some(value) = Value::checked_small_integer_add(left_int, right_int) {
+                let checked = match operator {
+                    BinaryOp::Add => Value::checked_small_integer_add(left_int, right_int),
+                    BinaryOp::Subtract => {
+                        Value::checked_small_integer_subtract(left_int, right_int)
+                    }
+                    BinaryOp::Multiply => {
+                        Value::checked_small_integer_multiply(left_int, right_int)
+                    }
+                    _ => unreachable!(),
+                };
+                if let Some(value) = checked {
                     return Some(value);
                 }
             }
-            Value::Number(*left + *right)
+            Value::Number(match operator {
+                BinaryOp::Add => *left + *right,
+                BinaryOp::Subtract => *left - *right,
+                BinaryOp::Multiply => *left * *right,
+                _ => unreachable!(),
+            })
         }
-        BinaryOp::Subtract => Value::Number(*left - *right),
-        BinaryOp::Multiply => Value::Number(*left * *right),
         BinaryOp::Divide => Value::Number(*left / *right),
         BinaryOp::Remainder => Value::Number(*left % *right),
         BinaryOp::Exponentiate => Value::Number(left.powf(*right)),
@@ -127,6 +140,32 @@ mod immediate_integer_tests {
         assert_eq!(overflow.as_small_integer(), None);
     }
 
+    #[test]
+    fn checked_integer_arithmetic_covers_subtract_and_multiply_boundaries() {
+        let cases = [
+            (BinaryOp::Subtract, i32::MIN, 1, f64::from(i32::MIN) - 1.0),
+            (BinaryOp::Multiply, 46_341, 46_341, 46_341.0 * 46_341.0),
+        ];
+        for (operator, left, right, fallback) in cases {
+            let result = fast_number_binary(
+                &Value::from_small_integer(left),
+                &Value::from_small_integer(right),
+                operator,
+            )
+            .expect("numeric operation");
+            assert_eq!(result, Value::Number(fallback));
+            assert!(result.as_small_integer().is_none());
+        }
+        assert_eq!(
+            fast_number_binary(
+                &Value::from_small_integer(7),
+                &Value::from_small_integer(6),
+                BinaryOp::Multiply,
+            )
+            .and_then(|value| value.as_small_integer()),
+            Some(42)
+        );
+    }
     #[test]
     fn add_preserves_negative_zero_and_fractional_numbers() {
         assert_eq!(
@@ -523,7 +562,7 @@ fn is_string_like(value: &Value) -> bool {
 
 fn add_units(value: &Value) -> Result<Vec<u16>, VmError> {
     if let Value::StringUnits(units) = value {
-        return Ok((**units).clone());
+        return Ok((**units).to_vec());
     }
     Ok(add_string(value)?.encode_utf16().collect())
 }
