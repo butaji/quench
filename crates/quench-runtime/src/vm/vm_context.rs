@@ -243,6 +243,25 @@ impl VmContext {
         let realm = realm::create(&parent);
         realm::context(realm).unwrap_or(parent)
     }
+    /// Use `global` as this realm's actual global object.
+    ///
+    /// This is intentionally separate from host bindings: properties created
+    /// by global declarations and assignments must remain owned by the caller's
+    /// sandbox object.
+    pub fn with_global_object(self, global: &Value) -> Self {
+        let object = match global {
+            Value::Object(object) => Some(object.clone()),
+            Value::ObjectAlias(alias) => alias.0.borrow().upgrade(),
+            _ => None,
+        };
+        if let Some(object) = object {
+            if let Some(token) = realm::token(self.realm) {
+                realm::register_global(&token, object);
+            }
+        }
+        self
+    }
+
 
     pub fn realm(&self) -> RealmId {
         self.realm

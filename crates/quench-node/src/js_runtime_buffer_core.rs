@@ -1,5 +1,5 @@
 fn buffer_module() -> Value {
-    let mut buffer = capability_function(HostCapabilityKind::Custom(CapabilityName::BufferFrom));
+    let mut buffer = capability_function(HostCapabilityKind::Custom(CapabilityName::BufferNew));
     buffer = quench_runtime::execute::set_property(
         buffer,
         "Symbol.hasInstance",
@@ -30,8 +30,10 @@ fn buffer_module() -> Value {
         ),
         ("of", HostCapabilityKind::Custom(CapabilityName::BufferOf)),
         (
+            // Keep the slow allocator on the same host path as allocUnsafe.
+            // Both APIs return the identical NodeBuffer representation.
             "allocUnsafeSlow",
-            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow),
+            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe),
         ),
         (
             "allocUnsafe",
@@ -304,11 +306,10 @@ fn node_buffer(bytes: &[u8]) -> Value {
 }
 
 fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -> Value {
-    let value = quench_runtime::execute::set_property(
-        Value::Uint8Array(Rc::new(Uint8ArrayData::new(buffer.clone(), offset, length))),
-        "toString",
-        capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)),
-    );
+    // Use the canonical Buffer view constructor so host-created buffers (zlib,
+    // networking, crypto, etc.) get the same prototype and callable method
+    // dispatch as Buffer.from/Buffer.alloc results.
+    let value = quench_node::modules::buffer_proto::make_view(buffer.clone(), offset, length);
     let value = quench_runtime::execute::set_property(
         value,
         "equals",
@@ -486,6 +487,20 @@ fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -
     prototype =
         quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
     prototype = quench_runtime::execute::set_property(prototype, "writeUintLE", write_uint_le);
-    value = quench_runtime::execute::set_property(value, "prototype", prototype);
+    value = quench_runtime::execute::set_property(
+        value,
+        "toString",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)),
+    );
+    value = quench_runtime::execute::set_property(
+        value,
+        "write",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::BufferWrite)),
+    );
+    value = quench_runtime::execute::set_property(
+        value,
+        "slice",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::BufferSlice)),
+    );
     value
 }

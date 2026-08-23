@@ -176,11 +176,21 @@ include!("js_runtime_host_fs_io.rs");
 impl QuenchNodeHost {}
 include!("js_runtime_host_url_stream.rs");
 impl QuenchNodeHost {
-    fn http_call(&self, kind: HostCapabilityKind, arguments: &[Value]) -> Result<Value, VmError> {
+    fn http_call(&self, kind: HostCapabilityKind, receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
         match kind {
             HostCapabilityKind::Custom(CapabilityName::HttpServer) => {
-                self.http.borrow_mut().server_callback = arguments.first().cloned();
+                let mut callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+                while let Value::BindingCell(cell) = callback {
+                    callback = cell.borrow().clone();
+                }
+                self.http.borrow_mut().server_callback = Some(callback);
                 Ok(Value::object(vec![
+                    (
+                        "on".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpRequestOn,
+                        )),
+                    ),
                     (
                         "listen".into(),
                         capability_function(HostCapabilityKind::Custom(
@@ -202,6 +212,31 @@ impl QuenchNodeHost {
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::HttpGet) => {
+                if matches!(arguments.first(), Some(Value::Object(_))) {
+                    let options = arguments.first().cloned().unwrap_or(Value::Undefined);
+                    let path = quench_runtime::execute::get_property_result(&options, "path")
+                        .ok().and_then(|v| match v { Value::String(s) => Some(s), _ => None })
+                        .unwrap_or_else(|| "/".into());
+                    let method = quench_runtime::execute::get_property_result(&options, "method")
+                        .ok().and_then(|v| match v { Value::String(s) => Some(s), _ => None })
+                        .unwrap_or_else(|| "GET".into());
+                    let mut callback = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+                    while let Value::BindingCell(cell) = callback {
+                        callback = cell.borrow().clone();
+                    }
+                    self.http.borrow_mut().client_callback = Some(callback);
+                    return Ok(Value::object(vec![
+                        ("method".into(), Value::String(method)),
+                        ("path".into(), Value::String(path)),
+                        ("on".into(), capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpRequestOn,
+                        ))),
+                        ("end".into(), capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpRequestEnd,
+                        ))),
+                    ]));
+                }
+                let callback = arguments.get(1).cloned().ok_or(VmError::NotCallable)?;
                 let url = arguments
                     .first()
                     .and_then(|v| match v {
@@ -209,7 +244,6 @@ impl QuenchNodeHost {
                         _ => None,
                     })
                     .ok_or(VmError::NotCallable)?;
-                let callback = arguments.get(1).cloned().ok_or(VmError::NotCallable)?;
                 let path = url
                     .split('/')
                     .skip(3)
@@ -252,27 +286,73 @@ impl QuenchNodeHost {
                 Ok(request)
             }
             HostCapabilityKind::Custom(CapabilityName::HttpRequestOn) => {
+                // ClientRequest.on registers the response listener; the
+                // callback must run only once a response is produced.
+                let is_client = receiver
+                    .and_then(|value| quench_runtime::execute::get_property_result(value, "method").ok())
+                    .is_some();
+                if is_client {
+                    if let Some(callback) = arguments.last() {
+                        let mut callback = callback.clone();
+                        while let Value::BindingCell(cell) = callback {
+                            callback = cell.borrow().clone();
+                        }
+                        self.http.borrow_mut().client_callback = Some(callback);
+                    }
+                    return Ok(Value::Undefined);
+                }
                 if let Some(callback) = arguments.last() {
                     quench_runtime::execute::call(callback, &Value::Undefined, &[])?;
                 }
                 Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::HttpRequestEnd) => {
+                let is_client = receiver
+                    .and_then(|value| quench_runtime::execute::get_property_result(value, "method").ok())
+                    .is_some();
+                if is_client {
+                    return self.http_call(
+                        HostCapabilityKind::Custom(CapabilityName::HttpRequest),
+                        receiver,
+                        arguments,
+                    );
+                }
                 Ok(Value::object(vec![("port".into(), Value::Number(43123.0))]))
             }
-            HostCapabilityKind::Custom(CapabilityName::HttpRequestWrite) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::HttpRequest) => {
+                let (server, callback) = {
+                    let state = self.http.borrow();
+                    (state.server_callback.clone().ok_or(VmError::NotCallable)?,
+                     state.client_callback.clone().ok_or(VmError::NotCallable)?)
+                };
+                let request = Value::object(vec![
+                    ("method".into(), Value::String("GET".into())),
+                    ("url".into(), Value::String("/".into())),
+                ]);
+                let response = response_object(200);
+                quench_runtime::execute::call(&server, &Value::Undefined, &[request, response.clone()])?;
+                quench_runtime::execute::call(&callback, &Value::Undefined, &[response])?;
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(CapabilityName::HttpRequestWrite) => {
+                if receiver.and_then(|value| quench_runtime::execute::get_property_result(value, "method").ok()).is_none() {
+                    if let Some(callback) = arguments.last() {
+                        if quench_runtime::is_callable(callback) {
+                            quench_runtime::execute::call(callback, &Value::Undefined, &[])?;
+                        }
+                    }
+                } else if let Some(value) = arguments.first() {
+                    self.http.borrow_mut().body = value_to_string(value);
+                }
+                Ok(Value::Undefined)
+            }
             HostCapabilityKind::Custom(id) if (500..600).contains(&id) => {
                 match id % 10 {
-                    4 => {
-                        self.http.borrow_mut().body =
-                            arguments.first().map(value_to_string).unwrap_or_default()
-                    }
+                    4 => self.http.borrow_mut().body = arguments.first().map(value_to_string).unwrap_or_default(),
                     5 => {
-                        if matches!(arguments.first(), Some(Value::String(event)) if event == "data")
-                        {
+                        if matches!(arguments.first(), Some(Value::String(event)) if event == "data") {
                             self.http.borrow_mut().data_callback = arguments.get(1).cloned();
-                        } else if matches!(arguments.first(), Some(Value::String(event)) if event == "end")
-                        {
+                        } else if matches!(arguments.first(), Some(Value::String(event)) if event == "end") {
                             self.http.borrow_mut().end_callback = arguments.get(1).cloned();
                         }
                     }

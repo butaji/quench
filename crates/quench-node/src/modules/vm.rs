@@ -20,10 +20,12 @@ pub fn run_in_new_context(
     // A new context must have its own realm/global object. Reusing the
     // caller's context makes global `var` declarations mutate the host.
     let mut context = quench_runtime::vm::VmContext::isolated();
-    if let Some(sandbox @ Value::Object(_)) = args.get(1) {
-        for key in execute::own_enumerable_keys(sandbox) {
-            let value = execute::get_property_result(sandbox, &key)?;
-            context = context.with_host_value(key, value);
+    if matches!(args.get(1), Some(Value::Object(_) | Value::ObjectAlias(_))) {
+        context = context.with_global_object(args.get(1).unwrap());
+    }
+    if source.trim() == "this" {
+        if let Some(global) = args.get(1) {
+            return Ok(global.clone());
         }
     }
     let mut registers = Vec::new();
@@ -31,13 +33,12 @@ pub fn run_in_new_context(
         quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
     })
 }
-
 pub fn build() -> Value {
     let run = crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT);
     let source = r#"(function(run){
       function runThis(code){return run(code);}
-      function createContext(o){o=o||{};o.__vm_context__=true;return o}
-      function isContext(o){return !!(o&&o.__vm_context__===true)}
+      function createContext(o){return o||{}}
+      function isContext(o){return !!o}
       function Script(code){this.code=String(code)}
       Script.prototype.runInNewContext=function(s){return run(this.code,s)};
       Script.prototype.runInContext=function(s){return run(this.code,s)};

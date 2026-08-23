@@ -101,12 +101,36 @@ fn raw_deflate(data: &[u8], level: flate2::Compression) -> Result<Vec<u8>, std::
     encoder.write_all(data)?;
     encoder.finish()
 }
-
 fn raw_inflate(data: &[u8], _: flate2::Compression) -> Result<Vec<u8>, std::io::Error> {
     let mut decoder = flate2::bufread::DeflateDecoder::new(data);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out)?;
     Ok(out)
+}
+
+
+pub fn gzip_value(args: &[Value]) -> Result<Value, VmError> {
+    run(args, gzip_deflate)
+}
+
+pub fn gunzip_value(args: &[Value]) -> Result<Value, VmError> {
+    run(args, gzip_inflate)
+}
+
+pub fn deflate_raw_value(args: &[Value]) -> Result<Value, VmError> {
+    run(args, raw_deflate)
+}
+
+pub fn inflate_raw_value(args: &[Value]) -> Result<Value, VmError> {
+    run(args, raw_inflate)
+}
+
+pub fn deflate_value(args: &[Value]) -> Result<Value, VmError> {
+    run(args, zlib_deflate)
+}
+
+pub fn inflate_value(args: &[Value]) -> Result<Value, VmError> {
+    run(args, zlib_inflate)
 }
 
 pub fn gzip(
@@ -115,7 +139,7 @@ pub fn gzip(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let _ = state;
-    run(args, gzip_deflate)
+    gzip_value(args)
 }
 
 pub fn gunzip(
@@ -124,7 +148,7 @@ pub fn gunzip(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let _ = state;
-    run(args, gzip_inflate)
+    gunzip_value(args)
 }
 
 pub fn deflate_raw(
@@ -133,7 +157,7 @@ pub fn deflate_raw(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let _ = state;
-    run(args, raw_deflate)
+    deflate_raw_value(args)
 }
 
 pub fn inflate_raw(
@@ -142,7 +166,7 @@ pub fn inflate_raw(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let _ = state;
-    run(args, raw_inflate)
+    inflate_raw_value(args)
 }
 
 pub fn deflate(
@@ -151,7 +175,7 @@ pub fn deflate(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let _ = state;
-    run(args, zlib_deflate)
+    deflate_value(args)
 }
 
 pub fn inflate(
@@ -160,7 +184,7 @@ pub fn inflate(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let _ = state;
-    run(args, zlib_inflate)
+    inflate_value(args)
 }
 
 /// The `zlib` module namespace.
