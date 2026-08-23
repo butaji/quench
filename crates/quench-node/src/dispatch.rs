@@ -228,6 +228,10 @@ const CAP_TEST_SKIP: u16 = 0x1b01;
 pub fn lookup(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     let h = match cap {
+        0x1200 => node_require,
+        CAP_EVENTS_NEW => handlers::events_call,
+        2044 => handlers::buffer_of,
+        0x1a00 => crate::modules::compat_extra::sea_is_sea,
         CAP_EVENTS_FROM => events_from,
         CAP_EVENTS_ON => events_method_on,
         CAP_EVENTS_EMIT => events_method_emit,
