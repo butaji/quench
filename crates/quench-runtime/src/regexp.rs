@@ -502,20 +502,11 @@ fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a
 }
 
 fn extract_source(receiver: &Value) -> String {
-    crate::execute::get_property_result(receiver, "source")
-        .ok()
-        .and_then(|value| crate::strings::source_text(&value))
-        .unwrap_or_default()
+    internal_regexp_string(receiver, "source").unwrap_or_default()
 }
 
 fn extract_flags(receiver: &Value) -> String {
-    crate::execute::get_property_result(receiver, "flags")
-        .ok()
-        .and_then(|value| match value {
-            Value::String(flags) => Some(flags),
-            _ => None,
-        })
-        .unwrap_or_default()
+    internal_regexp_string(receiver, "flags").unwrap_or_default()
 }
 
 fn extract_last_index(receiver: &Value) -> Result<usize, VmError> {
