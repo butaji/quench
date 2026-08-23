@@ -21,6 +21,9 @@ pub(crate) fn get_property_with_receiver(
     receiver: &Value,
 ) -> Result<Value, VmError> {
     crate::module_bindings::exports(value, key)?;
+    if let Some(value) = proven_own_data(value, key) {
+        return Ok(value);
+    }
     if let Some(result) = early_property_result(value, key, receiver) {
         return result;
     }
@@ -43,6 +46,47 @@ pub(crate) fn get_property_with_receiver(
         return result;
     }
     finish_property_access(value, key, receiver)
+}
+
+fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    if crate::vm::is_global_object(value) {
+        return None;
+    }
+    let deleted = crate::builtins::deleted_key(key);
+    let descriptor = crate::builtins::descriptor_key(key);
+    let mut own = None;
+    let mut metadata = None;
+    for (name, value) in properties.iter().rev() {
+        if name == &deleted {
+            return None;
+        }
+        if own.is_none() && name == key {
+            own = Some(value);
+        }
+        if metadata.is_none() && name == &descriptor {
+            metadata = Some(value);
+        }
+    }
+    let own = own?;
+    if matches!(own, Value::Null) && crate::vm::global_builtin_exists(key) {
+        return None;
+    }
+    if metadata.is_some_and(accessor_descriptor) {
+        return None;
+    }
+    Some(property_value(own))
+}
+
+fn accessor_descriptor(value: &Value) -> bool {
+    let Value::Object(fields) = value else {
+        return true;
+    };
+    fields
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "get" | "set"))
 }
 
 fn function_inherited_property_result(
@@ -374,3 +418,36 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
     name.starts_with("get ") || name.starts_with("set ")
 }
 
+#[cfg(test)]
+mod proven_own_data_tests {
+    use super::proven_own_data;
+    use crate::value::{ObjectData, Value};
+    use std::rc::Rc;
+
+    fn object(entries: Vec<(String, Value)>) -> Value {
+        Value::Object(Rc::new(ObjectData::new(entries)))
+    }
+
+    #[test]
+    fn returns_plain_own_data() {
+        let value = object(vec![("field".into(), Value::Number(7.0))]);
+        assert_eq!(proven_own_data(&value, "field"), Some(Value::Number(7.0)));
+        assert_eq!(proven_own_data(&value, "missing"), None);
+    }
+
+    #[test]
+    fn rejects_deleted_and_accessor_properties() {
+        let deleted = object(vec![
+            ("field".into(), Value::Number(7.0)),
+            (crate::builtins::deleted_key("field"), Value::Undefined),
+        ]);
+        assert_eq!(proven_own_data(&deleted, "field"), None);
+
+        let getter = object(vec![("get".into(), Value::Undefined)]);
+        let accessor = object(vec![
+            ("field".into(), Value::Number(7.0)),
+            (crate::builtins::descriptor_key("field"), getter),
+        ]);
+        assert_eq!(proven_own_data(&accessor, "field"), None);
+    }
+}

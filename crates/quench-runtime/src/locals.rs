@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
+    hash::{BuildHasherDefault, Hasher},
     rc::Rc,
 };
 
@@ -10,19 +11,60 @@ thread_local! {
     static CURRENT_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_REALM: RefCell<Option<crate::ops::RealmId>> = const { RefCell::new(None) };
-    static REPLACEMENTS: RefCell<HashMap<ReplacementIdentity, Replacement>> = RefCell::new(HashMap::new());
-    static REPLACEMENT_ROOTS: RefCell<HashMap<ReplacementIdentity, ReplacementIdentity>> = RefCell::new(HashMap::new());
+    static REPLACEMENTS: RefCell<ReplacementMap<Replacement>> = RefCell::new(ReplacementMap::default());
+    static REPLACEMENT_ROOTS: RefCell<ReplacementMap<ReplacementIdentity>> = RefCell::new(ReplacementMap::default());
     static REPLACEMENTS_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static STRICT_EVAL: RefCell<bool> = const { RefCell::new(false) };
     static ACTIVE_EVAL: RefCell<bool> = const { RefCell::new(false) };
     static INITIALIZING_CLASS_NAMES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+type ReplacementMap<T> = HashMap<ReplacementIdentity, T, BuildHasherDefault<ReplacementHasher>>;
+
+#[derive(Default)]
+struct ReplacementHasher(u64);
+
+impl Hasher for ReplacementHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = self.0.rotate_left(5) ^ u64::from(*byte);
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.0 = self.0.rotate_left(7) ^ value.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReplacementIdentity {
     Array(usize),
-    Object(usize),
+    Object(u64),
     Function(usize),
+}
+
+impl std::hash::Hash for ReplacementIdentity {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let (value, tag) = match *self {
+            Self::Array(value) => (value as u64, 0),
+            Self::Object(value) => (value, 1),
+            Self::Function(value) => (value as u64, 2),
+        };
+        state.write_u64(value.wrapping_mul(3).wrapping_add(tag));
+    }
 }
 
 struct Replacement {
@@ -470,6 +512,9 @@ pub(crate) fn capture(count: u16) -> Rc<Environment> {
 }
 
 pub(crate) fn replace_value(old: &Value, new: &Value) {
+    if replace_object(old, new) {
+        return;
+    }
     let Some(identity) = replacement_identity(old) else {
         return;
     };
@@ -485,17 +530,45 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
     REPLACEMENTS.with(|replacements| {
         let mut replacements = replacements.borrow_mut();
         let replacement = replacements.entry(root).or_insert_with(|| Replacement {
-            _owners: Vec::new(),
+            _owners: Vec::with_capacity(8),
             value: new.clone(),
         });
-        replacement._owners.push(old.clone());
+        if let Some(owner) = replacement_owner(old) {
+            replacement._owners.push(owner);
+        }
         replacement.value = new.clone();
     });
     REPLACEMENTS_ACTIVE.with(|active| active.set(true));
 }
 
+fn replace_object(old: &Value, new: &Value) -> bool {
+    let Value::Object(new) = new else {
+        return false;
+    };
+    let old = match old {
+        Value::Object(old) => Some(Rc::clone(old)),
+        Value::ObjectAlias(alias) => alias.target(),
+        _ => None,
+    };
+    let Some(old) = old else {
+        return false;
+    };
+    old.replace_with(Rc::clone(new));
+    true
+}
+
 #[inline]
 pub(crate) fn replacement(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(object) => return object.replacement().map(Value::Object),
+        Value::ObjectAlias(alias) => {
+            return alias
+                .target()
+                .and_then(|object| object.replacement())
+                .map(Value::Object)
+        }
+        _ => {}
+    }
     if !REPLACEMENTS_ACTIVE.with(|active| active.get()) {
         return None;
     }
@@ -531,20 +604,32 @@ pub(crate) fn resolved_replacement(value: Value) -> Value {
 fn replacement_identity(value: &Value) -> Option<ReplacementIdentity> {
     match value {
         Value::Array(value) => Some(ReplacementIdentity::Array(Rc::as_ptr(value) as usize)),
-        Value::Object(value) => Some(ReplacementIdentity::Object(Rc::as_ptr(value) as usize)),
+        Value::Object(value) => Some(ReplacementIdentity::Object(value.identity())),
         Value::ObjectAlias(value) => value
             .0
             .borrow()
             .upgrade()
-            .map(|object| ReplacementIdentity::Object(Rc::as_ptr(&object) as usize)),
+            .map(|object| ReplacementIdentity::Object(object.identity())),
         Value::Function(value) => Some(ReplacementIdentity::Function(Rc::as_ptr(value) as usize)),
+        _ => None,
+    }
+}
+
+fn replacement_owner(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(object) if Rc::weak_count(object) == 0 => None,
+        Value::ObjectAlias(alias) => alias.target().map(Value::Object),
+        Value::Array(_) | Value::Object(_) | Value::Function(_) => Some(value.clone()),
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod replacement_tests {
-    use super::{replacement_identity, Replacement, REPLACEMENTS};
+    use super::{
+        replace_value, replacement_identity, replacement_owner, resolved_replacement, Replacement,
+        REPLACEMENTS,
+    };
     use crate::value::{ObjectAliasValue, ObjectData, Value};
     use std::{cell::RefCell, rc::Rc};
 
@@ -576,5 +661,25 @@ mod replacement_tests {
         assert!(weak.upgrade().is_some());
         REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
         assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn ordinary_object_without_alias_needs_no_retained_owner() {
+        let owner = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        assert!(replacement_owner(&owner).is_none());
+    }
+
+    #[test]
+    fn ordinary_object_replacement_is_owned_by_the_object() {
+        let old = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        let new = Value::Object(Rc::new(ObjectData::new(vec![(
+            "answer".into(),
+            Value::Number(42.0),
+        )])));
+        replace_value(&old, &new);
+        let resolved = resolved_replacement(old);
+        assert!(
+            matches!(resolved, Value::Object(object) if Rc::ptr_eq(&object, match &new { Value::Object(object) => object, _ => unreachable!() }))
+        );
     }
 }
