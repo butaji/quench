@@ -523,7 +523,10 @@ impl std::ops::DerefMut for ObjectData {
 }
 
 fn creation_order(properties: &[(String, Value)]) -> Vec<String> {
-    let mut created = Vec::new();
+    // Bootstrap objects commonly arrive with all properties at once. Reserve
+    // the final key count so creation-order storage does not repeatedly grow
+    // and retain transient allocator pages during bootstrap.
+    let mut created = Vec::with_capacity(properties.len());
     for (key, _) in properties {
         if key.starts_with('\0') || created.iter().any(|name| name == key) {
             continue;
