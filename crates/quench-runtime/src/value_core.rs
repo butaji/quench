@@ -243,6 +243,10 @@ impl ObjectData {
         self.original_prototype.borrow().clone()
     }
 
+    pub(crate) fn set_original_prototype(&self, prototype: Option<Value>) {
+        self.original_prototype.replace(prototype);
+    }
+
     pub(crate) fn with_creation_order(
         properties: ObjectProperties,
         private_slots: PrivateSlots,
