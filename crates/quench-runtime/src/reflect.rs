@@ -391,14 +391,40 @@ fn evaluate_direct(
         grammar,
     )
     .map_err(|errors| syntax_error(errors, None))?;
-    execute_direct_eval(program.code(), program.facts.strict)
+    let local_slot = program
+        .local_slots
+        .values()
+        .copied()
+        .max()
+        .map_or(0, |slot| slot.saturating_add(1));
+    let eval_slot = program
+        .facts
+        .eval_deletable
+        .iter()
+        .map(|(_, slot)| slot.saturating_add(1))
+        .max()
+        .unwrap_or(0);
+    execute_direct_eval(
+        program.code(),
+        program.facts.strict,
+        local_slot.max(eval_slot),
+    )
 }
 
-fn execute_direct_eval(code: crate::machine::CodeView<'_>, strict: bool) -> Result<Value, VmError> {
-    let environment = crate::environment::Environment::child(&crate::locals::current(), Vec::new());
-    let _guard = crate::locals::EnvironmentGuard::install(environment);
+fn execute_direct_eval(
+    code: crate::machine::CodeView<'_>,
+    strict: bool,
+    slot_count: u16,
+) -> Result<Value, VmError> {
+    let caller = crate::locals::current();
+    let additional = usize::from(slot_count.saturating_sub(caller.len() as u16));
+    let environment = crate::environment::Environment::child(
+        &caller,
+        vec![Value::Undefined; additional],
+    );
     let _strict_eval = crate::locals::StrictEvalGuard::install(strict);
-    crate::vm::execute_code_in_place(code, &mut Vec::new())
+    let context = crate::vm::current_context_or_default();
+    crate::vm::execute_code_in_environment(code, &mut Vec::new(), &context, environment)
 }
 
 fn syntax_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
