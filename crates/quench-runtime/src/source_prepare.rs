@@ -6,10 +6,15 @@ use std::borrow::Cow;
 /// comment NULs to a space. String and template contents keep the code point
 /// as an escape that the parser accepts.
 pub(crate) fn prepare_source(source: &str) -> Cow<'_, str> {
-    if !source.contains('\0') {
+    if !source.contains('\0') && !source.contains('\r') {
         return Cow::Borrowed(source);
     }
-    Cow::Owned(rewrite_nuls(source))
+    let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
+    if normalized.contains('\0') {
+        Cow::Owned(rewrite_nuls(&normalized))
+    } else {
+        Cow::Owned(normalized)
+    }
 }
 
 fn rewrite_nuls(source: &str) -> String {
