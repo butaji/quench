@@ -221,6 +221,13 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
     // The live array view is interior-mutable. Append there without cloning
     // the physical snapshot on every call; consumers read through the same
     // logical/indexed interface and retain the receiver's identity.
-    values.append_live(arguments);
+    if values.has_argument_live() {
+        values.append_live(arguments);
+    } else {
+        let mut updated = (**values).clone();
+        updated.append_physical(arguments);
+        let result = Value::Array(Rc::new(updated));
+        crate::locals::replace_value(receiver.unwrap(), &result);
+    }
     Value::Number(length as f64)
 }
