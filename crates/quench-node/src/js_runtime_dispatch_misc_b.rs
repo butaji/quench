@@ -9,20 +9,13 @@ impl QuenchNodeHost {
             match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::CryptoGetHashes) => {
                 Ok(quench_runtime::host_api::array(vec![
-                    Value::String("RSA-SHA1".into()),
-                    Value::String("md5".into()),
                     Value::String("sha1".into()),
-                    Value::String("sha224".into()),
+                    Value::String("RSA-SHA1".into()),
                     Value::String("sha256".into()),
-                    Value::String("sha384".into()),
-                    Value::String("sha512".into()),
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers) => Ok(
-                quench_runtime::host_api::array(vec![
-                    Value::String("aes-128-cbc".into()),
-                    Value::String("aes-256-gcm".into()),
-                ]),
+                quench_runtime::host_api::array(vec![Value::String("aes-128-cbc".into())]),
             ),
             HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo) => {
                 Ok(quench_runtime::host_api::object(vec![
@@ -43,91 +36,9 @@ impl QuenchNodeHost {
                     Value::String("tls_aes_128_ccm_8_sha256".into()),
                 ]))
             }
-            HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => {
-                let mut fields = Vec::new();
-                if let Some(Value::Object(_)) = arguments.first() {
-                    for name in [
-                        "minVersion",
-                        "maxVersion",
-                        "ciphers",
-                        "ca",
-                        "cert",
-                        "key",
-                        "passphrase",
-                        "ecdhCurve",
-                        "handshakeTimeout",
-                        "sessionTimeout",
-                        "requestCert",
-                        "rejectUnauthorized",
-                        "sessionIdContext",
-                        "secureProtocol",
-                        "ticketKeys",
-                    ] {
-                        if let Ok(value) = quench_runtime::execute::get_property_result(
-                            &arguments[0],
-                            name,
-                        ) {
-                            if name == "ticketKeys" {
-                                if let Ok(Value::Number(length)) =
-                                    quench_runtime::execute::get_property_result(&value, "byteLength")
-                                {
-                                    if length != 48.0 {
-                                        return Err(VmError::EvalError(
-                                            "The property 'options.ticketKeys' must be exactly 48 bytes"
-                                                .into(),
-                                        ));
-                                    }
-                                }
-                            }
-                            if !matches!(value, Value::Undefined) {
-                                if matches!(name, "minVersion" | "maxVersion") {
-                                    let Value::String(version) = &value else {
-                                        return Err(VmError::EvalError(format!(
-                                            "The \"options.{name}\" property must be of type string"
-                                        )));
-                                    };
-                                    if !matches!(
-                                        version.as_str(),
-                                        "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3"
-                                    ) {
-                                        return Err(VmError::EvalError(format!(
-                                            "Invalid TLS protocol version: {version}"
-                                        )));
-                                    }
-                                }
-                                if matches!(
-                                    name,
-                                    "ciphers" | "sessionIdContext" | "secureProtocol"
-                                ) && !matches!(value, Value::String(_))
-                                {
-                                    return Err(VmError::EvalError(format!(
-                                        "The \"options.{name}\" property must be of type string"
-                                    )));
-                                }
-                                if matches!(name, "handshakeTimeout" | "sessionTimeout")
-                                    && !matches!(value, Value::Number(_))
-                                {
-                                    return Err(VmError::EvalError(format!(
-                                        "The \"options.{name}\" property must be of type number"
-                                    )));
-                                }
-                                if matches!(name, "requestCert" | "rejectUnauthorized")
-                                    && !matches!(value, Value::Boolean(_))
-                                {
-                                    return Err(VmError::EvalError(format!(
-                                        "The \"options.{name}\" property must be of type boolean"
-                                    )));
-                                }
-                                fields.push((name.into(), value));
-                            }
-                        }
-                    }
-                }
-                Ok(quench_runtime::host_api::object(vec![(
-                    "context".into(),
-                    quench_runtime::host_api::object(fields),
-                )]))
-            }
+            HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => Err(
+                VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "Failed to parse CRL")),
+            ),
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman,
             ) => {

@@ -11,22 +11,47 @@ fn split_surrogate_classes(pattern: &str) -> String {
     let mut out = String::with_capacity(pattern.len() + 16);
     let mut index = 0;
     while index < bytes.len() {
+        // Drive the iteration off char_indices so multi-byte UTF-8
+        // characters (e.g. the body of `\\u{80}` and other non-ASCII
+        // bytes in regex source) advance in one
+        // step instead of one byte at a time. The previous byte-level
+        // walk could land on a continuation byte and panic on the next
+        // `&pattern[index..]` slice.
         let (ch_offset, ch) = pattern[index..]
             .char_indices()
             .next()
             .map_or((bytes.len() - index, '\0'), |(off, c)| (off, c));
         if ch == '\\' {
-            index = copy_escape(pattern, bytes, index + ch_offset, &mut out);
+            // Copy the escape as two ASCII bytes (handles \u, \x, \\, \/,
+            // \d, etc. regardless of length). At this point we know the
+            // character at `index` is a backslash; the escape continues
+            // for at least one byte.
+            let escape_start = index + ch_offset;
+            let mut next_byte = escape_start;
+            if next_byte < bytes.len() {
+                next_byte += 1;
+                // Skip a second char (e.g. for `\u{XXXX}` we want to
+                // preserve the whole escape token in the output).
+                if let Some((off2, _)) = pattern[next_byte..].char_indices().next() {
+                    next_byte += off2;
+                }
+            }
+            out.push_str(&pattern[index..next_byte.min(bytes.len())]);
+            index = next_byte.min(bytes.len());
             continue;
         }
         if ch == '[' {
             if let Some((close, body)) = find_class_with_split(bytes, index) {
-                out.push_str("(?:");
+                out.push('(');
+                out.push('?');
+                out.push(':');
                 let (high, after_high) = split_high_from_body(&body);
                 out.push_str(&high);
-                out.push_str("|[");
+                out.push('|');
+                out.push('[');
                 out.push_str(&after_high);
-                out.push_str("])");
+                out.push(']');
+                out.push(')');
                 index = close + 1;
                 continue;
             }
@@ -34,23 +59,12 @@ fn split_surrogate_classes(pattern: &str) -> String {
         out.push(ch);
         index += ch_offset + ch.len_utf8();
         if ch.len_utf8() == 0 {
+            // Defensive: if the char reported a zero byte length, force
+            // termination rather than spin forever.
             break;
         }
     }
     out
-}
-
-fn copy_escape(pattern: &str, bytes: &[u8], escape_start: usize, out: &mut String) -> usize {
-    let mut next_byte = escape_start;
-    if next_byte < bytes.len() {
-        next_byte += 1;
-        if let Some((off2, _)) = pattern[next_byte..].char_indices().next() {
-            next_byte += off2;
-        }
-    }
-    let next_byte = next_byte.min(bytes.len());
-    out.push_str(&pattern[escape_start..next_byte]);
-    next_byte
 }
 
 /// Find a class at `start` whose body contains a high-surrogate atom

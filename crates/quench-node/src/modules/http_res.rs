@@ -36,17 +36,9 @@ pub fn res_set_header(
     let Some((name, value)) = name.zip(value) else {
         return Ok(Value::Undefined);
     };
-    if let Some(response) = receiver {
-        let normalized = name.to_ascii_lowercase();
-        if let Ok(headers) = execute::get_property_result(response, "headers") {
-            let updated = execute::set_property(headers, &normalized, Value::String(value.clone()));
-            let _ = execute::set_property(response.clone(), "headers", updated);
-        }
-    }
     let mut guard = state.borrow_mut();
     if let Some(res) = guard.http.res.get_mut(&id) {
-        res.headers
-            .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
+        res.headers.retain(|(key, _)| key != &name);
         res.headers.push((name, value));
     }
     Ok(Value::Undefined)
@@ -61,51 +53,30 @@ pub fn res_write_head(
     let Some(id) = res_state(receiver) else {
         return Ok(Value::Undefined);
     };
-    let status = args
-        .first()
-        .and_then(valid_status)
-        .ok_or_else(|| invalid_status_error(args.first()))?;
-    // Node accepts the optional reason phrase before the headers object.
-    let headers = match args.get(1) {
-        Some(Value::Object(_)) => args.get(1),
-        Some(Value::String(_)) => args.get(2),
-        _ => None,
-    };
+    let status = args.first().and_then(number).unwrap_or(200).clamp(100, 599);
+    if let Some(Value::Object(_)) = args.get(1) {
+        let object = args.get(1).cloned().unwrap_or(Value::Undefined);
+        let mut guard = state.borrow_mut();
+        if let Some(res) = guard.http.res.get_mut(&id) {
+            res.status = status;
+            merge_headers(res, &object)?;
+        }
+        return Ok(Value::Undefined);
+    }
+    let mut text = String::new();
+    if let Some(Value::String(s)) = args.get(1) {
+        text = s.clone();
+    }
     let mut guard = state.borrow_mut();
     if let Some(res) = guard.http.res.get_mut(&id) {
         res.status = status;
-        if let Some(object) = headers {
-            merge_headers(res, object)?;
+        if !text.is_empty() {
+            res.text = text;
         }
-        if let Some(Value::String(reason)) = args.get(1) {
-            res.text = reason.clone();
-        }
-    }
-    drop(guard);
-    if let Some(response) = receiver {
-        let _ = execute::set_property(response.clone(), "headersSent", Value::Boolean(true));
     }
     Ok(Value::Undefined)
 }
 
-fn invalid_status_error(value: Option<&Value>) -> VmError {
-    let rendered = value.map(execute::to_js_string).transpose().ok().flatten()
-        .unwrap_or_else(|| "undefined".to_string());
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("RangeError".into())),
-        ("code".into(), Value::String("ERR_HTTP_INVALID_STATUS_CODE".into())),
-        ("message".into(), Value::String(format!("Invalid status code: {rendered}"))),
-    ]))
-}
-
-fn valid_status(value: &Value) -> Option<u16> {
-    match value {
-        Value::Number(n) if n.is_finite() && n.fract() == 0.0 && (100.0..=999.0).contains(n) => {
-            Some(*n as u16)
-        }
-        _ => None,
-    }
-}
 fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     res.headers.clear();
     for key in execute::own_enumerable_keys(object) {
@@ -117,7 +88,6 @@ fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     }
     Ok(())
 }
-
 
 /// `res.write(chunk)` — buffer a body fragment.
 pub fn res_write(
@@ -175,45 +145,18 @@ pub fn res_end(
     let status = status_code(receiver, status);
     let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
     crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
-    finish_response(state, &socket, keep_alive)?;
-    if let Some(response) = receiver {
-        let _ = execute::set_property(response.clone(), "headersSent", Value::Boolean(true));
-        let _ = execute::set_property(response.clone(), "finished", Value::Boolean(true));
-        let _ = execute::set_property(response.clone(), "writable", Value::Boolean(false));
-    }
-    // Callback values crossing reduced global bindings can still be wrapped
-    // in a BindingCell. Resolve the cell before entering the VM call path.
-    if let Some(callback) = args.get(1).filter(|value| quench_runtime::is_callable(value)) {
-        let mut callback = callback.clone();
-        while let Value::BindingCell(cell) = callback {
-            callback = cell.borrow().clone();
-        }
-        if quench_runtime::is_callable(&callback) {
-            execute::call(&callback, &receiver.cloned().unwrap_or(Value::Undefined), &[])?;
-        }
-    }
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
-}
-
-/// After a response body is written, either flag the connection for reuse
-/// (keep-alive) or close the socket (HTTP/1.0 / `Connection: close`).
-fn finish_response(
-    state: &Rc<RefCell<HostState>>,
-    socket: &Value,
-    keep_alive: bool,
-) -> Result<(), VmError> {
     if keep_alive {
         // Leave the socket open and let the connection parser reset for the
         // next request on the same connection.
-        if let Some(socket_id) = net::net_id(socket) {
+        if let Some(socket_id) = net::net_id(&socket) {
             if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
                 conn.response_done = true;
             }
         }
     } else {
-        crate::modules::net::socket_end(state, Some(socket), &[])?;
+        crate::modules::net::socket_end(state, Some(&socket), &[])?;
     }
-    Ok(())
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 /// The effective status code, honoring a `res.statusCode = n` write.
@@ -246,4 +189,11 @@ fn compose(
     out.extend_from_slice(b"\r\n");
     out.extend_from_slice(body);
     out
+}
+
+fn number(value: &Value) -> Option<u16> {
+    match value {
+        Value::Number(n) if n.is_finite() => Some(*n as u16),
+        _ => None,
+    }
 }

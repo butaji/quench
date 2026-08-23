@@ -218,7 +218,7 @@ pub fn reduce_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let (mut ops, _, _) = reduce_statements_opt(
+    let (mut ops, _) = reduce_statements_opt(
         statements,
         facts,
         locals,
@@ -253,7 +253,7 @@ pub fn reduce_expression_statements_with_locals(
             directive_completion: None,
         },
     )
-    .map(|(ops, _, _)| ops)
+    .map(|(ops, _)| ops)
 }
 pub fn reduce_statements_no_tail(
     statements: &[Statement<'_>],
@@ -261,7 +261,7 @@ pub fn reduce_statements_no_tail(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_no_tail_value(statements, facts, locals, next_slot).map(|(ops, _, _)| ops)
+    reduce_statements_no_tail_value(statements, facts, locals, next_slot).map(|(ops, _)| ops)
 }
 
 pub fn reduce_statements_no_tail_value(
@@ -269,7 +269,7 @@ pub fn reduce_statements_no_tail_value(
     facts: &mut ProgramDb,
     locals: HashMap<String, u16>,
     next_slot: u16,
-) -> Result<(Vec<Op>, Option<u16>, u16), Vec<String>> {
+) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
     reduce_statements_opt(
         statements,
         facts,
@@ -295,7 +295,7 @@ fn reduce_statements_opt(
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
     options: StatementsOptions,
-) -> Result<(Vec<Op>, Option<u16>, u16), Vec<String>> {
+) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
     let StatementsOptions {
         tail,
         eval_behavior,
@@ -324,30 +324,12 @@ fn reduce_statements_opt(
         &mut locals,
         (eval_behavior, initial_value),
     )?;
-    let ops = finish_statement_ops(
-        ops,
-        last_value,
-        stack,
-        await_using,
-        &mut next_register,
-        tail,
-    )?;
-    Ok((ops, last_value, next_slot))
-}
-
-fn finish_statement_ops(
-    ops: Vec<Op>,
-    last_value: Option<u16>,
-    stack: Option<u16>,
-    await_using: bool,
-    next_register: &mut u16,
-    tail: bool,
-) -> Result<Vec<Op>, Vec<String>> {
     let ops = match stack {
-        Some(stack) => crate::using_scope::wrap(ops, stack, await_using, next_register)?,
+        Some(stack) => crate::using_scope::wrap(ops, stack, await_using, &mut next_register)?,
         None => ops,
     };
-    finish_statements_opt(ops, last_value, tail)
+    let ops = finish_statements_opt(ops, last_value, tail)?;
+    Ok((ops, last_value))
 }
 
 fn initialize_statement_reduction(
@@ -453,4 +435,99 @@ pub fn reduce_statement(
     Ok(last)
 }
 
-include!("reduce_statements_rest.rs");
+fn reduce_plain_statement(
+    statement: &Statement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    match statement {
+        Statement::EmptyStatement(_) => Ok(None),
+        Statement::BlockStatement(block) => {
+            reduce_block(block, ops, facts, next_register, next_slot, locals)
+        }
+        Statement::VariableDeclaration(_)
+        | Statement::FunctionDeclaration(_)
+        | Statement::ClassDeclaration(_) => crate::switch::suspend_completion(|| {
+            reduce_declaration_statement(statement, ops, facts, next_register, next_slot, locals)
+        }),
+        Statement::ReturnStatement(rs) => {
+            control_flow::reduce_return(rs, ops, facts, next_register, locals)
+        }
+        Statement::ThrowStatement(ts) => {
+            control_flow::reduce_throw(ts, ops, facts, next_register, locals)
+        }
+        Statement::ExpressionStatement(expression) => {
+            reduce_expression_stmt(&expression.expression, ops, facts, next_register, locals)
+                .map(Some)
+        }
+        statement => crate::statement_control::reduce(
+            statement,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        ),
+    }
+}
+fn reduce_expression_stmt(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Result<u16, Vec<String>> {
+    super::reduce_expressions::reduce_expression_statement(
+        expression,
+        ops,
+        facts,
+        next_register,
+        locals,
+    )
+}
+pub fn reduce_function_declaration(
+    function: &oxc::ast::ast::Function<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    let Some(identifier) = function.id.as_ref() else {
+        return Err(vec!["Anonymous function declaration".to_string()]);
+    };
+    let Some(body) = function.body.as_ref() else {
+        return Err(vec!["Function without body".to_string()]);
+    };
+    let slot = declaration_slot(identifier.name.as_str(), next_slot, locals, facts);
+    let (body_ops, parameter_count, captures, metadata) =
+        reduce_function_body(function, body, facts, locals)?;
+    let reserve = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst: reserve,
+        value: crate::ops::Constant::Undefined,
+    });
+    ops.push(Op::StoreLocal { slot, src: reserve });
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(function_declaration_op(
+        register,
+        body_ops,
+        parameter_count,
+        captures,
+        metadata,
+    ));
+    name_function_declaration(ops, register, next_register, identifier.name.as_str());
+    ops.push(Op::StoreLocal {
+        slot,
+        src: register,
+    });
+    store_annex_b_var(ops, identifier.name.as_str(), register, locals, facts);
+    Ok(())
+}
+
+include!("reduce_function_helpers.rs");

@@ -26,18 +26,9 @@ struct ExecutionGuard {
 
 thread_local! {
     static REALMS: RefCell<Vec<Option<Rc<RealmState>>>> = const { RefCell::new(Vec::new()) };
-    static ROOT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
     static ROOT_INTRINSICS: RefCell<Vec<(Builtin, Value)>> = const { RefCell::new(Vec::new()) };
     static ROOT_INTL_FALLBACK_SYMBOL: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NEXT_REALM: Cell<u64> = const { Cell::new(1) };
-}
-
-pub(super) fn register_root_context(context: &VmContext) {
-    ROOT_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
-}
-
-pub(super) fn root_context() -> Option<VmContext> {
-    ROOT_CONTEXT.with(|slot| slot.borrow().clone())
 }
 
 pub(super) fn create(parent: &VmContext) -> RealmId {
@@ -110,7 +101,7 @@ pub(super) fn initialize_current_global(global: ObjectProperties) {
         context
             .borrow()
             .as_ref()
-            .map_or(RealmId::ROOT, VmContext::realm)
+            .map_or(RealmId::ROOT, |rc| rc.realm())
     });
     if let Some(state) = state(realm) {
         state.global.replace(global);
@@ -118,9 +109,6 @@ pub(super) fn initialize_current_global(global: ObjectProperties) {
 }
 
 pub(super) fn context(id: RealmId) -> Option<VmContext> {
-    if id == RealmId::ROOT {
-        return root_context();
-    }
     state(id).map(|state| state.context.clone())
 }
 

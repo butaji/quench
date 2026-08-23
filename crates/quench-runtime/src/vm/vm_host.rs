@@ -13,59 +13,16 @@ pub(crate) fn execute_host_capability_with_receiver(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let Some(Value::HostCapability(capability)) = capability_receiver else {
-        return Err(crate::value::error::throw_type_error(&format!(
-            "value is not callable [host capability id={} receiver_variant={}]",
-            kind_id(kind),
-            value_variant(capability_receiver),
-        )));
+        return Err(VmError::NotCallable);
     };
     let descriptor = HostCapabilityRef {
         realm: capability.realm(),
         kind,
     };
     if !host_capability_permitted(descriptor, kind) {
-        // Legacy Require handles are frequently retained by a bound function
-        // across realm transitions.  The active realm's host is authoritative
-        // for Require dispatch; do not reject the handle merely because its
-        // original realm differs.
-        let legacy_require = matches!(kind, HostCapabilityKind::Custom(1))
-            && CURRENT_CONTEXT.with(|context| context.borrow().as_ref().is_some_and(|context| context.host_handle().is_some()));
-        if !legacy_require {
-            return Err(crate::value::error::throw_type_error(&format!(
-                "value is not callable [host capability id={} permission denied]",
-                kind_id(kind),
-            )));
-        }
+        return Err(VmError::NotCallable);
     }
-    let result = dispatch_host_capability(descriptor, kind, capability, receiver, arguments);
-    result
-}
-fn kind_id(kind: HostCapabilityKind) -> u32 {
-    match kind {
-        HostCapabilityKind::GetGlobal => 0,
-        HostCapabilityKind::CreateRealm => 1,
-        HostCapabilityKind::EvalScript => 2,
-        HostCapabilityKind::DetachArrayBuffer => 3,
-        HostCapabilityKind::IsHTMLDDA => 4,
-        HostCapabilityKind::Custom(id) => 0x10000 | u32::from(id),
-    }
-}
-
-fn value_variant(value: Option<&Value>) -> u32 {
-    match value {
-        None => 0,
-        Some(Value::Undefined) => 1,
-        Some(Value::Null) => 2,
-        Some(Value::Boolean(_)) => 3,
-        Some(Value::Number(_)) => 4,
-        Some(Value::String(_)) => 5,
-        Some(Value::HostCapability(_)) => 6,
-        Some(Value::Builtin(_)) => 7,
-        Some(Value::Function(_)) => 8,
-        Some(Value::BoundFunction(_)) => 9,
-        Some(Value::Proxy(_)) => 10,
-        Some(_) => 11,
-    }
+    dispatch_host_capability(descriptor, kind, capability, receiver, arguments)
 }
 
 fn host_capability_permitted(descriptor: HostCapabilityRef, kind: HostCapabilityKind) -> bool {
@@ -91,18 +48,9 @@ fn dispatch_host_capability(
         HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
-        HostCapabilityKind::IsHTMLDDA => Ok(Value::Null),
         HostCapabilityKind::EvalScript => run_eval_in_capability_realm(capability, arguments),
-        HostCapabilityKind::Custom(_) => {
-            let global = matches!(kind, HostCapabilityKind::Custom(1));
-            let result = if global {
-                let global_value = current_global_object();
-                host_custom_call(descriptor, Some(&global_value), arguments)
-            } else {
-                host_custom_call(descriptor, receiver, arguments)
-            };
-            return result;
-        }
+        HostCapabilityKind::IsHTMLDDA => Ok(Value::Null),
+        HostCapabilityKind::Custom(_) => host_custom_call(descriptor, receiver, arguments),
     }
 }
 
@@ -123,47 +71,10 @@ fn host_custom_call(
         context
             .borrow()
             .as_ref()
-            .and_then(VmContext::host_handle)
-    }).or_else(|| crate::vm::realm::context(descriptor.realm).and_then(|context| context.host_handle()));
-    host.map(|host| {
-        match host.call(descriptor, receiver, arguments) {
-            Err(VmError::NotCallable) if descriptor.kind == HostCapabilityKind::Custom(11) => {
-                host.construct(descriptor, arguments)
-            }
-            result => result,
-        }
-    })
-        .unwrap_or_else(|| Err(VmError::Thrown(crate::builtins::error(
-            crate::ops::Builtin::TypeError,
-            &[Value::String(format!(
-                "value is not callable [host capability id={} realm={:?} receiver_variant={} host_missing]",
-                kind_id(descriptor.kind), descriptor.realm, value_variant(receiver)
-            ))],
-        ))))
-}
-/// Invoke a legacy Custom(1) capability directly on the active host.  Bound
-/// `require` handles must preserve their concatenated arguments while using
-/// the current global object as the JavaScript receiver.
-pub(crate) fn execute_legacy_require_direct(
-    capability: &Value,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    let Value::HostCapability(capability) = capability else {
-        return Err(crate::value::error::throw_type_error("require capability missing"));
-    };
-    let host = CURRENT_CONTEXT
-        .with(|context| context.borrow().as_ref().and_then(VmContext::host_handle))
-        .or_else(|| realm::context(capability.realm()).and_then(|context| context.host_handle()))
-        .ok_or(VmError::NotCallable)?;
-    let global = current_global_object();
-    host.call(
-        HostCapabilityRef {
-            realm: capability.realm(),
-            kind: HostCapabilityKind::Custom(1),
-        },
-        Some(&global),
-        arguments,
-    )
+            .and_then(|rc| rc.host_handle())
+    });
+    host.map(|host| host.call(descriptor, receiver, arguments))
+        .unwrap_or(Err(VmError::NotCallable))
 }
 
 fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
@@ -174,7 +85,7 @@ fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(type_error("evalScript expects a string argument"));
     };
     let realm = CURRENT_CONTEXT
-        .with(|context| context.borrow().as_ref().map(VmContext::realm))
+        .with(|context| context.borrow().as_ref().map(|rc| rc.realm()))
         .and_then(|id| realm::context(id).is_some().then_some(id));
     let program = match crate::reduce::reduce_statements::reduce_global_script_source(source) {
         Ok(program) => program,
@@ -227,7 +138,7 @@ fn realm_global_object(
 fn create_realm_value() -> Value {
     let parent = CURRENT_CONTEXT
         .with(|context| context.borrow().clone())
-        .unwrap_or_default();
+        .unwrap_or_else(|| Rc::new(VmContext::default()));
     let realm = realm::create(&parent);
     let Some(context) = realm::context(realm) else {
         return Value::Undefined;
@@ -255,22 +166,13 @@ fn create_realm_value() -> Value {
         _ => global,
     };
     let eval_script = crate::vm::bind_receiver_property(
-        Value::Builtin(crate::ops::Builtin::HostCapability(crate::ops::HostCapabilityKind::EvalScript)),
+        Value::Builtin(Builtin::HostCapability(HostCapabilityKind::EvalScript)),
         &Value::HostCapability(Rc::clone(&token)),
     );
-    create_realm_object(global, eval_script, Value::HostCapability(token), creation_realm)
-}
-
-fn create_realm_object(
-    global: Value,
-    eval_script: Value,
-    token: Value,
-    creation_realm: Value,
-) -> Value {
     Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("global".to_string(), global),
         ("evalScript".to_string(), eval_script),
-        ("\0realm".to_string(), token),
+        ("\0realm".to_string(), Value::HostCapability(token)),
         ("\0creation_realm".to_string(), creation_realm),
     ])))
 }

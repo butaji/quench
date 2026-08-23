@@ -415,6 +415,6 @@ fn require_fs_module(name: &str) -> Option<Value> {
         }
         if let Some(module) = require_crypto_module(name) {
             return Some(module);
-        }
+    }
     None
 }

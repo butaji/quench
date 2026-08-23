@@ -14,7 +14,18 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
         return Err(runtime_error("RangeError: invalid type"));
     }
-    let mut slots = plural_slots(&locale, &plural_type, &notation, compact_display.as_deref());
+    let mut slots = vec![
+        ("locale".to_string(), Value::String(locale)),
+        ("type".to_string(), Value::String(plural_type)),
+        ("notation".to_string(), Value::String(notation)),
+        (
+            "compactDisplay".to_string(),
+            Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
+        ),
+        ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
+        ("minimumFractionDigits".to_string(), Value::Number(0.0)),
+        ("maximumFractionDigits".to_string(), Value::Number(3.0)),
+    ];
     if let Some((minimum, maximum)) = significant {
         slots.push((
             "minimumSignificantDigits".to_string(),
@@ -49,8 +60,25 @@ fn plural_options(option: Option<&Value>) -> Result<PluralOptions, VmError> {
     else {
         return Ok(("standard".to_string(), None, "cardinal".to_string(), None));
     };
-    let values = read_plural_values(option)?;
-
+    let keys = [
+        "localeMatcher",
+        "type",
+        "notation",
+        "compactDisplay",
+        "minimumIntegerDigits",
+        "minimumFractionDigits",
+        "maximumFractionDigits",
+        "minimumSignificantDigits",
+        "maximumSignificantDigits",
+        "roundingIncrement",
+        "roundingMode",
+        "roundingPriority",
+        "trailingZeroDisplay",
+    ];
+    let values = keys
+        .iter()
+        .map(|key| read_option(option, key))
+        .collect::<Result<Vec<_>, _>>()?;
     let notation = match &values[2] {
         Value::Undefined => "standard".to_string(),
         value => option_text(value)?,
@@ -72,46 +100,6 @@ fn plural_options(option: Option<&Value>) -> Result<PluralOptions, VmError> {
         _ => None,
     };
     Ok((notation, compact_display, plural_type, significant))
-}
-
-fn plural_slots(
-    locale: &str,
-    plural_type: &str,
-    notation: &str,
-    compact_display: Option<&str>,
-) -> Vec<(String, Value)> {
-    vec![
-        ("locale".to_string(), Value::String(locale.to_string())),
-        ("type".to_string(), Value::String(plural_type.to_string())),
-        ("notation".to_string(), Value::String(notation.to_string())),
-        (
-            "compactDisplay".to_string(),
-            Value::String(compact_display.unwrap_or("short").to_string()),
-        ),
-        ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
-        ("minimumFractionDigits".to_string(), Value::Number(0.0)),
-        ("maximumFractionDigits".to_string(), Value::Number(3.0)),
-    ]
-}
-fn read_plural_values(option: &Value) -> Result<Vec<Value>, VmError> {
-    let keys = [
-        "localeMatcher",
-        "type",
-        "notation",
-        "compactDisplay",
-        "minimumIntegerDigits",
-        "minimumFractionDigits",
-        "maximumFractionDigits",
-        "minimumSignificantDigits",
-        "maximumSignificantDigits",
-        "roundingIncrement",
-        "roundingMode",
-        "roundingPriority",
-        "trailingZeroDisplay",
-    ];
-    keys.iter()
-        .map(|key| read_option(option, key))
-        .collect::<Result<Vec<_>, _>>()
 }
 
 fn read_option(option: &Value, key: &str) -> Result<Value, VmError> {
@@ -146,41 +134,38 @@ pub(crate) fn prototype_method(
             )))
         }
         crate::ops::Builtin::IntlPluralRulesSelectRange => {
-            Ok(Value::String(select_range(arguments, receiver)?))
+            if arguments
+                .first()
+                .map_or(true, |value| matches!(value, Value::Undefined))
+                || arguments
+                    .get(1)
+                    .map_or(true, |value| matches!(value, Value::Undefined))
+            {
+                return Err(runtime_error(
+                    "TypeError: selectRange argument is undefined",
+                ));
+            }
+            let start = super::number::to_number_result(arguments.first())?;
+            let end = super::number::to_number_result(arguments.get(1))?;
+            if start.is_nan() || end.is_nan() {
+                return Err(runtime_error("RangeError: selectRange argument is NaN"));
+            }
+            let slots = super::intl_slots(receiver)?;
+            let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
+            let notation =
+                slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
+            let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
+            let first = select(start, &plural_type, &notation, &locale);
+            let last = select(end, &plural_type, &notation, &locale);
+            Ok(Value::String(if first == last {
+                first
+            } else {
+                "other".to_string()
+            }))
         }
         crate::ops::Builtin::IntlPluralRulesResolvedOptions => plural_resolved_options(receiver),
         _ => Err(runtime_error("TypeError: method not found")),
     }
-}
-
-fn select_range(arguments: &[Value], receiver: Option<&Value>) -> Result<String, VmError> {
-    if arguments
-        .first()
-        .map_or(true, |value| matches!(value, Value::Undefined))
-        || arguments
-            .get(1)
-            .map_or(true, |value| matches!(value, Value::Undefined))
-    {
-        return Err(runtime_error(
-            "TypeError: selectRange argument is undefined",
-        ));
-    }
-    let start = super::number::to_number_result(arguments.first())?;
-    let end = super::number::to_number_result(arguments.get(1))?;
-    if start.is_nan() || end.is_nan() {
-        return Err(runtime_error("RangeError: selectRange argument is NaN"));
-    }
-    let slots = super::intl_slots(receiver)?;
-    let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
-    let notation = slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
-    let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
-    let first = select(start, &plural_type, &notation, &locale);
-    let last = select(end, &plural_type, &notation, &locale);
-    Ok(if first == last {
-        first
-    } else {
-        "other".to_string()
-    })
 }
 
 fn plural_resolved_options(receiver: Option<&Value>) -> Result<Value, VmError> {

@@ -5,20 +5,6 @@ impl QuenchNodeHost {
         arguments: &[Value],
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
-        if matches!(
-            capability.kind,
-            HostCapabilityKind::Custom(
-                CapabilityName::TtyReadStream | CapabilityName::TtyWriteStream
-            )
-        ) {
-            return Ok(Value::object(vec![
-                (
-                    "fd".into(),
-                    arguments.first().cloned().unwrap_or(Value::Number(0.0)),
-                ),
-                ("isTTY".into(), Value::Boolean(false)),
-            ]));
-        }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::UrlSearchParams) {
             return url_search_params_construct(self, arguments);
         }

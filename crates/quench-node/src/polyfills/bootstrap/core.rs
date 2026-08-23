@@ -57,31 +57,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
     }
   ],
   ["assert", () => globalThis.__nodeAssert],
-  ["internal/assert/myers_diff", () => ({
-    myersDiff: function (a, b) {
-      const size = a.length + b.length;
-      if (size >= 2 ** 31) {
-        const error = new RangeError(
-          `The value of "myersDiff input size" is out of range. It must be < 2^31. Received ${size}`
-        );
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      const result = [];
-      let i = 0, j = 0;
-      while (i < a.length && j < b.length) {
-        if (a[i] === b[j]) {
-          result.push({ type: "equal", value: a[i++] });
-          j++;
-        } else result.push({ type: "delete", value: a[i++] });
-      }
-      while (i < a.length) result.push({ type: "delete", value: a[i++] });
-      while (j < b.length) result.push({ type: "insert", value: b[j++] });
-      return result;
-    },
-    printMyersDiff() {},
-    printSimpleMyersDiff() {}
-  })],
   ["path", () => globalThis.__nodePath],
   ["path/posix", () => globalThis.__nodePath],
   ["path/win32", () => globalThis.__nodePath.win32],
@@ -501,13 +476,16 @@ const __quenchChildProcessModule = () => {
   globalThis.__nodeCompileCacheRuns ||= 0;
   const spawnSync = (command, args = [], options = {}) => {
     command = String(command || "");
+    const convertOutput = (value) =>
+      options.encoding === "buffer"
+        ? value
+        : options.encoding
+          ? value.toString(
+              options.encoding === true ? "utf8" : options.encoding
+            )
+          : value;
     const result = (stdout = "", stderr = "", status = 0) => {
-      const output = (value) =>
-        options.encoding === "buffer"
-          ? NodeBuffer.from(value)
-          : options.encoding
-            ? value
-            : NodeBuffer.from(value);
+      const output = (value) => convertOutput(NodeBuffer.from(value));
       return {
         pid: 0,
         status,
@@ -759,24 +737,10 @@ let __quenchHttpModule;
           this.method = String(
             init.method || source?.method || "GET"
           ).toUpperCase();
-          if (
-            (this.method === "GET" || this.method === "HEAD") &&
-            (init.body ?? source?.body) != null
-          ) {
-            throw new TypeError(
-              "Request with GET/HEAD method cannot have body"
-            );
-          }
           this.headers = new globalThis.Headers(
             init.headers || source?.headers
           );
           this.body = init.body ?? source?.body ?? null;
-          this.mode = init.mode || source?.mode || "cors";
-          this.credentials = init.credentials || source?.credentials || "same-origin";
-          this.cache = init.cache || source?.cache || "default";
-          this.redirect = init.redirect || source?.redirect || "follow";
-          this.referrer = init.referrer || source?.referrer || "about:client";
-          this.integrity = init.integrity || source?.integrity || "";
           this.signal =
             init.signal || source?.signal || new AbortController().signal;
           this.bodyUsed = false;
@@ -1027,10 +991,6 @@ let __quenchHttpModule;
         },
         unref() {
           this.__unrefed = true;
-          return this;
-        },
-        setNoDelay(enable = true) {
-          this.noDelay = enable;
           return this;
         },
         setKeepAlive(enable = false, initialDelay) {
@@ -1654,10 +1614,6 @@ let __quenchHttpModule;
         writable: true,
         writableHighWaterMark: 16 * 1024,
         writableCorked: 0,
-        setNoDelay(enable = true) {
-          this.noDelay = enable;
-          return this;
-        },
         setTimeout(msecs) {
           this.timeout = msecs;
           if (this.__timeoutTimer !== undefined) {
@@ -1676,11 +1632,6 @@ let __quenchHttpModule;
           return this;
         },
         setEncoding: () => request.socket,
-        setKeepAlive(enable = false, initialDelay) {
-          this.keepAlive = enable;
-          this.keepAliveInitialDelay = initialDelay;
-          return this;
-        },
         destroy() {
           if (this.destroyed) return this;
           this.destroyed = true;

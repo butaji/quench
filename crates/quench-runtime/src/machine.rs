@@ -1,3 +1,13 @@
+//! Stackless execution state.
+//!
+//! `Machine::frames` is the sole owner of JavaScript call continuations.
+//! A frame owns its return metadata and register-window bounds; frames are
+//! pushed and popped only at VM transition boundaries. An empty stack is the
+//! only completed state. `FrameStack::limit` is a hard bound: failed pushes
+//! leave the stack unchanged and report the rejected frame to the caller.
+//! Host callbacks may re-enter the VM, but must do so through a new machine
+//! transition rather than Rust recursion.
+
 pub use crate::identity::{CodeId, CodeRange, EnvironmentRef, FrameId, PackedCompletion};
 use crate::{
     completion::Completion,
@@ -155,28 +165,73 @@ impl Default for RegisterWindow {
     }
 }
 
+/// Explicit VM frame storage.
+///
+/// `frames` is the canonical contiguous allocation. `base` identifies the
+/// owning VM stack segment; frame offsets are valid only while the referenced
+/// frame remains in this stack and are invalid after a pop or stack reset.
+/// Push may relocate the allocation, so callers retain offsets, not references,
+/// across transitions. The hard limit bounds depth and allocation growth.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameStack {
     pub base: u32,
-    pub count: u16,
     pub frames: Vec<Frame>,
-    limit: Option<u16>,
+    limit: u16,
 }
 
 impl FrameStack {
-    const DEFAULT_CAPACITY: u16 = 64;
+    const DEFAULT_CAPACITY: usize = 64;
+    pub const DEFAULT_LIMIT: u16 = u16::MAX;
 
     pub fn new() -> Self {
-        Self::with_capacity(Self::DEFAULT_CAPACITY)
+        Self::with_capacity(Self::DEFAULT_CAPACITY as u16)
     }
 
+    /// Creates a stack with an initial allocation and an explicit hard limit.
+    /// Growth is geometric and happens before pushing, so execution never
+    /// allocates beyond the configured limit.
     pub fn with_capacity(capacity: u16) -> Self {
+        Self::with_capacity_and_limit(capacity, Self::DEFAULT_LIMIT)
+    }
+
+    pub fn with_capacity_and_limit(capacity: u16, limit: u16) -> Self {
+        let capacity = usize::from(capacity.min(limit));
         Self {
             base: 0,
-            count: 0,
-            frames: Vec::with_capacity(usize::from(capacity)),
-            limit: Some(capacity),
+            frames: Vec::with_capacity(capacity),
+            limit,
         }
+    }
+
+    pub fn capacity(&self) -> u16 {
+        self.frames.capacity().min(usize::from(u16::MAX)) as u16
+    }
+
+    /// Preallocate room for `additional` frames without exceeding the limit.
+    pub fn try_reserve_for(&mut self, additional: u16) -> bool {
+        let target = self
+            .frames
+            .len()
+            .checked_add(usize::from(additional))
+            .filter(|target| *target <= usize::from(self.limit));
+        let Some(target) = target else {
+            return false;
+        };
+        if target > self.frames.capacity() {
+            self.frames.reserve(target - self.frames.len());
+        }
+        true
+    }
+
+    /// Preallocate room, ignoring requests that exceed the hard limit.
+    pub fn reserve_for(&mut self, additional: u16) {
+        let _ = self.try_reserve_for(additional);
+    }
+
+    /// Returns the number of additional frames accepted before the hard limit.
+    pub fn remaining(&self) -> u16 {
+        self.limit
+            .saturating_sub(self.frames.len().min(usize::from(u16::MAX)) as u16)
     }
 }
 
@@ -188,16 +243,20 @@ impl Default for FrameStack {
 
 impl FrameStack {
     pub fn try_push(&mut self, frame: Frame) -> Result<(), Frame> {
-        if self.limit.is_some_and(|limit| self.count >= limit) {
+        if self.frames.len() >= usize::from(self.limit) {
             return Err(frame);
         }
-        self.push(frame);
-        Ok(())
-    }
-
-    fn push(&mut self, frame: Frame) {
+        if self.frames.len() == self.frames.capacity() {
+            let next = self
+                .frames
+                .capacity()
+                .max(1)
+                .saturating_mul(2)
+                .min(usize::from(self.limit));
+            self.frames.reserve(next.saturating_sub(self.frames.len()));
+        }
         self.frames.push(frame);
-        self.count = u16::try_from(self.frames.len()).unwrap_or(u16::MAX);
+        Ok(())
     }
 
     pub fn pop(&mut self) -> Option<Frame> {

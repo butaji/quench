@@ -26,14 +26,6 @@ pub(crate) fn concat(
         }
         return Ok(Value::Array(std::rc::Rc::new(data)));
     }
-    finish_concat(species, elements, holes)
-}
-
-fn finish_concat(
-    species: Option<Value>,
-    elements: Vec<Value>,
-    holes: Vec<usize>,
-) -> Result<Value, crate::execute::VmError> {
     let hole = |index: usize| holes.contains(&index);
     let mut target = species.unwrap_or_else(|| Value::array(Vec::new()));
     let length = elements.len();

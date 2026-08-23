@@ -10,7 +10,9 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 
 pub fn new_decoder(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    let state = Rc::new(RefCell::new(StringDecoder::new()));
     let mut props = Vec::new();
+    let _ = state;
     props.push((
         "write".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new(
@@ -23,29 +25,6 @@ pub fn new_decoder(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<V
         crate::host::capability(crate::registry::NodeSpec::new("string_decoder:end", 0x0D02)),
     ));
     Ok(host_api::object(props))
-}
-
-pub fn write(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let bytes = match args.first() {
-        Some(Value::Uint8Array(view)) => {
-            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
-        }
-        Some(Value::String(text)) => text.as_bytes().to_vec(),
-        None => Vec::new(),
-        _ => {
-            return Err(VmError::EvalError(
-                "StringDecoder.write expects bytes or string".into(),
-            ))
-        }
-    };
-    Ok(Value::String(String::from_utf8_lossy(&bytes).into_owned()))
-}
-
-pub fn end(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    if args.is_empty() {
-        return Ok(Value::String(String::new()));
-    }
-    write(state, args)
 }
 
 pub struct StringDecoder {
@@ -65,20 +44,8 @@ impl StringDecoder {
 }
 
 pub fn build() -> Vec<(String, Value)> {
-    let constructor = crate::host::capability(crate::registry::SPEC_STRING_DECODER);
-    let prototype = host_api::object(vec![
-        (
-            "write".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "string_decoder:write",
-                0x0D01,
-            )),
-        ),
-        (
-            "end".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("string_decoder:end", 0x0D02)),
-        ),
-    ]);
-    let _ = quench_runtime::execute::set_callable_property(&constructor, "prototype", prototype);
-    vec![("StringDecoder".to_string(), constructor)]
+    vec![(
+        "StringDecoder".to_string(),
+        crate::host::capability(crate::registry::SPEC_STRING_DECODER),
+    )]
 }

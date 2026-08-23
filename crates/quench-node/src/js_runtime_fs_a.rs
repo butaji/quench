@@ -374,10 +374,9 @@ fn fs_access_sync(arguments: &[Value]) -> Result<Value, VmError> {
         }
     }
     if !matches!(fs_access(arguments)?, Value::Boolean(true)) {
-        return Err(VmError::Thrown(fs_error(
-            "ENOENT",
-            "no such file or directory",
-        )));
+        return Err(VmError::EvalError(
+            "ENOENT: no such file or directory".into(),
+        ));
     }
     if let Some(Value::Number(mode)) = arguments.get(1) {
         if (*mode as u32 & 2) != 0 {
@@ -388,14 +387,11 @@ fn fs_access_sync(arguments: &[Value]) -> Result<Value, VmError> {
             }) {
                 use std::os::unix::fs::PermissionsExt;
                 let permissions = std::fs::metadata(path)
-                    .map_err(|error| VmError::Thrown(fs_error("ENOENT", &error.to_string())))?
+                    .map_err(|error| VmError::EvalError(error.to_string()))?
                     .permissions()
                     .mode();
                 if permissions & 0o222 == 0 {
-                    return Err(VmError::Thrown(fs_error(
-                        "EACCES",
-                        "permission denied",
-                    )));
+                    return Err(VmError::EvalError("EACCES: permission denied".into()));
                 }
             }
         }
@@ -440,6 +436,7 @@ fn fs_access_async(arguments: &[Value]) -> Result<Value, VmError> {
     } else {
         arguments.len().min(2)
     };
+    fs_access_sync(&arguments[..check_len])?;
     let callback = arguments
         .get(2)
         .or_else(|| arguments.get(1))

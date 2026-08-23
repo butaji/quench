@@ -297,25 +297,6 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = builtin_special_descriptor(builtin, key) {
         return Some(descriptor);
     }
-    if let Some(descriptor) = builtin_function_descriptor(builtin, key) {
-        return Some(descriptor);
-    }
-    if key == "BYTES_PER_ELEMENT" {
-        if let Some(size) = typed_array_bytes_per_element(builtin) {
-            return Some(descriptor_object_with_flags(
-                Value::Number(size),
-                false,
-                false,
-                false,
-            ));
-        }
-    }
-    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
-        return Some(descriptor);
-    }
-    builtin_descriptor_tail(builtin, key)
-}
-fn builtin_function_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
         return Some(descriptor_object_with_flags(
             crate::builtins::generator_prototype(),
@@ -340,7 +321,20 @@ fn builtin_function_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             return Some(descriptor_object_with_flags(property, false, false, true));
         }
     }
-    None
+    if key == "BYTES_PER_ELEMENT" {
+        if let Some(size) = typed_array_bytes_per_element(builtin) {
+            return Some(descriptor_object_with_flags(
+                Value::Number(size),
+                false,
+                false,
+                false,
+            ));
+        }
+    }
+    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
+        return Some(descriptor);
+    }
+    builtin_descriptor_tail(builtin, key)
 }
 
 fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
@@ -504,4 +498,8 @@ include!("object_accessor_descriptor.rs");
 include!("object_property_flags.rs");
 include!("object_array_descriptor.rs");
 include!("object_descriptor_values.rs");
-include!("object_descriptor_tests_mod.rs");
+#[cfg(test)]
+mod tests {
+    include!("object_descriptor_tests.rs");
+    include!("object_tests.rs");
+}

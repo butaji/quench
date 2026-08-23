@@ -119,7 +119,10 @@ fn prototype_method_tail(
 }
 
 fn maximize(tag: &str) -> String {
-    if tag == "xtg" || tag.starts_with("xtg-") || tag == "posix" {
+    if tag == "xtg" || tag.starts_with("xtg-") {
+        return tag.to_string();
+    }
+    if tag == "posix" {
         return tag.to_string();
     }
     let (base, extension) = tag

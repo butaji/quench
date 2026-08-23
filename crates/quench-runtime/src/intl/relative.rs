@@ -448,10 +448,13 @@ pub(crate) fn prototype_method(
         slot_string(&slots, "numberingSystem").unwrap_or_else(|| "latn".to_string());
     match builtin {
         crate::ops::Builtin::IntlRelativeTimeFormatFormat => {
-            let value = finite_relative_value(arguments.first())?;
+            let value = super::tolocale::value::to_number_result(arguments.first())?;
             let unit = crate::conversion::to_string(
                 arguments.get(1).map_or(&Value::Undefined, |value| value),
             )?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             Ok(Value::String(format_relative(
                 value,
                 &unit,
@@ -462,7 +465,10 @@ pub(crate) fn prototype_method(
             )?))
         }
         crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts => {
-            let value = finite_relative_value(arguments.first())?;
+            let value = super::tolocale::value::to_number_result(arguments.first())?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             let unit = crate::conversion::to_string(
                 arguments.get(1).map_or(&Value::Undefined, |value| value),
             )?;
@@ -471,16 +477,8 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlRelativeTimeFormatResolvedOptions => {
             relative_resolved_options(&slots, locale, style, numeric)
         }
-
         _ => Err(runtime_error("TypeError: method not found")),
     }
-}
-fn finite_relative_value(value: Option<&Value>) -> Result<f64, VmError> {
-    let value = super::tolocale::value::to_number_result(value)?;
-    if !value.is_finite() {
-        return Err(runtime_error("RangeError: value must be finite"));
-    }
-    Ok(value)
 }
 
 include!("relative_dispatch.rs");

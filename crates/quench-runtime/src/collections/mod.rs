@@ -25,11 +25,25 @@ fn execute_core(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
-    if let Some(result) = execute_iterator_core(builtin, receiver, arguments) {
+    use Builtin::*;
+    if let Some(result) = execute_iterator_next(builtin, receiver, arguments) {
         return Some(result);
     }
-    use Builtin::*;
     match builtin {
+        IteratorConcat => Some(iterator::concat(arguments)),
+        IteratorFrom => Some(iterator::from(arguments)),
+        IteratorZip => Some(iterator::zip(arguments)),
+        IteratorToArray => Some(iterator::to_array(receiver)),
+        IteratorMap => Some(iterator::map(receiver, arguments)),
+        IteratorFilter => Some(iterator::filter(receiver, arguments)),
+        IteratorSome => Some(iterator::some(receiver, arguments)),
+        IteratorEvery => Some(iterator::every(receiver, arguments)),
+        IteratorFlatMap => Some(iterator::flat_map(receiver, arguments)),
+        IteratorDrop => Some(iterator::drop(receiver, arguments)),
+        IteratorTake => Some(iterator::take(receiver, arguments)),
+        IteratorReduce => Some(iterator::reduce(receiver, arguments)),
+        IteratorFind => Some(iterator::find(receiver, arguments)),
+        IteratorForEach => Some(iterator::for_each(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -54,34 +68,6 @@ fn execute_core(
         SetIterator => Some(iterator::from_set(receiver)),
         SetEntries => Some(iterator::from_set_entries(receiver)),
         SetSpeciesGetter | MapSpeciesGetter | SpeciesGetter => Some(set::set_species(receiver)),
-        _ => None,
-    }
-}
-
-fn execute_iterator_core(
-    builtin: Builtin,
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Option<Result<Value, VmError>> {
-    use Builtin::*;
-    if let Some(result) = execute_iterator_next(builtin, receiver, arguments) {
-        return Some(result);
-    }
-    match builtin {
-        IteratorConcat => Some(iterator::concat(arguments)),
-        IteratorFrom => Some(iterator::from(arguments)),
-        IteratorZip => Some(iterator::zip(arguments)),
-        IteratorToArray => Some(iterator::to_array(receiver)),
-        IteratorMap => Some(iterator::map(receiver, arguments)),
-        IteratorFilter => Some(iterator::filter(receiver, arguments)),
-        IteratorSome => Some(iterator::some(receiver, arguments)),
-        IteratorEvery => Some(iterator::every(receiver, arguments)),
-        IteratorFlatMap => Some(iterator::flat_map(receiver, arguments)),
-        IteratorDrop => Some(iterator::drop(receiver, arguments)),
-        IteratorTake => Some(iterator::take(receiver, arguments)),
-        IteratorReduce => Some(iterator::reduce(receiver, arguments)),
-        IteratorFind => Some(iterator::find(receiver, arguments)),
-        IteratorForEach => Some(iterator::for_each(receiver, arguments)),
         _ => None,
     }
 }

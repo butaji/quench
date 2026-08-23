@@ -225,23 +225,6 @@ fn fs_utimes(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> 
     Ok(Value::Undefined)
 }
 
-fn io_error_value(error: std::io::Error) -> Value {
-    let code = match error.kind() {
-        std::io::ErrorKind::NotFound => "ENOENT",
-        std::io::ErrorKind::PermissionDenied => "EACCES",
-        std::io::ErrorKind::AlreadyExists => "EEXIST",
-        std::io::ErrorKind::IsADirectory => "EISDIR",
-        std::io::ErrorKind::NotADirectory => "ENOTDIR",
-        std::io::ErrorKind::InvalidInput => "EINVAL",
-        _ => "EIO",
-    };
-    Value::object(vec![
-        ("code".into(), Value::String(code.into())),
-        ("message".into(), Value::String(error.to_string())),
-        ("name".into(), Value::String("Error".into())),
-    ])
-}
-
 fn reject_fs_error(error: VmError) -> Result<Value, VmError> {
     let value = match error {
         VmError::Thrown(value) => value,
@@ -254,10 +237,6 @@ fn reject_fs_error(error: VmError) -> Result<Value, VmError> {
     Ok(rejected(value))
 }
 
-fn reject_io_error(error: std::io::Error) -> Result<Value, VmError> {
-    Ok(rejected(io_error_value(error)))
-}
-
 fn fs_stat_promise(arguments: &[Value]) -> Result<Value, VmError> {
     let path = match path_arg(arguments, 0) {
         Ok(path) => path.to_owned(),
@@ -268,7 +247,7 @@ fn fs_stat_promise(arguments: &[Value]) -> Result<Value, VmError> {
             &metadata,
             stat_bigint_requested(arguments),
         ))),
-        Err(error) => reject_io_error(error),
+        Err(error) => reject_fs_error(VmError::EvalError(error.to_string())),
     }
 }
 
@@ -327,9 +306,10 @@ fn fs_lstat_promise(arguments: &[Value]) -> Result<Value, VmError> {
             &metadata,
             stat_bigint_requested(arguments),
         ))),
-        Err(error) => reject_io_error(error),
+        Err(error) => reject_fs_error(VmError::EvalError(error.to_string())),
     }
 }
+
 fn fs_truncate_promise(arguments: &[Value]) -> Result<Value, VmError> {
     fs_settle_sync(|| fs_truncate_sync(arguments).map(|_| Value::Undefined))
 }

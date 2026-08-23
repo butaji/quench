@@ -107,10 +107,7 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
         result.isDeepStrictEqual ||= (left, right) => left === right;
       }
       if (normalized === "console") {
-        result.createTask ||= (name) => ({
-          name: String(name || ""),
-          run: (callback, ...args) => callback(...args)
-        });
+        result.createTask ||= () => ({});
         for (const name of "dir time timeEnd assert table".split(" ")) {
           result[name] ||= () => undefined;
         }

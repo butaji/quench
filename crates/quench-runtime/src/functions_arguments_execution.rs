@@ -28,6 +28,9 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayToSorted => {
             Ok(crate::builtins::array_to_sorted(receiver, arguments))
         }
+        crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
+            crate::builtins::object::object_property_is_enumerable(receiver, arguments),
+        ),
         _ => Err(crate::execute::VmError::NotCallable),
     }
 }
@@ -37,10 +40,6 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    // Track the active JS function chain so `Error.captureStackTrace` can
-    // produce real (function-name, module-file) frames. The guard pops on
-    // every exit path, including errors.
-    let _frame = crate::frame_stack::FrameGuard::enter(function);
     let frame = CallFrame::new(
         std::rc::Rc::clone(function),
         this_value.clone(),
@@ -142,41 +141,9 @@ fn resolve_tail_target(
 ) -> Result<TailTarget, crate::execute::VmError> {
     let (target, receiver, arguments) =
         flatten_bound_target(request.callee, request.receiver, request.arguments);
-    let target_for_receiver = target.clone();
     match target {
         crate::value::Value::Function(function) => {
             resolve_function_target(function, receiver, arguments)
-        }
-        crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
-            let capability_receiver = match &receiver {
-                crate::value::Value::HostCapability(capability) => {
-                    Some(crate::value::Value::HostCapability(capability.clone()))
-                }
-                crate::value::Value::BindingCell(cell) => match &*cell.borrow() {
-                    crate::value::Value::HostCapability(capability) => {
-                        Some(crate::value::Value::HostCapability(capability.clone()))
-                    }
-                    _ => None,
-                },
-                _ => crate::vm::realm_token(crate::vm::current_context_or_default().realm()),
-            }
-            .ok_or(crate::execute::VmError::NotCallable)?;
-            crate::vm::execute_host_capability_with_receiver(
-                kind,
-                Some(&capability_receiver),
-                Some(&receiver),
-                &arguments,
-            )
-            .map(TailTarget::Value)
-        }
-        crate::value::Value::HostCapability(capability) => {
-            crate::vm::execute_host_capability_with_receiver(
-                capability.descriptor.kind,
-                Some(&target_for_receiver),
-                Some(&receiver),
-                &arguments,
-            )
-            .map(TailTarget::Value)
         }
         crate::value::Value::Builtin(builtin) => {
             execute_builtin_target(builtin, Some(&receiver), &arguments).map(TailTarget::Value)
@@ -184,49 +151,7 @@ fn resolve_tail_target(
         crate::value::Value::Proxy(_) => {
             crate::proxy::proxy_apply(&target, &receiver, &arguments).map(TailTarget::Value)
         }
-        other => {
-            let discriminant = match &other {
-                crate::value::Value::Number(_) => 0,
-                crate::value::Value::Boolean(_) => 1,
-                crate::value::Value::String(_) => 2,
-                crate::value::Value::StringUnits(_) => 3,
-                crate::value::Value::BigInt(_) => 4,
-                crate::value::Value::Array(_) => 5,
-                crate::value::Value::Object(_) => 6,
-                crate::value::Value::ObjectAlias(_) => 7,
-                crate::value::Value::BindingCell(_) => 8,
-                crate::value::Value::ArrayBuffer(_) => 9,
-                crate::value::Value::Float64Array(_) => 10,
-                crate::value::Value::Float32Array(_) => 11,
-                crate::value::Value::Int8Array(_) => 12,
-                crate::value::Value::Int16Array(_) => 13,
-                crate::value::Value::Int32Array(_) => 14,
-                crate::value::Value::BigInt64Array(_) => 15,
-                crate::value::Value::BigUint64Array(_) => 16,
-                crate::value::Value::Uint32Array(_) => 17,
-                crate::value::Value::Uint8Array(_) => 18,
-                crate::value::Value::Uint8ClampedArray(_) => 19,
-                crate::value::Value::Uint16Array(_) => 20,
-                crate::value::Value::DataView(_) => 21,
-                crate::value::Value::Builtin(_) => 22,
-                crate::value::Value::Function(_) => 23,
-                crate::value::Value::BoundFunction(_) => 24,
-                crate::value::Value::Proxy(_) => 25,
-                crate::value::Value::Promise(_) => 26,
-                crate::value::Value::HostCapability(cap) => {
-                    eprintln!("NOTCALLABLE callee discriminant=27 capability={:?}", cap.descriptor.kind);
-                    27
-                }
-                crate::value::Value::Map(_) => 28,
-                crate::value::Value::Set(_) => 29,
-                crate::value::Value::Iterator(_) => 30,
-                crate::value::Value::Generator(_) => 31,
-                crate::value::Value::Null => 32,
-                crate::value::Value::Undefined => 33,
-            };
-            eprintln!("NOTCALLABLE callee discriminant={discriminant} value={other:?}");
-            Err(crate::execute::VmError::NotCallable)
-        }
+        _ => Err(crate::execute::VmError::NotCallable),
     }
 }
 

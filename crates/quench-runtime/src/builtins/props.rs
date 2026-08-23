@@ -340,12 +340,9 @@ fn is_typed_array_prototype(builtin: Builtin) -> bool {
             | BigUint64ArrayPrototype
     )
 }
-fn host_capability_method(kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
+fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;
-    if matches!(kind, Custom(_)) && key == "call" {
-        return Some(Builtin::FunctionCall);
-    }
-    if let Custom(id) = kind {
+    if let Custom(id) = _kind {
         let custom = match (id, key) {
             (1, "basename") => Custom(2),
             (3, "log") => Custom(4),
@@ -398,7 +395,10 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
-    if !crate::conversion::is_callable(&Value::Builtin(builtin)) {
+    if crate::builtin_meta::is_prototype(builtin)
+        && builtin != Builtin::FunctionPrototype
+        && matches!(key, "length" | "name")
+    {
         return None;
     }
     match key {
