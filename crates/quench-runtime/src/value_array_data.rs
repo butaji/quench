@@ -179,8 +179,6 @@ impl ArrayData {
             && self.prototype.borrow().is_none()
             && !self.arguments
             && self.argument_live.is_none()
-            && self.deleted.iter().all(|deleted| !deleted)
-            && self.mapped.iter().all(Option::is_none)
     }
     /// Borrow the live argument data without consuming `self`.
     /// `argument_live` field is shared between the original and any
