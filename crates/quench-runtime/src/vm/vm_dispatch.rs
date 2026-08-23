@@ -2,11 +2,10 @@
 enum DispatchClass {
     Call,
     Global,
-    Simple,
-    Control,
-    Host,
+    Other,
 }
 const _: () = assert!(std::mem::size_of::<DispatchClass>() <= 1);
+
 
 
 /// Keep the inline entry point limited to classification and handoff.
@@ -18,9 +17,10 @@ fn classify_dispatch(op: &Op) -> DispatchClass {
     } else if is_global_declaration_op(op) {
         DispatchClass::Global
     } else {
-        // The existing handlers remain authoritative; this classification is
-        // deliberately conservative and avoids duplicating their opcode sets.
-        DispatchClass::Host
+        // All remaining opcodes share the same slow-path handoff. Keeping
+        // this as one class avoids carrying speculative sub-classifications
+        // through the hot dispatch loop.
+        DispatchClass::Other
     }
 }
 
@@ -28,12 +28,12 @@ fn classify_dispatch(op: &Op) -> DispatchClass {
 fn run_op(
     registers: &mut Vec<Value>,
     op: &Op,
-    _context: &VmContext,
+    context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     match classify_dispatch(op) {
-        DispatchClass::Call => return run_call_completion(registers, op).map(Some),
+        DispatchClass::Call => return run_call_completion(registers, op, context).map(Some),
         DispatchClass::Global => crate::vm::begin_global_declaration_batch(),
-        DispatchClass::Simple | DispatchClass::Control | DispatchClass::Host => {
+        DispatchClass::Other => {
             if crate::vm::is_global_declaration_batch_active() {
                 crate::vm::flush_global_declaration_batch(registers);
             }
@@ -57,6 +57,7 @@ fn malformed_call_completion() -> crate::completion::Completion {
 fn run_call_completion(
     registers: &mut Vec<Value>,
     op: &Op,
+    context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
     let Op::Call {
         dst,
@@ -68,7 +69,52 @@ fn run_call_completion(
     else {
         return Ok(malformed_call_completion());
     };
-    vm_ops::execute_call(registers, *dst, *callee, *receiver, args, spreads)
+    let record = FunctionCallRecord {
+        dst: *dst,
+        callee: *callee,
+        receiver: *receiver,
+        arguments: args,
+        spreads,
+        context,
+    };
+    if !record.is_well_formed() {
+        return Ok(malformed_call_completion());
+    }
+    dispatch_function_call(registers, record)
+}
+
+/// Borrowed call-boundary record. The caller owns the instruction and register
+/// storage; handlers must finish before either is mutated or released.
+struct FunctionCallRecord<'a> {
+    dst: u16,
+    callee: u16,
+    receiver: Option<u16>,
+    arguments: &'a [u16],
+    spreads: &'a [bool],
+    context: &'a VmContext,
+}
+
+impl FunctionCallRecord<'_> {
+    #[inline]
+    fn is_well_formed(&self) -> bool {
+        self.arguments.len() == self.spreads.len()
+    }
+}
+
+#[inline(never)]
+fn dispatch_function_call(
+    registers: &mut Vec<Value>,
+    record: FunctionCallRecord<'_>,
+) -> Result<crate::completion::Completion, VmError> {
+    let _context = record.context;
+    vm_ops::execute_call(
+        registers,
+        record.dst,
+        record.callee,
+        record.receiver,
+        record.arguments,
+        record.spreads,
+    )
 }
 
 include!("run_simple_op.rs");
@@ -578,7 +624,7 @@ fn boolean_property(_value: bool, key: &str) -> Value {
 mod dispatcher_tests {
     use super::{classify_dispatch, malformed_call_completion, DispatchClass};
     use crate::completion::Completion;
-    use crate::ops::Op;
+    use crate::ops::{Constant, Op};
 
     #[test]
     fn malformed_call_record_uses_cold_normal_completion() {
@@ -586,7 +632,7 @@ mod dispatcher_tests {
     }
 
     #[test]
-    fn classifier_keeps_call_handoff_compact() {
+    fn classifier_uses_compact_three_way_shape() {
         let call = Op::Call {
             dst: 0,
             callee: 1,
@@ -595,6 +641,25 @@ mod dispatcher_tests {
             spreads: Vec::new(),
         };
         assert_eq!(classify_dispatch(&call), DispatchClass::Call);
+        assert_eq!(
+            classify_dispatch(&Op::Const {
+                dst: 0,
+                value: Constant::Undefined,
+            }),
+            DispatchClass::Other
+        );
         assert!(std::mem::size_of::<DispatchClass>() <= 1);
+    }
+    
+    #[test]
+    fn borrowed_function_record_rejects_inconsistent_argument_span() {
+        let arguments = [1_u16, 2];
+        let spreads = [false];
+        let context = crate::vm::VmContext::default();
+        let record = super::FunctionCallRecord {
+            dst: 0, callee: 1, receiver: None,
+            arguments: &arguments, spreads: &spreads, context: &context,
+        };
+        assert!(!record.is_well_formed());
     }
 }

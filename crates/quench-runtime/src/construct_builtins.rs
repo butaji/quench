@@ -376,10 +376,7 @@ include!("construct_typed_high.rs");
 include!("construct_typed_bigint.rs");
 
 fn range_error(message: &str) -> crate::execute::VmError {
-    crate::execute::VmError::Thrown(crate::builtins::error(
-        crate::ops::Builtin::RangeError,
-        &[Value::String(message.to_string())],
-    ))
+    crate::value::error::throw_range_error(message)
 }
 
 fn construct_number(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {

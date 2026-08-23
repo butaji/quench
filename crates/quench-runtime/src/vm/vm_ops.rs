@@ -17,14 +17,18 @@ pub fn execute_call(
     let callee_value = super::read_register(registers, callee)?;
     let receiver_value = match receiver {
         Some(receiver) => super::read_register(registers, receiver)?,
-        None => crate::with_scope::receiver_for_callable(&callee_value).unwrap_or(Value::Undefined),
+        None => match &callee_value {
+            Value::Function(_) => Value::Undefined,
+            _ => crate::with_scope::receiver_for_callable(&callee_value)
+                .unwrap_or(Value::Undefined),
+        },
     };
     Ok(crate::completion::Completion::Call(
         crate::completion::CallContinuation {
             callee: callee_value,
             receiver: receiver_value,
             arguments,
-            caller_ops: std::rc::Rc::from([]),
+            caller_code: crate::identity::CodeId(0),
             caller_pc: 0,
             caller_registers: std::mem::take(registers),
             caller_environment: crate::identity::EnvironmentRef(0),

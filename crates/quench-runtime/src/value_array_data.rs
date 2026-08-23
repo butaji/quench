@@ -1,3 +1,15 @@
+/// Element storage strategy selected from the canonical array facts.
+///
+/// Dense elements are a structure-of-arrays (SoA) column: `values` is scanned
+/// independently of metadata (`length`, `kind`, and hole state). Named
+/// properties remain an array-of-structures (AoS), because each `(String,
+/// Value)` record is consumed together during ordinary property lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArrayLayout {
+    DenseSoA,
+    PropertyAoS,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ArrayKind {
@@ -16,7 +28,6 @@ impl ArrayKind {
         )
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayData {
@@ -96,6 +107,17 @@ impl ArrayData {
         (&self.values, self.logical_len(), self.kind)
     }
 
+    /// Return the derived physical layout without creating a second storage
+    /// representation. Dense arrays use the field-wide `values` column;
+    /// sparse arrays retain compact property records for whole-record lookup.
+    #[inline]
+    pub(crate) fn layout(&self) -> ArrayLayout {
+        if self.kind == ArrayKind::Sparse {
+            ArrayLayout::PropertyAoS
+        } else {
+            ArrayLayout::DenseSoA
+        }
+    }
 
     #[inline]
     pub(crate) fn is_packed(&self) -> bool {
@@ -153,7 +175,6 @@ impl ArrayData {
         self.values.capacity()
     }
 
-
     #[inline]
     pub(crate) fn is_sparse(&self) -> bool {
         matches!(self.kind, ArrayKind::Sparse)
@@ -161,7 +182,6 @@ impl ArrayData {
     pub(crate) fn is_dense(&self) -> bool {
         !matches!(self.kind, ArrayKind::Sparse)
     }
-
 
     #[inline]
     pub(crate) fn is_numeric_packed(&self) -> bool {
@@ -214,7 +234,10 @@ impl ArrayData {
             self.descriptors.retain(|(key, _)| keep_index(key, length));
         }
         self.length = length;
-        self.kind = monotonic_kind(self.kind, classify_kind_with_holes(&self.values, &self.deleted, length));
+        self.kind = monotonic_kind(
+            self.kind,
+            classify_kind_with_holes(&self.values, &self.deleted, length),
+        );
     }
 
     pub fn set_index(&mut self, index: usize, value: Value) {
@@ -249,6 +272,13 @@ impl ArrayData {
             self.kind,
             classify_kind_with_holes(&self.values, &self.deleted, self.length),
         );
+    }
+    pub(crate) fn extend_dense(&mut self, values: &[Value]) {
+        let start = self.length;
+        self.grow_dense_storage(start.saturating_add(values.len()));
+        self.values[start..].clone_from_slice(values);
+        self.length = start.saturating_add(values.len());
+        self.kind = classify_kind_with_holes(&self.values, &self.deleted, self.length);
     }
 
     /// Grow dense storage geometrically so sequential appends do not
@@ -293,9 +323,12 @@ impl ArrayData {
             set_live_index(&mut live, index, value.clone());
         }
     }
-
-    pub(crate) fn values_mut(&mut self) -> &mut [Value] {
-        &mut self.values
+    pub(crate) fn rewrite_values(&mut self, mut rewrite: impl FnMut(&mut Value)) {
+        for value in &mut self.values {
+            rewrite(value);
+        }
+        let candidate = classify_kind_with_holes(&self.values, &self.deleted, self.logical_len());
+        self.kind = monotonic_kind(self.kind, candidate);
     }
 
     pub(crate) fn get_index(&self, index: usize) -> Option<Value> {
@@ -334,12 +367,17 @@ impl ArrayData {
         self.set_index(index, Value::Number(number));
     }
 
+    /// Return a dense slot only when the index is inside the logical array
+    /// bounds and the physical backing store. The logical header is the
+    /// canonical source of bounds; callers must not infer validity from
+    /// `values.len()` alone because sparse growth can leave stale capacity.
     #[inline]
     pub(crate) fn dense_value_at(&self, index: usize) -> Option<&Value> {
-        if index >= self.values.len() || self.deleted.get(index) == Some(&true) {
+        let length = self.logical_len();
+        if index >= length || index >= self.values.len() || self.deleted.get(index) == Some(&true) {
             return None;
         }
-        // SAFETY: the explicit check above proves `index < self.values.len()`.
+        // SAFETY: the checks above prove `index < self.values.len()`.
         Some(unsafe { self.values.get_unchecked(index) })
     }
 
@@ -352,13 +390,15 @@ impl ArrayData {
     }
 
     pub(crate) fn dense_value_at_mut(&mut self, index: usize) -> Option<&mut Value> {
-        if index >= self.values.len() || self.deleted.get(index) == Some(&true) {
+        if index >= self.logical_len()
+            || index >= self.values.len()
+            || self.deleted.get(index) == Some(&true)
+        {
             return None;
         }
-        // SAFETY: the explicit check above proves `index < self.values.len()`.
+        // SAFETY: the checks above prove `index < self.values.len()`.
         Some(unsafe { self.values.get_unchecked_mut(index) })
     }
-
 
     pub(crate) fn has_index(&self, index: usize) -> bool {
         if let Some(live) = &self.argument_live {
@@ -388,10 +428,20 @@ impl ArrayData {
         let Some(dst_end) = dst.checked_add(len) else {
             return false;
         };
+        // The logical length is the authoritative bounds source. Physical
+        // storage may retain a stale suffix after a length shrink, but that
+        // suffix is no longer an array element and must never be copied.
+        let logical_len = self.logical_len();
+        if src_end > logical_len || dst_end > logical_len {
+            return false;
+        }
         if src_end > self.values.len() || dst_end > self.values.len() {
             return false;
         }
-        if self.deleted.get(src..src_end).is_some_and(|range| range.iter().any(|&hole| hole))
+        if self
+            .deleted
+            .get(src..src_end)
+            .is_some_and(|range| range.iter().any(|&hole| hole))
             || self
                 .deleted
                 .get(dst..dst_end)
@@ -572,7 +622,11 @@ fn classify_kind_with_holes(values: &[Value], deleted: &[bool], length: usize) -
 
 /// Element kinds only become less specialized as an array is mutated.
 fn monotonic_kind(previous: ArrayKind, candidate: ArrayKind) -> ArrayKind {
-    if kind_rank(candidate) >= kind_rank(previous) { candidate } else { previous }
+    if kind_rank(candidate) >= kind_rank(previous) {
+        candidate
+    } else {
+        previous
+    }
 }
 
 fn kind_rank(kind: ArrayKind) -> u8 {
@@ -626,7 +680,7 @@ impl std::ops::Deref for ArrayData {
 
 #[cfg(test)]
 mod array_data_tests {
-    use super::{ArrayData, ArrayKind};
+    use super::{ArrayData, ArrayKind, ArrayLayout};
     use crate::value::Value;
 
     #[test]
@@ -642,6 +696,18 @@ mod array_data_tests {
         holey.delete_property("0");
         assert_eq!(holey.kind(), ArrayKind::Holey);
         assert!(!holey.kind().is_packed());
+    }
+
+    #[test]
+    fn layout_contract_uses_soa_for_dense_and_aos_for_sparse() {
+        let dense = ArrayData::new(vec![Value::Number(1.0), Value::Number(2.0)]);
+        assert_eq!(dense.layout(), ArrayLayout::DenseSoA);
+        assert_eq!(dense.hot_storage().0.len(), dense.logical_len());
+
+        let mut sparse = ArrayData::new(Vec::new());
+        sparse.set_index(1024, Value::Boolean(true));
+        assert_eq!(sparse.kind(), ArrayKind::Sparse);
+        assert_eq!(sparse.layout(), ArrayLayout::PropertyAoS);
     }
     #[test]
     fn kind_transitions_preserve_monotonic_holes_and_sparse_boundary() {
@@ -659,15 +725,33 @@ mod array_data_tests {
         data.set_index(0, Value::Number(2.0));
         assert_eq!(data.kind(), ArrayKind::Holey);
 
-        let mut boundary = ArrayData::new(
-            (0..32).map(|index| Value::Number(index as f64)).collect(),
-        );
+        let mut boundary =
+            ArrayData::new((0..32).map(|index| Value::Number(index as f64)).collect());
         boundary.set_length(33);
         assert_eq!(boundary.kind(), ArrayKind::Holey);
         boundary.set_length(65);
         assert_eq!(boundary.kind(), ArrayKind::Sparse);
         boundary.set_length(1);
         assert_eq!(boundary.kind(), ArrayKind::Sparse);
+    }
+    #[test]
+    fn kind_transition_is_monotonic_even_when_storage_becomes_specialized_again() {
+        let mut data = ArrayData::new(vec![Value::Number(1.0), Value::Number(2.0)]);
+        data.set_index(0, Value::String("value".into()));
+        assert_eq!(data.kind(), ArrayKind::PackedValue);
+
+        data.set_index(1, Value::Number(3.0));
+        assert_eq!(data.kind(), ArrayKind::PackedValue);
+
+        data.delete_property("1");
+        assert_eq!(data.kind(), ArrayKind::Holey);
+        data.set_index(1, Value::Number(4.0));
+        assert_eq!(data.kind(), ArrayKind::Holey);
+
+        data.set_index(10_000, Value::Number(5.0));
+        assert_eq!(data.kind(), ArrayKind::Sparse);
+        data.set_length(2);
+        assert_eq!(data.kind(), ArrayKind::Sparse);
     }
 
     #[test]
@@ -688,7 +772,10 @@ mod array_data_tests {
             }
         }
         // A linear push strategy would allocate on nearly every append.
-        assert!(reallocations <= 6, "unexpected dense reallocations: {reallocations}");
+        assert!(
+            reallocations <= 6,
+            "unexpected dense reallocations: {reallocations}"
+        );
         data.set_index(10_000, Value::Boolean(true));
         assert!(data.is_sparse());
         assert!(!data.is_dense());
@@ -705,10 +792,21 @@ mod array_data_tests {
         assert_eq!(data.dense_number_at(1), Some(2.5));
         assert_eq!(data.get_index(1), Some(Value::Number(2.5)));
         assert_eq!(data.kind(), ArrayKind::PackedDouble);
-
         data.set_index(0, Value::Boolean(true));
         assert_eq!(data.dense_number_at(0), None);
         assert_eq!(data.get_index(0), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn dense_access_has_one_storage_boundary_and_hole_boundary() {
+        let mut data = ArrayData::new(vec![Value::Number(4.0)]);
+        assert_eq!(data.dense_value_at(0), Some(&Value::Number(4.0)));
+        assert_eq!(data.dense_value_at(1), None);
+
+        data.delete_property("0");
+        assert_eq!(data.dense_value_at(0), None);
+        // A hole must not change the physical storage contract.
+        assert_eq!(data.physical_len(), 1);
     }
     #[test]
     fn packed_numeric_storage_is_borrowed_until_value_access() {
@@ -779,7 +877,29 @@ mod array_data_tests {
         assert_eq!(data.storage_capacity(), capacity);
         assert_eq!(data.get_index(physical), Some(Value::Number(2.0)));
         assert!(data.has_index(physical));
-        assert_eq!(data.next_index(physical, data.logical_len()), Some(physical));
+        assert_eq!(
+            data.next_index(physical, data.logical_len()),
+            Some(physical)
+        );
+    }
+
+    #[test]
+    fn sparse_index_lifecycle_uses_logical_length_without_dense_materialization() {
+        let mut data = ArrayData::new(vec![Value::Number(1.0)]);
+        data.set_index(100_000, Value::String("far".into()));
+        assert_eq!(data.kind(), ArrayKind::Sparse);
+        assert_eq!(data.physical_len(), 1);
+        assert_eq!(data.get_index(100_000), Some(Value::String("far".into())));
+
+        // Extending the logical header must retain the sparse entry, while
+        // shrinking removes indexed properties at or above the new bound.
+        data.set_length(100_001);
+        assert_eq!(data.get_index(100_000), Some(Value::String("far".into())));
+        data.set_length(2);
+        assert_eq!(data.logical_len(), 2);
+        assert_eq!(data.get_index(100_000), None);
+        assert_eq!(data.physical_len(), 1);
+        assert_eq!(data.kind(), ArrayKind::Sparse);
     }
 }
 

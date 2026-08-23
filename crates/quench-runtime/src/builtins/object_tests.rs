@@ -1,4 +1,27 @@
 #[test]
+fn property_descriptor_has_explicit_optional_attributes() {
+    let empty = crate::value::PropertyDescriptor::empty();
+    assert!(empty.is_empty());
+    assert_eq!(
+        empty,
+        crate::value::PropertyDescriptor {
+            writable: None,
+            enumerable: None,
+            configurable: None,
+        }
+    );
+}
+
+#[test]
+fn property_descriptor_data_defaults_are_non_writable_and_hidden() {
+    let descriptor = crate::value::PropertyDescriptor::data_defaults();
+    assert_eq!(descriptor.writable, Some(false));
+    assert_eq!(descriptor.enumerable, Some(false));
+    assert_eq!(descriptor.configurable, Some(false));
+    assert!(!descriptor.is_empty());
+}
+
+#[test]
 fn has_own_observes_function_own_properties() {
     let function = Value::Function(Rc::new(FunctionValue {
         code: empty_function_code(),
@@ -185,7 +208,96 @@ fn ordinary_object_shape_preserves_order_and_dictionary_fallback() {
     assert_eq!(large.shape().slots, crate::value::DICTIONARY_SLOT_THRESHOLD + 1);
     assert!(large.shape().dictionary);
     assert_eq!(large.properties.len(), large.shape().slots as usize);
+    assert_eq!(large.slot_for("p0"), None);
+    assert_eq!(large.value_for_shape_slot(large.shape_id(), 0), None);
 }
+#[test]
+fn object_slots_have_one_authoritative_property_source() {
+    let object = crate::value::ObjectData::new(vec![
+        ("first".to_string(), Value::Number(10.0)),
+        (
+            "\0quench:descriptor:first".to_string(),
+            Value::Boolean(false),
+        ),
+        ("second".to_string(), Value::Number(20.0)),
+    ]);
+
+    // The hot view is the same owned vector used by ordinary readers; metadata
+    // is interleaved in that source but never becomes a public slot.
+    assert!(std::ptr::eq(object.hot_properties(), &object.properties));
+    assert_eq!(object.hot_properties().len(), 3);
+    assert_eq!(object.shape().slots, 2);
+    assert_eq!(object.value_for_shape_slot(object.shape_id(), 0), Some(&Value::Number(10.0)));
+    assert_eq!(object.value_for_shape_slot(object.shape_id(), 1), Some(&Value::Number(20.0)));
+    assert_eq!(object.value_at_slot(2), None);
+}
+
+#[test]
+fn object_slot_lookup_rejects_stale_shape_and_invalid_slots() {
+    let object = crate::value::ObjectData::new(vec![
+        ("first".to_string(), Value::Number(10.0)),
+        ("second".to_string(), Value::Number(20.0)),
+    ]);
+    let stale = crate::identity::ShapeId(object.shape_id().0.wrapping_add(1));
+
+    assert_eq!(object.value_for_shape_slot(stale, 0), None);
+    assert_eq!(object.value_for_shape_slot(object.shape_id(), usize::MAX), None);
+    assert_eq!(object.slot_for("missing"), None);
+}
+
+#[test]
+fn dictionary_storage_contract_keeps_last_write_authoritative() {
+    let object = crate::value::ObjectData::new(
+        (0..=crate::value::DICTIONARY_SLOT_THRESHOLD)
+            .map(|index| (format!("p{index}"), Value::Number(index as f64)))
+            .chain([
+                ("p7".to_string(), Value::Number(700.0)),
+                (
+                    crate::builtins::descriptor_key("p7"),
+                    Value::Boolean(false),
+                ),
+            ])
+            .collect(),
+    );
+
+    assert!(object.is_dictionary());
+    assert_eq!(object.dictionary_value("p7"), Some(&Value::Number(700.0)));
+    assert_eq!(object.dictionary_value("\0quench:descriptor:p7"), None);
+    assert_eq!(object.dictionary_value("missing"), None);
+    // Dictionary lookup never manufactures a slot/cache representation.
+    assert_eq!(object.slot_for("p7"), None);
+    assert_eq!(object.value_for_shape_slot(object.shape_id(), 7), None);
+}
+
+#[test]
+fn object_transition_is_deterministic_and_slot_stable() {
+    let object = crate::value::ObjectData::new(vec![
+        ("first".to_string(), Value::Number(1.0)),
+        ("\0quench:descriptor:first".to_string(), Value::Boolean(true)),
+    ]);
+    let add = object.transition_for("second").unwrap();
+    assert_eq!(add.from, object.shape_id());
+    assert_eq!(add.property, crate::identity::property_key_id("second"));
+    assert_eq!(add.slot, 1);
+    assert_eq!(add.to, object.transition_for("second").unwrap().to);
+    let existing = object.transition_for("first").unwrap();
+    assert_eq!(existing.slot, 0);
+    assert_eq!(existing.to, object.shape_id());
+    assert_eq!(object.properties.len(), 2);
+}
+
+#[test]
+fn object_transition_rejects_metadata_and_dictionary_layouts() {
+    let object = crate::value::ObjectData::new(vec![("x".to_string(), Value::Undefined)]);
+    assert!(object.transition_for("\0quench:internal").is_none());
+    let dictionary = crate::value::ObjectData::new(
+        (0..=crate::value::DICTIONARY_SLOT_THRESHOLD)
+            .map(|i| (format!("p{i}"), Value::Undefined))
+            .collect(),
+    );
+    assert!(dictionary.transition_for("new").is_none());
+}
+
 
 fn empty_function_code() -> crate::machine::FunctionCode {
     let mut arena = crate::machine::CodeArena::new();

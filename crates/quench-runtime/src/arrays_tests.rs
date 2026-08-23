@@ -59,6 +59,101 @@ mod tests {
     }
 
     #[test]
+    fn packed_push_preserves_values_and_updates_length() {
+        let array = Value::Array(Rc::new(ArrayData::new(vec![Value::Number(1.0)])));
+        let result = crate::builtins::array_push(
+            Some(&array),
+            &[Value::Number(2.0), Value::Number(3.0)],
+        );
+        assert_eq!(result, Value::Number(3.0));
+        // Builtin calls replace the receiver binding through the locals
+        // replacement channel; a direct Rc handle is intentionally unchanged.
+    }
+    #[test]
+    fn array_length_header_is_authoritative_when_capacity_exceeds_storage() {
+        let mut data = ArrayData::new(vec![Value::Number(1.0)]);
+        let initial_capacity = data.storage_capacity();
+        data.set_length(128);
+
+        // Extending length records holes in the header without materializing
+        // values or changing the dense backing-store ownership.
+        assert_eq!(data.header_length(), 128);
+        assert_eq!(data.logical_len(), 128);
+        assert_eq!(data.physical_len(), 1);
+        assert_eq!(data.storage_capacity(), initial_capacity);
+        assert_eq!(data.get_index(127), None);
+        assert_eq!(super::property(&data, "length"), Value::Number(128.0));
+    }
+    #[test]
+    fn dense_bounds_use_logical_length_before_property_source() {
+        let mut data = ArrayData::new(vec![Value::Number(7.0), Value::Number(8.0)]);
+        data.set_length(1);
+        data.set_property("1", Value::String("indexed fallback".into()));
+
+        assert_eq!(data.dense_value_at(1), None);
+        assert_eq!(
+            super::property(&data, "1"),
+            Value::String("indexed fallback".into())
+        );
+    }
+
+    #[test]
+    fn dense_copy_rejects_physical_suffix_outside_logical_bounds() {
+        let mut data = ArrayData::new(vec![
+            Value::Number(1.0),
+            Value::Number(2.0),
+            Value::Number(3.0),
+        ]);
+        data.set_length(1);
+
+        // Shrinking the header retains the backing allocation, so physical
+        // storage alone cannot be used as a source-of-truth for copying.
+        assert!(!data.copy_dense_within(1, 0, 1));
+        assert_eq!(data.dense_value_at(1), None);
+        assert_eq!(data.get_index(0), Some(Value::Number(1.0)));
+    }
+
+
+    #[test]
+    fn indexed_growth_reserves_capacity_before_materializing_holes() {
+        let mut data = ArrayData::new(Vec::new());
+        let initial_capacity = data.storage_capacity();
+        for index in 0..4 {
+            data.set_index(index, Value::Number(index as f64));
+        }
+        let reserved_capacity = data.storage_capacity();
+
+        assert_eq!(data.header_length(), 4);
+        assert_eq!(data.physical_len(), 4);
+        assert!(reserved_capacity >= 4);
+        assert!(reserved_capacity >= initial_capacity);
+        assert_eq!(data.get_index(0), Some(Value::Number(0.0)));
+        assert_eq!(data.get_index(3), Some(Value::Number(3.0)));
+    }
+
+    #[test]
+    fn sparse_transition_keeps_dense_prefix_and_property_tail_separate() {
+        let mut data = ArrayData::new(vec![Value::Number(3.0), Value::Number(5.0)]);
+        let dense_capacity = data.storage_capacity();
+
+        data.set_index(10_000, Value::Number(9.0));
+        assert!(data.is_sparse());
+        assert_eq!(data.physical_len(), 2);
+        assert_eq!(data.storage_capacity(), dense_capacity);
+        assert_eq!(data.dense_number_at(0), Some(3.0));
+        assert_eq!(data.dense_number_at(1), Some(5.0));
+        assert_eq!(data.dense_number_at(10_000), None);
+        assert_eq!(data.get_index(10_000), Some(Value::Number(9.0)));
+
+        // A subsequent adjacent write must not re-expand the abandoned dense
+        // store; the sparse property store remains authoritative for the tail.
+        data.set_index(2, Value::Number(7.0));
+        assert_eq!(data.physical_len(), 2);
+        assert_eq!(data.get_index(2), Some(Value::Number(7.0)));
+        assert_eq!(data.property("2"), Some(Value::Number(7.0)));
+    }
+
+    #[test]
     fn object_hot_properties_is_authoritative_storage() {
         let data = ObjectData::new(vec![("answer".into(), Value::Number(42.0))]);
         let hot = data.hot_properties();

@@ -196,10 +196,10 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
         return Value::Number(f64::NAN);
     };
     if values.is_packed_ordinary() {
-        let mut result = values.to_vec();
-        result.extend_from_slice(arguments);
-        let length = result.len();
-        crate::locals::replace_value(receiver, &Value::array(result));
+        let mut updated = std::rc::Rc::clone(values);
+        std::rc::Rc::make_mut(&mut updated).extend_dense(arguments);
+        let length = updated.logical_len();
+        crate::locals::replace_value(receiver, &Value::Array(updated));
         return Value::Number(length as f64);
     }
     let mut result = values.to_vec();
