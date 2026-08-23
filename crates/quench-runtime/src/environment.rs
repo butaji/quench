@@ -153,6 +153,7 @@ impl Environment {
     }
 
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
+        let captured_len = captures.slots.borrow().len() as u16;
         let store = SlotStore::from_values(values);
         let mut combined = captures.slots.borrow().clone();
         combined.extend((0..store.len()).map(|index| BindingRef::new(Rc::clone(&store), index)));
@@ -166,15 +167,24 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        environment
-            .uninitialized
-            .replace(clone_tdz(&captures.uninitialized.borrow()));
+        let uninitialized = clone_tdz(&captures.uninitialized.borrow());
+        if let Some(slots) = &uninitialized {
+            slots
+                .borrow_mut()
+                .retain(|slot| *slot < captured_len);
+        }
+        environment.uninitialized.replace(uninitialized);
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
-        environment
-            .immutable_slots
-            .replace(captures.immutable_slots.borrow().clone());
+        let immutable_slots = captures.immutable_slots.borrow().as_ref().map(|slots| {
+            slots
+                .iter()
+                .copied()
+                .filter(|slot| *slot < captured_len)
+                .collect()
+        });
+        environment.immutable_slots.replace(immutable_slots);
         environment
     }
     /// Create an execution child while retaining captured binding metadata.
