@@ -208,15 +208,7 @@ pub fn original_prototype(value: &Value) -> Option<Value> {
 }
 
 fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
-    if matches!(
-        target,
-        Value::Object(_)
-            | Value::Array(_)
-            | Value::ObjectAlias(_)
-            | Value::Function(_)
-            | Value::BoundFunction(_)
-            | Value::Builtin(_)
-    ) {
+    if crate::value::is_object(target) {
         return Ok(());
     }
     Err(crate::value::error::throw_type_error(
