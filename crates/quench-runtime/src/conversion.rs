@@ -337,7 +337,7 @@ fn call_primitive(method: &Value, receiver: &Value, arguments: &[Value]) -> Resu
         ));
     }
     let result = crate::functions::execute_target(method, receiver, arguments)?;
-    if crate::value::is_object(&result) {
+    if crate::value::is_object(&result) && !is_symbol(&result) {
         return Err(crate::value::error::throw_type_error(
             "Symbol.toPrimitive returned an object",
         ));
