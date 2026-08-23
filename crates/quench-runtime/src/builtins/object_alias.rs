@@ -26,7 +26,7 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         if let Some((_, current)) = values.iter_mut().rev().find(|(name, _)| name == key) {
             *current = value;
         } else {
-            values.push((key.to_string(), value));
+            values.push((key.into(), value));
         }
         sync_descriptor_value(&mut values, key);
         reattach_function_homes(&values, weak);
@@ -37,14 +37,14 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
     Value::Object(object)
 }
 
-pub(crate) fn record_created(created: &mut Vec<String>, key: &str) {
+pub(crate) fn record_created(created: &mut Vec<crate::value::PropertyName>, key: &str) {
     if key.starts_with('\0') || created.iter().any(|name| name == key) {
         return;
     }
-    created.push(key.to_string());
+    created.push(key.into());
 }
 
-fn sync_descriptor_value(values: &mut [(String, Value)], key: &str) {
+fn sync_descriptor_value(values: &mut [(crate::value::PropertyName, Value)], key: &str) {
     let value = values
         .iter()
         .rev()
@@ -66,7 +66,7 @@ fn sync_descriptor_value(values: &mut [(String, Value)], key: &str) {
 
 /// Re-anchor `\0home_object` aliases inside the clone's method values so `super`
 /// always resolves to the live prototype rather than a stale clone.
-fn reattach_function_homes(values: &[(String, Value)], new_home: &WeakObject) {
+fn reattach_function_homes(values: &[(crate::value::PropertyName, Value)], new_home: &WeakObject) {
     for (_, value) in values.iter() {
         let Value::Function(function) = value else {
             continue;

@@ -489,7 +489,10 @@ fn constructor_name(value: &Value) -> String {
     }
 }
 
-fn property_string(properties: &[(String, Value)], key: &str) -> Option<String> {
+fn property_string(
+    properties: &[(crate::value::PropertyName, Value)],
+    key: &str,
+) -> Option<String> {
     properties
         .iter()
         .rev()

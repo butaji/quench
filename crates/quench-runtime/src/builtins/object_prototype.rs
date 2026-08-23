@@ -212,11 +212,11 @@ fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
     )
 }
 
-fn internal_prototype(properties: &[(String, Value)], fallback: Builtin) -> Value {
+fn internal_prototype<K: AsRef<str>>(properties: &[(K, Value)], fallback: Builtin) -> Value {
     properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+        .find_map(|(name, value)| (name.as_ref() == "\0prototype").then(|| value.clone()))
         .unwrap_or(Value::Builtin(fallback))
 }
 
