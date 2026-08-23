@@ -60,6 +60,22 @@ fn deleted_global_property_keeps_strict_reference_error_semantics() {
 }
 
 #[test]
+fn cross_realm_class_evaluations_keep_private_static_brands_distinct() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var first = $262.createRealm(); var second = $262.createRealm();\n\
+         var source1 = '(class { static #value = 1; static read() { return this.#value; } })';\n\
+         var source2 = '(class { static #value = 2; static read() { return this.#value; } })';\n\
+         var C1 = first.evalScript(source1); var C2 = second.evalScript(source2);\n\
+         if (C1 === C2 || C1.read() !== 1 || C2.read() !== 2) throw new Error('private static setup');\n\
+         var threw = false;\n\
+         try { C1.read.call(C2); } catch (error) { if (!(error instanceof first.global.TypeError)) throw error; threw = true; }\n\
+         if (!threw) throw new Error('cross-realm private brand');",
+    )
+    .expect("private static names must remain distinct across realm evaluations");
+}
+
+#[test]
 fn symbols_are_unique_and_format_descriptions() {
     let mut host = super::RuntimeHost;
     host.run_script(
