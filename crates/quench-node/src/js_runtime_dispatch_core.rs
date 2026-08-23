@@ -20,6 +20,9 @@ impl QuenchNodeHost {
                     require_module(arguments)
                 }
             }
+            HostCapabilityKind::Custom(CapabilityName::RequireFor) => {
+                require_module(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::ConsoleCreateTask) => {
                 Ok(Value::object(vec![
                     (

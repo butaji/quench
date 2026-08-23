@@ -50,8 +50,22 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         bytes_written: 0,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
-    add_listener_cb(state, &object, args.last(), "connect")?;
+    // `connect(options, callback)` puts the callback immediately after the
+    // options object; positional forms reserve the host slot before it.
+    // Select by callability as well as position so a host/options value is
+    // never registered as an event listener.
+    let callback = connect_callback(args);
+    add_listener_cb(state, &object, callback, "connect")?;
     Ok(object)
+}
+
+fn connect_callback(args: &[Value]) -> Option<&Value> {
+    let candidate = if matches!(args.first(), Some(Value::Object(_))) {
+        args.get(1)
+    } else {
+        args.get(2)
+    };
+    candidate.filter(|value| quench_runtime::is_callable(value))
 }
 
 /// A refused/absent loopback peer surfaces as an `'error'` on a
@@ -122,6 +136,11 @@ pub fn server_listen(
         Err(error) => return Err(server_bind_error(&error)),
     };
     register_server(state, &receiver, Some(listener))?;
+    if let Some(id) = net_id(&receiver) {
+        if let Some(server) = state.borrow().net.servers.get(&id).cloned() {
+            server.borrow_mut().listen_args = args.to_vec();
+        }
+    }
     add_listener_cb(state, &receiver, args.last(), "listening")?;
     Ok(receiver.clone())
 }
@@ -160,11 +179,15 @@ fn add_listener_cb(
     event: &str,
 ) -> Result<(), VmError> {
     if let Some(cb) = cb {
-        if quench_runtime::is_callable(cb) {
+        let mut callback = cb.clone();
+        while let Value::BindingCell(cell) = callback {
+            callback = cell.borrow().clone();
+        }
+        if quench_runtime::is_callable(&callback) {
             crate::modules::events::method_on(
                 state,
                 Some(receiver),
-                &[Value::String(event.to_string()), cb.clone()],
+                &[Value::String(event.to_string()), callback],
             )?;
         }
     }
@@ -338,11 +361,9 @@ pub fn socket_write(
     }
     guard.write_buf.extend_from_slice(&bytes);
     guard.bytes_written += bytes.len() as u64;
-    let _ = execute::set_property(
-        guard.js.clone(),
-        "bytesWritten",
-        Value::Number(guard.bytes_written as f64),
-    );
+    // `bytesWritten` is exposed as a plain data property. Updating it through
+    // the generic property setter can dispatch a non-callable stale setter
+    // in cross-realm socket objects; keep the host-side counter authoritative.
     let flushed = try_flush(&mut guard);
     Ok(Value::Boolean(flushed))
 }

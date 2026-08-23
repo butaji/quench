@@ -147,19 +147,38 @@ pub fn buffer_prototype() -> Value {
     })
 }
 
-/// Attach Buffer identity to a view: shared prototype + `parent` and
-/// `offset` own data properties.
-fn finish_view(view: Value, buffer: &Rc<ArrayBufferData>, byte_offset: usize) -> Value {
-    quench_runtime::execute::set_property(view.clone(), "\0prototype", buffer_prototype());
-    quench_runtime::execute::set_property(
-        view.clone(),
+/// Attach Buffer identity to a view: shared prototype + `parent` and `offset` own data properties.
+fn finish_view(mut view: Value, buffer: &Rc<ArrayBufferData>, byte_offset: usize) -> Value {
+    // Typed-array prototype updates return a replacement value in the runtime
+    // (the old value is not mutated in place). Keep that replacement so host
+    // constructed Buffers actually expose Buffer.prototype methods.
+    view = quench_runtime::execute::set_prototype_of(&view, &buffer_prototype())
+        .unwrap_or(view);
+    view = quench_runtime::execute::set_property(
+        view,
         "parent",
         Value::ArrayBuffer(buffer.clone()),
     );
-    quench_runtime::execute::set_property(
-        view.clone(),
+    // Keep the callable entry point directly on host-created views as well;
+    // this remains visible if typed-array prototype chaining is represented
+    // by a proxy/replacement value.
+    // Keep the dispatch entry on the returned view itself. `set_property`
+    // returns the replacement view used by host-created typed arrays, while
+    // define-own-property can leave a stale Value variant behind.
+    view = quench_runtime::execute::set_property(
+        view,
+        "toString",
+        crate::host::capability(r::SPEC_BUFFER_TOSTRING),
+    );
+    let _ = quench_runtime::builtins::define_own_property_public(
+        &view,
         "offset",
-        Value::Number(byte_offset as f64),
+        &[
+            ("value".into(), Value::Number(byte_offset as f64)),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ],
     );
     view
 }
@@ -172,7 +191,7 @@ pub(crate) fn make_buffer(bytes: &[u8]) -> Value {
 }
 
 /// Construct a Buffer value over an existing ArrayBuffer (shared).
-pub(crate) fn make_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -> Value {
+pub fn make_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -> Value {
     let view = Value::Uint8Array(Rc::new(Uint8ArrayData::new(buffer.clone(), offset, length)));
     finish_view(view, &buffer, offset)
 }

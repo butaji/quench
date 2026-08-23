@@ -16,20 +16,22 @@ fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                 .unwrap_or_else(|| "utf8".into())
         }
         Some(value) => {
-            return Err(VmError::Thrown(fs_error(
-                "ERR_UNKNOWN_ENCODING",
-                &format!("Unknown encoding: {}", safe_value_string(value)),
-            )))
+            let error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::TypeError,
+                &[Value::String(format!("Unknown encoding: {}", safe_value_string(value)))],
+            );
+            return Err(VmError::Thrown(error));
         }
     };
     if !matches!(
         encoding.as_str(),
         "utf8" | "utf-8" | "hex" | "base64" | "base64url" | "ascii" | "utf16le" | "utf-16le"
     ) {
-        return Err(VmError::Thrown(fs_error(
-            "ERR_UNKNOWN_ENCODING",
-            &format!("Unknown encoding: {encoding}"),
-        )));
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::TypeError,
+            &[Value::String(format!("Unknown encoding: {encoding}"))],
+        );
+        return Err(VmError::Thrown(error));
     }
     let start = arguments
         .get(1)

@@ -212,6 +212,10 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
         if name == "node:http" || name == "http" {
             return Some(Value::object(vec![
                 (
+                    "request".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpGet)),
+                ),
+                (
                     "get".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::HttpGet)),
                 ),

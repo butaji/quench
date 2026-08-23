@@ -1,7 +1,23 @@
+
+thread_local! {
+    static NOT_CALLABLE_CONTEXT: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+pub(crate) fn set_not_callable_context(context: String) {
+    NOT_CALLABLE_CONTEXT.with(|slot| *slot.borrow_mut() = context);
+}
+
+fn not_callable_context() -> String {
+    NOT_CALLABLE_CONTEXT.with(|slot| slot.borrow().clone())
+}
+
 pub(crate) fn not_callable() -> VmError {
+    let context = not_callable_context();
     VmError::Thrown(crate::builtins::error(
         Builtin::TypeError,
-        &[Value::String("value is not callable".to_string())],
+        &[Value::String(format!(
+            "value is not callable [GLOBAL-NOT-CALLABLE caller=vm_execution::not_callable {context}]"
+        ))],
     ))
 }
 
@@ -45,6 +61,11 @@ pub(crate) fn execute_completion_in_place(
 }
 
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
+    // Keep the root context's host handle discoverable for callbacks that
+    // re-enter after the transient CURRENT_CONTEXT guard has been dropped.
+    if context.realm() == crate::ops::RealmId::ROOT {
+        realm::register_root_context(context);
+    }
     // The replacement log is the heap's forwarding table for copy-on-write
     // object snapshots: it must outlive any single top-level entry so that
     // references stashed in heap slots (event-loop callbacks, timers) still

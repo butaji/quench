@@ -7,6 +7,7 @@ use std::rc::Rc;
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::regexp;
 use quench_runtime::value::Value;
+use quench_runtime::host_api;
 
 use super::assert::{arg, assertion_error, custom_message};
 use crate::host::HostState;
@@ -84,6 +85,11 @@ fn invoke(function: &Value) -> Result<Result<(), Value>, VmError> {
     match execute::call(function, &Value::Undefined, &[]) {
         Ok(_) => Ok(Ok(())),
         Err(VmError::Thrown(value)) => Ok(Err(value)),
+        Err(VmError::EvalError(message)) => Ok(Err(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("message".into(), Value::String(message)),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ]))),
         Err(error) => Err(error),
     }
 }
@@ -275,11 +281,15 @@ fn validate_object(
     user_message: Option<String>,
 ) -> Result<Value, VmError> {
     for key in execute::own_enumerable_keys(expected) {
-        let expected_value = execute::get_property_result(expected, &key)?;
-        let actual_value = execute::get_property_result(error, &key)?;
-        if !expected_property_matches(&expected_value, &actual_value)? {
+        let expected_value = execute::get_property(expected, &key);
+        let actual_value = execute::get_property(error, &key);
+        let matches = match (&expected_value, &actual_value) {
+            (Value::String(wanted), Value::String(found)) => wanted == found,
+            _ => expected_property_matches(&expected_value, &actual_value)?,
+        };
+        if !matches {
             return Err(invalid_expected(
-                user_message,
+                user_message.clone(),
                 format!("The error did not match the expected object (key \"{key}\")"),
             ));
         }

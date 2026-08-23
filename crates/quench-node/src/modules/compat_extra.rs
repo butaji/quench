@@ -18,7 +18,9 @@ fn load(source: &str) -> Result<Value, VmError> {
         "exports".to_string(),
         quench_runtime::host_api::object(vec![]),
     )]);
-    quench_runtime::vm::call_value(&factory, &Value::Undefined, &[module.clone()])?;
+    quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::call_value(&factory, &Value::Undefined, &[module.clone()])
+    })?;
     quench_runtime::execute::get_property_result(&module, "exports")
 }
 

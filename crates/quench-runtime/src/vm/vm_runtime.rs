@@ -194,7 +194,14 @@ pub fn execute_builtin_with_receiver(
         return execute_shared_array_buffer_builtin(builtin, receiver, arguments);
     }
     if let Builtin::HostCapability(kind) = builtin {
-        return vm_ops::execute_host_capability(kind, receiver, arguments);
+        let capability_receiver = realm_token(current_context_or_default().realm())
+            .ok_or(VmError::NotCallable)?;
+        return execute_host_capability_with_receiver(
+            kind,
+            Some(&capability_receiver),
+            receiver,
+            arguments,
+        );
     }
     match builtin {
         _ if is_function_builtin(builtin) => {

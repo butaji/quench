@@ -111,11 +111,17 @@ pub(crate) fn proxy_get(
                 ],
                 Some(&proxy.handler),
             )?;
-            let descriptor = crate::builtins::object::descriptor(
+            let descriptor_target = crate::locals::resolved_replacement(proxy.target.clone());
+            let target_replaced = !crate::builtins::same_value(
+                Some(&descriptor_target),
                 Some(&proxy.target),
+            );
+            let descriptor = crate::builtins::object::descriptor(
+                Some(&descriptor_target),
                 Some(&Value::String(prop.to_string())),
             )?;
-            if let Value::Object(properties) = &descriptor {
+            if !target_replaced {
+                if let Value::Object(properties) = &descriptor {
                 let non_configurable = properties
                     .iter()
                     .any(|(n, v)| n == "configurable" && matches!(v, Value::Boolean(false)));
@@ -144,6 +150,7 @@ pub(crate) fn proxy_get(
                         ));
                     }
                 }
+            }
             }
             return Ok(result);
         }

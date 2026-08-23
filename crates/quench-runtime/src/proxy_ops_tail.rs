@@ -16,7 +16,7 @@ pub(crate) fn proxy_apply(
         return proxy_apply(&proxy.target, this_arg, arguments);
     }
     match target {
-        Value::Function(_) | Value::Builtin(_) | Value::BoundFunction(_) => {
+        Value::Function(_) | Value::Builtin(_) | Value::BoundFunction(_) | Value::HostCapability(_) => {
             crate::functions::execute_target(target, this_arg, arguments)
         }
         _ => Err(VmError::NotCallable),
