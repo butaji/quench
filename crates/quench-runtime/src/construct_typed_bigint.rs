@@ -81,9 +81,7 @@ fn bigint_object_values(
     name: &str,
 ) -> Result<Vec<Value>, crate::execute::VmError> {
     let object = Value::Object(properties.clone());
-    let values = object_array_like(properties)?
-        .or_else(|| crate::collections::iterator::collect_iterable(object).ok())
-        .ok_or_else(|| type_error(&format!("{name} source must be iterable or a buffer")))?;
+    let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => values, Err(_) => object_array_like(properties)?.ok_or_else(|| type_error(&format!("{name} source must be iterable or a buffer")))?, };
     Ok(values)
 }
 

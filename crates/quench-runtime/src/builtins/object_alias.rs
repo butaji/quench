@@ -126,11 +126,10 @@ fn retarget(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
             .target()
             .is_some_and(|object| Rc::ptr_eq(&object, old)),
         Value::BindingCell(cell) => {
-            let mut current = cell.borrow_mut();
-            let targets_old = matches!(&*current, Value::Object(object) if Rc::ptr_eq(object, old));
-            if targets_old {
-                *current = Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(new.clone()))));
-            }
+            // Binding cells can be layered (notably for accessor metadata and
+            // symbol-keyed properties). Propagate the COW home through every
+            // layer rather than only rewriting a directly-held object.
+            retarget(&mut cell.borrow_mut(), old, new);
             false
         }
         _ => false,

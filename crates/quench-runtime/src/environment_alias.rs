@@ -3,6 +3,10 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
         return;
     }
     let values = match value {
+        Value::BindingCell(cell) => {
+            replace_alias(&mut cell.borrow_mut(), old, new);
+            return;
+        }
         Value::Array(values) => Rc::make_mut(values),
         Value::Object(values) => {
             for (_, value) in values.iter() {
@@ -50,6 +54,7 @@ fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
 
 fn contains_nested(value: &Value, target: &Value) -> bool {
     match value {
+        Value::BindingCell(cell) => contains_nested(&cell.borrow(), target),
         Value::ObjectAlias(alias) => alias_targets(alias, target),
         Value::Array(values) => values
             .iter()
