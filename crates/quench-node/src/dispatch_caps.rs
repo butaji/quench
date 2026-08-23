@@ -15,6 +15,7 @@ pub(super) const CAP_DGRAM_GET_SEND_QUEUE_SIZE: u16 = 0x230B;
 pub(super) const CAP_DGRAM_GET_SEND_QUEUE_COUNT: u16 = 0x230C;
 pub(super) const CAP_DGRAM_REF: u16 = 0x230D;
 pub(super) const CAP_DGRAM_UNREF: u16 = 0x230E;
+pub(super) const CAP_INTERNAL_BINDING: u16 = 0x0F0E;
 pub(super) const CAP_EVENTS_NEW: u16 = 0x0100;
 pub(super) const CAP_EVENTS_FROM: u16 = 0x0101;
 pub(super) const CAP_EVENTS_ON: u16 = 0x0102;

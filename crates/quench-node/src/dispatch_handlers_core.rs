@@ -78,6 +78,28 @@ pub fn util_inspect(
     Ok(Value::String(crate::modules::util::inspect(&arg)))
 }
 
+pub fn internal_binding(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(name)) = args.first() else {
+        return Err(VmError::NotCallable);
+    };
+    if name == "buffer" {
+        return Ok(quench_runtime::host_api::object(vec![(
+            "fill".into(),
+            quench_runtime::host_api::capability_function(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(0x0814),
+                },
+            ),
+        )]));
+    }
+    Ok(quench_runtime::host_api::object(vec![]))
+}
+
 // ---- url ----
 pub fn url_parse(
     state: &Rc<RefCell<HostState>>,

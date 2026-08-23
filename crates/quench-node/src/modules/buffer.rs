@@ -237,14 +237,39 @@ pub fn concat(
 ) -> Result<Value, VmError> {
     let list = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(list, Value::Array(_)) {
-        return Err(enc::invalid_arg_type(format!(
-            "The \"list\" argument must be an Array of Buffers.{}",
+        let received = if matches!(list, Value::Uint8Array(_)) {
+            " Received an instance of Buffer".to_string()
+        } else {
             crate::modules::util::invalid_arg_received(&list)
+        };
+        return Err(enc::invalid_arg_type(format!(
+            "The \"list\" argument must be an instance of Array.{}",
+            received
         )));
     }
-    let total = args
-        .get(1)
-        .map(|v| crate::modules::buffer_methods::to_offset(Some(v)));
+    let total = match args.get(1) {
+        None | Some(Value::Undefined) => None,
+        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => {
+            if *value < 0.0 || *value > 9_007_199_254_740_991.0 {
+                return Err(enc::out_of_range(
+                    "length",
+                    ">= 0 && <= 9007199254740991",
+                    &enc::fmt_num(*value),
+                ));
+            }
+            Some(*value as usize)
+        }
+        Some(value) => {
+            return Err(enc::out_of_range(
+                "length",
+                "an integer",
+                &match value {
+                    Value::Number(number) => enc::fmt_num(*number),
+                    _ => format!("{value:?}"),
+                },
+            ));
+        }
+    };
     let mut all = Vec::new();
     for i in 0..u32::MAX {
         let v = get_property(&list, &i.to_string());
@@ -264,9 +289,9 @@ pub fn concat(
             }
         }
     }
-    if let Some(t) = total {
-        let t = t.max(0.0) as usize;
-        all.truncate(t.min(all.len()));
+    if let Some(total) = total {
+        all.truncate(total.min(all.len()));
+        all.resize(total, 0);
     }
     Ok(crate::modules::buffer_proto::make_buffer(&all))
 }
