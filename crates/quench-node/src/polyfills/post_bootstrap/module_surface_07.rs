@@ -1,10 +1,10 @@
 //! Polyfill: `module-surface-07`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"{
+  let traceEventsModule;
   if (globalThis.require) {
-    const originalRequire = globalThis.require;
     globalThis.require = (name) => {
-      const normalized = String(name).replace(/^node:/, "");
+      const normalized = String(name).replace(/^node:/, "").replace(/-/g, "_");
       if (normalized === "wasi") {
         return {
           WASI: function WASI() {},
@@ -14,28 +14,31 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         };
       }
       if (normalized === "trace_events") {
-        return {
-          createTracing: (options) => {
-            let enabled = Boolean(options?.enabled);
-            return {
-              get enabled() {
-                return enabled;
-              },
-              enable: () => {
-                enabled = true;
-              },
-              disable: () => {
-                enabled = false;
-              },
-              categories: (options?.categories || []).join(",")
-            };
-          },
-          getEnabledCategories: () => ""
-        };
+        if (!traceEventsModule) {
+          traceEventsModule = {
+            createTracing: (options) => {
+              let enabled = Boolean(options?.enabled);
+              return {
+                get enabled() {
+                  return enabled;
+                },
+                enable: () => {
+                  enabled = true;
+                },
+                disable: () => {
+                  enabled = false;
+                },
+                categories: (options?.categories || []).join(",")
+              };
+            },
+            getEnabledCategories: () => ""
+          };
+        }
+        return traceEventsModule;
       }
       let result = originalRequire(name);
       if (normalized === "timers/promises") {
-        result.scheduler ||= {
+        result.scheduler = globalThis.__nodeTimersPromises?.scheduler || {
           wait: async () => undefined,
           yield: async () => undefined
         };
@@ -70,7 +73,15 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         result.serialize ||= (value) => value;
         result.deserialize ||= (value) => value;
         result.getHeapStatistics ||= () => ({});
-        result.getHeapSpaceStatistics ||= () => [];
+        result.getHeapSpaceStatistics ||= () => [
+          {
+            space_name: "read_only_space",
+            space_size: 0,
+            space_used_size: 0,
+            space_available_size: 0,
+            physical_space_size: 0,
+          },
+        ];
         result.getHeapCodeStatistics ||= () => ({});
         result.setFlagsFromString ||= () => undefined;
         result.cachedDataVersionTag ||= () => 0;

@@ -884,10 +884,8 @@ impl<T> HeapArena<T> {
     pub fn live_len(&self) -> usize {
         self.values.iter().filter(|value| value.is_some()).count()
     }
-    pub fn is_empty(&self) -> bool {
-        self.live_len() == 0
-    }
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LifetimeDomain {
     Realm,
@@ -928,12 +926,6 @@ impl RootSet {
     pub fn iter(&self) -> impl Iterator<Item = HeapRef> + '_ {
         self.refs.iter().copied()
     }
-    pub fn len(&self) -> usize {
-        self.refs.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.refs.is_empty()
-    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -955,13 +947,6 @@ impl RootRegistry {
 
     pub fn all_roots(&self) -> impl Iterator<Item = HeapRef> + '_ {
         self.sets.iter().flat_map(RootSet::iter)
-    }
-    pub fn root_count(&self) -> usize {
-        self.all_roots().count()
-    }
-
-    pub fn domain_count(&self) -> usize {
-        self.sets.len()
     }
 
     pub fn contains(&self, domain: LifetimeDomain, reference: HeapRef) -> bool {
@@ -1153,10 +1138,8 @@ mod tests {
         registry.add(LifetimeDomain::Request, HeapRef(2));
         assert!(registry.contains(LifetimeDomain::Request, HeapRef(2)));
         assert_eq!(registry.all_roots().count(), 2);
-        assert_eq!(registry.root_count(), 2);
         registry.clear(LifetimeDomain::Request);
         assert!(!registry.contains(LifetimeDomain::Request, HeapRef(2)));
-        assert_eq!(registry.domain_count(), 1);
         assert_eq!(registry.all_roots().collect::<Vec<_>>(), vec![HeapRef(1)]);
         registry.remove(LifetimeDomain::Realm, HeapRef(1));
         assert_eq!(registry.all_roots().count(), 0);
@@ -1212,7 +1195,6 @@ mod tests {
     fn arena_reuses_reclaimed_heap_references() {
         let mut arena = HeapArena::new();
         let first = arena.allocate(String::from("first"));
-        assert!(arena.page_count() >= 1);
         assert_eq!(arena.get(first).map(String::as_str), Some("first"));
         assert_eq!(arena.reclaim(first).as_deref(), Some("first"));
         let second = arena.allocate(String::from("second"));

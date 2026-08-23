@@ -178,6 +178,7 @@ const __nodeOsExports = {
     ]
   }),
   uptime: () => Math.max(0.001, (Date.now() - __nodeStartedAt) / 1000),
+  getuid: () => typeof process.getuid === "function" ? process.getuid() : 0,
   getPriority: (pid) => {
     __nodeValidatePriorityPid(pid);
     return __nodePriority;

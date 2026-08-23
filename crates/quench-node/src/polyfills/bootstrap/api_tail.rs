@@ -2,12 +2,28 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeAssert.notDeepEqual =
   globalThis.__nodeAssert.notDeepStrictEqual;
+const __nodeAssertIsInstance = (value, constructor) => {
+  if (value && value.constructor === constructor) return true;
+  const expectedPrototype = constructor.prototype;
+  let prototype = Object.getPrototypeOf(value);
+  for (let i = 0; prototype !== null && i < 64; i++) {
+    if (prototype === expectedPrototype) return true;
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  return false;
+};
 const __nodeAssertMatchExpectedFunction = (error, expected) => {
   const isConstructor =
     expected === Array ||
     expected === Error ||
+    expected === TypeError ||
+    expected === RangeError ||
+    expected === EvalError ||
+    expected === ReferenceError ||
+    expected === SyntaxError ||
+    expected === URIError ||
     expected.prototype instanceof Error;
-  if (isConstructor && !(error instanceof expected)) {
+  if (isConstructor && !__nodeAssertIsInstance(error, expected)) {
     const assertion = new globalThis.__nodeAssert.AssertionError(
       `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`
     );

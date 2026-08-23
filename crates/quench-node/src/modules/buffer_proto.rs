@@ -101,6 +101,15 @@ const PROTOTYPE_METHODS: &[(&str, NodeSpec)] = &[
     ("writeIntLE", r::SPEC_BUF_WRITE_INT_LE),
     ("writeIntBE", r::SPEC_BUF_WRITE_INT_BE),
 ];
+const ITERATOR_METHODS: &[(&str, quench_runtime::ops::Builtin)] = &[
+    (
+        "Symbol.iterator",
+        quench_runtime::ops::Builtin::ArrayIterator,
+    ),
+    ("values", quench_runtime::ops::Builtin::ArrayIterator),
+    ("keys", quench_runtime::ops::Builtin::ArrayKeys),
+    ("entries", quench_runtime::ops::Builtin::ArrayEntries),
+];
 
 pub fn buffer_prototype() -> Value {
     BUFFER_PROTOTYPE.with(|slot| {
@@ -123,8 +132,12 @@ pub fn buffer_prototype() -> Value {
                 (*name, value)
             })
             .collect();
-        let prototype = crate::host::namespace_object(methods)
+        let mut prototype = crate::host::namespace_object(methods)
             .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
+        for (name, builtin) in ITERATOR_METHODS {
+            prototype =
+                quench_runtime::execute::set_property(prototype, name, Value::Builtin(*builtin));
+        }
         let _ = quench_runtime::execute::set_prototype_of(
             &prototype,
             &Value::Builtin(quench_runtime::ops::Builtin::Uint8ArrayPrototype),
@@ -134,19 +147,43 @@ pub fn buffer_prototype() -> Value {
     })
 }
 
-/// Attach Buffer identity to a view: shared prototype + `parent` and
-/// `offset` own data properties.
-fn finish_view(view: Value, buffer: &Rc<ArrayBufferData>, byte_offset: usize) -> Value {
-    quench_runtime::execute::set_property(view.clone(), "\0prototype", buffer_prototype());
-    quench_runtime::execute::set_property(
-        view.clone(),
+/// Attach Buffer identity to a view: shared prototype + `parent` and `offset` own data properties.
+fn finish_view(mut view: Value, buffer: &Rc<ArrayBufferData>, byte_offset: usize) -> Value {
+    // Typed-array prototype updates return a replacement value in the runtime
+    // (the old value is not mutated in place). Keep that replacement so host
+    // constructed Buffers actually expose Buffer.prototype methods.
+    view = quench_runtime::execute::set_prototype_of(&view, &buffer_prototype())
+        .unwrap_or(view);
+    view = quench_runtime::execute::set_property(
+        view,
         "parent",
         Value::ArrayBuffer(buffer.clone()),
     );
-    quench_runtime::execute::set_property(
-        view.clone(),
+    // Keep the callable entry point directly on host-created views as well;
+    // this remains visible if typed-array prototype chaining is represented
+    // by a proxy/replacement value.
+    // Keep the callable entry point directly on host-created views.  Defining
+    // it through the ordinary setter can return the backing ArrayBuffer for
+    // host-created aliases, losing the view as the method receiver.
+    let _ = quench_runtime::builtins::define_own_property_public(
+        &view,
+        "toString",
+        &[
+            ("value".into(), crate::host::capability(r::SPEC_BUFFER_TOSTRING)),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ],
+    );
+    let _ = quench_runtime::builtins::define_own_property_public(
+        &view,
         "offset",
-        Value::Number(byte_offset as f64),
+        &[
+            ("value".into(), Value::Number(byte_offset as f64)),
+            ("writable".into(), Value::Boolean(true)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ],
     );
     view
 }
@@ -159,7 +196,7 @@ pub(crate) fn make_buffer(bytes: &[u8]) -> Value {
 }
 
 /// Construct a Buffer value over an existing ArrayBuffer (shared).
-pub(crate) fn make_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -> Value {
+pub fn make_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -> Value {
     let view = Value::Uint8Array(Rc::new(Uint8ArrayData::new(buffer.clone(), offset, length)));
     finish_view(view, &buffer, offset)
 }

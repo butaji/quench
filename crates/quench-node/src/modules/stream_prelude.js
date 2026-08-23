@@ -12,6 +12,14 @@
     on(name, fn) {
       this._emitter.on(name, fn);
       if (name === "data" && this._readableState) this.resume();
+      // A stream may finish synchronously while a pipe/end callback is being
+      // installed. Preserve Node's observable completion guarantee for those
+      // late listeners by delivering the already-emitted terminal event.
+      if (name === "end" && this._readableState && this._readableState.endEmitted) {
+        nextTick(() => fn.call(this));
+      } else if (name === "finish" && this._writableState && this._writableState.finished) {
+        nextTick(() => fn.call(this));
+      }
       return this;
     },
     addListener(name, fn) {
@@ -79,7 +87,7 @@
   // ---- Readable ----
 
   function initReadable(stream, options) {
-    stream._emitter = new EventEmitter();
+    if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._readableState = {
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
@@ -88,26 +96,35 @@
       flowScheduled: false,
       reading: false,
       ended: false,
-      endEmitted: false
+      endEmitted: false,
+      errored: null,
+      closeEmitted: false
     };
     stream.readable = true;
     stream.destroyed = false;
+    stream.closed = false;
     if (options.read) stream._read = options.read;
     if (options.destroy) stream._destroy = options.destroy;
   }
 
   function flowReadable(stream) {
     const st = stream._readableState;
+    if (st.buffer.length > 0 && stream.listenerCount("readable") > 0) {
+      stream._emitter.emit("readable");
+      if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
+    }
     if (st.flowing) {
       while (st.flowing && st.buffer.length > 0) {
         stream._emitter.emit("data", st.buffer.shift());
       }
-    } else if (st.buffer.length > 0 && stream.listenerCount("readable") > 0) {
-      stream._emitter.emit("readable");
     }
     if (st.flowing && st.buffer.length === 0 && !st.ended && !st.reading) {
       st.reading = true;
       stream._read(st.highWaterMark);
+      // _read may synchronously refill the queue. Continue pulling in the
+      // same turn; flowScheduled is already set, so scheduling alone would
+      // otherwise strand the newly queued chunks until another event arrives.
+      if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
       st.endEmitted = true;
@@ -144,11 +161,19 @@
       return this._readableState.objectMode;
     }
 
+    get readableErrored() {
+      return this._readableState.errored || null;
+    }
+
+    get errored() {
+      return this._readableState.errored || null;
+    }
+
+
     isPaused() {
       // Node: a stream is "paused" only after an explicit pause().
       return this._readableState.paused === true;
     }
-
     pause() {
       this._readableState.paused = true;
       this._readableState.flowing = false;
@@ -165,6 +190,15 @@
     push(chunk) {
       const st = this._readableState;
       st.reading = false;
+      if (st.ended || st.errored) {
+        if (chunk !== null && !st.errored) {
+          const error = new Error("stream.push() after EOF");
+          error.code = "ERR_STREAM_PUSH_AFTER_EOF";
+          st.errored = error;
+          this.destroy(error);
+        }
+        return false;
+      }
       if (chunk === null) {
         st.ended = true;
       } else {
@@ -176,16 +210,27 @@
 
     read() {
       const st = this._readableState;
-      if (st.buffer.length > 0) return st.buffer.shift();
+      const finishIfEnded = () => {
+        if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
+          st.endEmitted = true;
+          this._emitter.emit("end");
+        }
+      };
+      if (st.buffer.length > 0) {
+        const chunk = st.buffer.shift();
+        finishIfEnded();
+        return chunk;
+      }
       if (!st.ended && !st.reading) {
         st.reading = true;
         this._read(st.highWaterMark);
       }
-      if (st.buffer.length > 0) return st.buffer.shift();
-      if (st.ended && !st.endEmitted) {
-        st.endEmitted = true;
-        this._emitter.emit("end");
+      if (st.buffer.length > 0) {
+        const chunk = st.buffer.shift();
+        finishIfEnded();
+        return chunk;
       }
+      finishIfEnded();
       return null;
     }
 
@@ -210,9 +255,93 @@
       return this;
     }
   }
+  Readable.from = function (source, options) {
+    options = options || {};
+    if (source == null) throw new TypeError("Readable.from requires a source");
+    const asyncIterator = source[Symbol.asyncIterator];
+    const iterator = asyncIterator ? asyncIterator.call(source) :
+      (source[Symbol.iterator] ? source[Symbol.iterator].call(source) : null);
+    const pull = iterator ? () => iterator.next() :
+      (typeof source.read === "function" ? () => source.read() : null);
+    if (!pull) throw new TypeError("source is not iterable or readable");
+
+    let pending = false;
+    let finished = false;
+    const readable = new Readable(Object.assign({}, options, {
+      objectMode: options.objectMode !== false,
+      read() {
+        if (pending || finished) return;
+        pending = true;
+        let result;
+        try {
+          result = pull();
+        } catch (error) {
+          pending = false;
+          finished = true;
+          readable._emitter.emit("error", error);
+          readable.push(null);
+          return;
+        }
+        Promise.resolve(result).then((step) => {
+          pending = false;
+          if (finished) return;
+          const iteratorResult = step && typeof step === "object" &&
+            ("done" in step || "value" in step);
+          if (step == null || (iteratorResult && step.done)) {
+            finished = true;
+            readable.push(null);
+          } else {
+            readable.push(iteratorResult ? step.value : step);
+          }
+        }, (error) => {
+          pending = false;
+          finished = true;
+          readable._emitter.emit("error", error);
+          readable.push(null);
+        });
+      }
+    }));
+    return readable;
+  };
+
   mixEmitter(Readable.prototype);
 
-  // ---- Writable ----
+  Readable.prototype.destroy = function (error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.readable = false;
+    if (error) {
+      this.readableErrored = error;
+      this._readableState.errored = error;
+    }
+    const stream = this;
+    const destroy = this._destroy;
+    nextTick(() => {
+      let finished = false;
+      const finish = () => {
+        if (finished || stream._readableState.closeEmitted) return;
+        finished = true;
+        stream._readableState.closeEmitted = true;
+        stream.closed = true;
+        if (error) stream._emitter.emit("error", error);
+        stream._emitter.emit("close");
+      };
+      if (destroy) {
+        destroy.call(stream, error, finish);
+      } else {
+        finish();
+      }
+    });
+    return this;
+  }
+
+  function writableChunkLength(stream, chunk) {
+    if (stream._writableState.objectMode) return 1;
+    if (typeof chunk === "string") return chunk.length;
+    if (chunk && typeof chunk.byteLength === "number") return chunk.byteLength;
+    if (chunk && typeof chunk.length === "number") return chunk.length;
+    return 1;
+  }
 
   function initWritable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
@@ -237,7 +366,7 @@
     stream._emitter.emit("finish");
   }
 
-  class Writable {
+  class WritableClass {
     constructor(options) {
       initWritable(this, options || {});
     }
@@ -274,13 +403,14 @@
         if (callback) nextTick(() => callback(error));
         return false;
       }
-      st.buffered += 1;
+      const chunkLength = writableChunkLength(this, chunk);
+      st.buffered += chunkLength;
       st.writing = true;
       let called = false;
       const done = (error) => {
         if (called) return;
         called = true;
-        st.buffered -= 1;
+        st.buffered -= chunkLength;
         st.writing = false;
         if (error) {
           if (callback) callback(error);
@@ -315,7 +445,33 @@
       return this;
     }
   }
+  // Node permits Writable(options) as a callable factory as well as new Writable(options).
+  function Writable(options) {
+    return new WritableClass(options);
+  }
+  Writable.prototype = WritableClass.prototype;
   mixEmitter(Writable.prototype);
+
+  Writable.prototype.destroy = function (error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.writable = false;
+    if (error) this.writableErrored = error;
+    const stream = this;
+    const destroy = this._destroy;
+    nextTick(() => {
+      const finish = () => {
+        if (error) stream._emitter.emit("error", error);
+        stream._emitter.emit("close");
+      };
+      if (destroy) {
+        destroy.call(stream, error, finish);
+      } else {
+        finish();
+      }
+    });
+    return this;
+  };
 
   // ---- Duplex / Transform ----
 
@@ -386,21 +542,94 @@
     const callback =
       typeof args[args.length - 1] === "function" ? args.pop() : null;
     const streams = args;
+    if (streams.length < 2) {
+      throw new TypeError("The streams argument must be an array or at least two streams");
+    }
+    if (!streams[0] || typeof streams[0].pipe !== "function" ||
+        typeof streams[0].on !== "function") {
+      throw new TypeError("The \"streams\" argument must contain stream instances");
+    }
+    for (const stream of streams.slice(1)) {
+      if (!stream || typeof stream.on !== "function" ||
+          typeof stream.write !== "function" || typeof stream.end !== "function") {
+        throw new TypeError("The \"streams\" argument must contain stream instances");
+      }
+    }
+    let callbackCalled = false;
+    const done = (error) => {
+      if (callback && !callbackCalled) {
+        callbackCalled = true;
+        callback(error);
+      }
+    };
     for (let i = 0; i + 1 < streams.length; i += 1) {
       streams[i].pipe(streams[i + 1]);
     }
     for (const stream of streams) {
-      stream.once("error", (error) => {
-        if (callback) callback(error);
-      });
+      stream.once("error", done);
     }
     const last = streams[streams.length - 1];
-    if (last && callback) {
-      last.once("finish", () => callback());
-      last.once("end", () => callback());
+    if (callback) {
+      last.once("finish", () => done());
+      last.once("end", () => done());
     }
     return last;
   }
+
+  function isReadableNodeStream(o) {
+    return !!(
+      o &&
+      typeof o.pipe === "function" &&
+      typeof o.on === "function" &&
+      (!o._writableState || o._readableState?.readable !== false) &&
+      (!o._writableState || o._readableState)
+    );
+  }
+  function isWritableNodeStream(o) {
+    return !!(
+      o &&
+      typeof o.write === "function" &&
+      typeof o.on === "function" &&
+      (!o._readableState || o._writableState?.writable !== false)
+    );
+  }
+  function isReadable(stream) {
+    if (stream && typeof stream.readable !== "boolean") return null;
+    if (!stream || stream.destroyed) return false;
+    return (
+      isReadableNodeStream(stream) &&
+      stream.readable &&
+      !stream._readableState?.endEmitted
+    );
+  }
+  function isWritable(stream) {
+    if (stream && typeof stream.writable !== "boolean") return null;
+    if (!stream || stream.destroyed) return false;
+    return (
+      isWritableNodeStream(stream) &&
+      stream.writable &&
+      !stream._writableState?.ended
+    );
+  }
+  function isErrored(stream) {
+    return !!(
+      stream &&
+      (stream.readableErrored ??
+        stream.writableErrored ??
+        stream._readableState?.errored ??
+        stream._writableState?.errored ??
+        stream._readableState?.errorEmitted ??
+        stream._writableState?.errorEmitted)
+    );
+  }
+  function isDisturbed(stream) {
+    return !!(
+      stream &&
+      (stream._readableState?.dataEmitted ?? stream.readableDidRead ?? stream.readableAborted)
+    );
+  }
+  Readable.isDisturbed = isDisturbed;
+  Writable.destroy = function (stream, error) { return stream.destroy(error); };
 
   return {
     Readable,
@@ -409,6 +638,10 @@
     Transform,
     Stream: Readable,
     finished,
-    pipeline
+    pipeline,
+    isReadable,
+    isWritable,
+    isErrored,
+    isDisturbed
   };
 });

@@ -69,7 +69,11 @@ const __quenchTlsModule = {
     if (options.pfx !== undefined && options.passphrase !== "sample") {
       throw new Error("mac verify failure");
     }
-    const context = { minVersion: options.minVersion };
+    const context = {
+      minVersion: options.minVersion,
+      maxVersion: options.maxVersion,
+      ciphers: options.ciphers,
+    };
     Object.defineProperty(context, "setOptions", {
       configurable: true,
       value() {

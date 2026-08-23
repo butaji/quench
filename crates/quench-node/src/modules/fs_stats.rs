@@ -54,6 +54,147 @@ pub fn dirent(name: &str, mode: u32) -> Value {
     )
 }
 
+/// Build a `Stats` from constructor arguments (deprecated `fs.Stats`).
+/// Numeric fields are passed through; the four Date fields are given as
+/// epoch-millisecond numbers, matching Node's Stats constructor.
+pub fn stats_from_values(
+    dev: f64,
+    mode: f64,
+    nlink: f64,
+    uid: f64,
+    gid: f64,
+    rdev: f64,
+    blksize: f64,
+    ino: f64,
+    size: f64,
+    blocks: f64,
+    atime_ms: f64,
+    mtime_ms: f64,
+    ctime_ms: f64,
+    birthtime_ms: f64,
+) -> Value {
+    with_predicates(
+        mode as u32,
+        stats_entries(
+            dev,
+            mode,
+            nlink,
+            uid,
+            gid,
+            rdev,
+            blksize,
+            ino,
+            size,
+            blocks,
+            atime_ms,
+            mtime_ms,
+            ctime_ms,
+            birthtime_ms,
+        ),
+    )
+}
+
+fn stats_entries(
+    dev: f64,
+    mode: f64,
+    nlink: f64,
+    uid: f64,
+    gid: f64,
+    rdev: f64,
+    blksize: f64,
+    ino: f64,
+    size: f64,
+    blocks: f64,
+    atime_ms: f64,
+    mtime_ms: f64,
+    ctime_ms: f64,
+    birthtime_ms: f64,
+) -> Vec<(String, Value)> {
+    let mut entries = stats_numeric_entries(
+        dev,
+        mode,
+        nlink,
+        uid,
+        gid,
+        rdev,
+        blksize,
+        ino,
+        size,
+        blocks,
+        atime_ms,
+        mtime_ms,
+        ctime_ms,
+        birthtime_ms,
+    );
+    entries.extend(stats_date_entries(
+        atime_ms,
+        mtime_ms,
+        ctime_ms,
+        birthtime_ms,
+    ));
+    entries
+}
+
+fn stats_numeric_entries(
+    dev: f64,
+    mode: f64,
+    nlink: f64,
+    uid: f64,
+    gid: f64,
+    rdev: f64,
+    blksize: f64,
+    ino: f64,
+    size: f64,
+    blocks: f64,
+    atime_ms: f64,
+    mtime_ms: f64,
+    ctime_ms: f64,
+    birthtime_ms: f64,
+) -> Vec<(String, Value)> {
+    vec![
+        ("dev".to_string(), Value::Number(dev)),
+        ("mode".to_string(), Value::Number(mode)),
+        ("nlink".to_string(), Value::Number(nlink)),
+        ("uid".to_string(), Value::Number(uid)),
+        ("gid".to_string(), Value::Number(gid)),
+        ("rdev".to_string(), Value::Number(rdev)),
+        ("blksize".to_string(), Value::Number(blksize)),
+        ("ino".to_string(), Value::Number(ino)),
+        ("size".to_string(), Value::Number(size)),
+        ("blocks".to_string(), Value::Number(blocks)),
+        ("atimeMs".to_string(), Value::Number(atime_ms)),
+        ("mtimeMs".to_string(), Value::Number(mtime_ms)),
+        ("ctimeMs".to_string(), Value::Number(ctime_ms)),
+        ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
+    ]
+}
+
+fn stats_date_entries(
+    atime_ms: f64,
+    mtime_ms: f64,
+    ctime_ms: f64,
+    birthtime_ms: f64,
+) -> [(String, Value); 4] {
+    [
+        (
+            "atime".to_string(),
+            quench_runtime::date::instance(atime_ms),
+        ),
+        (
+            "mtime".to_string(),
+            quench_runtime::date::instance(mtime_ms),
+        ),
+        (
+            "ctime".to_string(),
+            quench_runtime::date::instance(ctime_ms),
+        ),
+        (
+            "birthtime".to_string(),
+            quench_runtime::date::instance(birthtime_ms),
+        ),
+    ]
+}
+
 /// A `Stats` built from real filesystem metadata.
 pub fn stats(meta: &std::fs::Metadata) -> Value {
     #[cfg(unix)]
@@ -64,40 +205,105 @@ pub fn stats(meta: &std::fs::Metadata) -> Value {
     {
         with_predicates(
             mode_fallback(meta),
-            vec![("size".to_string(), Value::Number(meta.len() as f64))],
+            vec![
+                ("size".to_string(), Value::Number(meta.len() as f64)),
+                ("mtime".to_string(), quench_runtime::date::instance(0.0)),
+                ("atime".to_string(), quench_runtime::date::instance(0.0)),
+                ("ctime".to_string(), quench_runtime::date::instance(0.0)),
+                ("birthtime".to_string(), quench_runtime::date::instance(0.0)),
+            ],
         )
     }
+}
+/// Build a Stats value using bigint values for Node's `bigint: true` option.
+pub fn stats_bigint(meta: &std::fs::Metadata) -> Value {
+    let mut value = stats(meta);
+    for key in [
+        "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "blksize", "blocks",
+    ] {
+        if let Ok(Value::Number(number)) = quench_runtime::execute::get_property_result(&value, key)
+        {
+            value = quench_runtime::execute::set_property(
+                value,
+                key,
+                Value::BigInt((number as u64).to_string()),
+            );
+        }
+    }
+    value
 }
 
 #[cfg(unix)]
 fn stats_unix(meta: &std::fs::Metadata) -> Value {
     use std::os::unix::fs::MetadataExt;
-    let entries: Vec<(String, Value)> = vec![
-        ("dev".to_string(), Value::Number(meta.dev() as f64)),
-        ("ino".to_string(), Value::Number(meta.ino() as f64)),
-        ("mode".to_string(), Value::Number(meta.mode() as f64)),
-        ("nlink".to_string(), Value::Number(meta.nlink() as f64)),
-        ("uid".to_string(), Value::Number(meta.uid() as f64)),
-        ("gid".to_string(), Value::Number(meta.gid() as f64)),
-        ("rdev".to_string(), Value::Number(meta.rdev() as f64)),
-        ("size".to_string(), Value::Number(meta.size() as f64)),
-        ("blksize".to_string(), Value::Number(meta.blksize() as f64)),
-        ("blocks".to_string(), Value::Number(meta.blocks() as f64)),
-        (
-            "atimeMs".to_string(),
-            Value::Number(ms(meta.atime(), meta.atime_nsec())),
-        ),
-        (
-            "mtimeMs".to_string(),
-            Value::Number(ms(meta.mtime(), meta.mtime_nsec())),
-        ),
-        (
-            "ctimeMs".to_string(),
-            Value::Number(ms(meta.ctime(), meta.ctime_nsec())),
-        ),
-        ("birthtimeMs".to_string(), Value::Number(created_ms(meta))),
-    ];
-    with_predicates(meta.mode(), entries)
+    with_predicates(meta.mode(), stats_unix_entries(meta))
+}
+
+#[cfg(unix)]
+fn stats_unix_entries(meta: &std::fs::Metadata) -> Vec<(String, Value)> {
+    use std::os::unix::fs::MetadataExt;
+    let atime_ms = ms(meta.atime(), meta.atime_nsec());
+    let mtime_ms = ms(meta.mtime(), meta.mtime_nsec());
+    let ctime_ms = ms(meta.ctime(), meta.ctime_nsec());
+    let birthtime_ms = created_ms(meta);
+    let mut entries = stats_unix_numeric_entries(
+        meta.dev(),
+        meta.ino(),
+        meta.mode(),
+        meta.nlink(),
+        meta.uid(),
+        meta.gid(),
+        meta.rdev(),
+        meta.size(),
+        meta.blksize(),
+        meta.blocks(),
+        atime_ms,
+        mtime_ms,
+        ctime_ms,
+        birthtime_ms,
+    );
+    entries.extend(stats_date_entries(
+        atime_ms,
+        mtime_ms,
+        ctime_ms,
+        birthtime_ms,
+    ));
+    entries
+}
+
+#[cfg(unix)]
+fn stats_unix_numeric_entries(
+    dev: u64,
+    ino: u64,
+    mode: u32,
+    nlink: u64,
+    uid: u32,
+    gid: u32,
+    rdev: u64,
+    size: u64,
+    blksize: u64,
+    blocks: u64,
+    atime_ms: f64,
+    mtime_ms: f64,
+    ctime_ms: f64,
+    birthtime_ms: f64,
+) -> Vec<(String, Value)> {
+    vec![
+        ("dev".to_string(), Value::Number(dev as f64)),
+        ("ino".to_string(), Value::Number(ino as f64)),
+        ("mode".to_string(), Value::Number(mode as f64)),
+        ("nlink".to_string(), Value::Number(nlink as f64)),
+        ("uid".to_string(), Value::Number(uid as f64)),
+        ("gid".to_string(), Value::Number(gid as f64)),
+        ("rdev".to_string(), Value::Number(rdev as f64)),
+        ("size".to_string(), Value::Number(size as f64)),
+        ("blksize".to_string(), Value::Number(blksize as f64)),
+        ("blocks".to_string(), Value::Number(blocks as f64)),
+        ("atimeMs".to_string(), Value::Number(atime_ms)),
+        ("mtimeMs".to_string(), Value::Number(mtime_ms)),
+        ("ctimeMs".to_string(), Value::Number(ctime_ms)),
+        ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
+    ]
 }
 
 #[cfg(unix)]

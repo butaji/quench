@@ -57,16 +57,16 @@ pub fn run_script_with_sink(
     let exec = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "quench-node".to_string());
-    let script_str = script.to_string_lossy().into_owned();
+    let script_path = std::fs::canonicalize(script).unwrap_or_else(|_| script.to_path_buf());
+    let script_str = script_path.to_string_lossy().into_owned();
     let mut argv = vec![exec, script_str.clone()];
     argv.extend(script_args.iter().cloned());
     let (host, context) = crate::host::install_with_argv(RealmId::ROOT, sink, argv);
-    if let Some(dir) = script.parent() {
+    if let Some(dir) = script_path.parent() {
         host.set_main_dir(dir.to_string_lossy().into_owned());
     }
 
-    let wrapped = crate::modules::require::wrap_cjs(&host.state(), &script_str, source);
-    let ops = match reduce(&wrapped) {
+    let ops = match reduce(source) {
         Ok(ops) => ops,
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };

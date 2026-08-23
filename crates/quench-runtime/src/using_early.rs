@@ -22,6 +22,9 @@ fn walk_statements(statements: &[Statement<'_>], errors: &mut Vec<String>) {
 }
 
 fn walk_statement(statement: &Statement<'_>, errors: &mut Vec<String>) {
+    walk_statement_inner(statement, errors);
+}
+fn walk_statement_inner(statement: &Statement<'_>, errors: &mut Vec<String>) {
     match statement {
         Statement::BlockStatement(block) => walk_statements(&block.body, errors),
         Statement::SwitchStatement(statement) => {
@@ -38,44 +41,17 @@ fn walk_statement(statement: &Statement<'_>, errors: &mut Vec<String>) {
                 walk_statement(alternate, errors);
             }
         }
-        Statement::WhileStatement(statement) => {
-            reject_lone_using(&statement.body, errors);
-            walk_statement(&statement.body, errors);
-        }
-        Statement::DoWhileStatement(statement) => {
-            reject_lone_using(&statement.body, errors);
-            walk_statement(&statement.body, errors);
-        }
-        Statement::LabeledStatement(statement) => {
-            reject_lone_using(&statement.body, errors);
-            walk_statement(&statement.body, errors);
-        }
-        Statement::WithStatement(statement) => {
-            reject_lone_using(&statement.body, errors);
-            walk_statement(&statement.body, errors);
-        }
-        Statement::ForStatement(statement) => {
-            reject_lone_using(&statement.body, errors);
-            walk_statement(&statement.body, errors);
-        }
+        Statement::WhileStatement(statement) => walk_nested_body(&statement.body, errors),
+        Statement::DoWhileStatement(statement) => walk_nested_body(&statement.body, errors),
+        Statement::LabeledStatement(statement) => walk_nested_body(&statement.body, errors),
+        Statement::WithStatement(statement) => walk_nested_body(&statement.body, errors),
+        Statement::ForStatement(statement) => walk_nested_body(&statement.body, errors),
         Statement::ForInStatement(statement) => {
             reject_for_left_using(&statement.left, errors);
-            reject_lone_using(&statement.body, errors);
-            walk_statement(&statement.body, errors);
+            walk_nested_body(&statement.body, errors);
         }
-        Statement::ForOfStatement(statement) => {
-            reject_lone_using(&statement.body, errors);
-            walk_statement(&statement.body, errors);
-        }
-        Statement::TryStatement(statement) => {
-            walk_statements(&statement.block.body, errors);
-            if let Some(handler) = &statement.handler {
-                walk_statements(&handler.body.body, errors);
-            }
-            if let Some(finalizer) = &statement.finalizer {
-                walk_statements(&finalizer.body, errors);
-            }
-        }
+        Statement::ForOfStatement(statement) => walk_nested_body(&statement.body, errors),
+        Statement::TryStatement(statement) => walk_try_statement(statement, errors),
         Statement::FunctionDeclaration(function) => walk_function(function, errors),
         Statement::ClassDeclaration(class) => walk_class(class, errors),
         Statement::ExpressionStatement(statement) => walk_expression(&statement.expression, errors),
@@ -85,14 +61,36 @@ fn walk_statement(statement: &Statement<'_>, errors: &mut Vec<String>) {
             }
         }
         Statement::VariableDeclaration(declaration) => {
-            reject_using_without_init(declaration, errors);
-            for declarator in &declaration.declarations {
-                if let Some(init) = &declarator.init {
-                    walk_expression(init, errors);
-                }
-            }
+            walk_variable_declaration(declaration, errors)
         }
         _ => {}
+    }
+}
+
+fn walk_nested_body(body: &Statement<'_>, errors: &mut Vec<String>) {
+    reject_lone_using(body, errors);
+    walk_statement(body, errors);
+}
+
+fn walk_try_statement(statement: &oxc::ast::ast::TryStatement<'_>, errors: &mut Vec<String>) {
+    walk_statements(&statement.block.body, errors);
+    if let Some(handler) = &statement.handler {
+        walk_statements(&handler.body.body, errors);
+    }
+    if let Some(finalizer) = &statement.finalizer {
+        walk_statements(&finalizer.body, errors);
+    }
+}
+
+fn walk_variable_declaration(
+    declaration: &oxc::ast::ast::VariableDeclaration<'_>,
+    errors: &mut Vec<String>,
+) {
+    reject_using_without_init(declaration, errors);
+    for declarator in &declaration.declarations {
+        if let Some(init) = &declarator.init {
+            walk_expression(init, errors);
+        }
     }
 }
 

@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 const STAGE_SPEC: &str = include_str!("../../../docs/STAGES.md");
 const STAGE_PREFIX: &str = "- Stage ";
 
-/// One conformance stage.
+/// One canonical stage entry from [`docs/STAGES.md`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConformanceStage {
     /// Human-readable stage index.
     pub id: u32,

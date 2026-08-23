@@ -23,8 +23,10 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
         quench_node_test::NodeOutcome::Skip { reason } => {
-            println!("SKIP {}: {reason}", path.display());
-            ExitCode::from(0)
+            eprintln!("SKIP {}: {reason}", path.display());
+            // A skipped fixture is not compatibility evidence. Keep the
+            // command contract aligned with run-compat and run-parallel.
+            ExitCode::from(1)
         }
     }
 }

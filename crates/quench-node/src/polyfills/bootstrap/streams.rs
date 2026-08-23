@@ -221,6 +221,9 @@ class NodeAbortController {
     this.signal = new NodeAbortSignal();
   }
   abort(reason) {
+    // AbortController.abort() is idempotent: subsequent calls must preserve
+    // the original reason and must not dispatch another abort event.
+    if (this.signal.aborted) return;
     this.signal.aborted = true;
     this.signal.reason = reason === undefined
       ? new DOMException("This operation was aborted", "AbortError")
@@ -344,7 +347,7 @@ globalThis.__nodeFs.watchFile = (value, options, listener) => {
     options = {};
   }
   const path = __nodeFsReadPath(value);
-  if (listener !== undefined && typeof listener !== "function") {
+  if (typeof listener !== "function") {
     throw Object.assign(
       new TypeError('The "listener" argument must be of type function'),
       { code: "ERR_INVALID_ARG_TYPE" },
@@ -394,15 +397,21 @@ globalThis.__nodeFs.watchFile = (value, options, listener) => {
     },
     _refed: true,
   };
-  if (listener) watcher.listeners.add(listener);
+  watcher.listeners.add(listener);
   __nodeFsFileWatchers.set(path, watcher);
   return watcher;
 };
 globalThis.__nodeFs.unwatchFile = (value, listener) => {
   const path = __nodeFsReadPath(value);
+  if (listener !== undefined && typeof listener !== "function") {
+    throw Object.assign(
+      new TypeError('The "listener" argument must be of type function'),
+      { code: "ERR_INVALID_ARG_TYPE" },
+    );
+  }
   const watcher = __nodeFsFileWatchers.get(path);
   if (!watcher) return;
-  if (listener) watcher.listeners.delete(listener);
+  if (listener !== undefined) watcher.listeners.delete(listener);
   else watcher.listeners.clear();
   if (!watcher.listeners.size) {
     watcher.close();
