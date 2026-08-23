@@ -35,6 +35,13 @@ fn compare(
     skip_prototype: bool,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
+    if let (Value::ObjectAlias(left_alias), Value::ObjectAlias(right_alias)) = (left, right) {
+        if left_alias.0.borrow().upgrade().is_none() && right_alias.0.borrow().upgrade().is_none() {
+            // Cyclic literal aliases may be unresolved after their owning
+            // object has been reduced. They denote the same cycle marker.
+            return Ok(true);
+        }
+    }
     let left = &deref_alias(left);
     let right = &deref_alias(right);
     if execute::same_value(left, right) {
