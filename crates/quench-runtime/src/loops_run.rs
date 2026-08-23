@@ -110,7 +110,13 @@ fn loop_test(
     test: &[Op],
     registers: &mut Vec<crate::value::Value>,
 ) -> Result<bool, crate::execute::VmError> {
-    crate::vm::execute_in_current_context(test, registers).map(|value| crate::execute::is_truthy(&value))
+    match crate::execute::execute_completion_in_place(test, registers)? {
+        crate::completion::Completion::Return(value) => Ok(crate::execute::is_truthy(&value)),
+        crate::completion::Completion::Normal => Ok(false),
+        completion => completion
+            .into_vm_error()
+            .map(|value| crate::execute::is_truthy(&value)),
+    }
 }
 
 /// Run a loop fragment. An empty fragment (no init/update, e.g. a `while`
