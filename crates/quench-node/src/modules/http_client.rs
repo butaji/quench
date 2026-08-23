@@ -324,14 +324,35 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         id
     };
     let emitter = crate::modules::events::new_emitter_object(state)?;
-    let emitter_id = quench_runtime::vm::get_property(&emitter, "\0quench:events:id");
+    let emitter_id = quench_runtime::vm::get_property(
+        &emitter,
+        crate::modules::emitter::EMITTER_ID_PROP,
+    );
     let object = host_api::object(vec![
-        ("\0quench:events:id".to_string(), emitter_id),
-        ("on".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102))),
-        ("addListener".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102))),
-        ("emit".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103))),
-        ("write".to_string(), crate::host::capability(crate::registry::SPEC_HTTP_REQ_WRITE)),
-        ("end".to_string(), crate::host::capability(crate::registry::SPEC_HTTP_REQ_END)),
+        (
+            crate::modules::emitter::EMITTER_ID_PROP.to_string(),
+            emitter_id,
+        ),
+        (
+            "on".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
+        ),
+        (
+            "addListener".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
+        ),
+        (
+            "emit".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103)),
+        ),
+        (
+            "write".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_WRITE),
+        ),
+        (
+            "end".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_END),
+        ),
         (CLIENT_ID_PROP.to_string(), Value::Number(id as f64)),
     ]);
     Ok((object, id))
@@ -400,13 +421,31 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
         }
     }
     let res = crate::modules::events::new_emitter_object(state)?;
-    let emitter_id = quench_runtime::vm::get_property(&res, "\0quench:events:id");
+    let emitter_id = quench_runtime::vm::get_property(
+        &res,
+        crate::modules::emitter::EMITTER_ID_PROP,
+    );
     let all_props = vec![
-        ("\0quench:events:id".to_string(), emitter_id),
-        ("on".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102))),
-        ("addListener".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102))),
-        ("once".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:once", 0x0105))),
-        ("emit".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103))),
+        (
+            crate::modules::emitter::EMITTER_ID_PROP.to_string(),
+            emitter_id,
+        ),
+        (
+            "on".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
+        ),
+        (
+            "addListener".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
+        ),
+        (
+            "once".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:once", 0x0105)),
+        ),
+        (
+            "emit".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103)),
+        ),
         ("statusCode".to_string(), Value::Number(status as f64)),
         ("statusMessage".to_string(), Value::String(message)),
         ("httpVersion".to_string(), Value::String("1.1".to_string())),
