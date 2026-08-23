@@ -58,6 +58,13 @@ fn run_loop(
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (post_test, dst, per_iteration) = config;
     run_fragment(init, registers)?;
+    if label.is_none() && !post_test && per_iteration.is_empty() {
+        if let Some(fact) = CountedForFact::recognize(test, update) {
+            if let Some(completion) = run_counted_for(fact, body, update, dst, registers)? {
+                return Ok(completion);
+            }
+        }
+    }
     refresh_per_iteration(per_iteration);
     loop {
         if !post_test && !loop_test(test, registers)? {
@@ -83,6 +90,94 @@ fn run_loop(
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+fn run_counted_for(
+    fact: CountedForFact,
+    body: &[Op],
+    update: &[Op],
+    dst: u16,
+    registers: &mut Vec<crate::value::Value>,
+) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
+    let environment = crate::locals::current();
+    loop {
+        let crate::value::Value::Number(index) = environment.get(fact.slot) else {
+            return Ok(None);
+        };
+        if !counted_comparison(fact.comparison, index, fact.bound) {
+            return Ok(Some(crate::completion::Completion::Normal));
+        }
+        match execute_loop_body(registers, &None, body)? {
+            crate::completion::LoopTransition::Continue(value) => {
+                store_loop_value(registers, dst, value)?;
+            }
+            crate::completion::LoopTransition::Break(value) => {
+                store_loop_value(registers, dst, value)?;
+                return Ok(Some(crate::completion::Completion::Normal));
+            }
+            crate::completion::LoopTransition::Propagate(completion) => {
+                return update_empty_from(registers, dst, completion).map(Some);
+            }
+        }
+        let crate::value::Value::Number(index) = environment.get(fact.slot) else {
+            run_fragment(update, registers)?;
+            return Ok(None);
+        };
+        crate::locals::write(fact.slot, crate::value::Value::Number(index + fact.step));
+    }
+}
+
+macro_rules! counted_comparisons {
+    ($($variant:ident => $operator:tt),+ $(,)?) => {
+        fn counted_comparison(operator: crate::ops::BinaryOp, lhs: f64, rhs: f64) -> bool {
+            match operator {
+                $(crate::ops::BinaryOp::$variant => lhs $operator rhs,)+
+                _ => false,
+            }
+        }
+    };
+}
+
+counted_comparisons! {
+    LessThan => <,
+    LessEqual => <=,
+    GreaterThan => >,
+    GreaterEqual => >=,
+}
+
+#[derive(Clone, Copy)]
+struct CountedForFact {
+    slot: u16,
+    bound: f64,
+    comparison: crate::ops::BinaryOp,
+    step: f64,
+}
+
+impl CountedForFact {
+    fn recognize(test: &[Op], update: &[Op]) -> Option<Self> {
+        let [Op::LoadBinding { dst: index, slot, dynamic: false, .. }, Op::Const { dst: bound_register, value: crate::ops::Constant::Number(bound) }, Op::Binary { dst: condition, operator: comparison, lhs, rhs }, Op::Return { src }] = test else { return None };
+        if lhs != index || rhs != bound_register || src != condition {
+            return None;
+        }
+        let step = recognize_counted_update(update, *slot)?;
+        Some(Self { slot: *slot, bound: *bound, comparison: *comparison, step })
+    }
+}
+
+fn recognize_counted_update(update: &[Op], slot: u16) -> Option<f64> {
+    let (load, constant, binary, store, ret) = match update {
+        [load, constant, binary, store, ret] => (load, constant, binary, store, ret),
+        [load, constant, binary, Op::CheckInitialized { slot: checked, .. }, store, ret]
+            if *checked == slot => (load, constant, binary, store, ret),
+        _ => return None,
+    };
+    let Op::LoadLocal { dst: loaded, slot: loaded_slot } = load else { return None };
+    let Op::Const { dst: step_register, value: crate::ops::Constant::Number(step) } = constant else { return None };
+    let Op::Binary { dst: next, operator: crate::ops::BinaryOp::NumericAdd, lhs, rhs } = binary else { return None };
+    let Op::StoreLocal { slot: stored_slot, src: stored } = store else { return None };
+    let Op::Return { src: returned } = ret else { return None };
+    (*loaded_slot == slot && *stored_slot == slot && loaded == lhs && step_register == rhs
+        && next == stored && next == returned).then_some(*step)
 }
 
 fn store_loop_value(
