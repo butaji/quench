@@ -517,7 +517,14 @@ pub(crate) fn reset_replacements() {
 
 #[inline]
 pub(crate) fn resolved_replacement(value: Value) -> Value {
-    replacement(&value).unwrap_or(value)
+    let mut value = value;
+    while let Some(updated) = replacement(&value) {
+        if replacement_identity(&value) == replacement_identity(&updated) {
+            break;
+        }
+        value = updated;
+    }
+    value
 }
 
 #[inline]
