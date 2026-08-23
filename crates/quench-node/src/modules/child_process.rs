@@ -285,18 +285,18 @@ pub fn exec_file(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let file = args.first().map(value_to_string).unwrap_or_default();
-    let file_args = args.get(1).and_then(string_args).unwrap_or_default();
-    let callback = args
-        .iter()
-        .rev()
-        .find(|v| quench_runtime::is_callable(v))
-        .cloned();
-    let result = match std::process::Command::new(&file).args(file_args).output() {
+    let (file_args, options) = file_args_and_options(args);
+    let callback = args.iter().rev().find(|v| quench_runtime::is_callable(v)).cloned();
+    let mut command = std::process::Command::new(&file);
+    command.args(file_args);
+    apply_options(&mut command, options);
+    let result = match command.output() {
         Ok(output) => (
             if output.status.success() {
                 Value::Null
             } else {
-                coded_error("1", "command failed")
+                // execFile callbacks receive the numeric exit status in error.code.
+                exec_failed_error(output.status.code().unwrap_or(1))
             },
             String::from_utf8_lossy(&output.stdout).into_owned(),
             String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -316,21 +316,38 @@ pub fn exec_file(
     }
     Ok(Value::Undefined)
 }
+
 /// Synchronous direct-file variant.
 pub fn exec_file_sync(
     _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let file = args.first().map(value_to_string).unwrap_or_default();
-    let file_args = args.get(1).and_then(string_args).unwrap_or_default();
-    let output = std::process::Command::new(file)
-        .args(file_args)
+    let (file_args, options) = file_args_and_options(args);
+    let mut command = std::process::Command::new(file);
+    command.args(file_args);
+    apply_options(&mut command, options);
+    let output = command
         .output()
-        .map_err(|_| execute::type_error("failed to execute file"))?;
+        .map_err(|error| execute::type_error(&format!("failed to execute file: {}", error)))?;
     if !output.status.success() {
-        return Err(execute::type_error("file command failed"));
+        return Err(execute::type_error(&format!(
+            "file command failed with status {}",
+            output.status.code().unwrap_or(1)
+        )));
     }
     Ok(Value::String(
         String::from_utf8_lossy(&output.stdout).into_owned(),
     ))
+}
+
+/// Normalize Node's optional `args`/`options` positions. In particular,
+/// `execFile(file, options, callback)` must not treat the options object as
+/// an argument list.
+fn file_args_and_options(args: &[Value]) -> (Vec<String>, Option<&Value>) {
+    if matches!(args.get(1), Some(Value::Array(_))) {
+        (args.get(1).and_then(string_args).unwrap_or_default(), args.get(2))
+    } else {
+        (Vec::new(), args.get(1))
+    }
 }
