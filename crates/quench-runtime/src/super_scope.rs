@@ -98,7 +98,7 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
         crate::ops::Op::GetSuperProperty { dst, key } => {
             let context = current()?;
             require_initialized_this(&context)?;
-            let prototype = require_super_base(&context.home)?;
+            let prototype = require_context_super_base(&context)?;
             let value = get_with_receiver(&prototype, key, &context.receiver)?;
             crate::execute::write_value(registers, *dst, value);
             Ok(())
@@ -122,7 +122,7 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
         crate::ops::Op::SetSuperProperty { key, src } => {
             let context = current()?;
             require_initialized_this(&context)?;
-            let prototype = require_super_base(&context.home)?;
+            let prototype = require_context_super_base(&context)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
             let receiver = active_this(&context)?;
             put_with_receiver(&prototype, key, value, &receiver)?;
@@ -155,7 +155,7 @@ pub(crate) fn execute_call(registers: &mut Vec<Value>, op: &crate::ops::Op) -> R
     };
     let context = current()?;
     require_initialized_this(&context)?;
-    let prototype = require_super_base(&context.home)?;
+    let prototype = require_context_super_base(&context)?;
     let callee = get_with_receiver(&prototype, key, &context.receiver)?;
     let arguments = args
         .iter()
@@ -256,7 +256,7 @@ pub(crate) fn check_initialized_this() -> Result<(), VmError> {
 pub(crate) fn execute_capture_base(registers: &mut Vec<Value>, dst: u16) -> Result<(), VmError> {
     let context = current()?;
     require_initialized_this(&context)?;
-    let prototype = require_super_base(&context.home)?;
+    let prototype = require_context_super_base(&context)?;
     crate::execute::write_value(registers, dst, prototype);
     Ok(())
 }
@@ -264,7 +264,7 @@ pub(crate) fn execute_capture_base(registers: &mut Vec<Value>, dst: u16) -> Resu
 fn super_base(context: &Context, registers: &[Value], base: Option<u16>) -> Result<Value, VmError> {
     match base {
         Some(slot) => crate::execute::read_register(registers, slot),
-        None => require_super_base(&context.home),
+        None => require_context_super_base(context),
     }
 }
 
@@ -392,6 +392,53 @@ fn require_super_base(home: &Value) -> Result<Value, VmError> {
             "Super has no prototype",
         )),
         _ => Ok(prototype),
+    }
+}
+
+fn require_context_super_base(context: &Context) -> Result<Value, VmError> {
+    match require_super_base(&context.home) {
+        Ok(base) => Ok(base),
+        Err(error) if matches!(&context.home, Value::ObjectAlias(alias) if alias.target().is_none()) => {
+            recover_home_object(context).map_or(Err(error), |home| require_super_base(&home))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn recover_home_object(context: &Context) -> Option<Value> {
+    let mut current = crate::locals::resolved_replacement(context.receiver.clone());
+    for _ in 0..1_024 {
+        if holder_contains_function(&current, &context.function) {
+            return Some(current);
+        }
+        let prototype = crate::builtins::object::get_prototype_of(Some(&current)).ok()?;
+        if matches!(prototype, Value::Null | Value::Undefined) {
+            return None;
+        }
+        current = crate::locals::resolved_replacement(prototype);
+    }
+    None
+}
+
+fn holder_contains_function(
+    holder: &Value,
+    function: &Rc<crate::value::FunctionValue>,
+) -> bool {
+    let properties = match holder {
+        Value::Object(properties) => &properties.properties,
+        _ => return false,
+    };
+    properties.iter().any(|(_, value)| contains_function(value, function))
+}
+
+fn contains_function(value: &Value, function: &Rc<crate::value::FunctionValue>) -> bool {
+    match value {
+        Value::Function(candidate) => Rc::ptr_eq(candidate, function),
+        Value::Object(descriptor) => descriptor
+            .iter()
+            .filter(|(name, _)| matches!(name.as_str(), "value" | "get" | "set"))
+            .any(|(_, value)| contains_function(value, function)),
+        _ => false,
     }
 }
 
