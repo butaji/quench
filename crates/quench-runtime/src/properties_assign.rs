@@ -42,7 +42,7 @@ pub(crate) fn assign_set_property(
 }
 
 fn assign_proxy_set(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     object: u16,
     target: &crate::value::Value,
     key: &str,
@@ -54,7 +54,7 @@ fn assign_proxy_set(
 }
 
 fn delete_proxy_property(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     target: &crate::value::Value,
     key: &str,

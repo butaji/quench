@@ -248,7 +248,7 @@ fn receiver_data_descriptor(
 }
 
 fn ordinary_set(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     object: u16,
     target: &crate::value::Value,
     key: &str,

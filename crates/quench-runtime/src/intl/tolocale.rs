@@ -26,7 +26,7 @@ pub(crate) mod value {
             Some(Value::Number(value)) => crate::conversion::number_to_string(*value),
             Some(Value::String(value)) => symbol_string(value),
             Some(Value::StringUnits(value)) => String::from_utf16_lossy(value),
-            Some(Value::Array(values)) => array_to_string(values),
+            Some(Value::Array(values)) => array_to_string(&values.snapshot()),
             Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(), Some(Value::DataView(_)) => "[object DataView]".to_string(),
             Some(Value::Float32Array(_)) => "[object Float32Array]".to_string(),
             Some(Value::Float64Array(_)) => "[object Float64Array]".to_string(),
@@ -409,7 +409,7 @@ pub(crate) fn array_to_locale_string(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let values = match receiver {
-        Some(Value::Array(values)) => values.iter().cloned().collect(),
+        Some(Value::Array(values)) => values.snapshot(),
         Some(value) => array_values::typed_values(value).ok_or_else(|| {
             crate::value::error::throw_type_error(
                 "Array.prototype.toLocaleString called on non-array",

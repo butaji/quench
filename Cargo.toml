@@ -33,5 +33,5 @@ codegen-units = 1
 
 [profile.bench-throughput]
 inherits = "production"
-debug = 1
-strip = "none"
+debug = 0
+strip = "symbols"

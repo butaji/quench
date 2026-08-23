@@ -29,7 +29,11 @@ pub struct Contract {
 
 /// Return the canonical build contract for host diagnostics.
 pub const fn contract() -> Contract {
-    Contract { profile: PROFILE, lto: LTO, production: IS_PRODUCTION }
+    Contract {
+        profile: PROFILE,
+        lto: LTO,
+        production: IS_PRODUCTION,
+    }
 }
 
 #[cfg(test)]
@@ -40,11 +44,21 @@ mod tests {
     fn profile_contract_is_complete_and_consistent() {
         assert!(!PROFILE.is_empty());
         assert!(matches!(LTO, "off" | "thin" | "fat"));
-        assert_eq!(IS_PRODUCTION, matches!(PROFILE, "release" | "production" | "release-thin"));
+        assert_eq!(
+            IS_PRODUCTION,
+            matches!(PROFILE, "release" | "production" | "release-thin")
+        );
         if IS_PRODUCTION {
             assert!(matches!(LTO, "thin" | "fat"));
         }
-        assert_eq!(contract(), Contract { profile: PROFILE, lto: LTO, production: IS_PRODUCTION });
+        assert_eq!(
+            contract(),
+            Contract {
+                profile: PROFILE,
+                lto: LTO,
+                production: IS_PRODUCTION
+            }
+        );
     }
 
     #[test]

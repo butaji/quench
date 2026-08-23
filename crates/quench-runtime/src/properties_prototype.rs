@@ -1,5 +1,5 @@
 pub(crate) fn execute_set_prototype(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
     let Op::SetPrototype { object, prototype } = op else {
@@ -25,7 +25,7 @@ fn property_key(value: &crate::ops::Constant) -> Option<String> {
     }
 }
 pub(crate) fn propagate_updated_object(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     argument: Option<u16>,
     old: &crate::value::Value,
     new: &crate::value::Value,

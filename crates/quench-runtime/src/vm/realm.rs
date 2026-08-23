@@ -128,7 +128,7 @@ pub(super) fn execute(id: RealmId, code: crate::machine::CodeView<'_>) -> Result
     let caller = crate::locals::current();
     let environment = crate::environment::Environment::new();
     environment.set(0, global.clone());
-    let mut registers = Vec::new();
+    let mut registers = crate::register_file::RegisterFile::new();
     let result = {
         let _context = super::ContextGuard::install(&context);
         let _realm = ExecutionGuard::install(Rc::clone(&state));

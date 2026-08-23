@@ -1,7 +1,7 @@
 fn collect_for_of_frames(
     op: &Op,
     resume: crate::machine::CodeRange,
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
     let Op::ForOf { slot, body, .. } = op else {
@@ -22,7 +22,7 @@ fn collect_loop_body_frames(
     iterator: Value,
     slot: u16,
     resume: crate::machine::CodeRange,
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
     for (index, op) in ops.cold_ops() {
@@ -114,7 +114,7 @@ fn ops_contain_yield(ops: crate::machine::CodeView<'_>) -> bool {
 fn collect_iterator_frames(
     binding: &Op,
     resume: crate::machine::CodeRange,
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
     let Op::IteratorBinding {
@@ -193,7 +193,7 @@ fn collect_nested_yield_frame(
     body: crate::machine::CodeRange,
     resume: crate::machine::CodeRange,
     close_normal: bool,
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
     let Some(ops) = code.code() else {

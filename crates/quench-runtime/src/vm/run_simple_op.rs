@@ -1,4 +1,4 @@
-fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
+fn run_simple_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<Option<Option<Value>>, VmError> {
     if run_local_op(registers, op)? {
         return Ok(Some(None));
     }
@@ -12,7 +12,7 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
 }
 
 fn run_simple_single_op(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<Option<Option<Value>>, VmError> {
     use Op::*;
@@ -53,7 +53,7 @@ fn run_simple_single_op(
     Ok(Some(None))
 }
 
-fn run_dynamic_import(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_dynamic_import(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     let Op::DynamicImport {
         dst,
         specifier,
@@ -80,7 +80,7 @@ fn rejected_promise(reason: Value) -> Value {
     Value::Promise(promise)
 }
 
-fn run_class_prototype(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_class_prototype(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     let Op::GetClassPrototype {
         dst,
         constructor_dst,
@@ -121,7 +121,7 @@ fn class_heritage_prototype(heritage: &Value) -> Result<Value, VmError> {
     ))
 }
 
-fn run_optional_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_optional_call(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     if let Op::OptionalCall {
         dst,
         callee,

@@ -31,7 +31,6 @@ mod tests {
         assert_eq!(super::property(&data, "0"), Value::Number(7.0));
         assert_eq!(super::property(&data, "label"), Value::String("generic".into()));
     }
-
     #[test]
     fn indexed_generic_property_is_not_treated_as_dense_storage() {
         let mut data = ArrayData::new(Vec::new());
@@ -48,6 +47,20 @@ mod tests {
         assert_eq!(super::property(&data, "1"), Value::Number(22.0));
         assert_eq!(super::property(&data, "length"), Value::Number(2.0));
     }
+
+    #[test]
+    fn sequential_fill_recovers_packed_numeric_storage_from_holey_length() {
+        let mut data = ArrayData::new(Vec::new());
+        data.set_length(4);
+        assert!(!data.is_packed_ordinary());
+        for index in 0..4 {
+            assert!(data.append_preallocated_number(index, &Value::Number(index as f64)));
+        }
+        assert!(data.is_packed_ordinary());
+        assert_eq!(data.physical_len(), 4);
+        assert_eq!(data.dense_number_at(3), Some(3.0));
+    }
+
     #[test]
     fn hot_storage_exposes_one_canonical_dense_shape() {
         let data = ArrayData::new(vec![Value::Number(11.0), Value::Number(22.0)]);
