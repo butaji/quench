@@ -25,7 +25,10 @@ pub fn inspect(
     let view = this_view(receiver)?;
     let bytes = view_bytes(&view);
     let shown: Vec<String> = bytes.iter().take(MAX).map(|b| format!("{b:02x}")).collect();
-    let mut out = format!("<Buffer {}", shown.join(" "));
+    let label = receiver
+        .filter(|value| crate::modules::buffer::is_buffer(std::slice::from_ref(value)))
+        .map_or("Uint8Array", |_| "Buffer");
+    let mut out = format!("<{label} {}", shown.join(" "));
     if bytes.len() > MAX {
         let rest = bytes.len() - MAX;
         let plural = if rest == 1 { "" } else { "s" };
