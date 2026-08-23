@@ -116,6 +116,7 @@ pub(crate) fn to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> 
     ordinary_to_primitive(value, hint)
 }
 
+#[inline(always)]
 pub(crate) fn to_number(value: &Value) -> Result<f64, VmError> {
     let primitive = to_primitive(value, "number")?;
     primitive_to_number(&primitive)
@@ -165,7 +166,7 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
 /// Convert an already-primitive value without routing common immediate values
 /// through the generic Intl conversion layer. `to_number` still performs
 /// `ToPrimitive` first; this is the authoritative primitive conversion.
-#[inline]
+#[inline(always)]
 pub(crate) fn primitive_to_number(value: &Value) -> Result<f64, VmError> {
     match value {
         Value::Number(number) => Ok(*number),
@@ -181,21 +182,82 @@ pub(crate) fn primitive_to_number(value: &Value) -> Result<f64, VmError> {
         _ => Ok(crate::intl::tolocale::value::to_number(Some(value))),
     }
 }
+/// Implements ECMAScript `ToBoolean` without coercing objects through
+/// `ToPrimitive`. Immediate values stay on the value representation's
+/// canonical fast path; uncommon values use the existing semantic predicate.
+#[inline(always)]
+pub(crate) fn primitive_to_boolean(value: &Value) -> bool {
+    match value {
+        Value::Boolean(value) => *value,
+        Value::Number(value) => *value != 0.0 && !value.is_nan(),
+        Value::String(value) => !value.is_empty(),
+        Value::StringUnits(value) => !value.is_empty(),
+        Value::BigInt(value) => value != "0",
+        Value::Null | Value::Undefined => false,
+        _ => crate::intl::tolocale::value::is_truthy(value),
+    }
+}
 
+/// Canonical runtime entry point for JavaScript truthiness conversion.
+#[inline(always)]
+pub(crate) fn to_boolean(value: &Value) -> bool {
+    primitive_to_boolean(value)
+}
+
+/// Nullishness is intentionally narrower than falsiness: only `null` and
+/// `undefined` satisfy the ECMAScript nullish check.
+#[inline(always)]
+pub(crate) fn is_nullish(value: &Value) -> bool {
+    matches!(value, Value::Null | Value::Undefined)
+}
+
+
+/// Classify the canonical symbol representation without allocating.
+///
+/// The `Value` enum remains authoritative: strings carry the encoded symbol
+/// marker and builtins are checked through builtin metadata.  The inline
+/// contract is deliberately limited to these branch-light predicates; full
+/// coercion stays on the slow path below.
+#[inline]
 pub(crate) fn is_symbol(value: &Value) -> bool {
     match value {
         Value::String(value) => is_symbol_string(value),
-        Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin).is_some(),
+        Value::Builtin(builtin) => {
+            crate::builtin_meta::constructor_name(*builtin) == Some("Symbol")
+        }
         _ => false,
     }
 }
 
+#[inline]
 pub(crate) fn is_symbol_string(value: &str) -> bool {
     // The runtime stores Symbol values as `Value::String` with the
     // shape `Symbol.<desc>\0<id>`. Plain description strings that
     // happen to start with `Symbol.` (e.g. `Symbol.iterator`) do not
     // have the trailing nul + counter, so we discriminate by that.
     value.starts_with("Symbol.") && value.contains('\0')
+}
+
+#[cfg(test)]
+mod inline_primitive_tests {
+    use super::{is_symbol, is_symbol_string};
+    use crate::{ops::Builtin, value::Value};
+
+    #[test]
+    fn symbol_predicate_keeps_encoded_and_plain_strings_distinct() {
+        assert!(is_symbol_string("Symbol.iterator\0id"));
+        assert!(!is_symbol_string("Symbol.iterator"));
+        assert!(is_symbol(&Value::String("Symbol.iterator\0id".into())));
+        assert!(!is_symbol(&Value::String("Symbol.iterator".into())));
+        assert!(!is_symbol(&Value::Number(1.0)));
+    }
+
+    #[test]
+    fn symbol_builtin_metadata_is_the_authority() {
+        assert!(is_symbol(&Value::Builtin(Builtin::Symbol)));
+        assert!(!is_symbol(&Value::Builtin(Builtin::Object)));
+        assert!(!is_symbol(&Value::Undefined));
+    }
 }
 
 pub(crate) fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
@@ -302,16 +364,9 @@ pub fn is_callable(value: &Value) -> bool {
         return is_callable(&cell.borrow());
     }
     match value {
-        Value::Builtin(
-            crate::ops::Builtin::Math
-            | crate::ops::Builtin::Reflect
-            | crate::ops::Builtin::Json
-            | crate::ops::Builtin::Temporal,
-        ) => false,
+        Value::Builtin(crate::ops::Builtin::Math | crate::ops::Builtin::Reflect) => false,
         Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => false,
-        Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
-            false
-        }
+        Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => false,
         Value::Builtin(_) | Value::Function(_) => true,
         Value::BoundFunction(bound)
             if crate::vm::is_intrinsic_bound(bound)
@@ -322,10 +377,7 @@ pub fn is_callable(value: &Value) -> bool {
                             | crate::ops::Builtin::GeneratorFunctionPrototype
                             | crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
                     )
-                ) =>
-        {
-            false
-        }
+                ) => false,
         Value::BoundFunction(_) => true,
         Value::Proxy(proxy) => is_callable(&proxy.target),
         _ => false,
@@ -334,9 +386,8 @@ pub fn is_callable(value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{primitive_to_number, to_number};
+    use super::{is_nullish, primitive_to_boolean, primitive_to_number, to_boolean, to_number};
     use crate::value::Value;
-
     fn generic(value: &Value) -> Result<f64, crate::execute::VmError> {
         if super::is_symbol(value) || matches!(value, Value::BigInt(_)) {
             return Err(crate::value::error::throw_type_error(
@@ -369,6 +420,37 @@ mod tests {
     }
 
     #[test]
+    fn boolean_conversion_covers_immediate_boundaries() {
+        let cases = [
+            (Value::Boolean(false), false), (Value::Boolean(true), true),
+            (Value::Number(0.0), false), (Value::Number(f64::NAN), false),
+            (Value::Number(1.0), true), (Value::String(String::new()), false),
+            (Value::String("0".into()), true), (Value::BigInt("0".into()), false),
+            (Value::BigInt("1".into()), true), (Value::Null, false),
+            (Value::Undefined, false),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(primitive_to_boolean(&value), expected);
+            assert_eq!(to_boolean(&value), expected);
+        }
+    }
+
+    #[test]
+    fn nullish_conversion_is_not_falsiness() {
+        assert!(is_nullish(&Value::Null));
+        assert!(is_nullish(&Value::Undefined));
+        assert!(!is_nullish(&Value::Boolean(false)));
+        assert!(!is_nullish(&Value::Number(0.0)));
+        assert!(!is_nullish(&Value::String(String::new())));
+    }
+
+    #[test]
+    fn boolean_conversion_keeps_objects_truthy_without_coercion() {
+        let object = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(Vec::new())));
+        assert!(to_boolean(&object));
+    }
+
+    #[test]
     fn direct_number_conversion_preserves_negative_zero_and_nan_payload() {
         let negative_zero = primitive_to_number(&Value::Number(-0.0)).unwrap();
         assert_eq!(negative_zero.to_bits(), (-0.0_f64).to_bits());
@@ -380,6 +462,8 @@ mod tests {
 
     #[test]
     fn number_coercion_preserves_primitive_semantics() {
+        let nan = f64::from_bits(0x7ff8_0000_0000_0042);
+        assert_eq!(to_number(&Value::Number(nan)).unwrap().to_bits(), nan.to_bits());
         assert_eq!(to_number(&Value::Null).unwrap(), 0.0);
         assert_eq!(to_number(&Value::Boolean(true)).unwrap(), 1.0);
         assert_eq!(to_number(&Value::String(" 42.5 ".into())).unwrap(), 42.5);

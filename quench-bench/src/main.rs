@@ -15,12 +15,14 @@ fn main() {
         .next()
         .unwrap_or_else(|| usage("missing fixture or --all"));
     let mut node = "node".into();
+    let mut bun = "bun".into();
     let mut quench = "target/release/quench-node".into();
     let mut runs = 1usize;
     let mut timeout_ms = 120_000u64;
     while let Some(x) = a.next() {
         match x.as_str() {
             "--node" => node = a.next().unwrap_or_else(|| usage("missing --node path")),
+            "--bun" => bun = a.next().unwrap_or_else(|| usage("missing --bun path")),
             "--quench" => quench = a.next().unwrap_or_else(|| usage("missing --quench path")),
             "--runs" => {
                 runs = a
@@ -60,22 +62,28 @@ fn main() {
         let n = (0..runs)
             .map(|_| run(&node, &[], &x, timeout_ms))
             .collect::<Vec<_>>();
+        let b = (0..runs)
+            .map(|_| run(&bun, &[], &x, timeout_ms))
+            .collect::<Vec<_>>();
         let q = (0..runs)
             .map(|_| run(&quench, &[], &x, timeout_ms))
             .collect::<Vec<_>>();
-        let e = n
-            .iter()
-            .zip(&q)
-            .all(|(n, q)| n.status == q.status && n.stdout == q.stdout);
+        let e = n.iter().zip(&b).zip(&q).all(|((n, b), q)| {
+            n.status == b.status
+                && b.status == q.status
+                && n.stdout == b.stdout
+                && b.stdout == q.stdout
+        });
         let (nw, nr) = summary(&n);
+        let (bw, br) = summary(&b);
         let (qw, qr) = summary(&q);
-        let wall_ratio = ratio_u128(nw, qw);
-        let rss_ratio = ratio_u64(nr, qr);
-        let rss_target = q
-            .iter()
-            .all(|sample| !sample.timed_out && sample.status == 0)
-            && rss_ratio.parse::<f64>().is_ok_and(|ratio| ratio >= 10.0);
-        println!("{{\"fixture\":{},\"runs\":{},\"output_equal\":{},\"wall_ratio\":{},\"rss_ratio\":{},\"rss_target_met\":{},\"node\":{},\"quench\":{}}}",json(&f.display().to_string()),runs,e,wall_ratio,rss_ratio,rss_target,samples(&n),samples(&q));
+        println!(
+            "{{\"fixture\":{},\"runs\":{},\"output_equal\":{},\"node\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}},\"bun\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}},\"quench\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}}}}",
+            json(&f.display().to_string()), runs, e,
+            option_u128(nw), option_u64(nr), samples(&n),
+            option_u128(bw), option_u64(br), samples(&b),
+            option_u128(qw), option_u64(qr), samples(&q)
+        );
     }
 }
 fn summary(samples: &[Sample]) -> (Option<u128>, Option<u64>) {
@@ -157,14 +165,20 @@ fn json(s: &str) -> String {
             .replace('\n', "\\n")
     )
 }
+fn option_u128(value: Option<u128>) -> String {
+    value.map_or_else(|| "null".into(), |v| v.to_string())
+}
+fn option_u64(value: Option<u64>) -> String {
+    value.map_or_else(|| "null".into(), |v| v.to_string())
+}
 fn usage(s: &str) -> ! {
-    eprintln!("{s}\nusage: quench-bench <fixture.js>|--all [--runs N]");
+    eprintln!("{s}\nusage: quench-bench <fixture.js>|--all [--node PATH] [--bun PATH] [--quench PATH] [--runs N] [--timeout-ms N]");
     std::process::exit(2)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{summary, Sample};
+    use super::{option_u128, option_u64, summary, Sample};
 
     #[test]
     fn summary_uses_median_measurements() {
@@ -198,5 +212,12 @@ mod tests {
             },
         ];
         assert_eq!(summary(&samples), (Some(20), Some(200)));
+    }
+    #[test]
+    fn optional_summary_fields_use_json_null() {
+        assert_eq!(option_u128(None), "null");
+        assert_eq!(option_u128(Some(42)), "42");
+        assert_eq!(option_u64(None), "null");
+        assert_eq!(option_u64(Some(7)), "7");
     }
 }

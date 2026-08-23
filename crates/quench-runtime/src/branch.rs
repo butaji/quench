@@ -7,6 +7,7 @@ fn missing_return() -> Result<Completion, VmError> {
     Err(VmError::MissingReturn)
 }
 
+#[inline]
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion, VmError> {
     let Op::Branch {
         condition,
@@ -68,6 +69,14 @@ mod tests {
             branch_value(Value::Boolean(false)),
             Value::String("else".into())
         );
+    }
+
+    #[test]
+    fn non_branch_opcode_uses_cold_error_path() {
+        let mut registers = vec![Value::Boolean(true)];
+        let op = Op::Return { src: 0 };
+
+        assert_eq!(execute(&mut registers, &op), Err(VmError::MissingReturn));
     }
 }
 

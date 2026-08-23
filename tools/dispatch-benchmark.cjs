@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 "use strict";
-
+const { assertIterations, validateBenchmarkReport } = require("./microbenchmark-schema.cjs");
 const iterations = Number(process.env.QUENCH_DISPATCH_ITERATIONS || 1_000_000);
-if (!Number.isSafeInteger(iterations) || iterations < 1) {
-  throw new Error("QUENCH_DISPATCH_ITERATIONS must be a positive safe integer");
-}
+assertIterations(iterations);
 const opcodes = new Uint8Array(iterations);
 
 function match(op) {
@@ -27,7 +25,7 @@ function measure(name, dispatch) {
   const started = process.hrtime.bigint();
   for (let i = 0; i < iterations; i++) checksum += dispatch(opcodes[i]);
   const wallMs = Number(process.hrtime.bigint() - started) / 1e6;
-  return { strategy: name, iterations, checksum, wall_ms: wallMs };
+  return { name, iterations, checksum, wall_ms: wallMs };
 }
 
 const results = [measure("match", match), measure("table", tableDispatch)];
@@ -35,4 +33,6 @@ const expectedChecksum = Array.from(opcodes, (opcode) => table[opcode]).reduce((
 if (results.some((result) => result.checksum !== expectedChecksum)) {
   throw new Error("dispatch checksum mismatch");
 }
-console.log(JSON.stringify({ results }));
+const report = { results };
+validateBenchmarkReport(report, iterations);
+console.log(JSON.stringify(report));

@@ -24,9 +24,7 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
         }
         _ => return,
     };
-    for value in values.values_mut() {
-        replace_alias(value, old, new);
-    }
+    values.rewrite_values(|value| replace_alias(value, old, new));
 }
 
 fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {

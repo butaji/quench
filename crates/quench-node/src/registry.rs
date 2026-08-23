@@ -491,9 +491,18 @@ pub fn namespace_bindings(
         "console".to_string(),
         crate::host::namespace_object_from_pairs(vec![
             ("log".to_string(), crate::host::capability(SPEC_CONSOLE_LOG)),
-            ("info".to_string(), crate::host::capability(SPEC_CONSOLE_INFO)),
-            ("warn".to_string(), crate::host::capability(SPEC_CONSOLE_WARN)),
-            ("error".to_string(), crate::host::capability(SPEC_CONSOLE_ERROR)),
+            (
+                "info".to_string(),
+                crate::host::capability(SPEC_CONSOLE_INFO),
+            ),
+            (
+                "warn".to_string(),
+                crate::host::capability(SPEC_CONSOLE_WARN),
+            ),
+            (
+                "error".to_string(),
+                crate::host::capability(SPEC_CONSOLE_ERROR),
+            ),
         ]),
     ));
     out.push((

@@ -1,7 +1,12 @@
-use std::{env, fs, path::{Path, PathBuf}, process, sync::atomic::AtomicUsize};
-use walkdir::WalkDir;
 use quench_node::run::eval_script;
 use quench_runtime::vm::OutputSink;
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process,
+    sync::atomic::AtomicUsize,
+};
+use walkdir::WalkDir;
 mod bench_fast_path;
 mod js_runtime;
 mod polyfills;
