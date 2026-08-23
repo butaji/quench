@@ -61,29 +61,24 @@ pub fn res_write_head(
     let Some(id) = res_state(receiver) else {
         return Ok(Value::Undefined);
     };
-    let status = args.first().and_then(number).unwrap_or(200).clamp(100, 599);
-    if let Some(Value::Object(_)) = args.get(1) {
-        let object = args.get(1).cloned().unwrap_or(Value::Undefined);
-        let mut guard = state.borrow_mut();
-        if let Some(res) = guard.http.res.get_mut(&id) {
-            res.status = status;
-            merge_headers(res, &object)?;
-        }
-        drop(guard);
-        if let Some(response) = receiver {
-            let _ = execute::set_property(response.clone(), "headersSent", Value::Boolean(true));
-        }
-        return Ok(Value::Undefined);
-    }
+    let status = args
+        .first()
+        .and_then(valid_status)
+        .ok_or_else(|| invalid_status_error(args.first()))?;
+    // Node accepts the optional reason phrase before the headers object.
+    let headers = match args.get(1) {
+        Some(Value::Object(_)) => args.get(1),
+        Some(Value::String(_)) => args.get(2),
+        _ => None,
+    };
     let mut guard = state.borrow_mut();
-    let mut text = String::new();
-    if let Some(Value::String(s)) = args.get(1) {
-        text = s.clone();
-    }
     if let Some(res) = guard.http.res.get_mut(&id) {
         res.status = status;
-        if !text.is_empty() {
-            res.text = text;
+        if let Some(object) = headers {
+            merge_headers(res, object)?;
+        }
+        if let Some(Value::String(reason)) = args.get(1) {
+            res.text = reason.clone();
         }
     }
     drop(guard);
@@ -93,6 +88,24 @@ pub fn res_write_head(
     Ok(Value::Undefined)
 }
 
+fn invalid_status_error(value: Option<&Value>) -> VmError {
+    let rendered = value.map(execute::to_js_string).transpose().ok().flatten()
+        .unwrap_or_else(|| "undefined".to_string());
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("RangeError".into())),
+        ("code".into(), Value::String("ERR_HTTP_INVALID_STATUS_CODE".into())),
+        ("message".into(), Value::String(format!("Invalid status code: {rendered}"))),
+    ]))
+}
+
+fn valid_status(value: &Value) -> Option<u16> {
+    match value {
+        Value::Number(n) if n.is_finite() && n.fract() == 0.0 && (100.0..=999.0).contains(n) => {
+            Some(*n as u16)
+        }
+        _ => None,
+    }
+}
 fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     res.headers.clear();
     for key in execute::own_enumerable_keys(object) {
@@ -104,6 +117,7 @@ fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     }
     Ok(())
 }
+
 
 /// `res.write(chunk)` — buffer a body fragment.
 pub fn res_write(
@@ -221,11 +235,4 @@ fn compose(
     out.extend_from_slice(b"\r\n");
     out.extend_from_slice(body);
     out
-}
-
-fn number(value: &Value) -> Option<u16> {
-    match value {
-        Value::Number(n) if n.is_finite() => Some(*n as u16),
-        _ => None,
-    }
 }
