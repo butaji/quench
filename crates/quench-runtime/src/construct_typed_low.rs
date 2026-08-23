@@ -122,7 +122,16 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
             }
         }
         Some(Value::Number(length)) => length_uint8_array(*length),
-        Some(_) => Err(type_error("Uint8Array source must be iterable or a buffer")),
+        // DataView is an array-buffer view but not an iterable source;
+        // TypedArray construction observes its absent `length` as empty.
+        Some(Value::DataView(_)) => empty_uint8_array(),
+        // Every numeric typed array is iterable and is copied by element,
+        // regardless of its source element width. Keep this conversion in
+        // the constructor path so all callers share the same semantics.
+        Some(value) => match crate::collections::iterator::collect_iterable(value.clone()) {
+            Ok(values) => values_uint8_array(&values),
+            Err(_) => Err(type_error("Uint8Array source must be iterable or a buffer")),
+        },
     }
 }
 
