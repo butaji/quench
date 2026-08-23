@@ -90,12 +90,6 @@ pub fn execute_call_continuation(
             current.environment.clone(),
         )?;
         current.pc = next;
-        let reg7 = match current.registers.get(7) {
-            Some(Value::Object(_)) => "Obj",
-            Some(Value::Undefined) => "Undef",
-            _ => "Other",
-        };
-        eprintln!("AFTER_OP pc={} regs[7]={reg7} len={}", next, current.registers.len());
         let result = match completion {
             crate::completion::Completion::Normal => Some(Value::Undefined),
             crate::completion::Completion::Return(value) => Some(value),
@@ -120,6 +114,10 @@ pub fn execute_call_continuation(
         };
         let Some(value) = result else { continue };
         if let Some(mut parent) = stack.pop() {
+            // The nested call's continuation holds the parent's saved
+            // registers; restore them so writes target the live frame
+            // rather than the empty frame left by the take() in execute_call.
+            parent.registers = current.continuation.caller_registers.clone();
             super::write_value(
                 &mut parent.registers,
                 current.continuation.destination,
