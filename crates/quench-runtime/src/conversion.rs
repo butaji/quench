@@ -212,7 +212,6 @@ pub(crate) fn is_nullish(value: &Value) -> bool {
     matches!(value, Value::Null | Value::Undefined)
 }
 
-
 /// Classify the canonical symbol representation without allocating.
 ///
 /// The `Value` enum remains authoritative: strings carry the encoded symbol
@@ -225,6 +224,7 @@ pub(crate) fn is_symbol(value: &Value) -> bool {
         Value::String(value) => is_symbol_string(value),
         Value::Builtin(builtin) => {
             crate::builtin_meta::constructor_name(*builtin) == Some("Symbol")
+                || crate::intl::tolocale::symbol::name(*builtin).is_some()
         }
         _ => false,
     }
@@ -367,7 +367,9 @@ pub fn is_callable(value: &Value) -> bool {
     match value {
         Value::Builtin(crate::ops::Builtin::Math | crate::ops::Builtin::Reflect) => false,
         Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => false,
-        Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => false,
+        Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
+            false
+        }
         Value::Builtin(_) | Value::Function(_) => true,
         Value::BoundFunction(bound)
             if crate::vm::is_intrinsic_bound(&bound)
@@ -378,7 +380,10 @@ pub fn is_callable(value: &Value) -> bool {
                             | crate::ops::Builtin::GeneratorFunctionPrototype
                             | crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
                     )
-                ) => false,
+                ) =>
+        {
+            false
+        }
         Value::BoundFunction(_) => true,
         Value::Proxy(proxy) => is_callable(&proxy.target),
         _ => false,
@@ -423,11 +428,16 @@ mod tests {
     #[test]
     fn boolean_conversion_covers_immediate_boundaries() {
         let cases = [
-            (Value::Boolean(false), false), (Value::Boolean(true), true),
-            (Value::Number(0.0), false), (Value::Number(f64::NAN), false),
-            (Value::Number(1.0), true), (Value::String(String::new()), false),
-            (Value::String("0".into()), true), (Value::BigInt("0".into()), false),
-            (Value::BigInt("1".into()), true), (Value::Null, false),
+            (Value::Boolean(false), false),
+            (Value::Boolean(true), true),
+            (Value::Number(0.0), false),
+            (Value::Number(f64::NAN), false),
+            (Value::Number(1.0), true),
+            (Value::String(String::new()), false),
+            (Value::String("0".into()), true),
+            (Value::BigInt("0".into()), false),
+            (Value::BigInt("1".into()), true),
+            (Value::Null, false),
             (Value::Undefined, false),
         ];
         for (value, expected) in cases {
@@ -464,7 +474,10 @@ mod tests {
     #[test]
     fn number_coercion_preserves_primitive_semantics() {
         let nan = f64::from_bits(0x7ff8_0000_0000_0042);
-        assert_eq!(to_number(&Value::Number(nan)).unwrap().to_bits(), nan.to_bits());
+        assert_eq!(
+            to_number(&Value::Number(nan)).unwrap().to_bits(),
+            nan.to_bits()
+        );
         assert_eq!(to_number(&Value::Null).unwrap(), 0.0);
         assert_eq!(to_number(&Value::Boolean(true)).unwrap(), 1.0);
         assert_eq!(to_number(&Value::String(" 42.5 ".into())).unwrap(), 42.5);

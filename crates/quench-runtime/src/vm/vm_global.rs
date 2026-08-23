@@ -14,7 +14,7 @@ pub(crate) fn current_global_object() -> Value {
                 .as_ref()
                 .map(|object| Value::Object(object.clone()))
         })
-        .unwrap_or(Value::Undefined)
+        .unwrap_or_else(|| crate::locals::current().get(0))
 }
 
 pub(crate) fn initialize_global_object(value: &Value) {

@@ -177,6 +177,9 @@ pub(crate) fn execute_in_environment(
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<Value, VmError> {
+    let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(Rc::clone(&environment));
     let register_count = registers.len().min(usize::from(u16::MAX)) as u16;
     let mut machine = crate::machine::Machine::with_register_count(
         crate::machine::CodeId(0),
@@ -186,13 +189,7 @@ pub(crate) fn execute_in_environment(
     machine.restore_registers(std::mem::take(registers));
     let mut pc = 0;
     loop {
-        let step = {
-            let _context_guard = ContextGuard::install(context);
-            let _global_guard = GlobalObjectGuard::install();
-            let _environment_guard =
-                crate::locals::EnvironmentGuard::install(Rc::clone(&environment));
-            run_ops_completion_step_from(ops, pc, machine.registers_mut(), context)?
-        };
+        let step = run_ops_completion_step_from(ops, pc, machine.registers_mut(), context)?;
         let completion = step.completion;
         let next = step.next;
         match completion {
