@@ -17,7 +17,9 @@ pub fn run_in_new_context(
     let source = execute::to_js_string(args.first().unwrap_or(&Value::Undefined))?;
     let program = quench_runtime::reduce::reduce_global_script_source(&source)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let mut context = quench_runtime::vm::current_context();
+    // A new context must have its own realm/global object. Reusing the
+    // caller's context makes global `var` declarations mutate the host.
+    let mut context = quench_runtime::vm::VmContext::isolated();
     if let Some(sandbox @ Value::Object(_)) = args.get(1) {
         for key in execute::own_enumerable_keys(sandbox) {
             let value = execute::get_property_result(sandbox, &key)?;
