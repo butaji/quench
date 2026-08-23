@@ -11,6 +11,7 @@ thread_local! {
     static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_REALM: RefCell<Option<crate::ops::RealmId>> = const { RefCell::new(None) };
     static REPLACEMENTS: RefCell<HashMap<ReplacementIdentity, Replacement>> = RefCell::new(HashMap::new());
+    static REPLACEMENT_ROOTS: RefCell<HashMap<ReplacementIdentity, ReplacementIdentity>> = RefCell::new(HashMap::new());
     static REPLACEMENTS_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static STRICT_EVAL: RefCell<bool> = const { RefCell::new(false) };
     static ACTIVE_EVAL: RefCell<bool> = const { RefCell::new(false) };
@@ -25,7 +26,7 @@ enum ReplacementIdentity {
 }
 
 struct Replacement {
-    _owner: Value,
+    _owners: Vec<Value>,
     value: Value,
 }
 
@@ -469,18 +470,26 @@ pub(crate) fn capture(count: u16) -> Rc<Environment> {
 }
 
 pub(crate) fn replace_value(old: &Value, new: &Value) {
-    current().replace_value(old, new);
     let Some(identity) = replacement_identity(old) else {
         return;
     };
+    let root = REPLACEMENT_ROOTS.with(|roots| {
+        let mut roots = roots.borrow_mut();
+        let root = roots.get(&identity).copied().unwrap_or(identity);
+        roots.entry(identity).or_insert(root);
+        if let Some(new_identity) = replacement_identity(new) {
+            roots.insert(new_identity, root);
+        }
+        root
+    });
     REPLACEMENTS.with(|replacements| {
-        replacements.borrow_mut().insert(
-            identity,
-            Replacement {
-                _owner: old.clone(),
-                value: new.clone(),
-            },
-        )
+        let mut replacements = replacements.borrow_mut();
+        let replacement = replacements.entry(root).or_insert_with(|| Replacement {
+            _owners: Vec::new(),
+            value: new.clone(),
+        });
+        replacement._owners.push(old.clone());
+        replacement.value = new.clone();
     });
     REPLACEMENTS_ACTIVE.with(|active| active.set(true));
 }
@@ -491,36 +500,24 @@ pub(crate) fn replacement(value: &Value) -> Option<Value> {
         return None;
     }
     let identity = replacement_identity(value)?;
+    let root = REPLACEMENT_ROOTS.with(|roots| roots.borrow().get(&identity).copied())?;
     REPLACEMENTS.with(|replacements| {
         replacements
             .borrow()
-            .get(&identity)
+            .get(&root)
             .map(|replacement| replacement.value.clone())
     })
 }
 
 pub(crate) fn reset_replacements() {
     REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
+    REPLACEMENT_ROOTS.with(|roots| roots.borrow_mut().clear());
     REPLACEMENTS_ACTIVE.with(|active| active.set(false));
 }
 
 #[inline]
 pub(crate) fn resolved_replacement(value: Value) -> Value {
-    let mut value = value;
-    while let Some(updated) = replacement(&value) {
-        if same_identity(&value, &updated) {
-            break;
-        }
-        value = updated;
-    }
-    value
-}
-
-fn same_identity(left: &Value, right: &Value) -> bool {
-    match (replacement_identity(left), replacement_identity(right)) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    }
+    replacement(&value).unwrap_or(value)
 }
 
 #[inline]
@@ -564,7 +561,7 @@ mod replacement_tests {
             replacements.borrow_mut().insert(
                 identity,
                 Replacement {
-                    _owner: owner,
+                    _owners: vec![owner],
                     value: Value::Undefined,
                 },
             );
