@@ -280,6 +280,7 @@
       };
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
+        st.reading = false;
         if (st.encoding) {
           chunk = chunk.toString(st.encoding);
           while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
@@ -293,6 +294,7 @@
       }
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
+        st.reading = false;
         if (st.encoding) {
           chunk = chunk.toString(st.encoding);
           while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
