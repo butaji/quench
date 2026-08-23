@@ -14,14 +14,20 @@ fn load(source: &str) -> Result<Value, VmError> {
     let factory = quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)
     })?;
-    let module = quench_runtime::host_api::object(vec![(
-        "exports".to_string(),
+    let module = quench_runtime::execute::define_property(
         quench_runtime::host_api::object(vec![]),
-    )]);
-    quench_runtime::vm::with_current_context(&context, || {
+        "exports",
+        quench_runtime::host_api::object(vec![
+            ("value".to_string(), quench_runtime::host_api::object(vec![])),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]),
+    )?;
+    let exports = quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::call_value(&factory, &Value::Undefined, &[module.clone()])
     })?;
-    quench_runtime::execute::get_property_result(&module, "exports")
+    Ok(exports)
 }
 
 pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
