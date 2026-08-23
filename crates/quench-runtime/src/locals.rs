@@ -512,6 +512,9 @@ pub(crate) fn capture(count: u16) -> Rc<Environment> {
 }
 
 pub(crate) fn replace_value(old: &Value, new: &Value) {
+    if replace_object(old, new) {
+        return;
+    }
     let Some(identity) = replacement_identity(old) else {
         return;
     };
@@ -538,8 +541,34 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
     REPLACEMENTS_ACTIVE.with(|active| active.set(true));
 }
 
+fn replace_object(old: &Value, new: &Value) -> bool {
+    let Value::Object(new) = new else {
+        return false;
+    };
+    let old = match old {
+        Value::Object(old) => Some(Rc::clone(old)),
+        Value::ObjectAlias(alias) => alias.target(),
+        _ => None,
+    };
+    let Some(old) = old else {
+        return false;
+    };
+    old.replace_with(Rc::clone(new));
+    true
+}
+
 #[inline]
 pub(crate) fn replacement(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(object) => return object.replacement().map(Value::Object),
+        Value::ObjectAlias(alias) => {
+            return alias
+                .target()
+                .and_then(|object| object.replacement())
+                .map(Value::Object)
+        }
+        _ => {}
+    }
     if !REPLACEMENTS_ACTIVE.with(|active| active.get()) {
         return None;
     }
@@ -597,7 +626,10 @@ fn replacement_owner(value: &Value) -> Option<Value> {
 
 #[cfg(test)]
 mod replacement_tests {
-    use super::{replacement_identity, replacement_owner, Replacement, REPLACEMENTS};
+    use super::{
+        replace_value, replacement_identity, replacement_owner, resolved_replacement, Replacement,
+        REPLACEMENTS,
+    };
     use crate::value::{ObjectAliasValue, ObjectData, Value};
     use std::{cell::RefCell, rc::Rc};
 
@@ -635,5 +667,19 @@ mod replacement_tests {
     fn ordinary_object_without_alias_needs_no_retained_owner() {
         let owner = Value::Object(Rc::new(ObjectData::new(Vec::new())));
         assert!(replacement_owner(&owner).is_none());
+    }
+
+    #[test]
+    fn ordinary_object_replacement_is_owned_by_the_object() {
+        let old = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        let new = Value::Object(Rc::new(ObjectData::new(vec![(
+            "answer".into(),
+            Value::Number(42.0),
+        )])));
+        replace_value(&old, &new);
+        let resolved = resolved_replacement(old);
+        assert!(
+            matches!(resolved, Value::Object(object) if Rc::ptr_eq(&object, match &new { Value::Object(object) => object, _ => unreachable!() }))
+        );
     }
 }
