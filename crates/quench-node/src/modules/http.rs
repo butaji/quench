@@ -92,8 +92,23 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
             return Err(VmError::Thrown(error));
         }
     }
+    if args.len() > 1 && !quench_runtime::is_callable(&args[1]) {
+        let error = host_api::object(vec![
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("listener must be a function".into()),
+            ),
+        ]);
+        return Err(VmError::Thrown(error));
+    }
     let object = net::create_server(state, &[])?;
-    if let Some(cb) = args.first() {
+    let listener = if quench_runtime::is_callable(args.first().unwrap_or(&Value::Undefined)) {
+        args.first()
+    } else {
+        args.get(1)
+    };
+    if let Some(cb) = listener {
         if quench_runtime::is_callable(cb) {
             crate::modules::events::method_on(
                 state,
