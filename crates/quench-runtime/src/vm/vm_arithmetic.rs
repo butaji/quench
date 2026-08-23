@@ -86,22 +86,24 @@ fn fast_number_binary(
     use crate::ops::BinaryOp;
     Some(match operator {
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
-            if let (Some(left_int), Some(right_int)) = (
-                Value::Number(*left).as_small_integer(),
-                Value::Number(*right).as_small_integer(),
-            ) {
-                let checked = match operator {
-                    BinaryOp::Add => Value::checked_small_integer_add(left_int, right_int),
-                    BinaryOp::Subtract => {
-                        Value::checked_small_integer_subtract(left_int, right_int)
+            if !is_negative_zero(*left) && !is_negative_zero(*right) {
+                if let (Some(left_int), Some(right_int)) = (
+                    Value::Number(*left).as_small_integer(),
+                    Value::Number(*right).as_small_integer(),
+                ) {
+                    let checked = match operator {
+                        BinaryOp::Add => Value::checked_small_integer_add(left_int, right_int),
+                        BinaryOp::Subtract => {
+                            Value::checked_small_integer_subtract(left_int, right_int)
+                        }
+                        BinaryOp::Multiply => {
+                            Value::checked_small_integer_multiply(left_int, right_int)
+                        }
+                        _ => unreachable!(),
+                    };
+                    if let Some(value) = checked {
+                        return Some(value);
                     }
-                    BinaryOp::Multiply => {
-                        Value::checked_small_integer_multiply(left_int, right_int)
-                    }
-                    _ => unreachable!(),
-                };
-                if let Some(value) = checked {
-                    return Some(value);
                 }
             }
             Value::Number(match operator {
@@ -121,6 +123,12 @@ fn fast_number_binary(
         _ => return None,
     })
 }
+
+#[inline]
+fn is_negative_zero(value: f64) -> bool {
+    value == 0.0 && value.is_sign_negative()
+}
+
 #[cfg(test)]
 mod immediate_integer_tests {
     use super::fast_number_binary;
@@ -177,6 +185,12 @@ mod immediate_integer_tests {
         assert_eq!(
             fast_number_binary(&Value::Number(0.5), &Value::Number(0.25), BinaryOp::Add),
             Some(Value::Number(0.75))
+        );
+        assert_eq!(
+            fast_number_binary(&Value::Number(-0.0), &Value::Number(-0.0), BinaryOp::Add)
+                .unwrap()
+                .number_bits(),
+            Some((-0.0_f64).to_bits())
         );
     }
 }
