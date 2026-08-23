@@ -122,8 +122,13 @@ fn run_fragment(
     if ops.is_empty() {
         return Ok(());
     }
-    crate::vm::execute_in_current_context(ops, registers)?;
-    Ok(())
+    match crate::execute::execute_completion_in_place(ops, registers)? {
+        // Loop fragments use Return as their local value carrier. They are
+        // not function boundaries, so consume that marker while preserving
+        // the current lexical environment for the next fragment.
+        crate::completion::Completion::Normal | crate::completion::Completion::Return(_) => Ok(()),
+        completion => completion.into_vm_error().map(|_| ()),
+    }
 }
 
 fn refresh_per_iteration(slots: &[u16]) {

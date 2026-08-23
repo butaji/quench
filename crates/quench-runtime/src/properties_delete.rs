@@ -11,7 +11,9 @@ pub(crate) fn execute_delete_property(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let target = crate::execute::read_register(registers, *object)?.clone();
+    let target = crate::locals::resolved_replacement(
+        crate::execute::read_register(registers, *object)?.clone(),
+    );
     if matches!(
         target,
         crate::value::Value::Null | crate::value::Value::Undefined

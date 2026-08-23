@@ -168,6 +168,13 @@ pub struct StageReport {
 }
 
 impl StageReport {
+    /// Whether this report accounts for every discovered path exactly once.
+    pub fn covers(&self, paths: &[std::path::PathBuf]) -> bool {
+        self.total == paths.len()
+            && self.passed + self.failed == self.total
+            && self.failures.iter().all(|(path, _)| paths.contains(path))
+    }
+
     /// Build a per-path outcome map for a completed stage report. Paths that
     /// are absent from the failure list are treated as passing; this matches
     /// the runner's convention that only failed tests are recorded with a
