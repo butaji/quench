@@ -47,11 +47,9 @@ pub(crate) fn execute_completion_in_place(
 }
 
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
-    // The replacement log is the heap's forwarding table for copy-on-write
-    // object snapshots: it must outlive any single top-level entry so that
-    // references stashed in heap slots (event-loop callbacks, timers) still
-    // resolve to the latest snapshot. Hosts running independent programs on
-    // one thread call `execute::reset_replacements` between programs.
+    // Intrinsic overrides are scoped to one top-level evaluation; do not
+    // carry mutations such as Math.random assignments into the next one.
+    crate::builtins::reset_intrinsic_prototype_state();
     let result = execute_with_registers_context(ops, Vec::new(), context);
     // Drive the promise microtask queue so `.then`/`.catch` reactions and
     // synchronously-settling promise chains run to completion. Reinstall
@@ -344,17 +342,7 @@ mod tests {
             if (target.answer !== 42) throw "call RHS lost assignment target";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        for op in program.ops() {
-            if let crate::ops::Op::MakeFunctionWithKind { dst, body, .. } = op {
-                if let Some(ops) = body.ops() {
-                    for (idx, inner) in ops.iter().enumerate() {
-                        let brief = format!("{inner:?}");
-                        let brief = if brief.len() > 200 { format!("{}...", &brief[..200]) } else { brief };
-                        eprintln!("F[{dst}][{idx}] {brief}");
-                    }
-                }
-            }
-        }
+        let result = crate::vm::execute_with_context(
             program.ops(),
             &crate::vm::VmContext::default(),
         )

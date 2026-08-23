@@ -90,6 +90,12 @@ pub fn execute_call_continuation(
             current.environment.clone(),
         )?;
         current.pc = next;
+        let reg7 = match current.registers.get(7) {
+            Some(Value::Object(_)) => "Obj",
+            Some(Value::Undefined) => "Undef",
+            _ => "Other",
+        };
+        eprintln!("AFTER_OP pc={} regs[7]={reg7} len={}", next, current.registers.len());
         let result = match completion {
             crate::completion::Completion::Normal => Some(Value::Undefined),
             crate::completion::Completion::Return(value) => Some(value),
