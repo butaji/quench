@@ -162,7 +162,7 @@ pub fn execute_call_continuation(
                 // A reducer may promote the final call in a function body to a
                 // tail call.  Treat it as a frame replacement, not as an
                 // unconsumed completion: otherwise nested assert.throws sees an
-                // internal EvalError instead of the callback's Test262Error.
+                // internal EvalError instead of the callback's own error value.
                 let tail = crate::completion::CallContinuation {
                     callee: request.callee,
                     receiver: request.receiver,

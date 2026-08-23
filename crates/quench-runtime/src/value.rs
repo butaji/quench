@@ -538,7 +538,7 @@ fn creation_order(properties: &[(String, Value)]) -> Vec<String> {
 
 impl PartialEq for ObjectData {
     fn eq(&self, other: &Self) -> bool {
-        self.properties == other.properties
+        std::ptr::eq(self, other)
     }
 }
 /// Derived layout facts for ordinary objects. These are never authoritative;
@@ -640,7 +640,9 @@ impl ObjectData {
         debug_assert_eq!(self.shape().slots as usize, visible.len());
         for (slot, (name, value)) in visible.iter().enumerate() {
             debug_assert_eq!(self.slot_for(name), Some(slot));
-            debug_assert_eq!(self.value_at_slot(slot), Some(value));
+            debug_assert!(self
+                .value_at_slot(slot)
+                .is_some_and(|candidate| std::ptr::eq(candidate, value)));
         }
     }
 
@@ -1684,7 +1686,7 @@ pub enum PrivateSlot {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct FunctionValue {
     pub(crate) code: crate::machine::FunctionCode,
     pub params: u16,
@@ -1700,13 +1702,24 @@ pub struct FunctionValue {
     pub is_async: bool,
     pub mapped_arguments: bool,
 }
-#[derive(Debug, Clone, PartialEq)]
+impl PartialEq for FunctionValue {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct BoundFunctionValue {
     pub(crate) realm: crate::ops::RealmId,
     pub target: Value,
     pub receiver: Value,
     pub arguments: Vec<Value>,
     pub properties: RefCell<Vec<(String, Value)>>,
+}
+impl PartialEq for BoundFunctionValue {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
 }
 include!("value_constant.rs");
 include!("value_helpers.rs");

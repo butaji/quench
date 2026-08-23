@@ -1,8 +1,163 @@
 use std::path::PathBuf;
 
 use super::{LinkedModule, LinkedModuleGraph};
+use crate::Test262Host;
 use crate::module_graph::ModuleGraph;
 use quench_runtime::value::Value;
+
+#[test]
+fn stage_report_requires_complete_path_coverage() {
+    let paths = vec![PathBuf::from("a.js"), PathBuf::from("b.js")];
+    let complete = crate::StageReport {
+        total: 2,
+        passed: 1,
+        failed: 1,
+        failures: vec![(paths[1].clone(), "failure".to_string())],
+    };
+    assert!(complete.covers(&paths));
+    assert!(!crate::StageReport { total: 1, ..complete }.covers(&paths));
+}
+
+#[test]
+fn array_map_call_accepts_array_like_receiver() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var result = Array.prototype.map.call({0: 'a', 1: 'b', length: 2}, String);\n\
+         if (result[0] !== 'a' || result[1] !== 'b') throw new Error('map.call');",
+    )
+    .expect("Array.prototype.map.call must support array-like receivers");
+}
+
+#[test]
+fn nested_function_return_preserves_false() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function returnsFalse() { return false; }\n\
+         function callsIt() { return returnsFalse(); }\n\
+         if (callsIt() !== false) throw new Error('false return was lost');",
+    )
+    .expect("nested function calls must preserve false returns");
+}
+
+#[test]
+fn loop_early_return_preserves_false() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function differs(a, b) {\n\
+           for (var i = 0; i < a.length; i++) {\n\
+             if (a[i] !== b[i]) return false;\n\
+           }\n\
+           return true;\n\
+         }\n\
+         if (differs([0, 'a'], [0, 'b']) !== false) throw new Error('early return');",
+    )
+    .expect("loop early returns must preserve false");
+}
+
+#[test]
+fn loop_body_can_return_false_after_a_matching_iteration() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function differs(a, b) {\n\
+           for (var i = 0; i < 2; i++) {\n\
+             if (a[i] !== b[i]) return false;\n\
+           }\n\
+           return true;\n\
+         }\n\
+         if (differs([0, 'a'], [0, 'b']) !== false) throw new Error('loop return');",
+    )
+    .expect("loop must propagate a false return after continuing");
+}
+
+#[test]
+fn counted_loop_updates_index_between_iterations() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var count = 0; for (var i = 0; i < 2; i++) count++;\n\
+         if (count !== 2 || i !== 2) throw new Error('loop update');",
+    )
+    .expect("counted loop must execute and update each iteration");
+}
+
+#[test]
+fn deleting_a_configurable_property_removes_it() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var obj = {}; Object.defineProperty(obj, 'prop', {value: 42, enumerable: true, configurable: true, writable: true});\n\
+         if (!delete obj.prop || Object.prototype.hasOwnProperty.call(obj, 'prop')) throw new Error('delete');",
+    )
+    .expect("delete must remove configurable own properties");
+}
+
+#[test]
+fn function_constructor_return_this_matches_script_global() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var fromFunction = Function('return this;')();\n\
+         if (fromFunction !== this) throw new Error('global identity');",
+    )
+    .expect("Function-created code must see the script global object");
+}
+
+#[test]
+fn constructed_objects_preserve_constructor_identity() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function CustomError(message) { this.message = message; }\n\
+         var error = new CustomError('x');\n\
+         if (error.constructor !== CustomError) throw new Error('constructor identity');",
+    )
+    .expect("constructed objects must expose their constructor");
+}
+
+#[test]
+fn custom_error_prototype_keeps_constructor_identity() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function Test262Error(message) { this.message = message || ''; }\n\
+         Test262Error.prototype.toString = function() { return 'Test262Error: ' + this.message; };\n\
+         try { throw new Test262Error('x'); } catch (err) {\n\
+           if (err.constructor !== Test262Error) throw new Error('error constructor');\n\
+         }",
+    )
+    .expect("custom error instances must retain constructor identity");
+}
+
+#[test]
+fn dynamic_delete_inside_helper_observes_property_removal() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function isConfigurable(obj, name) { delete obj[name]; return !Object.prototype.hasOwnProperty.call(obj, name); }\n\
+         var obj = {}; Object.defineProperty(obj, 'prop', {value: 42, enumerable: true, configurable: true, writable: true});\n\
+         if (!isConfigurable(obj, 'prop')) throw new Error('dynamic delete');",
+    )
+    .expect("helper deletion must observe the updated object state");
+}
+
+#[test]
+fn bound_primordial_property_helpers_observe_mutation() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var hasOwn = Function.prototype.call.bind(Object.prototype.hasOwnProperty);\n\
+         function isConfigurable(obj, name) { delete obj[name]; return !hasOwn(obj, name); }\n\
+         var obj = {}; Object.defineProperty(obj, 'prop', {value: 42, configurable: true});\n\
+         if (!isConfigurable(obj, 'prop')) throw new Error('bound delete');",
+    )
+    .expect("bound primordial helpers must observe property deletion");
+}
+
+#[test]
+fn indexed_inequality_controls_an_early_return() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function differs(a, b) {\n\
+           if (a[0] !== b[0]) return false;\n\
+           return true;\n\
+         }\n\
+         if (differs(['a'], ['b']) !== false) throw new Error('indexed inequality');",
+    )
+    .expect("indexed inequality must select the false return");
+}
 
 #[test]
 fn default_export_cell_observes_module_execution() {
