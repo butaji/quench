@@ -21,7 +21,7 @@ thread_local! {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ReplacementIdentity {
     Array(usize),
-    Object(usize),
+    Object(u64),
     Function(usize),
 }
 
@@ -485,10 +485,12 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
     REPLACEMENTS.with(|replacements| {
         let mut replacements = replacements.borrow_mut();
         let replacement = replacements.entry(root).or_insert_with(|| Replacement {
-            _owners: Vec::new(),
+            _owners: Vec::with_capacity(8),
             value: new.clone(),
         });
-        replacement._owners.push(old.clone());
+        if let Some(owner) = replacement_owner(old) {
+            replacement._owners.push(owner);
+        }
         replacement.value = new.clone();
     });
     REPLACEMENTS_ACTIVE.with(|active| active.set(true));
@@ -531,20 +533,29 @@ pub(crate) fn resolved_replacement(value: Value) -> Value {
 fn replacement_identity(value: &Value) -> Option<ReplacementIdentity> {
     match value {
         Value::Array(value) => Some(ReplacementIdentity::Array(Rc::as_ptr(value) as usize)),
-        Value::Object(value) => Some(ReplacementIdentity::Object(Rc::as_ptr(value) as usize)),
+        Value::Object(value) => Some(ReplacementIdentity::Object(value.identity())),
         Value::ObjectAlias(value) => value
             .0
             .borrow()
             .upgrade()
-            .map(|object| ReplacementIdentity::Object(Rc::as_ptr(&object) as usize)),
+            .map(|object| ReplacementIdentity::Object(object.identity())),
         Value::Function(value) => Some(ReplacementIdentity::Function(Rc::as_ptr(value) as usize)),
+        _ => None,
+    }
+}
+
+fn replacement_owner(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(object) if Rc::weak_count(object) == 0 => None,
+        Value::ObjectAlias(alias) => alias.target().map(Value::Object),
+        Value::Array(_) | Value::Object(_) | Value::Function(_) => Some(value.clone()),
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod replacement_tests {
-    use super::{replacement_identity, Replacement, REPLACEMENTS};
+    use super::{replacement_identity, replacement_owner, Replacement, REPLACEMENTS};
     use crate::value::{ObjectAliasValue, ObjectData, Value};
     use std::{cell::RefCell, rc::Rc};
 
@@ -576,5 +587,11 @@ mod replacement_tests {
         assert!(weak.upgrade().is_some());
         REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
         assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn ordinary_object_without_alias_needs_no_retained_owner() {
+        let owner = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        assert!(replacement_owner(&owner).is_none());
     }
 }
