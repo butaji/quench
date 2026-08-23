@@ -89,15 +89,15 @@ impl NodeRunner {
         // `__dirname`, `require`, `module`/`exports` are in scope.
         let source =
             quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture.source);
-        let ops = match reduce_script(&source) {
-            Ok(ops) => ops,
+        let program = match reduce_script(&source) {
+            Ok(program) => program,
             Err(error) => {
                 return NodeOutcome::Fail {
                     reason: format!("reduce: {error}"),
                 };
             }
         };
-        let result = quench_runtime::vm::execute_with_context(&ops, &self.context)
+        let result = quench_runtime::vm::execute_code_with_context(program.code(), &self.context)
             .and_then(|_| self.drive("__quench_run_loop__();"));
         let result = self.route_uncaught(result);
         // `process.exit` unwinds with an error; `exit` handlers still run.
@@ -157,13 +157,15 @@ impl NodeRunner {
         &self,
         source: &str,
     ) -> Result<quench_runtime::value::Value, quench_runtime::vm::VmError> {
-        let ops = reduce_script(source).map_err(quench_runtime::vm::VmError::EvalError)?;
-        quench_runtime::vm::execute_with_context(&ops, &self.context)
+        let program = reduce_script(source).map_err(quench_runtime::vm::VmError::EvalError)?;
+        quench_runtime::vm::execute_code_with_context(program.code(), &self.context)
     }
 }
 
-fn reduce_script(source: &str) -> Result<Vec<quench_runtime::ops::Op>, String> {
+fn reduce_script(
+    source: &str,
+) -> Result<quench_runtime::reduce::reduce_statements::ResidualProgram, String> {
     use quench_runtime::reduce::reduce_source;
     let program = reduce_source(source).map_err(|errors| errors.join("; "))?;
-    Ok(program.ops().to_vec())
+    Ok(program)
 }

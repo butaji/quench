@@ -263,7 +263,7 @@ fn eval_scriptlet(source: &str) -> Result<Value, VmError> {
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let context = quench_runtime::vm::current_context();
     let mut registers = Vec::new();
-    quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
+    quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
 }
 
 /// `require('path')` — the platform namespace object with `win32` /

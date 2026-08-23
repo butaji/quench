@@ -12,7 +12,7 @@ use quench_runtime::reduce::{
     inspect_module_source, reduce_module_sequence, reduce_module_source, reduce_script_sources,
     reduce_source, ScriptSource,
 };
-use quench_runtime::vm::{execute_with_context, ExecutionScope, VmContext};
+use quench_runtime::vm::{execute_code_with_context, ExecutionScope, VmContext};
 
 use crate::module_graph::{ModuleGraph, ModuleId, ModuleKind};
 use crate::Test262Host;
@@ -409,7 +409,7 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
     let context = fresh_context();
-    let result = execute_with_context(program.ops(), &context)
+    let result = execute_code_with_context(program.code(), &context)
         .map(|_| ())
         .map_err(|error| format!("residual VM error: {}", error.render()));
     // Promise reactions (including asyncHelpers' $DONE handler) are queued

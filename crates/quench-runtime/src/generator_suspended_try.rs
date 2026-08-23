@@ -1,13 +1,13 @@
 fn suspended_try<'a>(
     generator: &'a GeneratorData,
     _state: &GeneratorState,
-) -> Option<(&'a Op, &'a Op, &'a [Op])> {
+) -> Option<(&'a Op, &'a Op, crate::machine::CodeView<'a>)> {
     let index = machine_pc(generator).checked_sub(1)?;
-    let op = generator.function.ops().get(index)?;
+    let op = generator.function.code.code()?.cold_at(index)?;
     match op {
         op @ Op::Try { body, .. } => try_yield_parts(generator, op, body),
         Op::ForOf { body, .. } | Op::ForIn { body, .. } | Op::Loop { body, .. } => {
-            body.ops()?.iter().find_map(|inner| match inner {
+            body.code()?.cold_ops().find_map(|(_, inner)| match inner {
                 inner @ Op::Try { body, .. } => try_yield_parts(generator, inner, body),
                 _ => None,
             })
@@ -20,13 +20,12 @@ fn try_yield_parts<'a>(
     generator: &GeneratorData,
     op: &'a Op,
     body: &'a crate::machine::FunctionCode,
-) -> Option<(&'a Op, &'a Op, &'a [Op])> {
-    let body = body.ops()?;
+) -> Option<(&'a Op, &'a Op, crate::machine::CodeView<'a>)> {
+    let body = body.code()?;
     let (yield_index, yield_op) = body
-        .iter()
-        .enumerate()
+        .cold_ops()
         .find(|(_, candidate)| suspended_try_op(candidate, generator))?;
-    Some((op, yield_op, &body[yield_index + 1..]))
+    Some((op, yield_op, body.slice(yield_index + 1, body.len())?))
 }
 
 fn resume_suspended_try(
@@ -67,10 +66,10 @@ fn complete_suspended_try(
     let Some(finalizer) = finalizer else {
         return Ok(completion);
     };
-    let Some(finalizer) = finalizer.ops() else {
+    let Some(finalizer) = finalizer.code() else {
         return Err(VmError::MissingReturn);
     };
-    match crate::execute::execute_completion_in_place(finalizer, registers)? {
+    match crate::vm::execute_code_completion_in_current_frame(finalizer, registers)? {
         crate::completion::Completion::Normal => Ok(completion),
         abrupt => Ok(abrupt),
     }
@@ -91,10 +90,10 @@ fn handle_suspended_throw(
     if let Some(slot) = catch_slot {
         crate::locals::write(slot, value);
     }
-    let Some(handler) = handler.ops() else {
+    let Some(handler) = handler.code() else {
         return Err(VmError::MissingReturn);
     };
-    crate::execute::execute_completion_in_place(handler, registers)
+    crate::vm::execute_code_completion_in_current_frame(handler, registers)
 }
 
 fn throw_and_finish(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {

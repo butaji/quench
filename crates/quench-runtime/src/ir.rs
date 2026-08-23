@@ -60,7 +60,6 @@ instruction_set! {
 }
 
 impl Opcode {
-
     pub const fn is_compact(self) -> bool {
         (self as u8) <= Self::COUNT
     }
@@ -255,6 +254,23 @@ impl Instruction {
             c: 0,
         }
     }
+    pub const fn slow_at(index: u32) -> Self {
+        Self {
+            opcode: Opcode::Slow,
+            flags: 0,
+            a: index as u16,
+            b: (index >> 16) as u16,
+            c: 0,
+        }
+    }
+
+    pub const fn cold_index(self) -> Option<u32> {
+        if matches!(self.opcode, Opcode::Slow) {
+            Some(self.a as u32 | (self.b as u32) << 16)
+        } else {
+            None
+        }
+    }
     pub const fn jump_if_false(condition: Register, target: u16) -> Self {
         Self {
             opcode: Opcode::JumpIfFalse,
@@ -398,15 +414,6 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
         } => Some(Instruction::binary(Opcode::Div, *dst, *lhs, *rhs)),
         Op::GetPropertyDynamic { dst, object, key } => {
             Some(Instruction::get_property(*dst, *object, *key))
-        }
-        Op::Call {
-            dst,
-            callee,
-            receiver: None,
-            args,
-            spreads,
-        } if args.is_empty() && spreads.is_empty() => {
-            Some(Instruction::call_zero_args(*dst, *callee))
         }
         Op::Return { src } => Some(Instruction::ret(*src)),
         _ => None,
@@ -815,7 +822,7 @@ mod tests {
                 args: vec![],
                 spreads: vec![]
             }),
-            Some(Instruction::call_zero_args(0, 4))
+            None
         );
         assert!(lower_compact(&Op::Call {
             dst: 0,
