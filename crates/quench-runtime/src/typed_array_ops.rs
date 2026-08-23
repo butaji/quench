@@ -28,6 +28,10 @@ fn typed_array_index(key: &str) -> Option<usize> {
     (index.to_string() == key).then_some(index)
 }
 
+pub(crate) fn is_index_key(key: &str) -> bool {
+    typed_array_index(key).is_some()
+}
+
 pub(crate) fn is_view(value: &Value) -> bool {
     matches!(
         value,
