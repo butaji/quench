@@ -261,23 +261,30 @@ pub(crate) fn load_binding(
     name: &str,
     dynamic: bool,
 ) -> Result<(), VmError> {
-    if let Some(value) = crate::with_scope::resolve_binding(name)? {
-        crate::execute::write_value(registers, dst, value);
-        return Ok(());
-    }
-    if current().is_deleted(&current().slot_cell(slot)) {
-        return Err(crate::value::error::throw_reference_error(&format!(
-            "Cannot access deleted binding '{name}'"
-        )));
-    }
-    ensure_initialized(slot, name)?;
-    if dynamic && current().eval_name_aliases_slot(name, slot) {
-        if let Some(value) = resolve_eval_name(name) {
+    let environment = current();
+    if dynamic {
+        if let Some(value) = crate::with_scope::resolve_binding(name)? {
             crate::execute::write_value(registers, dst, value);
             return Ok(());
         }
+        if environment.is_deleted(&environment.slot_cell(slot)) {
+            return Err(crate::value::error::throw_reference_error(&format!(
+                "Cannot access deleted binding '{name}'"
+            )));
+        }
+        if environment.eval_name_aliases_slot(name, slot) {
+            if let Some(value) = resolve_eval_name(name) {
+                crate::execute::write_value(registers, dst, value);
+                return Ok(());
+            }
+        }
     }
-    crate::execute::write_value(registers, dst, current().get(slot));
+    if environment.is_uninitialized(slot) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access '{name}' before initialization"
+        )));
+    }
+    crate::execute::write_value(registers, dst, environment.get(slot));
     Ok(())
 }
 
