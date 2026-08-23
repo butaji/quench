@@ -396,4 +396,13 @@ pub fn buffer_new_construct(
     }
 }
 
+pub fn buffer_last_index_of_construct(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Err(crate::modules::buffer_enc::invalid_arg_type(
+        "The \"buffer\" argument must be an instance of Buffer, TypedArray, or DataView. Received an instance of lastIndexOf".into(),
+    ))
+}
+
 include!("dispatch_handlers_core_tail.rs");

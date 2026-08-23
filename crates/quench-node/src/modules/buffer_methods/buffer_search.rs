@@ -33,9 +33,14 @@ fn search(receiver: Option<&Value>, args: &[Value], mode: Search) -> HandlerResu
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     let haystack = view_bytes(&view).to_vec();
     let needle = search_needle(&value, args)?;
+    let utf16 = args
+        .get(2)
+        .or_else(|| args.get(1).filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_))))
+        .and_then(|value| match value { Value::String(s) => Some(s), _ => None })
+        .is_some_and(|encoding| matches!(encoding.to_ascii_lowercase().as_str(), "ucs2" | "ucs-2" | "utf16le" | "utf-16le"));
     let found = match needle {
         Needle::Byte(byte) => search_byte(&haystack, byte, args.get(1), &mode),
-        Needle::Bytes(bytes) => search_bytes(&haystack, &bytes, args.get(1), &mode),
+        Needle::Bytes(bytes) => search_bytes(&haystack, &bytes, args.get(1), &mode, utf16),
     };
     Ok(match mode {
         Search::Includes => Value::Boolean(found >= 0),
@@ -56,16 +61,38 @@ fn search_needle(value: &Value, args: &[Value]) -> Result<Needle, VmError> {
         Value::String(_) | Value::StringUnits(_) => {
             let encoding = args
                 .get(2)
+                .or_else(|| args.get(1).filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_))))
                 .map(|v| encoding_arg(Some(v)))
                 .transpose()?
                 .unwrap_or_else(|| "utf8".to_string());
             Ok(Needle::Bytes(enc::encode_value(value, &encoding)?))
         }
-        Value::Uint8Array(view) => Ok(Needle::Bytes(view_bytes(view).to_vec())),
-        _ => Err(enc::invalid_arg_type(format!(
-            "The \"value\" argument must be one of type string, Buffer, TypedArray, or DataView.{}",
-            crate::modules::util::invalid_arg_received(value)
-        ))),
+        Value::Uint8Array(view) => {
+            let bytes = view_bytes(view).to_vec();
+            if let Some(encoding) = args
+                .get(2)
+                .map(|value| encoding_arg(Some(value)))
+                .transpose()?
+            {
+                if matches!(encoding.as_str(), "utf16le") && bytes.len() % 2 != 0 {
+                    let mut encoded = bytes;
+                    encoded.push(0);
+                    return Ok(Needle::Bytes(encoded));
+                }
+                return Ok(Needle::Bytes(bytes));
+            }
+            Ok(Needle::Bytes(bytes))
+        }
+        _ => {
+            let received = if matches!(value, Value::Array(_)) {
+                " Received an instance of Array".to_string()
+            } else {
+                crate::modules::util::invalid_arg_received(value)
+            };
+            Err(enc::invalid_arg_type(format!(
+                "The \"value\" argument must be one of type number or string or an instance of Buffer or Uint8Array.{received}"
+            )))
+        }
     }
 }
 
@@ -99,7 +126,7 @@ fn search_byte(haystack: &[u8], byte: u8, offset: Option<&Value>, mode: &Search)
     }
 }
 
-fn search_bytes(haystack: &[u8], needle: &[u8], offset: Option<&Value>, mode: &Search) -> i64 {
+fn search_bytes(haystack: &[u8], needle: &[u8], offset: Option<&Value>, mode: &Search, utf16: bool) -> i64 {
     if needle.is_empty() {
         return match mode {
             Search::LastIndexOf => search_offset(offset, haystack.len(), true),
@@ -111,13 +138,13 @@ fn search_bytes(haystack: &[u8], needle: &[u8], offset: Option<&Value>, mode: &S
             let start = search_offset(offset, haystack.len(), true);
             (0..=start)
                 .rev()
-                .find(|&i| ends_at(haystack, needle, i as usize))
+                .find(|&i| (!utf16 || i % 2 == 0) && ends_at(haystack, needle, i as usize))
                 .map_or(-1, |i| i)
         }
         _ => {
             let start = search_offset(offset, haystack.len(), false) as usize;
             (start..haystack.len())
-                .find(|&i| ends_at(haystack, needle, i))
+                .find(|&i| (!utf16 || i % 2 == 0) && ends_at(haystack, needle, i))
                 .map_or(-1, |i| i as i64)
         }
     }
