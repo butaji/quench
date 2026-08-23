@@ -82,15 +82,22 @@ pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)
     }
     let slots = crate::execute::get_property_result(receiver, SLOT)?;
     match slots {
-        Value::Object(slots) => Ok(slots.properties.clone()),
+        Value::Object(slots) => Ok(shared_slots(&slots.properties)),
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
             .upgrade()
-            .map(|slots| slots.properties.clone())
+            .map(|slots| shared_slots(&slots.properties))
             .ok_or_else(|| runtime_error("TypeError: not an Intl object")),
         _ => Err(runtime_error("TypeError: not an Intl object")),
     }
+}
+
+fn shared_slots(slots: &crate::value::ObjectProperties) -> Vec<(String, Value)> {
+    slots
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
+        .collect()
 }
 
 fn proxy_fallback_key(receiver: &Value) -> Result<String, VmError> {

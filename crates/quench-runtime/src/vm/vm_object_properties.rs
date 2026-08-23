@@ -31,7 +31,11 @@ pub(crate) fn has_restricted_function_property(value: &Value, key: &str) -> bool
     is_restricted && !properties.iter().any(|(name, _)| name == key)
 }
 
-fn object_prototype_property(receiver: &Value, properties: &[(String, Value)], key: &str) -> Value {
+fn object_prototype_property(
+    receiver: &Value,
+    properties: &[(crate::value::PropertyName, Value)],
+    key: &str,
+) -> Value {
     properties
         .iter()
         .rev()
@@ -68,7 +72,7 @@ pub(crate) fn object_property(
     object_builtin_property(properties, key)
 }
 
-fn object_builtin_property(properties: &[(String, Value)], key: &str) -> Value {
+fn object_builtin_property(properties: &[(crate::value::PropertyName, Value)], key: &str) -> Value {
     crate::builtins::property(object_prototype(properties), key)
 }
 
@@ -166,7 +170,7 @@ pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, k
     }
 }
 
-fn object_prototype(properties: &[(String, Value)]) -> Builtin {
+fn object_prototype(properties: &[(crate::value::PropertyName, Value)]) -> Builtin {
     if let Some((_, value)) = properties.iter().find(|(name, _)| name == "_value") {
         return match value {
             Value::String(value) if value.contains('\0') => Builtin::SymbolPrototype,

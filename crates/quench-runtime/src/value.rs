@@ -412,7 +412,69 @@ impl PropertyDescriptor {
     }
 }
 
-pub type ObjectProperties = Vec<(String, Value)>;
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PropertyName(Rc<str>);
+
+impl PropertyName {
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for PropertyName {
+    type Target = str;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<str> for PropertyName {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<&str> for PropertyName {
+    fn from(value: &str) -> Self {
+        Self(Rc::from(value))
+    }
+}
+
+impl From<String> for PropertyName {
+    fn from(value: String) -> Self {
+        Self(Rc::from(value))
+    }
+}
+
+impl From<PropertyName> for String {
+    fn from(value: PropertyName) -> Self {
+        value.0.to_string()
+    }
+}
+
+impl PartialEq<str> for PropertyName {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for PropertyName {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for PropertyName {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
+pub type ObjectProperties = Vec<(PropertyName, Value)>;
 pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 
 /// Canonical ordinary-object state. `properties` is the sole semantic store
@@ -476,11 +538,26 @@ impl ObjectData {
         &self.properties as *const ObjectProperties
     }
 
-    pub(crate) fn new(properties: ObjectProperties) -> Self {
+    pub(crate) fn new(properties: Vec<(String, Value)>) -> Self {
         Self::with_private_slots(properties, Rc::new(RefCell::new(Vec::new())))
     }
 
     pub(crate) fn with_private_slots(
+        properties: Vec<(String, Value)>,
+        private_slots: PrivateSlots,
+    ) -> Self {
+        let properties: ObjectProperties = properties
+            .into_iter()
+            .map(|(name, value)| (name.into(), value))
+            .collect();
+        Self::with_creation_order(
+            properties.clone(),
+            private_slots,
+            creation_order(&properties),
+        )
+    }
+
+    pub(crate) fn with_shared_properties(
         properties: ObjectProperties,
         private_slots: PrivateSlots,
     ) -> Self {
@@ -489,6 +566,10 @@ impl ObjectData {
             private_slots,
             creation_order(&properties),
         )
+    }
+
+    pub(crate) fn from_shared_properties(properties: ObjectProperties) -> Self {
+        Self::with_shared_properties(properties, Rc::new(RefCell::new(Vec::new())))
     }
 
     pub(crate) fn original_prototype(&self) -> Option<Value> {
@@ -535,16 +616,16 @@ impl std::ops::DerefMut for ObjectData {
     }
 }
 
-fn creation_order(properties: &[(String, Value)]) -> Vec<String> {
+fn creation_order(properties: &[(PropertyName, Value)]) -> Vec<String> {
     // Bootstrap objects commonly arrive with all properties at once. Reserve
     // the final key count so creation-order storage does not repeatedly grow
     // and retain transient allocator pages during bootstrap.
     let mut created = Vec::with_capacity(properties.len());
     for (key, _) in properties {
-        if key.starts_with('\0') || created.iter().any(|name| name == key) {
+        if key.starts_with('\0') || created.iter().any(|name| name == key.as_str()) {
             continue;
         }
-        created.push(key.clone());
+        created.push(key.as_str().to_owned());
     }
     created
 }
@@ -557,7 +638,8 @@ impl PartialEq for ObjectData {
 
 #[cfg(test)]
 mod object_identity_tests {
-    use super::ObjectData;
+    use super::{ObjectData, PropertyName};
+    use std::rc::Rc;
 
     #[test]
     fn fresh_objects_have_distinct_stable_identities() {
@@ -570,6 +652,14 @@ mod object_identity_tests {
     fn cloning_preserves_object_identity() {
         let object = ObjectData::new(Vec::new());
         assert_eq!(object.identity(), object.clone().identity());
+    }
+
+    #[test]
+    fn property_name_clones_share_immutable_storage() {
+        let name = PropertyName::from("currentTask");
+        let clone = name.clone();
+        assert!(Rc::ptr_eq(&name.0, &clone.0));
+        assert_eq!(std::mem::size_of::<PropertyName>(), 2 * std::mem::size_of::<usize>());
     }
 }
 /// Derived layout facts for ordinary objects. These are never authoritative;
@@ -746,9 +836,9 @@ impl ObjectData {
             .unwrap_or(visible.len());
         let mut next = self.properties.clone();
         if slot == visible.len() {
-            next.push((property.to_string(), Value::Undefined));
+            next.push((property.into(), Value::Undefined));
         }
-        let target = ObjectData::new(next).shape();
+        let target = ObjectData::from_shared_properties(next).shape();
         Some(ObjectTransition {
             from: current.id,
             property: key_id,

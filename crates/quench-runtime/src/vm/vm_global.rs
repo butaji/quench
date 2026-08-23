@@ -55,12 +55,12 @@ pub(crate) fn begin_global_declaration_batch() {
             }
         } else {
             properties.push((
-                "Math".to_string(),
+                "Math".into(),
                 Value::BindingCell(Rc::new(RefCell::new(math))),
             ));
         }
     }
-    let staged = Rc::new(crate::value::ObjectData::with_private_slots(
+    let staged = Rc::new(crate::value::ObjectData::with_shared_properties(
         properties,
         Rc::new(RefCell::new(current.private_slots.borrow().clone())),
     ));

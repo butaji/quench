@@ -223,7 +223,7 @@ fn read_pairs_from_object(
             continue;
         }
         let literal = value_to_literal_string(value);
-        pairs.push((key.clone(), literal));
+        pairs.push((key.as_str().to_owned(), literal));
     }
     pairs
 }
