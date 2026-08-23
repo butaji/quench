@@ -50,7 +50,14 @@ pub(crate) fn execute(
         return crate::generator::create(function, &receiver, arguments);
     }
     if function.is_async {
-        let generator = match crate::generator::create(function, &receiver, arguments)? {
+        // Parameter evaluation belongs to the async call's completion. A
+        // direct-eval SyntaxError in a default parameter rejects the promise
+        // instead of escaping as a synchronous host error.
+        let generator = match crate::generator::create(function, &receiver, arguments) {
+            Ok(generator) => generator,
+            Err(error) => return Ok(crate::promise::from_async_completion(Err(error))),
+        };
+        let generator = match generator {
             crate::value::Value::Generator(generator) => generator,
             _ => unreachable!("generator creation must return a generator"),
         };
