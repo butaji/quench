@@ -41,7 +41,18 @@ pub fn from(
                 &enc::encode_value(&first, &encoding)?,
             ))
         }
-        Value::Array(_) | Value::Object(_) => from_object(&first, args.get(1)),
+        Value::Array(_) => from_object(&first, args.get(1)),
+        Value::Object(_) => {
+            // JSON.stringify(Buffer) produces the canonical `{ type:
+            // "Buffer", data: [...] }` record accepted by Buffer.from.
+            if matches!(get_property(&first, "type"), Value::String(kind) if kind == "Buffer") {
+                let data = get_property(&first, "data");
+                if matches!(data, Value::Array(_)) {
+                    return from(_state, &[data]);
+                }
+            }
+            from_object(&first, args.get(1))
+        }
         Value::ArrayBuffer(buf) => from_array_buffer(buf, args),
         Value::Number(_)
         | Value::Boolean(_)
@@ -55,6 +66,18 @@ pub fn from(
         _ if is_typed_view(&first) => from_array_like(&first),
         _ => Ok(crate::modules::buffer_proto::make_buffer(&[])),
     }
+}
+
+/// `Buffer.of(...values)` — numeric values are converted with ToNumber and
+/// stored modulo 256, sharing Buffer's canonical byte representation.
+pub fn of(args: &[Value]) -> Result<Value, VmError> {
+    let mut bytes = Vec::with_capacity(args.len());
+    for value in args {
+        let number = quench_runtime::to_number(value)?;
+        let byte = if number.is_nan() { 0 } else { (number as i64 & 0xff) as u8 };
+        bytes.push(byte);
+    }
+    Ok(crate::modules::buffer_proto::make_buffer(&bytes))
 }
 
 fn first_arg_error(value: &Value) -> VmError {
