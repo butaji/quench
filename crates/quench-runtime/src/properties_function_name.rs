@@ -1,5 +1,5 @@
 pub(crate) fn execute_set_function_name(
-    registers: &mut [crate::value::Value],
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), crate::execute::VmError> {
     let crate::ops::Op::SetFunctionName { function, name } = op else {
@@ -10,7 +10,7 @@ pub(crate) fn execute_set_function_name(
 }
 
 pub(crate) fn execute_set_function_name_dynamic(
-    registers: &mut [crate::value::Value],
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), crate::execute::VmError> {
     let crate::ops::Op::SetFunctionNameDynamic {

@@ -8,7 +8,7 @@ fn suspended_try_op(op: &crate::ops::Op, generator: &GeneratorData) -> bool {
 }
 
 fn resume_suspended_try_op(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     yield_op: &crate::ops::Op,
     suffix: crate::machine::CodeView<'_>,
     resume: crate::completion::Completion,

@@ -1,11 +1,11 @@
-fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+fn run_local_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<bool, VmError> {
     if run_local_storage_op(registers, op)? || run_local_binding_op(registers, op)? {
         return Ok(true);
     }
     Ok(false)
 }
 
-fn run_local_storage_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+fn run_local_storage_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<bool, VmError> {
     use Op::*;
     match op {
         StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
@@ -43,7 +43,7 @@ fn run_local_storage_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmE
     Ok(true)
 }
 
-fn run_local_binding_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+fn run_local_binding_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<bool, VmError> {
     use Op::*;
     match op {
         DeleteEvalBinding { dst, name, slot } => write_value(
@@ -66,7 +66,7 @@ fn run_local_binding_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmE
     Ok(true)
 }
 
-fn run_local_resolved_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+fn run_local_resolved_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<bool, VmError> {
     use Op::*;
     match op {
         ResolveBindingTarget { dst, name } => crate::locals::resolve_target(registers, *dst, name)?,

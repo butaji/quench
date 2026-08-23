@@ -1,5 +1,5 @@
 pub(crate) fn execute_binding(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let crate::ops::Op::IteratorBinding {

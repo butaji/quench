@@ -6,7 +6,7 @@ fn call_frame_suspend_and_resume_restores_caller_state() {
     ]);
     let mut machine = super::Machine::with_function(&function, super::EnvironmentRef(7), 2);
     machine.set_program_counter(1);
-    machine.registers_mut()[0] = super::Value::Number(11.0);
+    machine.registers_mut().write(0, super::Value::Number(11.0));
     machine.suspend_call(
         super::Value::Undefined,
         super::Value::Undefined,
@@ -25,8 +25,8 @@ fn call_frame_suspend_and_resume_restores_caller_state() {
     assert_eq!(continuation.destination, 1);
     assert_eq!(continuation.guards.flags, 9);
     assert_eq!(machine.program_counter(), 1);
-    assert_eq!(machine.registers_mut()[0], super::Value::Number(11.0));
-    assert_eq!(machine.registers_mut()[1], super::Value::Number(42.0));
+    assert_eq!(machine.registers_mut().read(0), Some(super::Value::Number(11.0)));
+    assert_eq!(machine.registers_mut().read(1), Some(super::Value::Number(42.0)));
     assert!(machine.call_frames.is_empty());
 }
 
@@ -40,7 +40,7 @@ fn machine_rejects_call_continuation_from_unknown_code_source() {
         arguments: Vec::new(),
         caller_code: super::CodeId(99),
         caller_pc: 0,
-        caller_registers: Vec::new(),
+        caller_registers: crate::register_file::RegisterFile::new(),
         caller_environment: EnvironmentRef(0),
         destination: 0,
         guards: crate::completion::ContinuationGuards::default(),

@@ -5,7 +5,7 @@ pub(crate) struct CompletionStep {
 
 pub(crate) fn execute_completion_step_in_place(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<CompletionStep, VmError> {
     let context = current_context_or_default();
     execute_completion_step_context(ops, registers, &context)
@@ -13,7 +13,7 @@ pub(crate) fn execute_completion_step_in_place(
 
 pub(crate) fn execute_code_completion_step_in_place(
     code: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
 ) -> Result<CompletionStep, VmError> {
     let context = current_context_or_default();
     if crate::locals::is_installed() {
@@ -21,7 +21,7 @@ pub(crate) fn execute_code_completion_step_in_place(
     }
     let environment = crate::environment::Environment::child(
         &crate::environment::Environment::new(),
-        registers.clone(),
+        registers.to_values(),
     );
     let _context_guard = ContextGuard::install(&context);
     let _global_guard = GlobalObjectGuard::install();
@@ -33,7 +33,7 @@ pub(crate) fn execute_code_completion_step_in_place(
 
 fn execute_completion_step_context(
     ops: &[Op],
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
     if crate::locals::is_installed() {
@@ -41,7 +41,7 @@ fn execute_completion_step_context(
     }
     let environment = crate::environment::Environment::child(
         &crate::environment::Environment::new(),
-        registers.clone(),
+        registers.to_values(),
     );
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();

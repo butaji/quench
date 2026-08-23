@@ -8,7 +8,7 @@ use super::{read_register_unchecked, write_value, VmError};
 
 #[inline]
 pub(crate) fn execute_unary(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     operator: crate::ops::UnaryOp,
     src: u16,
@@ -56,19 +56,34 @@ fn numeric_unary(value: &Value, transform: fn(f64) -> f64) -> Result<Value, VmEr
 }
 #[inline]
 pub(crate) fn execute_binary(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     operator: crate::ops::BinaryOp,
     lhs: u16,
     rhs: u16,
 ) -> Result<(), VmError> {
-    let direct = match (&registers[usize::from(lhs)], &registers[usize::from(rhs)]) {
-        (Value::Number(left), Value::Number(right)) => fast_number_binary(*left, *right, operator),
-        _ => None,
-    };
-    if let Some(result) = direct {
-        write_value(registers, dst, result);
-        return Ok(());
+    if let Some((left, right)) = registers
+        .read_number(usize::from(lhs))
+        .zip(registers.read_number(usize::from(rhs)))
+    {
+        use crate::ops::BinaryOp;
+        let result = match operator {
+            BinaryOp::Add => Some(left + right),
+            BinaryOp::Subtract => Some(left - right),
+            BinaryOp::Multiply => Some(left * right),
+            BinaryOp::Divide => Some(left / right),
+            BinaryOp::Remainder => Some(left % right),
+            BinaryOp::Exponentiate => Some(left.powf(right)),
+            _ => None,
+        };
+        if let Some(result) = result {
+            registers.write_number(usize::from(dst), result);
+            return Ok(());
+        }
+        if let Some(result) = fast_number_binary(left, right, operator) {
+            write_value(registers, dst, result);
+            return Ok(());
+        }
     }
     let left = read_register_unchecked(registers, lhs);
     let right = read_register_unchecked(registers, rhs);

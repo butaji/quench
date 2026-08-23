@@ -141,7 +141,10 @@ fn define_slot(value: &Value, name: PrivateName, slot: PrivateSlot) -> Result<()
     Ok(())
 }
 
-pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute_get(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::GetPrivate { dst, object, name } = op else {
         return Err(VmError::MissingReturn);
     };
@@ -152,7 +155,10 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmE
     Ok(())
 }
 
-pub(crate) fn execute_set(registers: &mut [Value], op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute_set(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::SetPrivate { object, name, src } = op else {
         return Err(VmError::MissingReturn);
     };
@@ -162,7 +168,10 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &Op) -> Result<(), VmErro
     set(&object, &name, value)
 }
 
-pub(crate) fn execute_define(registers: &mut [Value], op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute_define(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::DefinePrivate { object, name, src } = op else {
         return Err(VmError::MissingReturn);
     };

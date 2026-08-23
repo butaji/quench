@@ -55,18 +55,16 @@ fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
     if crate::vm::is_global_object(value) {
         return None;
     }
-    let deleted = crate::builtins::deleted_key(key);
-    let descriptor = crate::builtins::descriptor_key(key);
     let mut own = None;
     let mut metadata = None;
     for (name, value) in properties.iter().rev() {
-        if name == &deleted {
+        if crate::builtins::is_deleted_key_for(name, key) {
             return None;
         }
         if own.is_none() && name == key {
             own = Some(value);
         }
-        if metadata.is_none() && name == &descriptor {
+        if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
             metadata = Some(value);
         }
     }

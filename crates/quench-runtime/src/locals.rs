@@ -211,7 +211,11 @@ pub(crate) fn is_installed() -> bool {
     CURRENT_ENVIRONMENT.with(|current| current.borrow().is_some())
 }
 
-pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), VmError> {
+pub(crate) fn store(
+    registers: &crate::register_file::RegisterFile,
+    slot: u16,
+    source: u16,
+) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, source)?;
     if current().is_deleted(&current().slot_cell(slot)) {
         return Err(crate::value::error::throw_reference_error(&format!(
@@ -237,7 +241,7 @@ pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), V
 }
 
 pub(crate) fn store_function_name(
-    _registers: &[Value],
+    _registers: &crate::register_file::RegisterFile,
     _slot: u16,
     _source: u16,
     strict: bool,
@@ -251,7 +255,7 @@ pub(crate) fn store_function_name(
 }
 
 pub(crate) fn load_binding(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     slot: u16,
     name: &str,
@@ -278,7 +282,7 @@ pub(crate) fn load_binding(
 }
 
 pub(crate) fn resolve_target(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     name: &str,
 ) -> Result<(), VmError> {
@@ -288,7 +292,7 @@ pub(crate) fn resolve_target(
 }
 
 pub(crate) fn initialize_resolved(
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     target: u16,
     slot: u16,
     name: &str,
@@ -307,7 +311,7 @@ pub(crate) fn initialize_resolved(
 }
 
 pub(crate) fn set_resolved_local(
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     target: u16,
     slot: u16,
     name: &str,
@@ -339,7 +343,7 @@ pub(crate) fn set_resolved_local(
 }
 
 pub(crate) fn load_resolved_local(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     target: u16,
     slot: u16,
@@ -363,7 +367,11 @@ pub(crate) fn load_resolved_local(
     crate::execute::write_value(registers, dst, value);
     Ok(())
 }
-pub(crate) fn load(registers: &mut Vec<Value>, dst: u16, slot: u16) -> Result<(), VmError> {
+pub(crate) fn load(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+) -> Result<(), VmError> {
     crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
 }
@@ -393,7 +401,7 @@ pub(crate) fn initialize(slot: u16) {
 }
 
 pub(crate) fn load_parameter(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     slot: u16,
 ) -> Result<(), VmError> {
@@ -518,6 +526,11 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
     let Some(identity) = replacement_identity(old) else {
         return;
     };
+    // Canonical interior mutation keeps identity and storage unchanged. It
+    // must not publish a replacement entry or retain another owner per write.
+    if replacement_identity(new) == Some(identity) {
+        return;
+    }
     let root = REPLACEMENT_ROOTS.with(|roots| {
         let mut roots = roots.borrow_mut();
         let root = roots.get(&identity).copied().unwrap_or(identity);

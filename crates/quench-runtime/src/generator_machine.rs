@@ -38,7 +38,7 @@ fn execute_generator_step(
 
 fn execute_with_generator_registers<T>(
     generator: &GeneratorData,
-    execute: impl FnOnce(&mut Vec<Value>) -> Result<T, VmError>,
+    execute: impl FnOnce(&mut crate::register_file::RegisterFile) -> Result<T, VmError>,
 ) -> Result<T, VmError> {
     let mut registers = generator.machine.borrow_mut().take_registers();
     let result = execute(&mut registers);

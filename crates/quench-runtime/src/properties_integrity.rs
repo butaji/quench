@@ -313,7 +313,7 @@ fn replace_object(
     let result = crate::value::Value::Object(std::rc::Rc::new(sealed));
     crate::locals::replace_value(target, &result);
     if crate::vm::is_global_object(target) {
-        let mut registers = Vec::new();
+        let mut registers = crate::register_file::RegisterFile::new();
         crate::vm::synchronize_global_object(&mut registers, target, &result);
     }
     result

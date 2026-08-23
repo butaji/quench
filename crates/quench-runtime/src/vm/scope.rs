@@ -17,7 +17,7 @@ impl ExecutionScope {
     pub fn execute(
         &self,
         ops: &[Op],
-        registers: &mut Vec<Value>,
+        registers: &mut crate::register_file::RegisterFile,
         context: &VmContext,
     ) -> Result<Value, crate::execute::VmError> {
         super::execute_in_environment(ops, registers, context, Rc::clone(&self.0))
@@ -27,7 +27,7 @@ impl ExecutionScope {
         &self,
         ops: &[Op],
         start: usize,
-        registers: &mut Vec<Value>,
+        registers: &mut crate::register_file::RegisterFile,
         context: &VmContext,
     ) -> Result<(crate::completion::Completion, usize), crate::execute::VmError> {
         super::execute_ops_from(ops, start, registers, context, Rc::clone(&self.0))
@@ -37,7 +37,7 @@ impl ExecutionScope {
         &self,
         code: crate::machine::CodeView<'_>,
         start: usize,
-        registers: &mut Vec<Value>,
+        registers: &mut crate::register_file::RegisterFile,
         context: &VmContext,
     ) -> Result<(crate::completion::Completion, usize), crate::execute::VmError> {
         super::execute_code_from(code, start, registers, context, Rc::clone(&self.0))
