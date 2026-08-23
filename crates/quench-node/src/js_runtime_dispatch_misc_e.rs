@@ -474,9 +474,11 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::OsHostname) => Ok(Value::String(
                 sysinfo::System::host_name().unwrap_or_else(|| "unknown".into()).into(),
             )),
+            // Node's os.version() is the kernel version, not the friendly
+            // distribution name returned by sysinfo::long_os_version().
             HostCapabilityKind::Custom(CapabilityName::OsVersion) => Ok(Value::String(
-                sysinfo::System::long_os_version()
-                    .or_else(sysinfo::System::kernel_version)
+                sysinfo::System::kernel_version()
+                    .or_else(sysinfo::System::long_os_version)
                     .unwrap_or_default()
                     .into(),
             )),

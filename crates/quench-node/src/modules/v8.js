@@ -44,23 +44,50 @@ module.exports = {
   Serializer, DefaultSerializer, Deserializer, DefaultDeserializer,
   cachedDataVersionTag() { return 0; },
   getHeapStatistics() {
+    // Keep the public V8 shape useful even though the embedded runtime does
+    // not expose V8's per-space allocator. These values are process-local and
+    // therefore track allocations instead of returning misleading constants.
+    const memory = process.memoryUsage();
+    const heapTotal = Number(memory.heapTotal) || 0;
+    const heapUsed = Math.min(heapTotal, Number(memory.heapUsed) || 0);
+    const external = Number(memory.external) || 0;
     return {
-      total_heap_size: 1, total_heap_size_executable: 0, total_physical_size: 1,
-      total_available_size: 1, used_heap_size: 1, heap_size_limit: 1,
-      malloced_memory: 0, external_memory: 0, peak_malloced_memory: 0,
-      does_zap_garbage: 0, number_of_native_contexts: 1,
-      number_of_detached_contexts: 0, total_global_handles_size: 0,
+      total_heap_size: heapTotal,
+      total_heap_size_executable: 0,
+      total_physical_size: heapTotal,
+      total_available_size: Math.max(0, 4 * 1024 * 1024 * 1024 - heapUsed),
+      used_heap_size: heapUsed,
+      heap_size_limit: 4 * 1024 * 1024 * 1024,
+      malloced_memory: 0,
+      external_memory: external,
+      peak_malloced_memory: 0,
+      does_zap_garbage: 0,
+      number_of_native_contexts: 1,
+      number_of_detached_contexts: 0,
+      total_global_handles_size: 0,
       used_global_handles_size: 0
     };
   },
   getHeapSpaceStatistics() {
-    return [{
-      space_name: 'read_only_space',
-      space_size: 0,
-      space_used_size: 0,
-      space_available_size: 0,
-      physical_space_size: 0
-    }];
+    const memory = process.memoryUsage();
+    const total = Number(memory.heapTotal) || 0;
+    const used = Math.min(Number(memory.heapUsed) || 0, total);
+    // Node exposes a version-dependent list, but always returns objects with
+    // these five fields. Use stable coarse spaces for the embedded engine.
+    const spaces = ['read_only_space', 'new_space', 'old_space', 'code_space'];
+    return spaces.map((space_name, index) => {
+      const space_size = index === 0 ? 0 : Math.floor(total / (spaces.length - 1));
+      const space_used_size = index === 0 ? 0 : Math.min(
+        space_size, index === spaces.length - 1 ? 0 : Math.floor(used / 2)
+      );
+      return {
+        space_name,
+        space_size,
+        space_used_size,
+        space_available_size: Math.max(0, space_size - space_used_size),
+        physical_space_size: space_size
+      };
+    });
   },
   getHeapCodeStatistics() {
     return { code_and_metadata_size: 0, bytecode_and_metadata_size: 0,
