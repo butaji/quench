@@ -37,7 +37,7 @@ pub(crate) fn create(
     } else {
         Vec::new()
     };
-    let register_count = function.ops().len().clamp(32, usize::from(u16::MAX)) as u16;
+    let register_count = function.code.len().clamp(32, usize::from(u16::MAX)) as u16;
     let mut machine = crate::machine::Machine::with_function(
         &function.code,
         crate::machine::EnvironmentRef(0),
@@ -67,11 +67,8 @@ fn initialize_parameters(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<InitialGeneratorState, VmError> {
-    let Some(marker) = function
-        .ops()
-        .iter()
-        .position(|op| matches!(op, Op::ParameterEnd))
-    else {
+    let code = function.code.code().ok_or(VmError::MissingReturn)?;
+    let Some(marker) = code.position_cold(|op| matches!(op, Op::ParameterEnd)) else {
         return Ok((None, Vec::new(), 0, None));
     };
     let (mut registers, environment) =
@@ -81,8 +78,8 @@ fn initialize_parameters(
     );
     let _home = crate::super_scope::Guard::install(function, receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
-    let step = crate::vm::execute_generator_step(
-        &function.ops()[..marker],
+    let step = crate::vm::execute_generator_code_step(
+        code.slice(0, marker).ok_or(VmError::MissingReturn)?,
         &mut registers,
         Rc::clone(&environment),
         0,

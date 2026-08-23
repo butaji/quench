@@ -46,8 +46,8 @@ impl ResidualProgram {
         }
     }
 
-    pub fn ops(&self) -> &[Op] {
-        self.code.ops()
+    pub fn code(&self) -> crate::machine::CodeView<'_> {
+        self.code.code()
     }
 }
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {

@@ -18,6 +18,55 @@ pub(crate) fn execute_generator_step(
     run_generator_steps(ops, registers, pc, resume, &context)
 }
 
+pub(crate) fn execute_generator_code_step(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut Vec<Value>,
+    environment: Rc<crate::environment::Environment>,
+    pc: usize,
+    resume: crate::completion::Completion,
+) -> Result<GeneratorStep, VmError> {
+    let context = VmContext::default();
+    let _context_guard = ContextGuard::install(&context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    run_generator_code_steps(code, registers, pc, resume, &context)
+}
+
+fn run_generator_code_steps(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut Vec<Value>,
+    pc: usize,
+    resume: crate::completion::Completion,
+    context: &VmContext,
+) -> Result<GeneratorStep, VmError> {
+    if !matches!(resume, crate::completion::Completion::Normal)
+        && !matches!(code.cold_at(pc), Some(Op::YieldStar { .. }))
+    {
+        return Ok(GeneratorStep { completion: resume, pc, suspension: None });
+    }
+    for next in pc..code.len() {
+        let instruction = code.instruction(next).ok_or(VmError::MissingReturn)?;
+        if let Some(op @ Op::YieldStar { .. }) = code.cold(instruction) {
+            if let Some(step) = run_yield_star_step(registers, op, &resume, next)? {
+                return Ok(step);
+            }
+            continue;
+        }
+        let result = run_instruction(code, instruction, registers, context)?;
+        if let Some(completion) = result.filter(|value| !matches!(value, crate::completion::Completion::Normal)) {
+            crate::vm::flush_global_declaration_batch(registers);
+            let suspension = code.cold(instruction).and_then(|op| {
+                matches!(completion, crate::completion::Completion::Yield(_))
+                    .then(|| direct_suspension(op, next))
+                    .flatten()
+            });
+            return Ok(GeneratorStep { completion, pc: next + 1, suspension });
+        }
+    }
+    crate::vm::flush_global_declaration_batch(registers);
+    Ok(GeneratorStep { completion: crate::completion::Completion::Normal, pc: code.len(), suspension: None })
+}
+
 fn run_generator_steps(
     ops: &[Op],
     registers: &mut Vec<Value>,

@@ -96,7 +96,8 @@ impl ConstantPool {
 
 #[derive(Debug, Default)]
 pub struct CodeArena {
-    ops: Vec<Op>,
+    instructions: Vec<crate::ir::Instruction>,
+    cold: Vec<Op>,
     ranges: Vec<(u32, u32)>,
     metadata: Vec<Vec<InstructionMeta>>,
 }
@@ -278,9 +279,9 @@ impl FrameStack {
     /// backing allocation or introducing a second frame representation.
     pub fn invariant_holds(&self) -> bool {
         self.frames.len() <= usize::from(self.limit)
-            && self.top_offset().is_none_or(|offset| {
-                usize::from(offset) + 1 == self.frames.len()
-            })
+            && self
+                .top_offset()
+                .is_none_or(|offset| usize::from(offset) + 1 == self.frames.len())
     }
     /// Return the offset of the top frame in the contiguous frame storage.
     #[inline]
@@ -314,10 +315,17 @@ impl CodeArena {
         let nested = body.iter().map(Op::body_count).sum::<usize>();
         self.ranges.reserve(nested.saturating_add(1));
         let code = CodeId(self.ranges.len() as u32);
-        let start = self.ops.len() as u32;
-        self.ops.extend_from_slice(body);
+        let start = self.instructions.len() as u32;
+        for op in body {
+            let instruction = crate::ir::lower_compact(op).unwrap_or_else(|| {
+                let index = self.cold.len() as u32;
+                self.cold.push(op.clone());
+                crate::ir::Instruction::slow_at(index)
+            });
+            self.instructions.push(instruction);
+        }
         self.metadata.push(body.iter().map(metadata_for).collect());
-        let end = self.ops.len() as u32;
+        let end = self.instructions.len() as u32;
         self.ranges.push((start, end));
         CodeRange { code, start, end }
     }
@@ -327,20 +335,19 @@ impl CodeArena {
     }
 
     pub fn append_function(&mut self, function: &FunctionCode) -> Option<CodeRange> {
-        let body = function.ops()?;
+        let body = function.source_ops()?;
         Some(self.append_slice(body))
     }
 
-    pub fn get(&self, range: CodeRange) -> Option<&[Op]> {
+    fn code(&self, range: CodeRange) -> Option<CodeArenaView<'_>> {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
-        (range.start >= start && range.end <= end)
-            .then(|| &self.ops[range.start as usize..range.end as usize])
+        (range.start >= start && range.end <= end).then_some(CodeArenaView { arena: self, range })
     }
     pub fn constant_pool(&self, range: CodeRange) -> ConstantPool {
         ConstantPool::new(
-            self.get(range)
+            self.code(range)
                 .into_iter()
-                .flat_map(|ops| ops.iter())
+                .flat_map(CodeArenaView::cold_ops)
                 .filter_map(|op| match op {
                     Op::Const { value, .. } => Some(value.clone()),
                     _ => None,
@@ -359,7 +366,8 @@ impl CodeArena {
 
     pub fn freeze(self) -> Rc<CodeStore> {
         Rc::new(CodeStore {
-            ops: self.ops.into_boxed_slice().into(),
+            instructions: self.instructions.into_boxed_slice().into(),
+            cold: self.cold.into_boxed_slice().into(),
             ranges: self.ranges.into_boxed_slice().into(),
             metadata: self.metadata.into_boxed_slice().into(),
         })
@@ -368,16 +376,16 @@ impl CodeArena {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CodeStore {
-    ops: Rc<[Op]>,
+    instructions: Rc<[crate::ir::Instruction]>,
+    cold: Rc<[Op]>,
     ranges: Rc<[(u32, u32)]>,
     metadata: Rc<[Vec<InstructionMeta>]>,
 }
 
 impl CodeStore {
-    pub fn get(&self, range: CodeRange) -> Option<&[Op]> {
+    pub fn code(&self, range: CodeRange) -> Option<CodeView<'_>> {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
-        (range.start >= start && range.end <= end)
-            .then(|| &self.ops[range.start as usize..range.end as usize])
+        (range.start >= start && range.end <= end).then_some(CodeView { store: self, range })
     }
     /// Rare metadata lives out of line from hot instructions.
     pub fn metadata(&self, range: CodeRange) -> Option<&[InstructionMeta]> {
@@ -386,8 +394,8 @@ impl CodeStore {
     /// Build the compact pool used by lowering and diagnostics.
     pub fn constant_pool(&self, range: CodeRange) -> ConstantPool {
         let mut values = Vec::new();
-        if let Some(ops) = self.get(range) {
-            for op in ops {
+        if let Some(code) = self.code(range) {
+            for (_, op) in code.cold_ops() {
                 let Op::Const { value, .. } = op else {
                     continue;
                 };
@@ -405,6 +413,79 @@ impl CodeStore {
     }
 }
 
+struct CodeArenaView<'a> {
+    arena: &'a CodeArena,
+    range: CodeRange,
+}
+
+impl<'a> CodeArenaView<'a> {
+    fn cold_ops(self) -> impl Iterator<Item = &'a Op> {
+        (self.range.start as usize..self.range.end as usize).filter_map(move |pc| {
+            let instruction = self.arena.instructions[pc];
+            let index = instruction.cold_index()? as usize;
+            self.arena.cold.get(index)
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct CodeView<'a> {
+    store: &'a CodeStore,
+    range: CodeRange,
+}
+
+impl<'a> CodeView<'a> {
+    pub fn len(self) -> usize {
+        self.range.end.saturating_sub(self.range.start) as usize
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.range.start == self.range.end
+    }
+
+    #[inline]
+    pub fn instruction(self, pc: usize) -> Option<crate::ir::Instruction> {
+        (pc < self.len()).then(|| self.store.instructions[(self.range.start as usize) + pc])
+    }
+
+    #[inline]
+    pub fn cold(self, instruction: crate::ir::Instruction) -> Option<&'a Op> {
+        let index = instruction.cold_index()? as usize;
+        self.store.cold.get(index)
+    }
+
+    pub fn cold_at(self, pc: usize) -> Option<&'a Op> {
+        self.instruction(pc)
+            .and_then(|instruction| self.cold(instruction))
+    }
+
+    pub fn slice(self, start: usize, end: usize) -> Option<Self> {
+        (start <= end && end <= self.len()).then(|| Self {
+            store: self.store,
+            range: CodeRange {
+                code: self.range.code,
+                start: self.range.start + start as u32,
+                end: self.range.start + end as u32,
+            },
+        })
+    }
+
+    pub fn position_cold(self, mut predicate: impl FnMut(&Op) -> bool) -> Option<usize> {
+        (0..self.len()).find(|&pc| self.cold_at(pc).is_some_and(&mut predicate))
+    }
+
+    pub fn find_cold(self, mut predicate: impl FnMut(&Op) -> bool) -> Option<(usize, &'a Op)> {
+        (0..self.len()).find_map(|pc| {
+            let op = self.cold_at(pc)?;
+            predicate(op).then_some((pc, op))
+        })
+    }
+
+    pub fn cold_ops(self) -> impl Iterator<Item = (usize, &'a Op)> + 'a {
+        (0..self.len()).filter_map(move |pc| self.cold_at(pc).map(|op| (pc, op)))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutableCode {
     store: Rc<CodeStore>,
@@ -417,10 +498,6 @@ impl ExecutableCode {
         Self { store, entry }
     }
 
-    pub fn ops(&self) -> &[Op] {
-        self.store.get(self.entry).unwrap_or(&[])
-    }
-
     pub fn store(&self) -> Rc<CodeStore> {
         self.store.clone()
     }
@@ -428,18 +505,43 @@ impl ExecutableCode {
     pub fn entry(&self) -> CodeRange {
         self.entry
     }
+
+    pub fn code(&self) -> CodeView<'_> {
+        self.store.code(self.entry).expect("executable range")
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionCode {
     store: Rc<OnceLock<Rc<CodeStore>>>,
     pub range: CodeRange,
+    source: Option<Rc<[Op]>>,
 }
 
 impl FunctionCode {
     pub fn from_ops(body: Vec<Op>) -> Self {
         let (_, range, store) = freeze_tree(body);
-        Self { store, range }
+        Self {
+            store,
+            range,
+            source: None,
+        }
+    }
+
+    pub fn pending(body: Vec<Op>) -> Self {
+        Self {
+            store: Rc::new(OnceLock::new()),
+            range: CodeRange {
+                code: CodeId(0),
+                start: 0,
+                end: body.len() as u32,
+            },
+            source: Some(body.into_boxed_slice().into()),
+        }
+    }
+
+    pub fn pending_many(bodies: Vec<Vec<Op>>) -> Vec<Self> {
+        bodies.into_iter().map(Self::pending).collect()
     }
 
     /// Materialize related nested bodies in one immutable store.
@@ -456,6 +558,7 @@ impl FunctionCode {
             .map(|range| Self {
                 store: store.clone(),
                 range,
+                source: None,
             })
             .collect()
     }
@@ -466,15 +569,24 @@ impl FunctionCode {
         Self {
             store: linked,
             range,
+            source: None,
         }
     }
 
-    pub fn ops(&self) -> Option<&[Op]> {
-        self.store.get()?.get(self.range)
+    pub(crate) fn source_ops(&self) -> Option<&[Op]> {
+        self.source.as_deref()
     }
 
     pub fn code_id(&self) -> CodeId {
         self.range.code
+    }
+
+    pub fn len(&self) -> usize {
+        self.range.end.saturating_sub(self.range.start) as usize
+    }
+
+    pub(crate) fn code(&self) -> Option<CodeView<'_>> {
+        self.store.get()?.code(self.range)
     }
 
     pub(crate) fn store(&self) -> Option<Rc<CodeStore>> {
@@ -482,10 +594,9 @@ impl FunctionCode {
     }
 
     pub(crate) fn rehome(&mut self, arena: &mut CodeArena, store: &Rc<OnceLock<Rc<CodeStore>>>) {
-        let Some(body) = self.ops() else {
-            return;
-        };
-        self.range = arena.append_tree(body.to_vec(), store);
+        let body = self.source.take().map(|body| body.to_vec());
+        let Some(body) = body else { return };
+        self.range = arena.append_tree(body, store);
         self.store = store.clone();
     }
 }
@@ -501,7 +612,9 @@ fn freeze_tree(body: Vec<Op>) -> (Rc<CodeStore>, CodeRange, Rc<OnceLock<Rc<CodeS
 
 impl PartialEq for FunctionCode {
     fn eq(&self, other: &Self) -> bool {
-        self.range == other.range && self.ops() == other.ops()
+        self.range == other.range
+            && self.source == other.source
+            && (self.source.is_some() || Rc::ptr_eq(&self.store, &other.store))
     }
 }
 
@@ -675,7 +788,12 @@ impl Machine {
         let valid = self
             .store
             .as_ref()
-            .map(|store| frame.ranges().into_iter().all(|range| store.get(range).is_some()))
+            .map(|store| {
+                frame
+                    .ranges()
+                    .into_iter()
+                    .all(|range| store.code(range).is_some())
+            })
             .unwrap_or(false);
         if !valid {
             return Err(frame);
@@ -927,9 +1045,28 @@ mod tests {
         let range = arena.append_slice(&[super::Op::ParameterEnd]);
         let store = arena.freeze();
         assert_eq!(store.range_len(range.code), Some(1));
-        assert_eq!(store.get(range).map(<[_]>::len), Some(1));
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0).map(|word| word.opcode),
+            Some(crate::ir::Opcode::Slow)
+        );
+        assert!(matches!(code.cold_at(0), Some(super::Op::ParameterEnd)));
         let invalid = super::CodeRange::new(range.code, 0, 2).unwrap();
-        assert!(store.get(invalid).is_none());
+        assert!(store.code(invalid).is_none());
+    }
+
+    #[test]
+    fn fast_instruction_has_no_duplicate_cold_operation() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::Move { dst: 1, src: 2 }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::move_(1, 2))
+        );
+        assert!(code.cold_at(0).is_none());
     }
     #[test]
     fn frozen_code_store_owns_metadata_after_builder_drop() {
@@ -962,7 +1099,7 @@ mod tests {
             name: "temporal_name".to_string(),
         }]);
         let store = arena.freeze();
-        let instructions = store.get(range).expect("instruction range");
+        let instructions = store.code(range).expect("instruction range");
         assert_eq!(instructions.len(), 1);
         assert_eq!(store.range_len(range.code), Some(1));
         let metadata = store.metadata(range).expect("metadata must resolve");

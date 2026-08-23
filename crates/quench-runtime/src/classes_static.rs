@@ -30,6 +30,6 @@ fn reduce_static_block(
     Some(Op::StaticBlock {
         constructor,
         captures,
-        body: crate::machine::FunctionCode::from_ops(body),
+        body: crate::machine::FunctionCode::pending(body),
     })
 }
