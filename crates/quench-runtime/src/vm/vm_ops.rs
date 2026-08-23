@@ -76,6 +76,13 @@ pub fn execute_call_continuation(
         if function.is_async || matches!(function.kind, crate::ops::FunctionKind::Generator) {
             return Ok(None);
         }
+        // Functions created inside a `with` scope carry a dynamic object
+        // environment. The optimized continuation path has no per-frame
+        // scope guard, so use the ordinary invocation path for these
+        // closures to restore the captured object lookup semantics.
+        if !function.with_captures.is_empty() {
+            return Ok(None);
+        }
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
