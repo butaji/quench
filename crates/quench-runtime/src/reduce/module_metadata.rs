@@ -17,6 +17,7 @@ pub struct ModuleMetadata {
     pub exported_names: Vec<String>,
     pub has_top_level_await: bool,
     pub requests: Vec<ModuleRequest>,
+    pub dynamic_import_specifiers: Vec<String>,
 }
 
 /// One ModuleRequest Record: specifier + phase, in source order.
@@ -65,7 +66,8 @@ impl ModuleMetadata {
         }
         metadata.mark_source_exports();
         metadata.has_top_level_await = statements.iter().any(statement_has_tla);
-        for specifier in dynamic_import_specifiers(statements) {
+        metadata.dynamic_import_specifiers = dynamic_import_specifiers(statements);
+        for specifier in metadata.dynamic_import_specifiers.clone() {
             push_unique(&mut metadata.import_specifiers, &specifier);
         }
         metadata
@@ -318,7 +320,7 @@ fn module_export_name(name: &ModuleExportName<'_>) -> String {
     }
 }
 
-fn dynamic_import_specifiers(statements: &[Statement<'_>]) -> Vec<String> {
+pub fn dynamic_import_specifiers(statements: &[Statement<'_>]) -> Vec<String> {
     struct Finder {
         specifiers: Vec<String>,
     }
