@@ -456,10 +456,6 @@ pub(crate) fn execute_target(
             let crate::value::Value::HostCapability(capability) = &bound.target else {
                 unreachable!()
             };
-            let capability_receiver = match &bound.receiver {
-                crate::value::Value::BindingCell(cell) => cell.borrow().clone(),
-                value => value.clone(),
-            };
             let capability_handle = crate::value::Value::HostCapability(capability.clone());
             let mut combined = bound.arguments.clone();
             combined.extend_from_slice(arguments);
