@@ -29,10 +29,18 @@ pub(crate) fn initialize_global_object(value: &Value) {
 }
 
 pub(crate) fn is_global_object(value: &Value) -> bool {
-    let Value::Object(object) = value else {
+    let Some(object) = global_object_target(value) else {
         return false;
     };
-    matches!(current_global_object(), Value::Object(global) if Rc::ptr_eq(&global, object))
+    matches!(current_global_object(), Value::Object(global) if Rc::ptr_eq(&global, &object))
+}
+
+fn global_object_target(value: &Value) -> Option<ObjectProperties> {
+    match value {
+        Value::Object(object) => Some(object.clone()),
+        Value::ObjectAlias(alias) => alias.target(),
+        _ => None,
+    }
 }
 
 pub(crate) fn is_child_global_object(value: &Value) -> bool {
