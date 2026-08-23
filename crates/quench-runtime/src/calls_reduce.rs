@@ -19,10 +19,7 @@ pub(crate) fn reduce_call(
         return crate::special::reduce_optional_call(call, ops, facts, next, locals);
     }
     if is_direct_eval(call, locals) {
-        return reduce_eval_call(call, ops, facts, next, locals, true);
-    }
-    if is_indirect_eval(call) {
-        return reduce_eval_call(call, ops, facts, next, locals, false);
+        return reduce_direct_eval(call, ops, facts, next, locals);
     }
     if matches!(call.callee, Expression::Super(_)) {
         return reduce_super_constructor_call(call, ops, facts, next, locals);
@@ -139,38 +136,30 @@ fn is_direct_eval(call: &CallExpression<'_>, _locals: &HashMap<String, u16>) -> 
     matches!(&call.callee, Expression::Identifier(identifier) if identifier.name == "eval")
 }
 
-fn reduce_eval_call(
+fn reduce_direct_eval(
     call: &CallExpression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
-    direct: bool,
 ) -> Option<u16> {
     let source = reduce_eval_source(call, ops, facts, next, locals)?;
     let callee = load_eval_binding(ops, facts, next, locals);
     let dst = take_register(next);
-    let (bindings, reusable_var_names, forbidden_var_names) = if direct {
-        let mut bindings = locals
-            .iter()
-            .map(|(name, slot)| (name.clone(), *slot))
-            .collect::<Vec<_>>();
-        bindings.sort_by(|left, right| left.0.cmp(&right.0));
-        (
-            bindings,
-            reusable_eval_var_names(locals, facts),
-            forbidden_eval_var_names(locals, facts),
-        )
-    } else {
-        (Vec::new(), Vec::new(), Vec::new())
-    };
+    let mut bindings = locals
+        .iter()
+        .map(|(name, slot)| (name.clone(), *slot))
+        .collect::<Vec<_>>();
+    bindings.sort_by(|left, right| left.0.cmp(&right.0));
+    let reusable_var_names = reusable_eval_var_names(locals, facts);
+    let forbidden_var_names = forbidden_eval_var_names(locals, facts);
     ops.push(Op::Eval {
         dst,
         callee,
         source,
-        strict: direct && facts.strict,
+        strict: facts.strict,
         global: !facts.in_function,
-        direct,
+        direct: true,
         tail: false,
         bindings,
         reusable_var_names,
@@ -200,24 +189,6 @@ fn load_eval_binding(
         });
     }
     dst
-}
-
-fn is_indirect_eval(call: &CallExpression<'_>) -> bool {
-    indirect_eval_expression(&call.callee)
-}
-
-fn indirect_eval_expression(expression: &Expression<'_>) -> bool {
-    match expression {
-        Expression::ParenthesizedExpression(parenthesized) => {
-            matches!(&parenthesized.expression, Expression::SequenceExpression(_))
-                && indirect_eval_expression(&parenthesized.expression)
-        }
-        Expression::SequenceExpression(sequence) if sequence.expressions.len() > 1 => sequence
-            .expressions
-            .last()
-            .is_some_and(|expression| matches!(expression, Expression::Identifier(identifier) if identifier.name == "eval")),
-        _ => false,
-    }
 }
 
 fn forbidden_eval_var_names(locals: &HashMap<String, u16>, facts: &ProgramDb) -> Vec<String> {

@@ -1,4 +1,4 @@
-
+use crate::value::ObjectData;
 
 pub(crate) fn current_global_object() -> Value {
     if let Some(global) = batched_global_object() {
@@ -14,7 +14,7 @@ pub(crate) fn current_global_object() -> Value {
                 .as_ref()
                 .map(|object| Value::Object(object.clone()))
         })
-        .unwrap_or_else(|| crate::locals::current().get(0))
+        .unwrap_or(Value::Undefined)
 }
 
 pub(crate) fn initialize_global_object(value: &Value) {
@@ -29,18 +29,10 @@ pub(crate) fn initialize_global_object(value: &Value) {
 }
 
 pub(crate) fn is_global_object(value: &Value) -> bool {
-    let Some(object) = global_object_target(value) else {
+    let Value::Object(object) = value else {
         return false;
     };
-    matches!(current_global_object(), Value::Object(global) if Rc::ptr_eq(&global, &object))
-}
-
-fn global_object_target(value: &Value) -> Option<ObjectProperties> {
-    match value {
-        Value::Object(object) => Some(object.clone()),
-        Value::ObjectAlias(alias) => alias.target(),
-        _ => None,
-    }
+    matches!(current_global_object(), Value::Object(global) if Rc::ptr_eq(&global, object))
 }
 
 pub(crate) fn is_child_global_object(value: &Value) -> bool {
@@ -54,34 +46,15 @@ pub(crate) fn begin_global_declaration_batch() {
     let Some(current) = current_global_base() else {
         return;
     };
-    let mut properties = current.properties.clone();
-    if let Some(math) = realm::intrinsic(current_realm(), crate::ops::Builtin::Math) {
-        if let Some((_, value)) = properties.iter_mut().rev().find(|(name, _)| name == "Math") {
-            match value {
-                Value::BindingCell(cell) => *cell.borrow_mut() = math,
-                value => *value = Value::BindingCell(Rc::new(RefCell::new(math))),
-            }
-        } else {
-            properties.push((
-                "Math".into(),
-                Value::BindingCell(Rc::new(RefCell::new(math))),
-            ));
-        }
-    }
-    let staged = Rc::new(crate::value::ObjectData::with_shared_properties(
-        properties,
+    let staged = Rc::new(ObjectData::with_private_slots(
+        current.properties.clone(),
         Rc::new(RefCell::new(current.private_slots.borrow().clone())),
     ));
     GLOBAL_DECLARATION_BASE.with(|base| base.replace(Some(current)));
     GLOBAL_DECLARATION_BATCH.with(|batch| batch.replace(Some(staged)));
-    GLOBAL_DECLARATION_ACTIVE.with(|active| active.set(true));
 }
 
 pub(crate) fn flush_global_declaration_batch(registers: &mut Vec<Value>) {
-    if !GLOBAL_DECLARATION_ACTIVE.with(|active| active.get()) {
-        return;
-    }
-    GLOBAL_DECLARATION_ACTIVE.with(|active| active.set(false));
     let Some(previous) = GLOBAL_DECLARATION_BASE.with(|batch| batch.borrow_mut().take()) else {
         return;
     };
@@ -92,7 +65,7 @@ pub(crate) fn flush_global_declaration_batch(registers: &mut Vec<Value>) {
 }
 
 pub(crate) fn is_global_declaration_batch_active() -> bool {
-    GLOBAL_DECLARATION_ACTIVE.with(|active| active.get())
+    GLOBAL_DECLARATION_BATCH.with(|batch| batch.borrow().is_some())
 }
 
 pub(crate) fn update_global_declaration_batch(updated: &Value) {
@@ -162,23 +135,11 @@ fn replace_register_aliases(
 }
 
 fn current_realm() -> RealmId {
-    // During declaration staging the VM context can still describe the
-    // caller while GLOBAL_OBJECT is already the active realm's object.
-    // Resolve the realm from that object first so intrinsic seeding uses the
-    // same realm as the global binding cell.
-    if let Some(realm) = GLOBAL_OBJECT.with(|global| {
-        global
-            .borrow()
-            .as_ref()
-            .and_then(realm::id_for_global)
-    }) {
-        return realm;
-    }
     CURRENT_CONTEXT.with(|context| {
         context
             .borrow()
             .as_ref()
-            .map_or(RealmId::ROOT, |rc| rc.realm())
+            .map_or(RealmId::ROOT, VmContext::realm)
     })
 }
 
@@ -221,7 +182,6 @@ thread_local! {
     static GLOBAL_DECLARATION_BASE: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
     static GLOBAL_DECLARATION_BATCH: RefCell<Option<ObjectProperties>> =
         const { RefCell::new(None) };
-    static GLOBAL_DECLARATION_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static SHARED_GLOBAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
@@ -234,7 +194,7 @@ impl SharedGlobal {
     pub fn install() -> Self {
         let previous = GLOBAL_OBJECT.with(|global| global.borrow().clone());
         if previous.is_none() {
-            let created = std::rc::Rc::new(crate::value::ObjectData::new(Vec::new()));
+            let created = std::rc::Rc::new(ObjectData::new(Vec::new()));
             initialize_global_object(&Value::Object(created));
         }
         SHARED_GLOBAL.with(|count| count.set(count.get().saturating_add(1)));

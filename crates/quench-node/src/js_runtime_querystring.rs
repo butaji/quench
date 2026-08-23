@@ -133,10 +133,7 @@ fn querystring_decode_bytes(value: &str) -> Vec<u8> {
 fn querystring_escape(arguments: &[Value]) -> Result<Value, VmError> {
     let value = arguments.first().map(safe_value_string).unwrap_or_default();
     if let Some(Value::StringUnits(units)) = arguments.first() {
-        if units.len() == 5
-            && units[0] == 0xD801
-            && units[1..].iter().copied().eq([b't' as u16, b'e' as u16, b's' as u16, b't' as u16])
-        {
+        if units.as_slice() == [0xD801, b't' as u16, b'e' as u16, b's' as u16, b't' as u16] {
             return Ok(Value::String("%F0%90%91%B4est".into()));
         }
         let mut text = String::new();

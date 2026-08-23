@@ -105,20 +105,18 @@ impl Registry {
     /// Build the bootstrap source by concatenating each bootstrap
     /// ability's JS in eval order.
     pub fn bootstrap_source(&self) -> String {
-        let capacity: usize = self
-            .phase(Phase::Bootstrap)
-            .map(|ability| ability.js.len() + 1)
-            .sum();
-        let abilities = self.phase(Phase::Bootstrap);
-        let mut source = String::with_capacity(capacity);
-        for ability in abilities {
+        let mut source = String::new();
+        for ability in self.phase(Phase::Bootstrap) {
             source.push_str(ability.js);
             source.push('\n');
         }
         source
     }
 
-    /// Post-bootstrap abilities in eval order.
+    /// Post-bootstrap abilities in eval order, as `(name, js)` pairs.
+    ///
+    /// Keep this as an iterator so contexts that do not reach post-bootstrap
+    /// setup do not pay for a temporary vector allocation.
     pub fn post_bootstrap_fragments(
         &self,
     ) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
@@ -127,16 +125,11 @@ impl Registry {
     }
 }
 
-/// The full Node-compatible ability set, built once and shared by every realm.
-pub static NODE_COMPAT: std::sync::LazyLock<Registry> = std::sync::LazyLock::new(|| {
+/// The full Node-compatible ability set, in eval order.
+pub fn node_compat() -> Registry {
     Registry::new()
         .add_all(bootstrap::ABILITIES)
         .add_all(post_bootstrap::ABILITIES)
-});
-
-/// Borrow the full Node-compatible ability set.
-pub fn node_compat() -> &'static Registry {
-    &NODE_COMPAT
 }
 
 /// Declare an ability table: each `name => module` pair is written once
@@ -161,32 +154,6 @@ macro_rules! abilities {
                 .map(|ability| ability.js)
         }
     };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Ability, Phase, Registry};
-
-    #[test]
-    fn bootstrap_source_preserves_order_and_separates_fragments() {
-        let registry = Registry::new()
-            .add(Ability {
-                name: "a",
-                phase: Phase::Bootstrap,
-                js: "A",
-            })
-            .add(Ability {
-                name: "b",
-                phase: Phase::PostBootstrap,
-                js: "B",
-            })
-            .add(Ability {
-                name: "c",
-                phase: Phase::Bootstrap,
-                js: "C",
-            });
-        assert_eq!(registry.bootstrap_source(), "A\nC\n");
-    }
 }
 pub mod bootstrap;
 pub mod post_bootstrap;

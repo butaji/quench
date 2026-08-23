@@ -182,24 +182,46 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
     };
     let pending = quench_runtime::host_api::array(
         pending
-            .into_iter()
+            .iter()
+            .copied()
             .map(|byte| Value::Number(byte as f64))
             .collect(),
     );
     let pending_values = array_values(&pending).unwrap_or_default();
+    let (last_need, last_total) = if pending_values.is_empty() {
+        (0.0, 0.0)
+    } else if encoding == "utf16le" || encoding == "ucs2" {
+        ((2 - pending_values.len()) as f64, 2.0)
+    } else if encoding == "latin1" || encoding == "ascii" {
+        (0.0, 0.0)
+    } else {
+        let first = pending_values
+            .first()
+            .and_then(|value| match value {
+                Value::Number(value) => Some(*value as u8),
+                _ => None,
+            })
+            .unwrap_or(0);
+        let total = if first < 0x80 {
+            1
+        } else if first & 0xe0 == 0xc0 {
+            2
+        } else if first & 0xf0 == 0xe0 {
+            3
+        } else {
+            4
+        };
+        ((total - pending_values.len()) as f64, total as f64)
+    };
     let _ = quench_runtime::execute::set_property(
         receiver.clone(),
         "lastNeed",
-        Value::Number(if pending_values.is_empty() {
-            0.0
-        } else {
-            (3 - pending_values.len()) as f64
-        }),
+        Value::Number(last_need),
     );
     let _ = quench_runtime::execute::set_property(
         receiver.clone(),
         "lastTotal",
-        Value::Number(if pending_values.is_empty() { 0.0 } else { 3.0 }),
+        Value::Number(last_total),
     );
     let _ = quench_runtime::execute::set_property(
         receiver.clone(),

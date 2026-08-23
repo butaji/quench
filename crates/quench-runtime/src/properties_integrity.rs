@@ -174,7 +174,7 @@ fn proxy_integrity_apply(
     Ok(target.clone())
 }
 
-fn integrity_function(properties: &mut Vec<(String, crate::value::Value)>, frozen: bool) {
+fn integrity_function(properties: &mut crate::value::ObjectProperties, frozen: bool) {
     let keys: Vec<String> = properties
         .iter()
         .map(|(name, _)| name.clone())
@@ -201,30 +201,30 @@ fn integrity_properties(
     let mut sealed = properties.properties.clone();
     let keys: Vec<String> = sealed
         .iter()
-        .map(|(name, _)| name.as_str().to_owned())
+        .map(|(name, _)| name.clone())
         .filter(|name| !name.starts_with('\0') && !crate::builtins::is_descriptor_key(name))
         .collect();
     for key in keys.iter() {
         let metadata_key = crate::builtins::descriptor_key(key);
         let metadata = integrity_descriptor(&sealed, &metadata_key, frozen);
         sealed.retain(|(name, _)| name != &metadata_key);
-        sealed.push((metadata_key.into(), metadata));
+        sealed.push((metadata_key, metadata));
     }
-    crate::value::ObjectData::with_shared_properties(
+    crate::value::ObjectData::with_private_slots(
         sealed,
         std::rc::Rc::clone(&properties.private_slots),
     )
 }
 
-fn integrity_descriptor<K: AsRef<str>>(
-    properties: &[(K, crate::value::Value)],
+fn integrity_descriptor(
+    properties: &crate::value::ObjectProperties,
     metadata_key: &str,
     frozen: bool,
 ) -> crate::value::Value {
     let existing = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == metadata_key).then_some(value.clone()));
+        .find_map(|(name, value)| (name == metadata_key).then_some(value.clone()));
     let flag = |field: &str| descriptor_flag_field(existing.as_ref(), field).unwrap_or(true);
     let accessor = existing.as_ref().is_some_and(is_accessor_descriptor);
     let mut fields = Vec::new();
@@ -256,15 +256,15 @@ fn integrity_descriptor<K: AsRef<str>>(
     descriptor_object(fields)
 }
 
-fn property_value<K: AsRef<str>>(
-    properties: &[(K, crate::value::Value)],
+fn property_value(
+    properties: &crate::value::ObjectProperties,
     metadata_key: &str,
 ) -> Option<crate::value::Value> {
     let key = metadata_key.strip_prefix(crate::builtins::descriptor_key("").as_str())?;
     properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == key).then_some(value.clone()))
+        .find_map(|(name, value)| (name == key).then_some(value.clone()))
 }
 
 fn is_accessor_descriptor(value: &crate::value::Value) -> bool {
@@ -300,7 +300,7 @@ fn descriptor_object(fields: Vec<(String, crate::value::Value)>) -> crate::value
 fn push_non_extensible(properties: &mut crate::value::ObjectData) {
     if !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE) {
         properties.push((
-            NON_EXTENSIBLE.into(),
+            NON_EXTENSIBLE.to_string(),
             crate::value::Value::Boolean(true),
         ));
     }

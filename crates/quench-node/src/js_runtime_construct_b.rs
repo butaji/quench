@@ -5,7 +5,8 @@ impl QuenchNodeHost {
         arguments: &[Value],
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
-        if capability.kind == HostCapabilityKind::Custom(CapabilityName::BufferFrom) {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::BufferNew)
+            || capability.kind == HostCapabilityKind::Custom(CapabilityName::BufferFrom) {
             if matches!(arguments.first(), Some(Value::Number(_))) {
                 if arguments.len() > 1 {
                     return Err(VmError::Thrown(fs_error(

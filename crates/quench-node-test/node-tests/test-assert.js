@@ -113,4 +113,7 @@ if (typeof assert.AssertionError !== 'object' && typeof assert.AssertionError !=
   throw new Error('AssertionError export missing');
 }
 
+
+assert.partialDeepStrictEqual({ a: 1 }, { a: 1 });
+
 console.log('assert: ok');

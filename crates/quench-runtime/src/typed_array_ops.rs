@@ -24,19 +24,8 @@ macro_rules! set_number_view {
 }
 
 fn typed_array_index(key: &str) -> Option<usize> {
-    if key.is_empty() || (key.len() > 1 && key.as_bytes()[0] == b'0') {
-        return None;
-    }
-    let mut index = 0usize;
-    for byte in key.bytes() {
-        if !byte.is_ascii_digit() {
-            return None;
-        }
-        index = index
-            .checked_mul(10)?
-            .checked_add(usize::from(byte - b'0'))?;
-    }
-    Some(index)
+    let index = key.parse::<usize>().ok()?;
+    (index.to_string() == key).then_some(index)
 }
 
 pub(crate) fn is_index_key(key: &str) -> bool {
@@ -235,6 +224,14 @@ fn transfer(
             "transfer requires an ArrayBuffer",
         ));
     };
+    transfer_buffer(buffer, arguments, preserve_resizability)
+}
+
+fn transfer_buffer(
+    buffer: &crate::value::ArrayBufferData,
+    arguments: &[Value],
+    preserve_resizability: bool,
+) -> Result<Value, VmError> {
     let new_length = match arguments.first() {
         None | Some(Value::Undefined) => buffer.byte_length(),
         Some(value) => crate::construct::to_index(crate::intl::tolocale::value::to_number_result(
@@ -339,12 +336,10 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
 }
 
 fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let target = receiver.ok_or_else(|| crate::value::error::throw_type_error(
-        "TypedArray.prototype.set called on incompatible receiver",
-    ))?;
+    let target = receiver.ok_or_else(crate::vm::not_callable)?;
     let Some(target_length) = view_length(target) else {
         return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.set called on incompatible receiver",
+            "set requires a TypedArray",
         ));
     };
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
@@ -376,13 +371,9 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let receiver = receiver.ok_or_else(|| crate::value::error::throw_type_error(
-        "TypedArray.prototype.fill called on incompatible receiver",
-    ))?;
+    let receiver = receiver.ok_or_else(crate::vm::not_callable)?;
     if matches!(receiver, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
-        let bits = crate::construct::bigint_bits(
-            arguments.first().unwrap_or(&Value::BigInt("0".to_string())),
-        )?;
+        let bits = crate::construct::bigint_bits(arguments.first().unwrap_or(&Value::Undefined))?;
         match receiver {
             Value::BigInt64Array(view) => fill_view!(view, bits, |value| value as i64),
             Value::BigUint64Array(view) => fill_view!(view, bits, |value| value),
@@ -401,9 +392,7 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
         Value::Uint16Array(view) => fill_view!(view, number, crate::construct::to_uint16),
         Value::Uint32Array(view) => fill_view!(view, number, crate::construct::to_uint32),
         Value::Uint8ClampedArray(view) => fill_view!(view, number, |value| value),
-        _ => return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.fill called on incompatible receiver",
-        )),
+        _ => return Err(crate::vm::not_callable()),
     }
     Ok(receiver.clone())
 }

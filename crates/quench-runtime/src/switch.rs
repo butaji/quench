@@ -125,7 +125,7 @@ fn reduce_cases(
         .into_iter()
         .map(|test| test.map(crate::machine::FunctionCode::from_ops))
         .collect::<Vec<_>>();
-    let stores = crate::machine::FunctionCode::pending_many(bodies);
+    let stores = crate::machine::FunctionCode::from_ops_many(bodies);
     Ok(tests.into_iter().zip(stores).collect())
 }
 
@@ -201,10 +201,10 @@ pub(crate) fn execute(
         return Ok(crate::completion::Completion::Normal);
     };
     for (_, body) in &cases[start..] {
-        let Some(body) = body.code() else {
+        let Some(body) = body.ops() else {
             return Err(crate::execute::VmError::MissingReturn);
         };
-        match crate::vm::execute_code_completion_in_current_frame(body, registers)? {
+        match crate::execute::execute_completion_in_place(body, registers)? {
             crate::completion::Completion::Normal => continue,
             crate::completion::Completion::Break { label: None, .. } => {
                 return Ok(crate::completion::Completion::Normal);
@@ -244,10 +244,10 @@ fn evaluate_case_test(
     test: &crate::machine::FunctionCode,
     registers: &mut Vec<Value>,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(ops) = test.code() else {
+    let Some(ops) = test.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    match crate::vm::execute_code_completion_in_current_frame(ops, registers)? {
+    match crate::execute::execute_completion_in_place(ops, registers)? {
         crate::completion::Completion::Return(value) => Ok(value),
         crate::completion::Completion::Normal => Ok(Value::Undefined),
         crate::completion::Completion::Throw(value) => Err(crate::execute::VmError::Thrown(value)),

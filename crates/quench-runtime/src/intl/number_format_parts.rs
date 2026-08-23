@@ -216,8 +216,7 @@ pub(crate) fn unit_parts(
     if unit == Some("kilometer-per-hour") {
         return speed_unit_parts(text, display, locale);
     }
-    let suffix = unit_suffix(unit, display, locale);
-    let narrow = display == "narrow" || unit == Some("percent");
+    let suffix = unit_suffix(unit, display, locale); let narrow = display == "narrow" || unit == Some("percent");
     let localized_text = if locale.starts_with("de") {
         text.replace('.', ",")
     } else {

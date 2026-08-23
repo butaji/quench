@@ -28,8 +28,14 @@ fn alloc_buffer(
     length: usize,
     element_size: usize,
 ) -> Result<Rc<crate::value::ArrayBufferData>, crate::execute::VmError> {
+    // Keep typed-array lengths within the implementation's 32-bit backing-store
+    // limit. This must be checked before attempting allocation so huge lengths
+    // reliably produce the specified RangeError instead of relying on the host
+    // allocator (which may overcommit virtual memory).
+    const MAX_TYPED_ARRAY_BYTES: usize = 4_294_967_296;
     length
         .checked_mul(element_size)
+        .filter(|&bytes| bytes <= MAX_TYPED_ARRAY_BYTES)
         .and_then(crate::value::ArrayBufferData::try_new)
         .map(Rc::new)
         .ok_or_else(|| range_error(&format!("Invalid typed array length: {length}")))

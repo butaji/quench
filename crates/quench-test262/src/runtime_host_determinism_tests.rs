@@ -60,6 +60,7 @@ fn runner_returns_same_outcome_when_self_interleaved_across_threads() {
 #[test]
 fn runner_returns_same_outcome_for_real_test262_fixtures() {
     let Some(fixture_root) = locate_test262_root() else {
+        eprintln!("test262 checkout not present; skipping real-fixture determinism check");
         return;
     };
     let target = fixture_root.join("test/built-ins/Object/defineProperty");
@@ -68,6 +69,7 @@ fn runner_returns_same_outcome_for_real_test262_fixtures() {
         Err(error) => panic!("discover fixtures: {error}"),
     };
     if files.is_empty() {
+        eprintln!("no defineProperty fixtures found; skipping real-fixture determinism check");
         return;
     }
     let cap = files.len().min(16);

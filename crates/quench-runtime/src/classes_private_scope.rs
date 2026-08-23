@@ -32,7 +32,7 @@ pub(crate) fn reduce_expression(
         names,
         labels,
         class_name: class.id.as_ref().map(|id| id.name.to_string()),
-        body: crate::machine::FunctionCode::pending(body),
+        body: crate::machine::FunctionCode::from_ops(body),
     });
     Some(constructor)
 }

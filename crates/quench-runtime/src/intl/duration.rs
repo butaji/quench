@@ -309,12 +309,12 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
 
 fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
     match value {
-        Value::Object(object) => Ok(duration_property_copy(&object.properties)),
+        Value::Object(object) => Ok(object.properties.clone()),
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
             .upgrade()
-            .map(|object| duration_property_copy(&object.properties))
+            .map(|object| object.properties.clone())
             .ok_or_else(|| crate::value::error::throw_type_error("Duration must be an object")),
         value if crate::conversion::is_symbol(value) => Err(crate::value::error::throw_type_error(
             "Duration must be an object",
@@ -327,15 +327,6 @@ fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
             "Duration must be an object",
         )),
     }
-}
-
-fn duration_property_copy(
-    properties: &crate::value::ObjectProperties,
-) -> Vec<(String, Value)> {
-    properties
-        .iter()
-        .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
-        .collect()
 }
 
 include!("duration_format.rs");

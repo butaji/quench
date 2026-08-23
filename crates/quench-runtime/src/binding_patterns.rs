@@ -125,7 +125,7 @@ fn assign_array(
     }
     ops.push(Op::IteratorBinding {
         iterator,
-        body: crate::machine::FunctionCode::pending(body),
+        body: crate::machine::FunctionCode::from_ops(body),
         close_normal: true,
     });
     Some(())
@@ -142,10 +142,9 @@ fn assign_prepared(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
-    let Some(mut place) = place else {
+    let Some(place) = place else {
         return assign_maybe_default(target, source, ops, facts, next, locals);
     };
-    crate::reduce::reduce_assignments::preserve_property_target(&mut place, ops, next);
     let value = match target {
         AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => default_value(
             source,
@@ -354,7 +353,7 @@ fn bind_array(
     }
     ops.push(Op::IteratorBinding {
         iterator,
-        body: crate::machine::FunctionCode::pending(body),
+        body: crate::machine::FunctionCode::from_ops(body),
         close_normal: true,
     });
     Some(())

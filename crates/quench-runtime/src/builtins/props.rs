@@ -281,12 +281,11 @@ fn reflect_method(key: &str) -> Option<Builtin> {
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_constructor_property(builtin, key)
         .or_else(|| {
-            (is_typed_array_prototype(builtin) && key == "values")
-                .then_some(Builtin::TypedArrayIterator)
+            (is_typed_array_prototype(builtin) && key == "values").then_some(Builtin::ArrayIterator)
         })
         .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "Symbol.iterator")
-                .then_some(Builtin::TypedArrayIterator)
+                .then_some(Builtin::ArrayIterator)
         })
         .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "keys").then_some(Builtin::ArrayKeys)
@@ -343,9 +342,12 @@ fn is_typed_array_prototype(builtin: Builtin) -> bool {
             | BigUint64ArrayPrototype
     )
 }
-fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
+fn host_capability_method(kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;
-    if let Custom(id) = _kind {
+    if matches!(kind, Custom(_)) && key == "call" {
+        return Some(Builtin::FunctionCall);
+    }
+    if let Custom(id) = kind {
         let custom = match (id, key) {
             (1, "basename") => Custom(2),
             (3, "log") => Custom(4),
@@ -398,20 +400,13 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
-    if crate::builtin_meta::is_prototype(builtin)
-        && !matches!(builtin, Builtin::FunctionPrototype | Builtin::StringPrototype)
-        && matches!(key, "length" | "name")
-    {
+    if !crate::conversion::is_callable(&Value::Builtin(builtin)) {
         return None;
     }
     match key {
         "call" => Some(Value::Builtin(Builtin::FunctionCall)),
         "bind" => Some(Value::Builtin(Builtin::FunctionBind)),
-        "length" => Some(Value::Number(if builtin == Builtin::StringPrototype {
-            0.0
-        } else {
-            builtin_length(builtin)
-        })),
+        "length" => Some(Value::Number(builtin_length(builtin))),
         "name" => Some(Value::String(builtin_name(builtin).to_string())),
         _ => None,
     }

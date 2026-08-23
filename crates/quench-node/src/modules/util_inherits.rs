@@ -31,9 +31,14 @@ pub fn inherits(
     }
     define_hidden(ctor, "super_", super_ctor.clone())?;
     let proto = execute::get_property(ctor, "prototype");
+    // `set_prototype_of` returns a replacement identity (a new value whose
+    // `[[Prototype]]` is `super_proto`) rather than mutating `proto` in
+    // place. Republish `proto -> chained` so later reads of `ctor.prototype`
+    // (including the `new (ctor)` path) see the linked chain, and do all
+    // subsequent work on the replacement value.
     let chained = execute::set_prototype_of(&proto, &super_proto)?;
     execute::replace_value(&proto, &chained);
-    define_hidden(&proto, "constructor", ctor.clone())?;
+    define_hidden(&chained, "constructor", ctor.clone())?;
     Ok(Value::Undefined)
 }
 

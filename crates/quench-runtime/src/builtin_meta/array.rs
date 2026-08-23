@@ -27,7 +27,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArraySome => Some("some"),
         Builtin::ArrayEvery => Some("every"),
         Builtin::ArrayFind => Some("find"),
-        Builtin::ArrayIterator | Builtin::TypedArrayIterator => Some("values"),
+        Builtin::ArrayIterator => Some("values"),
         Builtin::ArrayKeys => Some("keys"),
         Builtin::ArrayEntries => Some("entries"),
         Builtin::ArrayIncludes => Some("includes"),
@@ -104,7 +104,6 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayFill
         | Builtin::ArrayToSorted => Some(1.0),
         Builtin::ArrayIterator
-        | Builtin::TypedArrayIterator
         | Builtin::ArrayKeys
         | Builtin::ArrayEntries
         | Builtin::ArrayShift => Some(0.0),

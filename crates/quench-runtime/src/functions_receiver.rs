@@ -1,3 +1,25 @@
+fn execute_generator_target(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    target: &crate::value::Value,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    if !(matches!(function.kind, crate::ops::FunctionKind::Generator) || function.is_async) {
+        return Ok(None);
+    }
+    if matches!(function.kind, crate::ops::FunctionKind::Generator) {
+        if let crate::value::Value::Generator(generator) = receiver {
+            let next_arg = arguments.first().cloned().unwrap_or(crate::value::Value::Undefined);
+            let result = crate::generator::resume(
+                generator,
+                crate::generator::Resume::Next(next_arg),
+            )?;
+            return Ok(Some(result));
+        }
+    }
+    Ok(Some(execute_target(target, receiver, arguments)?))
+}
+
 pub(crate) fn execute_target_with_receiver(
     target: &crate::value::Value,
     receiver: &crate::value::Value,
@@ -11,20 +33,7 @@ pub(crate) fn execute_target_with_receiver(
         return Ok((result, receiver.clone()));
     };
     let frame = CallFrame::new(std::rc::Rc::clone(function), receiver.clone(), arguments.to_vec());
-    if matches!(function.kind, FunctionKind::Generator) || function.is_async {
-        // If the receiver is already an existing generator, resume it instead
-        // of calling generator::create (which would start a fresh generator).
-        // This prevents infinite-generator creation when call_next invokes a
-        // generator-backed protocol iterator under the
-        // ReceiverUpdateGuard (e.g., Array.from(generator-iterator)).
-        if matches!(function.kind, FunctionKind::Generator) {
-            if let crate::value::Value::Generator(generator) = receiver {
-                let next_arg = arguments.first().cloned().unwrap_or(crate::value::Value::Undefined);
-                let result = crate::generator::resume(generator, crate::generator::Resume::Next(next_arg))?;
-                return Ok((result, receiver.clone()));
-            }
-        }
-        let result = execute_target(target, receiver, arguments)?;
+    if let Some(result) = execute_generator_target(function, target, receiver, arguments)? {
         return Ok((result, receiver.clone()));
     }
     let _private_environment = crate::private_environment::Guard::install_environment(
@@ -35,8 +44,8 @@ pub(crate) fn execute_target_with_receiver(
     let (mut registers, environment) =
         build_registers(&frame.function, &frame.receiver, &frame.arguments);
     let context = crate::vm::current_context_or_default();
-    let completion = crate::vm::execute_code_frame_completion(
-        frame.function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
+    let completion = crate::vm::execute_frame_completion(
+        frame.function.ops(),
         &mut registers,
         &context,
         std::rc::Rc::clone(&environment),

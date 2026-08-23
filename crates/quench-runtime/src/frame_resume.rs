@@ -71,48 +71,8 @@ impl Frame {
         }
         true
     }
-    /// Every executable continuation must point into the machine's immutable
-    /// code store; frames never own or re-walk AST bodies.
-    pub(crate) fn ranges(&self) -> Vec<CodeRange> {
-        match self {
-            Self::Try { body, handler, finalizer, body_resume, resume, .. } => {
-                let mut out = vec![*body, *body_resume, *resume];
-                out.extend(handler.iter().copied());
-                out.extend(finalizer.iter().copied());
-                out
-            }
-            Self::Iterator { body, body_resume, resume, .. } => vec![*body, *body_resume, *resume],
-            Self::Branch { branch_resume, resume, .. } => vec![*branch_resume, *resume],
-            Self::Private { body_resume, resume, .. } => vec![*body_resume, *resume],
-            Self::Await { resume, .. } => vec![*resume],
-            Self::Delegate { .. } => Vec::new(),
-        }
-    }
-    /// Return the register IDs owned by this frame's continuation.
-    ///
-    /// Frames store only fixed-width integer IDs; values and code ranges are
-    /// resolved by the machine at the suspension boundary.
-    pub(crate) fn register_ids(&self) -> Vec<u16> {
-        match self {
-            Self::Try { yield_dst, catch_slot, .. } => {
-                let mut ids = vec![*yield_dst];
-                if let Some(slot) = catch_slot {
-                    ids.push(*slot);
-                }
-                ids
-            }
-            Self::Iterator { binding, yield_dst, slot, .. } => vec![*binding, *yield_dst, *slot],
-            Self::Branch { dst, yield_dst, .. } => vec![*dst, *yield_dst],
-            Self::Private { yield_dst, .. } => vec![*yield_dst],
-            Self::Await { .. } | Self::Delegate { .. } => Vec::new(),
-        }
-    }
-
-    /// Check that every register ID addresses the machine's register window.
-    pub(crate) fn has_valid_register_ids(&self, register_count: u16) -> bool {
-        self.register_ids().into_iter().all(|id| id < register_count)
-    }
 }
+
 fn set_resume<P>(
     phase: &mut P,
     resume: &mut CodeRange,

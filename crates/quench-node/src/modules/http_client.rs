@@ -37,7 +37,9 @@ pub struct ClientReq {
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let opts = request_options(args.first())?;
-    let (req, id) = build_req_object(state)?;
+    let (mut req, id) = build_req_object(state)?;
+    req = execute::set_property(req, "method", Value::String(opts.2.clone()));
+    req = execute::set_property(req, "path", Value::String(opts.3.clone()));
     let mut guard = state.borrow_mut();
     guard.http.clientreqs.insert(
         id,
@@ -315,39 +317,52 @@ pub fn res_end_handler(
 // ---- helpers ----
 
 fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmError> {
-    let mut object = crate::modules::events::new_emitter_object(state)?;
     let id = {
         let mut guard = state.borrow_mut();
         let id = guard.http.next_client;
         guard.http.next_client += 1;
         id
     };
-    object = install_methods(
-        object,
-        vec![
-            (
-                "write".to_string(),
-                crate::host::capability(crate::registry::SPEC_HTTP_REQ_WRITE),
-            ),
-            (
-                "end".to_string(),
-                crate::host::capability(crate::registry::SPEC_HTTP_REQ_END),
-            ),
-            (CLIENT_ID_PROP.to_string(), Value::Number(id as f64)),
-        ],
-    )?;
+    let emitter = crate::modules::events::new_emitter_object(state)?;
+    let emitter_id = quench_runtime::vm::get_property(
+        &emitter,
+        crate::modules::emitter::EMITTER_ID_PROP,
+    );
+    let object = host_api::object(vec![
+        (
+            crate::modules::emitter::EMITTER_ID_PROP.to_string(),
+            emitter_id,
+        ),
+        (
+            "on".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
+        ),
+        (
+            "addListener".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
+        ),
+        (
+            "emit".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103)),
+        ),
+        (
+            "write".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_WRITE),
+        ),
+        (
+            "end".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_REQ_END),
+        ),
+        (CLIENT_ID_PROP.to_string(), Value::Number(id as f64)),
+    ]);
     Ok((object, id))
 }
 
 fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
+    // Store callable host capabilities directly; descriptor-backed binding
+    // cells are not callable in all method retrieval paths.
     for (key, value) in props {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, &key, descriptor)?;
+        object = execute::set_property(object, &key, value);
     }
     Ok(object)
 }
@@ -406,13 +421,55 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
         }
     }
     let res = crate::modules::events::new_emitter_object(state)?;
-    let props = vec![
+    let emitter_id = quench_runtime::vm::get_property(
+        &res,
+        crate::modules::emitter::EMITTER_ID_PROP,
+    );
+    let all_props = vec![
+        (
+            crate::modules::emitter::EMITTER_ID_PROP.to_string(),
+            emitter_id,
+        ),
+        (
+            "on".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
+        ),
+        (
+            "addListener".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
+        ),
+        (
+            "once".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:once", 0x0105)),
+        ),
+        (
+            "emit".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103)),
+        ),
         ("statusCode".to_string(), Value::Number(status as f64)),
         ("statusMessage".to_string(), Value::String(message)),
         ("httpVersion".to_string(), Value::String("1.1".to_string())),
         ("headers".to_string(), host_api::object(headers)),
+        (
+            "resume".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "http:response:resume",
+                0x0F0D,
+            )),
+        ),
     ];
-    install_methods(res, props)
+    // Construct directly: generic property assignment can expose a
+    // BindingCell instead of the callable host capability.
+    Ok(host_api::object(all_props))
+}
+
+/// `IncomingMessage.resume()` — response data is already pumped by the host.
+pub fn res_resume(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
@@ -430,11 +487,33 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             if let Ok(hv) = execute::get_property_result(&options, "headers") {
                 if matches!(hv, Value::Object(_)) {
                     for key in execute::own_enumerable_keys(&hv) {
-                        if let Ok(item) = execute::get_property_result(&hv, &key) {
-                            if let Ok(s) = execute::to_js_string(&item) {
-                                headers.push((key, s));
-                            }
+                        if !is_http_token(&key) {
+                            return Err(header_error(
+                                "ERR_INVALID_HTTP_TOKEN",
+                                &format!(
+                                    "Header name must be a valid HTTP token [{}]",
+                                    json_quote(&key)
+                                ),
+                            ));
                         }
+                        let item = execute::get_property_result(&hv, &key)?;
+                        if matches!(item, Value::Undefined) {
+                            return Err(header_error(
+                                "ERR_HTTP_INVALID_HEADER_VALUE",
+                                &format!("Invalid value \"undefined\" for header \"{key}\""),
+                            ));
+                        }
+                        let s = execute::to_js_string(&item)?;
+                        if has_invalid_header_char(&s) {
+                            return Err(header_error(
+                                "ERR_INVALID_CHAR",
+                                &format!(
+                                    "Invalid character in header content [{}]",
+                                    json_quote(&key)
+                                ),
+                            ));
+                        }
+                        headers.push((key, s));
                     }
                 }
             }
@@ -442,6 +521,36 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
         }
         _ => Err(execute::type_error("options must be a string or object")),
     }
+}
+
+fn is_http_token(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            matches!(
+                byte,
+                b'!' | b'#'..=b'\'' | b'*' | b'+' | b'-' | b'.' | b'0'..=b'9'
+                    | b'A'..=b'Z' | b'^' | b'_' | b'`' | b'a'..=b'z' | b'|' | b'~'
+            )
+        })
+}
+
+fn has_invalid_header_char(value: &str) -> bool {
+    value.chars().any(|ch| {
+        matches!(ch, '\u{0000}'..='\u{0008}' | '\u{000a}'..='\u{000d}' | '\u{000f}'..='\u{001f}' | '\u{007f}')
+            || (ch as u32) > 0xff
+    })
+}
+
+fn json_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn header_error(code: &str, message: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+    ]))
 }
 
 fn opt(options: &Value, key: &str) -> Result<Option<String>, VmError> {

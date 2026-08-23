@@ -5,13 +5,7 @@ pub(crate) fn assign_set_property(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     reject_nullish_property_write(target)?;
     if let crate::value::Value::Proxy(_) = target {
-        let result = crate::proxy::proxy_set(target, key, &value, Some(target))?;
-        if matches!(result, crate::value::Value::Boolean(false)) {
-            return Err(crate::value::error::throw_type_error(
-                "Proxy set trap returned false",
-            ));
-        }
-        return Ok(target.clone());
+        return assign_proxy_target(target, key, value);
     }
     if crate::typed_array_ops::is_view(target)
         && crate::typed_array_ops::is_index_key(key)
@@ -48,12 +42,26 @@ pub(crate) fn assign_set_property(
     Ok(crate::builtins::set_property(target.clone(), key, value))
 }
 
+fn assign_proxy_target(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let result = crate::proxy::proxy_set(target, key, &value, Some(target))?;
+    if matches!(result, crate::value::Value::Boolean(false)) {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy set trap returned false",
+        ));
+    }
+    Ok(target.clone())
+}
 fn assign_proxy_set(
     registers: &mut Vec<crate::value::Value>,
     object: u16,
     target: &crate::value::Value,
     key: &str,
     value: crate::value::Value,
+
 ) -> Result<(), crate::execute::VmError> {
     let result = assign_set_property(target, key, value)?;
     crate::execute::write_value(registers, object, result);

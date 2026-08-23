@@ -98,7 +98,7 @@ fn string_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
         Some(Value::String(value)) if !crate::conversion::is_symbol_string(value) => {
             Ok(Value::String(value.clone()))
         }
-        Some(Value::StringUnits(value)) => Ok(crate::strings::from_units((**value).to_vec())),
+        Some(Value::StringUnits(value)) => Ok(crate::strings::from_units((**value).clone())),
         Some(value @ Value::Object(_)) => wrapped_string(value),
         Some(Value::ObjectAlias(alias)) => alias
             .0

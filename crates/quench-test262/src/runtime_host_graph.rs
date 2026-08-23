@@ -28,10 +28,6 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
     }
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
     for specifier in metadata.import_specifiers.clone() {
-        let dynamic = metadata
-            .dynamic_import_specifiers
-            .iter()
-            .any(|candidate| candidate == &specifier);
         let text_import = metadata
             .import_types
             .iter()
@@ -54,9 +50,6 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             continue;
         }
         let dependency = add_module_source(graph, path, &metadata.import_types, &specifier)?;
-        if dynamic {
-            graph.mark_dynamic_target(dependency);
-        }
         load_module_dependencies(graph, dependency)?;
     }
     Ok(())
@@ -92,3 +85,5 @@ fn add_module_source(
     }
     Ok(graph.add_dependency(path, source))
 }
+
+

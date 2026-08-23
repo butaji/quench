@@ -1,0 +1,338 @@
+/// Identity-bearing host capability kept outside the JavaScript value space.
+#[derive(Clone, Debug)]
+pub struct HostCapabilityValue {
+    pub descriptor: HostCapabilityRef,
+    identity: Rc<()>,
+    pub properties: RefCell<Vec<(String, Value)>>,
+}
+impl HostCapabilityValue {
+    pub fn new(descriptor: HostCapabilityRef) -> Self {
+        Self {
+            descriptor,
+            identity: Rc::new(()),
+            properties: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub fn realm(&self) -> RealmId {
+        self.descriptor.realm
+    }
+
+    pub fn same_realm(&self, other: &Self) -> bool {
+        self.realm() == other.realm()
+    }
+
+    pub fn same_identity(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.identity, &other.identity)
+    }
+}
+impl PartialEq for HostCapabilityValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.descriptor == other.descriptor && self.same_identity(other)
+    }
+}
+impl Eq for HostCapabilityValue {}
+
+/// Promise state: pending, fulfilled, or rejected.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromiseState {
+    Pending,
+    Fulfilled(Value),
+    Rejected(Value),
+}
+
+include!("value_promise.rs");
+
+/// Heap-allocated Promise data.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct TypedArrayMeta {
+    prototype: RefCell<Option<Value>>,
+    properties: RefCell<Vec<(String, Value)>>,
+}
+
+impl TypedArrayMeta {
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_prototype(&self, value: Value) {
+        self.prototype.replace(Some(value));
+    }
+
+    pub(crate) fn property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
+    }
+
+    pub(crate) fn own_properties(&self) -> Vec<(String, Value)> {
+        self.properties.borrow().clone()
+    }
+}
+
+type PromiseThenAction = (Option<Value>, Option<Value>, Rc<PromiseData>);
+
+/// Heap-allocated Promise data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromiseData {
+    pub(crate) prototype: RefCell<Option<Value>>,
+    pub(crate) properties: RefCell<Vec<(String, Value)>>,
+    pub state: RefCell<PromiseState>,
+    pub result: RefCell<Option<Value>>,
+    pub(crate) already_resolved: Cell<bool>,
+    pub then_actions: RefCell<Vec<PromiseThenAction>>,
+    pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
+}
+
+impl PromiseData {
+    pub fn new(state: PromiseState) -> Self {
+        let already_resolved = !matches!(state, PromiseState::Pending);
+        let result = match &state {
+            PromiseState::Pending => None,
+            PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => Some(value.clone()),
+        };
+        Self {
+            prototype: RefCell::new(None),
+            properties: RefCell::new(Vec::new()),
+            state: RefCell::new(state),
+            result: RefCell::new(result),
+            already_resolved: Cell::new(already_resolved),
+            then_actions: RefCell::new(Vec::new()),
+            continuations: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_prototype(&self, value: Value) {
+        self.prototype.replace(Some(value));
+    }
+
+    pub(crate) fn property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
+    }
+}
+
+impl Default for PromiseData {
+    fn default() -> Self {
+        Self::new(PromiseState::Pending)
+    }
+}
+
+/// Map key-value storage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapData {
+    pub(crate) weak: bool,
+    pub keys: RefCell<VecDeque<Value>>,
+    pub values: RefCell<Vec<Value>>,
+    pub(crate) prototype: RefCell<Option<Value>>,
+}
+
+impl MapData {
+    pub fn is_weak(&self) -> bool {
+        self.weak
+    }
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+    pub(crate) fn set_prototype(&self, prototype: Value) {
+        self.prototype.replace(Some(prototype));
+    }
+}
+
+/// Set value storage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetData {
+    pub(crate) weak: bool,
+    pub values: RefCell<VecDeque<Value>>,
+    pub(crate) prototype: RefCell<Option<Value>>,
+}
+
+impl SetData {
+    pub fn is_weak(&self) -> bool {
+        self.weak
+    }
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+    pub(crate) fn set_prototype(&self, prototype: Value) {
+        self.prototype.replace(Some(prototype));
+    }
+}
+include!("value_iterator.rs");
+
+#[derive(Debug, PartialEq)]
+pub struct GeneratorData {
+    pub function: Rc<FunctionValue>,
+    pub machine: RefCell<crate::machine::Machine>,
+    pub receiver: Value,
+    pub arguments: Vec<Value>,
+    pub done: RefCell<bool>,
+    pub state: RefCell<Option<GeneratorState>>,
+    pub pending_yield: RefCell<bool>,
+    pub(crate) executing: RefCell<bool>,
+    pub(crate) running: RefCell<bool>,
+    pub(crate) async_next_queue: RefCell<VecDeque<(Value, Rc<PromiseData>)>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratorState {
+    /// Resume offset within a nested `PrivateScope` body suspended on `yield`.
+    pub nested: usize,
+    /// Private-name capabilities captured when a class body suspended on `yield`.
+    pub private_environment: Option<crate::private_environment::PrivateEnvironment>,
+    pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
+}
+
+pub type ObjectProperties = Vec<(String, Value)>;
+pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
+
+#[derive(Debug, Clone)]
+pub struct ObjectData {
+    pub(crate) properties: ObjectProperties,
+    pub(crate) private_slots: PrivateSlots,
+    original_prototype: RefCell<Option<Value>>,
+    pub(crate) created: Vec<String>,
+}
+
+impl ObjectData {
+    pub(crate) fn new(properties: ObjectProperties) -> Self {
+        Self::with_private_slots(properties, Rc::new(RefCell::new(Vec::new())))
+    }
+
+    pub(crate) fn with_private_slots(
+        properties: ObjectProperties,
+        private_slots: PrivateSlots,
+    ) -> Self {
+        Self::with_creation_order(
+            properties.clone(),
+            private_slots,
+            creation_order(&properties),
+        )
+    }
+
+    pub(crate) fn original_prototype(&self) -> Option<Value> {
+        self.original_prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_original_prototype(&self, prototype: Option<Value>) {
+        self.original_prototype.replace(prototype);
+    }
+
+    pub(crate) fn with_creation_order(
+        properties: ObjectProperties,
+        private_slots: PrivateSlots,
+        created: Vec<String>,
+    ) -> Self {
+        Self {
+            properties,
+            private_slots,
+            original_prototype: RefCell::new(None),
+            created,
+        }
+    }
+}
+
+impl std::ops::Deref for ObjectData {
+    type Target = ObjectProperties;
+
+    fn deref(&self) -> &Self::Target {
+        &self.properties
+    }
+}
+
+impl std::ops::DerefMut for ObjectData {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.properties
+    }
+}
+
+fn creation_order(properties: &[(String, Value)]) -> Vec<String> {
+    let mut created = Vec::new();
+    for (key, _) in properties {
+        if key.starts_with('\0') || created.iter().any(|name| name == key) {
+            continue;
+        }
+        created.push(key.clone());
+    }
+    created
+}
+
+impl PartialEq for ObjectData {
+    fn eq(&self, other: &Self) -> bool {
+        self.properties == other.properties
+    }
+}
+
+pub type WeakObject = std::rc::Weak<ObjectData>;
+
+/// A private name capability created for one evaluation of a class definition.
+///
+/// The source id identifies the OXC fact that introduced the name. Its identity
+/// is the actual private-name key: evaluating the same class definition twice
+/// deliberately creates distinct keys.
+#[derive(Clone, Debug)]
+pub(crate) struct PrivateName {
+    source: PrivateNameId,
+    identity: Rc<()>,
+}
+
+impl PrivateName {
+    pub(crate) fn new(source: PrivateNameId) -> Self {
+        Self {
+            source,
+            identity: Rc::new(()),
+        }
+    }
+
+    pub(crate) fn same_identity(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.identity, &other.identity)
+    }
+}
+
+impl PartialEq for PrivateName {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source && self.same_identity(other)
+    }
+}
+
+impl Eq for PrivateName {}
+
+#[derive(Debug, Clone)]
+pub struct ObjectAliasValue(pub Rc<RefCell<WeakObject>>);
+
+impl PartialEq for ObjectAliasValue {
+    fn eq(&self, other: &Self) -> bool {
+        let left = self.0.borrow();
+        let right = other.0.borrow();
+        left.ptr_eq(&right)
+    }
+}

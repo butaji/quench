@@ -34,8 +34,6 @@ pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError>
         Value::String(value) => Ok(boxed_primitive(Value::String(value.clone()), crate::ops::Builtin::String)),
         Value::StringUnits(value) => Ok(boxed_primitive(Value::StringUnits(value.clone()), crate::ops::Builtin::String)),
         Value::BigInt(value) => Ok(boxed_primitive(Value::BigInt(value.clone()), crate::ops::Builtin::BigInt)),
-        Value::BindingCell(_) | Value::Undefined | Value::Null => Err(
-            crate::value::error::throw_type_error("Cannot convert undefined or null to object"),
-        ),
+        Value::BindingCell(_) | Value::Undefined | Value::Null => Err(crate::value::error::throw_type_error("Cannot convert undefined or null to object")),
     }
 }

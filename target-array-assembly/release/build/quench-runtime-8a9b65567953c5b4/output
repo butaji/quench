@@ -1,3 +1,0 @@
-cargo:rerun-if-env-changed=PROFILE
-cargo:rustc-cfg=quench_production
-cargo:rustc-env=QUENCH_BUILD_PROFILE=release

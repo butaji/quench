@@ -2,38 +2,6 @@ use std::rc::Rc;
 
 use crate::value::{PromiseData, Value};
 
-/// State required to resume a caller after a non-tail call completes.
-///
-/// `caller_code` and `caller_pc` are compact integer return addresses.  The
-/// isolate's code store is the sole owner of instructions; continuations never
-/// retain an instruction slice or AST/IR allocation.  The address is valid
-/// only while the originating machine/store is alive.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CallContinuation {
-    pub callee: Value,
-    pub receiver: Value,
-    pub arguments: Vec<Value>,
-    pub caller_code: crate::identity::CodeId,
-    pub caller_pc: u32,
-    pub caller_registers: Vec<Value>,
-    pub caller_environment: crate::identity::EnvironmentRef,
-    pub destination: u16,
-    pub guards: ContinuationGuards,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ContinuationGuards {
-    /// Guard state captured at the call boundary (strict-eval, with-scope,
-    /// private-environment, and host-context bits are intentionally opaque to
-    /// the completion transport).
-    pub flags: u32,
-}
-
-impl ContinuationGuards {
-    pub const fn new(flags: u32) -> Self {
-        Self { flags }
-    }
-}
 #[derive(Debug, Clone, PartialEq)]
 pub struct TailCallRequest {
     pub callee: Value,
@@ -45,8 +13,6 @@ pub struct TailCallRequest {
 pub enum Completion {
     Normal,
     Return(Value),
-    /// A call that must be executed before the current caller can continue.
-    Call(CallContinuation),
     TailCall(TailCallRequest),
     Throw(Value),
     Break {
@@ -110,7 +76,6 @@ impl Completion {
             VmError::Thrown(value) => Self::Throw(value),
             VmError::Break(label) => Self::Break { label, value: None },
             VmError::Continue(label) => Self::Continue { label, value: None },
-            VmError::Suspended(promise) => Self::Suspend(promise),
             VmError::NotCallable => {
                 let VmError::Thrown(value) = crate::execute::not_callable() else {
                     return Err(VmError::NotCallable);
@@ -126,7 +91,6 @@ impl Completion {
         match self {
             Self::Normal => Err(VmError::MissingReturn),
             Self::Return(value) => Ok(value),
-            Self::Call(_) => Err(VmError::EvalError("Unconsumed call completion".to_string())),
             Self::TailCall(_) => Err(VmError::EvalError(
                 "Unconsumed tail-call completion".to_string(),
             )),
