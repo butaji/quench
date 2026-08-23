@@ -275,6 +275,9 @@ include!("arrays_search_methods.rs");
 
 fn own_index(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     let index = array_index(key)? as usize;
+    if values.is_arguments() {
+        return values.get_index(index);
+    }
     // Keep the dense backing-store read independent from generic properties.
     // `direct_property` has already handled indexed property overrides; this
     // path only reads an actual dense slot.

@@ -280,6 +280,12 @@ fn prepare_array_length_definition(
     if key != "length" {
         return Ok(None);
     }
+    // The arguments exotic object's `length` is an ordinary writable data
+    // property, not ArraySetLength. Preserve its value without applying
+    // array-length coercion (which would incorrectly throw for strings).
+    if values.is_arguments() {
+        return Ok(None);
+    }
     let Some(value) = array_descriptor_value(descriptor, "value") else {
         return Ok(None);
     };
