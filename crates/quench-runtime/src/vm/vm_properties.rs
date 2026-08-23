@@ -227,6 +227,7 @@ fn primitive_prototype(value: &Value) -> Option<Value> {
     let builtin = match value {
         Value::Number(_) => Builtin::NumberPrototype,
         Value::Boolean(_) => Builtin::BooleanPrototype,
+        Value::StringUnits(_) => Builtin::StringPrototype,
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             Builtin::StringPrototype
         }
@@ -386,4 +387,3 @@ fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
 include!("vm_properties_resolution.rs");
 include!("vm_properties_special.rs");
 use crate::value::Value::{HostCapability, Promise};
-
