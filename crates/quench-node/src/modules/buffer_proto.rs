@@ -141,6 +141,20 @@ pub fn buffer_prototype() -> Value {
             prototype =
                 quench_runtime::execute::set_property(prototype, name, Value::Builtin(*builtin));
         }
+        prototype = quench_runtime::execute::set_property(
+            prototype,
+            "subarray",
+            Value::Builtin(quench_runtime::ops::Builtin::Uint8ArraySubarray),
+        );
+        // `util.inspect.custom` is a global symbol. Store the same function
+        // object as the named inspect method so identity and symbol lookup
+        // follow Node's Buffer prototype contract.
+        let inspect = quench_runtime::execute::get_property(&prototype, "inspect");
+        prototype = quench_runtime::execute::set_property(
+            prototype,
+            "Symbol.for.nodejs.util.inspect.custom\0",
+            inspect,
+        );
         let _ = quench_runtime::execute::set_prototype_of(
             &prototype,
             &Value::Builtin(quench_runtime::ops::Builtin::Uint8ArrayPrototype),
@@ -155,13 +169,9 @@ fn finish_view(mut view: Value, buffer: &Rc<ArrayBufferData>, byte_offset: usize
     // Typed-array prototype updates return a replacement value in the runtime
     // (the old value is not mutated in place). Keep that replacement so host
     // constructed Buffers actually expose Buffer.prototype methods.
-    view = quench_runtime::execute::set_prototype_of(&view, &buffer_prototype())
-        .unwrap_or(view);
-    view = quench_runtime::execute::set_property(
-        view,
-        "parent",
-        Value::ArrayBuffer(buffer.clone()),
-    );
+    view = quench_runtime::execute::set_prototype_of(&view, &buffer_prototype()).unwrap_or(view);
+    view =
+        quench_runtime::execute::set_property(view, "parent", Value::ArrayBuffer(buffer.clone()));
     // Keep the callable entry point directly on host-created views as well;
     // this remains visible if typed-array prototype chaining is represented
     // by a proxy/replacement value.
@@ -172,7 +182,10 @@ fn finish_view(mut view: Value, buffer: &Rc<ArrayBufferData>, byte_offset: usize
         &view,
         "toString",
         &[
-            ("value".into(), crate::host::capability(r::SPEC_BUFFER_TOSTRING)),
+            (
+                "value".into(),
+                crate::host::capability(r::SPEC_BUFFER_TOSTRING),
+            ),
             ("writable".into(), Value::Boolean(true)),
             ("enumerable".into(), Value::Boolean(false)),
             ("configurable".into(), Value::Boolean(true)),
