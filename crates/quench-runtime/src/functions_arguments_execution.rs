@@ -196,10 +196,7 @@ fn resolve_tail_target(
                 crate::value::Value::BoundFunction(_) => 24,
                 crate::value::Value::Proxy(_) => 25,
                 crate::value::Value::Promise(_) => 26,
-                crate::value::Value::HostCapability(cap) => {
-                    eprintln!("NOTCALLABLE callee discriminant=27 capability={:?}", cap.descriptor.kind);
-                    27
-                }
+                crate::value::Value::HostCapability(_) => 27,
                 crate::value::Value::Map(_) => 28,
                 crate::value::Value::Set(_) => 29,
                 crate::value::Value::Iterator(_) => 30,
@@ -207,7 +204,6 @@ fn resolve_tail_target(
                 crate::value::Value::Null => 32,
                 crate::value::Value::Undefined => 33,
             };
-            eprintln!("NOTCALLABLE callee discriminant={discriminant} value={other:?}");
             Err(crate::execute::VmError::NotCallable)
         }
     }
