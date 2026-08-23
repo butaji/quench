@@ -12,13 +12,13 @@ fn execute_generator_step(
     machine.pop_await_frame();
     let store = machine.store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store
-        .get(generator.function.code.range)
+        .code(generator.function.code.range)
         .ok_or(VmError::MissingReturn)?;
     let pc = machine.pc as usize;
     let resume = completion.clone();
     let mut step_result = None;
     let completion = machine.step(completion, |registers| {
-        let step = crate::vm::execute_generator_step(
+        let step = crate::vm::execute_generator_code_step(
             ops,
             registers,
             machine_environment(generator)?,
@@ -77,9 +77,9 @@ fn execute_generator_range(
         .store
         .clone()
         .ok_or(VmError::MissingReturn)?;
-    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
+    let ops = store.code(range).ok_or(VmError::MissingReturn)?;
     execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_generator_step(
+        crate::vm::execute_generator_code_step(
             ops,
             registers,
             machine_environment(generator)?,
@@ -150,8 +150,9 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         alternate,
     }) = generator
         .function
-        .ops()
-        .get(machine_pc(generator).wrapping_sub(1))
+        .code
+        .code()
+        .and_then(|code| code.cold_at(machine_pc(generator).wrapping_sub(1)))
     else {
         return Ok(());
     };
@@ -161,13 +162,10 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
     } else {
         alternate
     };
-    let Some(ops) = branch.ops() else {
+    let Some(ops) = branch.code() else {
         return Ok(());
     };
-    let Some((index, Op::Yield { src })) = ops
-        .iter()
-        .enumerate()
-        .find(|(_, op)| matches!(op, Op::Yield { .. }))
+    let Some((index, Op::Yield { src })) = ops.find_cold(|op| matches!(op, Op::Yield { .. }))
     else {
         return Ok(());
     };
@@ -234,13 +232,14 @@ fn push_private_frame(generator: &GeneratorData, state: &GeneratorState) -> Resu
     let Some((_, body_ops, index)) = suspended_private_scope(generator, state) else {
         return Ok(());
     };
-    let Some(Op::Yield { src }) = body_ops.get(index) else {
+    let Some(Op::Yield { src }) = body_ops.cold_at(index) else {
         return Ok(());
     };
     let Some(Op::PrivateScope { body, .. }) = generator
         .function
-        .ops()
-        .get(machine_pc(generator).wrapping_sub(1))
+        .code
+        .code()
+        .and_then(|code| code.cold_at(machine_pc(generator).wrapping_sub(1)))
     else {
         return Ok(());
     };
@@ -284,8 +283,8 @@ fn advance_frame_after_yield(
         .store
         .clone()
         .ok_or(VmError::MissingReturn)?;
-    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
-    let Some(Op::Yield { src }) = next.checked_sub(1).and_then(|index| ops.get(index)) else {
+    let code = store.code(range).ok_or(VmError::MissingReturn)?;
+    let Some(Op::Yield { src }) = next.checked_sub(1).and_then(|index| code.cold_at(index)) else {
         return Err(VmError::MissingReturn);
     };
     let resume = crate::machine::CodeRange {

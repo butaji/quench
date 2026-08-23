@@ -10,8 +10,8 @@ impl LinkedModule {
         self.evaluating.set(true);
         let start = self.resume_pc.get();
         let mut registers = self.resume_registers.borrow().clone();
-        let result = self.scope.execute_from(
-            self.program.ops(),
+        let result = self.scope.execute_code_from(
+            self.program.code(),
             start,
             &mut registers,
             &host_context(),

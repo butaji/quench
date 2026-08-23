@@ -43,7 +43,9 @@ pub fn execute_call(
 fn peel_binding_cell(mut value: Value) -> Value {
     let mut seen = std::collections::HashSet::new();
     loop {
-        let Value::BindingCell(cell) = value else { return value };
+        let Value::BindingCell(cell) = value else {
+            return value;
+        };
         if !seen.insert(std::rc::Rc::as_ptr(&cell)) {
             return Value::BindingCell(cell);
         }
@@ -51,14 +53,13 @@ fn peel_binding_cell(mut value: Value) -> Value {
     }
 }
 
-
 pub fn execute_call_continuation(
     registers: &mut Vec<Value>,
     continuation: crate::completion::CallContinuation,
 ) -> Result<(), VmError> {
     struct ActiveCall {
         continuation: crate::completion::CallContinuation,
-        ops: std::rc::Rc<[crate::ops::Op]>,
+        code: crate::machine::FunctionCode,
         registers: Vec<Value>,
         environment: std::rc::Rc<crate::environment::Environment>,
         pc: usize,
@@ -87,7 +88,7 @@ pub fn execute_call_continuation(
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
         Ok(Some(ActiveCall {
-            ops: std::rc::Rc::from(function.ops()),
+            code: function.code.clone(),
             continuation,
             registers: callee_registers,
             environment,
@@ -110,8 +111,9 @@ pub fn execute_call_continuation(
     };
     let context = crate::vm::current_context_or_default();
     let value = loop {
-        let (completion, next) = match crate::vm::execute_ops_from(
-            &current.ops,
+        let code = current.code.code().ok_or(VmError::MissingReturn)?;
+        let (completion, next) = match crate::vm::execute_code_from(
+            code,
             current.pc,
             &mut current.registers,
             &context,
@@ -355,7 +357,7 @@ pub(crate) fn collect_call_arguments(
     args: &[u16],
     spreads: &[bool],
 ) -> Result<Vec<Value>, VmError> {
-    let mut arguments = Vec::new();
+    let mut arguments = Vec::with_capacity(args.len());
     for (i, index) in args.iter().enumerate() {
         push_argument_value(
             &mut arguments,

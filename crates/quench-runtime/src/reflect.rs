@@ -360,8 +360,8 @@ fn evaluate(
     let program = crate::reduce::reduce_eval_source(&source, strict, true, false, &bindings, &[])
         .map_err(|errors| syntax_error(errors, error_realm))?;
     match realm {
-        Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.ops()),
-        None => crate::vm::execute_indirect_eval(program.ops()),
+        Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.code()),
+        None => crate::vm::execute_indirect_eval(program.code()),
     }
 }
 
@@ -391,37 +391,14 @@ fn evaluate_direct(
         grammar,
     )
     .map_err(|errors| syntax_error(errors, None))?;
-    let local_slot = program
-        .local_slots
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |slot| slot.saturating_add(1));
-    let eval_slot = program
-        .facts
-        .eval_deletable
-        .iter()
-        .map(|(_, slot)| slot.saturating_add(1))
-        .max()
-        .unwrap_or(0);
-    let slot_count = local_slot.max(eval_slot);
-    execute_direct_eval(program.ops(), program.facts.strict, slot_count)
+    execute_direct_eval(program.code(), program.facts.strict)
 }
 
-fn execute_direct_eval(
-    ops: &[crate::ops::Op],
-    strict: bool,
-    slot_count: u16,
-) -> Result<Value, VmError> {
-    let caller = crate::locals::current();
-    let additional = usize::from(slot_count.saturating_sub(caller.len() as u16));
-    let environment = crate::environment::Environment::child(
-        &caller,
-        vec![Value::Undefined; additional],
-    );
+fn execute_direct_eval(code: crate::machine::CodeView<'_>, strict: bool) -> Result<Value, VmError> {
+    let environment = crate::environment::Environment::child(&crate::locals::current(), Vec::new());
+    let _guard = crate::locals::EnvironmentGuard::install(environment);
     let _strict_eval = crate::locals::StrictEvalGuard::install(strict);
-    let context = crate::vm::current_context_or_default();
-    crate::vm::execute_in_environment(ops, &mut Vec::new(), &context, environment)
+    crate::vm::execute_code_in_place(code, &mut Vec::new())
 }
 
 fn syntax_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
