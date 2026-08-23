@@ -48,6 +48,12 @@ fn static_pairs() -> Vec<(String, Value)> {
         .iter()
         .map(|(name, spec)| (name.to_string(), crate::host::capability(*spec)))
         .collect();
+    // Buffer.of shares the same host capability as the legacy generated
+    // constructor table; keep it in the single static-method surface.
+    pairs.push((
+        "of".to_string(),
+        crate::host::scheduler_capability(2044),
+    ));
     pairs.push(("poolSize".to_string(), Value::Number(8192.0)));
     pairs.push(("kMaxLength".to_string(), Value::Number(MAX_LENGTH)));
     pairs.push((

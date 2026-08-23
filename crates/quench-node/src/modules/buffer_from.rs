@@ -57,6 +57,18 @@ pub fn from(
     }
 }
 
+/// `Buffer.of(...values)` — numeric values are converted with ToNumber and
+/// stored modulo 256, sharing Buffer's canonical byte representation.
+pub fn of(args: &[Value]) -> Result<Value, VmError> {
+    let mut bytes = Vec::with_capacity(args.len());
+    for value in args {
+        let number = quench_runtime::to_number(value)?;
+        let byte = if number.is_nan() { 0 } else { (number as i64 & 0xff) as u8 };
+        bytes.push(byte);
+    }
+    Ok(crate::modules::buffer_proto::make_buffer(&bytes))
+}
+
 fn first_arg_error(value: &Value) -> VmError {
     enc::invalid_arg_type(format!(
         "The first argument must be of type string or an instance of Buffer, \
