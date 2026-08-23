@@ -9,7 +9,7 @@ pub(super) fn reduce(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let callee = super::reduce_expression(&tagged.tag, ops, facts, next_register, locals)?;
+    let (callee, receiver) = reduce_tag(&tagged.tag, ops, facts, next_register, locals)?;
     let cooked = reduce_parts(&tagged.quasi, true, ops, next_register)?;
     let raw = reduce_parts(&tagged.quasi, false, ops, next_register)?;
     let raw_key = emit_string(ops, next_register, "raw");
@@ -37,11 +37,47 @@ pub(super) fn reduce(
     ops.push(Op::Call {
         dst,
         callee,
-        receiver: None,
+        receiver,
         args,
         spreads,
     });
     Some(dst)
+}
+
+fn reduce_tag(
+    tag: &oxc::ast::ast::Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut crate::facts::ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(u16, Option<u16>)> {
+    match tag {
+        oxc::ast::ast::Expression::StaticMemberExpression(member) => {
+            let object = super::reduce_expression(&member.object, ops, facts, next_register, locals)?;
+            let callee = take_register(next_register);
+            ops.push(Op::GetProperty {
+                dst: callee,
+                object,
+                key: member.property.name.to_string(),
+            });
+            Some((callee, Some(object)))
+        }
+        oxc::ast::ast::Expression::ComputedMemberExpression(member) => {
+            let object = super::reduce_expression(&member.object, ops, facts, next_register, locals)?;
+            let key = super::reduce_expression(&member.expression, ops, facts, next_register, locals)?;
+            let callee = take_register(next_register);
+            ops.push(Op::GetPropertyDynamic {
+                dst: callee,
+                object,
+                key,
+            });
+            Some((callee, Some(object)))
+        }
+        _ => Some((
+            super::reduce_expression(tag, ops, facts, next_register, locals)?,
+            None,
+        )),
+    }
 }
 
 fn freeze_template_object(ops: &mut Vec<Op>, next_register: &mut u16, object: u16) {
