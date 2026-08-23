@@ -13,6 +13,8 @@ use std::process::ExitCode;
 use quench_node_test::reader::NodeOutcome;
 use quench_node_test::stages::discover_fixtures;
 
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if let Some(path) = args
@@ -39,12 +41,13 @@ fn main() -> ExitCode {
         println!(
             "  --test-dir DIR  compat suite root (default: crates/quench-node-test/node-tests)"
         );
-        println!("  each fixture is bounded by a 30 second timeout");
+        println!("  --timeout-secs N  per-fixture timeout (default: 30)");
         return ExitCode::SUCCESS;
     }
     let mut args = args.into_iter().skip(1);
     let mut quiet = false;
     let mut list = false;
+    let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
     let mut dir = PathBuf::from("crates/quench-node-test/node-tests");
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -60,6 +63,17 @@ fn main() -> ExitCode {
                 };
                 dir = PathBuf::from(path);
             }
+            "--timeout-secs" => {
+                let Some(value) = args.next().and_then(|value| value.parse().ok()) else {
+                    eprintln!("error: --timeout-secs requires a positive integer");
+                    return ExitCode::from(2);
+                };
+                if value == 0 {
+                    eprintln!("error: --timeout-secs requires a positive integer");
+                    return ExitCode::from(2);
+                }
+                timeout_secs = value;
+            }
             _ if a.starts_with('-') => {
                 eprintln!("error: unknown option {a}");
                 return ExitCode::from(2);
@@ -67,9 +81,9 @@ fn main() -> ExitCode {
             _ => dir = PathBuf::from(a),
         }
     }
-    run_with_dir(dir, quiet, list)
+    run_with_dir(dir, quiet, list, timeout_secs)
 }
-fn run_with_dir(dir: std::path::PathBuf, quiet: bool, list: bool) -> ExitCode {
+fn run_with_dir(dir: std::path::PathBuf, quiet: bool, list: bool, timeout_secs: u64) -> ExitCode {
     if !dir.is_dir() {
         eprintln!("error: {} is not a directory", dir.display());
         return ExitCode::from(2);
@@ -95,7 +109,7 @@ fn run_with_dir(dir: std::path::PathBuf, quiet: bool, list: bool) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let mut runner = quench_node_test::NodeTestRunner::new();
-    let summary = run_suite(&mut runner, &fixtures, quiet);
+    let summary = run_suite(&mut runner, &fixtures, quiet, timeout_secs);
     print_summary(&summary, fixtures.len());
     // A skip is not compatibility evidence.  Keep it visible in the
     // aggregate and fail the gate until the fixture is either supported or
@@ -140,6 +154,7 @@ fn run_suite(
     _runner: &mut quench_node_test::NodeTestRunner,
     fixtures: &[PathBuf],
     quiet: bool,
+    timeout_secs: u64,
 ) -> SuiteSummary {
     use std::process::{Command, Stdio};
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-compat"));
@@ -163,7 +178,8 @@ fn run_suite(
         let result = match result {
             Err(error) => Err(error),
             Ok(mut child) => {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                let deadline =
+                    std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
                 loop {
                     match child.try_wait() {
                         Ok(Some(_)) => break child.wait_with_output().map(Some),
@@ -190,7 +206,7 @@ fn run_suite(
             Ok(None) => (
                 false,
                 false,
-                Some("fixture timed out after 30s".to_string()),
+                Some(format!("fixture timed out after {timeout_secs}s")),
             ),
             Err(error) => (
                 false,
