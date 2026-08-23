@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 "use strict";
+const { assertIterations, validateBenchmarkReport } = require("./microbenchmark-schema.cjs");
 const iterations = Number(process.env.QUENCH_VALUE_ITERATIONS || 1_000_000);
-if (!Number.isSafeInteger(iterations) || iterations < 1) {
-  throw new Error("QUENCH_VALUE_ITERATIONS must be a positive safe integer");
-}
+assertIterations(iterations);
 // The record is the canonical fact under test: tag selects the representation
 // and payload owns the numeric value. Both measurements consume these facts;
 // no second semantic model is introduced.
@@ -21,7 +20,7 @@ function measure(name, read) {
   let checksum = 0;
   const started = process.hrtime.bigint();
   for (let i = 0; i < iterations; i++) checksum += read(i);
-  return { representation: name, iterations, checksum, wall_ms: Number(process.hrtime.bigint() - started) / 1e6 };
+  return { name, iterations, checksum, wall_ms: Number(process.hrtime.bigint() - started) / 1e6 };
 }
 const results = [
   measure("tagged-payload", (i) => tagged[i].payload),
@@ -32,4 +31,6 @@ const expectedChecksum = (iterations * (iterations - 1)) / 2;
 if (results.some(({ checksum }) => checksum !== expectedChecksum)) {
   throw new Error("representation checksum mismatch");
 }
-console.log(JSON.stringify({ results, boxed_bytes: boxed.byteLength }));
+const report = { results, boxed_bytes: boxed.byteLength };
+validateBenchmarkReport(report, iterations);
+console.log(JSON.stringify(report));

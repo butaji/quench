@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");
-
+const { validateBenchmarkReport } = require("./microbenchmark-schema.cjs");
 const root = path.resolve(__dirname, "..");
 const scripts = [
   ["value", "value-representation-benchmark.cjs", "QUENCH_VALUE_ITERATIONS", 257],
@@ -38,15 +38,24 @@ for (const [name, script, variable, iterations] of scripts) {
   }
 }
 
-// This is a contract probe, not a throughput sample: invalid inputs must fail
-// before either runtime allocates its measurement arrays.
+// Invalid iteration inputs fail before benchmark arrays are allocated.
 for (const [name, script, variable] of scripts) {
   for (const invalid of ["0", "-1", "1.5", "not-a-number"]) {
     assert.throws(
       () => run(process.execPath, script, variable, invalid),
-      /must be a positive safe integer/,
+      /positive safe integer/,
       `${name} rejects ${invalid}`,
     );
   }
 }
+
+// Schema rejects malformed lifecycle states before any runner is invoked.
+assert.throws(() => validateBenchmarkReport({}, 1), /non-empty results/);
+assert.throws(() => validateBenchmarkReport({ results: [{ name: "x", iterations: 1, checksum: 0, wall_ms: -1 }] }, 1), /wall_ms/);
+assert.throws(() => validateBenchmarkReport({
+  results: [
+    { name: "x", iterations: 1, checksum: 0, wall_ms: 0 },
+    { name: "x", iterations: 1, checksum: 0, wall_ms: 0 },
+  ],
+}, 1), /unique/);
 console.log(`microbenchmark contracts passed (${scripts.length} benchmarks, Node/quench-node)`);

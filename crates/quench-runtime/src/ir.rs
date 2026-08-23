@@ -10,6 +10,7 @@ pub type Register = u16;
 pub const MAX_REGISTER_ID: Register = u16::MAX;
 pub type ConstantId = u16;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum Opcode {
     LoadConst = 1,
     Move = 2,
@@ -28,6 +29,27 @@ pub enum Opcode {
 
 impl Opcode {
     pub const COUNT: u8 = 13;
+
+    /// Decode the compact byte representation, rejecting reserved identifiers.
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        Some(match value {
+            1 => Self::LoadConst,
+            2 => Self::Move,
+            3 => Self::Add,
+            4 => Self::AddConst,
+            5 => Self::JumpIfFalse,
+            6 => Self::Return,
+            7 => Self::Slow,
+            8 => Self::LoadLocal,
+            9 => Self::Sub,
+            10 => Self::Mul,
+            11 => Self::Div,
+            12 => Self::GetProperty,
+            13 => Self::Call,
+            _ => return None,
+        })
+    }
+
     pub const fn is_compact(self) -> bool {
         (self as u8) <= Self::COUNT
     }
@@ -52,8 +74,8 @@ pub struct Instruction {
 /// not participate in dispatch or duplicate runtime semantics.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OpcodeMetrics {
-    pub frequency: [u64; 14],
-    pub operand_words: [u64; 14],
+    pub frequency: [u64; Opcode::COUNT as usize + 1],
+    pub operand_words: [u64; Opcode::COUNT as usize + 1],
 }
 
 impl OpcodeMetrics {
@@ -173,8 +195,8 @@ pub enum InstructionEncoding {
     Compact,
 }
 
-const DISPATCH_TABLE: [u8; 14] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
-
+const DISPATCH_TABLE: [u8; Opcode::COUNT as usize + 1] =
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 /// Number of u16 operand words consumed by this opcode.
 const fn operand_width(opcode: Opcode) -> u8 {
     match opcode {
@@ -296,9 +318,71 @@ impl Instruction {
         }
     }
 }
+impl Instruction {
+    /// Encode the canonical instruction into its deterministic compact wire form.
+    ///
+    /// The first two bytes are the opcode and flags, followed by exactly the
+    /// operand words required by that opcode in little-endian order.  This is
+    /// an interchange/measurement format; execution retains the fixed-width
+    /// [`Instruction`] record and therefore the slow path remains authoritative.
+    pub fn encode_compact(self) -> Vec<u8> {
+        let width = usize::from(operand_width(self.opcode));
+        let mut bytes = Vec::with_capacity(2 + width * 2);
+        bytes.push(self.opcode as u8);
+        bytes.push(self.flags);
+        for operand in [self.a, self.b, self.c].into_iter().take(width) {
+            bytes.extend_from_slice(&operand.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Decode one compact instruction, rejecting unknown opcodes and truncated
+    /// or overlong records rather than silently accepting an invalid state.
+    pub fn decode_compact(bytes: &[u8]) -> Result<Self, &'static str> {
+        if bytes.len() < 2 {
+            return Err("compact instruction missing opcode and flags");
+        }
+        let opcode = Opcode::from_u8(bytes[0]).ok_or("unknown compact opcode")?;
+        let width = usize::from(operand_width(opcode));
+        let expected = 2 + width * 2;
+        if bytes.len() != expected {
+            return Err("compact instruction has invalid width");
+        }
+        let mut operands = [0u16; 3];
+        for (index, operand) in operands.iter_mut().enumerate().take(width) {
+            let start = 2 + index * 2;
+            *operand = u16::from_le_bytes([bytes[start], bytes[start + 1]]);
+        }
+        Ok(Self {
+            opcode,
+            flags: bytes[1],
+            a: operands[0],
+            b: operands[1],
+            c: operands[2],
+        })
+    }
+}
+
+
+/// Result of lowering one canonical operation.
+///
+/// `Fast` owns only the fixed-width instruction used by the compact executor.
+/// `Slow` retains the original operation as the semantic authority. Unsupported
+/// operations are therefore never silently discarded.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoweredInstruction {
+    Fast(Instruction),
+    Slow(crate::ops::Op),
+}
+
+/// Classify an operation without introducing a second semantic representation.
+pub fn lower(op: &crate::ops::Op) -> LoweredInstruction {
+    lower_compact(op)
+        .map(LoweredInstruction::Fast)
+        .unwrap_or_else(|| LoweredInstruction::Slow(op.clone()))
+}
 
 /// Lossless lowering for the fixed-width subset of the canonical Op IR.
-/// Operations carrying pools, vectors, or nested code remain on the slow path.
 pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
     use crate::ops::{BinaryOp, Op};
     match op {
@@ -345,11 +429,71 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
     }
 }
 
+/// Out-of-line metadata indexed by the canonical instruction position.
+///
+/// Each populated vector is either empty (metadata omitted) or exactly as long
+/// as `Program::instructions`. `Program` owns the vectors and keeps them in
+/// lockstep when instructions are fused; an entry is never interpreted when
+/// its vector is empty. This makes missing metadata an explicit, valid state
+/// rather than a sentinel embedded in hot instruction records.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RareMetadata {
     pub source_spans: Vec<(u32, u32)>,
     pub names: Vec<String>,
     pub debug_flags: Vec<u8>,
+}
+
+impl RareMetadata {
+    fn is_aligned(&self, instruction_count: usize) -> bool {
+        [self.source_spans.len(), self.names.len(), self.debug_flags.len()]
+            .into_iter()
+            .all(|len| len == 0 || len == instruction_count)
+    }
+
+    fn retain_fused(&mut self, keep: &[bool]) {
+        for values in [
+            MetadataVector::Spans(&mut self.source_spans),
+            MetadataVector::Names(&mut self.names),
+            MetadataVector::Flags(&mut self.debug_flags),
+        ] {
+            values.retain(keep);
+        }
+    }
+}
+
+enum MetadataVector<'a> {
+    Spans(&'a mut Vec<(u32, u32)>),
+    Names(&'a mut Vec<String>),
+    Flags(&'a mut Vec<u8>),
+}
+
+impl MetadataVector<'_> {
+    fn retain(self, keep: &[bool]) {
+        match self {
+            Self::Spans(values) => values.retain_with_index(keep),
+            Self::Names(values) => values.retain_with_index(keep),
+            Self::Flags(values) => values.retain_with_index(keep),
+        }
+    }
+}
+
+trait RetainWithIndex {
+    fn retain_with_index(&mut self, keep: &[bool]);
+}
+
+impl<T> RetainWithIndex for Vec<T> {
+    fn retain_with_index(&mut self, keep: &[bool]) {
+        if self.is_empty() {
+            return;
+        }
+        assert_eq!(self.len(), keep.len());
+        let mut index = 0;
+        self.retain(|_| {
+            let retained = keep[index];
+            index += 1;
+            retained
+        });
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -475,33 +619,43 @@ impl Program {
     /// Fuse the measured hot pair `LoadConst; Add` without changing fallback semantics.
     pub fn fuse_load_const_add(&mut self) {
         let mut out = Vec::with_capacity(self.instructions.len());
+        let mut keep = Vec::with_capacity(self.instructions.len());
         let mut i = 0;
         while i < self.instructions.len() {
             if i + 1 < self.instructions.len()
                 && self.instructions[i].opcode == Opcode::LoadConst
                 && self.instructions[i + 1].opcode == Opcode::Add
+                && self.instructions[i].flags == 0
+                && self.instructions[i + 1].flags == 0
                 && self.instructions[i].a == self.instructions[i + 1].b
             {
                 let load = self.instructions[i];
                 let add = self.instructions[i + 1];
                 out.push(Instruction::add_const(add.a, add.c, load.b));
+                keep.push(true);
+                keep.push(false);
                 i += 2;
             } else {
                 out.push(self.instructions[i]);
+                keep.push(true);
                 i += 1;
             }
         }
+        self.rare.retain_fused(&keep);
         self.instructions = out;
     }
     pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.rare.is_aligned(self.instructions.len()) {
+            return Err("rare metadata is not aligned with instructions");
+        }
         for instruction in &self.instructions {
             match instruction.opcode {
-                Opcode::LoadConst | Opcode::AddConst
-                    if self.constants.get(instruction.b).is_none() =>
-                {
+                Opcode::LoadConst if self.constants.get(instruction.b).is_none() => {
                     return Err("instruction references missing constant");
                 }
-
+                Opcode::AddConst if self.constants.get(instruction.c).is_none() => {
+                    return Err("instruction references missing constant");
+                }
                 Opcode::JumpIfFalse if usize::from(instruction.b) >= self.instructions.len() => {
                     return Err("conditional jump target is out of range");
                 }
@@ -511,9 +665,93 @@ impl Program {
         Ok(())
     }
 }
+impl Program {
+    /// Execute the validated fixed-width subset with caller-owned registers.
+    /// Unsupported instructions deliberately fail rather than creating a
+    /// second semantic model; the Op VM remains the slow-path authority.
+    pub fn execute(
+        &self,
+        registers: &mut Vec<crate::value::Value>,
+    ) -> Result<crate::value::Value, crate::vm::VmError> {
+        self.validate()
+            .map_err(|message| crate::vm::VmError::EvalError(message.into()))?;
+        let mut pc = 0usize;
+        while let Some(instruction) = self.instructions.get(pc).copied() {
+            let read = |id: Register| {
+                registers
+                    .get(usize::from(id))
+                    .cloned()
+                    .ok_or(crate::vm::VmError::RegisterOutOfBounds(id))
+            };
+            match instruction.opcode {
+                Opcode::LoadConst => {
+                    let value = self.constants.get(instruction.b).cloned().ok_or(
+                        crate::vm::VmError::EvalError("missing constant".into()),
+                    )?;
+                    let dst = usize::from(instruction.a);
+                    registers.resize(registers.len().max(dst + 1), crate::value::Value::Undefined);
+                    registers[dst] = (&value).into();
+                }
+                Opcode::Move => {
+                    let value = read(instruction.b)?;
+                    let dst = usize::from(instruction.a);
+                    registers.resize(registers.len().max(dst + 1), crate::value::Value::Undefined);
+                    registers[dst] = value;
+                }
+                Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div | Opcode::AddConst => {
+                    let left = read(instruction.b)?;
+                    let right = if instruction.opcode == Opcode::AddConst {
+                        (&self.constants.get(instruction.c).cloned().ok_or(
+                            crate::vm::VmError::EvalError("missing constant".into()),
+                        )?).into()
+                    } else {
+                        read(instruction.c)?
+                    };
+                    let (crate::value::Value::Number(lhs), crate::value::Value::Number(rhs)) =
+                        (left, right)
+                    else {
+                        return Err(crate::vm::VmError::EvalError(
+                            "compact arithmetic requires numbers".into(),
+                        ));
+                    };
+                    let result = match instruction.opcode {
+                        Opcode::Add | Opcode::AddConst => lhs + rhs,
+                        Opcode::Sub => lhs - rhs,
+                        Opcode::Mul => lhs * rhs,
+                        Opcode::Div => lhs / rhs,
+                        _ => unreachable!(),
+                    };
+                    let dst = usize::from(instruction.a);
+                    registers.resize(registers.len().max(dst + 1), crate::value::Value::Undefined);
+                    registers[dst] = crate::value::Value::Number(result);
+                }
+                Opcode::Return => return read(instruction.a),
+                _ => {
+                    return Err(crate::vm::VmError::EvalError(
+                        "unsupported compact instruction".into(),
+                    ))
+                }
+            }
+            pc += 1;
+        }
+        Err(crate::vm::VmError::MissingReturn)
+    }
+}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn executes_canonical_numeric_stream_and_reports_missing_return() {
+        let mut program = Program::default();
+        program.load_constant(0, Constant::Number(2.0));
+        program.load_constant(1, Constant::Number(3.0));
+        program.instructions.push(Instruction::add(2, 0, 1));
+        program.instructions.push(Instruction::ret(2));
+        let mut registers = Vec::new();
+        assert_eq!(program.execute(&mut registers), Ok(crate::value::Value::Number(5.0)));
+        program.instructions.pop();
+        assert_eq!(program.execute(&mut registers), Err(crate::vm::VmError::MissingReturn));
+    }
     use super::*;
 
     #[test]
@@ -528,9 +766,31 @@ mod tests {
     }
 
     #[test]
+    fn validates_add_const_pool_operand_in_canonical_source() {
+        let mut program = Program::default();
+        program.load_constant(0, Constant::Number(1.0));
+        program.instructions.push(Instruction::add_const(1, 0, 7));
+        assert_eq!(
+            program.validate(),
+            Err("instruction references missing constant")
+        );
+    }
+
+    #[test]
     fn opcodes_remain_compact_byte_identifiers() {
         assert_eq!(Opcode::COUNT, 13);
         assert!(Opcode::Slow.is_compact());
+    }
+
+    #[test]
+    fn opcodes_have_checked_compact_byte_decoding() {
+        assert_eq!(std::mem::size_of::<Opcode>(), 1);
+        for value in 1..=Opcode::COUNT {
+            let opcode = Opcode::from_u8(value).expect("assigned opcode must decode");
+            assert_eq!(opcode as u8, value);
+        }
+        assert_eq!(Opcode::from_u8(0), None);
+        assert_eq!(Opcode::from_u8(Opcode::COUNT + 1), None);
     }
     #[test]
     fn lowers_common_ops_to_fixed_width_instructions() {
@@ -619,6 +879,24 @@ mod tests {
     }
 
     #[test]
+    fn fusion_preserves_flagged_instructions_for_slow_path() {
+        let mut p = Program::default();
+        p.load_constant(0, Constant::Number(2.0));
+        p.instructions.push(Instruction {
+            opcode: Opcode::Add,
+            flags: 1,
+            a: 2,
+            b: 0,
+            c: 1,
+        });
+        p.fuse_load_const_add();
+        assert_eq!(p.instructions.len(), 2);
+        assert_eq!(p.instructions[0].opcode, Opcode::LoadConst);
+        assert_eq!(p.instructions[1].flags, 1);
+        assert_eq!(p.validate(), Ok(()));
+    }
+
+    #[test]
     fn validation_rejects_missing_constants() {
         let mut p = Program::default();
         p.instructions.push(Instruction::load_const(0, 4));
@@ -674,6 +952,23 @@ mod tests {
         assert_eq!(matched, table);
     }
 
+
+    #[test]
+    fn opcode_metrics_use_the_complete_dispatch_domain() {
+        let instructions = [
+            Instruction::load_const(0, 0),
+            Instruction::add(1, 0, 0),
+            Instruction::slow(0),
+        ];
+        let metrics = OpcodeMetrics::for_instructions(&instructions);
+        assert_eq!(metrics.frequency.len(), Opcode::COUNT as usize + 1);
+        assert_eq!(metrics.frequency[Opcode::LoadConst as usize], 1);
+        assert_eq!(metrics.frequency[Opcode::Add as usize], 1);
+        assert_eq!(metrics.frequency[Opcode::Slow as usize], 1);
+        assert_eq!(metrics.operand_words[Opcode::LoadConst as usize], 2);
+        assert_eq!(metrics.operand_words[Opcode::Add as usize], 3);
+        assert_eq!(metrics.operand_words[Opcode::Slow as usize], 0);
+    }
     #[test]
     fn constant_pool_lookup_is_read_only_and_ids_are_stable() {
         let mut pool = ConstantPool::default();
@@ -702,4 +997,85 @@ mod tests {
             before.entries * std::mem::size_of::<ConstantId>()
         );
     }
+    #[test]
+    fn rare_metadata_stays_aligned_when_fusing_instructions() {
+        let mut p = Program::default();
+        p.load_constant(0, Constant::Number(2.0));
+        p.instructions.push(Instruction::add(1, 0, 0));
+        p.instructions.push(Instruction::ret(1));
+        p.rare.source_spans = vec![(1, 2), (3, 4), (5, 6)];
+        p.rare.names = vec!["load".into(), "add".into(), "return".into()];
+        p.rare.debug_flags = vec![1, 2, 3];
+        p.fuse_load_const_add();
+        assert_eq!(p.rare.source_spans, vec![(1, 2), (5, 6)]);
+        assert_eq!(p.rare.names, vec!["load".to_string(), "return".to_string()]);
+        assert_eq!(p.rare.debug_flags, vec![1, 3]);
+        assert_eq!(p.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validate_rejects_partial_rare_metadata() {
+        let mut p = Program::default();
+        p.instructions.push(Instruction::ret(0));
+        p.instructions.push(Instruction::ret(0));
+        p.rare.debug_flags.push(1);
+        assert_eq!(p.validate(), Err("rare metadata is not aligned with instructions"));
+    }
+    #[test]
+    fn compact_encoding_round_trips_operands_flags_and_unused_zeroes() {
+        let instructions = [
+            Instruction::load_const(0x1234, 0xabcd),
+            Instruction::get_property(7, 8, 9),
+            Instruction::slow(0x5a),
+        ];
+        for instruction in instructions {
+            let encoded = instruction.encode_compact();
+            assert_eq!(Instruction::decode_compact(&encoded), Ok(instruction));
+            assert_eq!(encoded[0], instruction.opcode as u8);
+            assert_eq!(encoded[1], instruction.flags);
+        }
+        let decoded_return = Instruction::decode_compact(&Instruction::ret(1).encode_compact()).unwrap();
+        assert_eq!((decoded_return.a, decoded_return.b, decoded_return.c), (1, 0, 0));
+    }
+
+    #[test]
+    fn compact_encoding_rejects_invalid_opcode_and_boundaries() {
+        assert_eq!(
+            Instruction::decode_compact(&[]),
+            Err("compact instruction missing opcode and flags")
+        );
+        assert_eq!(
+            Instruction::decode_compact(&[0, 0]),
+            Err("unknown compact opcode")
+        );
+        let valid = Instruction::ret(3).encode_compact();
+        assert_eq!(
+            Instruction::decode_compact(&valid[..valid.len() - 1]),
+            Err("compact instruction has invalid width")
+        );
+        let mut overlong = valid;
+        overlong.push(0);
+        assert_eq!(
+            Instruction::decode_compact(&overlong),
+            Err("compact instruction has invalid width")
+        );
+    }
+    
+    #[test]
+    fn lowering_classifies_fast_and_retains_slow_source() {
+        use crate::ops::Op;
+
+        let fast = lower(&Op::Move { dst: 1, src: 2 });
+        assert_eq!(fast, LoweredInstruction::Fast(Instruction::move_(1, 2)));
+
+        let source = Op::Const {
+            dst: 0,
+            value: Constant::Number(3.0),
+        };
+        let slow = lower(&source);
+        assert_eq!(slow, LoweredInstruction::Slow(source.clone()));
+        assert!(matches!(slow, LoweredInstruction::Slow(op) if op == source));
+    }
+
+
 }

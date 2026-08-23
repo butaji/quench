@@ -98,6 +98,11 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 false => quench_runtime::reduce::reduce_source(&source_with_globals),
             }
             .map_err(|errors| errors.join("\n"))?;
+        // The reducer owns the executable representation now. Release the
+        // bootstrap/source buffer before constructing the realm and running it;
+        // otherwise this large transient allocation remains live for the
+        // entire workload.
+        drop(source_with_globals);
         let capability = HostCapabilityRef {
             realm: RealmId::ROOT,
             kind: HostCapabilityKind::Custom(CapabilityName::Require),

@@ -47,11 +47,9 @@ pub(crate) fn execute_completion_in_place(
 }
 
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
-    // The replacement log is the heap's forwarding table for copy-on-write
-    // object snapshots: it must outlive any single top-level entry so that
-    // references stashed in heap slots (event-loop callbacks, timers) still
-    // resolve to the latest snapshot. Hosts running independent programs on
-    // one thread call `execute::reset_replacements` between programs.
+    // Intrinsic overrides are scoped to one top-level evaluation; do not
+    // carry mutations such as Math.random assignments into the next one.
+    crate::builtins::reset_intrinsic_prototype_state();
     let result = execute_with_registers_context(ops, Vec::new(), context);
     // Drive the promise microtask queue so `.then`/`.catch` reactions and
     // synchronously-settling promise chains run to completion. Reinstall
@@ -104,7 +102,7 @@ pub fn execute_with_registers_context(
 /// reserve a small hot-path working set up front; subsequent writes use Vec's
 /// geometric growth without introducing a second frame representation.
 fn prepare_register_stack(registers: &mut Vec<Value>) {
-    const INITIAL_REGISTER_CAPACITY: usize = 32;
+    const INITIAL_REGISTER_CAPACITY: usize = 16;
     const MAX_REGISTER_COUNT: usize = u16::MAX as usize + 1;
     debug_assert!(registers.len() <= MAX_REGISTER_COUNT);
     if registers.capacity() < INITIAL_REGISTER_CAPACITY {
@@ -199,7 +197,7 @@ pub(crate) fn execute_in_environment(
         let next = step.next;
         match completion {
             crate::completion::Completion::Call(mut continuation) => {
-                continuation.caller_ops = Rc::from(ops);
+                continuation.caller_code = machine.code_id();
                 continuation.caller_pc = next as u32;
                 machine.push_call_frame(continuation);
                 let continuation = machine.pop_call_frame().expect("call frame just pushed");

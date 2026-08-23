@@ -170,9 +170,21 @@ mod tests {
     #[test]
     fn bootstrap_source_preserves_order_and_separates_fragments() {
         let registry = Registry::new()
-            .add(Ability { name: "a", phase: Phase::Bootstrap, js: "A" })
-            .add(Ability { name: "b", phase: Phase::PostBootstrap, js: "B" })
-            .add(Ability { name: "c", phase: Phase::Bootstrap, js: "C" });
+            .add(Ability {
+                name: "a",
+                phase: Phase::Bootstrap,
+                js: "A",
+            })
+            .add(Ability {
+                name: "b",
+                phase: Phase::PostBootstrap,
+                js: "B",
+            })
+            .add(Ability {
+                name: "c",
+                phase: Phase::Bootstrap,
+                js: "C",
+            });
         assert_eq!(registry.bootstrap_source(), "A\nC\n");
     }
 }

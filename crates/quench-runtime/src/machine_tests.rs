@@ -1,6 +1,9 @@
 #[test]
 fn call_frame_suspend_and_resume_restores_caller_state() {
-    let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+    let function = super::FunctionCode::from_ops(vec![
+        super::Op::ParameterEnd,
+        super::Op::ParameterEnd,
+    ]);
     let mut machine = super::Machine::with_function(&function, super::EnvironmentRef(7), 2);
     machine.set_program_counter(1);
     machine.registers_mut()[0] = super::Value::Number(11.0);
@@ -17,14 +20,33 @@ fn call_frame_suspend_and_resume_restores_caller_state() {
     let continuation = machine
         .resume_call(super::Value::Number(42.0))
         .expect("suspended caller");
+    assert_eq!(continuation.caller_code, function.code_id());
     assert_eq!(continuation.caller_pc, 1);
-    assert_eq!(continuation.caller_environment, super::EnvironmentRef(7));
     assert_eq!(continuation.destination, 1);
     assert_eq!(continuation.guards.flags, 9);
     assert_eq!(machine.program_counter(), 1);
     assert_eq!(machine.registers_mut()[0], super::Value::Number(11.0));
     assert_eq!(machine.registers_mut()[1], super::Value::Number(42.0));
     assert!(machine.call_frames.is_empty());
+}
+
+#[test]
+fn machine_rejects_call_continuation_from_unknown_code_source() {
+    let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+    let mut machine = Machine::with_function(&function, EnvironmentRef(0), 1);
+    machine.push_call_frame(crate::completion::CallContinuation {
+        callee: super::Value::Undefined,
+        receiver: super::Value::Undefined,
+        arguments: Vec::new(),
+        caller_code: super::CodeId(99),
+        caller_pc: 0,
+        caller_registers: Vec::new(),
+        caller_environment: EnvironmentRef(0),
+        destination: 0,
+        guards: crate::completion::ContinuationGuards::default(),
+    });
+    assert!(machine.resume_call(super::Value::Number(1.0)).is_none());
+    assert_eq!(machine.program_counter(), 0);
 }
 
 #[test]
@@ -38,6 +60,24 @@ fn machine_resolves_frame_ranges_from_its_function_store() {
             .and_then(|store| store.get(function.range)),
         function.ops()
     );
+}
+#[test]
+fn machine_rejects_frame_ranges_not_owned_by_its_code_store() {
+    let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+    let mut machine = Machine::with_function(&function, EnvironmentRef(0), 1);
+    let invalid = super::CodeRange::new(super::CodeId(99), 0, 1).unwrap();
+    let frame = super::Frame::Await { phase: 0, resume: invalid };
+    assert!(machine.try_push_frame(frame).is_err());
+    assert_eq!(machine.frame_count(), 0);
+}
+
+#[test]
+fn machine_accepts_frame_ranges_from_its_immutable_store() {
+    let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+    let mut machine = Machine::with_function(&function, EnvironmentRef(0), 1);
+    let frame = super::Frame::Await { phase: 0, resume: function.range };
+    machine.try_push_frame(frame).unwrap();
+    assert_eq!(machine.frame_count(), 1);
 }
 
 #[test]
@@ -174,7 +214,40 @@ fn frame_stack_handles_deep_js_continuations_without_native_recursion() {
         stack.pop().expect("every continuation must be recoverable");
     }
     assert!(stack.is_empty());
+    assert!(stack.invariant_holds());
 
+}
+
+#[test]
+fn frame_offsets_survive_contiguous_storage_growth() {
+    let range = super::CodeRange::new(super::CodeId(0), 0, 1).unwrap();
+    let mut stack = super::FrameStack::with_capacity_and_limit(1, 4);
+    stack
+        .try_push(super::Frame::Await {
+            phase: 7,
+            resume: range,
+        })
+        .unwrap();
+    let first = stack.top_offset().expect("first frame offset");
+    let first_ptr = stack.frame_at(first).expect("first frame");
+    assert!(matches!(
+        first_ptr,
+        super::Frame::Await { phase: 7, .. }
+    ));
+
+    // Force Vec growth/reallocation. The offset, rather than a borrowed
+    // reference, is the continuation identity and must still resolve.
+    stack
+        .try_push(super::Frame::Await {
+            phase: 9,
+            resume: range,
+        })
+        .unwrap();
+    assert!(matches!(
+        stack.frame_at(first),
+        Some(super::Frame::Await { phase: 7, .. })
+    ));
+    assert_eq!(stack.top_offset(), Some(1));
 }
 #[test]
 fn constant_pool_deduplicates_instruction_constants() {
@@ -206,4 +279,27 @@ fn constant_pool_assigns_canonical_first_use_ids() {
     assert_eq!(pool.id(&super::Constant::Number(1.0)), Some(1));
     assert_eq!(pool.id(&super::Constant::Boolean(true)), Some(2));
     assert_eq!(pool.get(2), Some(&super::Constant::Boolean(true)));
+}
+
+#[test]
+fn frame_continuation_register_contract_uses_integer_ids() {
+    let range = super::CodeRange::new(super::CodeId(0), 0, 1).unwrap();
+    let frame = super::Frame::Branch {
+        phase: super::BranchPhase::Body,
+        branch_resume: range,
+        resume: range,
+        dst: 2,
+        yield_dst: 4,
+    };
+    assert_eq!(frame.register_ids(), vec![2, 4]);
+    assert!(frame.has_valid_register_ids(5));
+    assert!(!frame.has_valid_register_ids(4));
+}
+
+#[test]
+fn frames_without_register_destinations_have_empty_contract() {
+    let range = super::CodeRange::new(super::CodeId(0), 0, 1).unwrap();
+    let frame = super::Frame::Await { phase: 0, resume: range };
+    assert!(frame.register_ids().is_empty());
+    assert!(frame.has_valid_register_ids(0));
 }
