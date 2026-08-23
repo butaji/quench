@@ -81,12 +81,16 @@ fn run_with_dir(dir: std::path::PathBuf, quiet: bool, list: bool) -> ExitCode {
     }
     let fixtures = filter_fixtures(fixtures);
     if fixtures.is_empty() {
-        eprintln!("error: filter selected no `*.js` fixtures under {}", dir.display());
+        eprintln!(
+            "error: filter selected no `*.js` fixtures under {}",
+            dir.display()
+        );
         return ExitCode::from(2);
     }
     if list {
         for f in &fixtures {
-            println!("{}", f.file_name().unwrap().to_string_lossy());
+            let display = f.strip_prefix(&dir).unwrap_or(f);
+            println!("{}", display.display());
         }
         return ExitCode::SUCCESS;
     }
