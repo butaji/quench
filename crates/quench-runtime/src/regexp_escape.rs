@@ -1,0 +1,9 @@
+use crate::{execute::VmError, value::Value};
+pub(crate) fn escape(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = arguments.first().unwrap_or(&Value::Undefined);
+    match value { Value::StringUnits(units) => Ok(Value::String(escape_units(units))), Value::String(text) => { let mut escaped = String::new(); for (index, ch) in text.chars().enumerate() { escape_character(&mut escaped, ch, index == 0); } Ok(Value::String(escaped)) }, _ => Err(crate::value::error::throw_type_error("RegExp.escape requires a string value")) }
+}
+fn escape_units(units: &[u16]) -> String { let mut escaped = String::new(); for (index, unit) in units.iter().enumerate() { if (0xD800..=0xDFFF).contains(unit) { escaped.push_str(&format!("\\u{unit:04x}")); } else if let Some(ch) = char::from_u32(u32::from(*unit)) { escape_character(&mut escaped, ch, index == 0); } } escaped }
+fn escape_character(output: &mut String, ch: char, first: bool) { if first && ch.is_ascii_alphanumeric() { output.push_str(&format!("\\x{:02x}", ch as u32)); } else if let Some(name) = escape_control(ch) { output.push_str(name); } else if "^$\\.*+?()[]{}|/".contains(ch) { output.push('\\'); output.push(ch); } else if ",-=<>#&!%:;@~'`\"".contains(ch) || ch == ' ' { output.push_str(&format!("\\x{:02x}", ch as u32)); } else if ch.is_control() || ch.is_whitespace() || ch == '\u{FEFF}' { if (ch as u32) <= 0xff { output.push_str(&format!("\\x{:02x}", ch as u32)); } else { output.push_str(&format!("\\u{:04x}", ch as u32)); } } else { output.push(ch); } }
+fn escape_control(ch: char) -> Option<&'static str> { match ch { '\n' => Some("\\n"), '\r' => Some("\\r"), '\t' => Some("\\t"), '\u{000B}' => Some("\\v"), '\u{000C}' => Some("\\f"), _ => None } }
+pub(crate) fn build_re_flags(flags: &str) -> String { let mut f = String::new(); for c in ['i','m','s','u','v'] { if flags.contains(c) { f.push(c); } } f }

@@ -233,7 +233,11 @@ pub fn dispatch_event(
                 &[Value::String(event_type.clone()), listener.callback.clone()],
             )?;
         }
-        execute::call(&listener.callback, receiver, std::slice::from_ref(event))?;
+        let mut callback = listener.callback.clone();
+        while let Value::BindingCell(cell) = callback {
+            callback = cell.borrow().clone();
+        }
+        execute::call(&callback, receiver, std::slice::from_ref(event))?;
     }
     Ok(Value::Boolean(true))
 }
@@ -263,9 +267,17 @@ pub fn get_event_listeners(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let valid_target = emitter_id(&target).is_some() || target_id(&target).is_some();
+    if !valid_target {
+        return Err(invalid_emitter_error(&target));
+    }
     let event = match args.get(1) {
         Some(Value::String(name)) => name.clone(),
-        _ => String::new(),
+        _ => {
+            return Err(execute::type_error(
+                "The \"eventName\" argument must be of type string",
+            ))
+        }
     };
     if let Some(callbacks) = emitter_callbacks(state, &target, &event) {
         return Ok(host_api::array(callbacks));

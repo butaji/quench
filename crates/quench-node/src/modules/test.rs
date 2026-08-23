@@ -41,24 +41,35 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
         "assert".to_string(),
         crate::modules::assert::build_value(),
     )]);
+    if run_test_callback(state, callback, context)? {
+        Ok(Value::Undefined)
+    } else {
+        Err(VmError::EvalError("test reported not ok".into()))
+    }
+}
+
+fn run_test_callback(
+    state: &Rc<RefCell<HostState>>,
+    callback: &Value,
+    context: Value,
+) -> Result<bool, VmError> {
     match quench_runtime::vm::call_value(callback, &Value::Undefined, &[context]) {
         Ok(result) => {
             // Async callbacks return a promise; drive the loop until it
             // settles so a rejection reports `not ok`, never a vacuous `ok`.
-            if let Err(error) = crate::modules::pump::await_promise(state, &result) {
-                report(state, &format!("not ok - {name}"));
-                return Err(error);
+            if let Err(_error) = crate::modules::pump::await_promise(state, &result) {
+                report(state, "not ok");
+                return Ok(false);
             }
-            report(state, &format!("ok - {name}"));
-            Ok(Value::Undefined)
+            report(state, "ok");
+            Ok(true)
         }
-        Err(error) => {
-            report(state, &format!("not ok - {name}"));
-            Err(error)
+        Err(_error) => {
+            report(state, "not ok");
+            Ok(false)
         }
     }
 }
-
 /// `test.skip` / `it.skip` — report without running the callback.
 pub fn skip(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     report(state, &format!("ok - {} # SKIP", test_name(args)));

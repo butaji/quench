@@ -164,7 +164,7 @@ globalThis.__nodeAssert.Assert = class Assert {
           }
         };
         if (name === "partialDeepStrictEqual") {
-          return invoke(() => globalThis.__nodeAssert.deepStrictEqual(...args));
+          return invoke(() => globalThis.__nodeAssert.partialDeepStrictEqual(...args));
         }
         if (!context.strict && name === "equal") {
           return invoke(() => globalThis.__nodeAssert.equal(...args));

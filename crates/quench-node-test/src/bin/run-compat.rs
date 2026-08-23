@@ -14,16 +14,32 @@ use quench_node_test::reader::NodeOutcome;
 use quench_node_test::stages::discover_fixtures;
 
 fn main() -> ExitCode {
-    if std::env::args().any(|a| a == "--help" || a == "-h") {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(path) = args
+        .iter()
+        .position(|arg| arg == "--fixture-one")
+        .and_then(|index| args.get(index + 1))
+    {
+        return match quench_node_test::NodeTestRunner::new().run_file(&PathBuf::from(path)) {
+            NodeOutcome::Pass => ExitCode::SUCCESS,
+            NodeOutcome::Skip { .. } => ExitCode::from(2),
+            NodeOutcome::Fail { reason } => {
+                eprintln!("FAIL {path}: {reason}");
+                ExitCode::from(1)
+            }
+        };
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("run-compat: walk a Node compat test directory through the host");
         println!();
-        println!("usage: run-compat [--list] [--filter NAME] [--quiet] [DIR]");
+        println!("usage: run-compat [--list] [--filter NAME] [--quiet] [--test-dir DIR]");
         println!("  --list           enumerate the suite instead of running it");
         println!("  --filter NAME    only run scripts whose name contains NAME");
         println!("  --quiet          skip per-test output, only the summary");
         println!(
-            "  DIR              compat suite root (default: crates/quench-node-test/node-tests)"
+            "  --test-dir DIR  compat suite root (default: crates/quench-node-test/node-tests)"
         );
+        println!("  each fixture is bounded by a 30 second timeout");
         return ExitCode::SUCCESS;
     }
     let options = match Options::parse(std::env::args().skip(1)) {
@@ -94,14 +110,18 @@ fn run_with_options(options: Options) -> ExitCode {
     }
     if options.list {
         for f in &fixtures {
-            println!("{}", f.file_name().unwrap().to_string_lossy());
+            let display = f.strip_prefix(&dir).unwrap_or(f);
+            println!("{}", display.display());
         }
         return ExitCode::SUCCESS;
     }
     let mut runner = quench_node_test::NodeTestRunner::new();
     let summary = run_suite(&mut runner, &fixtures, options.quiet);
     print_summary(&summary, fixtures.len());
-    if summary.failed == 0 {
+    // A skip is not compatibility evidence.  Keep it visible in the
+    // aggregate and fail the gate until the fixture is either supported or
+    // explicitly removed from the selected suite.
+    if summary.failed == 0 && summary.skipped == 0 {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -115,16 +135,26 @@ fn filter_fixtures(
     match filter {
         Some(name) => fixtures
             .into_iter()
-            .filter(|f| f.file_name().unwrap().to_string_lossy().contains(&name))
+            .filter(|f| fixture_matches(f, &name))
             .collect(),
         None => fixtures,
     }
 }
 
+fn fixture_matches(path: &std::path::Path, filter: &str) -> bool {
+    path.to_string_lossy().contains(filter)
+}
+
 struct SuiteSummary {
     passed: usize,
+    skipped: usize,
     failed: usize,
     failed_names: Vec<String>,
+}
+impl SuiteSummary {
+    fn total(&self) -> usize {
+        self.passed + self.skipped + self.failed
+    }
 }
 
 fn run_suite(
@@ -134,6 +164,7 @@ fn run_suite(
 ) -> SuiteSummary {
     let mut summary = SuiteSummary {
         passed: 0,
+        skipped: 0,
         failed: 0,
         failed_names: Vec::new(),
     };
@@ -158,15 +189,27 @@ fn run_suite(
                 summary.failed += 1;
                 summary.failed_names.push(fixture.display().to_string());
             }
+            summary.passed += 1;
+        } else {
+            let reason = reason
+                .filter(|reason| !reason.is_empty())
+                .unwrap_or_else(|| {
+                    "fixture process terminated abnormally (isolated from suite)".into()
+                });
+            println!("FAIL  {}: {reason}", fixture.display());
+            summary.failed += 1;
+            summary.failed_names.push(fixture.display().to_string());
         }
     }
     summary
 }
 
 fn print_summary(summary: &SuiteSummary, total: usize) {
+    debug_assert_eq!(summary.total(), total);
     println!(
-        "\ncompat: {passed} passed, {failed} failed, {total} total",
+        "\ncompat: {passed} passed, {skipped} skipped, {failed} failed, {total} total",
         passed = summary.passed,
+        skipped = summary.skipped,
         failed = summary.failed,
     );
     if !summary.failed_names.is_empty() {
@@ -174,5 +217,28 @@ fn print_summary(summary: &SuiteSummary, total: usize) {
         for name in &summary.failed_names {
             println!("  - {name}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fixture_matches, SuiteSummary};
+    use std::path::PathBuf;
+
+    #[test]
+    fn summary_total_includes_skips_and_failures() {
+        let summary = SuiteSummary {
+            passed: 2,
+            skipped: 3,
+            failed: 1,
+            failed_names: vec!["broken.js".into()],
+        };
+        assert_eq!(summary.total(), 6);
+    }
+
+    #[test]
+    fn filter_matches_nested_fixture_paths() {
+        let fixture = PathBuf::from("node-tests/node_modules/ms/index.js");
+        assert!(fixture_matches(&fixture, "node_modules/ms/index.js"));
     }
 }

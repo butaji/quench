@@ -30,6 +30,13 @@ impl QuenchNodeHost {
                 buffer_byte_length(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferFrom) => buffer_from(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferNew) => {
+                if matches!(arguments.first(), Some(Value::Number(_))) {
+                    buffer_alloc(arguments)
+                } else {
+                    buffer_from(arguments)
+                }
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferHasInstance) => Ok(Value::Boolean(
                 matches!(arguments.first(), Some(Value::Uint8Array(_))),
             )),
@@ -85,13 +92,6 @@ impl QuenchNodeHost {
                 process_cpu_usage(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::ProcessHrtime) => process_hrtime(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ProcessHrtimeBigint) => Ok(Value::BigInt(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos()
-                    .to_string(),
-            )),
             HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo) => {
                 process_active_resources_info()
             }
@@ -514,16 +514,16 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ZlibGzip) => {
                 self.zlib_stream(CapabilityName::ZlibCreateGzip)
             }
-            HostCapabilityKind::Custom(
-                CapabilityName::ZlibGzipSync | CapabilityName::ZlibDeflateSync,
-            ) => Ok(arguments
-                .first()
-                .cloned()
-                .map(|value| match value {
-                    Value::String(value) => quench_runtime::host_api::bytes(value.as_bytes()),
-                    value => value,
-                })
-                .unwrap_or_else(|| quench_runtime::host_api::bytes(&[]))),
+            HostCapabilityKind::Custom(0x1700) => quench_node::modules::zlib::gzip_value(arguments),
+            HostCapabilityKind::Custom(0x1701) => quench_node::modules::zlib::gunzip_value(arguments),
+            HostCapabilityKind::Custom(0x1702) => {
+                quench_node::modules::zlib::deflate_raw_value(arguments)
+            }
+            HostCapabilityKind::Custom(0x1703) => {
+                quench_node::modules::zlib::inflate_raw_value(arguments)
+            }
+            HostCapabilityKind::Custom(0x1704) => quench_node::modules::zlib::deflate_value(arguments),
+            HostCapabilityKind::Custom(0x1705) => quench_node::modules::zlib::inflate_value(arguments),
                 _ => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
             }
         })();

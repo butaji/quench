@@ -1,6 +1,7 @@
 //! Polyfill: `buffer-validation`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __NodeBufferBase02 = NodeBuffer;
+const __nodeBufferFromValidation = (...args) => __NodeBufferBase02.from.apply(__NodeBufferBase02, args);
 const __nodeBufferFloatRangeError = (message) => {
   const error = new RangeError(message);
   error.code = "ERR_OUT_OF_RANGE";
@@ -42,7 +43,7 @@ const __nodeBufferSearchNeedle = (value, encoding) =>
   typeof value === "number"
     ? new Uint8Array([value & 0xff])
     : typeof value === "string"
-      ? NodeBuffer.from(value, encoding)
+      ? __nodeBufferFromValidation(value, encoding)
       : value;
 const __nodeBufferSearchStart = (length, offset) => {
   let start = Number(offset);
@@ -94,7 +95,11 @@ const __nodeBufferWriteArguments = (offset, length, encoding) => {
   return { offset, length, encoding };
 };
 const __nodeBufferWriteValidate = (buffer, offset, encoding) => {
-  if (typeof encoding !== "string" || !NodeBuffer.isEncoding(encoding)) {
+  if (
+    typeof encoding !== "string" ||
+    !["utf8", "utf-8", "ascii", "latin1", "binary", "base64", "base64url", "hex",
+      "utf16le", "utf-16le", "ucs2", "ucs-2"].includes(encoding.toLowerCase())
+  ) {
     throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
   }
   if (
@@ -110,7 +115,7 @@ const __nodeBufferWriteUtf8Count = (value, encoding, count) => {
   if (encoding !== "utf8" && encoding !== "utf-8") return count;
   let complete = 0;
   for (let index = 1; index <= String(value).length; index++) {
-    const size = NodeBuffer.from(String(value).slice(0, index), "utf8").length;
+    const size = __nodeBufferFromValidation(String(value).slice(0, index), "utf8").length;
     if (size > count) break;
     complete = size;
   }
@@ -174,7 +179,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       encoding
     ));
     __nodeBufferWriteValidate(this, offset, encoding);
-    const bytes = NodeBuffer.from(String(value), encoding);
+    const bytes = __nodeBufferFromValidation(String(value), encoding);
     const requested =
       length === undefined
         ? this.length - offset
@@ -191,7 +196,9 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     ) {
       count--;
     }
-    this.set(bytes.subarray(0, count), offset);
+    for (let index = 0; index < count; index++) {
+      this[offset + index] = bytes[index];
+    }
     return count;
   }
   writeDoubleLE(value, offset = 0) {

@@ -88,6 +88,12 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::StringFromCodePoint => Some(1.0),
         Builtin::StringRaw => Some(1.0),
         Builtin::StringValueOf => Some(0.0),
+        _ => fn_len_core(b),
+    }
+}
+
+const fn fn_len_core(b: Builtin) -> Option<f64> {
+    match b {
         Builtin::StringRepeat
         | Builtin::StringTrim
         | Builtin::StringToLowerCase
@@ -121,8 +127,6 @@ const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
         Builtin::StringConcat => Some(1.0),
         Builtin::StringSlice | Builtin::StringSubstring | Builtin::StringSubstr => Some(2.0),
         Builtin::StringSplit => Some(2.0),
-        Builtin::StringPadStart | Builtin::StringPadEnd => Some(1.0),
-        Builtin::StringReplace | Builtin::StringReplaceAll => Some(2.0),
         _ => None,
     }
 }
@@ -147,6 +151,12 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringFromCodePoint => Some("fromCodePoint"),
         Builtin::StringRaw => Some("raw"),
         Builtin::StringValueOf => Some("valueOf"),
+        _ => short_name_core(b),
+    }
+}
+
+const fn short_name_core(b: Builtin) -> Option<&'static str> {
+    match b {
         Builtin::StringIncludes => Some("includes"),
         Builtin::StringIsWellFormed => Some("isWellFormed"),
         Builtin::StringToWellFormed => Some("toWellFormed"),

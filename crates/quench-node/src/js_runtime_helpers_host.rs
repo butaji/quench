@@ -137,7 +137,16 @@ fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
 }
 
 fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
-    match value {
+    // Host calls can retain a stale view while a typed-array receiver is
+    // copy-on-write replaced by the VM. Resolve that receiver before
+    // extracting its backing bytes; otherwise Buffer methods see a
+    // non-callable alias instead of the Uint8Array.
+    let resolved = value.map(quench_runtime::execute::resolve_alias);
+    let resolved = match resolved.as_ref() {
+        Some(Value::BindingCell(cell)) => Some(cell.borrow().clone()),
+        other => other.cloned(),
+    };
+    match resolved.as_ref() {
         Some(Value::String(value)) => Ok(value.as_bytes().to_vec()),
         Some(Value::Uint8Array(view)) => Ok(view.buffer.bytes.borrow()
             [view.byte_offset..view.byte_offset + view.length]
@@ -278,8 +287,14 @@ fn child_exec_file(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn child_fork(arguments: &[Value]) -> Result<Value, VmError> {
     let _ = arguments;
-    Ok(Value::object(vec![(
-        "send".into(),
-        capability_function(HostCapabilityKind::Custom(CapabilityName::ChildSend)),
-    )]))
+    Ok(Value::object(vec![
+        (
+            "once".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ChildForkOnce)),
+        ),
+        (
+            "send".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ChildSend)),
+        ),
+    ]))
 }

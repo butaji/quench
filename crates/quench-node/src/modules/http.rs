@@ -78,8 +78,37 @@ impl HttpState {
 /// `http.createServer([requestListener])` — a net server object that
 /// parses HTTP on each connection and emits `'request'`.
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(options) = args.first() {
+        let valid = quench_runtime::is_callable(options)
+            || matches!(options, Value::Object(_) | Value::ObjectAlias(_));
+        if !valid {
+            let error = host_api::object(vec![
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String("options must be a function or an object".into()),
+                ),
+            ]);
+            return Err(VmError::Thrown(error));
+        }
+    }
+    if args.len() > 1 && !quench_runtime::is_callable(&args[1]) {
+        let error = host_api::object(vec![
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("listener must be a function".into()),
+            ),
+        ]);
+        return Err(VmError::Thrown(error));
+    }
     let object = net::create_server(state, &[])?;
-    if let Some(cb) = args.first() {
+    let listener = if quench_runtime::is_callable(args.first().unwrap_or(&Value::Undefined)) {
+        args.first()
+    } else {
+        args.get(1)
+    };
+    if let Some(cb) = listener {
         if quench_runtime::is_callable(cb) {
             crate::modules::events::method_on(
                 state,
@@ -104,9 +133,20 @@ pub fn connection_handler(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let socket = args.first().cloned().unwrap_or(Value::Undefined);
-    let Some(socket_id) = net::net_id(&socket) else {
+    let incoming_socket = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(socket_id) = net::net_id(&incoming_socket) else {
         return Ok(Value::Undefined);
+    };
+    // The net registry owns the sole JS identity for an accepted socket.
+    // Reuse it before retaining state or attaching HTTP listeners so event
+    // registration and later pump events address the same emitter object.
+    let socket = {
+        let host = state.borrow();
+        host.net
+            .sockets
+            .get(&socket_id)
+            .map(|socket| socket.borrow().js.clone())
+            .unwrap_or(incoming_socket)
     };
     state.borrow_mut().http.conns.insert(
         socket_id,
@@ -220,6 +260,7 @@ fn make_buffer(bytes: &[u8]) -> Value {
 pub(crate) fn chunk_bytes(value: Option<&Value>) -> Vec<u8> {
     match value {
         Some(Value::String(s)) => s.as_bytes().to_vec(),
+        Some(Value::StringUnits(units)) => String::from_utf16_lossy(units).into_bytes(),
         Some(Value::Uint8Array(view)) => {
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
@@ -343,29 +384,14 @@ fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64, keep
 
 fn install_req_props(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
     for (key, value) in props {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(true)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, &key, descriptor)?;
+        object = execute::set_property(object, &key, value);
     }
     Ok(object)
 }
 
-/// Parse the request line and headers; return the declared Content-Length.
-fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Value)>, usize, bool) {
-    let head_str = String::from_utf8_lossy(head);
-    let parts: Vec<&str> = head_str.split("\r\n").collect();
-    let mut fields = parts[0].split_whitespace();
-    let method = fields.next().unwrap_or("").to_string();
-    let url = fields.next().unwrap_or("/").to_string();
-    let version = fields
-        .next()
-        .and_then(|v| v.strip_prefix("HTTP/"))
-        .unwrap_or("1.1");
-
+/// Split `\r\n` header fields into `(key, value)` pairs, tracking
+/// Content-Length and Connection from the trailing request head lines.
+fn parse_headers(parts: &[&str]) -> (Vec<(String, Value)>, usize, String) {
     let mut headers: Vec<(String, Value)> = Vec::new();
     let mut content_length = 0usize;
     let mut connection = String::new();
@@ -385,6 +411,22 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
             headers.push((key, Value::String(value.to_string())));
         }
     }
+    (headers, content_length, connection)
+}
+
+/// Parse the request line and headers; return the declared Content-Length.
+fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Value)>, usize, bool) {
+    let head_str = String::from_utf8_lossy(head);
+    let parts: Vec<&str> = head_str.split("\r\n").collect();
+    let mut fields = parts[0].split_whitespace();
+    let method = fields.next().unwrap_or("").to_string();
+    let url = fields.next().unwrap_or("/").to_string();
+    let version = fields
+        .next()
+        .and_then(|v| v.strip_prefix("HTTP/"))
+        .unwrap_or("1.1");
+
+    let (headers, content_length, connection) = parse_headers(&parts);
     // HTTP/1.1 defaults to keep-alive unless `Connection: close`; HTTP/1.0
     // defaults to close unless the client asks to keep the connection.
     let http10 = version == "1.0";
@@ -407,6 +449,9 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
         guard.http.next_res += 1;
         id
     };
+    // Keep method capabilities as direct properties.  The generic setter
+    // represents host callables as binding cells; response methods are invoked
+    // from event callbacks and must not acquire a self-referential cell.
     let res = host_api::object(vec![
         (
             "setHeader".to_string(),
@@ -425,6 +470,9 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
             res_cap(crate::registry::SPEC_HTTP_RES_END),
         ),
         ("statusCode".to_string(), Value::Number(200.0)),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("headersSent".to_string(), Value::Boolean(false)),
+        ("finished".to_string(), Value::Boolean(false)),
         (RES_ID_PROP.to_string(), Value::Number(id as f64)),
     ]);
     Ok((res, id))
@@ -433,9 +481,6 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
 fn res_cap(spec: crate::registry::NodeSpec) -> Value {
     crate::host::capability(spec)
 }
-
-// Response methods live in `http_res`; re-exported here for dispatch.
-pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
 
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -447,21 +492,20 @@ pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     crate::modules::http_client::get(state, args)
 }
 
-/// The `http` module namespace.
+// Response methods live in `http_res`; re-exported here for dispatch.
+pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
 pub fn build() -> Value {
-    crate::host::namespace_object(vec![
+    let create_server = crate::host::capability(crate::registry::SPEC_HTTP_SERVER);
+    crate::host::namespace_object_from_pairs(vec![
+        ("createServer".into(), create_server.clone()),
+        ("Server".into(), create_server),
         (
-            "createServer",
-            crate::host::capability(crate::registry::SPEC_HTTP_SERVER),
-        ),
-        (
-            "request",
+            "request".into(),
             crate::host::capability(crate::registry::SPEC_HTTP_REQUEST),
         ),
         (
-            "get",
+            "get".into(),
             crate::host::capability(crate::registry::SPEC_HTTP_GET),
         ),
     ])
-    .unwrap_or_else(|_| Value::Undefined)
 }

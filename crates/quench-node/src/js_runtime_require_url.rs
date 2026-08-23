@@ -137,22 +137,31 @@ fn require_url_modules(name: &str) -> Result<Value, VmError> {
                 "canParse",
                 capability_function(HostCapabilityKind::Custom(CapabilityName::UrlCanParse)),
             );
-            let url_constructor = quench_runtime::execute::set_property(
-                url_constructor,
-                "createObjectURL",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+            let url_pattern_constructor = capability_function(
+                HostCapabilityKind::Custom(CapabilityName::UrlPattern),
             );
-            let url_constructor = quench_runtime::execute::set_property(
-                url_constructor,
-                "revokeObjectURL",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+            let url_pattern_prototype = quench_runtime::host_api::object(vec![
+                (
+                    "exec".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UrlPatternExec,
+                    )),
+                ),
+                (
+                    "test".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UrlPatternTest,
+                    )),
+                ),
+            ]);
+            let url_pattern_constructor = quench_runtime::execute::set_property(
+                url_pattern_constructor,
+                "prototype",
+                url_pattern_prototype,
             );
             return Ok(quench_runtime::host_api::object(vec![
                 ("URL".into(), url_constructor),
-                (
-                    "URLPattern".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPattern)),
-                ),
+                ("URLPattern".into(), url_pattern_constructor),
                 ("URLSearchParams".into(), url_search_params),
                 (
                     "Url".into(),

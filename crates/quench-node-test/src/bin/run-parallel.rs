@@ -11,12 +11,22 @@
 //!   cargo run -p quench-node-test --bin run-parallel
 //!   cargo run -p quench-node-test --bin run-parallel -- --triage [--filter NAME]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const PARALLEL_DIR: &str = "tests/node/test/parallel";
-const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
+const PARALLEL_REL: &str = "tests/node/test/parallel";
+const MANIFEST_REL: &str = "crates/quench-node-test/node-tests/parallel.txt";
 
+fn repo_root() -> PathBuf {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("node-tests/parallel.txt");
+    manifest
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(path) = args
@@ -41,14 +51,24 @@ fn main() -> ExitCode {
     run_manifest()
 }
 
-fn manifest_names() -> Vec<String> {
-    let manifest = std::fs::read_to_string(MANIFEST).unwrap_or_default();
-    manifest
+fn manifest_names(manifest_path: &Path) -> Result<Vec<String>, String> {
+    let manifest = std::fs::read_to_string(manifest_path)
+        .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
+    Ok(manifest
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(str::to_string)
-        .collect()
+        .collect())
+}
+
+fn report_manifest_failure(
+    name: &str,
+    outcome: quench_node_test::NodeOutcome,
+    failed: &mut Vec<String>,
+) {
+    println!("FAIL  {name}");
+    failed.push(format!("{name}: {outcome:?}"));
 }
 
 fn run_manifest() -> ExitCode {
@@ -65,20 +85,12 @@ fn run_manifest() -> ExitCode {
         return ExitCode::from(2);
     }
     let mut failed = Vec::new();
-    // Resolve fixture paths against the startup CWD: a fixture may call
-    // process.chdir (e.g. tmpdir cleanup), which moves the process CWD
-    // shared by all fixtures in this process.
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let parallel_dir = root.join(PARALLEL_REL);
     for name in &names {
-        let path = root.join(PARALLEL_DIR).join(name);
-        // Fresh runner per fixture: host state (module cache, exit
-        // handlers, timers) must not leak across tests.
+        let path = parallel_dir.join(name);
         match quench_node_test::NodeTestRunner::new().run_file(&path) {
             quench_node_test::NodeOutcome::Pass => println!("PASS  {name}"),
-            other => {
-                println!("FAIL  {name}");
-                failed.push(format!("{name}: {other:?}"));
-            }
+            other => report_manifest_failure(name, other, &mut failed),
         }
     }
     println!(

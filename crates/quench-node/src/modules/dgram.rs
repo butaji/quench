@@ -1,0 +1,339 @@
+//! `dgram` module — real loopback UDP sockets over `std::net::UdpSocket`.
+//!
+//! Sockets live in a host registry keyed by an opaque id attached to each
+//! JS socket object. `poll` runs from the event-loop pump and fans received
+//! datagrams out to each socket's `'message'` listeners.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::net::{SocketAddr, UdpSocket};
+use std::rc::Rc;
+
+use quench_runtime::execute::{self, VmError};
+use quench_runtime::value::Value;
+
+use crate::host::HostState;
+
+const ID: &str = "\0quench:dgram:id";
+const TYPE: &str = "\0quench:dgram:type";
+
+struct Sock {
+    socket: UdpSocket,
+    js: Value,
+}
+
+thread_local! {
+    static SOCKS: RefCell<HashMap<u64, Sock>> = RefCell::new(HashMap::new());
+    static NEXT: RefCell<u64> = RefCell::new(1);
+}
+
+fn install(mut object: Value, name: &str, value: Value) -> Result<Value, VmError> {
+    object = execute::set_property(object, name, value);
+    Ok(object)
+}
+
+fn sock_id(value: &Value) -> Option<u64> {
+    execute::get_property_result(value, ID).ok().and_then(|v| {
+        if let Value::Number(n) = v {
+            Some(n as u64)
+        } else {
+            None
+        }
+    })
+}
+
+fn addr_object(addr: SocketAddr) -> Value {
+    let family = if addr.is_ipv6() { "IPv6" } else { "IPv4" };
+    quench_runtime::host_api::object(vec![
+        ("address".to_string(), Value::String(addr.ip().to_string())),
+        ("family".to_string(), Value::String(family.into())),
+        ("port".to_string(), Value::Number(addr.port() as f64)),
+    ])
+}
+
+fn rinfo_object(addr: SocketAddr, size: usize) -> Value {
+    let family = if addr.is_ipv6() { "IPv6" } else { "IPv4" };
+    quench_runtime::host_api::object(vec![
+        ("address".to_string(), Value::String(addr.ip().to_string())),
+        ("family".to_string(), Value::String(family.into())),
+        ("port".to_string(), Value::Number(addr.port() as f64)),
+        ("size".to_string(), Value::Number(size as f64)),
+    ])
+}
+
+fn socket_type(value: &Value) -> &str {
+    match execute::get_property_result(value, TYPE).ok() {
+        Some(Value::String(kind)) if kind == "udp6" => "udp6",
+        _ => "udp4",
+    }
+}
+
+/// `dgram.createSocket(type)` — build a socket object. `type` is accepted but
+/// only IPv4-ish loopback behaviour is meaningful today.
+pub fn create_socket(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let mut object = crate::modules::events::new_emitter_object(state)?;
+    for (name, cap_id) in [
+        ("bind", 0x2301),
+        ("send", 0x2302),
+        ("close", 0x2303),
+        ("address", 0x2304),
+        ("setTTL", 0x2305),
+        ("setBroadcast", 0x2306),
+        ("setMulticastTTL", 0x2307),
+        ("setMulticastLoopback", 0x2308),
+        ("addMembership", 0x2309),
+        ("dropMembership", 0x230A),
+        ("getSendQueueSize", 0x230B),
+        ("getSendQueueCount", 0x230C),
+        ("ref", 0x230D),
+        ("unref", 0x230E),
+    ] {
+        object = install(
+            object,
+            name,
+            crate::host::capability(crate::registry::NodeSpec::new("dgram:method", cap_id)),
+        )?;
+    }
+    let id = NEXT.with(|next| {
+        let value = *next.borrow();
+        *next.borrow_mut() += 1;
+        value
+    });
+    let kind = match args.first() {
+        Some(Value::String(value)) if value == "udp6" => "udp6",
+        Some(Value::Object(options)) => {
+            match execute::get_property_result(&Value::Object(options.clone()), "type") {
+                Ok(Value::String(value)) if value == "udp6" => "udp6",
+                _ => "udp4",
+            }
+        }
+        _ => "udp4",
+    };
+    let object = install(object, TYPE, Value::String(kind.into()))?;
+    install(object, ID, Value::Number(id as f64))
+}
+
+/// `socket.bind(port[, address][, cb])` — bind and emit `'listening'`.
+pub fn bind(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let port = args
+        .first()
+        .and_then(|v| execute::to_js_string(v).ok())
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    let kind = socket_type(&receiver);
+    let host = args
+        .get(1)
+        .and_then(|v| execute::to_js_string(v).ok())
+        .unwrap_or_else(|| if kind == "udp6" { "::1" } else { "127.0.0.1" }.to_string());
+    let socket =
+        UdpSocket::bind((host.as_str(), port)).map_err(|e| execute::type_error(&e.to_string()))?;
+    socket.set_nonblocking(true).ok();
+    if let Some(id) = sock_id(&receiver) {
+        SOCKS.with(|registry| {
+            registry.borrow_mut().insert(
+                id,
+                Sock {
+                    socket,
+                    js: receiver.clone(),
+                },
+            );
+        });
+        crate::modules::net::emit(state, &receiver, "listening", Vec::new())?;
+    }
+    Ok(receiver)
+}
+
+/// `socket.send(buffer, port[, address][, cb])` — send one datagram.
+fn send_data(args: &[Value]) -> (Vec<u8>, u16, String) {
+    let data = match args.first() {
+        Some(Value::String(s)) => s.as_bytes().to_vec(),
+        Some(Value::Uint8Array(a)) => {
+            let bytes = a.buffer.bytes.borrow();
+            bytes[a.byte_offset..a.byte_offset + a.length].to_vec()
+        }
+        _ => Vec::new(),
+    };
+    let port = args
+        .get(1)
+        .and_then(|v| execute::to_js_string(v).ok())
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    let host = args
+        .get(2)
+        .and_then(|v| execute::to_js_string(v).ok())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    (data, port, host)
+}
+
+pub fn send(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let _ = state;
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let Some(id) = sock_id(&receiver) else {
+        return Ok(receiver);
+    };
+    let (data, port, host) = send_data(args);
+    SOCKS.with(|registry| {
+        if let Some(sock) = registry.borrow().get(&id) {
+            let _ = sock.socket.send_to(&data, (host.as_str(), port));
+        }
+    });
+    if let Some(callback) = args.last() {
+        if quench_runtime::is_callable(callback) {
+            execute::call(
+                callback,
+                &Value::Undefined,
+                &[Value::Number(data.len() as f64)],
+            )
+            .ok();
+        }
+    }
+    Ok(receiver)
+}
+
+/// `socket.close([cb])` — close the socket and emit `'close'`.
+pub fn close(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    if let Some(id) = sock_id(&receiver) {
+        SOCKS.with(|registry| {
+            registry.borrow_mut().remove(&id);
+        });
+        crate::modules::net::emit(state, &receiver, "close", Vec::new())?;
+    }
+    Ok(receiver)
+}
+
+/// `socket.address()` — bound local address, or `null` when unbounded.
+pub fn address(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Null);
+    };
+    let Some(id) = sock_id(receiver) else {
+        return Ok(Value::Null);
+    };
+    let value = SOCKS.with(|registry| {
+        registry
+            .borrow()
+            .get(&id)
+            .and_then(|sock| sock.socket.local_addr().ok())
+            .map(addr_object)
+            .unwrap_or(Value::Null)
+    });
+    Ok(value)
+}
+
+pub fn set_ttl(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn set_broadcast(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn set_multicast_ttl(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn set_multicast_loopback(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn add_membership(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn drop_membership(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn get_send_queue_size(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(0.0))
+}
+pub fn get_send_queue_count(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(0.0))
+}
+pub fn ref_socket(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn unref_socket(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+
+/// Event-loop pump: deliver any pending datagrams to `'message'` listeners.
+pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let sockets: Vec<Value> = SOCKS.with(|registry| {
+        registry
+            .borrow()
+            .values()
+            .map(|sock| sock.js.clone())
+            .collect()
+    });
+    for js in sockets {
+        let Some(id) = sock_id(&js) else { continue };
+        let received: Option<(Vec<u8>, SocketAddr)> = SOCKS.with(|registry| {
+            let binding = registry.borrow();
+            let sock = binding.get(&id)?;
+            let mut buffer = [0u8; 65536];
+            sock.socket
+                .recv_from(&mut buffer)
+                .ok()
+                .map(|(n, addr)| (buffer[..n].to_vec(), addr))
+        });
+        if let Some((bytes, addr)) = received {
+            let data = crate::modules::buffer_proto::make_buffer(&bytes);
+            let info = rinfo_object(addr, bytes.len());
+            crate::modules::net::emit(state, &js, "message", vec![data, info])?;
+        }
+    }
+    Ok(())
+}

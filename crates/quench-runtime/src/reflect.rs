@@ -117,11 +117,14 @@ pub(crate) fn wrap_shadow_function_with_caller(
     if let Some(caller) = caller.and_then(crate::vm::realm_token) {
         properties.push(("\0caller_realm".to_string(), caller));
     }
+    let realm_id = realm.unwrap_or(crate::ops::RealmId::ROOT);
+    let receiver = crate::vm::with_realm(realm_id, crate::vm::current_global_object)
+        .unwrap_or(Value::Undefined);
     Ok(Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
-            realm: realm.unwrap_or(crate::ops::RealmId::ROOT),
+            realm: realm_id,
             target: target.clone(),
-            receiver: Value::Undefined,
+            receiver,
             arguments: Vec::new(),
             properties: std::cell::RefCell::new(properties),
         },

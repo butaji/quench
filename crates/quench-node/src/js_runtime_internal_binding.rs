@@ -166,6 +166,45 @@ fn timers_promises_module() -> Value {
     NODE_TIMERS_PROMISES.with(|module| {
         let mut module = module.borrow_mut();
         if module.is_none() {
+            let scheduler_method = |kind| {
+                let function = capability_function(HostCapabilityKind::Custom(kind));
+                let descriptor = quench_runtime::host_api::object(vec![
+                    (
+                        "value".into(),
+                        Value::Builtin(quench_runtime::ops::Builtin::FunctionCall),
+                    ),
+                    ("writable".into(), Value::Boolean(true)),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]);
+                quench_runtime::execute::define_property(function, "call", descriptor)
+                    .unwrap_or_else(|_| capability_function(HostCapabilityKind::Custom(kind)))
+            };
+            let scheduler = quench_runtime::host_api::object(vec![
+                (
+                    "wait".into(),
+                    scheduler_method(CapabilityName::TimersPromisesSchedulerWait),
+                ),
+                (
+                    "yield".into(),
+                    scheduler_method(CapabilityName::TimersPromisesSchedulerYield),
+                ),
+                (
+                    "constructor".into(),
+                    scheduler_method(CapabilityName::TimersPromisesSchedulerConstructor),
+                ),
+            ]);
+            let marker = quench_runtime::host_api::object(vec![
+                ("value".into(), Value::Boolean(true)),
+                ("writable".into(), Value::Boolean(false)),
+                ("enumerable".into(), Value::Boolean(false)),
+                ("configurable".into(), Value::Boolean(false)),
+            ]);
+            let _ = quench_runtime::execute::define_property(
+                scheduler.clone(),
+                "__quench_scheduler_identity",
+                marker,
+            );
             *module = Some(quench_runtime::host_api::object(vec![
                 (
                     "setTimeout".into(),
@@ -179,6 +218,7 @@ fn timers_promises_module() -> Value {
                         CapabilityName::TimersPromisesSetImmediate,
                     )),
                 ),
+                ("scheduler".into(), scheduler),
             ]));
         }
         module.as_ref().unwrap().clone()

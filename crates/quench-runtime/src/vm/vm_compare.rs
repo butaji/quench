@@ -3,17 +3,17 @@ use std::cmp::Ordering;
 use num_bigint::{BigInt, Sign};
 
 fn compare_values(left: &Value, right: &Value, compare: fn(f64, f64) -> bool) -> Result<Value, VmError> {
-    // Fast path: two ordinary numbers need no ToPrimitive / string/bigint logic.
-    if let (Value::Number(l), Value::Number(r)) = (left, right) {
-        return Ok(Value::Boolean(!l.is_nan() && !r.is_nan() && compare(*l, *r)));
-    }
     let left = crate::conversion::to_primitive(left, "number")?;
     let right = crate::conversion::to_primitive(right, "number")?;
-    let symbol = matches!(&left, Value::String(value) if crate::conversion::is_symbol_string(value))
-        || matches!(&right, Value::String(value) if crate::conversion::is_symbol_string(value));
-    if !symbol {
-        if let Some(ordering) = compare_string_ordering(&left, &right) {
-            return Ok(Value::Boolean(compare_ordering(ordering, compare, false)));
+    if let (Some(left_units), Some(right_units)) =
+        (crate::strings::units_of(&left), crate::strings::units_of(&right))
+    {
+        let symbol = [&left, &right].into_iter().any(|value| match value {
+            Value::String(value) => crate::conversion::is_symbol_string(value),
+            _ => false,
+        });
+        if !symbol {
+            return Ok(Value::Boolean(compare_units(&left_units, &right_units, compare)));
         }
     }
     if let Some(result) = compare_bigint_operands(&left, &right, compare)? {
@@ -28,7 +28,6 @@ fn compare_bigint_operands(left: &Value, right: &Value, compare: fn(f64, f64) ->
     let (bigint, number, reverse) = match (left, right) {
         (Value::BigInt(left), Value::BigInt(right)) => return Ok(Some(compare_ordering(parse_bigint(left)?.cmp(&parse_bigint(right)?), compare, false))),
         (Value::BigInt(bigint), Value::String(string)) if !crate::conversion::is_symbol_string(string) => {
-
             return Ok(compare_bigint_string(bigint, string, compare, false))
         }
         (Value::String(string), Value::BigInt(bigint)) if !crate::conversion::is_symbol_string(string) => {
@@ -41,21 +40,6 @@ fn compare_bigint_operands(left: &Value, right: &Value, compare: fn(f64, f64) ->
     Ok(Some(bigint_number_ordering(bigint, number).is_some_and(|ordering| {
         compare_ordering(ordering, compare, reverse)
     })))
-}
-fn compare_string_ordering(left: &Value, right: &Value) -> Option<Ordering> {
-    match (left, right) {
-        (Value::String(left), Value::String(right)) => {
-            Some(left.encode_utf16().cmp(right.encode_utf16()))
-        }
-        (Value::String(left), Value::StringUnits(right)) => {
-            Some(left.encode_utf16().cmp(right.iter().copied()))
-        }
-        (Value::StringUnits(left), Value::String(right)) => {
-            Some(left.iter().copied().cmp(right.encode_utf16()))
-        }
-        (Value::StringUnits(left), Value::StringUnits(right)) => Some(left.cmp(right)),
-        _ => None,
-    }
 }
 
 fn compare_bigint_string(bigint: &str, string: &str, compare: fn(f64, f64) -> bool, reverse: bool) -> Option<bool> {
@@ -90,4 +74,10 @@ fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
     let exponent = if exponent_bits == 0 { -1074 } else { exponent_bits - 1075 };
     let significand = BigInt::from(significand);
     if exponent >= 0 { integer.cmp(&(significand << exponent as usize)) } else { (integer << (-exponent) as usize).cmp(&significand) }
+}
+
+fn compare_units(left: &[u16], right: &[u16], compare: fn(f64, f64) -> bool) -> bool {
+    match left.cmp(right) {
+        Ordering::Less => compare(0.0, 1.0), Ordering::Equal => compare(0.0, 0.0), Ordering::Greater => compare(1.0, 0.0),
+    }
 }

@@ -121,7 +121,7 @@ pub(crate) fn reduce_for_in(
         slot
     };
     let (mut body, _) = crate::switch::with_completion(dst, || {
-        crate::branch::reduce(&statement.body, facts, &body_locals)
+        crate::branch::reduce(&statement.body, facts, &body_locals, next_slot)
     })?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
@@ -208,7 +208,7 @@ pub(crate) fn reduce_for_of(
         slot
     };
     let (mut body, _) = crate::switch::with_completion(dst, || {
-        crate::branch::reduce(&statement.body, facts, &body_locals)
+        crate::branch::reduce(&statement.body, facts, &body_locals, next_slot)
     })?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
@@ -217,6 +217,18 @@ pub(crate) fn reduce_for_of(
         body.insert(0, Op::MarkImmutable { slot });
     }
     *locals = outer_locals;
+    emit_for_of(ops, iterable, slot, body, per_iteration, dst);
+    Ok(Some(dst))
+}
+
+fn emit_for_of(
+    ops: &mut Vec<Op>,
+    iterable: u16,
+    slot: u16,
+    body: Vec<Op>,
+    per_iteration: bool,
+    dst: u16,
+) {
     ops.push(Op::ForOf {
         label: None,
         iterable,
@@ -225,7 +237,6 @@ pub(crate) fn reduce_for_of(
         per_iteration,
         dst,
     });
-    Ok(Some(dst))
 }
 
 fn for_in_slot(

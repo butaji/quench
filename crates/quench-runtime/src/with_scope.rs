@@ -344,14 +344,46 @@ pub(crate) fn receiver_for_callable(callee: &Value) -> Option<Value> {
     None
 }
 
+fn callable_value(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => callable_value(&cell.borrow()),
+        _ => value.clone(),
+    }
+}
+
+fn same_callable(left: &Value, right: &Value) -> bool {
+    let left = callable_value(left);
+    let right = callable_value(right);
+    crate::builtins::same_value(Some(&left), Some(&right))
+}
+
 fn callable_on(object: &Value, callee: &Value) -> bool {
-    let Value::Object(object) = object else {
-        return false;
+    let callee = callable_value(callee);
+    let properties = match object {
+        Value::Object(object) => Some(object.properties.clone()),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| object.properties.clone()),
+        Value::BindingCell(cell) => match &*cell.borrow() {
+            Value::Object(object) => Some(object.properties.clone()),
+            Value::ObjectAlias(alias) => alias
+                .0
+                .borrow()
+                .upgrade()
+                .map(|object| object.properties.clone()),
+            _ => None,
+        },
+        _ => None,
     };
-    object.properties.iter().any(|(name, value)| {
-        !name.starts_with('\0') && crate::builtins::same_value(Some(value), Some(callee))
+    properties.is_some_and(|properties| {
+        properties.iter().any(|(name, value)| {
+            !name.starts_with('\0') && same_callable(value, &callee)
+        })
     })
 }
+
 
 pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
     let Some(target) = binding_target(key)? else {

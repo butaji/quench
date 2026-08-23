@@ -1,8 +1,29 @@
 //! Polyfill: `promises`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeTimerPromiseSchedulerError = (code, message) => {
+
+pub const JS: &str = quench_js_check::checked_js!(r##"
+const __nodeTimerPromiseSchedulerError = (code, message) => {
   const error = new TypeError(message);
   error.code = code;
+  return error;
+};
+const __nodeTimerPromiseOptions = (options) => {
+  if (options === null || typeof options !== "object") {
+    throw __nodeTimerPromiseSchedulerError("ERR_INVALID_ARG_TYPE", 'The "options" argument must be an object');
+  }
+  if (options.ref !== undefined && typeof options.ref !== "boolean") {
+    throw __nodeTimerPromiseSchedulerError("ERR_INVALID_ARG_TYPE", 'The "options.ref" property must be of type boolean');
+  }
+  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) {
+    throw __nodeTimerPromiseSchedulerError("ERR_INVALID_ARG_TYPE", 'The "options.signal" property must be an AbortSignal');
+  }
+  return options;
+};
+const __nodeTimerPromiseAbortError = (signal) => {
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  error.code = "ABORT_ERR";
+  if (signal?.reason !== undefined) error.cause = signal.reason;
   return error;
 };
 class NodeTimerPromiseScheduler {
@@ -35,113 +56,64 @@ class NodeTimerPromiseScheduler {
   }
 }
 globalThis.__nodeTimersPromises = {
-  setTimeout: (_delay = 0, value, options = {}) =>
-    new Promise((resolve, reject) => {
-      const signal = options?.signal;
+  setTimeout: (_delay = 0, value, options = {}) => {
+    options = __nodeTimerPromiseOptions(options);
+    return new Promise((resolve, reject) => {
+      const signal = options.signal;
       if (Number.isNaN(Number(_delay))) {
-        process.emitWarning("NaN is an invalid delay value", {
-          name: "TimeoutNaNWarning"
-        });
+        process.emitWarning("NaN is an invalid delay value", { name: "TimeoutNaNWarning" });
       }
       const abort = () => {
-        const error = new Error("The operation was aborted");
-        error.name = "AbortError";
-        error.code = "ABORT_ERR";
-        reject(error);
+        globalThis.clearTimeout(timer);
+        reject(__nodeTimerPromiseAbortError(signal));
       };
-      if (signal?.aborted) {
-        abort();
-        return;
-      }
-      const timer = globalThis.setTimeout(
-        () => {
-          signal?.removeEventListener?.("abort", abort);
-          resolve(value);
-        },
-        Math.max(0, Number(_delay))
-      );
-      signal?.addEventListener?.(
-        "abort",
-        () => {
-          globalThis.clearTimeout(timer);
-          abort();
-        },
-        { once: true }
-      );
-    }),
-  setImmediate: (value, options = {}) =>
-    new Promise((resolve, reject) =>
-      queueMicrotask(() => {
-        if (options && options.signal && options.signal.aborted) {
-          const error = new Error("The operation was aborted");
-          error.name = "AbortError";
-          error.code = "ABORT_ERR";
-          reject(error);
-          return;
-        }
+      if (signal?.aborted) { reject(__nodeTimerPromiseAbortError(signal)); return; }
+      const timer = globalThis.setTimeout(() => {
+        signal?.removeEventListener?.("abort", abort);
         resolve(value);
-      })
-    ),
+      }, Math.max(0, Number(_delay)));
+      if (options.ref === false) timer.unref?.();
+      signal?.addEventListener?.("abort", abort, { once: true });
+    });
+  },
+  setImmediate: (value, options = {}) => {
+    options = __nodeTimerPromiseOptions(options);
+    return new Promise((resolve, reject) => {
+      const signal = options.signal;
+      let timer;
+      const abort = () => {
+        globalThis.clearImmediate(timer);
+        reject(__nodeTimerPromiseAbortError(signal));
+      };
+      if (signal?.aborted) { reject(__nodeTimerPromiseAbortError(signal)); return; }
+      timer = globalThis.setImmediate(() => {
+        signal?.removeEventListener?.("abort", abort);
+        if (!signal?.aborted) resolve(value);
+      });
+      if (options.ref === false) timer.unref?.();
+      signal?.addEventListener?.("abort", abort, { once: true });
+    });
+  },
   setInterval: async function* (_delay = 0, value, options = {}) {
-    if (options === null || typeof options !== "object") {
-      throw __nodeTimerPromiseSchedulerError(
-        "ERR_INVALID_ARG_TYPE",
-        'The "options" argument must be an object'
-      );
-    }
-    if (options.ref !== undefined && typeof options.ref !== "boolean") {
-      throw __nodeTimerPromiseSchedulerError(
-        "ERR_INVALID_ARG_TYPE",
-        'The "options.ref" property must be of type boolean'
-      );
-    }
-    if (
-      options.signal !== undefined &&
-      (options.signal === null ||
-        typeof options.signal.addEventListener !== "function")
-    ) {
-      throw __nodeTimerPromiseSchedulerError(
-        "ERR_INVALID_ARG_TYPE",
-        'The "options.signal" property must be an AbortSignal'
-      );
-    }
+    options = __nodeTimerPromiseOptions(options);
     let activeAbort;
     try {
       while (true) {
-        if (options.signal?.aborted) {
-          const error = new Error("The operation was aborted");
-          error.name = "AbortError";
-          error.code = "ABORT_ERR";
-          if (options.signal.reason !== undefined) {
-            error.cause = options.signal.reason;
-          }
-          throw error;
-        }
-        if (Number(_delay) > 0) {
-          await new Promise((resolve, reject) => {
-            const abort = () => {
-              globalThis.clearTimeout(timer);
-              const error = new Error("The operation was aborted");
-              error.name = "AbortError";
-              error.code = "ABORT_ERR";
-              if (options.signal.reason !== undefined) {
-                error.cause = options.signal.reason;
-              }
-              reject(error);
-            };
-            activeAbort = abort;
-            const timer = globalThis.setTimeout(
-              () => {
-                options.signal?.removeEventListener?.("abort", abort);
-                activeAbort = undefined;
-                resolve();
-              },
-              Math.max(0, Number(_delay))
-            );
-            if (options.ref === false) timer.unref?.();
-            options.signal?.addEventListener?.("abort", abort, { once: true });
-          });
-        } else await new Promise((resolve) => queueMicrotask(resolve));
+        if (options.signal?.aborted) throw __nodeTimerPromiseAbortError(options.signal);
+        await new Promise((resolve, reject) => {
+          const abort = () => {
+            globalThis.clearTimeout(timer);
+            reject(__nodeTimerPromiseAbortError(options.signal));
+          };
+          activeAbort = abort;
+          const timer = globalThis.setTimeout(() => {
+            options.signal?.removeEventListener?.("abort", abort);
+            activeAbort = undefined;
+            resolve();
+          }, Math.max(0, Number(_delay)));
+          if (options.ref === false) timer.unref?.();
+          options.signal?.addEventListener?.("abort", abort, { once: true });
+        });
         yield value;
       }
     } finally {
@@ -152,4 +124,4 @@ globalThis.__nodeTimersPromises = {
 };
 process.stdout ||= { isTTY: false };
 process.stderr ||= { isTTY: false };
-"#);
+"##);
