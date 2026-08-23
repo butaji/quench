@@ -170,7 +170,7 @@ fn enumerable_created(data: &crate::value::ObjectData) -> Vec<String> {
         .iter()
         .filter(|key| !key.starts_with('\0'))
         .filter(|key| descriptor_enumerable(data, key))
-        .map(|key| (key.clone(), Value::Undefined))
+        .map(|key| (key.as_str().to_owned(), Value::Undefined))
         .collect();
     ordered(&properties, false)
 }
@@ -290,9 +290,8 @@ fn owns_string_key(target: &Value, key: &str) -> bool {
 }
 
 fn object_keys<K: AsRef<str>>(properties: &[(K, Value)], symbols: bool) -> Vec<String> {
-    let Some((_, Value::String(value))) = properties
-        .iter()
-        .find(|(key, _)| key.as_ref() == "_value")
+    let Some((_, Value::String(value))) =
+        properties.iter().find(|(key, _)| key.as_ref() == "_value")
     else {
         let keys = ordered(properties, symbols)
             .into_iter()
