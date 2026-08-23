@@ -85,6 +85,10 @@ impl ArrayData {
         self.arguments
     }
 
+    pub(crate) fn has_argument_live(&self) -> bool {
+        self.argument_live.is_some()
+    }
+
     pub(crate) fn is_strict_arguments(&self) -> bool {
         self.strict_arguments
     }
@@ -290,6 +294,11 @@ impl ArrayData {
             let index = live.length;
             set_live_index(&mut live, index, value.clone());
         }
+    }
+
+    pub(crate) fn append_physical(&mut self, values: &[Value]) {
+        self.values.extend_from_slice(values);
+        self.length = self.length.saturating_add(values.len());
     }
 
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
