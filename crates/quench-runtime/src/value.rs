@@ -508,6 +508,7 @@ pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 #[derive(Debug, Clone)]
 pub struct ObjectData {
     identity: u64,
+    replacement: RefCell<Option<Rc<ObjectData>>>,
     // Hot semantic storage. Keep the vector as the sole property storage.
     // An inline first-slot representation would not remove the per-object
     // `PrivateSlots` Rc (the ownership/lifecycle anchor), and would duplicate
@@ -583,6 +584,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             identity: next_object_identity(),
+            replacement: RefCell::new(None),
             properties,
             private_slots,
             original_prototype: RefCell::new(None),
@@ -593,6 +595,16 @@ impl ObjectData {
     #[inline]
     pub(crate) fn identity(&self) -> u64 {
         self.identity
+    }
+
+    #[inline]
+    pub(crate) fn replacement(&self) -> Option<Rc<ObjectData>> {
+        self.replacement.borrow().clone()
+    }
+
+    #[inline]
+    pub(crate) fn replace_with(&self, replacement: Rc<ObjectData>) {
+        *self.replacement.borrow_mut() = Some(replacement);
     }
 }
 
