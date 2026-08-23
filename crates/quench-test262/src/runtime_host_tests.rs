@@ -30,6 +30,17 @@ fn sequential_script_units_share_global_function_bindings() {
 }
 
 #[test]
+fn symbols_are_unique_and_format_descriptions() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var first = Symbol(); var second = Symbol('desc');\n\
+         if (first === second) throw new Error('symbol identity');\n\
+         if (String(first) !== 'Symbol()' || String(second) !== 'Symbol(desc)') throw new Error('symbol format');",
+    )
+    .expect("symbols must preserve identity and descriptions");
+}
+
+#[test]
 fn array_map_call_accepts_array_like_receiver() {
     let mut host = super::RuntimeHost;
     host.run_script(
