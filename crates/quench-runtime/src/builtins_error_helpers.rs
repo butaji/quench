@@ -110,6 +110,17 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
 }
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
+    // Integer-indexed writes on typed arrays are direct element stores. Keep
+    // them out of ordinary descriptor/prototype lookup; that path is both
+    // semantically unnecessary for a canonical typed-array index and turns
+    // large numeric loops into repeated property scans.
+    if crate::typed_array_ops::is_view(&target)
+        && crate::typed_array_ops::is_index_key(key)
+    {
+        if let Some(result) = crate::typed_array_ops::set_property(&target, key, &value) {
+            return result.unwrap_or(target);
+        }
+    }
     if crate::builtins::descriptor_flag(&target, key, "writable") == Some(false) {
         return target;
     }
@@ -144,5 +155,4 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         _ => set_property_tail(target, key, value),
     }
 }
-
 

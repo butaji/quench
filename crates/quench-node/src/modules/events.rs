@@ -17,14 +17,54 @@ use crate::modules::emitter::{emitter_id, EmitterId, EventEmitter, Listener, EMI
 /// Resolve the emitter for a receiver, throwing Node-style when the
 /// receiver is not an emitter at all.
 fn expect_emitter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Option<EmitterId> {
-    receiver
+    let receiver = receiver?;
+    let registry = &state.borrow().emitters;
+    Some(receiver)
         .and_then(emitter_id)
-        .filter(|id| state.borrow().emitters.get(*id).is_some())
+        .or_else(|| registry.identity(receiver))
+        .filter(|id| registry.get(*id).is_some())
+}
+
+/// EventEmitter methods are valid during a subclass constructor, before the
+/// base `EventEmitter` constructor has run. Allocate the host-side state on
+/// first use so JS prototype inheritance and host identity remain aligned.
+fn ensure_emitter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Option<EmitterId> {
+    let receiver = receiver?;
+    if let Some(id) = expect_emitter(state, Some(receiver)) {
+        return Some(id);
+    }
+    if !matches!(
+        receiver,
+        Value::Object(_) | Value::Array(_) | Value::Function(_) | Value::BoundFunction(_)
+    ) {
+        return None;
+    }
+    let id = state.borrow_mut().emitters.allocate();
+    state
+        .borrow_mut()
+        .emitters
+        .insert(id, Rc::new(RefCell::new(EventEmitter::new())));
+    let events = execute::set_property(host_api::object(Vec::new()), "\0prototype", Value::Null);
+    let mut updated = execute::set_property(receiver.clone(), "_events", events);
+    updated = execute::set_property(updated, EMITTER_ID_PROP, Value::Number(id.0 as f64));
+    updated = execute::set_property(updated, "_eventsCount", Value::Number(0.0));
+    execute::replace_value(receiver, &updated);
+    state.borrow_mut().emitters.bind_identity(&updated, id);
+    Some(id)
+}
+
+pub fn initialize_emitter(state: &Rc<RefCell<HostState>>, receiver: &Value) -> Result<(), VmError> {
+    ensure_emitter(state, Some(receiver))
+        .map(|_| ())
+        .ok_or_else(|| execute::type_error("receiver is not an EventEmitter"))
 }
 
 fn event_name(value: Option<&Value>) -> Result<String, VmError> {
     match value {
         Some(Value::String(name)) => Ok(name.clone()),
+        // Node canonicalizes numeric event names through property-key
+        // coercion (`on(1, fn)` and `emit('1')` address the same channel).
+        Some(Value::Number(number)) => Ok(execute::number_to_js_string(*number)),
         _ => Err(execute::type_error(
             "The \"event\" argument must be of type string or symbol",
         )),
@@ -49,7 +89,7 @@ fn add_listener(
 ) -> Result<Value, VmError> {
     let event = event_name(args.first())?;
     let callback = expect_listener(args)?;
-    let Some(id) = expect_emitter(state, receiver) else {
+    let Some(id) = ensure_emitter(state, receiver) else {
         return Err(execute::type_error("receiver is not an EventEmitter"));
     };
     let Some(emitter) = state.borrow().emitters.get(id) else {
@@ -136,12 +176,12 @@ pub fn method_emit(
     let Some(receiver) = receiver else {
         return Ok(Value::Boolean(false));
     };
-    let Some(id) = emitter_id(receiver) else {
+    let Some(id) = ensure_emitter(state, Some(receiver)) else {
         return Ok(Value::Boolean(false));
     };
-    let event = match args.first() {
-        Some(Value::String(name)) => name.clone(),
-        _ => return Ok(Value::Boolean(false)),
+    let event = match event_name(args.first()) {
+        Ok(name) => name,
+        Err(_) => return Ok(Value::Boolean(false)),
     };
     let Some(emitter) = state.borrow().emitters.get(id) else {
         return Ok(Value::Boolean(false));

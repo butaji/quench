@@ -24,6 +24,9 @@ thread_local! {
 const PROTOTYPE_METHODS: &[(&str, NodeSpec)] = &[
     ("toString", r::SPEC_BUFFER_TOSTRING),
     ("write", r::SPEC_BUFFER_WRITE),
+    ("asciiWrite", r::SPEC_BUFFER_ASCII_WRITE),
+    ("latin1Write", r::SPEC_BUFFER_LATIN1_WRITE),
+    ("utf8Write", r::SPEC_BUFFER_UTF8_WRITE),
     ("equals", r::SPEC_BUFFER_EQUALS),
     ("compare", r::SPEC_BUFFER_COMPARE),
     ("copy", r::SPEC_BUFFER_COPY),
