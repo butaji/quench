@@ -464,14 +464,7 @@ impl QuenchNodeHost {
                 internal_binding(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::InternalOsGetHomeDirectory) => {
-                let context = arguments.first().cloned().ok_or(VmError::NotCallable)?;
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-                let updated = quench_runtime::execute::set_property(
-                    context,
-                    "value",
-                    Value::String(home),
-                );
-                Ok(updated)
+                Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer) => {
                 internal_view_has_buffer(arguments)

@@ -64,35 +64,55 @@ fn prototype_property_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlDateTimeFormatPrototype, "constructor") => Builtin::IntlDateTimeFormat,
         (Builtin::IntlSegmenterPrototype, "constructor") => Builtin::IntlSegmenter,
         (Builtin::IntlSegmenterPrototype, "segment") => Builtin::IntlSegmenterSegment,
-        (Builtin::IntlSegmenterPrototype, "resolvedOptions") => Builtin::IntlSegmenterResolvedOptions,
+        (Builtin::IntlSegmenterPrototype, "resolvedOptions") => {
+            Builtin::IntlSegmenterResolvedOptions
+        }
         (Builtin::IntlDateTimeFormatPrototype, "format") => Builtin::IntlDateTimeFormatFormat,
-        (Builtin::IntlDateTimeFormatPrototype, "formatToParts") => Builtin::IntlDateTimeFormatFormatToParts,
-        (Builtin::IntlDateTimeFormatPrototype, "formatRange") => Builtin::IntlDateTimeFormatFormatRange,
-        (Builtin::IntlDateTimeFormatPrototype, "formatRangeToParts") => Builtin::IntlDateTimeFormatFormatRangeToParts,
-        (Builtin::IntlDateTimeFormatPrototype, "resolvedOptions") => Builtin::IntlDateTimeFormatResolvedOptions,
-        _ => prototype_property_tail_more(builtin, key)?,
-    })
-}
-
-fn prototype_property_tail_more(builtin: Builtin, key: &str) -> Option<Builtin> {
-    Some(match (builtin, key) {
+        (Builtin::IntlDateTimeFormatPrototype, "formatToParts") => {
+            Builtin::IntlDateTimeFormatFormatToParts
+        }
+        (Builtin::IntlDateTimeFormatPrototype, "formatRange") => {
+            Builtin::IntlDateTimeFormatFormatRange
+        }
+        (Builtin::IntlDateTimeFormatPrototype, "formatRangeToParts") => {
+            Builtin::IntlDateTimeFormatFormatRangeToParts
+        }
+        (Builtin::IntlDateTimeFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlDateTimeFormatResolvedOptions
+        }
         (Builtin::IntlPluralRulesPrototype, "select") => Builtin::IntlPluralRulesSelect,
         (Builtin::IntlPluralRulesPrototype, "selectRange") => Builtin::IntlPluralRulesSelectRange,
         (Builtin::IntlPluralRulesPrototype, "constructor") => Builtin::IntlPluralRules,
-        (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => Builtin::IntlPluralRulesResolvedOptions,
-        (Builtin::IntlRelativeTimeFormatPrototype, "format") => Builtin::IntlRelativeTimeFormatFormat,
-        (Builtin::IntlRelativeTimeFormatPrototype, "formatToParts") => Builtin::IntlRelativeTimeFormatFormatToParts,
-        (Builtin::IntlRelativeTimeFormatPrototype, "resolvedOptions") => Builtin::IntlRelativeTimeFormatResolvedOptions,
+        (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
+            Builtin::IntlPluralRulesResolvedOptions
+        }
+        (Builtin::IntlRelativeTimeFormatPrototype, "format") => {
+            Builtin::IntlRelativeTimeFormatFormat
+        }
+        (Builtin::IntlRelativeTimeFormatPrototype, "formatToParts") => {
+            Builtin::IntlRelativeTimeFormatFormatToParts
+        }
+        (Builtin::IntlRelativeTimeFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlRelativeTimeFormatResolvedOptions
+        }
         (Builtin::IntlListFormatPrototype, "constructor") => Builtin::IntlListFormat,
         (Builtin::IntlListFormatPrototype, "format") => Builtin::IntlListFormatFormat,
         (Builtin::IntlListFormatPrototype, "formatToParts") => Builtin::IntlListFormatFormatToParts,
-        (Builtin::IntlListFormatPrototype, "resolvedOptions") => Builtin::IntlListFormatResolvedOptions,
+        (Builtin::IntlListFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlListFormatResolvedOptions
+        }
         (Builtin::IntlDurationFormatPrototype, "constructor") => Builtin::IntlDurationFormat,
         (Builtin::IntlDurationFormatPrototype, "format") => Builtin::IntlDurationFormatFormat,
-        (Builtin::IntlDurationFormatPrototype, "formatToParts") => Builtin::IntlDurationFormatFormatToParts,
-        (Builtin::IntlDurationFormatPrototype, "resolvedOptions") => Builtin::IntlDurationFormatResolvedOptions,
+        (Builtin::IntlDurationFormatPrototype, "formatToParts") => {
+            Builtin::IntlDurationFormatFormatToParts
+        }
+        (Builtin::IntlDurationFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlDurationFormatResolvedOptions
+        }
         (Builtin::IntlDisplayNamesPrototype, "of") => Builtin::IntlDisplayNamesOf,
-        (Builtin::IntlDisplayNamesPrototype, "resolvedOptions") => Builtin::IntlDisplayNamesResolvedOptions,
+        (Builtin::IntlDisplayNamesPrototype, "resolvedOptions") => {
+            Builtin::IntlDisplayNamesResolvedOptions
+        }
         _ => return None,
     })
 }

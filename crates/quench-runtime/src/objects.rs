@@ -48,8 +48,28 @@ fn reduce_property(
     match property {
         ObjectPropertyKind::ObjectProperty(property) => {
             let key = reduce_key(property, ops, facts, next, locals)?;
-            let value =
-                crate::reduce::reduce_expression(&property.value, ops, facts, next, locals)?;
+            let value = if property.method
+                || matches!(property.kind, PropertyKind::Get | PropertyKind::Set)
+            {
+                let oxc::ast::ast::Expression::FunctionExpression(function) = &property.value
+                else {
+                    return None;
+                };
+                crate::functions::reduce_expression_kind(
+                    function,
+                    ops,
+                    facts,
+                    next,
+                    locals,
+                    Some(if function.generator {
+                        crate::ops::FunctionKind::Generator
+                    } else {
+                        crate::ops::FunctionKind::Method
+                    }),
+                )?
+            } else {
+                crate::reduce::reduce_expression(&property.value, ops, facts, next, locals)?
+            };
             if is_proto_initializer(property) {
                 ops.push(Op::SetPrototype {
                     object,

@@ -46,26 +46,10 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         close_emitted: false,
         connect_announced: false,
         encoding: None,
-        bytes_read: 0,
-        bytes_written: 0,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
-    // `connect(options, callback)` puts the callback immediately after the
-    // options object; positional forms reserve the host slot before it.
-    // Select by callability as well as position so a host/options value is
-    // never registered as an event listener.
-    let callback = connect_callback(args);
-    add_listener_cb(state, &object, callback, "connect")?;
+    add_listener_cb(state, &object, args.last(), "connect")?;
     Ok(object)
-}
-
-fn connect_callback(args: &[Value]) -> Option<&Value> {
-    let candidate = if matches!(args.first(), Some(Value::Object(_))) {
-        args.get(1)
-    } else {
-        args.get(2)
-    };
-    candidate.filter(|value| quench_runtime::is_callable(value))
 }
 
 /// A refused/absent loopback peer surfaces as an `'error'` on a
@@ -99,12 +83,9 @@ fn connect_target(
             let port = execute::to_js_string(&execute::get_property_result(&options, "port")?)?
                 .parse::<u16>()
                 .map_err(|_| execute::type_error("port must be a number"))?;
-            let mut host = execute::get_property_result(&options, "host")
+            let host = execute::get_property_result(&options, "host")
                 .ok()
                 .and_then(|v| execute::to_js_string(&v).ok());
-            if host.as_deref() == Some("example.org") {
-                host = Some("127.0.0.1".to_string());
-            }
             Ok((port, host))
         }
         _ => {
@@ -136,11 +117,6 @@ pub fn server_listen(
         Err(error) => return Err(server_bind_error(&error)),
     };
     register_server(state, &receiver, Some(listener))?;
-    if let Some(id) = net_id(&receiver) {
-        if let Some(server) = state.borrow().net.servers.get(&id).cloned() {
-            server.borrow_mut().listen_args = args.to_vec();
-        }
-    }
     add_listener_cb(state, &receiver, args.last(), "listening")?;
     Ok(receiver.clone())
 }
@@ -179,15 +155,11 @@ fn add_listener_cb(
     event: &str,
 ) -> Result<(), VmError> {
     if let Some(cb) = cb {
-        let mut callback = cb.clone();
-        while let Value::BindingCell(cell) = callback {
-            callback = cell.borrow().clone();
-        }
-        if quench_runtime::is_callable(&callback) {
+        if quench_runtime::is_callable(cb) {
             crate::modules::events::method_on(
                 state,
                 Some(receiver),
-                &[Value::String(event.to_string()), callback],
+                &[Value::String(event.to_string()), cb.clone()],
             )?;
         }
     }
@@ -228,27 +200,11 @@ pub fn server_close(
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
-    let mut sockets_to_close = Vec::new();
-    {
-        let host = state.borrow();
-        for socket in host.net.sockets.values() {
-            let socket = socket.borrow();
-            if socket.server_id == Some(id) && socket.state != SocketState::Closed {
-                sockets_to_close.push(socket.js.clone());
-            }
-        }
-    }
     if let Some(server) = state.borrow().net.servers.get(&id).cloned() {
         let mut server = server.borrow_mut();
         server.listener.take();
         server.listening = false;
         server.closed = true;
-    }
-    // Stop every accepted connection.  `socket_end` keeps Closing sockets
-    // alive until their write buffer has actually flushed, so responses
-    // queued by res.end() are not discarded.
-    for socket in sockets_to_close {
-        socket_end(state, Some(&socket), &[])?;
     }
     add_listener_cb(state, &receiver, args.first(), "close")?;
     Ok(receiver)
@@ -270,72 +226,6 @@ pub fn server_address(
         .get(&id)
         .and_then(|s| s.borrow().bind_addr);
     Ok(bind_addr.map_or(Value::Null, address_value))
-}
-
-pub fn server_get_connections(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let count = receiver
-        .and_then(net_id)
-        .map(|id| {
-            state
-                .borrow()
-                .net
-                .sockets
-                .values()
-                .filter(|s| s.borrow().server_id == Some(id))
-                .count()
-        })
-        .unwrap_or(0);
-    if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
-        execute::call(
-            cb,
-            &Value::Undefined,
-            &[Value::Null, Value::Number(count as f64)],
-        )?;
-    }
-    Ok(Value::Undefined)
-}
-pub fn server_ref(
-    _s: &Rc<RefCell<HostState>>,
-    r: Option<&Value>,
-    _: &[Value],
-) -> Result<Value, VmError> {
-    Ok(r.cloned().unwrap_or(Value::Undefined))
-}
-pub fn server_unref(
-    _s: &Rc<RefCell<HostState>>,
-    r: Option<&Value>,
-    _: &[Value],
-) -> Result<Value, VmError> {
-    Ok(r.cloned().unwrap_or(Value::Undefined))
-}
-pub fn server_set_max_connections(
-    _s: &Rc<RefCell<HostState>>,
-    r: Option<&Value>,
-    a: &[Value],
-) -> Result<Value, VmError> {
-    let r = r.cloned().unwrap_or(Value::Undefined);
-    if let Some(v) = a.first() {
-        execute::set_property(r.clone(), "maxConnections", v.clone());
-    }
-    Ok(r)
-}
-pub fn socket_ref(
-    _s: &Rc<RefCell<HostState>>,
-    r: Option<&Value>,
-    _: &[Value],
-) -> Result<Value, VmError> {
-    Ok(r.cloned().unwrap_or(Value::Undefined))
-}
-pub fn socket_unref(
-    _s: &Rc<RefCell<HostState>>,
-    r: Option<&Value>,
-    _: &[Value],
-) -> Result<Value, VmError> {
-    Ok(r.cloned().unwrap_or(Value::Undefined))
 }
 
 /// `socket.write(data[, encoding][, cb])` — buffers bytes and flushes
@@ -363,10 +253,6 @@ pub fn socket_write(
         return Ok(Value::Boolean(false));
     }
     guard.write_buf.extend_from_slice(&bytes);
-    guard.bytes_written += bytes.len() as u64;
-    // `bytesWritten` is exposed as a plain data property. Updating it through
-    // the generic property setter can dispatch a non-callable stale setter
-    // in cross-realm socket objects; keep the host-side counter authoritative.
     let flushed = try_flush(&mut guard);
     Ok(Value::Boolean(flushed))
 }
@@ -389,14 +275,10 @@ pub fn socket_end(
     if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
         let mut guard = sock.borrow_mut();
         guard.state = SocketState::Closing;
-        // Flush buffered bytes before half-closing the write side.  Calling
-        // shutdown first can discard the response queued by res.end().
-        try_flush(&mut guard);
-        if guard.write_buf.is_empty() {
-            if let Some(stream) = guard.stream.as_mut() {
-                let _ = stream.shutdown(Shutdown::Write);
-            }
+        if let Some(stream) = guard.stream.as_mut() {
+            let _ = stream.shutdown(Shutdown::Write);
         }
+        try_flush(&mut guard);
     }
     let _ = state;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -462,42 +344,6 @@ pub fn socket_set_keep_alive(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
-}
-
-/// `socket.setTimeout(milliseconds[, callback])` validates and stores the configured timeout.
-pub fn socket_set_timeout(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let timeout = match args.first() {
-        Some(Value::Number(value)) if value.is_finite() => Value::Number(*value),
-        Some(value) => {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-                "The \"milliseconds\" argument must be of type number.{}",
-                crate::modules::util::invalid_arg_received(value),
-            )));
-        }
-        None => Value::Number(0.0),
-    };
-    if let Some(socket) = receiver {
-        let _ = execute::set_property(socket.clone(), "timeout", timeout);
-        if let Some(callback) = args.get(1) {
-            if quench_runtime::is_callable(callback) {
-                crate::modules::events::method_on(
-                    state,
-                    Some(socket),
-                    &[Value::String("timeout".to_string()), callback.clone()],
-                )?;
-            } else {
-                return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-                    "The \"callback\" argument must be of type function.{}",
-                    crate::modules::util::invalid_arg_received(callback),
-                )));
-            }
-        }
-    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 

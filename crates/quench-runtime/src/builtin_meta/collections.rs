@@ -127,10 +127,6 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     if let Some(name) = set_fn_name(b) {
         return Some(name);
     }
-    fn_name_match(b)
-}
-
-const fn fn_name_match(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IteratorConcat => Some("Iterator.concat"),
         Builtin::IteratorFrom => Some("Iterator.from"),
@@ -151,12 +147,6 @@ const fn fn_name_match(b: Builtin) -> Option<&'static str> {
         Builtin::AsyncIteratorDispose => Some("[Symbol.asyncDispose]"),
         Builtin::SetIteratorNext => Some("SetIteratorPrototype.prototype.next"),
         Builtin::MapIteratorNext => Some("MapIteratorPrototype.prototype.next"),
-        _ => fn_name_match_b(b),
-    }
-}
-
-const fn fn_name_match_b(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::MapSet => Some("Map.prototype.set"),
         Builtin::MapSizeGetter => Some("get size"),
         Builtin::MapGet => Some("Map.prototype.get"),
@@ -227,12 +217,6 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::IteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
         Builtin::AsyncGeneratorNext => Some(1.0),
         Builtin::AsyncGeneratorReturn | Builtin::AsyncGeneratorThrow => Some(1.0),
-        _ => fn_len_tail(b),
-    }
-}
-
-const fn fn_len_tail(b: Builtin) -> Option<f64> {
-    match b {
         Builtin::MapSet => Some(2.0),
         Builtin::MapSizeGetter | Builtin::SetSizeGetter => Some(0.0),
         Builtin::MapGet | Builtin::MapHas | Builtin::MapDelete => Some(1.0),
@@ -271,18 +255,6 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     if let Some(name) = weak_short_name(b) {
         return Some(name);
     }
-    short_name_match(b)
-}
-
-const fn short_name_match(b: Builtin) -> Option<&'static str> {
-    if let Some(name) = short_name_iterator(b) {
-        Some(name)
-    } else {
-        short_name_collections(b)
-    }
-}
-
-const fn short_name_iterator(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IteratorConcat => Some("concat"),
         Builtin::IteratorFrom => Some("from"),
@@ -304,12 +276,6 @@ const fn short_name_iterator(b: Builtin) -> Option<&'static str> {
         Builtin::AsyncGeneratorNext => Some("next"),
         Builtin::AsyncGeneratorReturn => Some("return"),
         Builtin::AsyncGeneratorThrow => Some("throw"),
-        _ => None,
-    }
-}
-
-const fn short_name_collections(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::MapSet => Some("set"),
         Builtin::MapGet => Some("get"),
         Builtin::MapHas => Some("has"),

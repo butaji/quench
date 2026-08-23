@@ -87,9 +87,7 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
         if let Some(result) = settled(&data.state.borrow()) {
             return result;
         }
-        crate::modules::process::deliver_pending_warnings(state)?;
         crate::modules::net::poll(state)?;
-        crate::modules::dgram::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         fire_due_timers(state)?;
@@ -133,18 +131,11 @@ pub fn run_uncaught(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 /// mirroring Node's uncaught-exception exit.
 pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
-        crate::modules::process::deliver_pending_warnings(state)?;
         crate::modules::net::poll(state)?;
-        crate::modules::dgram::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         fire_due_timers(state)?;
         drain_immediates(state)?;
-        // Timer/immediate callbacks may settle promises and queue their
-        // reactions (including common.mustCall wrappers). Drain those jobs
-        // before checking whether the loop is quiescent.
-        drain_ticks(state)?;
-        quench_runtime::drain_promise_jobs();
         if !has_pending(state) {
             let handlers = state.borrow().process.before_exit_handlers.clone();
             run_handlers(&handlers, 0)?;

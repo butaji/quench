@@ -35,22 +35,6 @@ pub fn build() -> Vec<(String, Value)> {
             "trace".to_string(),
             crate::host::capability(crate::registry::SPEC_CONSOLE_TRACE),
         ),
-        (
-            "dir".to_string(),
-            crate::host::capability(crate::registry::SPEC_CONSOLE_LOG),
-        ),
-        (
-            "assert".to_string(),
-            crate::host::capability(crate::registry::SPEC_CONSOLE_ASSERT),
-        ),
-        (
-            "count".to_string(),
-            crate::host::capability(crate::registry::SPEC_CONSOLE_COUNT),
-        ),
-        (
-            "createTask".to_string(),
-            crate::host::scheduler_capability(2351),
-        ),
     ]
 }
 
@@ -125,50 +109,6 @@ fn format_args(args: &[Value]) -> String {
             }
             out.push_str(&inspect(arg));
         }
-
         out
     }
-}
-pub fn count(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, quench_runtime::execute::VmError> {
-    let label = match args.first() {
-        Some(Value::String(value)) => value.clone(),
-        Some(value) => inspect(value),
-        None => "default".to_string(),
-    };
-    let mut state = state.borrow_mut();
-    let count = state.console_counts.entry(label.clone()).or_insert(0);
-    *count += 1;
-    let line = format!("{label}: {count}");
-    if let Some(sink) = &state.output {
-        sink(&line);
-    }
-    Ok(Value::Undefined)
-}
-pub fn assert_(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, quench_runtime::execute::VmError> {
-    if args
-        .first()
-        .map(quench_runtime::execute::is_truthy)
-        .unwrap_or(false)
-    {
-        return Ok(Value::Undefined);
-    }
-    let mut rendered = "Assertion failed".to_string();
-    if args.len() > 1 {
-        let message = format_args(&args[1..]);
-        if !message.is_empty() {
-            rendered.push_str(": ");
-            rendered.push_str(&message);
-        }
-    }
-    let state = state.borrow();
-    if let Some(sink) = &state.output {
-        sink(&rendered);
-    }
-    Ok(Value::Undefined)
 }

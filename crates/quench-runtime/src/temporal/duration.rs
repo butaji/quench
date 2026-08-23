@@ -14,13 +14,6 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .find(|value| **value != 0.0)
         .map_or(0.0, |value| value.signum());
     let blank = values.iter().all(|value| *value == 0.0);
-    let properties = duration_properties(values, sign, blank);
-    Ok(Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(properties),
-    )))
-}
-
-fn duration_properties(values: Vec<f64>, sign: f64, blank: bool) -> Vec<(String, Value)> {
     let mut properties = values
         .into_iter()
         .zip([
@@ -45,7 +38,9 @@ fn duration_properties(values: Vec<f64>, sign: f64, blank: bool) -> Vec<(String,
             Value::Builtin(crate::ops::Builtin::TemporalDurationPrototype),
         ),
     ]);
-    properties
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(properties),
+    )))
 }
 
 pub(crate) fn execute(

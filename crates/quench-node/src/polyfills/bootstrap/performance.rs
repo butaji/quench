@@ -74,37 +74,7 @@ const __nodePerformance = {
     if (typeof functionToWrap !== "function") {
       throw new TypeError('The "fn" argument must be a function');
     }
-    const wrapped = function (...args) {
-      const start = __nodePerformance.now();
-      const record = (duration) => {
-        __nodePerformanceEntries.push({
-          name: functionToWrap.name,
-          entryType: "function",
-          startTime: start,
-          duration,
-        });
-      };
-      try {
-        const result = functionToWrap.apply(this, args);
-        if (result && typeof result.then === "function") {
-          return result.then(
-            (value) => {
-              record(__nodePerformance.now() - start);
-              return value;
-            },
-            (error) => {
-              record(__nodePerformance.now() - start);
-              throw error;
-            },
-          );
-        }
-        record(__nodePerformance.now() - start);
-        return result;
-      } catch (error) {
-        record(__nodePerformance.now() - start);
-        throw error;
-      }
-    };
+    const wrapped = (...args) => functionToWrap(...args);
     Object.defineProperty(wrapped, "name", {
       configurable: true,
       value: functionToWrap.name,

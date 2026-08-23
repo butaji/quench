@@ -54,6 +54,9 @@ pub(crate) fn construct_builtin_in_realm(
 }
 
 fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Value, VmError> {
+    if source.contains("import.meta") {
+        return Err(syntax_error("import.meta is only valid in modules"));
+    }
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
     if parsed.panicked || !parsed.errors.is_empty() {
@@ -367,11 +370,10 @@ fn invalid(message: &str) -> VmError {
     VmError::EvalError(message.to_string())
 }
 
+#[cold]
+#[inline(never)]
 fn syntax_error(message: &str) -> VmError {
-    VmError::Thrown(crate::builtins::error(
-        crate::ops::Builtin::SyntaxError,
-        &[Value::String(message.to_string())],
-    ))
+    crate::value::error::throw_syntax_error(message)
 }
 
 fn is_duplicate_param_error_str(message: &str) -> bool {

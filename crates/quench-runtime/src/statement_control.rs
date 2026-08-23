@@ -74,7 +74,7 @@ fn reduce_with(
     result?;
     ops.push(Op::With {
         object,
-        body: crate::machine::FunctionCode::from_ops(body),
+        body: crate::machine::FunctionCode::pending(body),
     });
     Ok(None)
 }
@@ -86,10 +86,10 @@ pub(crate) fn execute_label(
     let Op::Label { name, body } = op else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let Some(body) = body.ops() else {
+    let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let completion = crate::execute::execute_completion_in_place(body, registers)?;
+    let completion = crate::vm::execute_code_completion_in_current_frame(body, registers)?;
     // Per spec 13.13.14 step 4: a matching break becomes
     // NormalCompletion(stmtResult.[[Value]]), not an empty normal
     // completion. Preserve the break's carried value.

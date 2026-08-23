@@ -33,37 +33,6 @@ fn execute_builtin_tail(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
-    if let Some(result) = execute_builtin_tail_html(builtin, receiver, arguments) {
-        return Some(result);
-    }
-    let result = match builtin {
-        crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
-        crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
-        crate::ops::Builtin::StringSubstr => substr(receiver, arguments),
-        crate::ops::Builtin::StringConcat => concat(receiver, arguments),
-        crate::ops::Builtin::StringSplit => split(receiver, arguments),
-        crate::ops::Builtin::StringPadStart => pad_start(receiver, arguments),
-        crate::ops::Builtin::StringPadEnd => pad_end(receiver, arguments),
-        crate::ops::Builtin::StringTrimStart => trim_start(receiver),
-        crate::ops::Builtin::StringTrimEnd => trim_end(receiver),
-        crate::ops::Builtin::StringCodePointAt => code_point_at(receiver, arguments),
-        crate::ops::Builtin::StringToString => Ok(to_string_value(receiver)),
-        crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
-        crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
-        crate::ops::Builtin::StringSearch => search(receiver, arguments),
-        crate::ops::Builtin::StringLocaleCompare => locale_compare(receiver, arguments),
-        crate::ops::Builtin::StringMatch => string_match(receiver, arguments),
-        crate::ops::Builtin::StringMatchAll => string_match_all(receiver, arguments),
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn execute_builtin_tail_html(
-    builtin: crate::ops::Builtin,
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
         crate::ops::Builtin::StringAnchor => anchor(receiver, arguments),
         crate::ops::Builtin::StringBig => html_wrapper(receiver, "big"),
@@ -82,6 +51,23 @@ fn execute_builtin_tail_html(
         crate::ops::Builtin::StringSmall => html_wrapper(receiver, "small"),
         crate::ops::Builtin::StringSub => html_wrapper(receiver, "sub"),
         crate::ops::Builtin::StringSup => html_wrapper(receiver, "sup"),
+        crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
+        crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
+        crate::ops::Builtin::StringSubstr => substr(receiver, arguments),
+        crate::ops::Builtin::StringConcat => concat(receiver, arguments),
+        crate::ops::Builtin::StringSplit => split(receiver, arguments),
+        crate::ops::Builtin::StringPadStart => pad_start(receiver, arguments),
+        crate::ops::Builtin::StringPadEnd => pad_end(receiver, arguments),
+        crate::ops::Builtin::StringTrimStart => trim_start(receiver),
+        crate::ops::Builtin::StringTrimEnd => trim_end(receiver),
+        crate::ops::Builtin::StringCodePointAt => code_point_at(receiver, arguments),
+        crate::ops::Builtin::StringToString => Ok(to_string_value(receiver)),
+        crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
+        crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
+        crate::ops::Builtin::StringSearch => search(receiver, arguments),
+        crate::ops::Builtin::StringLocaleCompare => locale_compare(receiver, arguments),
+        crate::ops::Builtin::StringMatch => string_match(receiver, arguments),
+        crate::ops::Builtin::StringMatchAll => string_match_all(receiver, arguments),
         _ => return None,
     };
     Some(result)

@@ -3,8 +3,6 @@
 //! callbacks run on the host event loop.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fs::File;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
@@ -26,272 +24,6 @@ impl FsState {
         Self
     }
 }
-thread_local! { static FDS: RefCell<HashMap<i32, File>> = RefCell::new(HashMap::new()); }
-static NEXT_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(100);
-pub(crate) fn fd_open(path: &str, flag: Option<&str>) -> Result<i32, VmError> {
-    let flag = flag.unwrap_or("r");
-    let mut o = std::fs::OpenOptions::new();
-    let f = match flag {
-        "r" => o.read(true).open(path),
-        "r+" => o.read(true).write(true).open(path),
-        "w" => o.write(true).create(true).truncate(true).open(path),
-        "w+" => o
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path),
-        "a" => o.create(true).append(true).open(path),
-        "a+" => o.read(true).create(true).append(true).open(path),
-        // Exclusive-create variants (Node's `wx`/`wx+`/`ax`/`ax+`).
-        "wx" | "xw" => o.write(true).create_new(true).open(path),
-        "wx+" | "xw+" => o.read(true).write(true).create_new(true).open(path),
-        "ax" | "xa" => o.create_new(true).append(true).open(path),
-        "ax+" | "xa+" => o.read(true).create_new(true).append(true).open(path),
-        _ => {
-            return Err(crate::modules::fs_error::fs_error(
-                "open",
-                Some(path),
-                &std::io::Error::from(std::io::ErrorKind::InvalidInput),
-            ));
-        }
-    }
-    .map_err(|e| crate::modules::fs_error::fs_error("open", Some(path), &e))?;
-    let fd = NEXT_FD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    FDS.with(|t| {
-        t.borrow_mut().insert(fd, f);
-    });
-    Ok(fd)
-}
-pub(crate) fn fd_stat(fd: i32, bigint: bool) -> Result<Value, VmError> {
-    let build = |metadata: std::fs::Metadata| {
-        if bigint {
-            super::fs_stats::stats_bigint(&metadata)
-        } else {
-            super::fs_stats::stats(&metadata)
-        }
-    };
-    if let Some(stream) = std_stream_fd(fd) {
-        return std::fs::metadata(stream)
-            .map(build)
-            .map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e));
-    }
-    FDS.with(|t| {
-        t.borrow()
-            .get(&fd)
-            .ok_or_else(|| {
-                crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
-            })
-            .and_then(|f| {
-                f.metadata()
-                    .map(build)
-                    .map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e))
-            })
-    })
-}
-pub(crate) fn fd_close(fd: i32) -> Result<Value, VmError> {
-    if std_stream_fd(fd).is_some() {
-        return Ok(Value::Undefined);
-    }
-    FDS.with(|t| {
-        if t.borrow_mut().remove(&fd).is_some() {
-            Ok(Value::Undefined)
-        } else {
-            Err(crate::modules::buffer_enc::invalid_arg_value(
-                "Invalid file descriptor".into(),
-            ))
-        }
-    })
-}
-
-pub(crate) fn fd_truncate(fd: i32, len: u64) -> Result<Value, VmError> {
-    FDS.with(|t| {
-        t.borrow()
-            .get(&fd)
-            .ok_or_else(|| {
-                crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
-            })
-            .and_then(|f| {
-                f.set_len(len)
-                    .map(|_| Value::Undefined)
-                    .map_err(|e| crate::modules::fs_error::fs_error("ftruncate", None, &e))
-            })
-    })
-}
-/// Flush file data without requiring metadata updates, matching Node's
-/// `FileHandle.datasync()` primitive.
-pub(crate) fn fd_datasync(fd: i32) -> Result<Value, VmError> {
-    FDS.with(|t| {
-        t.borrow()
-            .get(&fd)
-            .ok_or_else(|| {
-                crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
-            })
-            .and_then(|f| {
-                f.sync_data()
-                    .map(|_| Value::Undefined)
-                    .map_err(|e| crate::modules::fs_error::fs_error("fdatasync", None, &e))
-            })
-    })
-}
-
-/// Flush file contents and metadata, matching Node's `FileHandle.sync()`.
-pub(crate) fn fd_sync(fd: i32) -> Result<Value, VmError> {
-    FDS.with(|t| {
-        t.borrow()
-            .get(&fd)
-            .ok_or_else(|| {
-                crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
-            })
-            .and_then(|f| {
-                f.sync_all()
-                    .map(|_| Value::Undefined)
-                    .map_err(|e| crate::modules::fs_error::fs_error("fsync", None, &e))
-            })
-    })
-}
-
-pub(crate) fn fd_write(
-    fd: i32,
-    data: &[u8],
-    offset: usize,
-    length: usize,
-    position: Option<u64>,
-) -> Result<usize, VmError> {
-    use std::io::{Seek, SeekFrom, Write};
-    FDS.with(|t| {
-        let mut table = t.borrow_mut();
-        let file = table.get_mut(&fd).ok_or_else(|| {
-            crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
-        })?;
-        if let Some(pos) = position {
-            file.seek(SeekFrom::Start(pos))
-                .map_err(|e| crate::modules::fs_error::fs_error("write", None, &e))?;
-        }
-        file.write(&data[offset..offset.saturating_add(length).min(data.len())])
-            .map_err(|e| crate::modules::fs_error::fs_error("write", None, &e))
-    })
-}
-
-pub(crate) fn fd_read(
-    fd: i32,
-    out: &mut [u8],
-    offset: usize,
-    length: usize,
-    position: Option<u64>,
-) -> Result<usize, VmError> {
-    use std::io::{Read, Seek, SeekFrom};
-    FDS.with(|t| {
-        let mut table = t.borrow_mut();
-        let file = table.get_mut(&fd).ok_or_else(|| {
-            crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
-        })?;
-        if let Some(pos) = position {
-            file.seek(SeekFrom::Start(pos))
-                .map_err(|e| crate::modules::fs_error::fs_error("read", None, &e))?;
-        }
-        let end = offset.saturating_add(length).min(out.len());
-        let start = offset.min(out.len());
-        file.read(&mut out[start..end])
-            .map_err(|e| crate::modules::fs_error::fs_error("read", None, &e))
-    })
-}
-#[cfg(unix)]
-fn with_raw_fd<T>(
-    fd: i32,
-    f: impl FnOnce(std::os::unix::io::RawFd) -> Result<T, VmError>,
-) -> Result<T, VmError> {
-    use std::os::unix::io::AsRawFd;
-    FDS.with(|t| {
-        t.borrow()
-            .get(&fd)
-            .map(|file| f(file.as_raw_fd()))
-            .unwrap_or_else(|| {
-                Err(crate::modules::buffer_enc::invalid_arg_value(
-                    "Invalid file descriptor".into(),
-                ))
-            })
-    })
-}
-
-#[cfg(unix)]
-pub(crate) fn fd_chmod(fd: i32, mode: u32) -> Result<Value, VmError> {
-    with_raw_fd(fd, |raw| {
-        let rc = unsafe { libc::fchmod(raw, mode as libc::mode_t) };
-        if rc == -1 {
-            return Err(crate::modules::fs_error::fs_error(
-                "fchmod",
-                None,
-                &std::io::Error::last_os_error(),
-            ));
-        }
-        Ok(Value::Undefined)
-    })
-}
-
-#[cfg(unix)]
-pub(crate) fn fd_chown(fd: i32, uid: u32, gid: u32) -> Result<Value, VmError> {
-    with_raw_fd(fd, |raw| {
-        let rc = unsafe { libc::fchown(raw, uid as libc::uid_t, gid as libc::gid_t) };
-        if rc == -1 {
-            return Err(crate::modules::fs_error::fs_error(
-                "fchown",
-                None,
-                &std::io::Error::last_os_error(),
-            ));
-        }
-        Ok(Value::Undefined)
-    })
-}
-
-#[cfg(unix)]
-pub(crate) fn fd_utimes(fd: i32, atime: f64, mtime: f64) -> Result<Value, VmError> {
-    with_raw_fd(fd, |raw| {
-        let times = [
-            libc::timeval {
-                tv_sec: atime.trunc() as libc::time_t,
-                tv_usec: (atime.fract() * 1_000_000.0) as libc::suseconds_t,
-            },
-            libc::timeval {
-                tv_sec: mtime.trunc() as libc::time_t,
-                tv_usec: (mtime.fract() * 1_000_000.0) as libc::suseconds_t,
-            },
-        ];
-        let rc = unsafe { libc::futimes(raw, times.as_ptr()) };
-        if rc == -1 {
-            return Err(crate::modules::fs_error::fs_error(
-                "futimes",
-                None,
-                &std::io::Error::last_os_error(),
-            ));
-        }
-        Ok(Value::Undefined)
-    })
-}
-
-#[cfg(not(unix))]
-pub(crate) fn fd_chmod(_: i32, _: u32) -> Result<Value, VmError> {
-    Err(VmError::NotCallable)
-}
-#[cfg(not(unix))]
-pub(crate) fn fd_chown(_: i32, _: u32, _: u32) -> Result<Value, VmError> {
-    Err(VmError::NotCallable)
-}
-#[cfg(not(unix))]
-pub(crate) fn fd_utimes(_: i32, _: f64, _: f64) -> Result<Value, VmError> {
-    Err(VmError::NotCallable)
-}
-
-/// The `/dev/fd/N` path for standard stream descriptors 0/1/2, which are
-/// always-open real fds in Node (stdin/stdout/stderr).
-fn std_stream_fd(fd: i32) -> Option<&'static str> {
-    match fd {
-        0 => Some("/dev/stdin"),
-        1 => Some("/dev/stdout"),
-        2 => Some("/dev/stderr"),
-        _ => None,
-    }
-}
 
 /// Parsed `options` argument shared by the sync and async families.
 #[derive(Default)]
@@ -306,47 +38,9 @@ pub(crate) struct FsOptions {
     pub signal_aborted: bool,
 }
 
-/// Convert Node's accepted filesystem path values to a host path.
-///
-/// Node accepts strings, Buffers, and WHATWG `file:` URLs for fs APIs.
-/// Keep this conversion centralized so sync, callback, and promise APIs
-/// agree on the contract.
+/// `path` argument: string only (Buffer/URL paths unsupported).
 pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
-    let value = value.unwrap_or(&Value::Undefined);
-    match value {
-        Value::String(path) if !quench_runtime::execute::is_symbol(value) => Ok(path.clone()),
-        Value::Uint8Array(view) => {
-            let bytes = view.buffer.bytes.borrow();
-            String::from_utf8(bytes[view.byte_offset..view.byte_offset + view.length].to_vec())
-                .map_err(|_| {
-                    crate::modules::buffer_enc::invalid_arg_type(
-                        "The \"path\" argument must be a string, Buffer, or URL".into(),
-                    )
-                })
-        }
-        Value::Object(_) => {
-            let href = quench_runtime::execute::get_property_result(value, "href")
-                .ok()
-                .and_then(|href| match href {
-                    Value::String(href) => Some(href),
-                    _ => None,
-                })
-                .ok_or_else(|| {
-                    crate::modules::buffer_enc::invalid_arg_type(
-                        "The \"path\" argument must be a string, Buffer, or URL".into(),
-                    )
-                })?;
-            if !href.starts_with("file://") {
-                return Err(crate::modules::buffer_enc::invalid_arg_value(
-                    "The \"path\" argument must be a file URL".into(),
-                ));
-            }
-            Ok(href.strip_prefix("file://").unwrap_or(&href).to_string())
-        }
-        _ => Err(crate::modules::buffer_enc::invalid_arg_type(
-            "The \"path\" argument must be a string, Buffer, or URL".into(),
-        )),
-    }
+    crate::modules::path::validate_string(value.unwrap_or(&Value::Undefined), "path")
 }
 
 /// Parse the trailing `options` argument (string encoding or object).
@@ -448,12 +142,122 @@ pub(crate) fn err_value(result: &Result<Value, VmError>) -> Value {
         )]),
     }
 }
-#[path = "fs_build.rs"]
-mod fs_build;
 
 pub fn build() -> Value {
-    fs_build::build()
+    use crate::registry::*;
+    let mut props: Vec<(&str, Value)> = vec![
+        ("readFile", crate::host::capability(SPEC_FS_READFILE)),
+        ("writeFile", crate::host::capability(SPEC_FS_WRITEFILE)),
+        ("stat", crate::host::capability(SPEC_FS_STAT)),
+        ("lstat", crate::host::capability(SPEC_FS_LSTAT)),
+        ("readdir", crate::host::capability(SPEC_FS_READDIR)),
+        ("exists", crate::host::capability(SPEC_FS_EXISTS)),
+        ("mkdir", crate::host::capability(SPEC_FS_MKDIR)),
+        ("unlink", crate::host::capability(SPEC_FS_UNLINK)),
+        ("rmdir", crate::host::capability(SPEC_FS_RMDIR)),
+        ("rm", crate::host::capability(SPEC_FS_RM)),
+        ("rename", crate::host::capability(SPEC_FS_RENAME)),
+        ("appendFile", crate::host::capability(SPEC_FS_APPENDFILE)),
+        ("copyFile", crate::host::capability(SPEC_FS_COPYFILE)),
+        ("access", crate::host::capability(SPEC_FS_ACCESS)),
+        ("mkdtemp", crate::host::capability(SPEC_FS_MKDTEMP)),
+        ("readlink", crate::host::capability(SPEC_FS_READLINK)),
+        ("chmod", crate::host::capability(SPEC_FS_CHMOD)),
+        ("truncate", crate::host::capability(SPEC_FS_TRUNCATE)),
+    ];
+    props.extend(sync_props());
+    props.push(("constants", constants()));
+    props.push(("promises", promises()));
+    crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
 }
+
+fn sync_props() -> Vec<(&'static str, Value)> {
+    use crate::registry::*;
+    let mut props = vec![
+        (
+            "readFileSync",
+            crate::host::capability(SPEC_FS_READFILESYNC),
+        ),
+        (
+            "writeFileSync",
+            crate::host::capability(SPEC_FS_WRITEFILESYNC),
+        ),
+        ("statSync", crate::host::capability(SPEC_FS_STATSYNC)),
+        ("lstatSync", crate::host::capability(SPEC_FS_LSTATSYNC)),
+        ("readdirSync", crate::host::capability(SPEC_FS_READDIRSYNC)),
+        ("existsSync", crate::host::capability(SPEC_FS_EXISTSSYNC)),
+        ("realpathSync", crate::host::capability(SPEC_FS_REALSYNC)),
+        ("mkdirSync", crate::host::capability(SPEC_FS_MKDIRSYNC)),
+        ("unlinkSync", crate::host::capability(SPEC_FS_UNLINKSYNC)),
+        ("rmdirSync", crate::host::capability(SPEC_FS_RMDIRSYNC)),
+    ];
+    props.extend(sync_props_more());
+    props
+}
+
+fn sync_props_more() -> Vec<(&'static str, Value)> {
+    use crate::registry::*;
+    vec![
+        ("rmSync", crate::host::capability(SPEC_FS_RMSYNC)),
+        ("renameSync", crate::host::capability(SPEC_FS_RENAMESYNC)),
+        (
+            "appendFileSync",
+            crate::host::capability(SPEC_FS_APPENDFILESYNC),
+        ),
+        (
+            "copyFileSync",
+            crate::host::capability(SPEC_FS_COPYFILESYNC),
+        ),
+        ("accessSync", crate::host::capability(SPEC_FS_ACCESSSYNC)),
+        ("mkdtempSync", crate::host::capability(SPEC_FS_MKDTEMPSYNC)),
+        (
+            "readlinkSync",
+            crate::host::capability(SPEC_FS_READLINKSYNC),
+        ),
+        ("chmodSync", crate::host::capability(SPEC_FS_CHMODSYNC)),
+        (
+            "truncateSync",
+            crate::host::capability(SPEC_FS_TRUNCATESYNC),
+        ),
+    ]
+}
+
+/// `fs.promises` — each op runs the sync implementation and returns
+/// an already-settled Promise (fulfilled with the result, rejected
+/// with the coded error).
+fn promises() -> Value {
+    use crate::registry::*;
+    let props: Vec<(&str, Value)> = vec![
+        ("readFile", crate::host::capability(SPEC_FSP_READFILE)),
+        ("writeFile", crate::host::capability(SPEC_FSP_WRITEFILE)),
+        ("appendFile", crate::host::capability(SPEC_FSP_APPENDFILE)),
+        ("stat", crate::host::capability(SPEC_FSP_STAT)),
+        ("lstat", crate::host::capability(SPEC_FSP_LSTAT)),
+        ("readdir", crate::host::capability(SPEC_FSP_READDIR)),
+        ("mkdir", crate::host::capability(SPEC_FSP_MKDIR)),
+        ("unlink", crate::host::capability(SPEC_FSP_UNLINK)),
+        ("rmdir", crate::host::capability(SPEC_FSP_RMDIR)),
+        ("rm", crate::host::capability(SPEC_FSP_RM)),
+        ("rename", crate::host::capability(SPEC_FSP_RENAME)),
+        ("copyFile", crate::host::capability(SPEC_FSP_COPYFILE)),
+        ("access", crate::host::capability(SPEC_FSP_ACCESS)),
+        ("mkdtemp", crate::host::capability(SPEC_FSP_MKDTEMP)),
+        ("readlink", crate::host::capability(SPEC_FSP_READLINK)),
+        ("chmod", crate::host::capability(SPEC_FSP_CHMOD)),
+        ("truncate", crate::host::capability(SPEC_FSP_TRUNCATE)),
+        ("realpath", crate::host::capability(SPEC_FSP_REALPATH)),
+    ];
+    crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
+}
+
+fn constants() -> Value {
+    let entries: Vec<(String, Value)> = CONSTANT_ENTRIES
+        .iter()
+        .map(|(name, value)| (name.to_string(), Value::Number(*value)))
+        .collect();
+    host_api::object(entries)
+}
+
 #[cfg(target_os = "macos")]
 mod flags {
     pub const O_CREAT: f64 = 0x200 as f64;
@@ -526,7 +330,6 @@ pub(crate) fn sync_op(name: &str) -> Option<Op> {
         "appendFile" => sync::append_file_sync,
         "stat" => sync::stat_sync,
         "lstat" => sync::lstat_sync,
-        "statfs" => sync::statfs_sync,
         "readdir" => sync::readdir_sync,
         "mkdir" => sync::mkdir_sync,
         "unlink" => sync::unlink_sync,
@@ -539,14 +342,7 @@ pub(crate) fn sync_op(name: &str) -> Option<Op> {
         "readlink" => sync::readlink_sync,
         "chmod" => sync::chmod_sync,
         "truncate" => sync::truncate_sync,
-        "chown" => sync::chown_sync,
-        "utimes" => sync::utimes_sync,
         "realpath" => sync::realpath_sync,
-        "link" => sync::link_sync,
-        "symlink" => sync::symlink_sync,
-        "lchown" => sync::lchown_sync,
-        "lutimes" => sync::lutimes_sync,
-        "lchmod" => sync::lchmod_sync,
         _ => return None,
     })
 }

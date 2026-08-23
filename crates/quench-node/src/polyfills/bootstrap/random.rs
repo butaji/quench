@@ -300,34 +300,11 @@ if (typeof globalThis.crypto.subtle.sign !== "function") {
   };
 }
 if (typeof globalThis.crypto.subtle.exportKey !== "function") {
-  globalThis.crypto.subtle.exportKey = async (format, key) => {
+  globalThis.crypto.subtle.exportKey = async (_format, key) => {
     if (!__quenchWebCryptoKeyBrand.has(key)) {
       return __quenchWebCryptoInvalidKey();
     }
-    const data = __quenchWebCryptoKeyData.get(key);
-    if (!data.extractable) {
-      throw new DOMException(
-        "key is not extractable",
-        "InvalidAccessError"
-      );
-    }
-    const bytes = data.bytes || new Uint8Array(0);
-    if (format === "raw") return bytes.slice().buffer;
-    if (format === "jwk") {
-      let binary = "";
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      return {
-        kty: "oct",
-        k: btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, ""),
-        alg: data.algorithm?.name,
-        key_ops: [...data.usages],
-        ext: true
-      };
-    }
-    throw new DOMException(
-      `Unsupported export format: ${format}`,
-      "NotSupportedError"
-    );
+    return { kty: "oct", k: "" };
   };
 }
 if (typeof globalThis.crypto.subtle.importKey !== "function") {

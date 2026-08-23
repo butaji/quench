@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap};
 
 use oxc::ast::ast::TemplateLiteral;
 
@@ -6,6 +6,54 @@ use crate::{
     facts::ProgramDb,
     ops::{BinaryOp, Constant, Op, UnaryOp},
 };
+
+thread_local! {
+    static TAGGED_TEMPLATE_CACHE:
+        RefCell<HashMap<(crate::ops::RealmId, u64), crate::value::Value>> =
+        RefCell::new(HashMap::new());
+}
+
+pub(crate) fn execute_tagged_template(
+    registers: &mut Vec<crate::value::Value>,
+    op: &crate::ops::Op,
+) -> Result<(), crate::execute::VmError> {
+    let crate::ops::Op::TemplateObject {
+        dst,
+        cooked,
+        raw,
+        site,
+    } = op
+    else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let key = (crate::vm::current_context_or_default().realm(), *site);
+    if let Some(value) = TAGGED_TEMPLATE_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        crate::execute::write_value(registers, *dst, value);
+        return Ok(());
+    }
+    let cooked_value = crate::execute::read_register(registers, *cooked)?.clone();
+    let raw_value = crate::execute::read_register(registers, *raw)?.clone();
+    let raw_value = crate::properties::integrity_apply(Some(&raw_value), true)?;
+    let descriptor = vec![
+        ("value".to_string(), raw_value),
+        ("writable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "enumerable".to_string(),
+            crate::value::Value::Boolean(false),
+        ),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
+    ];
+    let cooked_value = crate::builtins::define_own_property(&cooked_value, "raw", &descriptor)?;
+    let cooked_value = crate::properties::integrity_apply(Some(&cooked_value), true)?;
+    TAGGED_TEMPLATE_CACHE.with(|cache| {
+        cache.borrow_mut().insert(key, cooked_value.clone());
+    });
+    crate::execute::write_value(registers, *dst, cooked_value);
+    Ok(())
+}
 
 pub(crate) fn reduce(
     template: &TemplateLiteral<'_>,

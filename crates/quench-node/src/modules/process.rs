@@ -3,7 +3,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use quench_runtime::execute;
 use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
@@ -19,18 +18,12 @@ pub struct ProcessState {
     pub warning_handlers: Vec<(Value, bool)>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
-    /// Warnings awaiting delivery; handlers registered later in the same
-    /// synchronous block still receive them (Node's nexttick timing).
-    pub pending_warnings: Vec<Value>,
     pub exit_handlers_ran: bool,
     pub exec_path: String,
     pub version: String,
     pub versions: Vec<(String, String)>,
-    /// Process file-creation mask, shared by `umask()` getter/setter calls.
-    pub umask: u32,
     pub exit_code: Option<i32>,
     pub cwd: std::path::PathBuf,
-    pub start_time: std::time::Instant,
 }
 
 impl Default for ProcessState {
@@ -56,197 +49,63 @@ impl ProcessState {
             uncaught_exception_handlers: Vec::new(),
             warning_handlers: Vec::new(),
             warnings_emitted: Vec::new(),
-            pending_warnings: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
             version: "v22.0.0".into(),
             versions,
-            umask: 0o022,
             exit_code: None,
             cwd,
-            start_time: std::time::Instant::now(),
         }
     }
 }
 
 pub fn build(argv: &[String], exec_path: &str) -> Value {
     let mut props = info_props(argv, exec_path);
-    props.extend(method_props_helper::method_props());
-    props.push((
-        "uptime",
-        crate::host::capability(crate::registry::SPEC_PROCESS_UPTIME),
-    ));
-    props.push((
-        "memoryUsage",
-        crate::host::capability(crate::registry::SPEC_PROCESS_MEMORYUSAGE),
-    ));
-    props.push((
-        "resourceUsage",
-        crate::host::capability(crate::registry::SPEC_PROCESS_RESOURCE_USAGE),
-    ));
-    props.push((
-        "cpuUsage",
-        crate::host::capability(crate::registry::SPEC_PROCESS_CPU_USAGE),
-    ));
-    let obj = crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
-    execute::define_property(
-        obj,
-        "exitCode",
-        host_api::object(vec![
-            (
-                "get".into(),
-                crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_GET),
-            ),
-            (
-                "set".into(),
-                crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_SET),
-            ),
-            ("enumerable".into(), Value::Boolean(true)),
-            ("configurable".into(), Value::Boolean(false)),
-        ]),
-    )
-    .unwrap_or_else(|_| host_api::object(Vec::new()))
+    props.extend(method_props());
+    crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
 }
 
 fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
-    let mut props = info_props_argv(argv);
-    props.extend(info_props_static(exec_path));
-    props
-}
-
-fn info_props_argv(argv: &[String]) -> Vec<(&'static str, Value)> {
     vec![
         (
             "argv",
             host_api::array(argv.iter().cloned().map(Value::String).collect()),
         ),
-        (
-            "argv0",
-            Value::String(argv.first().cloned().unwrap_or_default()),
-        ),
-    ]
-}
-
-fn info_props_dynamic() -> Vec<(&'static str, Value)> {
-    vec![
         ("env", env_object()),
-        ("execPath", Value::String(String::new())),
+        (
+            "config",
+            host_api::object(vec![(
+                "variables".to_string(),
+                host_api::object(vec![(
+                    "v8_enable_i18n_support".to_string(),
+                    Value::Number(1.0),
+                )]),
+            )]),
+        ),
+        ("execPath", Value::String(exec_path.to_string())),
         ("version", Value::String("v22.0.0".into())),
+        (
+            "versions",
+            crate::host::namespace_object_from_pairs(versions_props()),
+        ),
         (
             "platform",
             Value::String(std_env("QUENCH_PLATFORM", current_platform())),
         ),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
-        ("ppid", Value::Number(parent_pid() as f64)),
-        ("title", Value::String("quench".into())),
-        ("sourceMapsEnabled", Value::Boolean(false)),
         ("execArgv", host_api::array(vec![])),
         ("features", host_api::object(vec![])),
-        ("stdin", std_stream_input()),
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
     ]
 }
 
-fn info_props_static(exec_path: &str) -> Vec<(&'static str, Value)> {
-    let mut props = info_props_dynamic();
-    props[1].1 = Value::String(exec_path.to_string());
-    props.push((
-        "release",
-        host_api::object(vec![("name".to_string(), Value::String("node".into()))]),
-    ));
-    props.push((
-        "config",
-        host_api::object(vec![(
-            "variables".to_string(),
-            host_api::object(vec![(
-                "v8_enable_i18n_support".to_string(),
-                Value::Number(1.0),
-            )]),
-        )]),
-    ));
-    props.push((
-        "versions",
-        crate::host::namespace_object_from_pairs(versions_props()),
-    ));
-    props.push((
-        "report",
-        crate::host::namespace_object_from_pairs(vec![(
-            "getReport".to_string(),
-            crate::host::capability(crate::registry::SPEC_PROCESS_REPORT),
-        )]),
-    ));
-    props.push((
-        "activeResourcesInfo",
-        crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
-    ));
-    props
-}
-
-fn parent_pid() -> u32 {
-    #[cfg(unix)]
-    {
-        unsafe { libc::getppid() as u32 }
-    }
-    #[cfg(not(unix))]
-    {
-        0
-    }
-}
-
-/// `process.binding()` exposes the legacy internal namespaces that Node's
-/// public fixtures probe. Quench does not expose their native ABI, but these
-/// names are valid and must return an object rather than fail resolution.
-pub fn binding(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let name = args.first().map(value_to_string).unwrap_or_default();
-    if matches!(
-        name.as_str(),
-        "buffer"
-            | "cares_wrap"
-            | "constants"
-            | "contextify"
-            | "fs"
-            | "fs_event_wrap"
-            | "icu"
-            | "inspector"
-            | "js_stream"
-            | "natives"
-            | "os"
-            | "pipe_wrap"
-            | "spawn_sync"
-            | "stream_wrap"
-            | "tcp_wrap"
-            | "tls_wrap"
-            | "tty_wrap"
-            | "udp_wrap"
-            | "util"
-            | "uv"
-            | "zlib"
-    ) {
-        return Ok(Value::object(vec![]));
-    }
-    Err(VmError::EvalError(format!(
-        "process.binding('{name}') is not supported"
-    )))
-}
-
 /// `process.stdout` / `process.stderr` — non-TTY write streams.
-///
-/// Keep standard writable-state flags on the namespace object. Node consumers
-/// inspect these before routing output; exposing only `write()` makes those
-/// reads observe `undefined` and can fail after an asynchronous callback.
 fn std_stream(is_error: bool) -> Value {
     crate::host::namespace_object_from_pairs(vec![
         ("isTTY".to_string(), Value::Boolean(false)),
         ("isRawTTY".to_string(), Value::Boolean(false)),
-        (
-            "fd".to_string(),
-            Value::Number(if is_error { 2.0 } else { 1.0 }),
-        ),
-        ("writable".to_string(), Value::Boolean(true)),
-        ("writableEnded".to_string(), Value::Boolean(false)),
-        ("writableFinished".to_string(), Value::Boolean(false)),
         (
             "write".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(
@@ -261,38 +120,41 @@ fn std_stream(is_error: bool) -> Value {
     ])
 }
 
-/// `process.stdin` is always present in Node, even when the host is not
-/// attached to a terminal.  Expose the descriptor and readable-state flags
-/// expected by code that probes standard streams before consuming input.
-fn std_stream_input() -> Value {
-    crate::host::namespace_object_from_pairs(vec![
-        ("isTTY".to_string(), Value::Boolean(false)),
-        ("isRawTTY".to_string(), Value::Boolean(false)),
-        ("fd".to_string(), Value::Number(0.0)),
-        ("readable".to_string(), Value::Boolean(true)),
-        ("readableEnded".to_string(), Value::Boolean(false)),
-        ("readableFlowing".to_string(), Value::Boolean(false)),
-    ])
-}
-#[path = "process_method_props.rs"]
-mod method_props_helper;
-
-/// `process.getuid()` — return the effective Unix user ID, or zero on non-Unix.
-pub fn getuid(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    #[cfg(unix)]
-    let uid = unsafe { libc::getuid() as u64 };
-    #[cfg(not(unix))]
-    let uid = 0;
-    Ok(Value::Number(uid as f64))
-}
-
-/// `process.getgid()` — return the effective Unix group ID, or zero on non-Unix.
-pub fn getgid(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    #[cfg(unix)]
-    let gid = unsafe { libc::getgid() as u64 };
-    #[cfg(not(unix))]
-    let gid = 0;
-    Ok(Value::Number(gid as f64))
+fn method_props() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "cwd",
+            crate::host::capability(crate::registry::SPEC_PROCESS_CWD),
+        ),
+        (
+            "chdir",
+            crate::host::capability(crate::registry::SPEC_PROCESS_CHDIR),
+        ),
+        (
+            "exit",
+            crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
+        ),
+        (
+            "nextTick",
+            crate::host::capability(crate::registry::SPEC_PROCESS_NEXT_TICK),
+        ),
+        (
+            "hrtime",
+            crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
+        ),
+        (
+            "umask",
+            crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
+        ),
+        (
+            "on",
+            crate::host::capability(crate::registry::SPEC_PROCESS_ON),
+        ),
+        (
+            "once",
+            crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
+        ),
+    ]
 }
 
 /// `process.env` — a snapshot of the host environment at startup.
@@ -401,298 +263,6 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     Ok(Value::Undefined)
 }
 
-/// `process.uptime()` — seconds since the host process started.
-pub fn uptime(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    let start = state.borrow().process.start_time;
-    let elapsed = start.elapsed();
-    Ok(Value::Number(elapsed.as_secs_f64()))
-}
-
-/// `process.memoryUsage()` — report resident memory for this process.
-///
-/// `sysinfo::System::used_memory()` is host-wide memory and is not a valid
-/// value for Node's `rss` field.  `getrusage(RUSAGE_SELF)` provides a
-/// process-scoped resident-set high-water mark on the supported Unix hosts.
-/// macOS reports `ru_maxrss` in bytes while Linux reports KiB.
-pub fn memory_usage(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    let rss = process_rss_bytes();
-    Ok(host_api::object(vec![
-        ("rss".to_string(), Value::Number(rss as f64)),
-        ("heapTotal".to_string(), Value::Number(0.0)),
-        ("heapUsed".to_string(), Value::Number(0.0)),
-        ("external".to_string(), Value::Number(0.0)),
-        ("arrayBuffers".to_string(), Value::Number(0.0)),
-    ]))
-}
-
-fn process_rss_bytes() -> u64 {
-    #[cfg(unix)]
-    {
-        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-        if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } == 0 {
-            let rss = unsafe { usage.assume_init() }.ru_maxrss;
-            #[cfg(target_os = "linux")]
-            { return (rss.max(0) as u64).saturating_mul(1024); }
-            #[cfg(not(target_os = "linux"))]
-            { return rss.max(0) as u64; }
-        }
-    }
-    0
-}
-
-/// `process.resourceUsage()` — counters reported by the host operating system.
-pub fn resource_usage(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    let usage = process_rusage();
-    Ok(host_api::object(vec![
-        ("userCPUTime".into(), Value::Number(usage.user as f64)),
-        ("systemCPUTime".into(), Value::Number(usage.system as f64)),
-        ("maxRSS".into(), Value::Number(usage.max_rss as f64)),
-        ("sharedMemorySize".into(), Value::Number(usage.shared as f64)),
-        ("unsharedDataSize".into(), Value::Number(usage.data as f64)),
-        ("unsharedStackSize".into(), Value::Number(usage.stack as f64)),
-        ("minorPageFault".into(), Value::Number(usage.minor as f64)),
-        ("majorPageFault".into(), Value::Number(usage.major as f64)),
-        ("swappedOut".into(), Value::Number(usage.swapped as f64)),
-        ("fsRead".into(), Value::Number(usage.fs_read as f64)),
-        ("fsWrite".into(), Value::Number(usage.fs_write as f64)),
-        ("ipcSent".into(), Value::Number(usage.ipc_sent as f64)),
-        ("ipcReceived".into(), Value::Number(usage.ipc_received as f64)),
-        ("signalsCount".into(), Value::Number(usage.signals as f64)),
-        ("voluntaryContextSwitches".into(), Value::Number(usage.voluntary as f64)),
-        ("involuntaryContextSwitches".into(), Value::Number(usage.involuntary as f64)),
-    ]))
-}
-
-struct ProcessRusage {
-    user: i64, system: i64, max_rss: i64, shared: i64, data: i64, stack: i64,
-    minor: i64, major: i64, swapped: i64, fs_read: i64, fs_write: i64,
-    ipc_sent: i64, ipc_received: i64, signals: i64, voluntary: i64, involuntary: i64,
-}
-
-fn process_rusage() -> ProcessRusage {
-    // getrusage is available on every Unix target supported by quench-node.
-    #[cfg(unix)]
-    {
-        let mut r = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-        if unsafe { libc::getrusage(libc::RUSAGE_SELF, r.as_mut_ptr()) } == 0 {
-            let r = unsafe { r.assume_init() };
-            let micros = |t: libc::timeval| t.tv_sec as i64 * 1_000_000 + t.tv_usec as i64;
-            return ProcessRusage {
-                user: micros(r.ru_utime), system: micros(r.ru_stime),
-                max_rss: r.ru_maxrss as i64, shared: r.ru_ixrss as i64,
-                data: r.ru_idrss as i64, stack: r.ru_isrss as i64,
-                minor: r.ru_minflt as i64, major: r.ru_majflt as i64,
-                swapped: r.ru_nswap as i64, fs_read: r.ru_inblock as i64,
-                fs_write: r.ru_oublock as i64, ipc_sent: r.ru_msgsnd as i64,
-                ipc_received: r.ru_msgrcv as i64, signals: r.ru_nsignals as i64,
-                voluntary: r.ru_nvcsw as i64, involuntary: r.ru_nivcsw as i64,
-            };
-        }
-    }
-    ProcessRusage { user: 0, system: 0, max_rss: 0, shared: 0, data: 0, stack: 0,
-        minor: 0, major: 0, swapped: 0, fs_read: 0, fs_write: 0, ipc_sent: 0,
-        ipc_received: 0, signals: 0, voluntary: 0, involuntary: 0 }
-}
-
-/// `process.cpuUsage()` — returns cumulative process CPU time in microseconds.
-pub fn cpu_usage(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let usage = process_rusage();
-    let (mut user, mut system) = (usage.user, usage.system);
-    if let Some(previous) = args.first() {
-        if !matches!(previous, Value::Object(_)) {
-            return Err(cpu_type_error("prevValue", previous));
-        }
-        for field in ["user", "system"] {
-            let value = execute::get_property_result(previous, field).unwrap_or(Value::Undefined);
-            match value {
-                Value::Number(number) if number.is_finite() && number >= 0.0 => {
-                    if field == "user" { user -= number as i64; } else { system -= number as i64; }
-                }
-                Value::Number(number) if !number.is_finite() || number < 0.0 => return Err(cpu_value_error(field, number)),
-                _ => return Err(cpu_field_error(field, &value)),
-            }
-        }
-    }
-    Ok(host_api::object(vec![("user".into(), Value::Number(user.max(0) as f64)),
-        ("system".into(), Value::Number(system.max(0) as f64))]))
-}
-
-fn cpu_type_error(name: &str, value: &Value) -> VmError {
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        (
-            "message".into(),
-            Value::String(format!(
-                "The \"{name}\" argument must be of type object.{}",
-                crate::modules::util::invalid_arg_received(value)
-            )),
-        ),
-    ]))
-}
-
-fn cpu_field_error(field: &str, value: &Value) -> VmError {
-    let received = crate::modules::util::invalid_arg_received(value);
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        (
-            "message".into(),
-            Value::String(format!(
-                "The \"prevValue.{field}\" property must be of type number.{received}"
-            )),
-        ),
-    ]))
-}
-fn cpu_value_error(field: &str, value: f64) -> VmError {
-    let rendered = if value.is_infinite() {
-        if value.is_sign_negative() {
-            "-Infinity"
-        } else {
-            "Infinity"
-        }
-        .to_string()
-    } else {
-        value.to_string()
-    };
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("RangeError".into())),
-        ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
-        (
-            "message".into(),
-            Value::String(format!(
-                "The property 'prevValue.{field}' is invalid. Received {rendered}"
-            )),
-        ),
-    ]))
-}
-
-pub fn exit_code_get(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    Ok(state
-        .borrow()
-        .process
-        .exit_code
-        .map_or(Value::Undefined, |code| Value::Number(code as f64)))
-}
-
-pub fn exit_code_set(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let value = args.first().cloned().unwrap_or(Value::Undefined);
-    let code = match value {
-        Value::Undefined | Value::Null => None,
-        Value::Number(code) if code.is_finite() && code.fract() == 0.0 => Some(code as i32),
-        Value::Number(code) => return Err(exit_code_range_error(code)),
-        Value::String(code) => match code.parse::<i32>() {
-            Ok(code) => Some(code),
-            Err(_) => return Err(exit_code_type_error(&Value::String(code))),
-        },
-        other => return Err(exit_code_type_error(&other)),
-    };
-    state.borrow_mut().process.exit_code = code;
-    Ok(Value::Undefined)
-}
-
-fn exit_code_type_error(value: &Value) -> VmError {
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        (
-            "message".into(),
-            Value::String(format!(
-                "The \"code\" argument must be a number.{}",
-                crate::modules::util::invalid_arg_received(value)
-            )),
-        ),
-    ]))
-}
-
-fn exit_code_range_error(value: f64) -> VmError {
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("RangeError".into())),
-        ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
-        (
-            "message".into(),
-            Value::String(format!(
-                "The value of \"code\" is out of range. It must be an integer. Received {value}"
-            )),
-        ),
-    ]))
-}
-
-pub fn kill(
-    _state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let pid = match args.first() {
-        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => *value as i32,
-        Some(Value::String(value)) => value.parse().map_err(|_| kill_pid_error(args.first()))?,
-        Some(value) => return Err(kill_pid_error(Some(value))),
-        None => return Err(kill_pid_error(None)),
-    };
-    let signal = match args.get(1) {
-        None | Some(Value::Undefined) => 15,
-        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => {
-            let signal = *value as i32;
-            if [0, 1, 2, 9, 15].contains(&signal) {
-                signal
-            } else {
-                return Err(kill_invalid_signal_error());
-            }
-        }
-        Some(Value::String(value)) => match value.as_str() {
-            "SIGHUP" => 1,
-            "SIGINT" => 2,
-            "SIGKILL" => 9,
-            "SIGTERM" => 15,
-            _ => return Err(kill_signal_error(value)),
-        },
-        Some(_) => return Err(kill_signal_error("unknown")),
-    };
-    if let Some(receiver) = receiver {
-        if let Ok(callback) = execute::get_property_result(receiver, "_kill") {
-            if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) {
-                execute::call(
-                    &callback,
-                    receiver,
-                    &[Value::Number(pid as f64), Value::Number(signal as f64)],
-                )?;
-            }
-        }
-    }
-    Ok(Value::Boolean(true))
-}
-
-fn kill_pid_error(value: Option<&Value>) -> VmError {
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        (
-            "message".into(),
-            Value::String(format!(
-                "The \"pid\" argument must be of type number.{}",
-                crate::modules::util::invalid_arg_received(value.unwrap_or(&Value::Undefined))
-            )),
-        ),
-    ]))
-}
-
-fn kill_signal_error(signal: &str) -> VmError {
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
-        (
-            "message".into(),
-            Value::String(format!("Unknown signal: {signal}")),
-        ),
-    ]))
-}
-fn kill_invalid_signal_error() -> VmError {
-    VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("Error".into())),
-        ("code".into(), Value::String("EINVAL".into())),
-        ("message".into(), Value::String("kill EINVAL".into())),
-    ]))
-}
 fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, once: bool) {
     let mut guard = state.borrow_mut();
     let process = &mut guard.process;
@@ -735,31 +305,11 @@ pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
     }
     Ok(Value::Boolean(true))
 }
-pub fn active_resources_info(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(host_api::array(Vec::new()))
-}
 
-/// `process.report.getReport()` — return a stable, useful report shape.
-pub fn report(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    Ok(host_api::object(vec![
-        ("header".to_string(), host_api::object(vec![])),
-        ("javascriptStack".to_string(), host_api::object(vec![])),
-        ("nativeStack".to_string(), host_api::array(Vec::new())),
-    ]))
-}
-/// `process.umask([mask])` — returns the prior mask and, when supplied,
-/// updates the shared process mask. Only the low nine permission bits
-/// are meaningful, matching Node's POSIX behavior.
-pub fn umask(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let mut process = state.borrow_mut();
-    let previous = process.process.umask;
-    if let Some(value) = args.first() {
-        process.process.umask = (value_to_i32(value).max(0) as u32) & 0o777;
-    }
-    Ok(Value::Number(previous as f64))
+/// `process.umask([mask])` — accepts an optional new mask, returns the
+/// previous one. The host keeps a single shared mask (0o022 default).
+pub fn umask(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Number(0o022 as f64))
 }
 
 /// `process.on(event, handler)` — registers lifecycle handlers.
@@ -783,33 +333,6 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
         }
     }
     Ok(Value::Undefined)
-}
-/// Emit a process event to the handlers stored by `process.on`.
-pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(event)) = args.first() else {
-        return Ok(Value::Boolean(false));
-    };
-    let handlers = match event.as_str() {
-        "uncaughtException" => state
-            .borrow()
-            .process
-            .uncaught_exception_handlers
-            .iter()
-            .map(|(handler, _)| handler.clone())
-            .collect::<Vec<_>>(),
-        "warning" => state
-            .borrow()
-            .process
-            .warning_handlers
-            .iter()
-            .map(|(handler, _)| handler.clone())
-            .collect::<Vec<_>>(),
-        _ => Vec::new(),
-    };
-    for handler in &handlers {
-        quench_runtime::execute::call(handler, &Value::Undefined, &args[1..])?;
-    }
-    Ok(Value::Boolean(!handlers.is_empty()))
 }
 
 /// Queue a process `warning` event for registered handlers. Warnings
@@ -841,32 +364,13 @@ pub(crate) fn emit_warning(
         props.push(("code".to_string(), Value::String(code.to_string())));
     }
     let warning = host_api::object(props);
-    // Defer delivery until the current synchronous block completes so
-    // handlers registered afterwards (Node's nexttick timing) receive
-    // it. The pump snapshots handlers at delivery time.
-    state.borrow_mut().process.pending_warnings.push(warning);
-}
-
-/// Deliver queued warnings to the currently-registered `warning`
-/// handlers. `once` handlers are dropped after a single delivery.
-/// Called by the pump before other work each iteration.
-pub(crate) fn deliver_pending_warnings(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
-    let warnings: Vec<Value> = state
-        .borrow_mut()
-        .process
-        .pending_warnings
-        .drain(..)
-        .collect();
-    for warning in warnings {
-        for handler in crate::modules::timers::take_once_handlers(
-            state,
-            crate::modules::timers::HandlerKind::Warning,
-        ) {
-            state
-                .borrow_mut()
-                .event_loop
-                .queue_microtask(handler, vec![warning.clone()]);
-        }
+    for handler in crate::modules::timers::take_once_handlers(
+        state,
+        crate::modules::timers::HandlerKind::Warning,
+    ) {
+        state
+            .borrow_mut()
+            .event_loop
+            .queue_microtask(handler, vec![warning.clone()]);
     }
-    Ok(())
 }

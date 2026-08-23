@@ -116,13 +116,9 @@ class __quenchDomain {
     };
   }
   dispose() {
-    for (const member of this.members) {
-      if (member && member.domain === this) delete member.domain;
-    }
     this.members = [];
     this.disposed = true;
     this.exit();
-    return this;
   }
 }
 const __quenchDomainModule = {
