@@ -54,7 +54,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     let context = quench_runtime::vm::current_context();
     let mut registers = Vec::new();
     let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
+        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
     })?;
     let deps = host_api::object(vec![(
         "events".to_string(),

@@ -51,12 +51,12 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
             "with object cannot be null or undefined",
         ));
     }
-    let Some(body) = body.ops() else {
+    let Some(body) = body.code() else {
         return Err(VmError::MissingReturn);
     };
     OBJECTS.with(|objects| objects.borrow_mut().push(object));
     let _guard = ScopeGuard;
-    crate::execute::execute_completion_in_place(body, registers)
+    crate::vm::execute_code_completion_in_current_frame(body, registers)
 }
 
 pub(crate) fn capture() -> Vec<Value> {

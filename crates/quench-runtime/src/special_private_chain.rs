@@ -62,7 +62,7 @@ fn reduce_private_after_optional_member(
             name,
         },
     ];
-    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![then_ops, else_ops]);
+    let mut branches = crate::machine::FunctionCode::pending_many(vec![then_ops, else_ops]);
     ops.push(Op::Branch {
         condition,
         then_ops: branches.remove(0),

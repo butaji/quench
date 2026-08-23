@@ -119,7 +119,7 @@ fn reduce_dynamic_for(
     let update =
         super::reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
     let [init, test, body, update] =
-        crate::machine::FunctionCode::from_ops_many(vec![init, test, body, update])
+        crate::machine::FunctionCode::pending_many(vec![init, test, body, update])
             .try_into()
             .expect("four loop bodies");
     let per_iteration = lexical_names

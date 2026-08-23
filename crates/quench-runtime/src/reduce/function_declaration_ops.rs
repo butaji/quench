@@ -31,7 +31,7 @@ fn function_declaration_op(
 ) -> Op {
     Op::MakeFunctionWithKind {
         dst,
-        body: crate::machine::FunctionCode::from_ops(body),
+        body: crate::machine::FunctionCode::pending(body),
         params,
         captures,
         kind: metadata.kind,

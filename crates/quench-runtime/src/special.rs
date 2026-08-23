@@ -138,7 +138,7 @@ fn reduce_guarded_computed_chain(
         crate::reduce::reduce_expression(&member.expression, &mut else_ops, facts, next, locals)?;
     else_ops.push(Op::OptionalGetDynamic { dst, object, key });
     let mut branches =
-        crate::machine::FunctionCode::from_ops_many(vec![std::mem::take(&mut then_ops), else_ops]);
+        crate::machine::FunctionCode::pending_many(vec![std::mem::take(&mut then_ops), else_ops]);
     let then_ops = branches.remove(0);
     let else_ops = branches.remove(0);
     ops.push(Op::Branch {
@@ -229,7 +229,7 @@ fn emit_nullish_guard(ops: &mut Vec<Op>, dst: u16, src: u16) {
 }
 
 fn emit_optional_branch(ops: &mut Vec<Op>, condition: u16, dst: u16, else_ops: Vec<Op>) {
-    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![
+    let mut branches = crate::machine::FunctionCode::pending_many(vec![
         vec![Op::Const {
             dst,
             value: crate::ops::Constant::Undefined,

@@ -409,7 +409,7 @@ fn reduce_field_initializer(
     let result = result?;
     body.push(Op::Return { src: result });
     Some(InstanceFieldInitializerOp {
-        body: crate::machine::FunctionCode::from_ops(body),
+        body: crate::machine::FunctionCode::pending(body),
         captures,
         name,
     })

@@ -134,7 +134,7 @@ pub(crate) fn reduce_for_in(
         label: None,
         object,
         slot,
-        body: crate::machine::FunctionCode::from_ops(body),
+        body: crate::machine::FunctionCode::pending(body),
         per_iteration,
         dst,
     });
@@ -221,7 +221,7 @@ pub(crate) fn reduce_for_of(
         label: None,
         iterable,
         slot,
-        body: crate::machine::FunctionCode::from_ops(body),
+        body: crate::machine::FunctionCode::pending(body),
         per_iteration,
         dst,
     });
@@ -374,7 +374,7 @@ fn iterate_loop_keys(
     data: ForInLoopData<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, slot, body, per_iteration, keys, dst, object) = data;
-    let Some(body) = body.ops() else {
+    let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     for key in keys {
@@ -440,7 +440,7 @@ fn iterate_loop_values(
     iterator: crate::value::Value,
     dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let Some(body) = body.ops() else {
+    let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let mut qdebug_count: u64 = 0;
@@ -496,10 +496,10 @@ fn bind_iteration(
 fn execute_loop_body(
     registers: &mut Vec<crate::value::Value>,
     label: &Option<String>,
-    body: &[Op],
+    body: crate::machine::CodeView<'_>,
 ) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
     Ok(crate::completion::Completion::into_loop_transition(
-        crate::execute::execute_completion_in_place(body, registers)?,
+        crate::vm::execute_code_completion_in_current_frame(body, registers)?,
         label,
     ))
 }

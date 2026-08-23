@@ -59,7 +59,7 @@ fn reduce_counted_loop(
         locals,
         dst,
     )?;
-    let [init, test, body, update] = crate::machine::FunctionCode::from_ops_many(vec![
+    let [init, test, body, update] = crate::machine::FunctionCode::pending_many(vec![
         Vec::new(),
         test,
         body_ops,

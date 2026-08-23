@@ -19,12 +19,12 @@ fn suspended_context(
     state: &GeneratorState,
 ) -> Option<SuspendedContext> {
     if matches!(
-        generator.function.ops().get(machine_pc(generator).wrapping_sub(1)),
+        generator.function.code.code()?.cold_at(machine_pc(generator).wrapping_sub(1)),
         Some(Op::Yield { .. })
     ) {
         return Some(SuspendedContext::Yield);
     }
-    if let Some(Op::YieldStar { iterator, .. }) = generator.function.ops().get(machine_pc(generator)) {
+    if let Some(Op::YieldStar { iterator, .. }) = generator.function.code.code()?.cold_at(machine_pc(generator)) {
         if crate::execute::read_register(&registers(generator), *iterator)
             .is_ok_and(|value| !matches!(value, Value::Undefined))
         {

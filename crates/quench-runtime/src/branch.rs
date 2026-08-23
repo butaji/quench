@@ -23,10 +23,10 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
     } else {
         else_ops
     };
-    let Some(selected) = selected.ops() else {
+    let Some(selected) = selected.code() else {
         return missing_return();
     };
-    crate::execute::execute_completion_in_place(selected, registers)
+    crate::vm::execute_code_completion_in_current_frame(selected, registers)
 }
 
 #[cfg(test)]
@@ -100,11 +100,7 @@ pub(crate) fn reduce_with_registers(
     match statement {
         oxc::ast::ast::Statement::BlockStatement(block) => {
             let mut block_locals = locals.clone();
-            crate::reduce_support::predeclare_lexicals(
-                &block.body,
-                &mut block_locals,
-                next_slot,
-            );
+            crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
             let mut ops = Vec::new();
             let mut last = None;
             for child in &block.body {

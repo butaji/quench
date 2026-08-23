@@ -9,47 +9,57 @@ use std::collections::HashMap;
 pub type Register = u16;
 pub const MAX_REGISTER_ID: Register = u16::MAX;
 pub type ConstantId = u16;
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum Opcode {
-    LoadConst = 1,
-    Move = 2,
-    Add = 3,
-    AddConst = 4,
-    JumpIfFalse = 5,
-    Return = 6,
-    Slow = 7,
-    LoadLocal = 8,
-    Sub = 9,
-    Mul = 10,
-    Div = 11,
-    GetProperty = 12,
-    Call = 13,
+macro_rules! instruction_set {
+    ($($name:ident = $id:literal / $width:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[repr(u8)]
+        pub enum Opcode { $($name = $id),+ }
+
+        impl Opcode {
+            pub const COUNT: u8 = instruction_set!(@last $($id),+);
+
+            pub const fn from_u8(value: u8) -> Option<Self> {
+                match value { $($id => Some(Self::$name),)+ _ => None }
+            }
+
+            pub const fn operand_width(self) -> u8 {
+                match self { $(Self::$name => $width),+ }
+            }
+        }
+
+        const DISPATCH_TABLE: [u8; Opcode::COUNT as usize + 1] =
+            [0, $($id),+];
+    };
+    (@last $head:literal, $($tail:literal),+) => { instruction_set!(@last $($tail),+) };
+    (@last $last:literal) => { $last };
+}
+
+instruction_set! {
+    LoadConst = 1 / 2,
+    Move = 2 / 2,
+    Add = 3 / 3,
+    AddConst = 4 / 3,
+    JumpIfFalse = 5 / 2,
+    Return = 6 / 1,
+    Slow = 7 / 1,
+    LoadLocal = 8 / 2,
+    Sub = 9 / 3,
+    Mul = 10 / 3,
+    Div = 11 / 3,
+    GetProperty = 12 / 3,
+    Call = 13 / 2,
+    Jump = 14 / 1,
+    IncI = 15 / 2,
+    ForI = 16 / 3,
+    AGetI = 17 / 3,
+    ASetI = 18 / 3,
+    AGetIInc = 19 / 3,
+    GetN = 20 / 3,
+    SetN = 21 / 3,
+    CallN = 22 / 3,
 }
 
 impl Opcode {
-    pub const COUNT: u8 = 13;
-
-    /// Decode the compact byte representation, rejecting reserved identifiers.
-    pub const fn from_u8(value: u8) -> Option<Self> {
-        Some(match value {
-            1 => Self::LoadConst,
-            2 => Self::Move,
-            3 => Self::Add,
-            4 => Self::AddConst,
-            5 => Self::JumpIfFalse,
-            6 => Self::Return,
-            7 => Self::Slow,
-            8 => Self::LoadLocal,
-            9 => Self::Sub,
-            10 => Self::Mul,
-            11 => Self::Div,
-            12 => Self::GetProperty,
-            13 => Self::Call,
-            _ => return None,
-        })
-    }
-
     pub const fn is_compact(self) -> bool {
         (self as u8) <= Self::COUNT
     }
@@ -106,21 +116,7 @@ impl DispatchStrategy {
     /// table is only a lookup policy and never a second semantic model.
     pub const fn dispatch(self, opcode: Opcode) -> u8 {
         match self {
-            Self::Match => match opcode {
-                Opcode::LoadConst => 1,
-                Opcode::Move => 2,
-                Opcode::Add => 3,
-                Opcode::AddConst => 4,
-                Opcode::JumpIfFalse => 5,
-                Opcode::Return => 6,
-                Opcode::Slow => 7,
-                Opcode::LoadLocal => 8,
-                Opcode::Sub => 9,
-                Opcode::Mul => 10,
-                Opcode::Div => 11,
-                Opcode::GetProperty => 12,
-                Opcode::Call => 13,
-            },
+            Self::Match => opcode as u8,
             Self::Table => DISPATCH_TABLE[opcode as usize],
         }
     }
@@ -195,21 +191,9 @@ pub enum InstructionEncoding {
     Compact,
 }
 
-const DISPATCH_TABLE: [u8; Opcode::COUNT as usize + 1] =
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 /// Number of u16 operand words consumed by this opcode.
 const fn operand_width(opcode: Opcode) -> u8 {
-    match opcode {
-        Opcode::Slow => 0,
-        Opcode::LoadConst
-        | Opcode::Move
-        | Opcode::AddConst
-        | Opcode::JumpIfFalse
-        | Opcode::LoadLocal
-        | Opcode::Return
-        | Opcode::Call => 2,
-        Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div | Opcode::GetProperty => 3,
-    }
+    opcode.operand_width()
 }
 
 impl Instruction {
@@ -268,6 +252,23 @@ impl Instruction {
             a: 0,
             b: 0,
             c: 0,
+        }
+    }
+    pub const fn slow_at(index: u32) -> Self {
+        Self {
+            opcode: Opcode::Slow,
+            flags: 0,
+            a: index as u16,
+            b: (index >> 16) as u16,
+            c: 0,
+        }
+    }
+
+    pub const fn cold_index(self) -> Option<u32> {
+        if matches!(self.opcode, Opcode::Slow) {
+            Some(self.a as u32 | (self.b as u32) << 16)
+        } else {
+            None
         }
     }
     pub const fn jump_if_false(condition: Register, target: u16) -> Self {
@@ -363,7 +364,6 @@ impl Instruction {
     }
 }
 
-
 /// Result of lowering one canonical operation.
 ///
 /// `Fast` owns only the fixed-width instruction used by the compact executor.
@@ -415,15 +415,6 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
         Op::GetPropertyDynamic { dst, object, key } => {
             Some(Instruction::get_property(*dst, *object, *key))
         }
-        Op::Call {
-            dst,
-            callee,
-            receiver: None,
-            args,
-            spreads,
-        } if args.is_empty() && spreads.is_empty() => {
-            Some(Instruction::call_zero_args(*dst, *callee))
-        }
         Op::Return { src } => Some(Instruction::ret(*src)),
         _ => None,
     }
@@ -445,9 +436,13 @@ pub struct RareMetadata {
 
 impl RareMetadata {
     fn is_aligned(&self, instruction_count: usize) -> bool {
-        [self.source_spans.len(), self.names.len(), self.debug_flags.len()]
-            .into_iter()
-            .all(|len| len == 0 || len == instruction_count)
+        [
+            self.source_spans.len(),
+            self.names.len(),
+            self.debug_flags.len(),
+        ]
+        .into_iter()
+        .all(|len| len == 0 || len == instruction_count)
     }
 
     fn retain_fused(&mut self, keep: &[bool]) {
@@ -685,9 +680,11 @@ impl Program {
             };
             match instruction.opcode {
                 Opcode::LoadConst => {
-                    let value = self.constants.get(instruction.b).cloned().ok_or(
-                        crate::vm::VmError::EvalError("missing constant".into()),
-                    )?;
+                    let value = self
+                        .constants
+                        .get(instruction.b)
+                        .cloned()
+                        .ok_or(crate::vm::VmError::EvalError("missing constant".into()))?;
                     let dst = usize::from(instruction.a);
                     registers.resize(registers.len().max(dst + 1), crate::value::Value::Undefined);
                     registers[dst] = (&value).into();
@@ -701,9 +698,12 @@ impl Program {
                 Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div | Opcode::AddConst => {
                     let left = read(instruction.b)?;
                     let right = if instruction.opcode == Opcode::AddConst {
-                        (&self.constants.get(instruction.c).cloned().ok_or(
-                            crate::vm::VmError::EvalError("missing constant".into()),
-                        )?).into()
+                        (&self
+                            .constants
+                            .get(instruction.c)
+                            .cloned()
+                            .ok_or(crate::vm::VmError::EvalError("missing constant".into()))?)
+                            .into()
                     } else {
                         read(instruction.c)?
                     };
@@ -748,9 +748,15 @@ mod tests {
         program.instructions.push(Instruction::add(2, 0, 1));
         program.instructions.push(Instruction::ret(2));
         let mut registers = Vec::new();
-        assert_eq!(program.execute(&mut registers), Ok(crate::value::Value::Number(5.0)));
+        assert_eq!(
+            program.execute(&mut registers),
+            Ok(crate::value::Value::Number(5.0))
+        );
         program.instructions.pop();
-        assert_eq!(program.execute(&mut registers), Err(crate::vm::VmError::MissingReturn));
+        assert_eq!(
+            program.execute(&mut registers),
+            Err(crate::vm::VmError::MissingReturn)
+        );
     }
     use super::*;
 
@@ -778,7 +784,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, 13);
+        assert_eq!(Opcode::COUNT, Opcode::CallN as u8);
         assert!(Opcode::Slow.is_compact());
     }
 
@@ -816,7 +822,7 @@ mod tests {
                 args: vec![],
                 spreads: vec![]
             }),
-            Some(Instruction::call_zero_args(0, 4))
+            None
         );
         assert!(lower_compact(&Op::Call {
             dst: 0,
@@ -952,7 +958,6 @@ mod tests {
         assert_eq!(matched, table);
     }
 
-
     #[test]
     fn opcode_metrics_use_the_complete_dispatch_domain() {
         let instructions = [
@@ -967,7 +972,7 @@ mod tests {
         assert_eq!(metrics.frequency[Opcode::Slow as usize], 1);
         assert_eq!(metrics.operand_words[Opcode::LoadConst as usize], 2);
         assert_eq!(metrics.operand_words[Opcode::Add as usize], 3);
-        assert_eq!(metrics.operand_words[Opcode::Slow as usize], 0);
+        assert_eq!(metrics.operand_words[Opcode::Slow as usize], 1);
     }
     #[test]
     fn constant_pool_lookup_is_read_only_and_ids_are_stable() {
@@ -1019,7 +1024,10 @@ mod tests {
         p.instructions.push(Instruction::ret(0));
         p.instructions.push(Instruction::ret(0));
         p.rare.debug_flags.push(1);
-        assert_eq!(p.validate(), Err("rare metadata is not aligned with instructions"));
+        assert_eq!(
+            p.validate(),
+            Err("rare metadata is not aligned with instructions")
+        );
     }
     #[test]
     fn compact_encoding_round_trips_operands_flags_and_unused_zeroes() {
@@ -1034,8 +1042,12 @@ mod tests {
             assert_eq!(encoded[0], instruction.opcode as u8);
             assert_eq!(encoded[1], instruction.flags);
         }
-        let decoded_return = Instruction::decode_compact(&Instruction::ret(1).encode_compact()).unwrap();
-        assert_eq!((decoded_return.a, decoded_return.b, decoded_return.c), (1, 0, 0));
+        let decoded_return =
+            Instruction::decode_compact(&Instruction::ret(1).encode_compact()).unwrap();
+        assert_eq!(
+            (decoded_return.a, decoded_return.b, decoded_return.c),
+            (1, 0, 0)
+        );
     }
 
     #[test]
@@ -1060,7 +1072,7 @@ mod tests {
             Err("compact instruction has invalid width")
         );
     }
-    
+
     #[test]
     fn lowering_classifies_fast_and_retains_slow_source() {
         use crate::ops::Op;
@@ -1076,6 +1088,4 @@ mod tests {
         assert_eq!(slow, LoweredInstruction::Slow(source.clone()));
         assert!(matches!(slow, LoweredInstruction::Slow(op) if op == source));
     }
-
-
 }
