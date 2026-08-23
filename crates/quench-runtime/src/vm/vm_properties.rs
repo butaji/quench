@@ -23,6 +23,7 @@ pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> 
     registers
         .get(usize::from(index))
         .cloned()
+        .map(crate::locals::resolved_replacement)
         .ok_or(VmError::MissingReturn)
 }
 
@@ -49,7 +50,28 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     if matches!(value, Value::Proxy(_)) {
         return crate::proxy::proxy_get(value, key, Some(value)).unwrap_or(Value::Undefined);
     }
-    crate::locals::resolved_replacement(direct_or_primitive_property(value, key))
+    // Property lookup must observe the latest physical object for this
+    // semantic identity. Resolving only the result reads stale scalar fields
+    // after an immutable object transition (for example `this.x++`).
+    let owner = match value {
+        Value::Array(_)
+        | Value::Object(_)
+        | Value::ObjectAlias(_)
+        | Value::Function(_)
+        | Value::BindingCell(_) => crate::locals::resolved_replacement(value.clone()),
+        _ => value.clone(),
+    };
+    let result = direct_or_primitive_property(&owner, key);
+    // Primitive results cannot participate in replacement aliases. Avoid the
+    // thread-local replacement lookup on the very common scalar property path.
+    match result {
+        Value::Array(_)
+        | Value::Object(_)
+        | Value::ObjectAlias(_)
+        | Value::Function(_)
+        | Value::BindingCell(_) => crate::locals::resolved_replacement(result),
+        _ => result,
+    }
 }
 
 fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
