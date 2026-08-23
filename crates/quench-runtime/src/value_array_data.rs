@@ -77,6 +77,14 @@ impl ArrayData {
             .map_or(self.length, |live| live.borrow().length)
     }
 
+    /// Read an indexed element for host-side ToPrimitive conversions.
+    pub fn index_value(&self, index: usize) -> Option<Value> {
+        self.argument_live
+            .as_ref()
+            .and_then(|live| live.borrow().values.get(index).cloned())
+            .or_else(|| self.values.get(index).cloned())
+    }
+
     /// Return the value of `arguments.length` if a plain-value override
     /// was written through `SetProperty`/`define_own_property`. When no
     /// override is set, returns the argument's logical length coerced to
