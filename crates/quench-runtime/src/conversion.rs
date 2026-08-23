@@ -148,6 +148,7 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
             Value::String(value) => value
                 .strip_prefix("Symbol.")
                 .and_then(|value| value.split('\0').next())
+                .map(|value| value.strip_prefix('\u{1}').unwrap_or(value))
                 .unwrap_or("")
                 .to_string(),
             _ => String::new(),
