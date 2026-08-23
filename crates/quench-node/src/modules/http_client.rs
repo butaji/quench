@@ -449,11 +449,33 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             if let Ok(hv) = execute::get_property_result(&options, "headers") {
                 if matches!(hv, Value::Object(_)) {
                     for key in execute::own_enumerable_keys(&hv) {
-                        if let Ok(item) = execute::get_property_result(&hv, &key) {
-                            if let Ok(s) = execute::to_js_string(&item) {
-                                headers.push((key, s));
-                            }
+                        if !is_http_token(&key) {
+                            return Err(header_error(
+                                "ERR_INVALID_HTTP_TOKEN",
+                                &format!(
+                                    "Header name must be a valid HTTP token [{}]",
+                                    json_quote(&key)
+                                ),
+                            ));
                         }
+                        let item = execute::get_property_result(&hv, &key)?;
+                        if matches!(item, Value::Undefined) {
+                            return Err(header_error(
+                                "ERR_HTTP_INVALID_HEADER_VALUE",
+                                &format!("Invalid value \"undefined\" for header \"{key}\""),
+                            ));
+                        }
+                        let s = execute::to_js_string(&item)?;
+                        if has_invalid_header_char(&s) {
+                            return Err(header_error(
+                                "ERR_INVALID_CHAR",
+                                &format!(
+                                    "Invalid character in header content [{}]",
+                                    json_quote(&key)
+                                ),
+                            ));
+                        }
+                        headers.push((key, s));
                     }
                 }
             }
@@ -461,6 +483,36 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
         }
         _ => Err(execute::type_error("options must be a string or object")),
     }
+}
+
+fn is_http_token(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            matches!(
+                byte,
+                b'!' | b'#'..=b'\'' | b'*' | b'+' | b'-' | b'.' | b'0'..=b'9'
+                    | b'A'..=b'Z' | b'^' | b'_' | b'`' | b'a'..=b'z' | b'|' | b'~'
+            )
+        })
+}
+
+fn has_invalid_header_char(value: &str) -> bool {
+    value.chars().any(|ch| {
+        matches!(ch, '\u{0000}'..='\u{0008}' | '\u{000a}'..='\u{000d}' | '\u{000f}'..='\u{001f}' | '\u{007f}')
+            || (ch as u32) > 0xff
+    })
+}
+
+fn json_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn header_error(code: &str, message: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+    ]))
 }
 
 fn opt(options: &Value, key: &str) -> Result<Option<String>, VmError> {

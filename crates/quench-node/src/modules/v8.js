@@ -74,7 +74,13 @@ module.exports = {
     return name;
   },
   getVersion() { return 'v8-embedded'; },
-  setFlagsFromString() {},
+  setFlagsFromString(flags) {
+    if (typeof flags !== 'string') {
+      const error = new TypeError('The "flags" argument must be of type string');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+  },
   serialize, deserialize,
   promiseHooks: { createHook() { return { enable() {}, disable() {} }; } }
 };
