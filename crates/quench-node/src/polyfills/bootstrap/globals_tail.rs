@@ -1,6 +1,7 @@
 //! Polyfill: `globals-tail`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.setImmediate = (callback, ...args) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
+globalThis.setImmediate = (callback, ...args) => {
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
   }

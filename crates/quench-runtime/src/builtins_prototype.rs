@@ -271,7 +271,7 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
 pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
     match receiver {
         Some(Value::Builtin(builtin)) => Value::String(format!(
-            "function {}() {{ [ native code ] }}",
+            "function {}() {{ [native code] }}",
             builtin_name(*builtin)
         )),
         Some(Value::Function(function)) => {
@@ -298,7 +298,7 @@ fn dynamic_function_source(function: &crate::value::FunctionValue) -> Option<Str
 }
 
 fn native_function_source() -> Value {
-    Value::String("function () { [ native code ] }".to_string())
+    Value::String("function () { [native code] }".to_string())
 }
 
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {

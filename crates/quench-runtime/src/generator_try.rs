@@ -10,13 +10,13 @@ fn suspended_try_op(op: &crate::ops::Op, generator: &GeneratorData) -> bool {
 fn resume_suspended_try_op(
     registers: &mut Vec<Value>,
     yield_op: &crate::ops::Op,
-    suffix: crate::machine::CodeView<'_>,
+    suffix: &[crate::ops::Op],
     resume: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     if matches!(yield_op, crate::ops::Op::Yield { .. }) {
         return match resume {
             crate::completion::Completion::Normal => {
-                crate::vm::execute_code_completion_in_current_frame(suffix, registers)
+                crate::execute::execute_completion_in_place(suffix, registers)
             }
             completion => Ok(completion),
         };
@@ -26,7 +26,7 @@ fn resume_suspended_try_op(
             Ok(crate::completion::Completion::Yield(value))
         }
         Ok(Some(completion)) => Ok(completion),
-        Ok(None) => crate::vm::execute_code_completion_in_current_frame(suffix, registers),
+        Ok(None) => crate::execute::execute_completion_in_place(suffix, registers),
         Err(error) => crate::completion::Completion::from_vm_error(error),
     }
 }

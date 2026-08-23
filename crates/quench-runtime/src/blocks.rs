@@ -75,40 +75,57 @@ fn reduce_block_statements(
     let own_functions = block_function_names(&block.body);
     let mut last = None;
     for statement in &block.body {
-        if matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_)) {
-            continue;
-        }
-        let barrier = facts.eval_var_barrier.len();
-        facts.eval_var_barrier.extend(own_functions.iter().cloned());
-        // Track whether the upcoming statement may need to inherit the
-        // previous V (used to carry the value through a `break` so that
-        // the labelled statement spec can return it as the abrupt
-        // completion's [[Value]]).
-        let pending_abrupt = matches!(
+        if let Some(value) = reduce_block_statement(
             statement,
-            oxc::ast::ast::Statement::BreakStatement(_)
-                | oxc::ast::ast::Statement::ContinueStatement(_)
-        );
-        let start_ops = ops.len();
-        let value = reduce_statement(
-            statement,
+            &own_functions,
             ops,
             facts,
             next_register,
             next_slot,
             block_locals,
-        )?;
-        facts.eval_var_barrier.truncate(barrier);
-        if pending_abrupt {
-            // Patch the just-emitted break/continue to carry `last`
-            // as its V so the enclosing loop/label can surface it.
-            patch_abrupt_value(ops, start_ops, last);
-        }
-        if let Some(value) = value {
+            last,
+        )? {
             last = Some(value);
         }
     }
     Ok(last)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reduce_block_statement(
+    statement: &oxc::ast::ast::Statement<'_>,
+    own_functions: &[String],
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    block_locals: &mut HashMap<String, u16>,
+    last: Option<u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    if matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_)) {
+        return Ok(None);
+    }
+    let barrier = facts.eval_var_barrier.len();
+    facts.eval_var_barrier.extend(own_functions.iter().cloned());
+    let pending_abrupt = matches!(
+        statement,
+        oxc::ast::ast::Statement::BreakStatement(_)
+            | oxc::ast::ast::Statement::ContinueStatement(_)
+    );
+    let start_ops = ops.len();
+    let value = reduce_statement(
+        statement,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        block_locals,
+    )?;
+    facts.eval_var_barrier.truncate(barrier);
+    if pending_abrupt {
+        patch_abrupt_value(ops, start_ops, last);
+    }
+    Ok(value)
 }
 
 pub(crate) fn patch_abrupt_value(ops: &mut [Op], start: usize, value: Option<u16>) {

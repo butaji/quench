@@ -100,9 +100,9 @@ fn execute_frame_step(
         .store
         .clone()
         .ok_or(VmError::MissingReturn)?;
-    let code = store.code(range).ok_or(VmError::MissingReturn)?;
+    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
     execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_code_completion_step_in_place(code, registers)
+        crate::execute::execute_completion_step_in_place(ops, registers)
     })
 }
 
@@ -165,8 +165,8 @@ fn advance_finalizer_after_yield(
         .store
         .clone()
         .ok_or(VmError::MissingReturn)?;
-    let code = store.code(range).ok_or(VmError::MissingReturn)?;
-    let Some(crate::ops::Op::Yield { src }) = next.checked_sub(1).and_then(|index| code.cold_at(index))
+    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
+    let Some(crate::ops::Op::Yield { src }) = next.checked_sub(1).and_then(|index| ops.get(index))
     else {
         return Err(VmError::MissingReturn);
     };

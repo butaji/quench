@@ -121,29 +121,16 @@ fn is_equality_object(value: &Value) -> bool {
 }
 
 pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
-    // Environment bindings are represented by cells, but ECMAScript equality
-    // compares the values stored in those cells rather than the cell identity.
-    if let Value::BindingCell(cell) = left {
-        return strict_equal(&cell.borrow(), right);
-    }
-    if let Value::BindingCell(cell) = right {
-        return strict_equal(left, &cell.borrow());
-    }
+    strict_equal_values(left, right)
+}
+
+fn strict_equal_values(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
-        (Value::ObjectAlias(left), Value::Object(right))
-        | (Value::Object(right), Value::ObjectAlias(left)) => left
-            .0
-            .borrow()
-            .upgrade()
-            .is_some_and(|left| Rc::ptr_eq(&left, right)),
-        (Value::ObjectAlias(left), Value::ObjectAlias(right)) => {
-            match (left.0.borrow().upgrade(), right.0.borrow().upgrade()) {
-                (Some(left), Some(right)) => Rc::ptr_eq(&left, &right),
-                _ => false,
-            }
-        }
+        (Value::ObjectAlias(_), Value::Object(_))
+        | (Value::Object(_), Value::ObjectAlias(_))
+        | (Value::ObjectAlias(_), Value::ObjectAlias(_)) => strict_equal_aliases(left, right),
         (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => Rc::ptr_eq(left, right),
         (Value::DataView(left), Value::DataView(right)) => Rc::ptr_eq(left, right),
         (Value::Float32Array(left), Value::Float32Array(right)) => Rc::ptr_eq(left, right),
@@ -165,6 +152,12 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         (Value::Set(left), Value::Set(right)) => Rc::ptr_eq(left, right),
         (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left, right),
         (Value::Proxy(left), Value::Proxy(right)) => Rc::ptr_eq(left, right),
+        _ => strict_equal_primitive_values(left, right),
+    }
+}
+
+fn strict_equal_primitive_values(left: &Value, right: &Value) -> bool {
+    match (left, right) {
         (Value::Number(left), Value::Number(right)) => left == right,
         (Value::Boolean(left), Value::Boolean(right)) => left == right,
         (Value::String(left), Value::String(right)) => left == right,
@@ -176,6 +169,24 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         (Value::BigInt(left), Value::BigInt(right)) => left == right,
         (Value::Builtin(left), Value::Builtin(right)) => left == right,
         (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => true,
+        _ => false,
+    }
+}
+
+fn strict_equal_aliases(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::ObjectAlias(left), Value::Object(right))
+        | (Value::Object(right), Value::ObjectAlias(left)) => left
+            .0
+            .borrow()
+            .upgrade()
+            .is_some_and(|left| Rc::ptr_eq(&left, right)),
+        (Value::ObjectAlias(left), Value::ObjectAlias(right)) => {
+            match (left.0.borrow().upgrade(), right.0.borrow().upgrade()) {
+                (Some(left), Some(right)) => Rc::ptr_eq(&left, &right),
+                _ => false,
+            }
+        }
         _ => false,
     }
 }

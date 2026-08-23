@@ -70,11 +70,8 @@ pub(crate) fn build_registers(
         environment.set(arguments_slot, arguments);
         mark_arguments_immutable(function, &environment, arguments_slot);
     }
-    let register_count = function.code.len().max(32);
-    (
-        vec![crate::value::Value::Undefined; register_count],
-        environment,
-    )
+    let register_count = function.ops().len().max(32);
+    (vec![crate::value::Value::Undefined; register_count], environment)
 }
 
 fn mark_arguments_immutable(
@@ -111,12 +108,12 @@ pub(crate) fn execute_construct(
         function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(function, this_value);
-    let result = crate::vm::execute_code_in_environment(
-        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
+    let result = crate::vm::execute_in_environment(
+        function.ops(),
         &mut registers,
         // Keep the active context so host-provided globals (console,
         // timers, capabilities) stay visible inside constructor bodies.
-        crate::vm::current_context().as_ref(),
+        &crate::vm::current_context(),
         std::rc::Rc::clone(&environment),
     )?;
     let final_this = environment.get(this_slot);
@@ -137,14 +134,63 @@ pub(crate) fn execute_bound(
     bound: &crate::value::BoundFunctionValue,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let crate::value::Value::BindingCell(cell) = &bound.target {
+        let mut unwrapped = bound.clone();
+        unwrapped.target = cell.borrow().clone();
+        return execute_bound(&unwrapped, arguments);
+    }
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     match &bound.target {
-        crate::value::Value::BindingCell(_) => {
-            crate::functions::execute_target(&bound.target, &bound.receiver, &combined)
-        }
-        crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(&bound.target) => {
+        crate::value::Value::Builtin(builtin)
+            if !matches!(builtin, crate::ops::Builtin::HostCapability(_))
+                && crate::conversion::is_callable(&bound.target) =>
+        {
             execute_bound_builtin(*builtin, bound, &combined)
+        }
+        crate::value::Value::HostCapability(capability) => {
+            let capability_receiver = match &bound.receiver {
+                crate::value::Value::BindingCell(cell) => cell.borrow().clone(),
+                value => value.clone(),
+            };
+            let js_receiver = if matches!(capability.descriptor.kind, crate::ops::HostCapabilityKind::Custom(1)) {
+                crate::vm::current_global_object()
+            } else {
+                capability_receiver.clone()
+            };
+            crate::vm::execute_host_capability_with_receiver(
+                capability.descriptor.kind,
+                Some(&bound.target),
+                Some(&js_receiver),
+                &combined,
+            )
+        }
+        crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
+            let capability_receiver = match &bound.receiver {
+                crate::value::Value::HostCapability(_) => bound.receiver.clone(),
+                crate::value::Value::BindingCell(cell) => match &*cell.borrow() {
+                    crate::value::Value::HostCapability(capability) => {
+                        crate::value::Value::HostCapability(capability.clone())
+                    }
+                    _ => crate::vm::realm_token(bound.realm)
+                        .or_else(|| crate::vm::realm_token(crate::vm::current_context_or_default().realm()))
+                        .ok_or(crate::execute::VmError::NotCallable)?,
+                },
+                _ => crate::vm::realm_token(bound.realm)
+                    .or_else(|| crate::vm::realm_token(crate::vm::current_context_or_default().realm()))
+                    .ok_or(crate::execute::VmError::NotCallable)?,
+            };
+            let js_receiver = if matches!(kind, crate::ops::HostCapabilityKind::Custom(1)) {
+                crate::vm::current_global_object()
+            } else {
+                bound.receiver.clone()
+            };
+            crate::vm::execute_host_capability_with_receiver(
+                *kind,
+                Some(&capability_receiver),
+                Some(&js_receiver),
+                &combined,
+            )
         }
         crate::value::Value::Function(function) => {
             execute_bound_function(function, bound, &combined)
@@ -153,7 +199,13 @@ pub(crate) fn execute_bound(
         crate::value::Value::Proxy(_) => {
             crate::proxy::proxy_apply(&bound.target, &bound.receiver, &combined)
         }
-        _ => Err(crate::execute::VmError::NotCallable),
+        _ => {
+            crate::vm::set_not_callable_context(format!(
+                "caller=functions_receiver::execute_bound bound_target={:?} bound_receiver={:?}",
+                bound.target, bound.receiver
+            ));
+            Err(crate::execute::VmError::NotCallable)
+        }
     }
 }
 
@@ -281,13 +333,96 @@ pub(crate) fn execute_target(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    fn cap_id(kind: crate::ops::HostCapabilityKind) -> u32 {
+        match kind {
+            crate::ops::HostCapabilityKind::GetGlobal => 0,
+            crate::ops::HostCapabilityKind::CreateRealm => 1,
+            crate::ops::HostCapabilityKind::EvalScript => 2,
+            crate::ops::HostCapabilityKind::DetachArrayBuffer => 3,
+            crate::ops::HostCapabilityKind::IsHTMLDDA => 4,
+            crate::ops::HostCapabilityKind::Custom(id) => 1000 + id as u32,
+        }
+    }
+    fn tag(value: &crate::value::Value) -> u32 {
+        match value {
+            crate::value::Value::Number(_) => 0,
+            crate::value::Value::Boolean(_) => 1,
+            crate::value::Value::String(_) => 2,
+            crate::value::Value::StringUnits(_) => 3,
+            crate::value::Value::BigInt(_) => 4,
+            crate::value::Value::Array(_) => 5,
+            crate::value::Value::Object(_) => 6,
+            crate::value::Value::ObjectAlias(_) => 7,
+            crate::value::Value::BindingCell(_) => 8,
+            crate::value::Value::ArrayBuffer(_) => 9,
+            crate::value::Value::Float64Array(_) => 10,
+            crate::value::Value::Float32Array(_) => 11,
+            crate::value::Value::Int8Array(_) => 12,
+            crate::value::Value::Int16Array(_) => 13,
+            crate::value::Value::BigInt64Array(_) => 14,
+            crate::value::Value::BigUint64Array(_) => 15,
+            crate::value::Value::Uint32Array(_) => 16,
+            crate::value::Value::Uint8Array(_) => 17,
+            crate::value::Value::Uint8ClampedArray(_) => 18,
+            crate::value::Value::Uint16Array(_) => 19,
+            crate::value::Value::DataView(_) => 20,
+            crate::value::Value::Builtin(_) => 21,
+            crate::value::Value::Function(_) => 22,
+            crate::value::Value::BoundFunction(_) => 23,
+            crate::value::Value::HostCapability(_) => 24,
+            _ => 25,
+        }
+    }
+    if let crate::value::Value::BindingCell(cell) = target {
+        let target = cell.borrow().clone();
+        return execute_target(&target, receiver, arguments);
+    }
+    let mut receiver_value = receiver.clone();
+    while let crate::value::Value::BindingCell(cell) = receiver_value {
+        receiver_value = cell.borrow().clone();
+    }
+    let receiver = &receiver_value;
+    if !crate::conversion::is_callable(target)
+        && !matches!(target, crate::value::Value::BoundFunction(_))
+    {
+        let cap = match target {
+            crate::value::Value::HostCapability(c) => Some(cap_id(c.descriptor.kind)),
+            crate::value::Value::BoundFunction(b) => match &b.target {
+                crate::value::Value::HostCapability(c) => Some(cap_id(c.descriptor.kind)),
+                crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
+                    Some(cap_id(*kind))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        return Err(crate::value::error::throw_type_error(&format!(
+            "value is not callable [execute_target discriminant={} capability={cap:?}]",
+            tag(target),
+        )));
+    }
     match target {
-        crate::value::Value::BindingCell(cell) => {
-            let value = cell.borrow().clone();
-            execute_target(&value, receiver, arguments)
+        crate::value::Value::BindingCell(_) => unreachable!("binding cell dereferenced above"),
+        crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
+            let capability_receiver = crate::vm::realm_token(crate::vm::current_context_or_default().realm())
+                .ok_or(crate::execute::VmError::NotCallable)?;
+            crate::vm::execute_host_capability_with_receiver(
+                *kind,
+                Some(&capability_receiver),
+                Some(receiver),
+                arguments,
+            )
         }
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(target) => {
             execute_builtin_target(*builtin, Some(receiver), arguments)
+        }
+        crate::value::Value::HostCapability(capability) => {
+            crate::vm::execute_host_capability_with_receiver(
+                capability.descriptor.kind,
+                Some(target),
+                Some(receiver),
+                arguments,
+            )
         }
         crate::value::Value::Function(function) => {
             execute_in_function_realm(function, receiver, arguments)
@@ -298,36 +433,90 @@ pub(crate) fn execute_target(
             let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
                 unreachable!()
             };
+            let capability_receiver = match &bound.receiver {
+                crate::value::Value::HostCapability(capability) => {
+                    crate::value::Value::HostCapability(capability.clone())
+                }
+                crate::value::Value::BindingCell(cell) => cell.borrow().clone(),
+                _ => crate::vm::realm_token(bound.realm)
+                    .ok_or(crate::execute::VmError::NotCallable)?,
+            };
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
             crate::vm::execute_host_capability_with_receiver(
                 kind,
-                Some(&bound.receiver),
+                Some(&capability_receiver),
                 Some(receiver),
-                arguments,
+                &combined,
             )
         }
         crate::value::Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(bound)
-                && matches!(bound.target, crate::value::Value::Builtin(_)) =>
+            if matches!(bound.target, crate::value::Value::HostCapability(_)) =>
+        {
+            let crate::value::Value::HostCapability(capability) = &bound.target else {
+                unreachable!()
+            };
+            let capability_handle = crate::value::Value::HostCapability(capability.clone());
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            if capability.descriptor.kind == crate::ops::HostCapabilityKind::Custom(1) {
+                crate::vm::execute_legacy_require_direct(&capability_handle, &combined)
+            } else {
+                let capability_receiver = match &bound.receiver {
+                    crate::value::Value::BindingCell(cell) => cell.borrow().clone(),
+                    value => value.clone(),
+                };
+                crate::vm::execute_host_capability_with_receiver(
+                    capability.descriptor.kind,
+                    Some(&capability_handle),
+                    Some(&capability_receiver),
+                    &combined,
+                )
+            }
+        }
+        crate::value::Value::BoundFunction(bound)
+            if matches!(bound.target, crate::value::Value::Builtin(_)) =>
         {
             let crate::value::Value::Builtin(builtin) = bound.target else {
                 unreachable!()
             };
-            // A bound intrinsic keeps its captured receiver.  The receiver
-            // supplied by the caller is only relevant to an unbound method;
-            // using it here made method properties (and host capabilities)
-            // fail with "not callable" or an incompatible-receiver error.
-            crate::vm::with_realm(bound.realm, || {
-                execute_builtin_target(builtin, Some(&bound.receiver), arguments)
-            })
-            .unwrap_or_else(|| execute_builtin_target(builtin, Some(&bound.receiver), arguments))
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            let bound_receiver = match &bound.receiver {
+                crate::value::Value::BindingCell(cell) => cell.borrow().clone(),
+                value => value.clone(),
+            };
+            execute_builtin_target(builtin, Some(&bound_receiver), &combined)
         }
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
-        _ => Err(crate::execute::VmError::NotCallable),
-    }
+        _ => {
+            Err(crate::execute::VmError::NotCallable)
+        },
+}
 }
 
-fn execute_in_function_realm(
+
+fn execute_intrinsic_bound(
+    bound: &crate::value::BoundFunctionValue,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let crate::value::Value::Builtin(builtin) = bound.target else {
+        unreachable!()
+    };
+    let cap_receiver = if matches!(builtin, crate::ops::Builtin::HostCapability(_)) {
+        bound.receiver.clone()
+    } else {
+        receiver.clone()
+    };
+    crate::vm::with_realm(bound.realm, || {
+        execute_builtin_target(builtin, Some(&cap_receiver), arguments)
+    })
+    .unwrap_or_else(|| execute_builtin_target(builtin, Some(&cap_receiver), arguments))
+}
+
+pub(crate) fn execute_in_function_realm(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
@@ -347,8 +536,24 @@ fn execute_builtin_target(
     receiver: Option<&crate::value::Value>,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let Some(result) = crate::regexp::execute_builtin(builtin, receiver, arguments) {
+        return result;
+    }
     if let crate::ops::Builtin::HostCapability(kind) = builtin {
-        return crate::vm::execute_host_capability(kind, receiver, arguments);
+        let cap = crate::vm::realm_token(crate::vm::current_context_or_default().realm())
+            .ok_or(crate::execute::VmError::NotCallable)?;
+        if matches!(kind, crate::ops::HostCapabilityKind::Custom(1))
+            && matches!(receiver, Some(crate::value::Value::Undefined))
+        {
+            let global = crate::vm::current_global_object();
+            return crate::vm::execute_host_capability_with_receiver(
+                kind,
+                Some(&cap),
+                Some(&global),
+                arguments,
+            );
+        }
+        return crate::vm::execute_host_capability_with_receiver(kind, Some(&cap), receiver, arguments);
     }
     crate::execute::execute_builtin_with_receiver(builtin, arguments, receiver)
 }
@@ -417,18 +622,6 @@ fn execute_function_call_in_realm(
             return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
         }
     }
-    // Function.prototype.call invokes static Object helpers with their
-    // receiver as the first argument, rather than as a `this` receiver.
-    if let crate::value::Value::Builtin(
-        crate::ops::Builtin::ObjectDefineProperty
-        | crate::ops::Builtin::ObjectGetOwnPropertyDescriptor,
-    ) = receiver
-    {
-        let mut call_arguments = Vec::with_capacity(arguments.len());
-        call_arguments.push(this);
-        call_arguments.extend_from_slice(arguments.get(1..).unwrap_or_default());
-        return execute_target(receiver, &crate::value::Value::Undefined, &call_arguments);
-    }
     execute_target(receiver, &this, arguments.get(1..).unwrap_or_default())
 }
 
@@ -442,10 +635,27 @@ fn bind_function_target(
     let Some(target) = receiver else {
         return Err(crate::execute::VmError::NotCallable);
     };
-    let bound_target = arguments
-        .first()
-        .cloned()
-        .unwrap_or(crate::value::Value::Undefined);
+    // Host capabilities are already receiver-bound dispatch tokens.  A few
+    // CommonJS/module bootstrap paths defensively use
+    // `require.bind(undefined)` when publishing the global require; this
+    // target is represented either as a host token or as the intrinsic
+    // HostCapability builtin.  Preserve it as the bound receiver so the
+    // subsequent call retains a valid capability instead of Global.
+    let host_require_target = matches!(
+        target,
+        crate::value::Value::HostCapability(capability)
+            if matches!(capability.descriptor.kind, crate::ops::HostCapabilityKind::Custom(1))
+    ) || matches!(
+        target,
+        crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(
+            crate::ops::HostCapabilityKind::Custom(1)
+        ))
+    );
+    let bound_target = match arguments.first().cloned() {
+        Some(crate::value::Value::Undefined) | None if host_require_target => target.clone(),
+        Some(value) => value,
+        None => crate::value::Value::Undefined,
+    };
     let extra = arguments.get(1..).unwrap_or(&[]).to_vec();
     let name = bound_function_name(target)?;
     let length = bound_function_length(target, extra.len() as f64);

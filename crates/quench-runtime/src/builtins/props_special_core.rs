@@ -14,10 +14,14 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
     special_match(builtin, key)
 }
 fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
-    use Builtin::*;
     if let Some(value) = special_match_prefix(builtin, key) {
         return Some(value);
     }
+    special_match_core(builtin, key)
+}
+
+fn special_match_core(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
         (IntlSegmenterPrototype, "Symbol.toStringTag") => {
@@ -51,6 +55,13 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
         (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
+        _ => special_match_temporal_tail(builtin, key),
+    }
+}
+
+fn special_match_temporal_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
@@ -71,6 +82,13 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (TemporalDurationPrototype, "toString") => Some(Value::Builtin(TemporalDurationToString)),
         (TemporalDurationPrototype, "toJSON") => Some(Value::Builtin(TemporalDurationToJSON)),
+        _ => special_match_core_tail(builtin, key),
+    }
+}
+
+fn special_match_core_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),
@@ -103,51 +121,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
-    use Builtin::*;
-    if builtin == ArrayIteratorPrototype && key == "constructor" {
-        return Some(Value::Builtin(Array));
-    }
-    if builtin == ArrayIteratorPrototype && key == "next" {
-        return Some(Value::Builtin(IteratorNext));
-    }
-    if builtin == ArrayIteratorPrototype && key == "Symbol.toStringTag" {
-        return Some(Value::String("Array Iterator".into()));
-    }
-    if builtin == IteratorPrototype && key == "Symbol.iterator" {
-        return Some(Value::Builtin(IteratorSelf));
-    }
-    if builtin == IteratorPrototype && key == "toArray" {
-        return Some(Value::Builtin(IteratorToArray));
-    }
-    if builtin == IteratorPrototype && key == "map" {
-        return Some(Value::Builtin(IteratorMap));
-    }
-    if builtin == IteratorPrototype && key == "filter" {
-        return Some(Value::Builtin(IteratorFilter));
-    }
-    if builtin == IteratorPrototype && key == "flatMap" {
-        return Some(Value::Builtin(IteratorFlatMap));
-    }
-    if builtin == IteratorPrototype && key == "drop" {
-        return Some(Value::Builtin(IteratorDrop));
-    }
-    if builtin == IteratorPrototype && key == "take" {
-        return Some(Value::Builtin(IteratorTake));
-    }
-    if builtin == IteratorPrototype && key == "reduce" {
-        return Some(Value::Builtin(IteratorReduce));
-    }
-    if builtin == IteratorPrototype && key == "find" {
-        return Some(Value::Builtin(IteratorFind));
-    }
-    if builtin == IteratorPrototype && key == "forEach" {
-        return Some(Value::Builtin(IteratorForEach));
-    }
-    if builtin == IteratorPrototype && key == "some" {
-        return Some(Value::Builtin(IteratorSome));
-    }
-    if builtin == IteratorPrototype && key == "every" {
-        return Some(Value::Builtin(IteratorEvery));
+    if let Some(value) = iterator_special(builtin, key) {
+        return Some(value);
     }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
@@ -158,7 +133,41 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::Error && key == "isError" {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
+    if builtin == Builtin::Error && key == "captureStackTrace" {
+        return Some(Value::Builtin(Builtin::ErrorCaptureStackTrace));
+    }
     None
+}
+
+fn iterator_special(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    if builtin == ArrayIteratorPrototype && key == "constructor" {
+        return Some(Value::Builtin(Array));
+    }
+    if builtin == ArrayIteratorPrototype && key == "next" {
+        return Some(Value::Builtin(IteratorNext));
+    }
+    if builtin == ArrayIteratorPrototype && key == "Symbol.toStringTag" {
+        return Some(Value::String("Array Iterator".into()));
+    }
+    if builtin != IteratorPrototype {
+        return None;
+    }
+    Some(match key {
+        "Symbol.iterator" => Value::Builtin(IteratorSelf),
+        "toArray" => Value::Builtin(IteratorToArray),
+        "map" => Value::Builtin(IteratorMap),
+        "filter" => Value::Builtin(IteratorFilter),
+        "flatMap" => Value::Builtin(IteratorFlatMap),
+        "drop" => Value::Builtin(IteratorDrop),
+        "take" => Value::Builtin(IteratorTake),
+        "reduce" => Value::Builtin(IteratorReduce),
+        "find" => Value::Builtin(IteratorFind),
+        "forEach" => Value::Builtin(IteratorForEach),
+        "some" => Value::Builtin(IteratorSome),
+        "every" => Value::Builtin(IteratorEvery),
+        _ => return None,
+    })
 }
 
 fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
@@ -174,28 +183,12 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (StringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("String Iterator".into()))
         }
-        (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
-        (Atomics, "add") => Some(Value::Builtin(AtomicsAdd)),
-        (Atomics, "and") => Some(Value::Builtin(AtomicsAnd)),
-        (Atomics, "or") => Some(Value::Builtin(AtomicsOr)),
-        (Atomics, "sub") => Some(Value::Builtin(AtomicsSub)),
-        (Atomics, "xor") => Some(Value::Builtin(AtomicsXor)),
-        (Atomics, "compareExchange") => Some(Value::Builtin(AtomicsCompareExchange)),
-        (Atomics, "isLockFree") => Some(Value::Builtin(AtomicsIsLockFree)),
-        (Atomics, "notify") => Some(Value::Builtin(AtomicsNotify)),
-        (Atomics, "wait") => Some(Value::Builtin(AtomicsWait)),
-        (Atomics, "load") => Some(Value::Builtin(AtomicsLoad)),
-        (Atomics, "store") => Some(Value::Builtin(AtomicsStore)),
-        (Atomics, "exchange") => Some(Value::Builtin(AtomicsExchange)),
-        (Atomics, "waitAsync") => Some(Value::Builtin(AtomicsWaitAsync)),
-        (Atomics, "pause") => Some(Value::Builtin(AtomicsPause)),
+        (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
-        (ArrayPrototype, "constructor") => Some(Value::Builtin(Array)),
-        (ArrayPrototype, "Symbol.unscopables") => Some(array_unscopables()),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
         (Map, "groupBy") => Some(Value::Builtin(MapGroupBy)),
         (Set, "Symbol.species") => Some(Value::Builtin(Set)),
@@ -203,6 +196,42 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (MapPrototype | SetPrototype | SetIteratorPrototype | MapIteratorPrototype, k) => {
             collections_prop(builtin, k)
         }
+        _ => special_match_middle_tail(builtin, key),
+    }
+}
+
+fn special_match_middle_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
+        (Atomics, k) => atomics_property(k),
+        _ => special_match_middle_tail_end(builtin, key),
+    }
+}
+
+fn atomics_property(key: &str) -> Option<Value> {
+    use Builtin::*;
+    Some(match key {
+        "add" => Value::Builtin(AtomicsAdd),
+        "and" => Value::Builtin(AtomicsAnd),
+        "or" => Value::Builtin(AtomicsOr),
+        "sub" => Value::Builtin(AtomicsSub),
+        "xor" => Value::Builtin(AtomicsXor),
+        "compareExchange" => Value::Builtin(AtomicsCompareExchange),
+        "isLockFree" => Value::Builtin(AtomicsIsLockFree),
+        "notify" => Value::Builtin(AtomicsNotify),
+        "wait" => Value::Builtin(AtomicsWait),
+        "load" => Value::Builtin(AtomicsLoad),
+        "store" => Value::Builtin(AtomicsStore),
+        "exchange" => Value::Builtin(AtomicsExchange),
+        "waitAsync" => Value::Builtin(AtomicsWaitAsync),
+        "pause" => Value::Builtin(AtomicsPause),
+        _ => return None,
+    })
+}
+
+fn special_match_middle_tail_end(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (AsyncFunctionPrototype, "Symbol.toStringTag") => {
             Some(Value::String("AsyncFunction".to_string()))
@@ -213,7 +242,7 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (GeneratorFunctionPrototype, "prototype") => Some(crate::builtins::generator_prototype()),
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (AsyncGeneratorFunctionPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("AsyncGeneratorFunction".into()))
+            Some(Value::String("AsyncGeneratorFunction".to_string()))
         }
         (AsyncGeneratorFunctionPrototype, "prototype") => {
             Some(crate::builtins::async_generator_prototype())
@@ -255,28 +284,6 @@ fn special_match_tail(builtin: Builtin, key: &str) -> Option<Value> {
 fn special_match_error_tail(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     match (builtin, key) {
-        (ErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
-        (ErrorPrototype, "name") => Some(Value::String("Error".to_string())),
-        (ErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
-        (RangeErrorPrototype, "name") => Some(Value::String("RangeError".to_string())),
-        (RangeErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (RangeErrorPrototype, "constructor") => Some(Value::Builtin(RangeError)),
-        (TypeErrorPrototype, "name") => Some(Value::String("TypeError".to_string())),
-        (TypeErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (TypeErrorPrototype, "constructor") => Some(Value::Builtin(TypeError)),
-        (ReferenceErrorPrototype, "name") => Some(Value::String("ReferenceError".to_string())),
-        (ReferenceErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (ReferenceErrorPrototype, "constructor") => Some(Value::Builtin(ReferenceError)),
-        (SyntaxErrorPrototype, "name") => Some(Value::String("SyntaxError".to_string())),
-        (SyntaxErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (SyntaxErrorPrototype, "constructor") => Some(Value::Builtin(SyntaxError)),
-        (EvalErrorPrototype, "name") => Some(Value::String("EvalError".to_string())),
-        (EvalErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (EvalErrorPrototype, "constructor") => Some(Value::Builtin(EvalError)),
-        (URIErrorPrototype, "name") => Some(Value::String("URIError".to_string())),
-        (URIErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (URIErrorPrototype, "constructor") => Some(Value::Builtin(URIError)),
         (AggregateError, "prototype") => Some(Value::Builtin(AggregateErrorPrototype)),
         (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".to_string())),
         (AggregateErrorPrototype, "message") => Some(Value::String("".to_string())),
@@ -285,13 +292,42 @@ fn special_match_error_tail(builtin: Builtin, key: &str) -> Option<Value> {
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
         (SuppressedErrorPrototype, "constructor") => Some(Value::Builtin(SuppressedError)),
+        _ => special_match_error_tail_end(builtin, key),
+    }
+}
+
+fn special_match_error_tail_end(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (DisposableStackPrototype, "Symbol.toStringTag") => {
             Some(Value::String("DisposableStack".into()))
         }
         (DisposableStackPrototype, k) => {
             crate::builtin_meta::disposable::property(k).map(Value::Builtin)
         }
-        _ => builtin_method(builtin, key).map(Value::Builtin),
+        _ => standard_error_property(builtin, key)
+            .or_else(|| builtin_method(builtin, key).map(Value::Builtin)),
+    }
+}
+
+fn standard_error_property(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    let (name, constructor) = match builtin {
+        ErrorPrototype => ("Error", Error),
+        RangeErrorPrototype => ("RangeError", RangeError),
+        TypeErrorPrototype => ("TypeError", TypeError),
+        ReferenceErrorPrototype => ("ReferenceError", ReferenceError),
+        SyntaxErrorPrototype => ("SyntaxError", SyntaxError),
+        EvalErrorPrototype => ("EvalError", EvalError),
+        URIErrorPrototype => ("URIError", URIError),
+        _ => return None,
+    };
+    match key {
+        "toString" if builtin == ErrorPrototype => Some(Value::Builtin(ErrorPrototypeToString)),
+        "name" => Some(Value::String(name.to_string())),
+        "message" => Some(Value::String("".to_string())),
+        "constructor" => Some(Value::Builtin(constructor)),
+        _ => None,
     }
 }
 
@@ -318,19 +354,4 @@ fn weak_special(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakRefPrototype, "Symbol.toStringTag") => Some(Value::String("WeakRef".into())),
         _ => None,
     }
-}
-
-fn array_unscopables() -> Value {
-    use std::rc::Rc;
-    use crate::value::ObjectData;
-    const NAMES: &[&str] = &[
-        "at", "copyWithin", "entries", "fill", "find", "findIndex",
-        "findLast", "findLastIndex", "flat", "flatMap", "includes",
-        "keys", "toReversed", "toSorted", "toSpliced", "values",
-    ];
-    let mut properties = vec![("\0prototype".to_string(), Value::Null)];
-    properties.extend(
-        NAMES.iter().map(|name| ((*name).to_string(), Value::Boolean(true))),
-    );
-    Value::Object(Rc::new(ObjectData::new(properties)))
 }

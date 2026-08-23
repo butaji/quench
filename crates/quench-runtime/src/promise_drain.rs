@@ -1,8 +1,6 @@
 thread_local! {
     static MICROTASK_QUEUE: RefCell<VecDeque<Rc<PromiseData>>> =
         const { RefCell::new(VecDeque::new()) };
-    static THEN_RESULTS: RefCell<HashMap<usize, VecDeque<Rc<PromiseData>>>> =
-        RefCell::new(HashMap::new());
     static JOB_QUEUE: RefCell<VecDeque<Rc<dyn Fn()>>> = const { RefCell::new(VecDeque::new()) };
 }
 
@@ -22,19 +20,6 @@ pub fn drain_microtasks() {
     if let Some(job) = JOB_QUEUE.with(|q| q.borrow_mut().pop_front()) {
         job();
     }
-}
-
-/// Run exactly one queued promise reaction or host job.
-pub(crate) fn drain_one_microtask() -> bool {
-    if let Some(promise) = MICROTASK_QUEUE.with(|queue| queue.borrow_mut().pop_front()) {
-        process_promise(&promise);
-        return true;
-    }
-    if let Some(job) = JOB_QUEUE.with(|queue| queue.borrow_mut().pop_front()) {
-        job();
-        return true;
-    }
-    false
 }
 
 /// Repeatedly drain microtasks until none remain, so promise `.then`/`.catch`

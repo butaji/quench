@@ -290,15 +290,11 @@ fn builtin_prototype(builtin: Builtin) -> Option<Value> {
     Some(Value::Builtin(next))
 }
 
-fn accessor_field<K: AsRef<str>>(
-    properties: &[(K, Value)],
-    key: &str,
-    field: &str,
-) -> Option<Value> {
+fn accessor_field(properties: &[(String, Value)], key: &str, field: &str) -> Option<Value> {
     let descriptor = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == key).then_some(value));
+        .find_map(|(name, value)| (name == key).then_some(value));
     if let Some(Value::Object(descriptor)) = descriptor {
         return descriptor
             .iter()
@@ -308,6 +304,6 @@ fn accessor_field<K: AsRef<str>>(
     let prototype = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == "\0prototype").then_some(value));
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value));
     prototype.and_then(|prototype| accessor_value(prototype, key, field))
 }

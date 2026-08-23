@@ -61,19 +61,18 @@ impl LinkedModule {
     }
 }
 
-fn sync_export_cells<K: AsRef<str>>(
-    properties: &[(K, quench_runtime::value::Value)],
+fn sync_export_cells(
+    properties: &[(String, quench_runtime::value::Value)],
     name: &str,
     live: quench_runtime::value::Value,
 ) {
-    let descriptor = format!("\0quench:descriptor:\0{name}");
     for (key, value) in properties {
-        if key.as_ref() == name {
+        if key == name {
             if let quench_runtime::value::Value::BindingCell(cell) = value {
                 *cell.borrow_mut() = live.clone();
             }
         }
-        if key.as_ref() == descriptor {
+        if key == &format!("\0quench:descriptor:\0{name}") {
             sync_descriptor_value(value, &live);
         }
     }

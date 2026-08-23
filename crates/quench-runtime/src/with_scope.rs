@@ -51,12 +51,12 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
             "with object cannot be null or undefined",
         ));
     }
-    let Some(body) = body.code() else {
+    let Some(body) = body.ops() else {
         return Err(VmError::MissingReturn);
     };
     OBJECTS.with(|objects| objects.borrow_mut().push(object));
     let _guard = ScopeGuard;
-    crate::vm::execute_code_completion_in_current_frame(body, registers)
+    crate::execute::execute_completion_in_place(body, registers)
 }
 
 pub(crate) fn capture() -> Vec<Value> {
@@ -71,14 +71,6 @@ pub(crate) fn execute_resolve_global(registers: &mut Vec<Value>, op: &Op) -> Res
     let value = match resolve(key)? {
         Some(value) => value,
         None => crate::execute::get_property_result(&target, key)?,
-    };
-    let value = if key == "Math"
-        && matches!(value, Value::Null | Value::Undefined)
-        && crate::vm::realm_id_for_global_value(&target).is_some()
-    {
-        crate::vm::realm_intrinsic(crate::ops::Builtin::Math)
-    } else {
-        value
     };
     if matches!(value, Value::Undefined) && !has_property(&target, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
@@ -231,21 +223,12 @@ fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), V
     let binding = resolve_binding(key)?;
     let immutable = crate::globals::immutable_value(key);
     let eval = crate::locals::resolve_eval_name(key);
-    let context = crate::vm::current_context_or_default();
-    let host_value = context.host_value(key);
-    let host_binding = context.host_binding(key);
-    let bound = binding.is_some()
-        || eval.is_some()
-        || crate::locals::has_name(key)
-        || immutable.is_some()
-        || host_value.is_some()
-        || host_binding.is_some();
+    let bound =
+        binding.is_some() || eval.is_some() || crate::locals::has_name(key) || immutable.is_some();
     let value = match binding
         .or(eval)
         .or_else(|| crate::locals::resolve_name(key))
         .or(immutable)
-        .or(host_value)
-        .or_else(|| host_binding.map(crate::host_api::capability_function))
     {
         Some(value) => value,
         None => {
@@ -256,11 +239,6 @@ fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), V
                 value
             }
         }
-    };
-    let value = if key == "Math" && matches!(value, Value::Null | Value::Undefined) {
-        crate::vm::realm_intrinsic(crate::ops::Builtin::Math)
-    } else {
-        value
     };
     if matches!(value, Value::Undefined) && !bound && !has_property(&global, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
@@ -344,14 +322,46 @@ pub(crate) fn receiver_for_callable(callee: &Value) -> Option<Value> {
     None
 }
 
+fn callable_value(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => callable_value(&cell.borrow()),
+        _ => value.clone(),
+    }
+}
+
+fn same_callable(left: &Value, right: &Value) -> bool {
+    let left = callable_value(left);
+    let right = callable_value(right);
+    crate::builtins::same_value(Some(&left), Some(&right))
+}
+
 fn callable_on(object: &Value, callee: &Value) -> bool {
-    let Value::Object(object) = object else {
-        return false;
+    let callee = callable_value(callee);
+    let properties = match object {
+        Value::Object(object) => Some(object.properties.clone()),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| object.properties.clone()),
+        Value::BindingCell(cell) => match &*cell.borrow() {
+            Value::Object(object) => Some(object.properties.clone()),
+            Value::ObjectAlias(alias) => alias
+                .0
+                .borrow()
+                .upgrade()
+                .map(|object| object.properties.clone()),
+            _ => None,
+        },
+        _ => None,
     };
-    object.properties.iter().any(|(name, value)| {
-        !name.starts_with('\0') && crate::builtins::same_value(Some(value), Some(callee))
+    properties.is_some_and(|properties| {
+        properties.iter().any(|(name, value)| {
+            !name.starts_with('\0') && same_callable(value, &callee)
+        })
     })
 }
+
 
 pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
     let Some(target) = binding_target(key)? else {
@@ -387,14 +397,8 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     for (index, object) in objects.iter().enumerate().rev() {
         let object = live_object(object);
         if has_property(&object, key)? && !is_unscopable(&object, key)? {
-            let global = crate::vm::is_global_object(&object)
-                .then(crate::vm::current_global_object);
             publish_set(&object, key, value)?;
-            let updated = live_object(&object);
-            if let Some(global) = global {
-                crate::vm::synchronize_global_object(&mut Vec::new(), &global, &updated);
-            }
-            OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
+            OBJECTS.with(|objects| objects.borrow_mut()[index] = live_object(&object));
             return Ok(true);
         }
     }
@@ -402,7 +406,7 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
 }
 
 fn is_unscopable(object: &Value, key: &str) -> Result<bool, VmError> {
-    let unscopables = crate::execute::get_property_result(object, "Symbol.unscopables")?;
+    let unscopables = crate::execute::get_property_result(object, "Symbol.unscopables\0")?;
     if matches!(unscopables, Value::Undefined | Value::Null) {
         return Ok(false);
     }
@@ -411,16 +415,6 @@ fn is_unscopable(object: &Value, key: &str) -> Result<bool, VmError> {
 }
 
 pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
-    // Host globals live in the execution context rather than as ordinary
-    // properties on the realm global object.  They must nevertheless
-    // participate in global binding existence checks (notably `process` and
-    // the capability-backed `require`).
-    if crate::vm::is_global_object(value) {
-        let context = crate::vm::current_context_or_default();
-        if context.host_value(key).is_some() || context.host_binding(key).is_some() {
-            return Ok(true);
-        }
-    }
     crate::module_bindings::exports(value, key)?;
     if let Value::BindingCell(cell) = value {
         return has_property(&cell.borrow(), key);
@@ -496,8 +490,11 @@ pub(crate) fn execute_has_private(registers: &mut Vec<Value>, op: &Op) -> Result
             "Private field access on an object without the required brand",
         )
     })?;
-    let slots = crate::private_slots::slots(&object)?;
-    let result = Value::Boolean(slots.borrow().iter().any(|(id, _)| id == &name));
+    let result = if let Ok(slots) = crate::private_slots::slots(&object) {
+        Value::Boolean(slots.borrow().iter().any(|(id, _)| id == &name))
+    } else {
+        Value::Boolean(false)
+    };
     crate::execute::write_value(registers, *dst, result);
     Ok(())
 }

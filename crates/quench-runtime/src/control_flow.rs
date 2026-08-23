@@ -83,10 +83,10 @@ fn promote_conditional_tail(ops: &mut Vec<Op>, returned: u16) -> bool {
     else {
         return false;
     };
-    let Some(consequent) = consequent.source_ops().map(<[_]>::to_vec) else {
+    let Some(consequent) = consequent.ops().map(<[_]>::to_vec) else {
         return false;
     };
-    let Some(alternate) = alternate.source_ops().map(<[_]>::to_vec) else {
+    let Some(alternate) = alternate.ops().map(<[_]>::to_vec) else {
         return false;
     };
     if !branch_completes(&consequent) || !branch_completes(&alternate) {
@@ -110,7 +110,7 @@ fn push_promoted_branch(
     consequent: Vec<Op>,
     alternate: Vec<Op>,
 ) {
-    let mut branches = crate::machine::FunctionCode::pending_many(vec![consequent, alternate]);
+    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
     let Some(alternate) = branches.pop() else {
         return;
     };
@@ -131,7 +131,7 @@ fn restore_conditional(
     consequent: Vec<Op>,
     alternate: Vec<Op>,
 ) {
-    let mut branches = crate::machine::FunctionCode::pending_many(vec![consequent, alternate]);
+    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
     let Some(alternate) = branches.pop() else {
         return;
     };
@@ -224,7 +224,7 @@ fn materialize_try_bodies(
         bodies.push(body);
         bodies.len() - 1
     });
-    let mut functions = crate::machine::FunctionCode::pending_many(bodies).into_iter();
+    let mut functions = crate::machine::FunctionCode::from_ops_many(bodies).into_iter();
     let Some(body) = functions.next() else {
         return Err(vec!["Missing try body".to_string()]);
     };

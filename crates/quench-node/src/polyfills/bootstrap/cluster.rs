@@ -1220,6 +1220,7 @@ const __quenchVmFormatError = (error, options, code) => {
   if (match) {
     error.message = `Cannot assign to read only property '${match[1]}'`;
   }
+  if (options?.displayErrors === false) return;
   const filename = typeof options === "string" ? options : options?.filename;
   if (filename) {
     const lineOffset =

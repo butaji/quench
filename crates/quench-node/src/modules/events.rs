@@ -72,11 +72,21 @@ fn event_name(value: Option<&Value>) -> Result<String, VmError> {
 }
 
 fn expect_listener(args: &[Value]) -> Result<Value, VmError> {
-    match args.get(1) {
-        Some(value) if quench_runtime::is_callable(value) => Ok(value.clone()),
-        _ => Err(execute::type_error(
+    let Some(value) = args.get(1) else {
+        return Err(execute::type_error(
             "The \"listener\" argument must be of type function",
-        )),
+        ));
+    };
+    let mut callback = value.clone();
+    while let Value::BindingCell(cell) = callback {
+        callback = cell.borrow().clone();
+    }
+    if quench_runtime::is_callable(&callback) {
+        Ok(callback)
+    } else {
+        Err(execute::type_error(
+            "The \"listener\" argument must be of type function",
+        ))
     }
 }
 
@@ -198,7 +208,11 @@ pub fn method_emit(
         if listener.once {
             emitter.borrow_mut().remove(&event, &listener.callback);
         }
-        execute::call(&listener.callback, receiver, &rest)?;
+        let mut callback = listener.callback.clone();
+        while let Value::BindingCell(cell) = callback {
+            callback = cell.borrow().clone();
+        }
+        execute::call(&callback, receiver, &rest)?;
     }
     Ok(Value::Boolean(true))
 }
@@ -370,14 +384,11 @@ pub fn new_emitter_object(state: &Rc<RefCell<HostState>>) -> Result<Value, VmErr
 }
 
 fn install_emitter_props(mut object: Value) -> Result<Value, VmError> {
+    // Keep host capabilities as direct property values.  Defining a
+    // descriptor introduces a binding cell, and method-call bytecode can
+    // otherwise observe the cell rather than the callable capability.
     for (key, value) in emitter_props() {
-        let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]);
-        object = execute::define_property(object, key, descriptor)?;
+        object = execute::set_property(object, key, value);
     }
     Ok(object)
 }
@@ -404,6 +415,7 @@ fn emitter_props() -> Vec<(&'static str, Value)> {
         ),
         ("setMaxListeners", cap("events:setMaxListeners", 0x010D)),
         ("getMaxListeners", cap("events:getMaxListeners", 0x010E)),
+        ("defaultMaxListeners", Value::Number(10.0)),
     ]
 }
 
@@ -432,6 +444,34 @@ pub fn enqueue_callback(state: &Rc<RefCell<HostState>>, cb: Value, args: Vec<Val
 /// EventEmitter; EventEmitter.EventEmitter = EventEmitter`.
 pub fn build() -> Value {
     let value = crate::host::capability(crate::registry::SPEC_EVENTS_NEW);
+    let prototype = host_api::object(
+        emitter_props()
+            .into_iter()
+            .map(|(name, property)| (name.to_string(), property))
+            .collect(),
+    );
+    let handle_request = {
+        let source = r#"(function(ctx, fn) {
+          const res = ctx.res;
+          res.statusCode = 404;
+          return fn(ctx).then(() => {
+            const body = ctx.body;
+            return body == null
+              ? res.end()
+              : res.end(typeof body === "string" ? body : JSON.stringify(body));
+          }).catch((error) => ctx.onerror(error));
+        })"#;
+        let program = quench_runtime::reduce::reduce_global_script_source(source)
+            .expect("valid Koa compatibility callback");
+        let context = quench_runtime::vm::current_context();
+        let mut registers = Vec::new();
+        quench_runtime::vm::with_current_context(&context, || {
+            quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
+        })
+        .expect("compile Koa compatibility callback")
+    };
+    let prototype = execute::set_property(prototype, "handleRequest", handle_request);
+    let value = execute::set_property(value, "prototype", prototype);
     let props: Vec<(String, Value)> = vec![
         ("EventEmitter".to_string(), value.clone()),
         ("defaultMaxListeners".to_string(), Value::Number(10.0)),
