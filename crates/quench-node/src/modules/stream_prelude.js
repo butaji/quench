@@ -452,7 +452,9 @@
       writing: false,
       ended: false,
       finished: false,
-      corked: 0
+      corked: 0,
+      prefinished: false,
+      final: options.final || null
     };
     stream.writable = true;
     if (options.write) stream._write = options.write;
@@ -463,9 +465,25 @@
     const st = stream._writableState;
     if (stream._passThrough && !stream._passThroughRead &&
         stream.listenerCount("data") === 0) return;
-    if (st.finished || !st.ended || st.buffered > 0 || st.writing) return;
+    if (st.finished || !st.ended || st.buffered > 0 || st.writing || st.prefinishing) return;
+    if (!st.prefinished) {
+      st.prefinishing = true;
+      const complete = (error) => {
+        if (error) {
+          stream._emitter.emit("error", error);
+          return;
+        }
+        st.prefinishing = false;
+        st.prefinished = true;
+        stream._emitter.emit("prefinish");
+        nextTick(() => finishWritable(stream));
+      };
+      if (st.final) {
+        try { st.final.call(stream, complete); } catch (error) { complete(error); }
+      } else complete();
+      return;
+    }
     st.finished = true;
-    stream._emitter.emit("prefinish");
     stream._emitter.emit("finish");
   }
 
@@ -605,7 +623,7 @@
       if (chunk != null) this.write(chunk, encoding);
       this._writableState.ended = true;
       const stream = this;
-      nextTick(() => finishWritable(stream));
+      finishWritable(stream);
       return this;
     }
   }
