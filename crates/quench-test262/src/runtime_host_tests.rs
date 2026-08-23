@@ -60,6 +60,17 @@ fn deleted_global_property_keeps_strict_reference_error_semantics() {
 }
 
 #[test]
+fn direct_eval_parameter_var_reaches_captured_function() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var x = 'outside'; var probe;\n\
+         (function(_ = (eval(\"var x = 'inside';\"), probe = function() { return x; })) {})();\n\
+         if (probe() !== 'inside') throw new Error('eval parameter binding');",
+    )
+    .expect("direct eval var bindings must follow captured cells");
+}
+
+#[test]
 fn cross_realm_class_evaluations_keep_private_static_brands_distinct() {
     let mut host = super::RuntimeHost;
     host.run_script(
