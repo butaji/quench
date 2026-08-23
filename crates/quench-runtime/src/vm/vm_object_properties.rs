@@ -207,6 +207,9 @@ fn global_property(
             })
             .unwrap_or_else(|| crate::builtins::property(Builtin::ObjectPrototype, key));
     }
+    if let Some(value) = crate::globals::immutable_value(key) {
+        return value;
+    }
     if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
         return value;
     }
