@@ -151,7 +151,12 @@ pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), V
             "Cannot access deleted binding '{slot}'"
         )));
     }
-    if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {
+    let initializing_function_binding = current().get(slot) == Value::Undefined
+        && crate::conversion::is_callable(&value);
+    if current().is_immutable_slot(slot)
+        && !current().is_uninitialized(slot)
+        && !initializing_function_binding
+    {
         if ACTIVE_EVAL.with(|active| *active.borrow())
             && !STRICT_EVAL.with(|strict| *strict.borrow())
         {
