@@ -21,4 +21,17 @@ You can also run from npm script:
 npm run bench:quench-runtime
 ```
 
-The runner generates `quench-bench/dist/*.js` artifacts (ignored by git), executes each suite via `quench-node`, and prints a JSON record containing the raw text and parsed results.
+The runner materializes `base.js`, each selected fixture, and the V8-v7 suite
+runner into a temporary script. A sample is valid only when the process exits
+successfully and prints a parsed `Score:` line; empty startup-only executions
+are rejected.
+
+For throughput measurements, build the exact binary once and pass it explicitly:
+
+```sh
+cargo build --profile bench-throughput -p quench-node
+node quench-bench/run-quench-runtime.mjs \
+  --quench target/bench-throughput/quench-node \
+  --only richards,deltablue \
+  --runs 3
+```

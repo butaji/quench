@@ -18,7 +18,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
     else {
         return Err(VmError::NotCallable);
     };
-    let receiver = read_register(registers, *object)?;
+    let receiver = crate::locals::resolved_replacement(read_register(registers, *object)?);
     let callee = resolved_callee(registers, *callee, &receiver, key)?;
     let arguments = crate::vm::vm_ops::collect_call_arguments(registers, args, spreads)?;
     let propagates = matches!(
