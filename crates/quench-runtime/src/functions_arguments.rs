@@ -381,6 +381,26 @@ fn execute_function_call_in_realm(
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
     if let crate::value::Value::BoundFunction(bound) = receiver {
+        if let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target
+        {
+            let capability = match &bound.receiver {
+                crate::value::Value::HostCapability(capability) => {
+                    crate::value::Value::HostCapability(capability.clone())
+                }
+                _ => crate::vm::realm_token(bound.realm)
+                    .ok_or(crate::execute::VmError::NotCallable)?,
+            };
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments.get(1..).unwrap_or_default());
+            return crate::vm::execute_host_capability_with_receiver(
+                kind,
+                Some(&capability),
+                Some(&this),
+                &combined,
+            );
+        }
+    }
+    if let crate::value::Value::BoundFunction(bound) = receiver {
         if matches!(
             bound.target,
             crate::value::Value::Builtin(
