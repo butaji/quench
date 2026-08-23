@@ -71,6 +71,26 @@ fn direct_eval_parameter_var_reaches_captured_function() {
 }
 
 #[test]
+fn with_global_copy_on_write_updates_the_active_realm() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var count = 0; (function() { with (this) { count++; } })();\n\
+         if (count !== 1) throw new Error('with global replacement');",
+    )
+    .expect("with writes must publish the active global replacement");
+}
+
+#[test]
+fn async_with_nested_function_runs_before_returning_promise() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var count = 0; async function f() { count++; (function() { count++; with (this) { count++; } })(); }\n\
+         f(); if (count !== 3) throw new Error('async with ordering');",
+    )
+    .expect("async function body must run synchronously through nested with calls");
+}
+
+#[test]
 fn cross_realm_class_evaluations_keep_private_static_brands_distinct() {
     let mut host = super::RuntimeHost;
     host.run_script(
