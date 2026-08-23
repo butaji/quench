@@ -249,6 +249,7 @@ fn make_buffer(bytes: &[u8]) -> Value {
 pub(crate) fn chunk_bytes(value: Option<&Value>) -> Vec<u8> {
     match value {
         Some(Value::String(s)) => s.as_bytes().to_vec(),
+        Some(Value::StringUnits(units)) => String::from_utf16_lossy(units).into_bytes(),
         Some(Value::Uint8Array(view)) => {
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
@@ -441,10 +442,22 @@ fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
     // represents host callables as binding cells; response methods are invoked
     // from event callbacks and must not acquire a self-referential cell.
     let res = host_api::object(vec![
-        ("setHeader".to_string(), res_cap(crate::registry::SPEC_HTTP_RES_SET_HEADER)),
-        ("writeHead".to_string(), res_cap(crate::registry::SPEC_HTTP_RES_WRITE_HEAD)),
-        ("write".to_string(), res_cap(crate::registry::SPEC_HTTP_RES_WRITE)),
-        ("end".to_string(), res_cap(crate::registry::SPEC_HTTP_RES_END)),
+        (
+            "setHeader".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_SET_HEADER),
+        ),
+        (
+            "writeHead".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_WRITE_HEAD),
+        ),
+        (
+            "write".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_WRITE),
+        ),
+        (
+            "end".to_string(),
+            res_cap(crate::registry::SPEC_HTTP_RES_END),
+        ),
         ("statusCode".to_string(), Value::Number(200.0)),
         ("writable".to_string(), Value::Boolean(true)),
         ("headersSent".to_string(), Value::Boolean(false)),
@@ -472,17 +485,16 @@ pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
 pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
 pub fn build() -> Value {
     let create_server = crate::host::capability(crate::registry::SPEC_HTTP_SERVER);
-    crate::host::namespace_object(vec![
-        ("createServer", create_server.clone()),
-        ("Server", create_server),
+    crate::host::namespace_object_from_pairs(vec![
+        ("createServer".into(), create_server.clone()),
+        ("Server".into(), create_server),
         (
-            "request",
+            "request".into(),
             crate::host::capability(crate::registry::SPEC_HTTP_REQUEST),
         ),
         (
-            "get",
+            "get".into(),
             crate::host::capability(crate::registry::SPEC_HTTP_GET),
         ),
     ])
-    .unwrap_or_else(|_| Value::Undefined)
 }
