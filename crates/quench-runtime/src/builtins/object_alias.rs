@@ -3,6 +3,23 @@ use std::{cell::RefCell, rc::Rc};
 use crate::value::{ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Value, WeakObject};
 
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
+    let self_reference = value_targets(&value, &properties);
+    if self_reference {
+        let parent_alias = alias(&properties);
+        let parent = unsafe { &mut *(Rc::as_ptr(&properties) as *mut ObjectData) };
+        if let Some((_, current)) = parent
+            .properties
+            .iter_mut()
+            .rev()
+            .find(|(name, _)| name == key)
+        {
+            *current = parent_alias;
+        } else {
+            parent.properties.push((key.into(), parent_alias));
+        }
+        record_created(&mut parent.created, key);
+        return Value::Object(properties);
+    }
     let object = Rc::new_cyclic(|weak| {
         let mut values = properties.properties.clone();
         // A subsequent define/set resurrects a property removed through the
@@ -35,6 +52,17 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
     Value::Object(object)
+}
+
+fn value_targets(value: &Value, object: &Rc<ObjectData>) -> bool {
+    match value {
+        Value::Object(value) => Rc::ptr_eq(value, object),
+        Value::ObjectAlias(alias) => alias
+            .target()
+            .is_some_and(|value| Rc::ptr_eq(&value, object)),
+        Value::BindingCell(cell) => value_targets(&cell.borrow(), object),
+        _ => false,
+    }
 }
 
 pub(crate) fn record_created(created: &mut Vec<crate::value::PropertyName>, key: &str) {
