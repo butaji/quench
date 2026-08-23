@@ -370,7 +370,7 @@ pub fn is_callable(value: &Value) -> bool {
         Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
             false
         }
-        Value::Builtin(_) | Value::Function(_) | Value::HostCapability(_) => true,
+        Value::Builtin(_) | Value::Function(_) => true,
         Value::BoundFunction(bound)
             if crate::vm::is_intrinsic_bound(&bound)
                 && matches!(
@@ -385,7 +385,6 @@ pub fn is_callable(value: &Value) -> bool {
             false
         }
         Value::BoundFunction(_) => true,
-        Value::BindingCell(cell) => is_callable(&cell.borrow()),
         Value::Proxy(proxy) => is_callable(&proxy.target),
         _ => false,
     }

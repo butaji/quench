@@ -46,16 +46,13 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
       username: { input: url.username }
     };
   };
-  const isURLPatternMatch = (source, value, baseURL, ignoreCase = false) => {
+  const isURLPatternMatch = (source, value, baseURL) => {
     if (source === "*") return baseURL !== null;
     const pathname = getURLPatternURL(value, baseURL).pathname;
-    const expected = source.replace(
-      /:[^/]+/g,
-      () => pathname.split("/").slice(-1)[0]
+    return (
+      pathname ===
+      source.replace(/:[^/]+/g, () => pathname.split("/").slice(-1)[0])
     );
-    return ignoreCase
-      ? pathname.toLowerCase() === expected.toLowerCase()
-      : pathname === expected;
   };
   const validateURLPatternBase = (baseURL) => {
     if (baseURL != null && typeof baseURL !== "string") {
@@ -142,12 +139,7 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
       if (!(this instanceof URLPattern)) {
         throw new TypeError("Illegal invocation");
       }
-      return isURLPatternMatch(
-        this._source,
-        value,
-        baseURL,
-        this._ignoreCase
-      );
+      return isURLPatternMatch(this._source, value, baseURL);
     };
     URLPattern.prototype.exec = function (value, baseURL) {
       validateURLPatternValue(value, baseURL);
@@ -434,7 +426,7 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
       );
       const source = initializeURLPattern(this, options);
       this._source = source;
-      this._ignoreCase = optionsFlags?.ignoreCase === true;
+      optionsFlags?.ignoreCase;
     }
     installURLPatternProperties(URLPattern);
     return URLPattern;

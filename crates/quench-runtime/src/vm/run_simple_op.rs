@@ -11,14 +11,10 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
     run_simple_single_op(registers, op)
 }
 
-
 fn run_simple_single_op(
     registers: &mut Vec<Value>,
     op: &Op,
 ) -> Result<Option<Option<Value>>, VmError> {
-    run_simple_single_op_inner(registers, op)
-}
-fn run_simple_single_op_inner(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
     use Op::*;
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),

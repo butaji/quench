@@ -73,27 +73,6 @@ for (const name of ["URL", "URLSearchParams"]) {
   }
 }
 */
-if (typeof globalThis.URL === "function") {
-  if (typeof globalThis.URL.canParse !== "function") {
-    globalThis.URL.canParse = function(input, base) {
-      try {
-        new globalThis.URL(input, base);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    };
-  }
-  if (typeof globalThis.URL.parse !== "function") {
-    globalThis.URL.parse = function(input, base) {
-      try {
-        return new globalThis.URL(input, base);
-      } catch (_) {
-        return null;
-      }
-    };
-  }
-}
 const __quench_import_meta = { url: __quench_module_url, dirname: __filename.replace(/[^/\\]*$/, ""), filename: __filename, resolve(specifier, parent) { return new URL(specifier, parent || __quench_module_url).href; } };
 Object.defineProperty(globalThis, "import_meta", { configurable: true, value: __quench_import_meta });
 let __quench_import_meta_alias = __quench_import_meta;
@@ -132,7 +111,6 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
             RealmId::ROOT,
             vec![
                 HostCapabilityKind::Custom(CapabilityName::Require),
-                HostCapabilityKind::Custom(CapabilityName::RequireFor),
                 HostCapabilityKind::Custom(CapabilityName::PathBasename),
                 HostCapabilityKind::Custom(CapabilityName::Console),
                 HostCapabilityKind::Custom(CapabilityName::ConsoleLog),
@@ -149,6 +127,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 HostCapabilityKind::Custom(CapabilityName::ProcessEmit),
                 HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage),
                 HostCapabilityKind::Custom(CapabilityName::ProcessHrtime),
+                HostCapabilityKind::Custom(CapabilityName::ProcessHrtimeBigint),
                 HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo),
                 HostCapabilityKind::Custom(CapabilityName::ProcessPermissionHas),
                 HostCapabilityKind::Custom(CapabilityName::AssertNotStrictEqual),
@@ -167,28 +146,6 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 HostCapabilityKind::Custom(CapabilityName::StreamWritable),
                 HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom),
                 HostCapabilityKind::Custom(CapabilityName::StreamDuplex),
-                HostCapabilityKind::Custom(CapabilityName::HttpRequest),
-                HostCapabilityKind::Custom(CapabilityName::HttpRequestOn),
-                HostCapabilityKind::Custom(CapabilityName::HttpRequestEnd),
-                HostCapabilityKind::Custom(CapabilityName::HttpRequestWrite),
-                // Legacy HTTP module objects use compact numeric capability
-                // ids at the host boundary; keep those callable in the
-                // capability context alongside the named runtime ids.
-                HostCapabilityKind::Custom(401),
-                HostCapabilityKind::Custom(402),
-                HostCapabilityKind::Custom(403),
-                HostCapabilityKind::Custom(504),
-                HostCapabilityKind::Custom(505),
-                HostCapabilityKind::Custom(506),
-                HostCapabilityKind::Custom(0x0F00),
-                HostCapabilityKind::Custom(0x0F01),
-                HostCapabilityKind::Custom(0x0F02),
-                HostCapabilityKind::Custom(0x0102),
-                HostCapabilityKind::Custom(0x1000),
-                HostCapabilityKind::Custom(0x1007),
-                HostCapabilityKind::Custom(1805),
-                HostCapabilityKind::Custom(0x1008),
-                HostCapabilityKind::Custom(0x1009),
                 HostCapabilityKind::Custom(CapabilityName::StreamFinished),
                 HostCapabilityKind::Custom(CapabilityName::StreamIsPaused),
                 HostCapabilityKind::Custom(CapabilityName::FsAccess),
@@ -400,11 +357,4 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
             .map_err(|error| error.render().into())
     }
 
-    fn poll_jobs(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        Ok(false)
-    }
-
-    fn has_pending_jobs(&self) -> bool {
-        false
-    }
 }

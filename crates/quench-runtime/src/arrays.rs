@@ -311,8 +311,17 @@ pub(crate) fn prototype_override_getter(key: &str) -> Option<Value> {
 }
 
 pub(crate) fn array_index(key: &str) -> Option<u32> {
-    let index = key.parse::<u32>().ok()?;
-    (index != u32::MAX && index.to_string() == key).then_some(index)
+    if key.is_empty() || (key.len() > 1 && key.as_bytes()[0] == b'0') {
+        return None;
+    }
+    let mut index = 0u32;
+    for byte in key.bytes() {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        index = index.checked_mul(10)?.checked_add(u32::from(byte - b'0'))?;
+    }
+    (index != u32::MAX).then_some(index)
 }
 
 fn direct_property(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
@@ -566,7 +575,6 @@ fn relative_index(value: Option<&Value>, length: isize) -> isize {
         integer.min(length)
     }
 }
-include!("arrays_reduce.rs");
 include!("arrays_concat.rs");
 include!("arrays_slice.rs");
 include!("arrays_index_of.rs");

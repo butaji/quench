@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::index_of;
+    use super::{array_index, index_of};
     use crate::value::{ArrayData, ObjectData, Value};
     use std::rc::Rc;
 

@@ -222,7 +222,7 @@ pub fn file_url_to_path(
 }
 
 fn path_from_url_posix(hostname: &str, pathname: &str, input: &Value) -> Result<String, VmError> {
-    if !hostname.is_empty() && hostname != "localhost" {
+    if !hostname.is_empty() {
         return Err(coded_error(
             "TypeError",
             "ERR_INVALID_FILE_URL_HOST",
@@ -240,7 +240,7 @@ fn path_from_url_posix(hostname: &str, pathname: &str, input: &Value) -> Result<
 fn path_from_url_win32(hostname: &str, pathname: &str, input: &Value) -> Result<String, VmError> {
     reject_encoded_slash(pathname, input, false)?;
     let decoded = decode_path(&pathname.replace('/', "\\"))?;
-    if !hostname.is_empty() && hostname != "localhost" {
+    if !hostname.is_empty() {
         return Ok(format!("\\\\{hostname}{decoded}"));
     }
     let bytes = decoded.as_bytes();

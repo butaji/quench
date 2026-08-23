@@ -207,7 +207,14 @@ fn finish_set_property(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
-    if finish_accessor_set(registers, object, target, key, &value, strict)? {
+    if let Some(setter) = crate::property_define::accessor(target, key, "set") {
+        if matches!(setter, crate::value::Value::Undefined) {
+            return write_failure(strict);
+        }
+        crate::functions::execute_target(&setter, target, std::slice::from_ref(&value))?;
+        if let Some(updated) = crate::locals::replacement(target) {
+            crate::execute::write_value(registers, object, updated);
+        }
         return Ok(());
     }
     if inherited_write_blocked(target, key) {
@@ -229,44 +236,16 @@ fn finish_set_property(
         }
         return set_builtin_property(registers, object, target, key, value);
     }
-    if bound_intrinsic_write_blocked(target, key) {
-        return write_failure(strict);
+    if let crate::value::Value::BoundFunction(bound) = &target {
+        if crate::vm::is_intrinsic_bound(bound) {
+            if let crate::value::Value::Builtin(builtin) = bound.target {
+                if !crate::builtins::object::builtin_property_is_writable(builtin, key) {
+                    return write_failure(strict);
+                }
+            }
+        }
     }
     ordinary_set(registers, object, target, key, value, strict)
-}
-
-fn bound_intrinsic_write_blocked(target: &crate::value::Value, key: &str) -> bool {
-    let crate::value::Value::BoundFunction(bound) = target else {
-        return false;
-    };
-    if !crate::vm::is_intrinsic_bound(bound) {
-        return false;
-    }
-    let crate::value::Value::Builtin(builtin) = bound.target else {
-        return false;
-    };
-    !crate::builtins::object::builtin_property_is_writable(builtin, key)
-}
-
-fn finish_accessor_set(
-    registers: &mut Vec<crate::value::Value>,
-    object: u16,
-    target: &crate::value::Value,
-    key: &str,
-    value: &crate::value::Value,
-    strict: bool,
-) -> Result<bool, crate::execute::VmError> {
-    let Some(setter) = crate::property_define::accessor(target, key, "set") else {
-        return Ok(false);
-    };
-    if matches!(setter, crate::value::Value::Undefined) {
-        write_failure(strict)?;
-    }
-    crate::functions::execute_target(&setter, target, std::slice::from_ref(value))?;
-    if let Some(updated) = crate::locals::replacement(target) {
-        crate::execute::write_value(registers, object, updated);
-    }
-    Ok(true)
 }
 
 fn inherits_error_prototype(target: &crate::value::Value) -> bool {
@@ -339,23 +318,13 @@ fn finish_primitive_set(
         ));
     }
     let receiver = crate::construct::to_object(target)?;
-    set_primitive_prototype(&receiver, target, key, value, strict)
-}
-
-fn set_primitive_prototype(
-    receiver: &crate::value::Value,
-    target: &crate::value::Value,
-    key: &str,
-    value: crate::value::Value,
-    strict: bool,
-) -> Result<(), crate::execute::VmError> {
     let mut home_proto = primitive_prototype_for(target);
     loop {
         match &home_proto {
             crate::value::Value::Null => break,
             crate::value::Value::Proxy(_) => {
                 let trap_result =
-                    crate::proxy::proxy_set(&home_proto, key, &value, Some(receiver))?;
+                    crate::proxy::proxy_set(&home_proto, key, &value, Some(&receiver))?;
                 let succeeded = matches!(trap_result, crate::value::Value::Boolean(true));
                 if !succeeded && strict {
                     return Err(crate::value::error::throw_type_error(
@@ -379,7 +348,7 @@ fn set_primitive_prototype(
                 Ok(crate::value::Value::Undefined)
             );
             if has_setter {
-                let succeeded = crate::proxy::proxy_set(&home_proto, key, &value, Some(receiver))?;
+                let succeeded = crate::proxy::proxy_set(&home_proto, key, &value, Some(&receiver))?;
                 let ok = matches!(succeeded, crate::value::Value::Boolean(true));
                 if !ok && strict {
                     return Err(crate::value::error::throw_type_error(
@@ -409,7 +378,7 @@ fn set_primitive_prototype(
                     crate::value::Value::Boolean(true),
                 ),
             ];
-            let _ = crate::builtins::define_own_property(receiver, key, &own)?;
+            let _ = crate::builtins::define_own_property(&receiver, key, &own)?;
             return Ok(());
         }
         home_proto = crate::builtins::object::get_prototype_of(Some(&home_proto))?;
@@ -423,7 +392,7 @@ fn set_primitive_prototype(
             crate::value::Value::Boolean(true),
         ),
     ];
-    let _ = crate::builtins::define_own_property(receiver, key, &own)?;
+    let _ = crate::builtins::define_own_property(&receiver, key, &own)?;
     Ok(())
 }
 
@@ -456,7 +425,6 @@ fn reject_nullish_property_write(
     Ok(())
 }
 include!("properties_function_name.rs");
-include!("properties_ext.rs");
 
 fn set_builtin_property(
     registers: &mut Vec<crate::value::Value>,

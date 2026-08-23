@@ -325,17 +325,6 @@ fn prepare_array_length_definition(
             "Cannot assign to read only array length",
         ));
     }
-    prepare_array_length_shrink(target, values, key, descriptor, old_length, new_length)
-}
-
-fn prepare_array_length_shrink(
-    target: &Value,
-    values: &Rc<crate::value::ArrayData>,
-    key: &str,
-    descriptor: &[(String, Value)],
-    old_length: usize,
-    new_length: usize,
-) -> Result<Option<Value>, crate::execute::VmError> {
     let mut values = Rc::clone(values);
     let data = Rc::make_mut(&mut values);
     for index in (new_length..old_length).rev() {
@@ -346,7 +335,10 @@ fn prepare_array_length_shrink(
         if array_descriptor_flag(data, &index_key, "configurable") == Some(false) {
             data.set_length(index + 1);
             return Err(commit_failed_array_length(
-                target, values, descriptor, index + 1,
+                target,
+                values,
+                descriptor,
+                index + 1,
             ));
         }
         data.delete_property(&index_key);

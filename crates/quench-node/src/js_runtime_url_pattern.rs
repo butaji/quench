@@ -16,20 +16,8 @@ fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
         None | Some(Value::Null) | Some(Value::Undefined) => None,
         Some(Value::Object(options)) => Some(Value::Object(options.clone())),
         Some(Value::String(value)) => {
-            let parsed = match url::Url::parse(value) {
-                Ok(parsed) => parsed,
-                Err(_) if matches!(arguments.get(1), Some(Value::String(_))) => {
-                    let base = arguments.get(1).and_then(|base| match base {
-                        Value::String(base) => Some(base.as_str()),
-                        _ => None,
-                    }).unwrap();
-                    let base = url::Url::parse(base)
-                        .map_err(|error| VmError::EvalError(error.to_string()))?;
-                    base.join(value)
-                        .map_err(|error| VmError::EvalError(error.to_string()))?
-                }
-                Err(error) => return Err(VmError::EvalError(error.to_string())),
-            };
+            let parsed =
+                url::Url::parse(value).map_err(|error| VmError::EvalError(error.to_string()))?;
             Some(Value::object(vec![
                 (
                     "hostname".into(),
@@ -259,24 +247,10 @@ fn params_id_from_receiver(receiver: Option<&Value>) -> Option<u16> {
     }
 }
 
-fn query_encode(input: &str) -> String {
-    let mut output = String::new();
-    for byte in input.as_bytes() {
-        if matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'*') {
-            output.push(*byte as char);
-        } else if *byte == b' ' {
-            output.push('+');
-        } else {
-            output.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    output
-}
-
 fn format_pairs(pairs: &[(String, String)]) -> String {
     pairs
         .iter()
-        .map(|(name, value)| format!("{}={}", query_encode(name), query_encode(value)))
+        .map(|(name, value)| format!("{name}={value}"))
         .collect::<Vec<_>>()
         .join("&")
 }

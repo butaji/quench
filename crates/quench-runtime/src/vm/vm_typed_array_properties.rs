@@ -194,7 +194,6 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
         view.byte_length(),
     );
     match key {
-        "offset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),

@@ -188,8 +188,25 @@ fn bound_function_fallback(
     if shadow_wrapper {
         return function_prototype_property_for_builtin(Builtin::FunctionPrototype, key);
     }
-    if let Some(value) = bound_builtin_property(bound, key) {
-        return value;
+    if let Value::Builtin(builtin) = bound.target {
+        if key == "prototype" {
+            if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
+                return realm::intrinsic(bound.realm, prototype)
+                    .unwrap_or(Value::Builtin(prototype));
+            }
+        }
+        let intrinsic = match (builtin, key) {
+            (Builtin::GeneratorFunctionPrototype, "constructor") => {
+                Some(Builtin::GeneratorFunction)
+            }
+            (Builtin::AsyncGeneratorFunctionPrototype, "constructor") => {
+                Some(Builtin::AsyncGeneratorFunction)
+            }
+            _ => None,
+        };
+        if let Some(intrinsic) = intrinsic {
+            return realm::intrinsic(bound.realm, intrinsic).unwrap_or(Value::Builtin(intrinsic));
+        }
     }
     let result = get_property(&bound.target, key);
     if let Value::Builtin(constructor) = &result {
@@ -203,51 +220,9 @@ fn bound_function_fallback(
         result
     }
 }
-
-fn bound_builtin_property(bound: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
-    let Value::Builtin(builtin) = bound.target else {
-        return None;
-    };
-    if key == "prototype" {
-        if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
-            return Some(
-                realm::intrinsic(bound.realm, prototype).unwrap_or(Value::Builtin(prototype)),
-            );
-        }
-    }
-    let property = builtin_property(builtin, key);
-    if !matches!(property, Value::Undefined) {
-        return Some(match property {
-            Value::Builtin(target) if crate::builtin_meta::constructor_name(target).is_some() => {
-                realm::intrinsic(bound.realm, target).unwrap_or(Value::Builtin(target))
-            }
-            property => property,
-        });
-    }
-    let intrinsic = match (builtin, key) {
-        (Builtin::GeneratorFunctionPrototype, "constructor") => Some(Builtin::GeneratorFunction),
-        (Builtin::AsyncGeneratorFunctionPrototype, "constructor") => {
-            Some(Builtin::AsyncGeneratorFunction)
-        }
-        _ => None,
-    }?;
-    Some(realm::intrinsic(bound.realm, intrinsic).unwrap_or(Value::Builtin(intrinsic)))
-}
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
-    };
-    // Host capabilities are callable values, not ordinary prototype methods.
-    // A missing receiver can occur while resolving a returned require/module
-    // factory through a reduced context; retain the realm host token rather
-    // than creating a BoundFunction whose receiver is `undefined`.
-    let receiver = if matches!(builtin, Builtin::HostCapability(_))
-        && matches!(receiver, Value::Undefined)
-    {
-        crate::vm::realm_token(crate::vm::current_context_or_default().realm())
-            .unwrap_or_else(|| receiver.clone())
-    } else {
-        receiver.clone()
     };
     let properties = match builtin {
         Builtin::IntlNumberFormatFormat => RefCell::new(number_format_bound_properties()),
@@ -258,7 +233,7 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
-        receiver,
+        receiver: receiver.clone(),
         arguments: Vec::new(),
         properties,
     }))

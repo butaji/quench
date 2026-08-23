@@ -35,6 +35,7 @@ fn run_ops_completion_step(
     run_ops_completion_step_from(ops, 0, registers, context)
 }
 
+#[inline]
 fn run_ops_completion_step_from(
     ops: &[Op],
     start: usize,
@@ -46,13 +47,7 @@ fn run_ops_completion_step_from(
         let op = &ops[index];
         let result = match run_op(registers, op, context) {
             Ok(result) => result,
-            Err(error) => {
-                crate::vm::flush_global_declaration_batch(registers);
-                return error_completion(error).map(|completion| CompletionStep {
-                    completion,
-                    next: index + 1,
-                });
-            }
+            Err(error) => return completion_step_after_error(registers, error, index + 1),
         };
         index += 1;
         match result {
@@ -62,26 +57,41 @@ fn run_ops_completion_step_from(
             }
         }
     }
-    crate::vm::flush_global_declaration_batch(registers);
-    Ok(CompletionStep {
-        completion: crate::completion::Completion::Normal,
-        next: ops.len(),
-    })
+    completion_step_after_transition(
+        registers,
+        crate::completion::Completion::Normal,
+        ops.len(),
+    )
 }
 
 fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmError> {
     crate::completion::Completion::from_vm_error(error)
 }
 
+#[cold]
+fn completion_step_after_error(
+    registers: &mut Vec<Value>,
+    error: VmError,
+    next: usize,
+) -> Result<CompletionStep, VmError> {
+    crate::vm::flush_global_declaration_batch(registers);
+    error_completion(error).map(|completion| CompletionStep { completion, next })
+}
+
+#[cold]
+fn completion_step_after_transition(
+    registers: &mut Vec<Value>,
+    completion: crate::completion::Completion,
+    next: usize,
+) -> Result<CompletionStep, VmError> {
+    crate::vm::flush_global_declaration_batch(registers);
+    Ok(CompletionStep { completion, next })
+}
+
 pub(crate) fn completion_result(
     completion: crate::completion::Completion,
 ) -> Result<Value, VmError> {
-    match completion {
-        crate::completion::Completion::TailCall(request) => {
-            crate::functions::execute_target(&request.callee, &request.receiver, &request.arguments)
-        }
-        completion => completion.into_vm_error(),
-    }
+    completion.into_vm_error()
 }
 
 struct GlobalObjectGuard {
@@ -198,14 +208,7 @@ pub fn execute_builtin_with_receiver(
         return execute_shared_array_buffer_builtin(builtin, receiver, arguments);
     }
     if let Builtin::HostCapability(kind) = builtin {
-        let capability_receiver = realm_token(current_context_or_default().realm())
-            .ok_or(VmError::NotCallable)?;
-        return execute_host_capability_with_receiver(
-            kind,
-            Some(&capability_receiver),
-            receiver,
-            arguments,
-        );
+        return vm_ops::execute_host_capability(kind, receiver, arguments);
     }
     match builtin {
         _ if is_function_builtin(builtin) => {

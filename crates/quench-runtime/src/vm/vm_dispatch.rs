@@ -118,6 +118,7 @@ fn dispatch_function_call(
 }
 
 include!("run_simple_op.rs");
+
 fn run_global_declaration_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
     if !is_global_declaration_op(op) {
         return Ok(false);
@@ -125,6 +126,7 @@ fn run_global_declaration_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool
     crate::global_environment::execute(registers, op)?;
     Ok(true)
 }
+
 fn is_global_declaration_op(op: &Op) -> bool {
     matches!(
         op,

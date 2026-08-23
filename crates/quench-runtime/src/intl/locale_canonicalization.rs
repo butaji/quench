@@ -25,26 +25,35 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
-    if let Some(result) = canonicalize_legacy(tag) {
-        return result;
+    match tag.to_ascii_lowercase().as_str() {
+        "art-lojban" => return Ok("jbo".to_string()),
+        "cel-gaulish" => return Ok("xtg".to_string()),
+        "zh-guoyu" => return Ok("zh".to_string()),
+        "zh-hakka" => return Ok("hak".to_string()),
+        "zh-xiang" => return Ok("hsn".to_string()),
+        "en-gb-oed" | "zh-min" | "i-default" => {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        _ => {}
     }
-    validate_tag_syntax(tag)?;
+    if tag.is_empty()
+        || tag.eq_ignore_ascii_case("nan")
+        || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
     let mut parts = tag.split('-');
-    let language = parts.next().ok_or_else(|| runtime_error("RangeError: invalid language tag"))?;
-    validate_language(language)?;
-    let parts: Vec<&str> = parts.collect();
-    let (out, script_done) = canonicalize_language_alias(language, &parts);
-    let (parts, replacement) = apply_armenian_variant_alias(&out, &parts);
-    let mut out = out;
-    if let Some(value) = replacement {
-        out[0] = value;
+    let language = parts
+        .next()
+        .ok_or_else(|| runtime_error("RangeError: invalid language tag"))?;
+    if language.is_empty()
+        || language.len() < 2
+        || language.len() > 8
+        || !language.chars().all(|c| c.is_ascii_alphabetic())
+    {
+        return Err(runtime_error("RangeError: invalid language tag"));
     }
-    let parts = parts.to_vec();
-    validate_transformed_extensions(&parts)?;
-    Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
-}
-
-fn canonicalize_language_alias(language: &str, parts: &[&str]) -> (Vec<String>, bool) {
+    let parts: Vec<&str> = parts.collect();
     let mut out = Vec::new();
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
@@ -69,29 +78,14 @@ fn canonicalize_language_alias(language: &str, parts: &[&str]) -> (Vec<String>, 
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    (out, script_done)
-}
-fn validate_tag_syntax(tag: &str) -> Result<(), VmError> {
-    if tag.is_empty()
-        || tag.eq_ignore_ascii_case("nan")
-        || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-    {
-        return Err(runtime_error("RangeError: invalid language tag"));
+    let (parts, replacement) = apply_armenian_variant_alias(&out, &parts);
+    if let Some(value) = replacement {
+        out[0] = value;
     }
-    Ok(())
+    let parts = parts.to_vec();
+    validate_transformed_extensions(&parts)?;
+    Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
 }
-
-fn validate_language(language: &str) -> Result<(), VmError> {
-    if language.is_empty()
-        || language.len() < 2
-        || language.len() > 8
-        || !language.chars().all(|c| c.is_ascii_alphabetic())
-    {
-        return Err(runtime_error("RangeError: invalid language tag"));
-    }
-    Ok(())
-}
-
 
 fn apply_armenian_variant_alias<'a>(
     out: &[String],
@@ -101,23 +95,9 @@ fn apply_armenian_variant_alias<'a>(
         return (parts, None);
     }
     match parts.first().copied() {
-
         Some("arevela") => (&parts[1..], None),
         Some("arevmda") => (&parts[1..], Some("hyw".to_string())),
         _ => (parts, None),
-    }
-}
-fn canonicalize_legacy(tag: &str) -> Option<Result<String, VmError>> {
-    match tag.to_ascii_lowercase().as_str() {
-        "art-lojban" => Some(Ok("jbo".to_string())),
-        "cel-gaulish" => Some(Ok("xtg".to_string())),
-        "zh-guoyu" => Some(Ok("zh".to_string())),
-        "zh-hakka" => Some(Ok("hak".to_string())),
-        "zh-xiang" => Some(Ok("hsn".to_string())),
-        "en-gb-oed" | "zh-min" | "i-default" => {
-            Some(Err(runtime_error("RangeError: invalid language tag")))
-        }
-        _ => None,
     }
 }
 
