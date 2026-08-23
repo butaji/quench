@@ -150,9 +150,20 @@ pub fn equals(
     args: &[Value],
 ) -> HandlerResult {
     let view = this_view(receiver)?;
-    let other = require_buffer(args.first().unwrap_or(&Value::Undefined), "otherBuffer")?;
+    let other = args
+        .first()
+        .and_then(as_byte_view)
+        .ok_or_else(|| {
+            enc::invalid_arg_type(format!(
+                "The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array.{}",
+                crate::modules::util::invalid_arg_received(
+                    args.first().unwrap_or(&Value::Undefined)
+                )
+            ))
+        })?;
     let bytes = view_bytes(&view);
-    Ok(Value::Boolean(bytes[..] == other[..]))
+    let other_bytes = view_bytes(&other);
+    Ok(Value::Boolean(bytes[..] == other_bytes[..]))
 }
 
 fn compare_ranges(a: &[u8], b: &[u8]) -> f64 {
