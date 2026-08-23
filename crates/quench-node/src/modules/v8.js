@@ -1,14 +1,20 @@
 // V8 compatibility surface backed by the embedded engine.
 function encode(value) {
   return JSON.stringify(value, (key, item) => {
+    if (typeof item === 'bigint') {
+      return { __quench_type: 'bigint', value: item.toString() };
+    }
     if (item === undefined) return { __quench_type: 'undefined' };
-    if (item instanceof Uint8Array) return { __quench_type: 'uint8array', data: Array.from(item) };
+    if (item instanceof Uint8Array) {
+      return { __quench_type: 'uint8array', data: Array.from(item) };
+    }
     return item;
   });
 }
 function decode(text) {
   return JSON.parse(text, (key, item) => {
     if (item && item.__quench_type === 'undefined') return undefined;
+    if (item && item.__quench_type === 'bigint') return BigInt(item.value);
     if (item && item.__quench_type === 'uint8array') return new Uint8Array(item.data);
     return item;
   });
