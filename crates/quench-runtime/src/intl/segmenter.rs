@@ -168,9 +168,9 @@ fn restore_segment(
         .properties
         .iter()
         .map(|(name, value)| match name.as_str() {
-            "segment" => (name.clone(), segment.clone()),
-            "input" => (name.clone(), input.clone()),
-            _ => (name.clone(), value.clone()),
+            "segment" => (name.as_str().to_owned(), segment.clone()),
+            "input" => (name.as_str().to_owned(), input.clone()),
+            _ => (name.as_str().to_owned(), value.clone()),
         })
         .collect();
     make_object(properties)
@@ -282,7 +282,11 @@ fn word_entry(segment: &str, index: usize, input: &str, word_like: bool) -> Valu
     let Value::Object(object) = value else {
         return value;
     };
-    let mut properties = object.properties.clone();
+    let mut properties: Vec<(String, Value)> = object
+        .properties
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
+        .collect();
     properties.push(("isWordLike".to_string(), Value::Boolean(word_like)));
     make_object(properties)
 }
