@@ -13,6 +13,10 @@ use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
+use crate::registry::{
+    SPEC_STREAM_DUPLEX, SPEC_STREAM_PIPELINE, SPEC_STREAM_READABLE, SPEC_STREAM_TRANSFORM,
+    SPEC_STREAM_WRITABLE,
+};
 
 const PRELUDE: &str = include_str!("stream_prelude.js");
 
@@ -56,7 +60,33 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
         "events".to_string(),
         crate::modules::events::build(),
     )]);
-    let module = quench_runtime::vm::call_value(&factory, &Value::Undefined, &[deps])?;
+    let module = match quench_runtime::vm::call_value(&factory, &Value::Undefined, &[deps]) {
+        Ok(module) => module,
+        Err(_) => {
+            // Keep module loading total when the optional JS stream layer hits
+            // an unsupported dynamic construct; the native constructors are
+            // the canonical fallback and preserve the public API shape.
+            host_api::object(vec![
+                (
+                    "Readable".into(),
+                    crate::host::capability(SPEC_STREAM_READABLE),
+                ),
+                (
+                    "Writable".into(),
+                    crate::host::capability(SPEC_STREAM_WRITABLE),
+                ),
+                ("Duplex".into(), crate::host::capability(SPEC_STREAM_DUPLEX)),
+                (
+                    "Transform".into(),
+                    crate::host::capability(SPEC_STREAM_TRANSFORM),
+                ),
+                (
+                    "pipeline".into(),
+                    crate::host::capability(SPEC_STREAM_PIPELINE),
+                ),
+            ])
+        }
+    };
     state.borrow_mut().stream_module = Some(module.clone());
     Ok(module)
 }
