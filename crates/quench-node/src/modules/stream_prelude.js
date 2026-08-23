@@ -621,6 +621,11 @@
   }
 
   function finished(stream, callback) {
+    if (!stream || typeof stream.on !== "function") {
+      const error = new TypeError("The \"stream\" argument must be an instance of Stream");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     let done = false;
     const finish = (error) => {
       if (done) return;
