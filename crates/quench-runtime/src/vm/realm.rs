@@ -229,68 +229,7 @@ fn root_intrinsic(builtin: Builtin) -> Value {
 }
 
 pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    Some(match key {
-        "Array" => Array,
-        "Iterator" => Iterator,
-        "ArrayBuffer" => ArrayBuffer,
-        "SharedArrayBuffer" => SharedArrayBuffer,
-        "DataView" => DataView,
-        "Float32Array" => Float32Array,
-        "Float64Array" => Float64Array,
-        "Int8Array" => Int8Array,
-        "Int16Array" => Int16Array,
-        "Int32Array" => Int32Array,
-        "Uint8Array" => Uint8Array,
-        "Uint8ClampedArray" => Uint8ClampedArray,
-        "Uint16Array" => Uint16Array,
-        "Uint32Array" => Uint32Array,
-        "Object" => Object,
-        "Function" => Function,
-        "Promise" => Promise,
-        "RegExp" => RegExp,
-        "Symbol" => Symbol,
-        "Number" => Number,
-        "Boolean" => Boolean,
-        "BigInt" => BigInt,
-        "String" => String,
-        "Date" => Date,
-        "DisposableStack" => DisposableStack,
-        "AsyncDisposableStack" => AsyncDisposableStack,
-        "FinalizationRegistry" => FinalizationRegistry,
-        "ShadowRealm" => ShadowRealm,
-        "Intl" => Intl,
-        _ => return global_builtin_error(key),
-    })
-}
-
-fn global_builtin_error(key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    Some(match key {
-        "eval" => Eval,
-        "isNaN" => IsNaN,
-        "isFinite" => IsFinite,
-        "JSON" => Json,
-        "Math" => Math,
-        "Atomics" => Atomics,
-        "Reflect" => Reflect,
-        "Map" => Map,
-        "Set" => Set,
-        "WeakMap" => WeakMap,
-        "WeakSet" => WeakSet,
-        "WeakRef" => WeakRef,
-        "Error" => Error,
-        "AggregateError" => AggregateError,
-        "SuppressedError" => SuppressedError,
-        "TypeError" => TypeError,
-        "RangeError" => RangeError,
-        "ReferenceError" => ReferenceError,
-        "SyntaxError" => SyntaxError,
-        "EvalError" => EvalError,
-        "URIError" => URIError,
-        "decodeURI" => DecodeURI,
-        _ => return None,
-    })
+    crate::globals::builtin(key)
 }
 
 pub(super) fn global_builtin_exists(key: &str) -> bool {
