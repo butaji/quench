@@ -41,6 +41,15 @@ fn symbols_are_unique_and_format_descriptions() {
 }
 
 #[test]
+fn regexp_identifier_ascii_class_matches() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        r#"if (!/(?:[A-Za-z\xAA\u02C1])/.test('f')) throw new Error('identifier class');"#,
+    )
+    .expect("ASCII characters must match generated identifier classes");
+}
+
+#[test]
 fn array_map_call_accepts_array_like_receiver() {
     let mut host = super::RuntimeHost;
     host.run_script(
