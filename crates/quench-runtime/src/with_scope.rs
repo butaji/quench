@@ -323,11 +323,28 @@ pub(crate) fn receiver_for_callable(callee: &Value) -> Option<Value> {
 }
 
 fn callable_on(object: &Value, callee: &Value) -> bool {
-    let Value::Object(object) = object else {
-        return false;
+    let properties = match object {
+        Value::Object(object) => Some(object.properties.clone()),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| object.properties.clone()),
+        Value::BindingCell(cell) => match &*cell.borrow() {
+            Value::Object(object) => Some(object.properties.clone()),
+            Value::ObjectAlias(alias) => alias
+                .0
+                .borrow()
+                .upgrade()
+                .map(|object| object.properties.clone()),
+            _ => None,
+        },
+        _ => None,
     };
-    object.properties.iter().any(|(name, value)| {
-        !name.starts_with('\0') && crate::builtins::same_value(Some(value), Some(callee))
+    properties.is_some_and(|properties| {
+        properties.iter().any(|(name, value)| {
+            !name.starts_with('\0') && crate::builtins::same_value(Some(value), Some(callee))
+        })
     })
 }
 

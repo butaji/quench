@@ -228,26 +228,29 @@ pub fn server_close(
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
-    let has_open_sockets = state.borrow().net.sockets.values().any(|socket| {
-        let socket = socket.borrow();
-        socket.server_id == Some(id) && socket.state != SocketState::Closed
-    });
-    let mut emit_now = false;
+    let mut sockets_to_close = Vec::new();
+    {
+        let host = state.borrow();
+        for socket in host.net.sockets.values() {
+            let socket = socket.borrow();
+            if socket.server_id == Some(id) && socket.state != SocketState::Closed {
+                sockets_to_close.push(socket.js.clone());
+            }
+        }
+    }
     if let Some(server) = state.borrow().net.servers.get(&id).cloned() {
         let mut server = server.borrow_mut();
         server.listener.take();
         server.listening = false;
         server.closed = true;
-        if !has_open_sockets {
-            server.close_emitted = true;
-            emit_now = true;
-        }
+    }
+    // Stop every accepted connection.  `socket_end` keeps Closing sockets
+    // alive until their write buffer has actually flushed, so responses
+    // queued by res.end() are not discarded.
+    for socket in sockets_to_close {
+        socket_end(state, Some(&socket), &[])?;
     }
     add_listener_cb(state, &receiver, args.first(), "close")?;
-    if emit_now {
-        state.borrow_mut().net.servers.remove(&id);
-        emit(state, &receiver, "close", Vec::new())?;
-    }
     Ok(receiver)
 }
 
@@ -386,10 +389,14 @@ pub fn socket_end(
     if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
         let mut guard = sock.borrow_mut();
         guard.state = SocketState::Closing;
-        if let Some(stream) = guard.stream.as_mut() {
-            let _ = stream.shutdown(Shutdown::Write);
-        }
+        // Flush buffered bytes before half-closing the write side.  Calling
+        // shutdown first can discard the response queued by res.end().
         try_flush(&mut guard);
+        if guard.write_buf.is_empty() {
+            if let Some(stream) = guard.stream.as_mut() {
+                let _ = stream.shutdown(Shutdown::Write);
+            }
+        }
     }
     let _ = state;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))

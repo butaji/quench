@@ -368,6 +368,15 @@ pub(crate) fn execute_target(
             _ => 25,
         }
     }
+    if let crate::value::Value::BindingCell(cell) = target {
+        let target = cell.borrow().clone();
+        return execute_target(&target, receiver, arguments);
+    }
+    let mut receiver_value = receiver.clone();
+    while let crate::value::Value::BindingCell(cell) = receiver_value {
+        receiver_value = cell.borrow().clone();
+    }
+    let receiver = &receiver_value;
     if !crate::conversion::is_callable(target)
         && !matches!(target, crate::value::Value::BoundFunction(_))
     {
@@ -388,10 +397,7 @@ pub(crate) fn execute_target(
         )));
     }
     match target {
-        crate::value::Value::BindingCell(cell) => {
-            let target = cell.borrow().clone();
-            execute_target(&target, receiver, arguments)
-        }
+        crate::value::Value::BindingCell(_) => unreachable!("binding cell dereferenced above"),
         crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
             let capability_receiver = crate::vm::realm_token(crate::vm::current_context_or_default().realm())
                 .ok_or(crate::execute::VmError::NotCallable)?;
