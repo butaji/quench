@@ -28,10 +28,7 @@ pub fn run_in_new_context(
             return Ok(global.clone());
         }
     }
-    let mut registers = Vec::new();
-    quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
-    })
+    quench_runtime::vm::execute_with_context(program.ops(), &context)
 }
 pub fn build() -> Value {
     let run = crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT);
