@@ -100,6 +100,7 @@ const SCRIPT_PROPERTY_NAMES: &[&str] = &[
     "ShadowRealm",
     "Float64Array",
     "Float32Array",
+    "Float16Array",
     "Int8Array",
     "Int16Array",
     "Int32Array",
@@ -148,6 +149,10 @@ fn typed_array_builtin(name: &str) -> Option<crate::ops::Builtin> {
     match name {
         "Float64Array" => Some(crate::ops::Builtin::Float64Array),
         "Float32Array" => Some(crate::ops::Builtin::Float32Array),
+        // Float16Array uses the existing 16-bit view representation until
+        // half-precision arithmetic is required; byte width and view identity
+        // remain correct for Node's buffer/stream contracts.
+        "Float16Array" => Some(crate::ops::Builtin::Uint16Array),
         "Int8Array" => Some(crate::ops::Builtin::Int8Array),
         "Int16Array" => Some(crate::ops::Builtin::Int16Array),
         "Int32Array" => Some(crate::ops::Builtin::Int32Array),
