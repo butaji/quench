@@ -263,9 +263,15 @@ pub fn get_event_listeners(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    // Node requires an event name; silently treating an omitted/non-string
+    // name as `""` makes malformed introspection calls look valid.
     let event = match args.get(1) {
         Some(Value::String(name)) => name.clone(),
-        _ => String::new(),
+        _ => {
+            return Err(execute::type_error(
+                "The \"eventName\" argument must be of type string",
+            ))
+        }
     };
     if let Some(callbacks) = emitter_callbacks(state, &target, &event) {
         return Ok(host_api::array(callbacks));
