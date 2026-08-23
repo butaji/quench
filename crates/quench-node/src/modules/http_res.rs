@@ -36,6 +36,13 @@ pub fn res_set_header(
     let Some((name, value)) = name.zip(value) else {
         return Ok(Value::Undefined);
     };
+    if let Some(response) = receiver {
+        let normalized = name.to_ascii_lowercase();
+        if let Ok(headers) = execute::get_property_result(response, "headers") {
+            let updated = execute::set_property(headers, &normalized, Value::String(value.clone()));
+            let _ = execute::set_property(response.clone(), "headers", updated);
+        }
+    }
     let mut guard = state.borrow_mut();
     if let Some(res) = guard.http.res.get_mut(&id) {
         res.headers
