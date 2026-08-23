@@ -442,10 +442,55 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => inspect_object(value, depth),
         Value::Array(_) => inspect_array(value, depth),
-        Value::Uint8Array(_) => "[Buffer]".into(),
+        Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
+        Value::Uint8Array(_) => "Uint8Array(0) []".into(),
         Value::BigInt(digits) => format!("{digits}n"),
         _ => "<unknown>".into(),
     }
+}
+
+fn is_buffer_view(value: &Value) -> bool {
+    matches!(
+        quench_runtime::execute::get_property_result(value, "parent"),
+        Ok(Value::ArrayBuffer(_))
+    )
+}
+
+fn inspect_buffer(value: &Value, view: &quench_runtime::value::Uint8ArrayData) -> String {
+    let bytes = view.buffer.bytes.borrow();
+    let slice = &bytes[view.byte_offset..view.byte_offset + view.length];
+    let shown = slice
+        .iter()
+        .take(2)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>();
+    let suffix = slice.len().saturating_sub(2);
+    let mut result = if suffix == 0 {
+        format!("<Buffer {}>", shown.join(" "))
+    } else {
+        format!("<Buffer {} ... {suffix} more bytes>", shown.join(" "))
+    };
+    let properties = quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| {
+            key != "parent"
+                && key != "offset"
+                && key != "toString"
+                && key.parse::<usize>().is_err()
+        })
+        .map(|key| format!("{key}: {}", inspect_shallow(&quench_runtime::execute::get_property(value, &key))))
+        .collect::<Vec<_>>();
+    if !properties.is_empty() {
+        if slice.is_empty() {
+            result = "<Buffer ".to_string();
+        } else {
+            result.pop();
+            result.push_str(", ");
+        }
+        result.push_str(&properties.join(", "));
+        result.push('>');
+    }
+    result
 }
 
 fn inspect_array(value: &Value, depth: usize) -> String {
@@ -519,6 +564,8 @@ fn inspect_shallow(value: &Value) -> String {
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => "[Object]".into(),
         Value::Array(_) => "[Array]".into(),
+        Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
+        Value::Uint8Array(view) => format!("Uint8Array({}) []", view.length),
         _ => "<unknown>".into(),
     }
 }
