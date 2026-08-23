@@ -235,6 +235,7 @@
 
     read() {
       const st = this._readableState;
+      if (this._passThrough) this._passThroughRead = true;
       const finishIfEnded = () => {
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
           nextTick(() => {
@@ -268,6 +269,7 @@
         return chunk;
       }
       finishIfEnded();
+      if (this._passThrough) finishWritable(this);
       return null;
     }
 
@@ -403,6 +405,8 @@
 
   function finishWritable(stream) {
     const st = stream._writableState;
+    if (stream._passThrough && !stream._passThroughRead &&
+        stream.listenerCount("data") === 0) return;
     if (st.finished || !st.ended || st.buffered > 0 || st.writing) return;
     st.finished = true;
     stream._emitter.emit("prefinish");
@@ -616,6 +620,8 @@
   class PassThrough extends Transform {
     constructor(options) {
       super(options || {});
+      this._passThrough = true;
+      this._passThroughRead = false;
       this._transform = (chunk, encoding, callback) => {
         this.push(chunk);
         callback();
