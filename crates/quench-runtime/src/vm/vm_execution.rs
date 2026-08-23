@@ -146,7 +146,11 @@ fn execute_completion_in_place_context(
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
-                crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+                if let Err(VmError::Thrown(value)) =
+                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
+                {
+                    return Ok(crate::completion::Completion::Throw(value));
+                }
             }
             completion => return preserve_frame_completion(completion),
         }
@@ -227,7 +231,11 @@ pub(crate) fn execute_frame_completion(
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
-                crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+                if let Err(VmError::Thrown(value)) =
+                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
+                {
+                    return Ok(crate::completion::Completion::Throw(value));
+                }
             }
             completion => return Ok(completion),
         }
