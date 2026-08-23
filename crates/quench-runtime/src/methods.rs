@@ -83,14 +83,12 @@ fn execute_callee(
                 arguments,
             )
         }
-        Value::HostCapability(capability) => {
-            crate::vm::execute_host_capability_with_receiver(
-                capability.descriptor.kind,
-                Some(&callee),
-                Some(receiver),
-                arguments,
-            )
-        }
+        Value::HostCapability(capability) => crate::vm::execute_host_capability_with_receiver(
+            capability.descriptor.kind,
+            Some(&callee),
+            Some(receiver),
+            arguments,
+        ),
         Value::Builtin(crate::ops::Builtin::String) => {
             execute_builtin_with_receiver(crate::ops::Builtin::String, arguments, None)
         }
@@ -124,8 +122,8 @@ fn execute_callee(
             combined.extend_from_slice(arguments);
             crate::vm::execute_host_capability_with_receiver(
                 capability.descriptor.kind,
-                Some(&bound.target),
                 Some(&capability_receiver),
+                Some(receiver),
                 &combined,
             )
         }
@@ -136,18 +134,40 @@ fn execute_callee(
         Value::Proxy(_) => crate::functions::execute_target(&callee, receiver, arguments),
         other => {
             let discriminant = match &other {
-                Value::Number(_) => 0, Value::Boolean(_) => 1, Value::String(_) => 2,
-                Value::StringUnits(_) => 3, Value::BigInt(_) => 4, Value::Array(_) => 5,
-                Value::Object(_) => 6, Value::ObjectAlias(_) => 7, Value::BindingCell(_) => 8,
-                Value::ArrayBuffer(_) => 9, Value::Float64Array(_) => 10, Value::Float32Array(_) => 11,
-                Value::Int8Array(_) => 12, Value::Int16Array(_) => 13, Value::Int32Array(_) => 14,
-                Value::BigInt64Array(_) => 15, Value::BigUint64Array(_) => 16, Value::Uint32Array(_) => 17,
-                Value::Uint8Array(_) => 18, Value::Uint8ClampedArray(_) => 19, Value::Uint16Array(_) => 20,
-                Value::DataView(_) => 21, Value::Builtin(_) => 22, Value::Function(_) => 23,
-                Value::BoundFunction(_) => 24, Value::Proxy(_) => 25, Value::Promise(_) => 26,
+                Value::Number(_) => 0,
+                Value::Boolean(_) => 1,
+                Value::String(_) => 2,
+                Value::StringUnits(_) => 3,
+                Value::BigInt(_) => 4,
+                Value::Array(_) => 5,
+                Value::Object(_) => 6,
+                Value::ObjectAlias(_) => 7,
+                Value::BindingCell(_) => 8,
+                Value::ArrayBuffer(_) => 9,
+                Value::Float64Array(_) => 10,
+                Value::Float32Array(_) => 11,
+                Value::Int8Array(_) => 12,
+                Value::Int16Array(_) => 13,
+                Value::Int32Array(_) => 14,
+                Value::BigInt64Array(_) => 15,
+                Value::BigUint64Array(_) => 16,
+                Value::Uint32Array(_) => 17,
+                Value::Uint8Array(_) => 18,
+                Value::Uint8ClampedArray(_) => 19,
+                Value::Uint16Array(_) => 20,
+                Value::DataView(_) => 21,
+                Value::Builtin(_) => 22,
+                Value::Function(_) => 23,
+                Value::BoundFunction(_) => 24,
+                Value::Proxy(_) => 25,
+                Value::Promise(_) => 26,
                 Value::HostCapability(_) => 27,
-                Value::Map(_) => 28, Value::Set(_) => 29, Value::Iterator(_) => 30,
-                Value::Generator(_) => 31, Value::Null => 32, Value::Undefined => 33,
+                Value::Map(_) => 28,
+                Value::Set(_) => 29,
+                Value::Iterator(_) => 30,
+                Value::Generator(_) => 31,
+                Value::Null => 32,
+                Value::Undefined => 33,
             };
             return Err(crate::value::error::throw_type_error(&format!(
                 "value is not callable [method callee discriminant={discriminant}]"
