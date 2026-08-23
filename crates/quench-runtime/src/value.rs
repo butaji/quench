@@ -445,6 +445,7 @@ pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 /// metadata-filtered projection is invalid and must return `None`.
 #[derive(Debug, Clone)]
 pub struct ObjectData {
+    identity: u64,
     // Hot semantic storage. Keep the vector as the sole property storage.
     // An inline first-slot representation would not remove the per-object
     // `PrivateSlots` Rc (the ownership/lifecycle anchor), and would duplicate
@@ -500,12 +501,24 @@ impl ObjectData {
         created: Vec<String>,
     ) -> Self {
         Self {
+            identity: next_object_identity(),
             properties,
             private_slots,
             original_prototype: RefCell::new(None),
             created,
         }
     }
+
+    #[inline]
+    pub(crate) fn identity(&self) -> u64 {
+        self.identity
+    }
+}
+
+fn next_object_identity() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl std::ops::Deref for ObjectData {
@@ -539,6 +552,24 @@ fn creation_order(properties: &[(String, Value)]) -> Vec<String> {
 impl PartialEq for ObjectData {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
+    }
+}
+
+#[cfg(test)]
+mod object_identity_tests {
+    use super::ObjectData;
+
+    #[test]
+    fn fresh_objects_have_distinct_stable_identities() {
+        let first = ObjectData::new(Vec::new());
+        let second = ObjectData::new(Vec::new());
+        assert_ne!(first.identity(), second.identity());
+    }
+
+    #[test]
+    fn cloning_preserves_object_identity() {
+        let object = ObjectData::new(Vec::new());
+        assert_eq!(object.identity(), object.clone().identity());
     }
 }
 /// Derived layout facts for ordinary objects. These are never authoritative;
