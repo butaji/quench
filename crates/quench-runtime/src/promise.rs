@@ -77,10 +77,14 @@ fn process_then_actions(
 }
 
 fn peel_binding_cell(mut value: Value) -> Value {
-    while let Value::BindingCell(cell) = value {
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        let Value::BindingCell(cell) = value else { return value };
+        if !seen.insert(std::rc::Rc::as_ptr(&cell)) {
+            return Value::BindingCell(cell);
+        }
         value = cell.borrow().clone();
     }
-    value
 }
 
 fn process_continuation(continuation: PromiseContinuation, state: &PromiseState) {

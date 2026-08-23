@@ -369,7 +369,7 @@ pub fn is_callable(value: &Value) -> bool {
         Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => false,
         Value::Builtin(_) | Value::Function(_) => true,
         Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(bound)
+            if crate::vm::is_intrinsic_bound(&bound)
                 && matches!(
                     bound.target,
                     Value::Builtin(
