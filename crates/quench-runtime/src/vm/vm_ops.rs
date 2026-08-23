@@ -375,7 +375,7 @@ fn invoke_with_receiver(
             let js_receiver = if matches!(kind, crate::ops::HostCapabilityKind::Custom(1)) {
                 super::current_global_object()
             } else {
-                bound.receiver.clone()
+                receiver.clone()
             };
             crate::vm::execute_host_capability_with_receiver(
                 *kind,
