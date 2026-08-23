@@ -27,6 +27,20 @@ pub(crate) fn execute_ops_from(
     Ok((step.completion, step.next))
 }
 
+pub(crate) fn execute_code_from(
+    code: crate::machine::CodeView<'_>,
+    start: usize,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+) -> Result<(crate::completion::Completion, usize), VmError> {
+    let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    let step = run_code_completion_step_from(code, start, registers, context)?;
+    Ok((step.completion, step.next))
+}
+
 fn run_ops_completion_step(
     ops: &[Op],
     registers: &mut Vec<Value>,
@@ -35,33 +49,84 @@ fn run_ops_completion_step(
     run_ops_completion_step_from(ops, 0, registers, context)
 }
 
-#[inline]
 fn run_ops_completion_step_from(
     ops: &[Op],
     start: usize,
     registers: &mut Vec<Value>,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
-    let mut index = start;
-    while index < ops.len() {
-        let op = &ops[index];
-        let result = match run_op(registers, op, context) {
+    let executable = crate::machine::ExecutableCode::from_ops(ops.to_vec());
+    run_code_completion_step_from(executable.code(), start, registers, context)
+}
+
+#[inline]
+fn run_code_completion_step_from(
+    code: crate::machine::CodeView<'_>,
+    start: usize,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<CompletionStep, VmError> {
+    let mut pc = start;
+    while let Some(instruction) = code.instruction(pc) {
+        let result = match run_instruction(code, instruction, registers, context) {
             Ok(result) => result,
-            Err(error) => return completion_step_after_error(registers, error, index + 1),
+            Err(error) => return completion_step_after_error(registers, error, pc + 1),
         };
-        index += 1;
-        match result {
-            None | Some(crate::completion::Completion::Normal) => {}
-            Some(completion) => {
-                return completion_step_after_transition(registers, completion, index);
-            }
+        pc += 1;
+        if let Some(completion) = result.filter(|value| !matches!(value, crate::completion::Completion::Normal)) {
+            return completion_step_after_transition(registers, completion, pc);
         }
     }
-    completion_step_after_transition(
-        registers,
-        crate::completion::Completion::Normal,
-        ops.len(),
-    )
+    completion_step_after_transition(registers, crate::completion::Completion::Normal, code.len())
+}
+
+#[inline(always)]
+fn run_instruction(
+    code: crate::machine::CodeView<'_>,
+    instruction: crate::ir::Instruction,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    use crate::ir::Opcode;
+    match instruction.opcode {
+        Opcode::Move => {
+            copy_register(registers, instruction.a, instruction.b)?;
+            Ok(None)
+        }
+        Opcode::LoadLocal => {
+            crate::locals::load(registers, instruction.a, instruction.b)?;
+            Ok(None)
+        }
+        Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div => {
+            let operator = match instruction.opcode {
+                Opcode::Add => crate::ops::BinaryOp::Add,
+                Opcode::Sub => crate::ops::BinaryOp::Subtract,
+                Opcode::Mul => crate::ops::BinaryOp::Multiply,
+                Opcode::Div => crate::ops::BinaryOp::Divide,
+                _ => unreachable!(),
+            };
+            vm_arithmetic::execute_binary(registers, instruction.a, operator, instruction.b, instruction.c)?;
+            Ok(None)
+        }
+        Opcode::GetProperty => {
+            let object = read_register(registers, instruction.b)?;
+            let key = read_register(registers, instruction.c)?;
+            let key = crate::properties::dynamic_property_key(&key)?;
+            let value = get_property_result(&object, &key)?;
+            write_value(registers, instruction.a, value);
+            Ok(None)
+        }
+        Opcode::Return => read_register(registers, instruction.a)
+            .map(crate::completion::Completion::Return)
+            .map(Some),
+        Opcode::Slow => run_op(
+            registers,
+            code.cold(instruction)
+                .ok_or_else(|| VmError::EvalError("missing cold instruction".into()))?,
+            context,
+        ),
+        _ => Err(VmError::EvalError("unsupported compact instruction".into())),
+    }
 }
 
 fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmError> {

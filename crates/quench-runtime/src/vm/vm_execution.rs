@@ -62,6 +62,27 @@ pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, Vm
     result
 }
 
+pub fn execute_code_with_context(
+    code: crate::machine::CodeView<'_>,
+    context: &VmContext,
+) -> Result<Value, VmError> {
+    crate::builtins::reset_intrinsic_prototype_state();
+    let result = crate::vm::with_current_context(context, || {
+        let mut registers = Vec::new();
+        prepare_register_stack(&mut registers);
+        let environment = crate::environment::Environment::child(
+            &crate::environment::Environment::new(),
+            registers.clone(),
+        );
+        execute_code_in_environment(code, &mut registers, context, environment)
+    });
+    let realm = context.realm();
+    if realm::with_realm(realm, crate::promise::drain_microtasks_all).is_none() {
+        crate::vm::with_current_context(context, crate::promise::drain_microtasks_all);
+    }
+    result
+}
+
 /// The context currently active on this thread, or a default one.
 /// Hosts use this to re-enter the VM from inside a capability call.
 pub fn current_context() -> Rc<VmContext> {
@@ -125,6 +146,25 @@ pub fn execute_in_place_context(
     execute_in_environment(ops, registers, context, environment)
 }
 
+pub fn execute_code_in_place_context(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<Value, VmError> {
+    prepare_register_stack(registers);
+    let parent = crate::locals::current();
+    let environment = crate::environment::Environment::in_place_child(&parent, registers.clone());
+    execute_code_in_environment(code, registers, context, environment)
+}
+
+pub(crate) fn execute_code_in_place(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut Vec<Value>,
+) -> Result<Value, VmError> {
+    let context = current_context_or_default();
+    execute_code_in_place_context(code, registers, &context)
+}
+
 fn execute_completion_in_place_context(
     ops: &[Op],
     registers: &mut Vec<Value>,
@@ -144,6 +184,14 @@ pub(crate) fn execute_completion_in_current_frame(
     drive_completion(ops, registers, &context)
 }
 
+pub(crate) fn execute_code_completion_in_current_frame(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut Vec<Value>,
+) -> Result<crate::completion::Completion, VmError> {
+    let context = current_context_or_default();
+    drive_code_completion(code, registers, &context)
+}
+
 fn drive_completion(
     ops: &[Op],
     registers: &mut Vec<Value>,
@@ -152,6 +200,28 @@ fn drive_completion(
     let mut pc = 0;
     loop {
         let step = run_ops_completion_step_from(ops, pc, registers, context)?;
+        pc = step.next;
+        match step.completion {
+            crate::completion::Completion::Call(continuation) => {
+                if let Err(VmError::Thrown(value)) =
+                    crate::vm::vm_ops::execute_call_continuation(registers, continuation)
+                {
+                    return Ok(crate::completion::Completion::Throw(value));
+                }
+            }
+            completion => return preserve_frame_completion(completion),
+        }
+    }
+}
+
+fn drive_code_completion(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<crate::completion::Completion, VmError> {
+    let mut pc = 0;
+    loop {
+        let step = run_code_completion_step_from(code, pc, registers, context)?;
         pc = step.next;
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
@@ -224,6 +294,28 @@ pub(crate) fn execute_in_environment(
         }
     }
 }
+
+pub(crate) fn execute_code_in_environment(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+) -> Result<Value, VmError> {
+    let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    let mut pc = 0;
+    loop {
+        let step = run_code_completion_step_from(code, pc, registers, context)?;
+        pc = step.next;
+        match step.completion {
+            crate::completion::Completion::Call(continuation) => {
+                crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+            }
+            completion => return completion_result(completion),
+        }
+    }
+}
 pub(crate) fn execute_frame_completion(
     ops: &[Op],
     registers: &mut Vec<Value>,
@@ -249,12 +341,24 @@ pub(crate) fn execute_frame_completion(
         }
     }
 }
-pub(crate) fn execute_indirect_eval(ops: &[Op]) -> Result<Value, VmError> {
+
+pub(crate) fn execute_code_frame_completion(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+) -> Result<crate::completion::Completion, VmError> {
+    let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    drive_code_completion(code, registers, context)
+}
+pub(crate) fn execute_indirect_eval(code: crate::machine::CodeView<'_>) -> Result<Value, VmError> {
     let context = CURRENT_CONTEXT
         .with(|current| current.borrow().clone())
         .unwrap_or_else(|| Rc::new(VmContext::default()));
     if realm::context(context.realm()).is_some() {
-        return execute_indirect_eval_in_realm(context.realm(), ops);
+        return execute_indirect_eval_in_realm(context.realm(), code);
     }
     let global = current_global_object();
     let caller = crate::locals::current();
@@ -262,15 +366,15 @@ pub(crate) fn execute_indirect_eval(ops: &[Op]) -> Result<Value, VmError> {
     environment.set(0, global.clone());
     let mut registers = Vec::new();
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
-    let result = execute_in_environment(ops, &mut registers, &context, environment);
+    let result = execute_code_in_environment(code, &mut registers, &context, environment);
     caller.replace_value(&global, &current_global_object());
     result
 }
 pub(crate) fn execute_indirect_eval_in_realm(
     realm_id: RealmId,
-    ops: &[Op],
+    code: crate::machine::CodeView<'_>,
 ) -> Result<Value, VmError> {
-    realm::execute(realm_id, ops)
+    realm::execute(realm_id, code)
 }
 
 #[cfg(test)]
@@ -291,7 +395,7 @@ mod tests {
         let new = Value::Object(Rc::new(ObjectData::new(vec![])));
         crate::locals::replace_value(&old, &new);
         let program = crate::reduce::reduce_source("0;").expect("source reduces");
-        crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+        crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
             .expect("program runs");
         let resolved = crate::locals::resolved_replacement(old);
         let (Value::Object(resolved), Value::Object(expected)) = (resolved, new) else {
@@ -311,7 +415,7 @@ mod tests {
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("bounded ordinary calls run");
         assert_eq!(result, Value::Undefined);
     }
@@ -324,7 +428,7 @@ mod tests {
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("Math assignment runs");
         assert_eq!(result, Value::Undefined);
     }
@@ -341,7 +445,7 @@ mod tests {
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("stateful Math.random assignment runs");
         assert_eq!(result, Value::Undefined);
     }
@@ -356,7 +460,7 @@ mod tests {
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("member assignment with call RHS runs");
         assert_eq!(result, Value::Undefined);
     }
@@ -370,7 +474,7 @@ mod tests {
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("nested calls run");
         assert_eq!(result, Value::Undefined);
     }
@@ -387,7 +491,7 @@ mod tests {
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("receiver call runs");
         assert_eq!(result, Value::Undefined);
     }
@@ -401,7 +505,7 @@ mod tests {
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default());
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default());
         assert!(matches!(
             result,
             Err(crate::vm::VmError::Thrown(Value::Number(17.0)))
@@ -419,7 +523,7 @@ mod tests {
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("closure call runs");
         assert_eq!(result, Value::Undefined);
     }
@@ -471,14 +575,14 @@ mod tests {
             // dispatch benchmark to call-frame register restoration.
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let operation_count = program.ops().len();
+        let operation_count = program.code().len();
         assert!(
             operation_count >= 10,
             "benchmark must contain a meaningful dispatch sequence"
         );
         let started = Instant::now();
         let result =
-            crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
                 .expect("dispatch benchmark runs");
         let elapsed = started.elapsed();
         assert_eq!(result, Value::Undefined);
