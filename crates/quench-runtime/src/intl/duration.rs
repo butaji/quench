@@ -329,9 +329,7 @@ fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
     }
 }
 
-fn duration_property_copy(
-    properties: &crate::value::ObjectProperties,
-) -> Vec<(String, Value)> {
+fn duration_property_copy(properties: &crate::value::ObjectProperties) -> Vec<(String, Value)> {
     properties
         .iter()
         .map(|(name, value)| (name.as_str().to_owned(), value.clone()))

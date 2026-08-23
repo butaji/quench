@@ -10,7 +10,10 @@ struct Descriptor {
     data: bool,
 }
 
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     match op {
         Op::CheckGlobalFunction { name } => check_function(name),
         Op::CheckGlobalVar {
@@ -121,7 +124,7 @@ fn has_restricted_global(name: &str) -> bool {
 }
 
 fn create_var(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     name: &str,
     slot: u16,
     deletable: bool,
@@ -150,7 +153,7 @@ fn create_var(
 }
 
 fn alias_existing_global(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     name: &str,
     slot: u16,
     current: &Descriptor,
@@ -163,7 +166,7 @@ fn alias_existing_global(
 }
 
 fn create_function(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     name: &str,
     slot: u16,
     deletable: bool,
@@ -260,7 +263,7 @@ fn data_descriptor(
 }
 
 fn define_global(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     name: &str,
     descriptor: Vec<(String, Value)>,
 ) -> Result<(), VmError> {

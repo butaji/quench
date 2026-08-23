@@ -281,7 +281,7 @@ fn own_index(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     // Keep the dense backing-store read independent from generic properties.
     // `direct_property` has already handled indexed property overrides; this
     // path only reads an actual dense slot.
-    values.dense_value_at(index).cloned()
+    values.dense_value_at(index)
 }
 
 fn array_prototype_override(key: &str) -> Option<Value> {
@@ -389,7 +389,7 @@ pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
             _ => None,
         })
         .unwrap_or(1);
-    Value::array(flatten(values, depth))
+    Value::array(flatten(&values.snapshot(), depth))
 }
 fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
     // Allocate the result once and append through the whole traversal. The
@@ -404,7 +404,7 @@ fn flatten_into(values: &[Value], depth: usize, result: &mut Vec<Value>) {
     for value in values {
         if depth > 0 {
             if let Value::Array(nested) = value {
-                flatten_into(nested, depth - 1, result);
+                flatten_into(&nested.snapshot(), depth - 1, result);
                 continue;
             }
         }
@@ -425,15 +425,15 @@ pub(crate) fn flat_map(
     // Reserve that lower bound once; nested results can still grow the vector.
     let mut mapped = Vec::with_capacity(values.len());
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    for (index, value) in values.iter().enumerate() {
+    for (index, value) in values.snapshot().into_iter().enumerate() {
         let args = [
-            value.clone(),
+            value,
             Value::Number(index as f64),
             receiver.cloned().unwrap_or(Value::Undefined),
         ];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
         match result {
-            Value::Array(nested) => mapped.extend(nested.iter().cloned()),
+            Value::Array(nested) => mapped.extend(nested.snapshot()),
             value => mapped.push(value),
         }
     }
@@ -455,7 +455,7 @@ pub(crate) fn at(
     };
     let number = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
     if number.is_nan() {
-        return Ok(values.first().cloned().unwrap_or(Value::Undefined));
+        return Ok(values.first().unwrap_or(Value::Undefined));
     }
     let index = number.trunc();
     let length = values.len() as f64;
@@ -463,7 +463,9 @@ pub(crate) fn at(
     if position < 0.0 || position >= length {
         return Ok(Value::Undefined);
     }
-    Ok(values[position as usize].clone())
+    Ok(values
+        .get_index(position as usize)
+        .unwrap_or(Value::Undefined))
 }
 pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let this = receiver.cloned().unwrap_or(Value::Undefined);
@@ -498,7 +500,7 @@ pub(crate) fn reduce_values(
         ));
     }
     let values: Vec<Value> = if let Value::Array(values) = receiver {
-        values.iter().cloned().collect()
+        values.snapshot()
     } else {
         let length = crate::execute::get_property_result(receiver, "length")
             .ok()

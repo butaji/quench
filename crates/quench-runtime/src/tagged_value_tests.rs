@@ -5,8 +5,26 @@ use core::mem::{align_of, size_of};
 fn one_word_layout() {
     assert_eq!(size_of::<TaggedValue>(), 8);
     assert_eq!(align_of::<TaggedValue>(), 8);
-    assert_eq!(TaggedValue::null().bits(), 0x7ff8_3000_0000_0000);
-    assert_eq!(TaggedValue::undefined().bits(), 0x7ff8_4000_0000_0000);
+    assert_eq!(TaggedValue::null().bits(), 0x7ff8_4000_0000_0002);
+    assert_eq!(TaggedValue::undefined().bits(), 0x7ff8_4000_0000_0003);
+}
+
+#[test]
+fn fact_generated_tag_accessors_are_exhaustive() {
+    assert!(TaggedValue::i31(1).unwrap().is_i31());
+    assert!(TaggedValue::bool(true).is_primitive());
+    assert!(TaggedValue::null().is_primitive());
+    assert!(TaggedValue::undefined().is_primitive());
+    assert!(TaggedValue::object_ptr(0).unwrap().is_object_ptr());
+    assert!(TaggedValue::array_ptr(0).unwrap().is_array_ptr());
+    assert!(TaggedValue::function_ptr(0).unwrap().is_function_ptr());
+    assert!(TaggedValue::heap_ref(HeapHandle {
+        reference: crate::identity::HeapRef(1),
+        generation: 1,
+    })
+    .unwrap()
+    .is_heap_ref());
+    assert!(TaggedValue::heap_ptr(0).unwrap().is_heap_ptr());
 }
 
 #[test]
@@ -41,14 +59,8 @@ fn every_tag_round_trips_at_boundaries() {
     }
     assert_eq!(TaggedValue::null().decode(), DecodedValue::Null);
     assert_eq!(TaggedValue::undefined().decode(), DecodedValue::Undefined);
-    for payload in [0, 0x1234, PAYLOAD_MASK] {
-        assert_eq!(
-            TaggedValue::builtin(payload).unwrap().decode(),
-            DecodedValue::Builtin(payload)
-        );
-    }
-    let reference = HeapRef {
-        index: HEAP_INDEX_MASK as u32,
+    let reference = HeapHandle {
+        reference: crate::identity::HeapRef(HEAP_INDEX_MASK as u32),
         generation: HEAP_GENERATION_MASK as u32,
     };
     assert_eq!(
@@ -61,15 +73,14 @@ fn every_tag_round_trips_at_boundaries() {
 fn bounds_are_checked() {
     assert!(TaggedValue::i31(i32::MIN).is_none());
     assert!(TaggedValue::i31(i32::MAX).is_none());
-    assert!(TaggedValue::builtin(1 << 44).is_none());
-    assert!(TaggedValue::heap_ref(HeapRef {
-        index: 1 << 24,
+    assert!(TaggedValue::heap_ref(HeapHandle {
+        reference: crate::identity::HeapRef(1 << 24),
         generation: 0
     })
     .is_none());
-    assert!(TaggedValue::heap_ref(HeapRef {
-        index: 0,
-        generation: 1 << 20
+    assert!(TaggedValue::heap_ref(HeapHandle {
+        reference: crate::identity::HeapRef(0),
+        generation: 1 << 21
     })
     .is_none());
 }
@@ -77,10 +88,8 @@ fn bounds_are_checked() {
 #[test]
 fn forged_singleton_payloads_are_rejected() {
     for bits in [
-        TAG_PREFIX | (2 << TAG_SHIFT) | 2,
-        TAG_PREFIX | (3 << TAG_SHIFT) | 1,
-        TAG_PREFIX | (4 << TAG_SHIFT) | PAYLOAD_MASK,
-        TAG_PREFIX | (7 << TAG_SHIFT),
+        TAG_PREFIX | (2 << TAG_SHIFT) | 4,
+        TAG_PREFIX | (8 << TAG_SHIFT),
     ] {
         assert!(matches!(
             TaggedValue::from_bits(bits).decode(),
@@ -125,7 +134,7 @@ fn value_adapter_has_explicit_scalar_boundary() {
     assert!(Value::BigInt("1".into()).to_tagged().is_none());
     assert!(Value::String("heap-owned".into()).to_tagged().is_none());
     assert!(Value::from_tagged(TaggedValue::i31(7).unwrap()).is_some());
-    assert!(Value::from_tagged(TaggedValue::builtin(1).unwrap()).is_none());
+    assert!(Value::from_tagged(TaggedValue::heap_ptr(0).unwrap()).is_none());
 }
 
 #[test]

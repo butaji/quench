@@ -3,7 +3,7 @@ fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute:
         None | Some(Value::Undefined) => empty_float64_array(),
         Some(Value::ArrayBuffer(buffer)) => view_float64_array(buffer, arguments),
         Some(Value::Float64Array(view)) => copy_float64_array(view),
-        Some(Value::Array(values)) => values_float64_array(values),
+        Some(Value::Array(values)) => values_float64_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?
@@ -27,7 +27,7 @@ fn construct_float32_array(arguments: &[Value]) -> Result<Value, crate::execute:
         None | Some(Value::Undefined) => empty_float32_array(),
         Some(Value::ArrayBuffer(buffer)) => view_float32_array(buffer, arguments),
         Some(Value::Float32Array(view)) => copy_float32_array(view),
-        Some(Value::Array(values)) => values_float32_array(values),
+        Some(Value::Array(values)) => values_float32_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?
@@ -51,7 +51,7 @@ fn construct_int8_array(arguments: &[Value]) -> Result<Value, crate::execute::Vm
         None | Some(Value::Undefined) => empty_int8_array(),
         Some(Value::ArrayBuffer(buffer)) => view_int8_array(buffer, arguments),
         Some(Value::Int8Array(view)) => copy_int8_array(view),
-        Some(Value::Array(values)) => values_int8_array(values),
+        Some(Value::Array(values)) => values_int8_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?
@@ -71,7 +71,7 @@ fn construct_int16_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         None | Some(Value::Undefined) => empty_int16_array(),
         Some(Value::ArrayBuffer(buffer)) => view_int16_array(buffer, arguments),
         Some(Value::Int16Array(view)) => copy_int16_array(view),
-        Some(Value::Array(values)) => values_int16_array(values),
+        Some(Value::Array(values)) => values_int16_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?
@@ -91,7 +91,7 @@ fn construct_int32_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         None | Some(Value::Undefined) => empty_int32_array(),
         Some(Value::ArrayBuffer(buffer)) => view_int32_array(buffer, arguments),
         Some(Value::Int32Array(view)) => copy_int32_array(view),
-        Some(Value::Array(values)) => values_int32_array(values),
+        Some(Value::Array(values)) => values_int32_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?
@@ -111,7 +111,7 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         None | Some(Value::Undefined) => empty_uint8_array(),
         Some(Value::ArrayBuffer(buffer)) => view_uint8_array(buffer, arguments),
         Some(Value::Uint8Array(view)) => copy_uint8_array(view),
-        Some(Value::Array(values)) => values_uint8_array(values),
+        Some(Value::Array(values)) => values_uint8_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?
@@ -140,7 +140,7 @@ fn construct_uint32_array(arguments: &[Value]) -> Result<Value, crate::execute::
         None | Some(Value::Undefined) => empty_uint32_array(),
         Some(Value::ArrayBuffer(buffer)) => view_uint32_array(buffer, arguments),
         Some(Value::Uint32Array(view)) => copy_uint32_array(view),
-        Some(Value::Array(values)) => values_uint32_array(values),
+        Some(Value::Array(values)) => values_uint32_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?
@@ -164,7 +164,7 @@ fn construct_uint16_array(arguments: &[Value]) -> Result<Value, crate::execute::
         None | Some(Value::Undefined) => empty_uint16_array(),
         Some(Value::ArrayBuffer(buffer)) => view_uint16_array(buffer, arguments),
         Some(Value::Uint16Array(view)) => copy_uint16_array(view),
-        Some(Value::Array(values)) => values_uint16_array(values),
+        Some(Value::Array(values)) => values_uint16_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?
@@ -308,7 +308,7 @@ fn construct_uint8_clamped_array(arguments: &[Value]) -> Result<Value, crate::ex
         None | Some(Value::Undefined) => empty_uint8_clamped_array(),
         Some(Value::ArrayBuffer(buffer)) => view_uint8_clamped_array(buffer, arguments),
         Some(Value::Uint8ClampedArray(view)) => copy_uint8_clamped_array(view),
-        Some(Value::Array(values)) => values_uint8_clamped_array(values),
+        Some(Value::Array(values)) => values_uint8_clamped_array(&values.snapshot()),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
             let values = object_array_like(properties)?

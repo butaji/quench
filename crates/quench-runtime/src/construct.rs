@@ -30,7 +30,10 @@ pub(crate) fn reduce(
     });
     Some(dst)
 }
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::execute::VmError> {
+pub(crate) fn execute(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), crate::execute::VmError> {
     let Op::Construct {
         dst,
         callee,
@@ -54,7 +57,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::
     Ok(())
 }
 fn collect_construct_arguments(
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     args: &[u16],
     spreads: &[bool],
 ) -> Result<Vec<Value>, crate::execute::VmError> {

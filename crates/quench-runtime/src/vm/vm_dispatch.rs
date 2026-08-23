@@ -26,7 +26,7 @@ fn classify_dispatch(op: &Op) -> DispatchClass {
 
 #[inline(always)]
 fn run_op(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
     context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
@@ -55,7 +55,7 @@ fn malformed_call_completion() -> crate::completion::Completion {
 }
 
 fn run_call_completion(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
@@ -103,7 +103,7 @@ impl FunctionCallRecord<'_> {
 
 #[inline(never)]
 fn dispatch_function_call(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     record: FunctionCallRecord<'_>,
 ) -> Result<crate::completion::Completion, VmError> {
     let _context = record.context;
@@ -119,7 +119,7 @@ fn dispatch_function_call(
 
 include!("run_simple_op.rs");
 
-fn run_global_declaration_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+fn run_global_declaration_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<bool, VmError> {
     if !is_global_declaration_op(op) {
         return Ok(false);
     }
@@ -138,7 +138,7 @@ fn is_global_declaration_op(op: &Op) -> bool {
 }
 
 fn run_eval_completion(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     let Op::Eval {
@@ -174,7 +174,7 @@ fn run_eval_completion(
     Ok(tail.map(crate::completion::Completion::TailCall))
 }
 
-fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+fn run_property_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<bool, VmError> {
     use Op::*;
     if !matches!(
         op,
@@ -212,7 +212,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
     Ok(true)
 }
 
-fn run_class_heritage(registers: &[Value], op: &Op) -> Result<(), VmError> {
+fn run_class_heritage(registers: &crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     let Op::ValidateClassHeritage { src } = op else {
         return Ok(());
     };
@@ -221,7 +221,7 @@ fn run_class_heritage(registers: &[Value], op: &Op) -> Result<(), VmError> {
 
 include!("vm_local.rs");
 
-fn run_make_builtin(registers: &mut Vec<Value>, op: &Op) {
+fn run_make_builtin(registers: &mut crate::register_file::RegisterFile, op: &Op) {
     let Op::MakeBuiltin { dst, builtin } = op else {
         return;
     };
@@ -233,7 +233,7 @@ fn run_make_builtin(registers: &mut Vec<Value>, op: &Op) {
 }
 
 fn run_control_op(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::completion::Completion;
@@ -290,7 +290,7 @@ fn run_control_op(
     }
 }
 
-fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
+fn run_dispatch_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<Option<Value>, VmError> {
     use Op::*;
     match op {
         CallMethod { .. }
@@ -302,7 +302,7 @@ fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>,
     Ok(None)
 }
 
-fn run_make_array(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_make_array(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     match op {
         Op::MakeArray { dst, elements } => execute_array(registers, *dst, elements)?,
         Op::BuildArray { dst, elements } => execute_array_plan(registers, *dst, elements)?,
@@ -311,7 +311,7 @@ fn run_make_array(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     Ok(())
 }
 
-fn run_make_object(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_make_object(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     if let Op::MakeObject { dst, properties } = op {
         execute_object(registers, *dst, properties)?;
         if let Value::Object(object) = read_register(registers, *dst)? {
@@ -321,7 +321,7 @@ fn run_make_object(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     Ok(())
 }
 
-fn run_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_call(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     if let Op::Call {
         dst,
         callee,
@@ -335,7 +335,7 @@ fn run_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     Ok(())
 }
 
-fn run_tail_call(registers: &[Value], op: &Op) -> Result<crate::completion::Completion, VmError> {
+fn run_tail_call(registers: &crate::register_file::RegisterFile, op: &Op) -> Result<crate::completion::Completion, VmError> {
     let Op::TailCall {
         callee,
         args,
@@ -349,7 +349,7 @@ fn run_tail_call(registers: &[Value], op: &Op) -> Result<crate::completion::Comp
 }
 
 fn run_await_completion(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::completion::Completion;
@@ -365,7 +365,7 @@ fn run_await_completion(
     Ok(None)
 }
 
-fn run_binary(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_binary(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     if let Op::Binary {
         dst,
         operator,
@@ -378,7 +378,7 @@ fn run_binary(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     Ok(())
 }
 
-fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_get_set_property(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     use Op::*;
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
@@ -429,22 +429,22 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
     Ok(())
 }
 
-fn run_name_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_name_property(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     crate::with_scope::execute_name(registers, op)
 }
 
-fn run_delete_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_delete_property(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     crate::properties::execute_delete_property(registers, op)
 }
 
-fn to_property_key(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
+fn to_property_key(registers: &mut crate::register_file::RegisterFile, dst: u16, src: u16) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, src)?;
     let key = crate::conversion::to_property_key(&value)?;
     crate::execute::write_value(registers, dst, crate::value::Value::String(key));
     Ok(())
 }
 
-fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_method_or_construct(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
     use Op::*;
     match op {
         CallMethod { .. } => crate::methods::execute(registers, op)?,
@@ -457,7 +457,7 @@ fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
 }
 
 fn run_conditional(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, VmError> {
     crate::conditional::execute(registers, op)
@@ -500,7 +500,7 @@ fn property_string(
         .map(|(_, value)| to_string(Some(value)))
 }
 
-fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Result<(), VmError> {
+fn execute_array(registers: &mut crate::register_file::RegisterFile, dst: u16, elements: &[u16]) -> Result<(), VmError> {
     let values = elements
         .iter()
         .map(|index| read_register(registers, *index))
@@ -511,7 +511,7 @@ fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Resu
 include!("vm_array_build.rs");
 
 fn execute_object(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     properties: &[(String, u16)],
 ) -> Result<(), VmError> {

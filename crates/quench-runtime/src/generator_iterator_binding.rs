@@ -38,7 +38,7 @@ fn iterator_frame(
     index: usize,
     yield_dst: u16,
     close_normal: bool,
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
 ) -> Result<crate::machine::Frame, VmError> {
     let iterator = crate::execute::read_register(registers, binding)?;
     Ok(iterator_binding_frame(
@@ -366,7 +366,7 @@ fn resume_iterator_conditional(
 
 fn write_conditional_result(
     conditional: &Op,
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     value: Value,
 ) -> Result<(), VmError> {
     let Op::Conditional { dst, .. } = conditional else {
@@ -378,7 +378,7 @@ fn write_conditional_result(
 
 fn close_iterator_binding(
     op: &Op,
-    registers: &[Value],
+    registers: &crate::register_file::RegisterFile,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
     let Op::IteratorBinding {

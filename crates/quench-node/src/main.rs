@@ -56,7 +56,12 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
                 return result;
             }
             let source = host.load_module(&path)?;
-            QuenchRuntime.execute(&source, Some(path.as_path()), &host)
+            let outcome = quench_node::run::run_script(path.as_path(), &[], &source);
+            match outcome.error {
+                Some(error) => Err(error.into()),
+                None if outcome.exit_code == 0 => Ok(()),
+                None => Err(format!("script exited with status {}", outcome.exit_code).into()),
+            }
         }
         None => QuenchRuntime.execute("", None, &host),
     }

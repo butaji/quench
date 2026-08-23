@@ -93,7 +93,10 @@ pub(crate) fn capture_lexical() -> Option<(Value, Value, Value)> {
     })
 }
 
-pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {
+pub(crate) fn execute_get(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &crate::ops::Op,
+) -> Result<(), VmError> {
     match op {
         crate::ops::Op::GetSuperProperty { dst, key } => {
             let context = current()?;
@@ -117,7 +120,10 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
     }
 }
 
-pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Result<(), VmError> {
+pub(crate) fn execute_set(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &crate::ops::Op,
+) -> Result<(), VmError> {
     match op {
         crate::ops::Op::SetSuperProperty { key, src } => {
             let context = current()?;
@@ -143,7 +149,10 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
     }
 }
 
-pub(crate) fn execute_call(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {
+pub(crate) fn execute_call(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &crate::ops::Op,
+) -> Result<(), VmError> {
     if matches!(
         op,
         crate::ops::Op::GetSuperProperty { .. } | crate::ops::Op::GetSuperPropertyDynamic { .. }
@@ -167,7 +176,7 @@ pub(crate) fn execute_call(registers: &mut Vec<Value>, op: &crate::ops::Op) -> R
 }
 
 pub(crate) fn execute_constructor(
-    registers: &mut Vec<Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), VmError> {
     let crate::ops::Op::CallSuperConstructor { dst, args, spreads } = op else {
@@ -253,7 +262,10 @@ pub(crate) fn check_initialized_this() -> Result<(), VmError> {
     require_initialized_this(&context)
 }
 
-pub(crate) fn execute_capture_base(registers: &mut Vec<Value>, dst: u16) -> Result<(), VmError> {
+pub(crate) fn execute_capture_base(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+) -> Result<(), VmError> {
     let context = current()?;
     require_initialized_this(&context)?;
     let prototype = require_context_super_base(&context)?;
@@ -261,7 +273,11 @@ pub(crate) fn execute_capture_base(registers: &mut Vec<Value>, dst: u16) -> Resu
     Ok(())
 }
 
-fn super_base(context: &Context, registers: &[Value], base: Option<u16>) -> Result<Value, VmError> {
+fn super_base(
+    context: &Context,
+    registers: &crate::register_file::RegisterFile,
+    base: Option<u16>,
+) -> Result<Value, VmError> {
     match base {
         Some(slot) => crate::execute::read_register(registers, slot),
         None => require_context_super_base(context),

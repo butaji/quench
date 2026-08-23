@@ -20,14 +20,14 @@ pub(crate) struct CallRequest {
     pub(crate) arguments: Vec<Value>,
     pub(crate) return_destination: u16,
     pub(crate) caller_resume_pc: usize,
-    pub(crate) caller_registers: Vec<Value>,
+    pub(crate) caller_registers: crate::register_file::RegisterFile,
 }
 
 #[derive(Debug)]
 pub(crate) struct Activation {
     pub(crate) function: Option<Rc<FunctionValue>>,
     pub(crate) pc: usize,
-    pub(crate) registers: Vec<Value>,
+    pub(crate) registers: crate::register_file::RegisterFile,
     pub(crate) environment: Rc<Environment>,
     pub(crate) receiver: Value,
     pub(crate) return_destination: Option<u16>,

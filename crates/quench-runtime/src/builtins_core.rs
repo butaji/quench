@@ -184,6 +184,7 @@ pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value
         .map_or_else(|| ",".to_string(), value_to_string);
     Value::String(
         values
+            .snapshot()
             .iter()
             .map(value_to_string)
             .collect::<Vec<_>>()

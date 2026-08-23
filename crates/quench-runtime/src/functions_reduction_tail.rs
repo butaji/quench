@@ -90,7 +90,7 @@ fn prototype_descriptor(value: crate::value::Value) -> crate::value::Value {
 }
 
 pub(crate) fn write(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     body: &crate::machine::FunctionCode,
     params: u16,
@@ -115,6 +115,6 @@ pub(crate) fn write(
     crate::execute::write_value(registers, dst, value);
 }
 
-pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
+pub(crate) fn write_op(registers: &mut crate::register_file::RegisterFile, op: &Op) {
     crate::functions_write::write_op(registers, op);
 }

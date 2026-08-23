@@ -1,5 +1,5 @@
 pub(crate) fn execute_optional_get(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), crate::execute::VmError> {
     let crate::ops::Op::OptionalGet { dst, object, key } = op else {
@@ -16,7 +16,7 @@ pub(crate) fn execute_optional_get(
 }
 
 pub(crate) fn execute_optional_get_private(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), crate::execute::VmError> {
     let crate::ops::Op::OptionalGetPrivate { dst, object, name } = op else {
@@ -38,7 +38,7 @@ pub(crate) fn execute_optional_get_private(
 }
 
 pub(crate) fn execute_optional_get_dynamic(
-    registers: &mut Vec<crate::value::Value>,
+    registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
 ) -> Result<(), crate::execute::VmError> {
     let crate::ops::Op::OptionalGetDynamic { dst, object, key } = op else {

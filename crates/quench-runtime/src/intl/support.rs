@@ -108,10 +108,11 @@ fn proxy_fallback_key(receiver: &Value) -> Result<String, VmError> {
     let Value::Array(keys) = keys else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
-    keys.iter()
+    keys.snapshot()
+        .into_iter()
         .find_map(|value| match value {
             Value::String(key) if key.starts_with("Symbol.IntlLegacyConstructedSymbol\0") => {
-                Some(key.clone())
+                Some(key)
             }
             _ => None,
         })

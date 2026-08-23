@@ -15,7 +15,7 @@ pub struct CallContinuation {
     pub arguments: Vec<Value>,
     pub caller_code: crate::identity::CodeId,
     pub caller_pc: u32,
-    pub caller_registers: Vec<Value>,
+    pub caller_registers: crate::register_file::RegisterFile,
     pub caller_environment: crate::identity::EnvironmentRef,
     pub destination: u16,
     pub guards: ContinuationGuards,

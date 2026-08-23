@@ -89,11 +89,10 @@ fn argument_property_flag(
 }
 
 fn descriptor_flag_in<K: AsRef<str>>(properties: &[(K, Value)], key: &str, field: &str) -> Option<bool> {
-    let metadata_key = descriptor_key(key);
     let (_, Value::Object(descriptor)) = properties
         .iter()
         .rev()
-        .find(|(name, _)| name.as_ref() == metadata_key)?
+        .find(|(name, _)| crate::builtins::is_descriptor_key_for(name.as_ref(), key))?
     else {
         return None;
     };
