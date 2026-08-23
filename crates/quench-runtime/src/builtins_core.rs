@@ -196,11 +196,14 @@ pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value
         .map_or_else(|| Value::String(",".to_string()), Clone::clone);
     let separator_units = string_units_for_join(&separator);
     let mut units = Vec::new();
-    for (index, value) in values.iter().enumerate() {
+    for index in 0..values.logical_len() {
+        let value = values.get_index(index).unwrap_or(Value::Undefined);
         if index > 0 {
             units.extend_from_slice(&separator_units);
         }
-        units.extend_from_slice(&string_units_for_join(value));
+        if !matches!(value, Value::Undefined | Value::Null) {
+            units.extend_from_slice(&string_units_for_join(&value));
+        }
     }
     crate::strings::from_units(units)
 }
@@ -211,13 +214,13 @@ fn string_units_for_join(value: &Value) -> Vec<u16> {
 }
 
 pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(receiver @ Value::Array(values)) = receiver else {
+    let Some(Value::Array(values)) = receiver else {
         return Value::Number(f64::NAN);
     };
-    let mut result = values.to_vec();
-    result.extend_from_slice(arguments);
-    let length = result.len();
+    let length = values.logical_len().saturating_add(arguments.len());
+    // The live array view is interior-mutable. Append there without cloning
+    // the physical snapshot on every call; consumers read through the same
+    // logical/indexed interface and retain the receiver's identity.
     values.append_live(arguments);
-    crate::locals::replace_value(receiver, &Value::array(result));
     Value::Number(length as f64)
 }
