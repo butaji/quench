@@ -9,8 +9,8 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
         }
         Value::Array(values) => Rc::make_mut(values),
         Value::Object(values) => {
-            for (_, value) in values.iter() {
-                retarget_nested_alias(value, old, new);
+            for (_, value) in Rc::make_mut(values).iter_mut() {
+                replace_direct(value, old, new);
             }
             retarget_private_aliases(&values.private_slots, old, new);
             return;
@@ -138,14 +138,15 @@ fn private_slot_contains(slot: &crate::value::PrivateSlot, target: &Value) -> bo
                     .is_some_and(|value| private_value_contains(value, target))
         }
     }
-}
-
 fn private_value_contains(value: &Value, target: &Value) -> bool {
     same_identity(value, target) || contains_nested(value, target)
 }
 
+}
 fn replace_direct(value: &mut Value, old: &Value, new: &Value) {
-    if let Value::ObjectAlias(alias) = value {
+    if let Value::BindingCell(cell) = value {
+        replace_direct(&mut cell.borrow_mut(), old, new);
+    } else if let Value::ObjectAlias(alias) = value {
         if alias_targets(alias, old) {
             if let Value::Object(object) = new {
                 *alias.0.borrow_mut() = Rc::downgrade(object);
