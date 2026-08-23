@@ -499,7 +499,7 @@ fn execute_loop_body(
     body: &[Op],
 ) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
     Ok(crate::completion::Completion::into_loop_transition(
-        crate::execute::execute_completion_in_place(body, registers)?,
+        crate::vm::execute_completion_in_current_frame(body, registers)?,
         label,
     ))
 }
