@@ -134,10 +134,10 @@ pub(crate) mod value {
                 | Value::Iterator(_)
         )
     }
-    fn boxed_number(properties: &[(String, Value)]) -> f64 {
+    fn boxed_number<K: AsRef<str>>(properties: &[(K, Value)]) -> f64 {
         properties
             .iter()
-            .find_map(|(key, value)| (key == "_value").then_some(value))
+            .find_map(|(key, value)| (key.as_ref() == "_value").then_some(value))
             .map_or(f64::NAN, |value| to_number(Some(value)))
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
