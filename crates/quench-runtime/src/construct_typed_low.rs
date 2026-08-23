@@ -7,8 +7,10 @@ fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute:
         Some(Value::Array(values)) => values_float64_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) {
+                Ok(values) => Some(values),
+                Err(_) => object_array_like(properties)?,
+            };
             match values {
                 Some(values) => values_float64_array(&values),
                 None => Err(type_error(
@@ -35,8 +37,7 @@ fn construct_float32_array(arguments: &[Value]) -> Result<Value, crate::execute:
         Some(Value::Array(values)) => values_float32_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => Some(values), Err(_) => object_array_like(properties)?, };
             match values {
                 Some(values) => values_float32_array(&values),
                 None => Err(type_error(
@@ -63,8 +64,7 @@ fn construct_int8_array(arguments: &[Value]) -> Result<Value, crate::execute::Vm
         Some(Value::Array(values)) => values_int8_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => Some(values), Err(_) => object_array_like(properties)?, };
             match values {
                 Some(values) => values_int8_array(&values),
                 None => Err(type_error("Int8Array source must be iterable or a buffer")),
@@ -87,8 +87,7 @@ fn construct_int16_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::Array(values)) => values_int16_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => Some(values), Err(_) => object_array_like(properties)?, };
             match values {
                 Some(values) => values_int16_array(&values),
                 None => Err(type_error("Int16Array source must be iterable or a buffer")),
@@ -111,8 +110,7 @@ fn construct_int32_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::Array(values)) => values_int32_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => Some(values), Err(_) => object_array_like(properties)?, };
             match values {
                 Some(values) => values_int32_array(&values),
                 None => Err(type_error("Int32Array source must be iterable or a buffer")),
@@ -135,8 +133,7 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::Array(values)) => values_uint8_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => Some(values), Err(_) => object_array_like(properties)?, };
             match values {
                 Some(values) => values_uint8_array(&values),
                 None => Err(type_error("Uint8Array source must be iterable or a buffer")),
@@ -159,8 +156,7 @@ fn construct_uint32_array(arguments: &[Value]) -> Result<Value, crate::execute::
         Some(Value::Array(values)) => values_uint32_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => Some(values), Err(_) => object_array_like(properties)?, };
             match values {
                 Some(values) => values_uint32_array(&values),
                 None => Err(type_error(
@@ -187,8 +183,7 @@ fn construct_uint16_array(arguments: &[Value]) -> Result<Value, crate::execute::
         Some(Value::Array(values)) => values_uint16_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => Some(values), Err(_) => object_array_like(properties)?, };
             match values {
                 Some(values) => values_uint16_array(&values),
                 None => Err(type_error(
@@ -335,8 +330,7 @@ fn construct_uint8_clamped_array(arguments: &[Value]) -> Result<Value, crate::ex
         Some(Value::Array(values)) => values_uint8_clamped_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = match crate::collections::iterator::collect_iterable(object.clone()) { Ok(values) => Some(values), Err(_) => object_array_like(properties)?, };
             match values {
                 Some(values) => values_uint8_clamped_array(&values),
                 None => Err(type_error(
