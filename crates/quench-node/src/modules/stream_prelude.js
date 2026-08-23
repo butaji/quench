@@ -536,10 +536,24 @@
       const st = this._writableState;
       if (st.ended) {
         const error = new Error("write after end");
-        nextTick(() => this._emitter.emit("error", error));
+        error.code = "ERR_STREAM_WRITE_AFTER_END";
         if (callback) nextTick(() => callback(error));
+        nextTick(() => this._emitter.emit("error", error));
         return false;
       }
+      if (chunk == null && !st.objectMode) {
+        const error = new TypeError("May not write null values to stream");
+        error.code = "ERR_STREAM_NULL_VALUES";
+        throw error;
+      }
+      if (!st.objectMode && typeof chunk !== "string" &&
+          !(chunk && typeof chunk.byteLength === "number" &&
+            typeof chunk.byteOffset === "number")) {
+        const error = new TypeError("The \"chunk\" argument must be of type string or an instance of Buffer");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (typeof encoding === "string") validateEncoding(encoding);
       // Node normalizes binary views to Buffer for byte-mode Writable
       // callbacks; object-mode streams preserve the original view identity.
       const isByteView = chunk && typeof chunk.byteLength === "number" &&
