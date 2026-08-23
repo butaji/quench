@@ -87,6 +87,18 @@
     return options.objectMode ? 16 : 16384;
   }
 
+  function validateEncoding(encoding) {
+    const name = String(encoding).toLowerCase();
+    const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
+      "binary", "ascii", "base64", "base64url", "hex"];
+    if (!valid.includes(name)) {
+      const error = new TypeError("Unknown encoding: " + encoding);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
+    return name;
+  }
+
   // ---- Readable ----
 
   function initReadable(stream, options) {
@@ -104,7 +116,8 @@
       closeEmitted: false,
       encoding: null,
       awaitDrainWriters: null,
-      pipeCount: 0
+      pipeCount: 0,
+      defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
     stream.readable = true;
     stream.destroyed = false;
@@ -218,7 +231,7 @@
       return this;
     }
 
-    push(chunk) {
+    push(chunk, encoding) {
       const st = this._readableState;
       st.reading = false;
       if (st.ended || st.errored) {
@@ -233,6 +246,9 @@
       if (chunk === null) {
         st.ended = true;
       } else {
+        if (!st.objectMode && typeof chunk === "string" && typeof Buffer !== "undefined") {
+          chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
+        }
         st.buffer.push(normalizeReadableChunk(this, chunk));
       }
       scheduleFlow(this);
@@ -290,7 +306,7 @@
     }
 
     setEncoding(encoding) {
-      this._readableState.encoding = encoding || "utf8";
+      this._readableState.encoding = validateEncoding(encoding || "utf8");
       return this;
     }
 
