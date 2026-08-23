@@ -52,7 +52,7 @@ fn search(receiver: Option<&Value>, args: &[Value], mode: Search) -> HandlerResu
         });
     let found = match needle {
         Needle::Byte(byte) => search_byte(&haystack, byte, args.get(1), end, &mode),
-        Needle::Bytes(bytes) => search_bytes(&haystack, &bytes, args.get(1), end, &mode, utf16),
+        Needle::Bytes(ref bytes) => search_bytes(&haystack, bytes, args.get(1), end, &mode, utf16),
     };
     Ok(match mode {
         Search::Includes => Value::Boolean(found >= 0),
@@ -184,7 +184,18 @@ fn search_bytes(
 ) -> i64 {
     if needle.is_empty() {
         return match mode {
-            Search::LastIndexOf => search_offset(offset, haystack.len(), true).min(end as i64),
+            Search::LastIndexOf => {
+                let start = if matches!(
+                    offset,
+                    None | Some(Value::Undefined) | Some(Value::Object(_))
+                ) || matches!(offset, Some(Value::Number(value)) if value.is_nan())
+                {
+                    haystack.len() as i64
+                } else {
+                    search_offset(offset, haystack.len(), true)
+                };
+                start.min(end as i64)
+            }
             _ => search_offset(offset, haystack.len(), false).min(end as i64),
         };
     }
