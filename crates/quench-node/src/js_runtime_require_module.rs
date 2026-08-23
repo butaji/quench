@@ -371,7 +371,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             let module = Value::object(vec![
                 ("Buffer".into(), buffer),
                 ("constants".into(), constants),
-                ("kMaxLength".into(), Value::Number(4_294_967_296.0)),
+                ("kMaxLength".into(), Value::Number(9_007_199_254_740_991.0)),
                 ("kStringMaxLength".into(), Value::Number(536_870_888.0)),
                 (
                     "isAscii".into(),
