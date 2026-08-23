@@ -19,6 +19,17 @@ fn stage_report_requires_complete_path_coverage() {
 }
 
 #[test]
+fn sequential_script_units_share_global_function_bindings() {
+    let mut host = super::RuntimeHost;
+    host.run_harnessed_script(
+        &["function Test262Error(message) { this.message = message; }"] ,
+        "if (typeof Test262Error !== 'function') throw new Error('missing global function');",
+        false,
+    )
+    .expect("sequential harness scripts must share global function bindings");
+}
+
+#[test]
 fn array_map_call_accepts_array_like_receiver() {
     let mut host = super::RuntimeHost;
     host.run_script(
