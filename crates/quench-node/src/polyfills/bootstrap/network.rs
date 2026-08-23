@@ -13,7 +13,7 @@ let __quenchNetAutoSelectFamilyAttemptTimeout = __quenchNetFamilyTimeoutFlag
   )
   : 2500;
 const __quenchNetModule = {
-  _normalizeArgs: function(input) {
+  _normalizeArgs(input) {
     if (input?.[__quenchNetNormalizedArgsSymbol]) return input;
     const args = [input?.[0] || {}, input?.[1] ?? null];
     args[__quenchNetNormalizedArgsSymbol] = true;
@@ -81,11 +81,13 @@ const __quenchNetModule = {
             return;
           }
           const selected = autoSelect
-            ? addresses.find((entry) => [...__quenchNetServers].some((server) =>
-              server.listening &&
-              server.address().address === entry.address &&
-              server.address().port === Number(options.port)
-            ))
+            ? addresses.find((entry) =>
+              [...__quenchNetServers].some((server) =>
+                server.listening &&
+                server.address().address === entry.address &&
+                server.address().port === Number(options.port)
+              )
+            )
             : addresses[0];
           if (!selected) {
             const noAddress = new AggregateError(
@@ -256,7 +258,6 @@ const __quenchNetModule = {
       options = {};
     }
     const server = new globalThis.__nodeEventEmitter();
-    if (typeof handler === "function") server.on("connection", handler);
     server.listening = false;
     server._connections = new Set();
     server._closeRequested = false;

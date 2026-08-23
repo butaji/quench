@@ -206,13 +206,7 @@ fn super_is_constructor(value: &Value) -> bool {
     match value {
         Value::Function(function) => crate::functions::is_constructible(function),
         Value::BoundFunction(bound) => super_is_constructor(&bound.target),
-        // Host capabilities expose constructible native classes (for example
-        // the stream constructors).  Class heritage validation already treats
-        // these as constructors; super() must make the same determination.
-        Value::Builtin(builtin) => {
-            matches!(builtin, crate::ops::Builtin::HostCapability(_))
-                || crate::builtin_meta::constructor_name(*builtin).is_some()
-        }
+        Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
         Value::Proxy(proxy) => super_is_constructor(&proxy.target),
         _ => false,
     }

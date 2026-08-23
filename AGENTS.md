@@ -7,13 +7,6 @@ irreducible behavior handwritten. Optimize for the minimum maintainable LOC.
 Keep the Rust host minimal and do not add or restore a separate runtime crate.
 The architecture is defined in `docs/data-first-minimal-runtime.md`.
 
-## Runtime prohibition
-
-`quench-runtime` is the sole JavaScript runtime for `quench-node`. Do not add,
-restore, select, document, or test QuickJS, rquickjs, or any other third-party
-JavaScript runtime. Engine-specific dependencies and alternate runtime flags
-are forbidden.
-
 ## Frozen doctrine
 
 1. Never represent the same semantic fact twice.
@@ -41,11 +34,11 @@ are forbidden.
 
 1. Select the next upstream Node fixture or API cluster.
 2. Model the reusable API facts in the shared declaration/IR layer first.
-3. Generate registration and wrappers; hand-write only irreducible compatibility behavior.
-4. Write tests only for critical behavior. For non-critical behavior, use the tests provided by submodules.
-5. Add a focused stage under `tests/node-compat/stage-N/`, run the relevant checks, format with
+3. Generate registration, wrappers, and ordinary tests; hand-write only
+   irreducible compatibility behavior.
+4. Add a focused stage under `tests/node-compat/stage-N/`, run it, format with
    Prettier, and run `git diff --check`.
-6. Commit and push each verified stage before starting the next one.
+5. Commit and push each verified stage before starting the next one.
 
 ```bash
 cargo build -p quench-runtime

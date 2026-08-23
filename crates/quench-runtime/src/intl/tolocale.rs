@@ -8,8 +8,6 @@ pub(crate) use date_kind::DateLocaleKind;
 mod array_values;
 mod date;
 mod locale_number;
-include!("tolocale_value.rs");
-include!("tolocale_symbol.rs");
 
 pub(crate) mod value {
     use crate::value::Value;

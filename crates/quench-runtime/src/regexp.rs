@@ -25,85 +25,34 @@ pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
 
 fn validate_literal_ranges(pattern: &str) -> Result<(), String> {
     let bytes = pattern.as_bytes();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        if bytes[index] != b'[' {
-            index += 1;
+    let mut in_class = false;
+    let mut escaped = false;
+    for index in 0..bytes.len().saturating_sub(2) {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
             continue;
         }
-        index += 1;
-        if index < bytes.len() && bytes[index] == b'^' {
-            index += 1;
+        if byte == b'\\' {
+            escaped = true;
+            continue;
         }
-        while index < bytes.len() && bytes[index] != b']' {
-            let (left_value, next) = class_atom(bytes, index);
-            index = next;
-            let Some(left_value) = left_value else {
-                continue;
-            };
-            if index < bytes.len()
-                && bytes[index] == b'-'
-                && index + 1 < bytes.len()
-                && bytes[index + 1] != b']'
-            {
-                index += 1;
-                let (right, next) = class_atom(bytes, index);
-                index = next;
-                if let Some(right) = right {
-                    if right < left_value {
-                        return Err("invalid character range".to_string());
-                    }
-                }
-            }
+        if byte == b'[' {
+            in_class = true;
+            continue;
         }
-        if index < bytes.len() {
-            index += 1;
+        if byte == b']' {
+            in_class = false;
+            continue;
+        }
+        if in_class && bytes[index + 1] == b'-' && bytes[index + 2] > byte {
+            continue;
+        }
+        if in_class && bytes[index + 1] == b'-' && bytes[index + 2] < byte {
+            return Err("invalid character range".to_string());
         }
     }
     Ok(())
-}
-
-/// Decode one simple character-class atom. Unknown escapes are intentionally
-/// returned as `None`: they are not safe to order, but are valid regex atoms.
-fn class_atom(bytes: &[u8], mut index: usize) -> (Option<u32>, usize) {
-    if index >= bytes.len() {
-        return (None, index);
-    }
-    if bytes[index] != b'\\' {
-        return (Some(bytes[index] as u32), index + 1);
-    }
-    index += 1;
-    if index >= bytes.len() {
-        return (None, index);
-    }
-    let kind = bytes[index];
-    match kind {
-        b'x' if index + 2 < bytes.len() => {
-            let value = hex_value(bytes[index + 1])
-                .and_then(|a| hex_value(bytes[index + 2]).map(|b| (a << 4) | b));
-            (value, index + 3)
-        }
-        b'u' if index + 4 < bytes.len() => {
-            let mut value = 0u32;
-            for offset in 1..=4 {
-                let Some(digit) = hex_value(bytes[index + offset]) else {
-                    return (None, index + 1);
-                };
-                value = (value << 4) | digit;
-            }
-            (Some(value), index + 5)
-        }
-        _ => (Some(kind as u32), index + 1),
-    }
-}
-
-fn hex_value(byte: u8) -> Option<u32> {
-    match byte {
-        b'0'..=b'9' => Some((byte - b'0') as u32),
-        b'a'..=b'f' => Some((byte - b'a' + 10) as u32),
-        b'A'..=b'F' => Some((byte - b'A' + 10) as u32),
-        _ => None,
-    }
 }
 
 pub fn execute_builtin(

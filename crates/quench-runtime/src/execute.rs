@@ -10,11 +10,7 @@ pub fn call(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, VmError> {
-    let mut target = function.clone();
-    while let crate::value::Value::BindingCell(cell) = target {
-        target = cell.borrow().clone();
-    }
-    crate::functions::execute_target(&target, receiver, arguments)
+    crate::functions::execute_target(function, receiver, arguments)
 }
 
 pub fn set_property(

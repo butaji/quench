@@ -1,13 +1,6 @@
 //! `fs` synchronous operations — real filesystem I/O with coded
 //! Node errors. Async variants wrap these and defer the callback.
 
-#[path = "fs_sync_extra.rs"]
-mod fs_sync_extra;
-pub(crate) use fs_sync_extra::{
-    access_sync, chmod_sync, chown_sync, copy_file_sync, lchmod_sync, lchown_sync, link_sync,
-    lutimes_sync, mkdtemp_sync, readlink_sync, rename_sync, rm_sync, rmdir_sync, symlink_sync,
-    truncate_sync, unlink_sync, utimes_sync, utimes_time,
-};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -24,50 +17,6 @@ fn split(args: &[Value]) -> Result<(String, FsOptions), VmError> {
     let path = path_arg(args.first())?;
     let options = parse_options(args.get(1))?;
     Ok((path, options))
-}
-#[cfg(unix)]
-pub fn statfs_sync(
-    _s: &Rc<RefCell<HostState>>,
-    _r: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let path = super::fs::path_arg(args.first())?;
-    let cpath = std::ffi::CString::new(path.as_bytes()).map_err(|_| {
-        crate::modules::buffer_enc::invalid_arg_value(
-            "Path must be a string without null bytes".into(),
-        )
-    })?;
-    let mut st = unsafe { std::mem::zeroed::<libc::statvfs>() };
-    let rc = unsafe { libc::statvfs(cpath.as_ptr(), &mut st) };
-    if rc != 0 {
-        return Err(crate::modules::fs_error::fs_error(
-            "statfs",
-            Some(&path),
-            &std::io::Error::last_os_error(),
-        ));
-    }
-    let n = |v: u128| Value::Number(v as f64);
-    Ok(host_api::object(vec![
-        ("type".into(), n(st.f_flag as u128)),
-        ("bsize".into(), n(st.f_bsize as u128)),
-        ("frsize".into(), n(st.f_frsize as u128)),
-        ("blocks".into(), n(st.f_blocks as u128)),
-        ("bfree".into(), n(st.f_bfree as u128)),
-        ("bavail".into(), n(st.f_bavail as u128)),
-        ("files".into(), n(st.f_files as u128)),
-        ("ffree".into(), n(st.f_ffree as u128)),
-    ]))
-}
-
-#[cfg(not(unix))]
-pub fn statfs_sync(
-    _s: &Rc<RefCell<HostState>>,
-    _r: Option<&Value>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
-    Err(crate::modules::buffer_enc::invalid_arg_value(
-        "statfs is not supported on this platform".into(),
-    ))
 }
 
 fn string_data(data: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError> {
@@ -89,29 +38,17 @@ fn string_data(data: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError>
 fn write_open(path: &str, flag: Option<&str>, syscall: &str) -> Result<std::fs::File, VmError> {
     let mut open = std::fs::OpenOptions::new();
     match flag.unwrap_or("w") {
-        "w" => {
+        "w" | "w+" => {
             open.write(true).create(true).truncate(true);
         }
-        "w+" => {
-            open.read(true).write(true).create(true).truncate(true);
-        }
-        "a" => {
+        "a" | "a+" => {
             open.append(true).create(true);
         }
-        "a+" => {
-            open.read(true).append(true).create(true);
-        }
-        "wx" => {
+        "wx" | "ax" => {
             open.write(true).create_new(true);
-        }
-        "ax" => {
-            open.append(true).create_new(true);
         }
         "r" => {
             open.read(true);
-        }
-        "r+" => {
-            open.read(true).write(true);
         }
         other => {
             return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
@@ -219,90 +156,6 @@ pub fn stat_sync(
 ) -> Result<Value, VmError> {
     let (path, options) = split(args)?;
     stat_impl(&path, true, options.throw_if_no_entry)
-}
-
-pub fn open_sync(
-    _s: &Rc<RefCell<HostState>>,
-    _r: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let path = super::fs::path_arg(args.first())?;
-    // Second argument is `flags` (a string) or an options object; mode
-    // (third) is accepted but unused. Matches Node's openSync signature.
-    let flag: String = match args.get(1) {
-        Some(Value::String(s)) => s.clone(),
-        Some(v) => super::fs::parse_options(Some(v))
-            .map(|o| o.flag.unwrap_or_else(|| "r".to_string()))
-            .unwrap_or_else(|_| "r".to_string()),
-        None => "r".to_string(),
-    };
-    super::fs::fd_open(&path, Some(&flag)).map(|n| Value::Number(n as f64))
-}
-pub fn fstat_sync(
-    _s: &Rc<RefCell<HostState>>,
-    _r: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let bigint = args.get(1).is_some_and(|options| {
-        quench_runtime::execute::get_property_result(options, "bigint") == Ok(Value::Boolean(true))
-    });
-    match args.first() {
-        Some(Value::Number(n)) => super::fs::fd_stat(*n as i32, bigint),
-        _ => Err(crate::modules::buffer_enc::invalid_arg_type(
-            "fd must be a number".into(),
-        )),
-    }
-}
-pub fn close_sync(
-    _s: &Rc<RefCell<HostState>>,
-    _r: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    match args.first() {
-        Some(Value::Number(n)) => super::fs::fd_close(*n as i32),
-        _ => Err(crate::modules::buffer_enc::invalid_arg_type(
-            "fd must be a number".into(),
-        )),
-    }
-}
-
-/// Deprecated `fs.Stats(...)` constructor: builds a `Stats` value from
-/// the 14 date/group fields and emits a DEP0180 deprecation warning.
-pub fn stats_constructor(
-    state: &Rc<RefCell<HostState>>,
-    _r: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let n = |i: usize| -> f64 {
-        match args.get(i) {
-            Some(Value::Number(num)) => *num,
-            _ => 0.0,
-        }
-    };
-    let value = super::fs_stats::stats_from_values(
-        n(0),
-        n(1),
-        n(2),
-        n(3),
-        n(4),
-        n(5),
-        n(6),
-        n(7),
-        n(8),
-        n(9),
-        n(10),
-        n(11),
-        n(12),
-        n(13),
-    );
-    super::process::emit_warning(
-        state,
-        "DeprecationWarning",
-        "fs.Stats constructor is deprecated.",
-        Some("DEP0180"),
-        true,
-    );
-    Ok(value)
 }
 
 pub fn lstat_sync(
@@ -417,5 +270,210 @@ pub fn mkdir_sync(
     };
     result.map_err(|e| super::fs_error::fs_error("mkdir", Some(&path), &e))?;
     apply_mode(&path, options.mode);
+    Ok(Value::Undefined)
+}
+
+pub fn unlink_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = path_arg(args.first())?;
+    std::fs::remove_file(Path::new(&path))
+        .map_err(|e| super::fs_error::fs_error("unlink", Some(&path), &e))?;
+    Ok(Value::Undefined)
+}
+
+pub fn rmdir_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = path_arg(args.first())?;
+    std::fs::remove_dir(Path::new(&path))
+        .map_err(|e| super::fs_error::fs_error("rmdir", Some(&path), &e))?;
+    Ok(Value::Undefined)
+}
+
+pub fn rm_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (path, options) = split(args)?;
+    let target = Path::new(&path);
+    let result = if options.recursive {
+        std::fs::remove_dir_all(target)
+    } else if target.is_dir() && !target.is_symlink() {
+        std::fs::remove_dir(target)
+    } else {
+        std::fs::remove_file(target)
+    };
+    match result {
+        Ok(()) => Ok(Value::Undefined),
+        Err(e) if options.force && e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Undefined),
+        Err(e) => Err(super::fs_error::fs_error("rm", Some(&path), &e)),
+    }
+}
+
+pub fn rename_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let from = path_arg(args.first())?;
+    let to = path_arg(args.get(1))?;
+    std::fs::rename(Path::new(&from), Path::new(&to))
+        .map_err(|e| super::fs_error::fs_error("rename", Some(&from), &e))?;
+    Ok(Value::Undefined)
+}
+
+pub fn copy_file_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let from = path_arg(args.first())?;
+    let to = path_arg(args.get(1))?;
+    let exclusive = matches!(args.get(2), Some(Value::Number(m)) if *m as u32 & 1 != 0);
+    let result = if exclusive {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(Path::new(&to))
+            .and_then(|mut dest| {
+                use std::io::Write;
+                let bytes = std::fs::read(Path::new(&from))?;
+                dest.write_all(&bytes)
+            })
+            .map(|_| 0)
+    } else {
+        std::fs::copy(Path::new(&from), Path::new(&to))
+    };
+    result.map_err(|e| super::fs_error::fs_error("copyfile", Some(&from), &e))?;
+    Ok(Value::Undefined)
+}
+
+pub fn access_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = path_arg(args.first())?;
+    let mode = match args.get(1) {
+        Some(Value::Number(m)) => *m as u32,
+        _ => 0,
+    };
+    check_access(&path, mode).map_err(|e| super::fs_error::fs_error("access", Some(&path), &e))?;
+    Ok(Value::Undefined)
+}
+
+fn check_access(path: &str, mode: u32) -> std::io::Result<()> {
+    let meta = std::fs::metadata(Path::new(path))?;
+    if mode & 2 != 0 && meta.permissions().readonly() {
+        return Err(std::io::Error::from_raw_os_error(13));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if mode & 1 != 0 && meta.mode() & 0o111 == 0 {
+            return Err(std::io::Error::from_raw_os_error(13));
+        }
+    }
+    Ok(())
+}
+
+pub fn mkdtemp_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let prefix = path_arg(args.first())?;
+    for attempt in 0..100u32 {
+        let candidate = format!("{prefix}{:06x}", random_suffix(attempt));
+        match std::fs::create_dir(Path::new(&candidate)) {
+            Ok(()) => return Ok(Value::String(candidate)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(super::fs_error::fs_error("mkdtemp", Some(&prefix), &e)),
+        }
+    }
+    let err = std::io::Error::from_raw_os_error(17);
+    Err(super::fs_error::fs_error("mkdtemp", Some(&prefix), &err))
+}
+
+fn random_suffix(attempt: u32) -> u32 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    now ^ std::process::id().wrapping_mul(2654435761) ^ attempt.wrapping_mul(40503)
+}
+
+pub fn readlink_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (path, options) = split(args)?;
+    let target = std::fs::read_link(Path::new(&path))
+        .map_err(|e| super::fs_error::fs_error("readlink", Some(&path), &e))?;
+    let text = target.to_string_lossy().into_owned();
+    Ok(match &options.encoding {
+        Some(encoding) if encoding != "utf8" => {
+            crate::modules::buffer_enc::decode_str(text.as_bytes(), encoding)
+        }
+        Some(_) | None => Value::String(text),
+    })
+}
+
+pub fn chmod_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = path_arg(args.first())?;
+    let mode = match args.get(1) {
+        Some(Value::Number(m)) => *m as u32,
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"mode\" argument must be of type number.".to_string(),
+            ));
+        }
+    };
+    chmod_impl(&path, mode)
+}
+
+fn chmod_impl(path: &str, mode: u32) -> Result<Value, VmError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(Path::new(path), std::fs::Permissions::from_mode(mode))
+            .map_err(|e| super::fs_error::fs_error("chmod", Some(path), &e))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = mode;
+        let err = std::io::Error::from_raw_os_error(78);
+        return Err(super::fs_error::fs_error("chmod", Some(path), &err));
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn truncate_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = path_arg(args.first())?;
+    let len = match args.get(1) {
+        Some(Value::Number(n)) => *n as u64,
+        _ => 0,
+    };
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(Path::new(&path))
+        .map_err(|e| super::fs_error::fs_error("truncate", Some(&path), &e))?;
+    file.set_len(len)
+        .map_err(|e| super::fs_error::fs_error("truncate", Some(&path), &e))?;
     Ok(Value::Undefined)
 }

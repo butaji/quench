@@ -77,12 +77,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
     }
   }
   const asyncLocalStore = "__nodeAsyncStores";
-  const asyncLocalStores = new WeakMap();
-  const getAsyncStores = (resource) =>
-    resource ? asyncLocalStores.get(resource) : undefined;
-  const setAsyncStores = (resource, stores) => {
-    if (resource) asyncLocalStores.set(resource, stores);
-  };
   class AsyncLocalStorage {
     constructor(options = {}) {
       if (options === null || typeof options !== "object") {
@@ -93,46 +87,55 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
+      this._defaultValue = options.defaultValue;
+      this.name = options.name === undefined ? "" : String(options.name);
+      this._disabled = false;
+    }
+    getStore() {
+      if (this._disabled) return undefined;
       const resource = globalThis.__nodeCurrentAsyncResource;
-      const stores = getAsyncStores(resource);
-      return stores ? stores.get(this) : this._defaultValue;
+      return resource?.[asyncLocalStore]
+        ? resource[asyncLocalStore].get(this)
+        : this._defaultValue;
     }
     run(store, callback, ...args) {
       if (typeof callback !== "function") {
         throw new TypeError('The "callback" argument must be of type function');
       }
       const resource = globalThis.__nodeCurrentAsyncResource;
-      const previous = getAsyncStores(resource);
+      const previous = resource?.[asyncLocalStore];
       const stores = previous ? new Map(previous) : new Map();
       stores.set(this, store);
-      setAsyncStores(resource, stores);
+      if (resource) resource[asyncLocalStore] = stores;
       try {
         return callback(...args);
       } finally {
-        const current = getAsyncStores(resource);
-        const restored = current ? new Map(current) : new Map();
-        if (previous?.has(this)) restored.set(this, previous.get(this));
-        else restored.delete(this);
-        setAsyncStores(resource, restored.size ? restored : previous);
+        if (resource) {
+          const current = resource[asyncLocalStore];
+          const restored = current ? new Map(current) : new Map();
+          if (previous?.has(this)) restored.set(this, previous.get(this));
+          else restored.delete(this);
+          resource[asyncLocalStore] = restored.size ? restored : previous;
+        }
       }
     }
     enterWith(store) {
       const resource = globalThis.__nodeCurrentAsyncResource;
-      const stores = getAsyncStores(resource)
-        ? new Map(getAsyncStores(resource))
+      const stores = resource?.[asyncLocalStore]
+        ? new Map(resource[asyncLocalStore])
         : new Map();
       stores.set(this, store);
-      setAsyncStores(resource, stores);
+      if (resource) resource[asyncLocalStore] = stores;
     }
     withScope(store) {
       const resource = globalThis.__nodeCurrentAsyncResource;
-      const previous = getAsyncStores(resource);
+      const previous = resource?.[asyncLocalStore];
       this.enterWith(store);
       let disposed = false;
       const dispose = () => {
         if (disposed) return;
         disposed = true;
-        setAsyncStores(resource, previous);
+        if (resource) resource[asyncLocalStore] = previous;
       };
       return {
         dispose,
@@ -144,16 +147,16 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
         throw new TypeError('The "callback" argument must be of type function');
       }
       const resource = globalThis.__nodeCurrentAsyncResource;
-      const previous = getAsyncStores(resource);
+      const previous = resource?.[asyncLocalStore];
       if (resource) {
         const stores = new Map(previous || []);
         stores.delete(this);
-        setAsyncStores(resource, stores);
+        resource[asyncLocalStore] = stores;
       }
       try {
         return callback(...args);
       } finally {
-        setAsyncStores(resource, previous);
+        if (resource) resource[asyncLocalStore] = previous;
       }
     }
     disable() {
@@ -232,8 +235,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
   globalThis.__nodeAsyncStoresKey = asyncLocalStore;
   globalThis.__nodeCloneAsyncResource = (resource) => {
     const captured = Object.create(resource || {});
-    const stores = getAsyncStores(resource);
-    if (stores) setAsyncStores(captured, new Map(stores));
+    if (resource?.[asyncLocalStore]) {
+      captured[asyncLocalStore] = new Map(resource[asyncLocalStore]);
+    }
     return captured;
   };
   globalThis.__nodeCreatePromiseResource = (trigger) => {
@@ -244,7 +248,12 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
     globalThis.__nodePromiseResourceList.add(resource);
     for (const hook of globalThis.__nodeAsyncHooks) {
       if (typeof hook.callbacks.init === "function") {
-        hook.callbacks.init(resource.asyncId, "PROMISE", resource.triggerAsyncId, resource);
+        hook.callbacks.init(
+          resource.asyncId,
+          "PROMISE",
+          resource.triggerAsyncId,
+          resource
+        );
       }
     }
     return resource;
@@ -261,8 +270,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
     const captured = globalThis.__nodeCreatePromiseResource(
       resource || globalThis.__nodeCurrentAsyncResource
     );
-    const stores = getAsyncStores(resource);
-    if (stores) setAsyncStores(captured, new Map(stores));
+    captured[asyncLocalStore] = resource?.[asyncLocalStore]
+      ? new Map(resource[asyncLocalStore])
+      : undefined;
     return function (...args) {
       const previous = globalThis.__nodeCurrentAsyncResource;
       globalThis.__nodeCurrentAsyncResource = Object.create(captured);

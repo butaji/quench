@@ -77,7 +77,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
   }
   static allocUnsafeSlow(size) {
     __nodeAllocatorCounts.uninitialized++;
-    return NodeBuffer.allocUnsafe(NodeBuffer._validateSize(size));
+    return new NodeBuffer(NodeBuffer._validateSize(size));
   }
 };
 NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =

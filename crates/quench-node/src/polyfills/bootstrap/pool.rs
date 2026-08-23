@@ -1,7 +1,6 @@
 //! Polyfill: `pool`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __NodeBufferBase01 = NodeBuffer;
-const __nodeBufferBaseFrom = NodeBuffer.from;
 const __nodeBufferPoolSize = 8192;
 let __nodeBufferPool = new ArrayBuffer(__nodeBufferPoolSize);
 let __nodeBufferPoolOffset = 0;

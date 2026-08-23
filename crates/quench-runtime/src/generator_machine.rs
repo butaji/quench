@@ -8,42 +8,33 @@ fn execute_generator_step(
     );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
-    let (store, pc, mut registers) = take_machine_execution(generator)?;
+    let machine = generator.machine.borrow_mut();
+    machine.pop_await_frame();
+    let store = machine.store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store
         .get(generator.function.code.range)
         .ok_or(VmError::MissingReturn)?;
-    let result = crate::vm::execute_generator_step(
-        ops,
-        &mut registers,
-        machine_environment(generator)?,
-        pc,
-        completion,
-    );
-    restore_machine_execution(generator, registers, result)
+    let pc = machine.pc as usize;
+    let resume = completion.clone();
+    let mut step_result = None;
+    let completion = machine.step(completion, |registers| {
+        let step = crate::vm::execute_generator_step(
+            ops,
+            registers,
+            machine_environment(generator)?,
+            pc,
+            resume,
+        )?;
+        let completion = step.completion.clone();
+        step_result = Some(step);
+        Ok(completion)
+    })?;
+    let mut step = step_result.expect("generator VM step must produce a result");
+    machine.pc = step.pc as u32;
+    step.completion = completion;
+    Ok(step)
 }
 
-fn take_machine_execution(
-    generator: &GeneratorData,
-) -> Result<(std::rc::Rc<crate::machine::CodeStore>, usize, Vec<Value>), VmError> {
-    let mut machine = generator.machine.borrow_mut();
-    machine.pop_await_frame();
-    let store = machine.store.clone().ok_or(VmError::MissingReturn)?;
-    let registers = machine.take_registers();
-    Ok((store, machine.pc as usize, registers))
-}
-
-fn restore_machine_execution(
-    generator: &GeneratorData,
-    registers: Vec<Value>,
-    result: Result<crate::vm::GeneratorStep, VmError>,
-) -> Result<crate::vm::GeneratorStep, VmError> {
-    let mut machine = generator.machine.borrow_mut();
-    machine.restore_registers(registers);
-    if let Ok(step) = &result {
-        machine.record_completion(step.completion.clone());
-    }
-    result
-}
 
 fn execute_with_generator_registers<T>(
     generator: &GeneratorData,

@@ -286,10 +286,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
   }
   toString(encoding = "utf8", start = 0, end = this.length) {
     encoding = String(encoding).toLowerCase();
-    // Avoid dispatch through the mutable NodeBuffer constructor while the
-    // bootstrap replaces it with derived classes and copies static methods.
-    // The encoding set is stable and local to this method.
-    if (!"hex utf8 utf-8 ascii latin1 binary base64 base64url ucs2 ucs-2 utf16le utf-16le".split(" ").includes(encoding)) {
+    if (!NodeBuffer.isEncoding(encoding)) {
       throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
     }
     if (start !== 0 || end !== this.length) {
@@ -297,13 +294,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       const first = range.start;
       const last = range.end;
       if (last <= first) return "";
-      // Read the receiver's bytes directly.  Buffer views can carry a
-      // runtime-owned backing value whose `buffer` property is not a native
-      // ArrayBuffer, so constructing another typed-array view here is not
-      // reliable during bootstrap.
-      const bytes = [];
-      for (let index = first; index < last; index++) bytes[bytes.length] = this[index];
-      return __nodeBufferEncodedString(bytes, encoding);
+      return this.subarray(first, Math.max(first, last)).toString(encoding);
     }
     return __nodeBufferEncodedString(this, encoding);
   }
@@ -441,32 +432,9 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
     return this.toString(...args);
   }
 };
-NodeBuffer.prototype.write = function write(
-  value,
-  offset = 0,
-  length,
-  encoding = "utf8",
-) {
-  if (typeof length === "string") {
-    encoding = length;
-    length = undefined;
-  }
-  const bytes = __nodeBufferFromBase(String(value), encoding);
-  const available = this.length - offset;
-  const count = Math.min(
-    available,
-    length === undefined ? available : Math.max(0, Number(length)),
-    bytes.length,
-  );
-  this.set(bytes.subarray(0, count), offset);
-  return count;
-};
-const __nodeBufferFromBase = __nodeBufferBaseFrom;
-Object.defineProperty(NodeBuffer, "from", {
-  configurable: true,
-  writable: true,
-  value: (...args) => {
-    const source = __nodeBufferFromBase(...args);
+const __nodeBufferFromBase = __NodeBufferBase01.from;
+NodeBuffer.from = (...args) => {
+  const source = __nodeBufferFromBase.apply(__NodeBufferBase01, args);
   if (
     __nodeBufferIsArrayBuffer(args[0]) ||
     args[0] instanceof SharedArrayBuffer
@@ -481,6 +449,5 @@ Object.defineProperty(NodeBuffer, "from", {
   const output = new NodeBuffer(source.length);
   output.set(source);
   return output;
-  }
-});
+};
 "#);

@@ -1,18 +1,6 @@
 //! Polyfill: `api-head`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeCurrentBuffer = () => NodeBuffer;
-globalThis.Buffer = new Proxy(NodeBuffer, {
-  get(target, property) {
-    const currentNodeBuffer = __nodeCurrentBuffer();
-    const value = property === "prototype"
-      ? currentNodeBuffer.prototype
-      : currentNodeBuffer[property];
-    return typeof value === "function" ? value.bind(currentNodeBuffer) : value;
-  },
-  set(_target, property, value) {
-    NodeBuffer[property] = value;
-    return true;
-  },
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.Buffer = new Proxy(NodeBuffer, {
   apply(_target, _thisArg, args) {
     if (typeof args[0] === "number") {
       return new NodeBuffer(NodeBuffer._validateSize(args[0]));

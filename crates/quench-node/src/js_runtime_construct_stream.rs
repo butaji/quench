@@ -96,8 +96,6 @@ impl QuenchNodeHost {
                 },
                 need_drain: false,
                 destroyed: false,
-                destroy_scheduled: false,
-                close_emitted: false,
                 errored: None,
             },
         );

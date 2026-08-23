@@ -33,46 +33,41 @@ pub(crate) fn array_map(
     };
     let length = map_length(receiver)?;
     if length > u32::MAX as usize {
-        return Err(crate::value::error::throw_range_error("Invalid array length"));
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
     }
     let mut mapped = Value::array(Vec::new());
     if let Value::Array(values) = &mut mapped {
         Rc::make_mut(values).set_length(length);
     }
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    map_array_values(receiver, callback, this_arg, length, &mut mapped)?;
-    Ok(mapped)
-}
-
-fn map_array_values(
-    receiver: &Value,
-    callback: &Value,
-    this_arg: &Value,
-    length: usize,
-    mapped: &mut Value,
-) -> Result<(), crate::execute::VmError> {
     if let Value::Array(source) = receiver {
         let mut index = 0;
         while let Some(current) = source.next_index(index, length) {
             index = current.saturating_add(1);
-            let Some(value) = map_value(receiver, current)? else { continue };
+            let Some(value) = map_value(receiver, current)? else {
+                continue;
+            };
             let args = [value, Value::Number(current as f64), receiver.clone()];
             let result = crate::functions::execute_target(callback, this_arg, &args)?;
-            if let Value::Array(values) = mapped {
+            if let Value::Array(values) = &mut mapped {
                 Rc::make_mut(values).set_index(current, result);
             }
         }
     } else {
         for index in 0..length {
-            let Some(value) = map_value(receiver, index)? else { continue };
+            let Some(value) = map_value(receiver, index)? else {
+                continue;
+            };
             let args = [value, Value::Number(index as f64), receiver.clone()];
             let result = crate::functions::execute_target(callback, this_arg, &args)?;
-            if let Value::Array(values) = mapped {
+            if let Value::Array(values) = &mut mapped {
                 Rc::make_mut(values).set_index(index, result);
             }
         }
     }
-    Ok(())
+    Ok(mapped)
 }
 pub(crate) fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
     if let Value::Array(values) = receiver {
@@ -118,16 +113,6 @@ pub(crate) fn array_for_each(
     }
     let length = map_length(receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    array_for_each_values(receiver, callback, this_arg, length)?;
-    Ok(Value::Undefined)
-}
-
-fn array_for_each_values(
-    receiver: &Value,
-    callback: &Value,
-    this_arg: &Value,
-    length: usize,
-) -> Result<(), crate::execute::VmError> {
     if let Value::Array(values) = receiver {
         let mut index = 0;
         while let Some(current) = values.next_index(index, length) {
@@ -153,7 +138,7 @@ fn array_for_each_values(
             )?;
         }
     }
-    Ok(())
+    Ok(Value::Undefined)
 }
 pub(crate) fn array_filter(
     receiver: Option<&Value>,
@@ -196,21 +181,14 @@ pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value
     };
     let separator = arguments
         .first()
-        .map_or_else(|| Value::String(",".to_string()), Clone::clone);
-    let separator_units = string_units_for_join(&separator);
-    let mut units = Vec::new();
-    for (index, value) in values.iter().enumerate() {
-        if index > 0 {
-            units.extend_from_slice(&separator_units);
-        }
-        units.extend_from_slice(&string_units_for_join(value));
-    }
-    crate::strings::from_units(units)
-}
-
-fn string_units_for_join(value: &Value) -> Vec<u16> {
-    crate::strings::units_of(value)
-        .unwrap_or_else(|| value_to_string(value).encode_utf16().collect())
+        .map_or_else(|| ",".to_string(), value_to_string);
+    Value::String(
+        values
+            .iter()
+            .map(value_to_string)
+            .collect::<Vec<_>>()
+            .join(&separator),
+    )
 }
 
 pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value {

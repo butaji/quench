@@ -276,7 +276,16 @@ pub(crate) fn set_for_each(
             "Set method called on incompatible receiver",
         ));
     };
-    let callback = set_for_each_callback(arguments)?;
+    let Some(callback) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Set callback must be callable",
+        ));
+    };
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Set callback must be callable",
+        ));
+    }
     let this_arg = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let set = receiver.cloned().unwrap_or(Value::Undefined);
     let mut index = 0;
@@ -296,17 +305,4 @@ pub(crate) fn set_for_each(
         }
     }
     Ok(Value::Undefined)
-}
-fn set_for_each_callback(arguments: &[Value]) -> Result<&Value, VmError> {
-    let Some(callback) = arguments.first() else {
-        return Err(crate::value::error::throw_type_error(
-            "Set callback must be callable",
-        ));
-    };
-    if !crate::conversion::is_callable(callback) {
-        return Err(crate::value::error::throw_type_error(
-            "Set callback must be callable",
-        ));
-    }
-    Ok(callback)
 }

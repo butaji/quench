@@ -1,5 +1,10 @@
 //! Promise implementation with microtask queue.
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+
+use std::{
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
+    rc::Rc,
+};
 
 use crate::{
     execute::VmError,
@@ -23,7 +28,8 @@ include!("promise_try.rs");
 fn process_promise(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
-    process_then_actions(then_actions, &state);
+    let promise_key = Rc::as_ptr(promise) as usize;
+    process_then_actions(then_actions, &state, promise_key);
     let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
     for continuation in continuations {
         process_continuation(continuation, &state);
@@ -31,10 +37,23 @@ fn process_promise(promise: &Rc<PromiseData>) {
 }
 
 fn process_then_actions(
-    then_actions: Vec<(Option<Value>, Option<Value>, Rc<PromiseData>)>,
+    then_actions: Vec<(Option<Value>, Option<Value>)>,
     state: &PromiseState,
+    promise_key: usize,
 ) {
-    for (on_fulfilled, on_rejected, result_promise) in then_actions {
+    for (on_fulfilled, on_rejected) in then_actions {
+        let result_promise = THEN_RESULTS.with(|results| {
+            let mut results = results.borrow_mut();
+            let queue = results.get_mut(&promise_key)?;
+            let result = queue.pop_front();
+            if queue.is_empty() {
+                results.remove(&promise_key);
+            }
+            result
+        });
+        let Some(result_promise) = result_promise else {
+            continue;
+        };
         let action = match &state {
             PromiseState::Fulfilled(_) => on_fulfilled,
             PromiseState::Rejected(_) => on_rejected,
@@ -441,11 +460,18 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         Value::Promise(promise) => Rc::clone(promise),
         _ => return Err(VmError::NotCallable),
     };
-    promise.then_actions.borrow_mut().push((
-        maybe_handler(arguments, 0),
-        maybe_handler(arguments, 1),
-        result_promise,
-    ));
+    promise
+        .then_actions
+        .borrow_mut()
+        .push((maybe_handler(arguments, 0), maybe_handler(arguments, 1)));
+    let promise_key = Rc::as_ptr(promise) as usize;
+    THEN_RESULTS.with(|results| {
+        results
+            .borrow_mut()
+            .entry(promise_key)
+            .or_default()
+            .push_back(result_promise);
+    });
     if !matches!(*promise.state.borrow(), PromiseState::Pending) {
         queue_promise(promise);
     }
@@ -459,18 +485,8 @@ pub fn execute_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
-    if matches!(builtin, Builtin::Promise) {
-        return Some(Err(VmError::NotCallable));
-    }
-    execute_builtin_inner(builtin, receiver, arguments)
-}
-
-fn execute_builtin_inner(
-    builtin: Builtin,
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Option<Result<Value, VmError>> {
     let result = match builtin {
+        Builtin::Promise => Err(VmError::NotCallable),
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
         Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, receiver, arguments),

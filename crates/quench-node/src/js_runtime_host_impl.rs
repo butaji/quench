@@ -1,43 +1,13 @@
-fn query_decode(input: &str) -> String {
-    let mut bytes = Vec::with_capacity(input.len());
-    let raw = input.as_bytes();
-    let mut index = 0;
-    while index < raw.len() {
-        if raw[index] == b'+' {
-            bytes.push(b' ');
-            index += 1;
-        } else if raw[index] == b'%' && index + 2 < raw.len() {
-            let hex = |byte: u8| match byte {
-                b'0'..=b'9' => Some(byte - b'0'),
-                b'a'..=b'f' => Some(byte - b'a' + 10),
-                b'A'..=b'F' => Some(byte - b'A' + 10),
-                _ => None,
-            };
-            if let (Some(high), Some(low)) = (hex(raw[index + 1]), hex(raw[index + 2])) {
-                bytes.push(high * 16 + low);
-                index += 3;
-            } else {
-                bytes.push(raw[index]);
-                index += 1;
-            }
-        } else {
-            bytes.push(raw[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
 fn query_pairs(input: &str) -> Vec<(String, String)> {
     input
         .split('&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| match pair.find('=') {
             Some(index) => (
-                query_decode(&pair[..index]),
-                query_decode(&pair[index + 1..]),
+                pair[..index].to_string(),
+                pair[index + 1..].to_string(),
             ),
-            None => (query_decode(pair), String::new()),
+            None => (pair.to_string(), String::new()),
         })
         .collect()
 }
@@ -49,47 +19,6 @@ impl Host for QuenchNodeHost {
         receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
-        // Bootstrap and older module paths can retain the legacy HTTP registry
-        // IDs. Normalize them at the active dispatch boundary so they reach
-        // the same handlers as the dedicated capability IDs.
-        let capability = HostCapabilityRef {
-            realm: capability.realm,
-            kind: match capability.kind {
-                HostCapabilityKind::Custom(1) | HostCapabilityKind::Custom(0x1200) => {
-                    HostCapabilityKind::Custom(CapabilityName::Require)
-                }
-                HostCapabilityKind::Custom(1805) => {
-                    HostCapabilityKind::Custom(CapabilityName::HttpGet)
-                }
-                HostCapabilityKind::Custom(0x0F01) => {
-                    HostCapabilityKind::Custom(CapabilityName::HttpGet)
-                }
-                HostCapabilityKind::Custom(0x0F02) => {
-                    HostCapabilityKind::Custom(CapabilityName::HttpServer)
-                }
-                HostCapabilityKind::Custom(0x0F03) => HostCapabilityKind::Custom(501),
-                HostCapabilityKind::Custom(0x0F04) => HostCapabilityKind::Custom(502),
-                HostCapabilityKind::Custom(0x0F05) => HostCapabilityKind::Custom(503),
-                HostCapabilityKind::Custom(0x0F06) => HostCapabilityKind::Custom(504),
-                HostCapabilityKind::Custom(0x0F07) => HostCapabilityKind::Custom(507),
-                HostCapabilityKind::Custom(0x0F08) => HostCapabilityKind::Custom(508),
-                HostCapabilityKind::Custom(0x0F09) => HostCapabilityKind::Custom(509),
-                HostCapabilityKind::Custom(0x0F0A) => HostCapabilityKind::Custom(510),
-                HostCapabilityKind::Custom(0x0F0B) => HostCapabilityKind::Custom(511),
-                HostCapabilityKind::Custom(0x0F0C) => HostCapabilityKind::Custom(512),
-                HostCapabilityKind::Custom(0x0F0D) => HostCapabilityKind::Custom(513),
-                kind => kind,
-            },
-        };
-        // Bound legacy `__quench_require_for__` capabilities can arrive
-        // through the generic host path; dispatch it before family handlers
-        // that may claim an unknown capability.
-        if capability.kind == HostCapabilityKind::Custom(CapabilityName::RequireFor) {
-            return require_module(arguments);
-        }
-        if capability.kind == HostCapabilityKind::Custom(0x070D) {
-            return Ok(Value::Undefined);
-        }
         if let Some(result) = self.dispatch_tmpdir(capability, receiver, arguments) {
             return result;
         }
@@ -127,7 +56,7 @@ impl Host for QuenchNodeHost {
             return result;
         }
         match capability.kind {
-            HostCapabilityKind::Custom(CapabilityName::Require) => require_module(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessNextTick) => next_tick(arguments),
             HostCapabilityKind::Custom(CapabilityName::TimerImmediate | CapabilityName::Timer) => {
                 NODE_TIMER_COUNTS.with(|counts| {
                     let (timeouts, immediates) = counts.get();
@@ -160,34 +89,13 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ProcessGetBuiltinModule) => {
                 process_get_builtin_module(arguments)
             }
-            HostCapabilityKind::Custom(404) => self.http_call(
-                HostCapabilityKind::Custom(CapabilityName::HttpRequest),
-                receiver,
-                arguments,
-            ),
-            HostCapabilityKind::Custom(401) => self.http_call(
-                HostCapabilityKind::Custom(CapabilityName::HttpRequestOn),
-                receiver,
-                arguments,
-            ),
-            HostCapabilityKind::Custom(402) => self.http_call(
-                HostCapabilityKind::Custom(CapabilityName::HttpRequestEnd),
-                receiver,
-                arguments,
-            ),
-            HostCapabilityKind::Custom(403) => self.http_call(
-                HostCapabilityKind::Custom(CapabilityName::HttpRequestWrite),
-                receiver,
-                arguments,
-            ),
-            HostCapabilityKind::Custom(0x070D) => Ok(Value::Undefined),
-            HostCapabilityKind::Custom(CapabilityName::Stream) => {
-                self.construct(capability, arguments)
+            HostCapabilityKind::Custom(CapabilityName::HttpServer | CapabilityName::HttpGet) => {
+                self.http_call(capability.kind, arguments)
             }
             HostCapabilityKind::Custom(id) if (400..600).contains(&id) => {
-                self.http_call(capability.kind, receiver, arguments)
+                self.http_call(capability.kind, arguments)
             }
-            HostCapabilityKind::Custom(id) if (1000..2000).contains(&id) => {
+            HostCapabilityKind::Custom(id) if (200..300).contains(&id) => {
                 self.stream_call(id, receiver, arguments)
             }
             HostCapabilityKind::Custom(id) if id >= 100 => self.hash_call(id, receiver, arguments),
