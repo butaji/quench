@@ -26,25 +26,54 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        if a == "--list" {
-            // Handled in discover_fixtures; skip.
-        } else if a == "--filter" {
-            // Skip the value too.
-            args.next();
-        } else {
-            // Positional arg = dir.
-            let dir = std::path::PathBuf::from(a);
-            return run_with_dir(dir);
+    let options = match Options::parse(std::env::args().skip(1)) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
         }
-    }
-    run_with_dir(std::path::PathBuf::from(
-        "crates/quench-node-test/node-tests",
-    ))
+    };
+    run_with_options(options)
 }
 
-fn run_with_dir(dir: std::path::PathBuf) -> ExitCode {
+struct Options {
+    dir: PathBuf,
+    list: bool,
+    quiet: bool,
+    filter: Option<String>,
+}
+
+impl Options {
+    fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
+        let mut options = Self {
+            dir: PathBuf::from("crates/quench-node-test/node-tests"),
+            list: false,
+            quiet: false,
+            filter: None,
+        };
+        let mut positional = None;
+        let mut args = args;
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--list" => options.list = true,
+                "--quiet" => options.quiet = true,
+                "--filter" => {
+                    options.filter = Some(args.next().ok_or("--filter requires a name")?);
+                }
+                value if value.starts_with('-') => return Err(format!("unknown option {value}")),
+                value if positional.is_none() => positional = Some(PathBuf::from(value)),
+                _ => return Err("only one directory may be specified".into()),
+            }
+        }
+        if let Some(dir) = positional {
+            options.dir = dir;
+        }
+        Ok(options)
+    }
+}
+
+fn run_with_options(options: Options) -> ExitCode {
+    let dir = options.dir;
     if !dir.is_dir() {
         eprintln!("error: {} is not a directory", dir.display());
         return ExitCode::from(2);
@@ -54,15 +83,15 @@ fn run_with_dir(dir: std::path::PathBuf) -> ExitCode {
         eprintln!("error: no `*.js` fixtures under {}", dir.display());
         return ExitCode::from(2);
     }
-    let fixtures = filter_fixtures(fixtures);
-    if std::env::args().any(|a| a == "--list") {
+    let fixtures = filter_fixtures(fixtures, options.filter.as_deref());
+    if options.list {
         for f in &fixtures {
             println!("{}", f.file_name().unwrap().to_string_lossy());
         }
         return ExitCode::SUCCESS;
     }
     let mut runner = quench_node_test::NodeTestRunner::new();
-    let summary = run_suite(&mut runner, &fixtures);
+    let summary = run_suite(&mut runner, &fixtures, options.quiet);
     print_summary(&summary, fixtures.len());
     if summary.failed == 0 {
         ExitCode::SUCCESS
@@ -71,10 +100,10 @@ fn run_with_dir(dir: std::path::PathBuf) -> ExitCode {
     }
 }
 
-fn filter_fixtures(fixtures: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
-    let args: Vec<String> = std::env::args().collect();
-    let idx = args.iter().position(|a| a == "--filter");
-    let filter = idx.and_then(|i| args.get(i + 1).cloned());
+fn filter_fixtures(
+    fixtures: Vec<std::path::PathBuf>,
+    filter: Option<&str>,
+) -> Vec<std::path::PathBuf> {
     match filter {
         Some(name) => fixtures
             .into_iter()
@@ -90,7 +119,11 @@ struct SuiteSummary {
     failed_names: Vec<String>,
 }
 
-fn run_suite(runner: &mut quench_node_test::NodeTestRunner, fixtures: &[PathBuf]) -> SuiteSummary {
+fn run_suite(
+    runner: &mut quench_node_test::NodeTestRunner,
+    fixtures: &[PathBuf],
+    quiet: bool,
+) -> SuiteSummary {
     let mut summary = SuiteSummary {
         passed: 0,
         failed: 0,
@@ -100,14 +133,20 @@ fn run_suite(runner: &mut quench_node_test::NodeTestRunner, fixtures: &[PathBuf]
         let outcome = runner.run_file(fixture);
         match outcome {
             NodeOutcome::Pass => {
-                println!("PASS  {}", fixture.display());
+                if !quiet {
+                    println!("PASS  {}", fixture.display());
+                }
                 summary.passed += 1;
             }
             NodeOutcome::Skip { reason } => {
-                println!("SKIP  {}: {reason}", fixture.display());
+                if !quiet {
+                    println!("SKIP  {}: {reason}", fixture.display());
+                }
             }
             NodeOutcome::Fail { reason } => {
-                println!("FAIL  {}: {reason}", fixture.display());
+                if !quiet {
+                    println!("FAIL  {}: {reason}", fixture.display());
+                }
                 summary.failed += 1;
                 summary.failed_names.push(fixture.display().to_string());
             }
