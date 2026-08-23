@@ -27,6 +27,9 @@ pub(crate) fn reduce_eval_source_in_context(
     forbidden_var_names: &[String],
     grammar: crate::semantic::EvalGrammarContext,
 ) -> Result<ResidualProgram, Vec<String>> {
+    if has_top_level_eval_control(source) {
+        return Err(vec!["SyntaxError: break or continue outside of loop".into()]);
+    }
     let strict_source = inherited_strict.then(|| format!("\"use strict\";\n{source}"));
     let source = strict_source.as_deref().unwrap_or(source);
     let source = crate::reduce_support::prepare_source(source);
@@ -79,6 +82,19 @@ pub(crate) fn reduce_eval_source_in_context(
     )
 }
 
+fn has_top_level_eval_control(source: &str) -> bool {
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
+    parsed.errors.is_empty()
+        && parsed.program.body.iter().any(|statement| {
+            matches!(
+                statement,
+                oxc::ast::ast::Statement::BreakStatement(_)
+                    | oxc::ast::ast::Statement::ContinueStatement(_)
+            )
+        })
+}
+
 fn reduce_eval_program(
     statements: &[oxc::ast::ast::Statement<'_>],
     mut facts: ProgramDb,
@@ -93,6 +109,7 @@ fn reduce_eval_program(
         .extend(crate::semantic_early::lexically_declared_names_in(
             statements,
         ));
+    let local_slots = locals.clone();
     let ops = reduce_eval_body(
         statements,
         &mut facts,
@@ -101,17 +118,18 @@ fn reduce_eval_program(
         behavior,
         directive_completion,
     )?;
-    Ok(finish_eval_reduction(facts, prefix, ops))
+    Ok(finish_eval_reduction(facts, prefix, ops, local_slots))
 }
 
 fn finish_eval_reduction(
     mut facts: ProgramDb,
     mut prefix: Vec<crate::ops::Op>,
     mut ops: Vec<crate::ops::Op>,
+    local_slots: HashMap<String, u16>,
 ) -> ResidualProgram {
     prefix.append(&mut ops);
     facts.finish_reduction();
-    ResidualProgram::new(facts, prefix, None, std::collections::HashMap::new())
+    ResidualProgram::new(facts, prefix, None, local_slots)
 }
 
 fn reduce_eval_body(
