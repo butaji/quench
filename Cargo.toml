@@ -27,5 +27,9 @@ lto = "thin"
 inherits = "release"
 # Production artifacts use whole-program optimization and one codegen unit.
 # Keep this profile explicit so release policy cannot drift by accident.
+opt-level = 3
 lto = "fat"
 codegen-units = 1
+
+[profile.bench-throughput]
+inherits = "production"

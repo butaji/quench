@@ -1,4 +1,20 @@
 use std::{env, fs, path::PathBuf, process::Command, time::Instant};
+
+const RUNNER: &str = r#"
+let __quenchBenchSucceeded = true;
+const __quenchBenchPrint = typeof print === "function" ? print : console.log;
+BenchmarkSuite.RunSuites({
+  NotifyResult(name, result) { __quenchBenchPrint(name + ": " + result); },
+  NotifyError(name, error) { __quenchBenchSucceeded = false; __quenchBenchPrint(name + ": " + error); },
+  NotifyScore(score) {
+    if (__quenchBenchSucceeded) {
+      __quenchBenchPrint("----");
+      __quenchBenchPrint("Score: " + score);
+    }
+  },
+});
+"#;
+
 #[derive(Debug)]
 struct Sample {
     program: String,
@@ -6,6 +22,12 @@ struct Sample {
     timed_out: bool,
     wall_ns: u128,
     peak_rss_bytes: Option<u64>,
+    score: Option<f64>,
+    instructions: Option<u64>,
+    cycles: Option<u64>,
+    page_faults: Option<u64>,
+    page_reclaims: Option<u64>,
+    involuntary_context_switches: Option<u64>,
     stdout: String,
     stderr: String,
 }
@@ -16,7 +38,7 @@ fn main() {
         .unwrap_or_else(|| usage("missing fixture or --all"));
     let mut node = "node".into();
     let mut bun = "bun".into();
-    let mut quench = "target/release/quench-node".into();
+    let mut quench = "target/bench-throughput/quench-node".into();
     let mut runs = 1usize;
     let mut timeout_ms = 120_000u64;
     while let Some(x) = a.next() {
@@ -74,16 +96,26 @@ fn main() {
                 && n.stdout == b.stdout
                 && b.stdout == q.stdout
         });
+        let valid = n.iter().chain(&b).chain(&q).all(Sample::valid);
         let (nw, nr) = summary(&n);
         let (bw, br) = summary(&b);
         let (qw, qr) = summary(&q);
         println!(
-            "{{\"fixture\":{},\"runs\":{},\"output_equal\":{},\"node\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}},\"bun\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}},\"quench\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}}}}",
-            json(&f.display().to_string()), runs, e,
+            "{{\"fixture\":{},\"runs\":{},\"valid\":{},\"output_equal\":{},\"node\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}},\"bun\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}},\"quench\":{{\"wall_ns\":{},\"peak_rss_bytes\":{},\"samples\":{}}}}}",
+            json(&f.display().to_string()), runs, valid, e,
             option_u128(nw), option_u64(nr), samples(&n),
             option_u128(bw), option_u64(br), samples(&b),
             option_u128(qw), option_u64(qr), samples(&q)
         );
+        if !valid {
+            std::process::exit(1);
+        }
+    }
+}
+
+impl Sample {
+    fn valid(&self) -> bool {
+        self.status == 0 && !self.timed_out && self.score.is_some()
     }
 }
 fn summary(samples: &[Sample]) -> (Option<u128>, Option<u64>) {
@@ -96,18 +128,6 @@ fn summary(samples: &[Sample]) -> (Option<u128>, Option<u64>) {
         rss.get(rss.len() / 2).copied(),
     )
 }
-fn ratio_u128(node: Option<u128>, quench: Option<u128>) -> String {
-    match (node, quench) {
-        (Some(n), Some(q)) if q > 0 => format!("{:.4}", n as f64 / q as f64),
-        _ => "null".into(),
-    }
-}
-fn ratio_u64(node: Option<u64>, quench: Option<u64>) -> String {
-    match (node, quench) {
-        (Some(n), Some(q)) if q > 0 => format!("{:.4}", n as f64 / q as f64),
-        _ => "null".into(),
-    }
-}
 fn materialize(f: &PathBuf) -> PathBuf {
     let p = PathBuf::from("/tmp").join(format!(
         "quench-bench-{}",
@@ -115,10 +135,12 @@ fn materialize(f: &PathBuf) -> PathBuf {
     ));
     let base = fs::read("quench-bench/js-engine-benchmark/v8-v7/base.js").unwrap();
     let fixture = fs::read(f).unwrap();
-    let mut source = Vec::with_capacity(base.len() + 1 + fixture.len());
+    let mut source = Vec::with_capacity(base.len() + fixture.len() + RUNNER.len() + 2);
     source.extend_from_slice(&base);
     source.push(b'\n');
     source.extend_from_slice(&fixture);
+    source.push(b'\n');
+    source.extend_from_slice(RUNNER.as_bytes());
     fs::write(&p, source).unwrap();
     p
 }
@@ -140,22 +162,36 @@ fn run(p: &str, args: &[String], s: &PathBuf, t: u64) -> Sample {
         Err(e) => (-1, e.to_string(), String::new()),
     };
     let timed_out = stderr.contains("command terminated abnormally");
+    let score = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Score: "))
+        .and_then(|value| value.parse().ok());
     Sample {
         program: p.into(),
         status,
         timed_out,
         wall_ns: st.elapsed().as_nanos(),
-        peak_rss_bytes: stderr.lines().find_map(|l| {
-            l.trim()
-                .strip_suffix(" maximum resident set size")
-                .and_then(|v| v.trim().parse().ok())
-        }),
+        peak_rss_bytes: time_metric(&stderr, "maximum resident set size"),
+        score,
+        instructions: time_metric(&stderr, "instructions retired"),
+        cycles: time_metric(&stderr, "cycles elapsed"),
+        page_faults: time_metric(&stderr, "page faults"),
+        page_reclaims: time_metric(&stderr, "page reclaims"),
+        involuntary_context_switches: time_metric(&stderr, "involuntary context switches"),
         stdout,
         stderr,
     }
 }
+
+fn time_metric(stderr: &str, suffix: &str) -> Option<u64> {
+    stderr.lines().find_map(|line| {
+        line.trim()
+            .strip_suffix(suffix)
+            .and_then(|value| value.trim().parse().ok())
+    })
+}
 fn samples(v: &[Sample]) -> String {
-    format!("[{}]",v.iter().map(|s|format!("{{\"program\":{},\"status\":{},\"timed_out\":{},\"wall_ns\":{},\"peak_rss_bytes\":{},\"stdout\":{},\"stderr\":{}}}",json(&s.program),s.status,s.timed_out,s.wall_ns,s.peak_rss_bytes.map_or("null".into(),|x:u64|x.to_string()),json(&s.stdout),json(&s.stderr))).collect::<Vec<_>>().join(","))
+    format!("[{}]",v.iter().map(|s|format!("{{\"program\":{},\"status\":{},\"timed_out\":{},\"wall_ns\":{},\"peak_rss_bytes\":{},\"score\":{},\"instructions\":{},\"cycles\":{},\"page_faults\":{},\"page_reclaims\":{},\"involuntary_context_switches\":{},\"stdout\":{},\"stderr\":{}}}",json(&s.program),s.status,s.timed_out,s.wall_ns,option_u64(s.peak_rss_bytes),option_f64(s.score),option_u64(s.instructions),option_u64(s.cycles),option_u64(s.page_faults),option_u64(s.page_reclaims),option_u64(s.involuntary_context_switches),json(&s.stdout),json(&s.stderr))).collect::<Vec<_>>().join(","))
 }
 fn json(s: &str) -> String {
     format!(
@@ -169,6 +205,9 @@ fn option_u128(value: Option<u128>) -> String {
     value.map_or_else(|| "null".into(), |v| v.to_string())
 }
 fn option_u64(value: Option<u64>) -> String {
+    value.map_or_else(|| "null".into(), |v| v.to_string())
+}
+fn option_f64(value: Option<f64>) -> String {
     value.map_or_else(|| "null".into(), |v| v.to_string())
 }
 fn usage(s: &str) -> ! {
@@ -189,6 +228,12 @@ mod tests {
                 timed_out: false,
                 wall_ns: 30,
                 peak_rss_bytes: Some(300),
+                score: Some(1.0),
+                instructions: None,
+                cycles: None,
+                page_faults: None,
+                page_reclaims: None,
+                involuntary_context_switches: None,
                 stdout: String::new(),
                 stderr: String::new(),
             },
@@ -198,6 +243,12 @@ mod tests {
                 timed_out: false,
                 wall_ns: 10,
                 peak_rss_bytes: Some(100),
+                score: Some(1.0),
+                instructions: None,
+                cycles: None,
+                page_faults: None,
+                page_reclaims: None,
+                involuntary_context_switches: None,
                 stdout: String::new(),
                 stderr: String::new(),
             },
@@ -207,6 +258,12 @@ mod tests {
                 timed_out: false,
                 wall_ns: 20,
                 peak_rss_bytes: Some(200),
+                score: Some(1.0),
+                instructions: None,
+                cycles: None,
+                page_faults: None,
+                page_reclaims: None,
+                involuntary_context_switches: None,
                 stdout: String::new(),
                 stderr: String::new(),
             },
