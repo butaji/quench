@@ -253,7 +253,7 @@ impl CapabilityName {
     const TextDecoderConstructor: u16 = 2062;
     const TextDecoderDecode: u16 = 2063;
     const BufferInspect: u16 = 2065;
-    const InternalBinding: u16 = 2066;
+    const InternalBinding: u16 = 0x0F0E;
     const InternalArrayBufferViewHasBuffer: u16 = 2067;
     const UrlParse: u16 = 2068;
     const UrlFormat: u16 = 2069;
