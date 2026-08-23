@@ -414,7 +414,11 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
             publish_set(&object, key, value)?;
             let updated = live_object(&object);
             if let Some(global) = global {
-                crate::vm::synchronize_global_object(&mut Vec::new(), &global, &updated);
+                crate::vm::synchronize_global_object(
+                    &mut crate::register_file::RegisterFile::new(),
+                    &global,
+                    &updated,
+                );
             }
             OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
             return Ok(true);
