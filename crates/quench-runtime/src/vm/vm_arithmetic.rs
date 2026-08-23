@@ -115,7 +115,7 @@ fn fast_number_binary(
         }
         BinaryOp::Divide => Value::Number(*left / *right),
         BinaryOp::Remainder => Value::Number(*left % *right),
-        BinaryOp::Exponentiate => Value::Number(left.powf(*right)),
+        BinaryOp::Exponentiate => Value::Number(exponentiate(*left, *right)),
         BinaryOp::LessThan => Value::Boolean(left < right),
         BinaryOp::LessEqual => Value::Boolean(left <= right),
         BinaryOp::GreaterThan => Value::Boolean(left > right),
