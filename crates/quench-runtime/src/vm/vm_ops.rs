@@ -104,10 +104,6 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
             match state {
                 crate::value::PromiseState::Fulfilled(value) => {
                     super::write_value(registers, dst, value);
-                    if crate::module_bindings::fulfilled_await_defers() {
-                        crate::module_bindings::mark_await_advanced(true);
-                        return Err(VmError::Suspended(promise));
-                    }
                     Ok(())
                 }
                 crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
