@@ -414,12 +414,53 @@ fn validate_function(function: &oxc::ast::ast::Function<'_>) -> Result<(), Vec<S
 fn validate_expression(expression: &oxc::ast::ast::Expression<'_>) -> Result<(), Vec<String>> {
     match expression {
         oxc::ast::ast::Expression::FunctionExpression(function) => validate_function(function),
+        oxc::ast::ast::Expression::ObjectExpression(object) => {
+            for property in &object.properties {
+                let oxc::ast::ast::ObjectPropertyKind::ObjectProperty(property) = property else {
+                    continue;
+                };
+                if property.method
+                    || matches!(
+                        property.kind,
+                        oxc::ast::ast::PropertyKind::Get | oxc::ast::ast::PropertyKind::Set
+                    )
+                {
+                    let oxc::ast::ast::Expression::FunctionExpression(function) = &property.value
+                    else {
+                        continue;
+                    };
+                    validate_unique_formals(function)?;
+                    validate_function(function)?;
+                }
+                validate_expression(&property.value)?;
+            }
+            Ok(())
+        }
         oxc::ast::ast::Expression::ParenthesizedExpression(value) => {
             validate_expression(&value.expression)
         }
         oxc::ast::ast::Expression::CallExpression(call) => validate_expression(&call.callee),
         _ => Ok(()),
     }
+}
+
+fn validate_unique_formals(function: &oxc::ast::ast::Function<'_>) -> Result<(), Vec<String>> {
+    let mut names = HashSet::new();
+    for parameter in &function.params.items {
+        for name in crate::binding_patterns::names(&parameter.pattern) {
+            if !names.insert(name.clone()) {
+                return Err(vec!["SyntaxError: duplicate method parameter".to_string()]);
+            }
+        }
+    }
+    if let Some(rest) = &function.params.rest {
+        for name in crate::binding_patterns::names(&rest.argument) {
+            if !names.insert(name.clone()) {
+                return Err(vec!["SyntaxError: duplicate method parameter".to_string()]);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_case_block(statement: &oxc::ast::ast::SwitchStatement<'_>) -> Result<(), Vec<String>> {
