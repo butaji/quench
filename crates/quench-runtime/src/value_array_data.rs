@@ -299,6 +299,9 @@ impl ArrayData {
     }
 
     pub(crate) fn get_index(&self, index: usize) -> Option<Value> {
+        if index >= self.logical_len() {
+            return None;
+        }
         if let Some(live) = &self.argument_live {
             return live_index(&live.borrow(), index).or_else(|| self.property(&index.to_string()));
         }
@@ -336,10 +339,13 @@ impl ArrayData {
 
     #[inline]
     pub(crate) fn dense_value_at(&self, index: usize) -> Option<&Value> {
-        if index >= self.values.len() || self.deleted.get(index) == Some(&true) {
+        if index >= self.logical_len()
+            || index >= self.values.len()
+            || self.deleted.get(index) == Some(&true)
+        {
             return None;
         }
-        // SAFETY: the explicit check above proves `index < self.values.len()`.
+        // SAFETY: the explicit checks above prove `index < self.values.len()`.
         Some(unsafe { self.values.get_unchecked(index) })
     }
 
@@ -352,10 +358,13 @@ impl ArrayData {
     }
 
     pub(crate) fn dense_value_at_mut(&mut self, index: usize) -> Option<&mut Value> {
-        if index >= self.values.len() || self.deleted.get(index) == Some(&true) {
+        if index >= self.logical_len()
+            || index >= self.values.len()
+            || self.deleted.get(index) == Some(&true)
+        {
             return None;
         }
-        // SAFETY: the explicit check above proves `index < self.values.len()`.
+        // SAFETY: the explicit checks above prove `index < self.values.len()`.
         Some(unsafe { self.values.get_unchecked_mut(index) })
     }
 
@@ -369,7 +378,8 @@ impl ArrayData {
                     || live.mapped.get(index).and_then(Option::as_ref).is_some()))
                 || self.property(&index.to_string()).is_some();
         }
-        index < self.length
+        let logical_len = self.logical_len();
+        index < logical_len
             && self.deleted.get(index) != Some(&true)
             && (index < self.values.len()
                 || self.mapped.get(index).and_then(Option::as_ref).is_some()

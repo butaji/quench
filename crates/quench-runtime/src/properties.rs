@@ -166,8 +166,10 @@ pub(crate) fn execute_set_property(
 ) -> Result<(), crate::execute::VmError> {
     let (object, key, src, strict) = set_property_parts(registers, op)?;
     let mut target = crate::execute::read_register(registers, object)?.clone();
-    if matches!(target, crate::value::Value::Null | crate::value::Value::Undefined)
-        && (crate::math::property(&key).is_some() || crate::math::constant(&key).is_some())
+    if matches!(
+        target,
+        crate::value::Value::Null | crate::value::Value::Undefined
+    ) && (crate::math::property(&key).is_some() || crate::math::constant(&key).is_some())
     {
         target = crate::vm::realm_intrinsic(crate::ops::Builtin::Math);
         crate::execute::write_value(registers, object, target.clone());

@@ -41,11 +41,27 @@ pub fn reduce_if_statement(
             .ok_or_else(|| vec!["Unsupported branch condition".to_string()])?,
     };
     let dst = crate::reduce_support::emit_undefined(ops, next_register);
-    let then_ops = reduce_if_branch(&statement.consequent, dst, facts, locals)?;
+    let then_ops = reduce_if_branch(
+        &statement.consequent,
+        dst,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+    )?;
     let else_ops = statement
         .alternate
         .as_ref()
-        .map(|alternate| reduce_if_branch(alternate, dst, facts, locals))
+        .map(|alternate| {
+            reduce_if_branch(
+                alternate,
+                dst,
+                facts,
+                next_register,
+                next_slot,
+                locals,
+            )
+        })
         .transpose()?
         .unwrap_or_default();
     push_branch(ops, condition, then_ops, else_ops)?;
@@ -56,12 +72,15 @@ fn reduce_if_branch(
     statement: &Statement<'_>,
     dst: u16,
     facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Result<Vec<Op>, Vec<String>> {
     if should_skip_if_function(statement, facts) {
         return Ok(Vec::new());
     }
-    let (mut ops, last) = crate::branch::reduce(statement, facts, locals)?;
+    let (mut ops, last) =
+        crate::branch::reduce_with_registers(statement, facts, next_register, next_slot, locals)?;
     crate::reduce_support::seal_completion(&mut ops, dst, last);
     Ok(ops)
 }
