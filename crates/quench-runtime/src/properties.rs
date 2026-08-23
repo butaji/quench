@@ -140,6 +140,7 @@ fn reduce_dynamic_get(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    ops.push(Op::RequireObjectCoercible { src: object });
     let key = crate::reduce::reduce_expression(key_expression, ops, facts, next_register, locals)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
