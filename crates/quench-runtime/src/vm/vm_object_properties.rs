@@ -73,42 +73,17 @@ fn object_builtin_property(properties: &[(String, Value)], key: &str) -> Value {
 }
 
 fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
-    // The shape slot is only a hint: metadata tombstones and duplicate writes
-    // retain their complete slow-path meaning in the canonical vector.  Scan
-    // that vector once to establish the fast-path preconditions, then perform
-    // the shape/slot lookup.  This keeps the optimized path derived from the
-    // same source as the fallback rather than introducing a cache.
-    let use_shape_hint = !crate::vm::is_global_object(&Value::Object(properties.clone()));
-    if use_shape_hint && !properties.is_dictionary() && !key.starts_with('\0') {
-        let deleted_key = crate::builtins::deleted_key(key);
-        let descriptor_key = crate::builtins::descriptor_key(key);
-        let mut matching = 0usize;
-        let mut shadowed = false;
-        for (name, _) in properties.hot_properties() {
-            if name == &deleted_key || name == &descriptor_key {
-                shadowed = true;
-            }
-            if name == key {
-                matching += 1;
-            }
+    let deleted_key = crate::builtins::deleted_key(key);
+    let mut direct = None;
+    for (name, value) in properties.iter().rev() {
+        if name == &deleted_key {
+            return Some(Value::Undefined);
         }
-        if !shadowed && matching == 1 {
-            if let Some(slot) = properties.slot_for(key) {
-                if let Some(value) =
-                    properties.value_for_shape_slot(properties.shape().id, slot)
-                {
-                    return Some(property_value(value));
-                }
-            }
+        if direct.is_none() && name == key {
+            direct = Some(value);
         }
     }
-    if properties
-        .iter()
-        .any(|(name, _)| name == &crate::builtins::deleted_key(key))
-    {
-        return Some(Value::Undefined);
-    }
-    if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
+    if let Some(value) = direct {
         if matches!(value, Value::Null)
             && crate::vm::global_builtin_exists(key)
             && global_object_property(properties, key).is_some()
@@ -268,7 +243,7 @@ fn current_host_capability(kind: HostCapabilityKind) -> Value {
 }
 
 #[cfg(test)]
-mod shape_slot_tests {
+mod canonical_lookup_tests {
     use super::direct_object_property;
     use crate::value::{ObjectData, Value};
     use std::rc::Rc;
@@ -282,7 +257,7 @@ mod shape_slot_tests {
     }
 
     #[test]
-    fn ordinary_shape_slot_hit_returns_visible_value() {
+    fn ordinary_lookup_returns_visible_value() {
         let properties = object(vec![
             named("first", Value::Number(1.0)),
             named("second", Value::String("hit".into())),
@@ -294,7 +269,7 @@ mod shape_slot_tests {
     }
 
     #[test]
-    fn shape_slot_falls_back_for_descriptor_and_deleted_entries() {
+    fn lookup_preserves_descriptor_and_deleted_entries() {
         let descriptor = crate::builtins::descriptor_key("value");
         let deleted = crate::builtins::deleted_key("gone");
         let properties = object(vec![
@@ -314,7 +289,7 @@ mod shape_slot_tests {
     }
 
     #[test]
-    fn shape_slot_falls_back_for_duplicate_keys() {
+    fn lookup_preserves_last_duplicate_value() {
         let properties = object(vec![
             named("key", Value::Number(1.0)),
             named("key", Value::Number(2.0)),
