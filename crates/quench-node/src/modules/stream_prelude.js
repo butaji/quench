@@ -454,7 +454,8 @@
       finished: false,
       corked: 0,
       prefinished: false,
-      final: options.final || null
+      final: options.final || null,
+      destroyed: false
     };
     stream.writable = true;
     if (options.write) stream._write = options.write;
@@ -463,6 +464,7 @@
 
   function finishWritable(stream) {
     const st = stream._writableState;
+    if (st.destroyed) return;
     if (stream._passThrough && !stream._passThroughRead &&
         stream.listenerCount("data") === 0) return;
     if (st.finished || !st.ended || st.buffered > 0 || st.writing || st.prefinishing) return;
@@ -637,6 +639,7 @@
   Writable.prototype.destroy = function (error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    if (this._writableState) this._writableState.destroyed = true;
     this.writable = false;
     if (error) this.writableErrored = error;
     const stream = this;
