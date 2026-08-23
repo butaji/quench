@@ -30,6 +30,7 @@ pub struct ModuleGraph {
     paths: HashMap<PathBuf, ModuleId>,
     edges: HashMap<ModuleId, Vec<ModuleId>>,
     deferred_modules: HashSet<ModuleId>,
+    dynamic_targets: HashSet<ModuleId>,
     resolution_errors: HashMap<ModuleId, String>,
 }
 
@@ -49,6 +50,14 @@ impl ModuleGraph {
 impl ModuleGraph {
     pub fn has_resolution_error(&self, id: ModuleId) -> bool {
         self.resolution_errors.contains_key(&id)
+    }
+
+    pub fn mark_dynamic_target(&mut self, id: ModuleId) {
+        self.dynamic_targets.insert(id);
+    }
+
+    pub fn is_dynamic_target(&self, id: ModuleId) -> bool {
+        self.dynamic_targets.contains(&id)
     }
 
     pub fn mark_deferred_modules(&mut self) {
