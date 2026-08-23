@@ -237,8 +237,10 @@ pub fn concat(
 ) -> Result<Value, VmError> {
     let list = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(list, Value::Array(_)) {
+        // Node reports a Buffer passed where an Array is required through its
+        // ordinary object classification, even though Buffer is a byte view.
         let received = if matches!(list, Value::Uint8Array(_)) {
-            " Received an instance of Buffer".to_string()
+            " Received an instance of Object".to_string()
         } else {
             crate::modules::util::invalid_arg_received(&list)
         };
@@ -256,6 +258,9 @@ pub fn concat(
                     ">= 0 && <= 9007199254740991",
                     &enc::fmt_num(*value),
                 ));
+            }
+            if matches!(&list, Value::Array(array) if array.logical_len() == 0) {
+                return Ok(crate::modules::buffer_proto::make_buffer(&[]));
             }
             Some(*value as usize)
         }
