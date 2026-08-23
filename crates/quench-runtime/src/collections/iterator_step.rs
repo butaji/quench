@@ -19,6 +19,48 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     }
 }
 
+pub(crate) fn step_value_await(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
+    let Value::Iterator(data) = value else {
+        return Err(not_iterable());
+    };
+    match step_target(data)? {
+        StepTarget::Value(value) => Ok(value),
+        StepTarget::Protocol(iterator, cached) => {
+            let next = resolve_next(data, &iterator, cached)?;
+            let result = iterator_protocol::call_next(data, &next, &iterator)?;
+            let result = await_iterator_result(result)?;
+            protocol_result(data, result)
+        }
+    }
+}
+
+fn await_iterator_result(value: Value) -> Result<Value, crate::execute::VmError> {
+    let resolved = crate::promise::promise_resolve(std::slice::from_ref(&value));
+    let Value::Promise(promise) = resolved else {
+        return Ok(value);
+    };
+    let state = promise.state.borrow().clone();
+    match state {
+        crate::value::PromiseState::Fulfilled(value) => Ok(value),
+        crate::value::PromiseState::Rejected(reason) => {
+            Err(crate::execute::VmError::Thrown(reason))
+        }
+        crate::value::PromiseState::Pending => {
+            crate::promise::drain_one_microtask();
+            let state = promise.state.borrow().clone();
+            match state {
+                crate::value::PromiseState::Fulfilled(value) => Ok(value),
+                crate::value::PromiseState::Rejected(reason) => {
+                    Err(crate::execute::VmError::Thrown(reason))
+                }
+                crate::value::PromiseState::Pending => {
+                    Err(crate::execute::VmError::Suspended(promise))
+                }
+            }
+        }
+    }
+}
+
 enum StepTarget {
     Value(Option<Value>),
     Protocol(Value, Value),
