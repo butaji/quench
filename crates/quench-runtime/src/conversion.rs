@@ -112,7 +112,7 @@ pub(crate) fn to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> 
     ordinary_to_primitive(value, hint)
 }
 
-pub(crate) fn to_number(value: &Value) -> Result<f64, VmError> {
+pub fn to_number(value: &Value) -> Result<f64, VmError> {
     let primitive = to_primitive(value, "number")?;
     primitive_to_number(&primitive)
 }
