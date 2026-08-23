@@ -467,6 +467,34 @@ fn reduce_binary(
     let Expression::BinaryExpression(binary) = expression else {
         return None;
     };
+    if matches!(
+        binary.operator,
+        oxc::syntax::operator::BinaryOperator::ShiftLeft
+            | oxc::syntax::operator::BinaryOperator::ShiftRight
+            | oxc::syntax::operator::BinaryOperator::ShiftRightZeroFill
+    ) {
+        if let Expression::PrivateInExpression(private_in) = &binary.left {
+            let PrivateInExpression { left, right, .. } = private_in.as_ref();
+            let name = facts.private_name(left.span)?;
+            let object = reduce_expression(right, ops, facts, next_register, locals)?;
+            let shift_rhs = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
+            let shifted = take_register(next_register);
+            let operator = reduce_operator(binary.operator)?;
+            ops.push(Op::Binary {
+                dst: shifted,
+                operator,
+                lhs: object,
+                rhs: shift_rhs,
+            });
+            let dst = take_register(next_register);
+            ops.push(Op::HasPrivate {
+                dst,
+                object: shifted,
+                name,
+            });
+            return Some(dst);
+        }
+    }
     if binary.operator == oxc::syntax::operator::BinaryOperator::In {
         return reduce_in(binary, ops, facts, next_register, locals);
     }
