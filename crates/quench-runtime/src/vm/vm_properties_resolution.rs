@@ -240,6 +240,24 @@ fn descriptor_property_result(
 /// functions; strict functions keep the receiver as-is.
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     match getter {
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(crate::ops::Builtin::HostCapability(_))
+            ) => {
+            let Value::HostCapability(token) = &bound.receiver else {
+                return Err(crate::vm::not_callable());
+            };
+            let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
+                unreachable!();
+            };
+            crate::vm::execute_host_capability_with_receiver(
+                kind,
+                Some(&Value::HostCapability(token.clone())),
+                Some(receiver),
+                &[],
+            )
+        }
         Value::Function(_) | Value::BoundFunction(_) => {
             crate::functions::execute_target(getter, receiver, &[])
         }
@@ -384,4 +402,3 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
     let name = crate::builtins::builtin_name(builtin);
     name.starts_with("get ") || name.starts_with("set ")
 }
-
