@@ -28,7 +28,6 @@ pub struct ArgumentLive {
 impl ArrayData {
     pub fn new(values: Vec<Value>) -> Self {
         let length = values.len();
-        let live_values = values.clone();
         Self {
             values,
             length,
@@ -39,13 +38,7 @@ impl ArrayData {
             mapped: Vec::new(),
             deleted: Vec::new(),
             prototype: std::cell::RefCell::new(None),
-            argument_live: Some(Rc::new(RefCell::new(ArgumentLive {
-                values: live_values,
-                length,
-                mapped: Vec::new(),
-                deleted: Vec::new(),
-                length_override: None,
-            }))),
+            argument_live: None,
         }
     }
 
@@ -65,6 +58,10 @@ impl ArrayData {
 
     pub(crate) fn is_arguments(&self) -> bool {
         self.arguments
+    }
+
+    pub(crate) fn has_argument_live(&self) -> bool {
+        self.argument_live.is_some()
     }
 
     pub(crate) fn is_strict_arguments(&self) -> bool {
@@ -191,6 +188,11 @@ impl ArrayData {
             let index = live.length;
             set_live_index(&mut live, index, value.clone());
         }
+    }
+
+    pub(crate) fn append_physical(&mut self, values: &[Value]) {
+        self.values.extend_from_slice(values);
+        self.length = self.length.saturating_add(values.len());
     }
 
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
