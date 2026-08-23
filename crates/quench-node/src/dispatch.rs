@@ -251,6 +251,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_DNS_PROMISE_LOOKUP => dns_promise_lookup,
         CAP_DNS_PROMISE_RESOLVE4 => dns_promise_resolve4,
+        CAP_DNS_PROMISE_REVERSE => dns_promise_reverse,
         CAP_HTTP_REQUEST => http_request,
         CAP_HTTP_GET => http_get,
         CAP_HTTP_SERVER => http_create_server,

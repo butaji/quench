@@ -356,3 +356,10 @@ pub fn dns_promise_resolve4(
 ) -> Result<Value, VmError> {
     crate::modules::dns::promise_resolve4(s, a)
 }
+pub fn dns_promise_reverse(
+    s: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    a: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::dns::promise_reverse(s, a)
+}

@@ -102,6 +102,22 @@ pub fn promise_resolve4(
 ) -> Result<Value, quench_runtime::execute::VmError> {
     Ok(fulfilled(resolve4(state, args)?))
 }
+pub fn promise_reverse(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let address = host(args);
+    let hostname = match address.as_str() {
+        "127.0.0.1" => "localhost",
+        "::1" => "ip6-localhost",
+        _ => {
+            return Ok(Value::Promise(Rc::new(PromiseData::new(
+                PromiseState::Rejected(dns_error(&address)),
+            ))));
+        }
+    };
+    Ok(fulfilled(host_api::array(vec![Value::String(hostname.into())])))
+}
 pub fn empty_promise(
     _state: &Rc<RefCell<HostState>>,
     _args: &[Value],
@@ -119,6 +135,13 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::NodeSpec::new(
                 "dns:promise_resolve4",
                 0x0E03,
+            )),
+        ),
+        (
+            "reverse".into(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "dns:promise_reverse",
+                0x0E04,
             )),
         ),
     ]);
