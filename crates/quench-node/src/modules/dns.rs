@@ -16,10 +16,23 @@ fn value_to_string(v: &Value) -> String {
     }
 }
 fn address(name: &str) -> Option<String> {
-    if name == "localhost" || name == "ip6-localhost" {
+    if name == "localhost" {
         return Some("127.0.0.1".into());
     }
+    if name == "ip6-localhost" {
+        return Some("::1".into());
+    }
     name.parse::<std::net::IpAddr>().ok().map(|x| x.to_string())
+}
+fn callback_index(args: &[Value]) -> Option<usize> {
+    args.iter().rposition(quench_runtime::is_callable)
+}
+fn dns_error(hostname: &str) -> Value {
+    host_api::object(vec![
+        ("code".into(), Value::String("ENOTFOUND".into())),
+        ("syscall".into(), Value::String("getaddrinfo".into())),
+        ("hostname".into(), Value::String(hostname.into())),
+    ])
 }
 fn callback(cb: Option<&Value>, args: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
     if let Some(cb) = cb.filter(|v| quench_runtime::is_callable(v)) {
@@ -30,17 +43,27 @@ fn callback(cb: Option<&Value>, args: &[Value]) -> Result<Value, quench_runtime:
 fn fulfilled(value: Value) -> Value {
     Value::Promise(Rc::new(PromiseData::new(PromiseState::Fulfilled(value))))
 }
-
 pub fn lookup(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, quench_runtime::execute::VmError> {
-    let ip = address(&host(args)).unwrap_or_else(|| "127.0.0.1".into());
-    callback(
-        args.get(1),
-        &[Value::Null, Value::String(ip), Value::Number(4.0)],
-    )
+    let hostname = host(args);
+    let cb = callback_index(args).and_then(|i| args.get(i));
+    let requested_family = args.iter().find_map(|v| match v {
+        Value::Number(n) if *n == 4.0 || *n == 6.0 => Some(*n),
+        _ => None,
+    });
+    let ip = address(&hostname).filter(|ip| requested_family.is_none_or(|family| {
+        (family == 4.0 && ip.parse::<std::net::Ipv4Addr>().is_ok())
+            || (family == 6.0 && ip.parse::<std::net::Ipv6Addr>().is_ok())
+    }));
+    let Some(ip) = ip else {
+        return callback(cb, &[dns_error(&hostname), Value::Undefined, Value::Undefined]);
+    };
+    let family = if ip.parse::<std::net::Ipv6Addr>().is_ok() { 6.0 } else { 4.0 };
+    callback(cb, &[Value::Null, Value::String(ip), Value::Number(family)])
 }
+
 pub fn resolve4(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
