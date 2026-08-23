@@ -41,7 +41,18 @@ pub fn from(
                 &enc::encode_value(&first, &encoding)?,
             ))
         }
-        Value::Array(_) | Value::Object(_) => from_object(&first, args.get(1)),
+        Value::Array(_) => from_object(&first, args.get(1)),
+        Value::Object(_) => {
+            // JSON.stringify(Buffer) produces the canonical `{ type:
+            // "Buffer", data: [...] }` record accepted by Buffer.from.
+            if matches!(get_property(&first, "type"), Value::String(kind) if kind == "Buffer") {
+                let data = get_property(&first, "data");
+                if matches!(data, Value::Array(_)) {
+                    return from(_state, &[data]);
+                }
+            }
+            from_object(&first, args.get(1))
+        }
         Value::ArrayBuffer(buf) => from_array_buffer(buf, args),
         Value::Number(_)
         | Value::Boolean(_)
