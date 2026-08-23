@@ -70,11 +70,10 @@ const __nodeCryptoApi = {
   getCurves: () => ["secp384r1"],
   timingSafeEqual: (left, right) => {
     const normalize = (value) => {
-      if (value instanceof Uint8Array) return value;
-      if (value instanceof DataView) {
+      if (value instanceof ArrayBuffer) return new Uint8Array(value);
+      if (ArrayBuffer.isView(value)) {
         return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
       }
-      if (value instanceof ArrayBuffer) return new Uint8Array(value);
       throw Object.assign(new TypeError('The "buf1" and "buf2" arguments must be instances of Buffer, TypedArray, DataView, or ArrayBuffer'), { code: "ERR_INVALID_ARG_TYPE" });
     };
     left = normalize(left);
