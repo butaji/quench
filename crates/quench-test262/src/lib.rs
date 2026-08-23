@@ -102,10 +102,10 @@ impl TestMetadata {
 
 fn extract_frontmatter(source: &str) -> Result<&str, String> {
     let source = source.strip_prefix('\u{feff}').unwrap_or(source);
-    // test262 fixtures may begin with generator copyright banners (`// …`)
-    // before the frontmatter marker. Accept only leading `//` comment lines
-    // ahead of `/*---` so a marker embedded after arbitrary code is rejected.
-    let mut body = source;
+    // Fixtures normally begin with copyright comments. Hashbang tests add a
+    // deliberately malformed preamble before those comments; skip only that
+    // narrow preamble, never arbitrary JavaScript preceding the marker.
+    let mut body = skip_hashbang_preamble(source);
     loop {
         if let Some(rest) = body.strip_prefix('\n') {
             body = rest;
@@ -126,6 +126,58 @@ fn extract_frontmatter(source: &str) -> Result<&str, String> {
         return Err("unterminated test262 frontmatter".into());
     };
     Ok(&body[..end_offset])
+}
+
+fn skip_hashbang_preamble(source: &str) -> &str {
+    let mut body = source;
+
+    // A preceding directive, empty statement, line comment, or block comment
+    // is accepted only when it is immediately followed by a hashbang line.
+    if body.starts_with("\"use strict\"") {
+        if let Some(line_end) = body.find('\n') {
+            let after_directive = &body[line_end + 1..];
+            if after_directive.starts_with("#!") {
+                body = after_directive;
+            }
+        }
+    } else if body.starts_with(";#!") {
+        body = skip_line(body);
+    } else if body.starts_with("//\n#!") {
+        body = &body[3..];
+    } else if body.starts_with("/*\n*/#!") {
+        body = &body["/*\n*/".len()..];
+    }
+
+    while is_hashbang_candidate(body) {
+        if body.starts_with("#!/*") {
+            if let Some(end) = body.find("*/") {
+                body = &body[end + 2..];
+            } else {
+                return "";
+            }
+        } else {
+            body = skip_line(body);
+        }
+    }
+    body
+}
+
+fn is_hashbang_candidate(source: &str) -> bool {
+    let Some(line_end) = source.find('\n') else {
+        return source.starts_with("#!") || source.starts_with("#\\") || source.starts_with('\\');
+    };
+    let line = source[..line_end].trim_start();
+    line.starts_with("#!")
+        || line.starts_with("#\\")
+        || line.starts_with("\\u")
+        || line.starts_with("\\x")
+        || line.starts_with("\\0")
+}
+
+fn skip_line(source: &str) -> &str {
+    source
+        .find('\n')
+        .map_or("", |line_end| &source[line_end + 1..])
 }
 
 fn value_after_colon(line: &str) -> Option<String> {
