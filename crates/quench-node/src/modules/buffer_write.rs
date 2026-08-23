@@ -50,29 +50,21 @@ pub fn write(
     Ok(Value::Number(count as f64))
 }
 
-pub fn ascii_write(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    fixed_write(state, receiver, args, "ascii")
+macro_rules! fixed_write_method {
+    ($name:ident, $encoding:literal) => {
+        pub fn $name(
+            state: &Rc<RefCell<HostState>>,
+            receiver: Option<&Value>,
+            args: &[Value],
+        ) -> Result<Value, VmError> {
+            fixed_write(state, receiver, args, $encoding)
+        }
+    };
 }
 
-pub fn latin1_write(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    fixed_write(state, receiver, args, "latin1")
-}
-
-pub fn utf8_write(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    fixed_write(state, receiver, args, "utf8")
-}
+fixed_write_method!(ascii_write, "ascii");
+fixed_write_method!(latin1_write, "latin1");
+fixed_write_method!(utf8_write, "utf8");
 
 fn fixed_write(
     state: &Rc<RefCell<HostState>>,
