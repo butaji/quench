@@ -103,6 +103,7 @@ pub struct EmitterId(pub u64);
 pub struct EmitterRegistry {
     next: u64,
     emitters: HashMap<EmitterId, Rc<RefCell<EventEmitter>>>,
+    identities: HashMap<usize, EmitterId>,
     /// `events.defaultMaxListeners`.
     pub default_max: usize,
 }
@@ -118,6 +119,7 @@ impl EmitterRegistry {
         Self {
             next: 1,
             emitters: HashMap::new(),
+            identities: HashMap::new(),
             default_max: 10,
         }
     }
@@ -132,10 +134,45 @@ impl EmitterRegistry {
     pub fn insert(&mut self, id: EmitterId, emitter: Rc<RefCell<EventEmitter>>) {
         self.emitters.insert(id, emitter);
     }
+
+    pub fn identity(&self, value: &Value) -> Option<EmitterId> {
+        object_identity(value).and_then(|key| self.identities.get(&key).copied())
+    }
+
+    pub fn bind_identity(&mut self, value: &Value, id: EmitterId) {
+        if let Some(key) = object_identity(value) {
+            self.identities.insert(key, id);
+        }
+    }
+}
+
+fn object_identity(value: &Value) -> Option<usize> {
+    match value {
+        Value::Object(object) => Some(Rc::as_ptr(object) as usize),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| Rc::as_ptr(&object) as usize),
+        Value::Array(array) => Some(Rc::as_ptr(array) as usize),
+        Value::Function(function) => Some(Rc::as_ptr(function) as usize),
+        Value::BoundFunction(function) => Some(Rc::as_ptr(function) as usize),
+        _ => None,
+    }
 }
 
 /// Resolve the emitter id stored on a JS receiver object.
 pub fn emitter_id(receiver: &Value) -> Option<EmitterId> {
+    let own = quench_runtime::execute::execute_builtin_with_receiver(
+        quench_runtime::ops::Builtin::ObjectHasOwnProperty,
+        &[Value::String(EMITTER_ID_PROP.to_string())],
+        Some(receiver),
+    )
+    .ok()
+    .is_some_and(|value| matches!(value, Value::Boolean(true)));
+    if !own {
+        return None;
+    }
     match quench_runtime::vm::get_property(receiver, EMITTER_ID_PROP) {
         Value::Number(n) if n.is_finite() && n >= 0.0 => Some(EmitterId(n as u64)),
         _ => None,
