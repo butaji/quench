@@ -507,6 +507,7 @@ pub enum Op {
         slot: u16,
         body: crate::machine::FunctionCode,
         per_iteration: bool,
+        r#await: bool,
         dst: u16,
     },
     Switch {
