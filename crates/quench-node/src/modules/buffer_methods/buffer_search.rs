@@ -199,26 +199,74 @@ fn search_bytes(
             _ => search_offset(offset, haystack.len(), false).min(end as i64),
         };
     }
+    let max_start = match mode {
+        Search::LastIndexOf => search_offset(offset, haystack.len(), true).min(end as i64 - 1),
+        _ => search_offset(offset, haystack.len(), false),
+    };
+    if max_start < 0 {
+        return -1;
+    }
     match mode {
         Search::LastIndexOf => {
-            let start = search_offset(offset, haystack.len(), true).min(end as i64 - 1);
-            if start < 0 {
-                return -1;
-            }
-            (0..=start)
-                .rev()
-                .find(|&i| (!utf16 || i % 2 == 0) && ends_at(haystack, needle, i as usize))
-                .map_or(-1, |i| i)
+            let limit = (max_start as usize + needle.len())
+                .min(end)
+                .min(haystack.len());
+            kmp_search(haystack, needle, 0, limit, max_start as usize, utf16, true)
         }
-        _ => {
-            let start = search_offset(offset, haystack.len(), false) as usize;
-            (start..end)
-                .find(|&i| (!utf16 || i % 2 == 0) && ends_at(haystack, needle, i))
-                .map_or(-1, |i| i as i64)
-        }
+        _ => kmp_search(
+            haystack,
+            needle,
+            max_start as usize,
+            end.min(haystack.len()),
+            usize::MAX,
+            utf16,
+            false,
+        ),
     }
 }
 
-fn ends_at(haystack: &[u8], needle: &[u8], index: usize) -> bool {
-    index + needle.len() <= haystack.len() && &haystack[index..index + needle.len()] == needle
+fn kmp_search(
+    haystack: &[u8],
+    needle: &[u8],
+    scan_start: usize,
+    scan_end: usize,
+    reverse_limit: usize,
+    utf16: bool,
+    reverse: bool,
+) -> i64 {
+    if scan_start >= scan_end || needle.len() > scan_end.saturating_sub(scan_start) {
+        return -1;
+    }
+    let mut prefix = vec![0usize; needle.len()];
+    for index in 1..needle.len() {
+        let mut matched = prefix[index - 1];
+        while matched > 0 && needle[index] != needle[matched] {
+            matched = prefix[matched - 1];
+        }
+        if needle[index] == needle[matched] {
+            matched += 1;
+        }
+        prefix[index] = matched;
+    }
+    let mut matched = 0usize;
+    let mut last = None;
+    for (absolute, byte) in haystack[scan_start..scan_end].iter().copied().enumerate() {
+        while matched > 0 && byte != needle[matched] {
+            matched = prefix[matched - 1];
+        }
+        if byte == needle[matched] {
+            matched += 1;
+        }
+        if matched == needle.len() {
+            let index = scan_start + absolute + 1 - needle.len();
+            if (!utf16 || index % 2 == 0) && (!reverse || index <= reverse_limit) {
+                if !reverse {
+                    return index as i64;
+                }
+                last = Some(index as i64);
+            }
+            matched = prefix[matched - 1];
+        }
+    }
+    last.unwrap_or(-1)
 }
