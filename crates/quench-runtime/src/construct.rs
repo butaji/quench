@@ -42,7 +42,14 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::
     };
     let arguments = collect_construct_arguments(registers, args, spreads)?;
     let target = crate::execute::read_register(registers, *callee)?;
-    let value = construct_value(&target, &arguments)?;
+    let value = match &target {
+        // Intrinsic builtins are implemented directly; do not enter the VM
+        // environment trampoline used by user-defined Function constructors.
+        Value::Builtin(builtin) => {
+            construct_builtin_target(*builtin, &target, &target, &arguments)?
+        }
+        _ => construct_value(&target, &arguments)?,
+    };
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
@@ -119,11 +126,31 @@ fn construct_builtin_target(
     new_target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let needs_new_target_local = !crate::builtins::same_value(Some(target), Some(new_target));
-    if let Some(value) = construct_builtin_special_case(builtin, target, new_target, arguments)? {
+    if builtin == crate::ops::Builtin::SharedArrayBuffer
+        && !crate::builtins::same_value(Some(target), Some(new_target))
+    {
+        return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
+    }
+    let needs_new_target = !crate::builtins::same_value(Some(target), Some(new_target));
+    // Promise checks that its executor is callable before GetPrototypeFromConstructor.
+    // Fetching the prototype first would incorrectly expose a prototype getter error
+    // when the executor is not callable.
+    if builtin == crate::ops::Builtin::Promise && needs_new_target {
+        let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        let value = apply_new_target_prototype(value, target, new_target, prototype)?;
+        validate_data_view(&value)?;
         return Ok(value);
     }
-    let prototype = needs_new_target_local
+    if builtin == crate::ops::Builtin::DataView && needs_new_target {
+        let value = construct_data_view(arguments)?;
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        let value = apply_new_target_prototype(value, target, new_target, prototype)?;
+        let value = value;
+        validate_data_view(&value)?;
+        return Ok(value);
+    }
+    let prototype = needs_new_target
         .then(|| crate::execute::get_property_result(new_target, "prototype"))
         .transpose()?;
     let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
@@ -134,35 +161,6 @@ fn construct_builtin_target(
     };
     validate_data_view(&value)?;
     Ok(value)
-}
-
-fn construct_builtin_special_case(
-    builtin: crate::ops::Builtin,
-    target: &Value,
-    new_target: &Value,
-    arguments: &[Value],
-) -> Result<Option<Value>, crate::execute::VmError> {
-    let needs_new_target_local = !crate::builtins::same_value(Some(target), Some(new_target));
-    if builtin == crate::ops::Builtin::SharedArrayBuffer && needs_new_target_local {
-        return Ok(Some(construct_shared_array_buffer_with_target(
-            builtin, target, new_target, arguments,
-        )?));
-    }
-    if builtin == crate::ops::Builtin::Promise && needs_new_target_local {
-        let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
-        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
-        let value = apply_new_target_prototype(value, target, new_target, prototype)?;
-        validate_data_view(&value)?;
-        return Ok(Some(value));
-    }
-    if builtin == crate::ops::Builtin::DataView && needs_new_target_local {
-        let value = construct_data_view(arguments)?;
-        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
-        let value = apply_new_target_prototype(value, target, new_target, prototype)?;
-        validate_data_view(&value)?;
-        return Ok(Some(value));
-    }
-    Ok(None)
 }
 
 fn construct_shared_array_buffer_with_target(
@@ -394,13 +392,7 @@ fn construct_function(
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
         let (result, final_this) =
             crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
-        let result = finish_derived_construct(result, final_this)?;
-        let prototype = crate::execute::get_property(target, "prototype");
-        return Ok(if crate::value::is_object(&prototype) {
-            crate::execute::set_prototype_of(&result, &prototype).unwrap_or(result)
-        } else {
-            result
-        });
+        return finish_derived_construct(result, final_this);
     }
     let object = initialize_instance_fields(function, constructor_receiver(target))?;
     let (result, final_this) =
@@ -439,19 +431,6 @@ pub(crate) fn initialize_instance_fields(
     receiver: Value,
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = crate::locals::resolved_replacement(receiver);
-    let receiver = if crate::value::is_object(&receiver) {
-        let prototype = crate::execute::get_property(
-            &crate::value::Value::Function(std::rc::Rc::new(function.clone())),
-            "prototype",
-        );
-        if crate::value::is_object(&prototype) {
-            crate::execute::set_prototype_of(&receiver, &prototype).unwrap_or(receiver)
-        } else {
-            receiver
-        }
-    } else {
-        receiver
-    };
     let _home = crate::super_scope::Guard::install(&std::rc::Rc::new(function.clone()), &receiver);
     initialize_instance_fields_impl(function, receiver)
 }

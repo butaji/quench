@@ -76,7 +76,7 @@ pub(super) fn instantiate_functions(
             behavior == EvalBehavior::Global,
         )?;
     }
-    if is_global_behavior(behavior) {
+    if behavior == EvalBehavior::Script {
         emit_global_lexical_bindings(statements, locals, ops);
     }
     Ok(())
@@ -100,7 +100,7 @@ fn instantiate_context<'a>(
         variables.sort_unstable();
         variables.dedup();
     }
-    let lexical = if is_global_behavior(behavior) {
+    let lexical = if behavior == EvalBehavior::Script {
         lexical_variable_names(statements)
     } else {
         Vec::new()

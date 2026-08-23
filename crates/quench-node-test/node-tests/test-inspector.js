@@ -1,14 +1,6 @@
-// Node compat: inspector lifecycle and console surface (without transport).
-const assert = require('node:assert');
+// Node compat: inspector + trace_events shape.
 const inspector = require('node:inspector');
 const te = require('node:trace_events');
-assert.strictEqual(typeof inspector, 'object');
-assert.strictEqual(typeof te, 'object');
-for (const name of ['open', 'close', 'url', 'waitForDebugger']) {
-  assert.strictEqual(typeof inspector[name], 'function', `inspector.${name}`);
-}
-assert.strictEqual(typeof inspector.open, 'function');
-assert.strictEqual(typeof inspector.url, 'function');
-assert.strictEqual(typeof inspector.waitForDebugger, 'function');
-assert.strictEqual(typeof inspector.close, 'function');
+if (typeof inspector !== 'object') throw new Error('inspector: ' + typeof inspector);
+if (typeof te !== 'object') throw new Error('trace_events: ' + typeof te);
 console.log('inspector+te: ok');

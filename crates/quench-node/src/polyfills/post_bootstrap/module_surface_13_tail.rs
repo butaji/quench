@@ -237,8 +237,6 @@ if (globalThis.require) {
   globalThis.require = (name) => {
     const result = originalRequire(name);
     if (String(name).replace(/^node:/, "") === "crypto") {
-      const subtle = globalThis.crypto && globalThis.crypto.subtle;
-      if (subtle) result.subtle = subtle;
       return __quenchCryptoFallbacks(result);
     }
     return result;

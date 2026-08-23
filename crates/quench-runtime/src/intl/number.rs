@@ -153,18 +153,7 @@ fn validate_option(key: &str, text: &str) -> Result<(), VmError> {
 
 impl RawOptions {
     fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
-        let mut raw = Self::defaults();
-        if let Some(options) = options.filter(|value| crate::value::is_object(value)) {
-            raw.read_options(options)?;
-        }
-        if raw.style == "currency" && raw.currency.is_none() {
-            return Err(runtime_error("TypeError: currency"));
-        }
-        Ok(raw)
-    }
-
-    fn defaults() -> Self {
-        Self {
+        let mut raw = RawOptions {
             style: "decimal".to_string(),
             numbering_system: None,
             currency: None,
@@ -188,28 +177,29 @@ impl RawOptions {
             maximum_significant_digits: -1.0,
             rounding_priority: "auto".to_string(),
             trailing_zero_display: "auto".to_string(),
-        }
-    }
-
-    fn read_options(&mut self, options: &Value) -> Result<(), VmError> {
-        for key in OPTION_KEYS {
-            let value = crate::execute::get_property_result(options, key)?;
-            if matches!(value, Value::Undefined) {
-                continue;
+        };
+        if let Some(options) = options.filter(|value| crate::value::is_object(value)) {
+            for key in OPTION_KEYS {
+                let value = crate::execute::get_property_result(options, key)?;
+                if !matches!(value, Value::Undefined) {
+                    if *key == "useGrouping" {
+                        let (grouping, enabled, min2) = normalize_grouping(&value)?;
+                        raw.grouping = grouping;
+                        raw.grouping_explicit = true;
+                        raw.use_grouping = enabled;
+                        raw.grouping_min2 = min2;
+                        continue;
+                    }
+                    let text = option_text(key, &value)?;
+                    validate_option(key, &text)?;
+                    apply_option(&mut raw, key, &text);
+                }
             }
-            if *key == "useGrouping" {
-                let (grouping, enabled, min2) = normalize_grouping(&value)?;
-                self.grouping = grouping;
-                self.grouping_explicit = true;
-                self.use_grouping = enabled;
-                self.grouping_min2 = min2;
-                continue;
-            }
-            let text = option_text(key, &value)?;
-            validate_option(key, &text)?;
-            apply_option(self, key, &text);
         }
-        Ok(())
+        if raw.style == "currency" && raw.currency.is_none() {
+            return Err(runtime_error("TypeError: currency"));
+        }
+        Ok(raw)
     }
 }
 
@@ -341,7 +331,24 @@ impl NumberOptions {
 
     fn slot(&self) -> Value {
         let mut properties = slot_primary(self);
-        append_style_options(&mut properties, self);
+        if let Some(currency) = &self.currency {
+            properties.push(("currency".to_string(), Value::String(currency.clone())));
+            properties.push((
+                "currencyDisplay".to_string(),
+                Value::String(self.currency_display.clone()),
+            ));
+            properties.push((
+                "currencySign".to_string(),
+                Value::String(self.currency_sign.clone()),
+            ));
+        }
+        if let Some(unit) = &self.unit {
+            properties.push(("unit".to_string(), Value::String(unit.clone())));
+            properties.push((
+                "unitDisplay".to_string(),
+                Value::String(self.unit_display.clone()),
+            ));
+        }
         properties.extend([
             (
                 "minimumIntegerDigits".to_string(),
@@ -378,27 +385,6 @@ impl NumberOptions {
         ));
         properties.extend(slot_tail(self));
         make_object(properties)
-    }
-}
-
-fn append_style_options(properties: &mut Vec<(String, Value)>, options: &NumberOptions) {
-    if let Some(currency) = &options.currency {
-        properties.push(("currency".to_string(), Value::String(currency.clone())));
-        properties.push((
-            "currencyDisplay".to_string(),
-            Value::String(options.currency_display.clone()),
-        ));
-        properties.push((
-            "currencySign".to_string(),
-            Value::String(options.currency_sign.clone()),
-        ));
-    }
-    if let Some(unit) = &options.unit {
-        properties.push(("unit".to_string(), Value::String(unit.clone())));
-        properties.push((
-            "unitDisplay".to_string(),
-            Value::String(options.unit_display.clone()),
-        ));
     }
 }
 

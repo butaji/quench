@@ -2,18 +2,28 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.global = globalThis;
 if (typeof Array.fromAsync !== "function") {
-  Array.fromAsync = async function (source, mapFn) {
-    const result = [];
-    let index = 0;
-    if (source != null && source[Symbol.asyncIterator]) {
-      for await (const value of source) {
-        result.push(mapFn ? await mapFn(value, index++) : value);
-      }
-    } else {
-      for (const value of source || []) {
-        result.push(mapFn ? await mapFn(value, index++) : value);
-      }
+  Array.fromAsync = async function fromAsync(items, mapFn) {
+    if (items == null) throw new TypeError("Array.fromAsync requires an object");
+    if (mapFn !== undefined && typeof mapFn !== "function") {
+      throw new TypeError("Array.fromAsync mapper must be a function");
     }
+    const C = this;
+    if (typeof C !== "function") throw new TypeError("Array.fromAsync called on non-constructor");
+    const result = new C();
+    let index = 0;
+    const add = async (value) => {
+      result[index] = mapFn === undefined ? value : await mapFn(value, index);
+      index++;
+    };
+    if (items[Symbol.asyncIterator] != null) {
+      for await (const value of items) await add(value);
+    } else if (items[Symbol.iterator] != null) {
+      for (const value of items) await add(value);
+    } else {
+      const length = Math.min(Math.max(Number(items.length) || 0, 0), 2 ** 53 - 1);
+      for (let i = 0; i < length; i++) await add(items[i]);
+    }
+    result.length = index;
     return result;
   };
 }
@@ -141,9 +151,6 @@ globalThis.console.assert = (condition, ...args) => {
 };
 const consoleTimers = {};
 const consoleCounts = {};
-const __nodeConsoleWarning = (message) => {
-  globalThis.process?.emitWarning?.(message, { name: "Warning" });
-};
 globalThis.console.count = (label = "default") => {
   if (typeof label === "symbol") {
     const e = new TypeError("Count label must be a string");
@@ -154,37 +161,23 @@ globalThis.console.count = (label = "default") => {
   __nodeConsoleWrite(`${label}: ${consoleCounts[label]}`);
 };
 globalThis.console.countReset = (label = "default") => {
-  if (consoleCounts[label] === undefined) {
-    __nodeConsoleWarning(`Count for '${label}' does not exist`);
-    return;
-  }
-  delete consoleCounts[label];
+  consoleCounts[label] = 0;
 };
 globalThis.console.clear = () => undefined;
 globalThis.console.time = (label = "default") => {
-  if (consoleTimers[label] !== undefined) {
-    __nodeConsoleWarning(`Label '${label}' already exists for console.time()`);
-    return;
-  }
   consoleTimers[label] = BigInt(globalThis.__quench_now_ns());
 };
 globalThis.console.timeLog = (label = "default", ...args) => {
-  if (consoleTimers[label] === undefined) {
-    __nodeConsoleWarning(`No such label '${label}' for console.timeLog()`);
-    return;
-  }
-  __nodeConsoleWrite(
+  if (consoleTimers[label] === undefined) return;
+  globalThis.__quench_console_write(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
     } ms ${globalThis.__nodeFormat(args)}`
   );
 };
 globalThis.console.timeEnd = (label = "default") => {
-  if (consoleTimers[label] === undefined) {
-    __nodeConsoleWarning(`No such label '${label}' for console.timeEnd()`);
-    return;
-  }
-  __nodeConsoleWrite(
+  if (consoleTimers[label] === undefined) return;
+  globalThis.__quench_console_write(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
     } ms`

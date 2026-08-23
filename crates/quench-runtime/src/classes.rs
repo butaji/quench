@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use oxc::ast::ast::{
-    Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyDefinition, PropertyKey,
-};
+use oxc::ast::ast::{Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyKey};
 
 use crate::{
     facts::ProgramDb,
@@ -94,10 +92,8 @@ fn is_constructor(value: &crate::value::Value) -> bool {
     match value {
         crate::value::Value::Function(function) => crate::functions::is_constructible(function),
         crate::value::Value::BoundFunction(bound) => is_constructor(&bound.target),
-        crate::value::Value::HostCapability(_) => true,
         crate::value::Value::Builtin(builtin) => {
-            matches!(builtin, crate::ops::Builtin::HostCapability(_))
-                || crate::builtin_meta::constructor_name(*builtin).is_some()
+            crate::builtin_meta::constructor_name(*builtin).is_some()
         }
         crate::value::Value::Proxy(proxy) => {
             crate::proxy::get_handler_trap(proxy, "construct").is_some()
@@ -180,14 +176,6 @@ fn reduce_class_element(
     element: &ClassElement<'_>,
     context: &mut ClassElementContext<'_>,
 ) -> Option<()> {
-    reduce_class_element_inner(element, context)?;
-    Some(())
-}
-
-fn reduce_class_element_inner(
-    element: &ClassElement<'_>,
-    context: &mut ClassElementContext<'_>,
-) -> Option<()> {
     match element {
         ClassElement::StaticBlock(block) => {
             context.static_fields.push(reduce_static_block(
@@ -200,37 +188,32 @@ fn reduce_class_element_inner(
         ClassElement::MethodDefinition(method) => {
             reduce_class_method(method, context)?;
         }
-        ClassElement::PropertyDefinition(field) => {
-            reduce_class_field(field, context)?;
+        ClassElement::PropertyDefinition(field)
+            if !matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
+        {
+            reduce_public_field(
+                field,
+                context.constructor,
+                context.ops,
+                context.static_fields,
+                context.facts,
+                context.next,
+                context.locals,
+            )?;
+        }
+        ClassElement::PropertyDefinition(field)
+            if matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
+        {
+            reduce_private_field(
+                field,
+                context.constructor,
+                context.ops,
+                context.static_fields,
+                context.facts,
+                context.locals,
+            )?;
         }
         _ => {}
-    }
-    Some(())
-}
-
-fn reduce_class_field(
-    field: &PropertyDefinition<'_>,
-    context: &mut ClassElementContext<'_>,
-) -> Option<()> {
-    if matches!(field.key, PropertyKey::PrivateIdentifier(_)) {
-        reduce_private_field(
-            field,
-            context.constructor,
-            context.ops,
-            context.static_fields,
-            context.facts,
-            context.locals,
-        )?;
-    } else {
-        reduce_public_field(
-            field,
-            context.constructor,
-            context.ops,
-            context.static_fields,
-            context.facts,
-            context.next,
-            context.locals,
-        )?;
     }
     Some(())
 }
@@ -253,13 +236,6 @@ fn reduce_class_method(
             context.locals,
         );
     }
-    reduce_class_method_body(method, context)
-}
-
-fn reduce_class_method_body(
-    method: &MethodDefinition<'_>,
-    context: &mut ClassElementContext<'_>,
-) -> Option<()> {
     let key = reduce_method_key(
         method,
         context.ops,
@@ -433,7 +409,7 @@ fn reduce_field_initializer(
     let result = result?;
     body.push(Op::Return { src: result });
     Some(InstanceFieldInitializerOp {
-        body: crate::machine::FunctionCode::from_ops(body),
+        body: crate::machine::FunctionCode::pending(body),
         captures,
         name,
     })

@@ -3,7 +3,6 @@
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithOsHelpers = globalThis.require;
 globalThis.__nodeOsInitialized = false;
 const __quenchOsFallback = {
-  devNull: globalThis.process?.platform === "win32" ? "NUL" : "/dev/null",
   homedir: () =>
     globalThis.__quench_homedir || globalThis.process?.env?.HOME || "/",
   tmpdir: () => {
@@ -18,7 +17,6 @@ const __quenchOsFallback = {
       ).replace(/\/$/, "") || "/"
     );
   },
-  getuid: () => (typeof globalThis.process?.getuid === "function" ? globalThis.process.getuid() : 0),
   userInfo: (options = {}) => {
     const value = {
       uid: 0,
@@ -64,12 +62,7 @@ for (const name of ["homedir", "tmpdir"]) {
 }
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "os") {
-    globalThis.__nodeOs.getuid ||= () => 0;
     globalThis.__nodeOsInitialized = true;
-    if (globalThis.__nodeOs.devNull === undefined) {
-      globalThis.__nodeOs.devNull =
-        globalThis.process?.platform === "win32" ? "NUL" : "/dev/null";
-    }
     return globalThis.__nodeOs;
   }
   return __quenchOriginalRequireWithOsHelpers(specifier);

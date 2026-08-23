@@ -206,11 +206,9 @@ pub fn method_ref(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> V
 }
 
 pub fn method_has_ref(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Value {
-    // A cleared/disposed handle is no longer ref'ed. Node reports false for
-    // `hasRef()` after the timer has been removed from the registry.
     let referenced = timer_id_of(receiver)
         .and_then(|id| state.borrow().timers.timers.get(&id).map(|t| t.referenced))
-        .unwrap_or(false);
+        .unwrap_or(true);
     Value::Boolean(referenced)
 }
 
@@ -279,17 +277,13 @@ pub(crate) fn monotonic_ms() -> u64 {
 /// Node delay normalization with duration warnings: NaN, negative,
 /// and >2^31-1 delays clamp to 1ms and emit a process warning.
 fn normalize_delay(state: &Rc<RefCell<HostState>>, value: Option<&Value>) -> u64 {
-    let Some(value) = value else {
-        return 0;
+    let Some(Value::Number(n)) = value else {
+        return match value {
+            None => 0,
+            Some(_) => 1,
+        };
     };
-    // The public timers API applies JavaScript numeric coercion to delay,
-    // rather than treating every non-number as the 1ms fallback.
-    let n = match value {
-        Value::Number(n) => *n,
-        Value::String(s) => s.trim().parse::<f64>().unwrap_or(f64::NAN),
-        Value::Boolean(b) => f64::from(u8::from(*b)),
-        _ => f64::NAN,
-    };
+    let n = *n;
     if n.is_finite() && (0.0..=1.0).contains(&n) {
         return if n >= 1.0 { 1 } else { 0 };
     }
@@ -342,25 +336,6 @@ pub fn tick(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, V
 
 /// Build the `timers` namespace bindings.
 pub fn build() -> Vec<(String, Value)> {
-    let scheduler = crate::host::namespace_object_from_pairs(vec![
-        ("wait".to_string(), crate::host::scheduler_capability(2348)),
-        ("yield".to_string(), crate::host::scheduler_capability(2349)),
-        (
-            "constructor".to_string(),
-            crate::host::scheduler_capability(2350),
-        ),
-    ]);
-    let marker = quench_runtime::host_api::object(vec![
-        ("value".into(), Value::Boolean(true)),
-        ("writable".into(), Value::Boolean(false)),
-        ("enumerable".into(), Value::Boolean(false)),
-        ("configurable".into(), Value::Boolean(false)),
-    ]);
-    let _ = quench_runtime::execute::define_property(
-        scheduler.clone(),
-        "__quench_scheduler_identity",
-        marker,
-    );
     vec![
         (
             "setTimeout".to_string(),
@@ -386,6 +361,5 @@ pub fn build() -> Vec<(String, Value)> {
             "clearImmediate".to_string(),
             crate::host::capability(crate::registry::SPEC_TIMERS_CLEARIMMEDIATE),
         ),
-        ("scheduler".to_string(), scheduler),
     ]
 }

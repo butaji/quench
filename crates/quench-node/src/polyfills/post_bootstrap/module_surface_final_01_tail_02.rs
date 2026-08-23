@@ -52,21 +52,16 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchApplyFinalMod
     };
   }
   if (normalized === "inspector") {
-    // Inspector control APIs are lifecycle no-ops here; no debugging
-    // transport is advertised. Expose the documented console namespace.
     return {
       open: () => undefined,
       close: () => undefined,
       url: () => undefined,
       waitForDebugger: () => undefined,
       Session: function Session() {},
-      console: globalThis.console,
+      console: {},
     };
   }
   let result = originalRequire(name);
-  if (normalized === "timers/promises") {
-    result.scheduler = globalThis.__nodeTimersPromises?.scheduler || result.scheduler;
-  }
   if (normalized === "timers") {
     result.promises = originalRequire("timers/promises");
     const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
