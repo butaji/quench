@@ -5,6 +5,11 @@ function encode(value) {
       return { __quench_type: 'bigint', value: item.toString() };
     }
     if (item === undefined) return { __quench_type: 'undefined' };
+    // Buffer's toJSON hook runs before this replacer, so recognize its
+    // canonical `{ type: "Buffer", data: [...] }` representation explicitly.
+    if (item && item.type === 'Buffer' && Array.isArray(item.data)) {
+      return { __quench_type: 'buffer', data: item.data };
+    }
     if (item instanceof Uint8Array) {
       return { __quench_type: 'uint8array', data: Array.from(item) };
     }
@@ -15,6 +20,7 @@ function decode(text) {
   return JSON.parse(text, (key, item) => {
     if (item && item.__quench_type === 'undefined') return undefined;
     if (item && item.__quench_type === 'bigint') return BigInt(item.value);
+    if (item && item.__quench_type === 'buffer') return Buffer.from(item.data);
     if (item && item.__quench_type === 'uint8array') return new Uint8Array(item.data);
     return item;
   });
