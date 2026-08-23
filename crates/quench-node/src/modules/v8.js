@@ -51,10 +51,12 @@ module.exports = {
     const heapTotal = Number(memory.heapTotal) || 0;
     const heapUsed = Math.min(heapTotal, Number(memory.heapUsed) || 0);
     const external = Number(memory.external) || 0;
+    const totalAllocated = heapTotal + external;
     return {
       total_heap_size: heapTotal,
       total_heap_size_executable: 0,
       total_physical_size: heapTotal,
+      total_allocated_bytes: totalAllocated,
       total_available_size: Math.max(0, 4 * 1024 * 1024 * 1024 - heapUsed),
       used_heap_size: heapUsed,
       heap_size_limit: 4 * 1024 * 1024 * 1024,
