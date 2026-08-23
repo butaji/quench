@@ -242,7 +242,7 @@ fn global_property(
         |builtin| {
             realm.map_or_else(
                 || crate::vm::realm_intrinsic_for(RealmId::ROOT, builtin),
-                |realm| realm::intrinsic(realm, builtin).unwrap_or(Value::Undefined),
+                |realm| crate::vm::realm_intrinsic_for(realm, builtin),
             )
         },
     )
