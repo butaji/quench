@@ -91,40 +91,47 @@ pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D)
 pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
 pub const SPEC_TIMERS_CLOSE: NodeSpec = NodeSpec::new("timers:close", 0x070F);
 
-pub const SPEC_BUFFER_FROM: NodeSpec = NodeSpec::new("buffer:from", 0x0800);
-pub const SPEC_BUFFER_ALLOC: NodeSpec = NodeSpec::new("buffer:alloc", 0x0801);
-pub const SPEC_BUFFER_BYTELENGTH: NodeSpec = NodeSpec::new("buffer:byteLength", 0x0802);
-pub const SPEC_BUFFER_ISBUFFER: NodeSpec = NodeSpec::new("buffer:isBuffer", 0x0803);
-pub const SPEC_BUFFER_CONCAT: NodeSpec = NodeSpec::new("buffer:concat", 0x0804);
-pub const SPEC_BUFFER_NEW: NodeSpec = NodeSpec::new("buffer:Buffer", 0x0805);
-pub const SPEC_BUFFER_ATOB: NodeSpec = NodeSpec::new("buffer:atob", 0x0806);
-pub const SPEC_BUFFER_BTOA: NodeSpec = NodeSpec::new("buffer:btoa", 0x0807);
-pub const SPEC_BUFFER_TOSTRING: NodeSpec = NodeSpec::new("buffer:toString", 0x0808);
-pub const SPEC_BUFFER_ALLOC_UNSAFE: NodeSpec = NodeSpec::new("buffer:allocUnsafe", 0x080B);
-pub const SPEC_BUFFER_ALLOC_UNSAFE_SLOW: NodeSpec = NodeSpec::new("buffer:allocUnsafeSlow", 0x080C);
-pub const SPEC_BUFFER_ISENCODING: NodeSpec = NodeSpec::new("buffer:isEncoding", 0x080D);
-pub const SPEC_BUFFER_ISUTF8: NodeSpec = NodeSpec::new("buffer:isUtf8", 0x080E);
-pub const SPEC_BUFFER_ISASCII: NodeSpec = NodeSpec::new("buffer:isAscii", 0x080F);
-pub const SPEC_BUFFER_COMPARE_STATIC: NodeSpec = NodeSpec::new("buffer:compare", 0x0810);
-pub const SPEC_BUFFER_EQUALS: NodeSpec = NodeSpec::new("buffer.prototype:equals", 0x0811);
-pub const SPEC_BUFFER_COMPARE: NodeSpec = NodeSpec::new("buffer.prototype:compare", 0x0812);
-pub const SPEC_BUFFER_COPY: NodeSpec = NodeSpec::new("buffer.prototype:copy", 0x0813);
-pub const SPEC_BUFFER_FILL: NodeSpec = NodeSpec::new("buffer.prototype:fill", 0x0814);
-pub const SPEC_BUFFER_SLICE: NodeSpec = NodeSpec::new("buffer.prototype:slice", 0x0815);
-pub const SPEC_BUFFER_SWAP16: NodeSpec = NodeSpec::new("buffer.prototype:swap16", 0x0816);
-pub const SPEC_BUFFER_SWAP32: NodeSpec = NodeSpec::new("buffer.prototype:swap32", 0x0817);
-pub const SPEC_BUFFER_SWAP64: NodeSpec = NodeSpec::new("buffer.prototype:swap64", 0x0818);
-pub const SPEC_BUFFER_TOJSON: NodeSpec = NodeSpec::new("buffer.prototype:toJSON", 0x0819);
-pub const SPEC_BUFFER_INDEX_OF: NodeSpec = NodeSpec::new("buffer.prototype:indexOf", 0x081A);
-pub const SPEC_BUFFER_LAST_INDEX_OF: NodeSpec =
-    NodeSpec::new("buffer.prototype:lastIndexOf", 0x081B);
-pub const SPEC_BUFFER_INCLUDES: NodeSpec = NodeSpec::new("buffer.prototype:includes", 0x081C);
-pub const SPEC_BUFFER_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:write", 0x081D);
-pub const SPEC_BUFFER_INSPECT: NodeSpec = NodeSpec::new("buffer.prototype:inspect", 0x081E);
-pub const SPEC_BUFFER_COPY_BYTES_FROM: NodeSpec = NodeSpec::new("buffer:copyBytesFrom", 0x081F);
-pub const SPEC_BUFFER_ASCII_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:asciiWrite", 0x0850);
-pub const SPEC_BUFFER_LATIN1_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:latin1Write", 0x0851);
-pub const SPEC_BUFFER_UTF8_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:utf8Write", 0x0852);
+macro_rules! buffer_specs {
+    ($(($name:ident, $label:literal, $id:expr)),* $(,)?) => {
+        $(pub const $name: NodeSpec = NodeSpec::new($label, $id);)*
+    };
+}
+
+buffer_specs! {
+    (SPEC_BUFFER_FROM, "buffer:from", 0x0800),
+    (SPEC_BUFFER_ALLOC, "buffer:alloc", 0x0801),
+    (SPEC_BUFFER_BYTELENGTH, "buffer:byteLength", 0x0802),
+    (SPEC_BUFFER_ISBUFFER, "buffer:isBuffer", 0x0803),
+    (SPEC_BUFFER_CONCAT, "buffer:concat", 0x0804),
+    (SPEC_BUFFER_NEW, "buffer:Buffer", 0x0805),
+    (SPEC_BUFFER_ATOB, "buffer:atob", 0x0806),
+    (SPEC_BUFFER_BTOA, "buffer:btoa", 0x0807),
+    (SPEC_BUFFER_TOSTRING, "buffer:toString", 0x0808),
+    (SPEC_BUFFER_ALLOC_UNSAFE, "buffer:allocUnsafe", 0x080B),
+    (SPEC_BUFFER_ALLOC_UNSAFE_SLOW, "buffer:allocUnsafeSlow", 0x080C),
+    (SPEC_BUFFER_ISENCODING, "buffer:isEncoding", 0x080D),
+    (SPEC_BUFFER_ISUTF8, "buffer:isUtf8", 0x080E),
+    (SPEC_BUFFER_ISASCII, "buffer:isAscii", 0x080F),
+    (SPEC_BUFFER_COMPARE_STATIC, "buffer:compare", 0x0810),
+    (SPEC_BUFFER_EQUALS, "buffer.prototype:equals", 0x0811),
+    (SPEC_BUFFER_COMPARE, "buffer.prototype:compare", 0x0812),
+    (SPEC_BUFFER_COPY, "buffer.prototype:copy", 0x0813),
+    (SPEC_BUFFER_FILL, "buffer.prototype:fill", 0x0814),
+    (SPEC_BUFFER_SLICE, "buffer.prototype:slice", 0x0815),
+    (SPEC_BUFFER_SWAP16, "buffer.prototype:swap16", 0x0816),
+    (SPEC_BUFFER_SWAP32, "buffer.prototype:swap32", 0x0817),
+    (SPEC_BUFFER_SWAP64, "buffer.prototype:swap64", 0x0818),
+    (SPEC_BUFFER_TOJSON, "buffer.prototype:toJSON", 0x0819),
+    (SPEC_BUFFER_INDEX_OF, "buffer.prototype:indexOf", 0x081A),
+    (SPEC_BUFFER_LAST_INDEX_OF, "buffer.prototype:lastIndexOf", 0x081B),
+    (SPEC_BUFFER_INCLUDES, "buffer.prototype:includes", 0x081C),
+    (SPEC_BUFFER_WRITE, "buffer.prototype:write", 0x081D),
+    (SPEC_BUFFER_INSPECT, "buffer.prototype:inspect", 0x081E),
+    (SPEC_BUFFER_COPY_BYTES_FROM, "buffer:copyBytesFrom", 0x081F),
+    (SPEC_BUFFER_ASCII_WRITE, "buffer.prototype:asciiWrite", 0x0850),
+    (SPEC_BUFFER_LATIN1_WRITE, "buffer.prototype:latin1Write", 0x0851),
+    (SPEC_BUFFER_UTF8_WRITE, "buffer.prototype:utf8Write", 0x0852),
+}
 
 macro_rules! buffer_num_specs {
     ($(($name:ident, $id:expr)),* $(,)?) => {
