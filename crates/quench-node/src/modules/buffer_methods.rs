@@ -75,7 +75,11 @@ pub(crate) fn to_offset(value: Option<&Value>) -> f64 {
 /// Clamped `start`/`end` slice bounds per Node's `toString`/`slice`.
 fn clamp_bounds(args: &[Value], at: usize, len: usize, default: f64) -> usize {
     let raw = to_offset(args.get(at));
-    let raw = if args.get(at).is_none() { default } else { raw };
+    let raw = if args.get(at).is_none() || matches!(args.get(at), Some(Value::Undefined)) {
+        default
+    } else {
+        raw
+    };
     if raw < 0.0 {
         (len as f64 + raw).max(0.0) as usize
     } else {
@@ -265,6 +269,21 @@ pub fn fill(
     if !matches!(receiver, Some(Value::Uint8Array(_)))
         && matches!(args.first(), Some(Value::Uint8Array(_)))
     {
+        let view = match args.first() {
+            Some(Value::Uint8Array(view)) => view,
+            _ => unreachable!(),
+        };
+        validate_fill_bound(args.get(1), view.length, "start")?;
+        validate_fill_bound(args.get(2), view.length, "end")?;
+        if let Some(Value::Number(value)) = args.get(3) {
+            if !value.is_finite() || *value < 0.0 || *value > 255.0 {
+                return Err(enc::out_of_range(
+                    "value",
+                    ">= 0 && <= 255",
+                    &enc::fmt_num(*value),
+                ));
+            }
+        }
         let reordered = [
             args.get(3).cloned().unwrap_or(Value::Undefined),
             args.get(1).cloned().unwrap_or(Value::Undefined),
@@ -274,6 +293,15 @@ pub fn fill(
         return fill(state, args.first(), &reordered);
     }
     let view = this_view(receiver)?;
+    if let Some(receiver) = receiver {
+        if let Ok(Value::Number(length)) = quench_runtime::execute::get_property_result(receiver, "length") {
+            if length != view.length as f64 {
+                return Err(enc::buffer_out_of_bounds(
+                    "Attempt to access memory outside buffer bounds",
+                ));
+            }
+        }
+    }
     let fill = args.first().cloned().unwrap_or(Value::Undefined);
     let (offset_arg, end_arg, encoding_arg) = fill_args(args);
     let encoding = match encoding_arg {
@@ -281,8 +309,8 @@ pub fn fill(
         None => None,
     };
     let pattern = fill_pattern(&fill, encoding.as_deref())?;
-    validate_fill_bound(args.get(offset_arg), view.length)?;
-    validate_fill_bound(args.get(end_arg), view.length)?;
+    validate_fill_bound(args.get(offset_arg), view.length, "offset")?;
+    validate_fill_bound(args.get(end_arg), view.length, "end")?;
     let offset = clamp_bounds(args, offset_arg, view.length, 0.0);
     let end = clamp_bounds(args, end_arg, view.length, view.length as f64);
     if !pattern.is_empty() {
@@ -294,13 +322,18 @@ pub fn fill(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
-fn validate_fill_bound(value: Option<&Value>, length: usize) -> Result<(), VmError> {
-    let Some(Value::Number(value)) = value else {
-        return Ok(());
+fn validate_fill_bound(value: Option<&Value>, length: usize, name: &str) -> Result<(), VmError> {
+    let Some(value) = value else { return Ok(()); };
+    let Value::Number(value) = value else {
+        if matches!(value, Value::Undefined) { return Ok(()); }
+        return Err(enc::invalid_arg_type(format!(
+            "The \"{name}\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(value)
+        )));
     };
     if !value.is_finite() || *value < 0.0 || *value > length as f64 {
         return Err(enc::out_of_range(
-            "offset",
+            name,
             &format!(">= 0 && <= {length}"),
             &enc::fmt_num(*value),
         ));
