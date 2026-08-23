@@ -47,12 +47,45 @@ fn compare(
         (Value::Object(_), Value::Object(_)) => {
             compare_objects(left, right, strict, skip_prototype, memo)
         }
+        (Value::DataView(_), Value::DataView(_)) => {
+            compare_data_views(left, right, strict, skip_prototype, memo)
+        }
         _ if is_typed_array(left) && is_typed_array(right) => {
             compare_typed_arrays(left, right, strict, skip_prototype, memo)
         }
         _ if strict => Ok(false),
         _ => execute::abstract_equal(left, right),
     }
+}
+
+fn compare_data_views(
+    left: &Value,
+    right: &Value,
+    strict: bool,
+    skip_prototype: bool,
+    _memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    let (Value::DataView(a), Value::DataView(b)) = (left, right) else {
+        return Ok(false);
+    };
+    if strict && !skip_prototype {
+        let left_proto = execute::get_prototype_of(left)?;
+        let right_proto = execute::get_prototype_of(right)?;
+        if !execute::same_value(&left_proto, &right_proto) {
+            return Ok(false);
+        }
+    }
+    if a.byte_length != b.byte_length {
+        return Ok(false);
+    }
+    let left_bytes = a.buffer.bytes.borrow();
+    let right_bytes = b.buffer.bytes.borrow();
+    let left_end = a.byte_offset.saturating_add(a.byte_length);
+    let right_end = b.byte_offset.saturating_add(b.byte_length);
+    if left_end > left_bytes.len() || right_end > right_bytes.len() {
+        return Ok(false);
+    }
+    Ok(left_bytes[a.byte_offset..left_end] == right_bytes[b.byte_offset..right_end])
 }
 
 /// Typed-array views compare element content plus own symbol props.

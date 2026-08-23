@@ -98,7 +98,8 @@
       ended: false,
       endEmitted: false,
       errored: null,
-      closeEmitted: false
+      closeEmitted: false,
+      encoding: null
     };
     stream.readable = true;
     stream.destroyed = false;
@@ -140,6 +141,20 @@
       st.flowScheduled = false;
       flowReadable(stream);
     });
+  }
+
+  function normalizeReadableChunk(stream, chunk) {
+    const st = stream._readableState;
+    const isByteView = chunk && typeof chunk.byteLength === "number" &&
+      typeof chunk.byteOffset === "number" && (chunk.buffer ||
+      (typeof Uint8Array !== "undefined" && chunk instanceof Uint8Array));
+    if (!st.objectMode && isByteView && typeof Buffer !== "undefined" &&
+        !(chunk instanceof Buffer)) {
+      const normalized = Buffer.alloc(chunk.byteLength);
+      normalized.set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+      return normalized;
+    }
+    return chunk;
   }
 
   class Readable {
@@ -202,10 +217,20 @@
       if (chunk === null) {
         st.ended = true;
       } else {
-        st.buffer.push(chunk);
+        st.buffer.push(normalizeReadableChunk(this, chunk));
       }
       scheduleFlow(this);
       return !st.ended;
+    }
+
+    unshift(chunk) {
+      const st = this._readableState;
+      if (chunk === null) return false;
+      if (st.ended) st.ended = false;
+      st.buffer.unshift(normalizeReadableChunk(this, chunk));
+      st.reading = false;
+      scheduleFlow(this);
+      return true;
     }
 
     read() {
@@ -217,7 +242,11 @@
         }
       };
       if (st.buffer.length > 0) {
-        const chunk = st.buffer.shift();
+        let chunk = st.buffer.shift();
+        if (st.encoding) {
+          chunk = chunk.toString(st.encoding);
+          while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
+        }
         finishIfEnded();
         return chunk;
       }
@@ -226,12 +255,21 @@
         this._read(st.highWaterMark);
       }
       if (st.buffer.length > 0) {
-        const chunk = st.buffer.shift();
+        let chunk = st.buffer.shift();
+        if (st.encoding) {
+          chunk = chunk.toString(st.encoding);
+          while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
+        }
         finishIfEnded();
         return chunk;
       }
       finishIfEnded();
       return null;
+    }
+
+    setEncoding(encoding) {
+      this._readableState.encoding = encoding || "utf8";
+      return this;
     }
 
     pipe(dest, options) {
@@ -349,6 +387,7 @@
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
       buffered: 0,
+      pending: [],
       writing: false,
       ended: false,
       finished: false
@@ -403,8 +442,23 @@
         if (callback) nextTick(() => callback(error));
         return false;
       }
+      // Node normalizes binary views to Buffer for byte-mode Writable
+      // callbacks; object-mode streams preserve the original view identity.
+      const isByteView = chunk && typeof chunk.byteLength === "number" &&
+        typeof chunk.byteOffset === "number" && (chunk.buffer ||
+        (typeof Uint8Array !== "undefined" && chunk instanceof Uint8Array));
+      if (!st.objectMode && isByteView && typeof Buffer !== "undefined" &&
+          !(chunk instanceof Buffer)) {
+        const normalized = Buffer.alloc(chunk.byteLength);
+        normalized.set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+        chunk = normalized;
+      }
       const chunkLength = writableChunkLength(this, chunk);
       st.buffered += chunkLength;
+      if (st.writing) {
+        st.pending.push({ chunk, encoding, callback, chunkLength });
+        return st.buffered < st.highWaterMark;
+      }
       st.writing = true;
       let called = false;
       const done = (error) => {
@@ -418,6 +472,33 @@
           return;
         }
         if (callback) callback();
+        if (st.pending.length) {
+          const pending = st.pending.splice(0);
+          if (this._writev && pending.length > 1) {
+            const total = pending.reduce((sum, item) => sum + item.chunkLength, 0);
+            try {
+              this._writev(
+                pending.map((item) => ({ chunk: item.chunk, encoding: item.encoding })),
+                (batchError) => {
+                  st.buffered -= total;
+                  st.writing = false;
+                  for (const item of pending) if (item.callback) item.callback(batchError);
+                  if (batchError) this._emitter.emit("error", batchError);
+                  if (st.buffered < st.highWaterMark) this._emitter.emit("drain");
+                  finishWritable(this);
+                }
+              );
+            } catch (batchError) {
+              done(batchError);
+            }
+            return;
+          }
+          const next = pending.shift();
+          st.pending.unshift(...pending);
+          st.writing = false;
+          this.write(next.chunk, next.encoding, next.callback);
+          return;
+        }
         if (st.buffered < st.highWaterMark) this._emitter.emit("drain");
         finishWritable(this);
       };
