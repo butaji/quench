@@ -2,7 +2,9 @@ use std::{env, fs, path::PathBuf, process::Command, time::Instant};
 
 const RUNNER: &str = r#"
 let __quenchBenchSucceeded = true;
-const __quenchBenchPrint = typeof print === "function" ? print : console.log;
+const __quenchBenchPrint = typeof console !== "undefined" && typeof console.log === "function"
+  ? console.log
+  : print;
 BenchmarkSuite.RunSuites({
   NotifyResult(name, result) { __quenchBenchPrint(name + ": " + result); },
   NotifyError(name, error) { __quenchBenchSucceeded = false; __quenchBenchPrint(name + ": " + error); },
@@ -147,9 +149,16 @@ fn materialize(f: &PathBuf) -> PathBuf {
 fn run(p: &str, args: &[String], s: &PathBuf, t: u64) -> Sample {
     let st = Instant::now();
     let seconds = format!("{:.3}", t as f64 / 1000.0);
-    let mut command = Command::new("/usr/bin/time");
+    let mut command = Command::new("timeout");
     command
-        .args(["-l", "timeout", "--signal=KILL", &seconds, p])
+        .args([
+            "--signal=TERM",
+            "--kill-after=1",
+            &seconds,
+            "/usr/bin/time",
+            "-l",
+            p,
+        ])
         .args(args)
         .arg(s);
     let o = command.output();
@@ -161,7 +170,7 @@ fn run(p: &str, args: &[String], s: &PathBuf, t: u64) -> Sample {
         ),
         Err(e) => (-1, e.to_string(), String::new()),
     };
-    let timed_out = stderr.contains("command terminated abnormally");
+    let timed_out = matches!(status, 124 | 137);
     let score = stdout
         .lines()
         .find_map(|line| line.strip_prefix("Score: "))
