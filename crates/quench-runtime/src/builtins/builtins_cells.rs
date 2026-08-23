@@ -18,7 +18,7 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
         if let Some((_, current)) = values.iter_mut().rev().find(|(name, _)| name == key) {
             *current = Value::BindingCell(Rc::clone(&cell));
         } else {
-            values.push((key.into(), Value::BindingCell(Rc::clone(&cell))));
+            values.push((key.to_string(), Value::BindingCell(Rc::clone(&cell))));
         }
         let mut created = properties.created.clone();
         crate::builtins::object_alias::record_created(&mut created, key);

@@ -48,9 +48,9 @@ fn execute_private_suffix(
     generator: &GeneratorData, _state: &mut GeneratorState, range: crate::machine::CodeRange,
 ) -> Result<crate::vm::CompletionStep, VmError> {
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
-    let code = store.code(range).ok_or(VmError::MissingReturn)?;
+    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
     execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_code_completion_step_in_place(code, registers)
+        crate::execute::execute_completion_step_in_place(ops, registers)
     })
 }
 

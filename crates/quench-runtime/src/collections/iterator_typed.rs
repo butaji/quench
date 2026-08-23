@@ -3,13 +3,8 @@ use crate::value::Value;
 macro_rules! number_values {
     ($data:expr) => {
         collect_typed(
-            checked_length(
-                $data.length,
-                $data.byte_offset,
-                $data.byte_length(),
-                $data.logical_len(),
-                &$data.buffer,
-            )?,
+            $data.logical_len(),
+            *$data.buffer.detached.borrow() || $data.buffer.byte_length() < $data.byte_offset,
             |index| $data.get(index).map(|value| Value::Number(value.into())),
         )
     };
@@ -17,13 +12,8 @@ macro_rules! number_values {
 macro_rules! bigint_values {
     ($data:expr) => {
         collect_typed(
-            checked_length(
-                $data.length,
-                $data.byte_offset,
-                $data.byte_length(),
-                $data.logical_len(),
-                &$data.buffer,
-            )?,
+            $data.logical_len(),
+            $data.buffer.byte_length() < $data.byte_offset,
             |index| {
                 $data
                     .get(index)
@@ -33,9 +23,6 @@ macro_rules! bigint_values {
     };
 }
 pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
-    if let Value::BindingCell(cell) = value {
-        return typed_values(cell.borrow().clone());
-    }
     match value {
         Value::Float64Array(data) => number_values!(data),
         Value::Float32Array(data) => number_values!(data),
@@ -51,6 +38,7 @@ pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::V
         _ => Err(crate::collections::iterator::not_iterable()),
     }
 }
+
 fn checked_length(
     length: usize,
     byte_offset: usize,
@@ -74,10 +62,8 @@ fn checked_length(
         Ok(logical_len)
     }
 }
+
 pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmError> {
-    if let Value::BindingCell(cell) = value {
-        return typed_length(&cell.borrow());
-    }
     macro_rules! length {
         ($data:expr) => {
             checked_length(
@@ -106,8 +92,12 @@ pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmErr
 }
 fn collect_typed<T>(
     length: usize,
+    out_of_bounds: bool,
     mut get: impl FnMut(usize) -> Option<T>,
 ) -> Result<Vec<T>, crate::execute::VmError> {
+    if out_of_bounds {
+        return Err(crate::collections::iterator::not_iterable());
+    }
     (0..length)
         .map(|index| get(index).ok_or_else(crate::collections::iterator::not_iterable))
         .collect()

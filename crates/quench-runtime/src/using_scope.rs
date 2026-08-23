@@ -92,7 +92,7 @@ pub(crate) fn wrap(
     _next_register: &mut u16,
 ) -> Result<Vec<Op>, Vec<String>> {
     Ok(vec![Op::WithDispose {
-        body: crate::machine::FunctionCode::pending(body),
+        body: crate::machine::FunctionCode::from_ops(body),
         stack,
         await_using,
     }])
@@ -110,7 +110,7 @@ pub(crate) fn execute(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let Some(ops) = body.code() else {
+    let Some(ops) = body.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let completion = crate::exceptions::execute_ops(ops, registers)?;

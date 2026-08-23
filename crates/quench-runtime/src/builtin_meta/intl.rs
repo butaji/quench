@@ -38,9 +38,12 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlRelativeTimeFormatSupportedLocalesOf => {
             Some("Intl.RelativeTimeFormat.supportedLocalesOf")
         }
-        Builtin::IntlDurationFormatSupportedLocalesOf => {
-            Some("Intl.DurationFormat.supportedLocalesOf")
-        }
+        _ => intl_name_group_a_getters_or_tail(b),
+    }
+}
+
+const fn intl_name_group_a_getters_or_tail(b: Builtin) -> Option<&'static str> {
+    match b {
         Builtin::IntlLocaleBaseNameGetter => Some("get baseName"),
         Builtin::IntlLocaleCalendarGetter => Some("get calendar"),
         Builtin::IntlLocaleCaseFirstGetter => Some("get caseFirst"),
@@ -86,6 +89,12 @@ const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
         Builtin::IntlDateTimeFormatResolvedOptions => {
             Some("Intl.DateTimeFormat.prototype.resolvedOptions")
         }
+        _ => intl_name_group_a_tail_rest(b),
+    }
+}
+
+const fn intl_name_group_a_tail_rest(b: Builtin) -> Option<&'static str> {
+    match b {
         Builtin::IntlDateTimeFormatFormatGetter => Some("get format"),
         Builtin::IntlDurationFormatFormat => Some("Intl.DurationFormat.prototype.format"),
         Builtin::IntlDurationFormatFormatToParts => {
@@ -114,6 +123,22 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleGetTimeZones
         | Builtin::IntlLocaleGetTextInfo
         | Builtin::IntlLocaleGetWeekInfo => Some(0.0),
+        Builtin::IntlNumberFormatSupportedLocalesOf
+        | Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(1.0),
+        Builtin::IntlCollatorSupportedLocalesOf => Some(1.0),
+        Builtin::IntlPluralRulesSupportedLocalesOf => Some(1.0),
+        Builtin::IntlSegmenterSupportedLocalesOf => Some(1.0),
+        Builtin::IntlListFormatSupportedLocalesOf => Some(1.0),
+        Builtin::IntlRelativeTimeFormatSupportedLocalesOf
+        | Builtin::IntlDurationFormatSupportedLocalesOf => Some(1.0),
+        Builtin::IntlNumberFormatFormat => Some(0.0),
+        Builtin::IntlDurationFormatFormat | Builtin::IntlDurationFormatFormatToParts => Some(1.0),
+        _ => intl_fn_len_core_tail(b),
+    }
+}
+
+const fn intl_fn_len_core_tail(b: Builtin) -> Option<f64> {
+    match b {
         Builtin::IntlLocaleBaseNameGetter
         | Builtin::IntlLocaleCalendarGetter
         | Builtin::IntlLocaleCaseFirstGetter
@@ -127,16 +152,6 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleScriptGetter
         | Builtin::IntlLocaleTextInfoGetter
         | Builtin::IntlLocaleVariantsGetter => Some(0.0),
-        Builtin::IntlNumberFormatSupportedLocalesOf
-        | Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(1.0),
-        Builtin::IntlCollatorSupportedLocalesOf => Some(1.0),
-        Builtin::IntlPluralRulesSupportedLocalesOf => Some(1.0),
-        Builtin::IntlSegmenterSupportedLocalesOf => Some(1.0),
-        Builtin::IntlListFormatSupportedLocalesOf => Some(1.0),
-        Builtin::IntlRelativeTimeFormatSupportedLocalesOf
-        | Builtin::IntlDurationFormatSupportedLocalesOf => Some(1.0),
-        Builtin::IntlNumberFormatFormat => Some(0.0),
-        Builtin::IntlDurationFormatFormat | Builtin::IntlDurationFormatFormatToParts => Some(1.0),
         _ => intl_fn_len_tail(b),
     }
 }
@@ -207,13 +222,19 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleScriptGetter => Some("get script"),
         Builtin::IntlLocaleTextInfoGetter => Some("get textInfo"),
         Builtin::IntlLocaleVariantsGetter => Some("get variants"),
+        _ => intl_short_name_supported_locales(b),
+    }
+}
+
+const fn intl_short_name_supported_locales(b: Builtin) -> Option<&'static str> {
+    match b {
         Builtin::IntlNumberFormatSupportedLocalesOf
-        | Builtin::IntlDateTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlCollatorSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlPluralRulesSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlSegmenterSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlListFormatSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
+        | Builtin::IntlDateTimeFormatSupportedLocalesOf
+        | Builtin::IntlCollatorSupportedLocalesOf
+        | Builtin::IntlPluralRulesSupportedLocalesOf
+        | Builtin::IntlSegmenterSupportedLocalesOf
+        | Builtin::IntlListFormatSupportedLocalesOf
+        | Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
         _ => intl_short_name_formats(b),
     }
 }

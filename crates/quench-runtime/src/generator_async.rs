@@ -5,9 +5,8 @@ fn yielded_result(
 ) -> Result<Value, VmError> {
     let op = generator
         .function
-        .code
-        .code()
-        .and_then(|code| code.cold_at(machine_pc(generator)))
+        .ops()
+        .get(machine_pc(generator))
         .or_else(|| suspended_try(generator, state).map(|(_, yield_op, _)| yield_op));
     if generator.function.is_async {
         let value = match op {

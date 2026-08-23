@@ -24,10 +24,17 @@ server.on('error', () => {});
 server.listen(0, '127.0.0.1', () => {
   const port = server.address().port;
   assert.ok(port > 0, 'ephemeral port assigned');
+  assert.strictEqual(typeof server.getConnections, 'function');
+  server.maxConnections = 10;
+  assert.strictEqual(server.maxConnections, 10);
+  server.getConnections((err, count) => assert.ok(typeof count === 'number' && count >= 0));
 
   const client = net.connect(port, '127.0.0.1', () => {
     client.write('hello net');
   });
+    assert.strictEqual(typeof client.connecting, 'boolean');
+    assert.ok(client.readyState === 'open' || client.readyState === 'closed');
+    assert.strictEqual(client.ref(), client);
   const chunks = [];
   client.setEncoding('utf8');
   client.on('data', (chunk) => {

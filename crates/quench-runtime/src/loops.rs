@@ -121,7 +121,7 @@ pub(crate) fn reduce_for_in(
         slot
     };
     let (mut body, _) = crate::switch::with_completion(dst, || {
-        crate::branch::reduce(&statement.body, facts, &body_locals)
+        crate::branch::reduce(&statement.body, facts, &body_locals, next_slot)
     })?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
@@ -134,7 +134,7 @@ pub(crate) fn reduce_for_in(
         label: None,
         object,
         slot,
-        body: crate::machine::FunctionCode::pending(body),
+        body: crate::machine::FunctionCode::from_ops(body),
         per_iteration,
         dst,
     });
@@ -208,7 +208,7 @@ pub(crate) fn reduce_for_of(
         slot
     };
     let (mut body, _) = crate::switch::with_completion(dst, || {
-        crate::branch::reduce(&statement.body, facts, &body_locals)
+        crate::branch::reduce(&statement.body, facts, &body_locals, next_slot)
     })?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
@@ -217,16 +217,26 @@ pub(crate) fn reduce_for_of(
         body.insert(0, Op::MarkImmutable { slot });
     }
     *locals = outer_locals;
+    emit_for_of(ops, iterable, slot, body, per_iteration, dst);
+    Ok(Some(dst))
+}
+
+fn emit_for_of(
+    ops: &mut Vec<Op>,
+    iterable: u16,
+    slot: u16,
+    body: Vec<Op>,
+    per_iteration: bool,
+    dst: u16,
+) {
     ops.push(Op::ForOf {
         label: None,
         iterable,
         slot,
-        body: crate::machine::FunctionCode::pending(body),
+        body: crate::machine::FunctionCode::from_ops(body),
         per_iteration,
-        r#await: statement.r#await,
         dst,
     });
-    Ok(Some(dst))
 }
 
 fn for_in_slot(
@@ -275,61 +285,26 @@ pub(crate) fn execute_for_of(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, await_values, iterable, dst) =
-        unpack_for_of(registers, op)?;
+    let (label, slot, body, per_iteration, iterable, dst) = unpack_for_of(registers, op)?;
     let iterator = crate::collections::iterator::open(iterable)?;
-    iterate_loop_values(
-        registers,
-        label,
-        slot,
-        body,
-        per_iteration,
-        await_values,
-        iterator,
-        dst,
-    )
-}
-
-/// Active `for-of` iterators are execution bookkeeping, never observable
-/// through the JavaScript object model. Keep this stack in an `UnsafeCell`
-/// rather than imposing a borrow-checking runtime guard on every VM step.
-///
-/// The VM is single-threaded and this value is thread-local, so callers must
-/// only access it through the methods below.
-struct LiveForOf(std::cell::UnsafeCell<Vec<crate::value::Value>>);
-
-impl LiveForOf {
-    const fn new() -> Self {
-        Self(std::cell::UnsafeCell::new(Vec::new()))
-    }
-
-    fn push(&self, iterator: crate::value::Value) {
-        unsafe { &mut *self.0.get() }.push(iterator);
-    }
-
-    fn last(&self) -> Option<crate::value::Value> {
-        unsafe { (&*self.0.get()).last().cloned() }
-    }
-
-    fn pop(&self) -> Option<crate::value::Value> {
-        unsafe { (&mut *self.0.get()).pop() }
-    }
+    iterate_loop_values(registers, label, slot, body, per_iteration, iterator, dst)
 }
 
 thread_local! {
-    static LIVE_FOR_OF: LiveForOf = const { LiveForOf::new() };
+    static LIVE_FOR_OF: std::cell::RefCell<Vec<crate::value::Value>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 fn remember_for_of(iterator: crate::value::Value) {
-    LIVE_FOR_OF.with(|live| live.push(iterator));
+    LIVE_FOR_OF.with(|live| live.borrow_mut().push(iterator));
 }
 
 pub(crate) fn live_for_of() -> Option<crate::value::Value> {
-    LIVE_FOR_OF.with(LiveForOf::last)
+    LIVE_FOR_OF.with(|live| live.borrow().last().cloned())
 }
 
 pub(crate) fn take_live_for_of() -> Option<crate::value::Value> {
-    LIVE_FOR_OF.with(LiveForOf::pop)
+    LIVE_FOR_OF.with(|live| live.borrow_mut().pop())
 }
 
 type ForInLoopData<'a> = (
@@ -345,7 +320,6 @@ type ForOfLoopData<'a> = (
     &'a Option<String>,
     u16,
     &'a crate::machine::FunctionCode,
-    bool,
     bool,
     crate::value::Value,
     u16,
@@ -386,7 +360,7 @@ fn iterate_loop_keys(
     data: ForInLoopData<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, slot, body, per_iteration, keys, dst, object) = data;
-    let Some(body) = body.code() else {
+    let Some(body) = body.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     for key in keys {
@@ -434,14 +408,13 @@ fn unpack_for_of<'a>(
         slot,
         body,
         per_iteration,
-        r#await,
         dst,
     } = op
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let iterable = crate::execute::read_register(registers, *iterable)?;
-    Ok((label, *slot, body, *per_iteration, *r#await, iterable, *dst))
+    Ok((label, *slot, body, *per_iteration, iterable, *dst))
 }
 
 fn iterate_loop_values(
@@ -450,19 +423,19 @@ fn iterate_loop_values(
     slot: u16,
     body: &crate::machine::FunctionCode,
     per_iteration: bool,
-    await_values: bool,
     iterator: crate::value::Value,
     dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let Some(body) = body.code() else {
+    let Some(body) = body.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
+    let mut qdebug_count: u64 = 0;
     loop {
-        let value = match if await_values {
-            crate::collections::iterator::step_value_await(&iterator)
-        } else {
-            crate::collections::iterator::step_value(&iterator)
-        } {
+        qdebug_count += 1;
+        if qdebug_count == 40 && std::env::var_os("QDEBUG").is_some() {
+            panic!("QDEBUG: for-of spun 40 iterations, iterator={iterator:?}");
+        }
+        let value = match crate::collections::iterator::step_value(&iterator) {
             Ok(value) => value,
             Err(crate::execute::VmError::Thrown(reason)) => {
                 return Ok(crate::completion::Completion::Throw(reason));
@@ -509,10 +482,10 @@ fn bind_iteration(
 fn execute_loop_body(
     registers: &mut Vec<crate::value::Value>,
     label: &Option<String>,
-    body: crate::machine::CodeView<'_>,
+    body: &[Op],
 ) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
     Ok(crate::completion::Completion::into_loop_transition(
-        crate::vm::execute_code_completion_in_current_frame(body, registers)?,
+        crate::execute::execute_completion_in_place(body, registers)?,
         label,
     ))
 }
@@ -520,21 +493,3 @@ fn execute_loop_body(
 include!("loops_run.rs");
 include!("loops_body.rs");
 include!("loops_while.rs");
-
-#[cfg(test)]
-mod tests {
-    use super::{live_for_of, take_live_for_of, LIVE_FOR_OF};
-    use crate::value::Value;
-
-    #[test]
-    fn live_for_of_stack_is_lifo_and_empty_after_pop() {
-        LIVE_FOR_OF.with(|live| {
-            live.push(Value::Number(1.0));
-            live.push(Value::Number(2.0));
-        });
-        assert_eq!(live_for_of(), Some(Value::Number(2.0)));
-        assert_eq!(take_live_for_of(), Some(Value::Number(2.0)));
-        assert_eq!(take_live_for_of(), Some(Value::Number(1.0)));
-        assert_eq!(take_live_for_of(), None);
-    }
-}

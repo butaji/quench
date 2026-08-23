@@ -4,9 +4,8 @@ use crate::intl::tolocale::value::{is_truthy, strict_equal, to_int32, type_of};
 use crate::ops::Builtin;
 use crate::value::Value;
 
-use super::{read_register_unchecked, write_value, VmError};
+use super::{read_register, write_value, VmError};
 
-#[inline]
 pub(crate) fn execute_unary(
     registers: &mut Vec<Value>,
     dst: u16,
@@ -14,21 +13,12 @@ pub(crate) fn execute_unary(
     src: u16,
 ) -> Result<(), VmError> {
     use crate::ops::UnaryOp;
-    let value = read_register_unchecked(registers, src);
+    let value = read_register(registers, src)?;
     let result = match operator {
-        UnaryOp::Plus => match value {
-            Value::Number(n) => Value::Number(n),
-            _ => unary_plus(&value)?,
-        },
-        UnaryOp::Minus => match value {
-            Value::Number(n) => Value::Number(-n),
-            _ => unary_minus(&value)?,
-        },
+        UnaryOp::Plus => unary_plus(&value)?,
+        UnaryOp::Minus => unary_minus(&value)?,
         UnaryOp::Not => Value::Boolean(!is_truthy(&value)),
-        UnaryOp::BitwiseNot => match value {
-            Value::Number(n) => Value::Number(f64::from(!to_int32(n))),
-            _ => bitwise_not(&value)?,
-        },
+        UnaryOp::BitwiseNot => bitwise_not(&value)?,
         UnaryOp::Void => Value::Undefined,
         UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
         UnaryOp::ToString => to_string_value(&value)?,
@@ -54,7 +44,6 @@ fn numeric_unary(value: &Value, transform: fn(f64) -> f64) -> Result<Value, VmEr
         value,
     )?)))
 }
-#[inline]
 pub(crate) fn execute_binary(
     registers: &mut Vec<Value>,
     dst: u16,
@@ -62,124 +51,11 @@ pub(crate) fn execute_binary(
     lhs: u16,
     rhs: u16,
 ) -> Result<(), VmError> {
-    let direct = match (&registers[usize::from(lhs)], &registers[usize::from(rhs)]) {
-        (Value::Number(left), Value::Number(right)) => fast_number_binary(*left, *right, operator),
-        _ => None,
-    };
-    if let Some(result) = direct {
-        write_value(registers, dst, result);
-        return Ok(());
-    }
-    let left = read_register_unchecked(registers, lhs);
-    let right = read_register_unchecked(registers, rhs);
+    let left = read_register(registers, lhs)?;
+    let right = read_register(registers, rhs)?;
     write_value(registers, dst, evaluate_binary(&left, &right, operator)?);
     Ok(())
 }
-
-#[inline]
-fn fast_number_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> Option<Value> {
-    use crate::ops::BinaryOp;
-    Some(match operator {
-        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
-            if !is_negative_zero(left) && !is_negative_zero(right) {
-                if let (Some(left_int), Some(right_int)) = (
-                    Value::Number(left).as_small_integer(),
-                    Value::Number(right).as_small_integer(),
-                ) {
-                    let checked = match operator {
-                        BinaryOp::Add => Value::checked_small_integer_add(left_int, right_int),
-                        BinaryOp::Subtract => {
-                            Value::checked_small_integer_subtract(left_int, right_int)
-                        }
-                        BinaryOp::Multiply => {
-                            Value::checked_small_integer_multiply(left_int, right_int)
-                        }
-                        _ => unreachable!(),
-                    };
-                    if let Some(value) = checked {
-                        return Some(value);
-                    }
-                }
-            }
-            Value::Number(match operator {
-                BinaryOp::Add => left + right,
-                BinaryOp::Subtract => left - right,
-                BinaryOp::Multiply => left * right,
-                _ => unreachable!(),
-            })
-        }
-        BinaryOp::Divide => Value::Number(left / right),
-        BinaryOp::Remainder => Value::Number(left % right),
-        BinaryOp::Exponentiate => Value::Number(exponentiate(left, right)),
-        BinaryOp::LessThan => Value::Boolean(left < right),
-        BinaryOp::LessEqual => Value::Boolean(left <= right),
-        BinaryOp::GreaterThan => Value::Boolean(left > right),
-        BinaryOp::GreaterEqual => Value::Boolean(left >= right),
-        _ => return None,
-    })
-}
-
-#[inline]
-fn is_negative_zero(value: f64) -> bool {
-    value == 0.0 && value.is_sign_negative()
-}
-
-#[cfg(test)]
-mod immediate_integer_tests {
-    use super::fast_number_binary;
-    use crate::{ops::BinaryOp, value::Value};
-
-    #[test]
-    fn add_stays_exact_at_i32_boundaries() {
-        assert_eq!(
-            fast_number_binary(f64::from(i32::MAX), -1.0, BinaryOp::Add)
-                .and_then(|value| value.as_small_integer()),
-            Some(i32::MAX - 1)
-        );
-        let overflow = fast_number_binary(f64::from(i32::MAX), 1.0, BinaryOp::Add).unwrap();
-        assert_eq!(overflow, Value::Number(f64::from(i32::MAX) + 1.0));
-        assert_eq!(overflow.as_small_integer(), None);
-    }
-
-    #[test]
-    fn checked_integer_arithmetic_covers_subtract_and_multiply_boundaries() {
-        let cases = [
-            (BinaryOp::Subtract, i32::MIN, 1, f64::from(i32::MIN) - 1.0),
-            (BinaryOp::Multiply, 46_341, 46_341, 46_341.0 * 46_341.0),
-        ];
-        for (operator, left, right, fallback) in cases {
-            let result = fast_number_binary(f64::from(left), f64::from(right), operator)
-                .expect("numeric operation");
-            assert_eq!(result, Value::Number(fallback));
-            assert!(result.as_small_integer().is_none());
-        }
-        assert_eq!(
-            fast_number_binary(7.0, 6.0, BinaryOp::Multiply)
-                .and_then(|value| value.as_small_integer()),
-            Some(42)
-        );
-    }
-    #[test]
-    fn add_preserves_negative_zero_and_fractional_numbers() {
-        assert_eq!(
-            fast_number_binary(-0.0, 0.0, BinaryOp::Add)
-                .unwrap()
-                .number_bits(),
-            Some(0)
-        );
-        assert_eq!(
-            fast_number_binary(0.5, 0.25, BinaryOp::Add),
-            Some(Value::Number(0.75))
-        );
-        assert_eq!(
-            fast_number_binary(-0.0, -0.0, BinaryOp::Add)
-                .unwrap()
-                .number_bits(),
-            Some((-0.0_f64).to_bits())
-        );
-    }
-}
-#[inline]
 fn evaluate_binary(
     left: &Value,
     right: &Value,
@@ -241,7 +117,6 @@ fn bigint_binary(
     })
 }
 
-#[inline]
 fn arithmetic_value(
     left: &Value,
     right: &Value,
@@ -250,24 +125,19 @@ fn arithmetic_value(
     if operator != crate::ops::BinaryOp::Add {
         return numeric_binary_value(left, right, operator);
     }
-    // Fast path: ordinary number addition (no string concat, no ToPrimitive).
-    if let (Value::Number(l), Value::Number(r)) = (left, right) {
-        return Ok(Value::Number(numeric_binary(*l, *r, operator)));
-    }
-    let left = crate::conversion::to_primitive(left, "default")?;
-    let right = crate::conversion::to_primitive(right, "default")?;
+    let hint = if operator == crate::ops::BinaryOp::Add {
+        "default"
+    } else {
+        "number"
+    };
+    let left = crate::conversion::to_primitive(left, hint)?;
+    let right = crate::conversion::to_primitive(right, hint)?;
     if crate::conversion::is_symbol(&left) || crate::conversion::is_symbol(&right) {
         return Err(crate::value::error::throw_type_error(
             "Cannot convert Symbol value",
         ));
     }
-    if let (Value::String(left), Value::String(right)) = (&left, &right) {
-        let mut value = String::with_capacity(left.len() + right.len());
-        value.push_str(left);
-        value.push_str(right);
-        return Ok(Value::String(value));
-    }
-    if is_string_like(&left) || is_string_like(&right) {
+    if operator == crate::ops::BinaryOp::Add && (is_string_like(&left) || is_string_like(&right)) {
         let mut units = add_units(&left)?;
         units.extend(add_units(&right)?);
         return Ok(crate::strings::from_units(units));
@@ -280,15 +150,11 @@ fn arithmetic_value(
     Ok(Value::Number(numeric_binary(left, right, operator)))
 }
 
-#[inline]
 fn numeric_binary_value(
     left: &Value,
     right: &Value,
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
-    if let (Value::Number(l), Value::Number(r)) = (left, right) {
-        return Ok(Value::Number(numeric_binary(*l, *r, operator)));
-    }
     let left = to_numeric(left)?;
     let right = to_numeric(right)?;
     if has_bigint_operand(&left, &right) {
@@ -301,19 +167,9 @@ fn numeric_binary_value(
 
 /// Implement `++`/`--` semantics: ToNumeric the operand and adjust it by one
 /// in its own type, never via string concatenation.
-#[inline]
 fn numeric_update_value(left: &Value, operator: crate::ops::BinaryOp) -> Result<Value, VmError> {
-    let decrement = operator == crate::ops::BinaryOp::NumericSubtract;
-    if let Value::Number(n) = left {
-        return Ok(Value::Number(if decrement { *n - 1.0 } else { *n + 1.0 }));
-    }
-    if let Value::BindingCell(cell) = left {
-        let value = cell.borrow();
-        if let Value::Number(n) = &*value {
-            return Ok(Value::Number(if decrement { *n - 1.0 } else { *n + 1.0 }));
-        }
-    }
     let value = to_numeric(left)?;
+    let decrement = operator == crate::ops::BinaryOp::NumericSubtract;
     if let Some(big) = bigint_value(&value) {
         let result = if decrement {
             crate::bigint::subtract(big, "1")
@@ -340,16 +196,11 @@ fn to_numeric(value: &Value) -> Result<Value, VmError> {
     Ok(Value::Number(crate::conversion::to_number(&value)?))
 }
 
-#[inline]
 fn bitwise_value(
     left: &Value,
     right: &Value,
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
-    if let (Value::Number(l), Value::Number(r)) = (left, right) {
-        let result = number_bitwise(to_int32(*l), to_int32(*r), operator);
-        return Ok(Value::Number(f64::from(result)));
-    }
     let left = crate::conversion::to_primitive(left, "number")?;
     let left_number = bigint_value(&left)
         .is_none()
@@ -406,13 +257,7 @@ fn shift_count(right: i32) -> u32 {
 }
 
 /// ECMAScript unsigned right shift: ToUint32(left) >> (count & 31), as a number.
-#[inline]
 fn shift_right_unsigned(left: &Value, right: &Value) -> Result<f64, VmError> {
-    if let (Value::Number(l), Value::Number(r)) = (left, right) {
-        let left = to_int32(*l) as u32;
-        let right = to_int32(*r);
-        return Ok(f64::from(left >> shift_count(right)));
-    }
     let left = crate::conversion::to_primitive(left, "number")?;
     let left_number = bigint_value(&left)
         .is_none()
@@ -488,11 +333,7 @@ fn is_odd_integer(value: f64) -> bool {
     value.is_finite() && value.fract() == 0.0 && value.abs() % 2.0 == 1.0
 }
 
-#[inline]
 fn unary_plus(value: &Value) -> Result<Value, VmError> {
-    if let Value::Number(n) = value {
-        return Ok(Value::Number(*n));
-    }
     let value = crate::conversion::to_primitive(value, "number")?;
     if bigint_value(&value).is_some() {
         return Err(type_error("Cannot convert BigInt value to number"));
@@ -500,11 +341,7 @@ fn unary_plus(value: &Value) -> Result<Value, VmError> {
     numeric_unary(&value, |n| n)
 }
 
-#[inline]
 fn unary_minus(value: &Value) -> Result<Value, VmError> {
-    if let Value::Number(n) = value {
-        return Ok(Value::Number(-*n));
-    }
     let value = crate::conversion::to_primitive(value, "number")?;
     if let Some(value) = bigint_value(&value) {
         return Ok(Value::BigInt(bigint::negate(value).map_err(bigint_error)?));
@@ -514,11 +351,7 @@ fn unary_minus(value: &Value) -> Result<Value, VmError> {
     )?))
 }
 
-#[inline]
 fn bitwise_not(value: &Value) -> Result<Value, VmError> {
-    if let Value::Number(n) = value {
-        return Ok(Value::Number(f64::from(!to_int32(*n))));
-    }
     let value = crate::conversion::to_primitive(value, "number")?;
     if let Some(value) = bigint_value(&value) {
         let result = bigint::subtract("-1", value).map_err(bigint_error)?;
@@ -561,7 +394,7 @@ fn is_string_like(value: &Value) -> bool {
 
 fn add_units(value: &Value) -> Result<Vec<u16>, VmError> {
     if let Value::StringUnits(units) = value {
-        return Ok((**units).to_vec());
+        return Ok((**units).clone());
     }
     Ok(add_string(value)?.encode_utf16().collect())
 }
@@ -583,7 +416,7 @@ fn bigint_value(value: &Value) -> Option<&str> {
     }
 }
 
-fn bigint_slot((key, value): &(crate::value::PropertyName, Value)) -> Option<&str> {
+fn bigint_slot((key, value): &(String, Value)) -> Option<&str> {
     if key != "_value" {
         return None;
     }
@@ -594,69 +427,3 @@ fn bigint_slot((key, value): &(crate::value::PropertyName, Value)) -> Option<&st
 }
 
 include!("vm_compare.rs");
-
-#[cfg(test)]
-mod fast_path_tests {
-    use super::{evaluate_binary, fast_number_binary};
-    use crate::{ops::BinaryOp, value::Value};
-
-    #[test]
-    fn numeric_add_uses_specialized_result() {
-        assert_eq!(
-            fast_number_binary(2.0, 3.0, BinaryOp::Add),
-            Some(Value::Number(5.0))
-        );
-    }
-
-    #[test]
-    fn non_numeric_add_falls_back_to_generic_path() {
-        let left = Value::String("a".to_string());
-        let right = Value::Number(1.0);
-        assert_eq!(
-            evaluate_binary(&left, &right, BinaryOp::Add).unwrap(),
-            Value::String("a1".to_string())
-        );
-    }
-
-    #[test]
-    fn unsupported_operator_falls_back_to_generic_path() {
-        let left = Value::Number(2.0);
-        let right = Value::Number(2.0);
-        assert_eq!(fast_number_binary(2.0, 2.0, BinaryOp::Equal), None);
-        assert_eq!(
-            evaluate_binary(&left, &right, BinaryOp::Equal).unwrap(),
-            Value::Boolean(true)
-        );
-    }
-
-    #[test]
-    fn generic_path_reports_coercion_errors() {
-        let left = Value::BigInt("1".to_string());
-        let right = Value::Number(1.0);
-        assert!(evaluate_binary(&left, &right, BinaryOp::Add).is_err());
-    }
-
-    #[test]
-    fn specialized_numeric_results_match_generic_results() {
-        let left = Value::Number(8.0);
-        let right = Value::Number(3.0);
-        for operator in [
-            BinaryOp::Add,
-            BinaryOp::Subtract,
-            BinaryOp::Multiply,
-            BinaryOp::Divide,
-            BinaryOp::Remainder,
-            BinaryOp::Exponentiate,
-            BinaryOp::LessThan,
-            BinaryOp::LessEqual,
-            BinaryOp::GreaterThan,
-            BinaryOp::GreaterEqual,
-        ] {
-            assert_eq!(
-                fast_number_binary(8.0, 3.0, operator),
-                Some(evaluate_binary(&left, &right, operator).unwrap()),
-                "operator {operator:?}"
-            );
-        }
-    }
-}

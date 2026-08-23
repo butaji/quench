@@ -10,219 +10,9 @@ use crate::dispatch_handlers as handlers;
 
 pub use crate::dispatch_handlers::{CallHandler, ConstructHandler};
 
-const CAP_EVENTS_NEW: u16 = 0x0100;
-const CAP_EVENTS_FROM: u16 = 0x0101;
-const CAP_EVENTS_ON: u16 = 0x0102;
-const CAP_EVENTS_EMIT: u16 = 0x0103;
-const CAP_EVENTS_ONCE: u16 = 0x0105;
-const CAP_EVENTS_REMOVE_LISTENER: u16 = 0x0106;
-const CAP_EVENTS_REMOVE_ALL: u16 = 0x0107;
-const CAP_EVENTS_LISTENERS: u16 = 0x0108;
-const CAP_EVENTS_EVENT_NAMES: u16 = 0x0109;
-const CAP_EVENTS_LISTENER_COUNT: u16 = 0x010A;
-const CAP_EVENTS_PREPEND: u16 = 0x010B;
-const CAP_EVENTS_PREPEND_ONCE: u16 = 0x010C;
-const CAP_EVENTS_SET_MAX: u16 = 0x010D;
-const CAP_EVENTS_GET_MAX: u16 = 0x010E;
-const CAP_EVENTS_SET_MAX_STATIC: u16 = 0x010F;
-const CAP_EVENTS_GET_LISTENERS: u16 = 0x0110;
-const CAP_EVENTS_LISTENER_COUNT_STATIC: u16 = 0x0111;
-const CAP_EVENTS_GET_MAX_STATIC: u16 = 0x0112;
-const CAP_TARGET_ADD: u16 = 0x0113;
-const CAP_TARGET_REMOVE: u16 = 0x0114;
-const CAP_TARGET_DISPATCH: u16 = 0x0115;
-const CAP_EVENT_TARGET_NEW: u16 = 0x0116;
-const CAP_RUN_UNCAUGHT: u16 = 0x0117;
-const CAP_CONSOLE_LOG: u16 = 0x0200;
-const CAP_CONSOLE_INFO: u16 = 0x0201;
-const CAP_CONSOLE_WARN: u16 = 0x0202;
-const CAP_CONSOLE_ERROR: u16 = 0x0203;
-const CAP_CONSOLE_DEBUG: u16 = 0x0204;
-const CAP_CONSOLE_TRACE: u16 = 0x0205;
-const CAP_UTIL_FORMAT: u16 = 0x0300;
-const CAP_UTIL_INSPECT: u16 = 0x0301;
-const CAP_PATH_JOIN: u16 = 0x0400;
-const CAP_PATH_RESOLVE: u16 = 0x0401;
-const CAP_PATH_NORMALIZE: u16 = 0x0402;
-const CAP_PATH_DIRNAME: u16 = 0x0403;
-const CAP_PATH_BASENAME: u16 = 0x0404;
-const CAP_PATH_EXTNAME: u16 = 0x0405;
-const CAP_PATH_ISABSOLUTE: u16 = 0x0406;
-const CAP_PATH_RELATIVE: u16 = 0x0409;
-const CAP_PATH_PARSE: u16 = 0x040A;
-const CAP_PATH_FORMAT: u16 = 0x040B;
-const CAP_PATH_TO_NAMESPACED: u16 = 0x040C;
-const CAP_PATH_MATCHES_GLOB: u16 = 0x040D;
-const CAP_PATH_WIN32_JOIN: u16 = 0x0410;
-const CAP_PATH_WIN32_RESOLVE: u16 = 0x0411;
-const CAP_PATH_WIN32_NORMALIZE: u16 = 0x0412;
-const CAP_PATH_WIN32_DIRNAME: u16 = 0x0413;
-const CAP_PATH_WIN32_BASENAME: u16 = 0x0414;
-const CAP_PATH_WIN32_EXTNAME: u16 = 0x0415;
-const CAP_PATH_WIN32_ISABSOLUTE: u16 = 0x0416;
-const CAP_PATH_WIN32_RELATIVE: u16 = 0x0417;
-const CAP_PATH_WIN32_PARSE: u16 = 0x0418;
-const CAP_PATH_WIN32_FORMAT: u16 = 0x0419;
-const CAP_PATH_WIN32_TO_NAMESPACED: u16 = 0x041A;
-const CAP_PATH_WIN32_MATCHES_GLOB: u16 = 0x041B;
-const CAP_URL_PARSE: u16 = 0x0500;
-const CAP_URL_FORMAT: u16 = 0x0501;
-const CAP_URL_RESOLVE: u16 = 0x0502;
-const CAP_URL_NEW: u16 = 0x0503;
-const CAP_URL_SEARCH: u16 = 0x0504;
-const CAP_QS_PARSE: u16 = 0x0600;
-const CAP_QS_STRINGIFY: u16 = 0x0601;
-const CAP_QS_ESCAPE: u16 = 0x0602;
-const CAP_QS_UNESCAPE: u16 = 0x0603;
-const CAP_QS_UNESCAPE_BUFFER: u16 = 0x0604;
-const CAP_URL_GET_HREF: u16 = 0x0506;
-const CAP_URL_GET_PROTOCOL: u16 = 0x0507;
-const CAP_URL_GET_USERNAME: u16 = 0x0508;
-const CAP_URL_GET_PASSWORD: u16 = 0x0509;
-const CAP_URL_GET_HOST: u16 = 0x050A;
-const CAP_URL_GET_HOSTNAME: u16 = 0x050B;
-const CAP_URL_GET_PORT: u16 = 0x050C;
-const CAP_URL_GET_PATHNAME: u16 = 0x050D;
-const CAP_URL_GET_SEARCH: u16 = 0x050E;
-const CAP_URL_GET_HASH: u16 = 0x050F;
-const CAP_URL_GET_ORIGIN: u16 = 0x0510;
-const CAP_URL_GET_SEARCH_PARAMS: u16 = 0x0511;
-const CAP_URL_TO_STRING: u16 = 0x0512;
-const CAP_URL_TO_JSON: u16 = 0x0513;
-const CAP_URL_REVOKE_OBJECT_URL: u16 = 0x0514;
-const CAP_URL_FILE_URL_TO_PATH: u16 = 0x0515;
-const CAP_URL_TO_HTTP_OPTIONS: u16 = 0x0516;
-const CAP_URL_DOMAIN_TO_ASCII: u16 = 0x0517;
-const CAP_URL_DOMAIN_TO_UNICODE: u16 = 0x0518;
-const CAP_UTIL_INHERITS: u16 = 0x0304;
-const CAP_UTIL_STRIP_VT: u16 = 0x0305;
-const CAP_UTIL_FORMAT_WITH_OPTIONS: u16 = 0x0306;
-const CAP_UTIL_STYLE_TEXT: u16 = 0x0307;
-const CAP_UTIL_IS_DEEP_STRICT_EQUAL: u16 = 0x0308;
-const CAP_TEXT_DECODER_NEW: u16 = 0x0809;
-const CAP_TEXT_DECODER_DECODE: u16 = 0x080A;
-const CAP_TEXT_ENCODER_NEW: u16 = 0x084C;
-const CAP_TIMERS_SETTIMEOUT: u16 = 0x0700;
-const CAP_TIMERS_CLEARTIMEOUT: u16 = 0x0701;
-const CAP_TIMERS_SETINTERVAL: u16 = 0x0702;
-const CAP_TIMERS_CLEARINTERVAL: u16 = 0x0703;
-const CAP_TIMERS_SETIMMEDIATE: u16 = 0x0704;
-const CAP_TIMERS_CLEARIMMEDIATE: u16 = 0x0705;
-const CAP_TIMERS_TICK: u16 = 0x0706;
-const CAP_TIMERS_UNREF: u16 = 0x0708;
-const CAP_TIMERS_REF: u16 = 0x0709;
-const CAP_TIMERS_HASREF: u16 = 0x070A;
-const CAP_TIMERS_REFRESH: u16 = 0x070B;
-const CAP_RUN_LOOP: u16 = 0x070C;
-const CAP_RUN_EXIT: u16 = 0x070D;
-const CAP_INTERNAL_UTIL_SLEEP: u16 = 0x070E;
-const CAP_TIMERS_CLOSE: u16 = 0x070F;
-const CAP_BUFFER_NEW: u16 = 0x0805;
-const CAP_TTY_ISATTY: u16 = 0x0900;
-const CAP_PROCESS_EXIT: u16 = 0x0A01;
-const CAP_PROCESS_CWD: u16 = 0x0A02;
-const CAP_PROCESS_CHDIR: u16 = 0x0A03;
-const CAP_PROCESS_NEXT_TICK: u16 = 0x0A04;
-const CAP_PROCESS_HRTIME: u16 = 0x0A05;
-const CAP_PROCESS_HRTIME_BIGINT: u16 = 0x0A0B;
-const CAP_OS_PLATFORM: u16 = 0x0B00;
-const CAP_OS_ARCH: u16 = 0x0B01;
-const CAP_OS_HOSTNAME: u16 = 0x0B02;
-const CAP_OS_TYPE: u16 = 0x0B03;
-const CAP_OS_RELEASE: u16 = 0x0B04;
-const CAP_OS_CPUS: u16 = 0x0B05;
-const CAP_OS_TMPDIR: u16 = 0x0B06;
-const CAP_OS_HOMEDIR: u16 = 0x0B07;
-const CAP_OS_EOL: u16 = 0x0B08;
-const CAP_OS_UPTIME: u16 = 0x0B09;
-const CAP_OS_FREEMEM: u16 = 0x0B0A;
-const CAP_OS_TOTALMEM: u16 = 0x0B0B;
-const CAP_OS_LOADAVG: u16 = 0x0B0C;
-const CAP_OS_NETIF: u16 = 0x0B0D;
-const CAP_STREAM_READABLE: u16 = 0x0C00;
-const CAP_STREAM_WRITABLE: u16 = 0x0C01;
-const CAP_STREAM_DUPLEX: u16 = 0x0C02;
-const CAP_STREAM_TRANSFORM: u16 = 0x0C03;
-const CAP_STREAM_PIPELINE: u16 = 0x0C04;
-const CAP_STRING_DECODER: u16 = 0x0D00;
-const CAP_DNS_LOOKUP: u16 = 0x0E00;
-const CAP_DNS_RESOLVE4: u16 = 0x0E01;
-const CAP_HTTP_REQUEST: u16 = 0x0F00;
-const CAP_HTTP_GET: u16 = 0x0F01;
-const CAP_HTTP_SERVER: u16 = 0x0F02;
-const CAP_HTTP_RES_SET_HEADER: u16 = 0x0F03;
-const CAP_HTTP_RES_WRITE_HEAD: u16 = 0x0F04;
-const CAP_HTTP_RES_WRITE: u16 = 0x0F05;
-const CAP_HTTP_RES_END: u16 = 0x0F06;
-const CAP_HTTP_CONN: u16 = 0x0F07;
-const CAP_HTTP_DATA: u16 = 0x0F08;
-const CAP_HTTP_REQ_WRITE: u16 = 0x0F09;
-const CAP_HTTP_REQ_END: u16 = 0x0F0A;
-const CAP_HTTP_RESDATA: u16 = 0x0F0B;
-const CAP_HTTP_RESEND: u16 = 0x0F0C;
-const CAP_NET_CONNECT: u16 = 0x1000;
-const CAP_NET_SERVER: u16 = 0x1001;
-const CAP_NET_ISIP: u16 = 0x1002;
-const CAP_NET_ISIPV4: u16 = 0x1003;
-const CAP_NET_ISIPV6: u16 = 0x1004;
-const CAP_REQUIRE: u16 = 0x1200;
-const CAP_READLINE: u16 = 0x1300;
-const CAP_READLINE_DRIVER: u16 = 0x1301;
-const CAP_READLINE_DONE: u16 = 0x1302;
-const CAP_ZLIB_GZIP: u16 = 0x1700;
-const CAP_ZLIB_GUNZIP: u16 = 0x1701;
-const CAP_ZLIB_DEFLATE_RAW: u16 = 0x1702;
-const CAP_ZLIB_INFLATE_RAW: u16 = 0x1703;
-const CAP_ZLIB_DEFLATE: u16 = 0x1704;
-const CAP_ZLIB_INFLATE: u16 = 0x1705;
-const CAP_ASSERT_OK: u16 = 0x1400;
-const CAP_ASSERT_STRICT_EQUAL: u16 = 0x1401;
-const CAP_ASSERT_NOT_STRICT_EQUAL: u16 = 0x1402;
-const CAP_ASSERT_EQUAL: u16 = 0x1403;
-const CAP_ASSERT_NOT_EQUAL: u16 = 0x1404;
-const CAP_ASSERT_DEEP_STRICT_EQUAL: u16 = 0x1405;
-const CAP_ASSERT_NOT_DEEP_STRICT_EQUAL: u16 = 0x1406;
-const CAP_ASSERT_THROWS: u16 = 0x1407;
-const CAP_ASSERT_DOES_NOT_THROW: u16 = 0x1408;
-const CAP_ASSERT_FAIL: u16 = 0x1409;
-const CAP_ASSERT_IF_ERROR: u16 = 0x140A;
-const CAP_ASSERT_MATCH: u16 = 0x140B;
-const CAP_ASSERT_DOES_NOT_MATCH: u16 = 0x140C;
-const CAP_CJS_WRAP: u16 = 0x1d00;
-const CAP_UTIL_GETCALLSITES: u16 = 0x0303;
-const CAP_BUFFER_ATOB: u16 = 0x0806;
-const CAP_BUFFER_BTOA: u16 = 0x0807;
-const CAP_VM_RUN_IN_NEW_CONTEXT: u16 = 0x1600;
-const CAP_URL_PATH_TO_FILE_URL: u16 = 0x0505;
-const CAP_CP_SPAWNSYNC: u16 = 0x1e00;
-const CAP_CP_EXECSYNC: u16 = 0x1e01;
-const CAP_CP_EXEC: u16 = 0x1e02;
-const CAP_CP_SPAWN: u16 = 0x1e03;
-const CAP_PROCESS_UMASK: u16 = 0x0A06;
-const CAP_PROCESS_ON: u16 = 0x0A07;
-const CAP_PROCESS_ONCE: u16 = 0x0A08;
-const CAP_STDOUT_WRITE: u16 = 0x0A09;
-const CAP_STDERR_WRITE: u16 = 0x0A0A;
-const CAP_NET_GET_ASF_TIMEOUT: u16 = 0x1005;
-const CAP_NET_SET_ASF_TIMEOUT: u16 = 0x1006;
-const CAP_NET_SERVER_LISTEN: u16 = 0x1007;
-const CAP_NET_SERVER_CLOSE: u16 = 0x1008;
-const CAP_NET_SERVER_ADDRESS: u16 = 0x1009;
-const CAP_NET_SOCKET_WRITE: u16 = 0x100A;
-const CAP_NET_SOCKET_END: u16 = 0x100B;
-const CAP_NET_SOCKET_DESTROY: u16 = 0x100C;
-const CAP_NET_SOCKET_ADDRESS: u16 = 0x100D;
-const CAP_NET_SOCKET_SET_NO_DELAY: u16 = 0x100E;
-const CAP_NET_SOCKET_SET_KEEP_ALIVE: u16 = 0x100F;
-const CAP_NET_SOCKET_SET_ENCODING: u16 = 0x1010;
-const CAP_NET_SOCKET_PAUSE: u16 = 0x1011;
-const CAP_NET_SOCKET_RESUME: u16 = 0x1012;
-const CAP_STRUCTURED_CLONE: u16 = 0x1f00;
-const CAP_FETCH: u16 = 0x1f01;
-const CAP_ABORT_CONTROLLER: u16 = 0x1f02;
-const CAP_ABORT_SIGNAL: u16 = 0x1f03;
-const CAP_TEST_RUN: u16 = 0x1b00;
-const CAP_TEST_SKIP: u16 = 0x1b01;
+#[path = "dispatch_caps.rs"]
+mod dispatch_caps;
+use dispatch_caps::*;
 
 /// Single canonical mapping from capability id to call handler.
 pub fn lookup(cap: u16) -> Option<CallHandler> {
@@ -233,13 +23,24 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         2044 => handlers::buffer_of,
         0x1a00 => crate::modules::compat_extra::sea_is_sea,
         CAP_EVENTS_FROM => events_from,
-        CAP_EVENTS_ON => events_method_on,
         CAP_EVENTS_EMIT => events_method_emit,
         CAP_CONSOLE_LOG | CAP_CONSOLE_INFO | CAP_CONSOLE_DEBUG => console_log,
         CAP_CONSOLE_WARN | CAP_CONSOLE_ERROR => console_warn,
         CAP_CONSOLE_TRACE => console_trace,
+        CAP_CONSOLE_ASSERT => console_assert,
+        CAP_CONSOLE_COUNT => console_count,
         CAP_UTIL_FORMAT => util_format,
         CAP_UTIL_INSPECT => util_inspect,
+        CAP_INTERNAL_BINDING => internal_binding,
+        CAP_INTERNAL_VIEW_HAS_BUFFER => internal_view_has_buffer,
+        CAP_STRING_DECODER => string_decoder_call,
+        CAP_STRING_DECODER_WRITE => string_decoder_write,
+        CAP_STRING_DECODER_END => string_decoder_end,
+        0x2401 => crate::modules::sqlite::exec,
+        0x2402 => crate::modules::sqlite::prepare,
+        0x2403 => crate::modules::sqlite::run,
+        0x2404 => crate::modules::sqlite::all,
+        0x2405 => crate::modules::sqlite::close,
         _ => return events_dispatch(cap),
     };
     Some(h)
@@ -248,6 +49,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
 fn events_dispatch(cap: u16) -> Option<CallHandler> {
     use crate::modules::{event_target, events};
     Some(match cap {
+        CAP_EVENTS_ON => events::method_on,
         CAP_EVENTS_ONCE => events::method_once,
         CAP_EVENTS_REMOVE_LISTENER => events::method_remove_listener,
         CAP_EVENTS_REMOVE_ALL => events::method_remove_all_listeners,
@@ -313,6 +115,8 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_URL_PARSE => url_parse,
         CAP_URL_FORMAT => url_format,
         CAP_URL_RESOLVE => url_resolve,
+        CAP_URL_CAN_PARSE => url_can_parse,
+        CAP_URL_PARSE_STATIC => url_parse_static,
         CAP_QS_PARSE => crate::modules::querystring_parse::parse,
         CAP_QS_STRINGIFY => crate::modules::querystring_stringify::stringify,
         CAP_QS_ESCAPE => crate::modules::querystring::escape,
@@ -382,13 +186,40 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
         CAP_PROCESS_EXIT => process_exit,
+        CAP_PROCESS_KILL => process_kill,
+        CAP_PROCESS_EXIT_CODE_GET => process_exit_code_get,
+        CAP_PROCESS_EXIT_CODE_SET => process_exit_code_set,
         CAP_PROCESS_CWD => process_cwd,
         CAP_PROCESS_CHDIR => process_chdir,
+        CAP_PROCESS_NEXT_TICK => process_next_tick,
         CAP_PROCESS_HRTIME => process_hrtime,
-        CAP_PROCESS_HRTIME_BIGINT => process_hrtime_bigint,
         CAP_PROCESS_UMASK => process_umask,
         CAP_PROCESS_ON => process_on,
         CAP_PROCESS_ONCE => process_once,
+        CAP_PROCESS_GETUID => process_getuid,
+        CAP_PROCESS_GETGID => process_getgid,
+        CAP_PROCESS_UPTIME => process_uptime,
+        CAP_PROCESS_MEMORYUSAGE => process_memory_usage,
+        CAP_PROCESS_RESOURCE_USAGE => process_resource_usage,
+        CAP_PROCESS_CPU_USAGE => process_cpu_usage,
+        CAP_PROCESS_BINDING => process_binding,
+        CAP_PROCESS_EMIT => process_emit,
+        CAP_PROCESS_ACTIVE_RESOURCES => process_active_resources,
+        CAP_PROCESS_REPORT => process_report,
+        CAP_CRYPTO_RANDOM_BYTES => crypto_random_bytes,
+        CAP_CRYPTO_RANDOM_FILL_SYNC => crypto_random_fill_sync,
+        CAP_CRYPTO_UNSUPPORTED => crypto_unsupported,
+        CAP_CRYPTO_CREATE_HASH => crypto_create_hash,
+        CAP_CRYPTO_CREATE_HMAC => crypto_create_hmac,
+        CAP_CRYPTO_TIMING_SAFE_EQUAL => crypto_timing_safe_equal,
+        CAP_CRYPTO_RANDOM_UUID => crypto_random_uuid,
+        CAP_CRYPTO_RANDOM_INT => crypto_random_int,
+        CAP_CRYPTO_GET_HASHES => crypto_get_hashes,
+        CAP_CRYPTO_GET_CIPHERS => crypto_get_ciphers,
+        CAP_CRYPTO_HASH_UPDATE => crypto_hash_update,
+        CAP_CRYPTO_HASH_DIGEST => crypto_hash_digest,
+        CAP_CRYPTO_HMAC_UPDATE => crypto_hmac_update,
+        CAP_CRYPTO_HMAC_DIGEST => crypto_hmac_digest,
         CAP_STDOUT_WRITE | CAP_STDERR_WRITE => {
             |state, _receiver, args| crate::modules::process::stream_write(state, args)
         }
@@ -423,6 +254,9 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_PIPELINE => stream_pipeline,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
+        CAP_DNS_PROMISE_LOOKUP => dns_promise_lookup,
+        CAP_DNS_PROMISE_RESOLVE4 => dns_promise_resolve4,
+        CAP_DNS_PROMISE_REVERSE => dns_promise_reverse,
         CAP_HTTP_REQUEST => http_request,
         CAP_HTTP_GET => http_get,
         CAP_HTTP_SERVER => http_create_server,
@@ -436,6 +270,29 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_REQ_END => crate::modules::http_client::req_end,
         CAP_HTTP_RESDATA => crate::modules::http_client::data_handler,
         CAP_HTTP_RESEND => crate::modules::http_client::res_end_handler,
+        CAP_HTTP_RESUME => crate::modules::http_client::res_resume,
+        CAP_DGRAM_CREATE => dgram_create,
+        CAP_DGRAM_BIND => dgram_bind,
+        CAP_DGRAM_SEND => dgram_send,
+        CAP_DGRAM_CLOSE => dgram_close,
+        CAP_DGRAM_ADDRESS => dgram_address,
+        CAP_DGRAM_SET_TTL => crate::modules::dgram::set_ttl,
+        CAP_DGRAM_SET_BROADCAST => crate::modules::dgram::set_broadcast,
+        CAP_DGRAM_SET_MULTICAST_TTL => crate::modules::dgram::set_multicast_ttl,
+        CAP_DGRAM_SET_MULTICAST_LOOPBACK => crate::modules::dgram::set_multicast_loopback,
+        CAP_DGRAM_ADD_MEMBERSHIP => crate::modules::dgram::add_membership,
+        CAP_DGRAM_DROP_MEMBERSHIP => crate::modules::dgram::drop_membership,
+        CAP_DGRAM_GET_SEND_QUEUE_SIZE => crate::modules::dgram::get_send_queue_size,
+        CAP_DGRAM_GET_SEND_QUEUE_COUNT => crate::modules::dgram::get_send_queue_count,
+        CAP_DGRAM_REF => crate::modules::dgram::ref_socket,
+        CAP_DGRAM_UNREF => crate::modules::dgram::unref_socket,
+        _ => return network_dispatch_secondary(cap),
+    })
+}
+
+fn network_dispatch_secondary(cap: u16) -> Option<CallHandler> {
+    use handlers::*;
+    Some(match cap {
         CAP_NET_CONNECT => net_connect,
         CAP_NET_SERVER => net_create_server_call,
         CAP_NET_ISIP => net_is_ip,
@@ -446,6 +303,9 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SERVER_LISTEN => crate::modules::net::server_listen,
         CAP_NET_SERVER_CLOSE => crate::modules::net::server_close,
         CAP_NET_SERVER_ADDRESS => crate::modules::net::server_address,
+        CAP_NET_SERVER_GET_CONNECTIONS => crate::modules::net::server_get_connections,
+        CAP_NET_SERVER_REF => crate::modules::net::server_ref,
+        CAP_NET_SERVER_UNREF => crate::modules::net::server_unref,
         CAP_NET_SOCKET_WRITE => crate::modules::net::socket_write,
         CAP_NET_SOCKET_END => crate::modules::net::socket_end,
         CAP_NET_SOCKET_DESTROY => crate::modules::net::socket_destroy,
@@ -454,8 +314,29 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_SET_KEEP_ALIVE => crate::modules::net::socket_set_keep_alive,
         CAP_NET_SOCKET_SET_ENCODING => crate::modules::net::socket_set_encoding,
         CAP_NET_SOCKET_PAUSE => crate::modules::net::socket_pause,
+        CAP_NET_SOCKET_SET_TIMEOUT => crate::modules::net::socket_set_timeout,
         CAP_NET_SOCKET_RESUME => crate::modules::net::socket_resume,
+        CAP_NET_SOCKET_REF => crate::modules::net::socket_ref,
+        CAP_NET_SOCKET_UNREF => crate::modules::net::socket_unref,
+        _ => return network_dispatch_host(cap),
+    })
+}
+
+fn network_dispatch_host(cap: u16) -> Option<CallHandler> {
+    use handlers::*;
+    Some(match cap {
+        CAP_CRYPTO_SUBTLE_DIGEST => crypto_subtle_digest,
+        CAP_CRYPTO_SUBTLE_IMPORT_KEY => crypto_subtle_import_key,
+        CAP_CRYPTO_SUBTLE_ENCRYPT => crypto_subtle_encrypt,
+        CAP_CRYPTO_SUBTLE_DECRYPT => crypto_subtle_decrypt,
+        CAP_CRYPTO_SUBTLE_SIGN => crypto_subtle_sign,
+        CAP_CRYPTO_SUBTLE_VERIFY => crypto_subtle_verify,
+        CAP_CRYPTO_SUBTLE_GENERATE_KEY => crypto_subtle_generate_key,
+        CAP_CRYPTO_SUBTLE_EXPORT_KEY => crypto_subtle_export_key,
+        CAP_CRYPTO_SUBTLE_DERIVE_BITS => crypto_subtle_derive_bits,
+        CAP_CRYPTO_SUBTLE_DERIVE_KEY => crypto_subtle_derive_key,
         CAP_REQUIRE => node_require,
+        CAP_REQUIRE_FOR => node_require_for,
         CAP_CJS_WRAP => cjs_wrap,
         CAP_UTIL_GETCALLSITES => util_get_call_sites,
         CAP_BUFFER_ATOB => buffer_atob,
@@ -464,14 +345,27 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_SPAWNSYNC => cp_spawn_sync,
         CAP_CP_EXECSYNC => cp_exec_sync,
         CAP_CP_EXEC | CAP_CP_SPAWN => cp_async,
+        CAP_CP_EXECFILE => cp_exec_file,
+        CAP_CP_EXECFILESYNC => cp_exec_file_sync,
         CAP_TEST_RUN => test_run,
         CAP_TEST_SKIP => test_skip,
         CAP_STRUCTURED_CLONE => structured_clone,
         CAP_FETCH => fetch,
         CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm::run_in_new_context,
         CAP_READLINE => crate::modules::readline::create_interface,
+        CAP_READLINE_QUESTION => crate::modules::readline::question,
+        CAP_READLINE_WRITE | CAP_READLINE_CLOSE => crate::modules::readline::noop,
+        CAP_READLINE_CALLBACK => crate::modules::readline::question_callback,
+        CAP_TTY_READSTREAM => crate::modules::tty::read_stream,
+        CAP_TTY_WRITESTREAM => crate::modules::tty::write_stream,
         CAP_READLINE_DRIVER => crate::modules::readline::driver_handler,
         CAP_READLINE_DONE => crate::modules::readline::done_handler,
+        _ => return network_dispatch_compression(cap),
+    })
+}
+
+fn network_dispatch_compression(cap: u16) -> Option<CallHandler> {
+    Some(match cap {
         CAP_ZLIB_GZIP => crate::modules::zlib::gzip,
         CAP_ZLIB_GUNZIP => crate::modules::zlib::gunzip,
         CAP_ZLIB_DEFLATE_RAW => crate::modules::zlib::deflate_raw,
@@ -498,6 +392,7 @@ pub fn assert_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_ASSERT_IF_ERROR => assert::if_error,
         CAP_ASSERT_MATCH => assert_validate::matches,
         CAP_ASSERT_DOES_NOT_MATCH => assert_validate::does_not_match,
+        CAP_ASSERT_REJECTS => assert::rejects,
         _ => return None,
     })
 }
@@ -512,16 +407,18 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_STREAM_WRITABLE => stream_writable,
         CAP_STREAM_DUPLEX => stream_duplex,
         CAP_STREAM_TRANSFORM => stream_transform,
-        CAP_STRING_DECODER => string_decoder_new,
         CAP_URL_NEW => url_new,
         CAP_TEXT_DECODER_NEW => crate::modules::text_decoder::new_text_decoder,
         CAP_TEXT_ENCODER_NEW => crate::modules::text_encoder::new_text_encoder,
         CAP_URL_SEARCH => url_search_params,
-        CAP_NET_SERVER => net_create_server,
-        CAP_BUFFER_NEW => buffer_new_construct,
         CAP_READLINE => readline_create_interface,
+        CAP_NET_SERVER => net_create_server,
+        CAP_HTTP_SERVER => http_construct_server,
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
+        0x0805 => buffer_new_construct,
+        0x081B => buffer_last_index_of_construct,
+        0x2400 => crate::modules::sqlite::construct,
         _ => return None,
     })
 }

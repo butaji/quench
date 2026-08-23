@@ -21,6 +21,7 @@ server.listen(
       },
       () => client.write("ping"),
     );
+    client.setNoDelay(true);
     client.on("data", (chunk) => {
       assert.strictEqual(chunk.toString(), "pong");
       client.destroy();

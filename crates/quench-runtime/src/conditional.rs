@@ -25,7 +25,7 @@ pub(crate) fn reduce_expression(
     let alternate = reduce_branch(&conditional.alternate, facts, next_register, locals)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    let mut branches = crate::machine::FunctionCode::pending_many(vec![consequent, alternate]);
+    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
     let alternate = branches.pop()?;
     let consequent = branches.pop()?;
     ops.push(crate::ops::Op::Conditional {
@@ -69,10 +69,10 @@ pub(crate) fn execute(
     } else {
         alternate
     };
-    let Some(branch) = branch.code() else {
+    let Some(branch) = branch.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let completion = crate::vm::execute_code_completion_in_current_frame(branch, registers)?;
+    let completion = crate::execute::execute_completion_in_place(branch, registers)?;
     let crate::completion::Completion::Return(value) = completion else {
         return Ok(completion);
     };

@@ -2,18 +2,15 @@
 //! calls `Object.defineProperty(Object.prototype, "x", …)` to install getters
 //! that should affect primitive lookups too; we record the descriptor here
 //! so subsequent reads see it.
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-};
+use std::{cell::RefCell, collections::HashMap};
 
 use crate::{ops::Builtin, value::Value};
 
 thread_local! {
     static INTRINSIC_OVERRIDES: RefCell<HashMap<(Builtin, String), Value>> =
         RefCell::new(HashMap::new());
-    static INTRINSIC_REMOVED: RefCell<HashSet<(Builtin, String)>> =
-        RefCell::new(HashSet::new());
+    static INTRINSIC_REMOVED: RefCell<HashMap<(Builtin, String), ()>> =
+        RefCell::new(HashMap::new());
     static INTRINSIC_PROTOTYPE_OVERRIDES: RefCell<HashMap<Builtin, Value>> =
         RefCell::new(HashMap::new());
 }
@@ -77,14 +74,14 @@ pub(crate) fn remove(builtin: Builtin, key: &str) {
 /// future hardcoded prototype-chain lookup can observe the deletion.
 pub(crate) fn mark_removed(builtin: Builtin, key: &str) {
     INTRINSIC_REMOVED.with(|removed| {
-        removed.borrow_mut().insert((builtin, key.to_string()));
+        removed.borrow_mut().insert((builtin, key.to_string()), ());
     });
 }
 
 /// Returns true if JS `delete` has previously removed `key` from `builtin`'s
 /// prototype chain in this program.
 pub(crate) fn is_removed(builtin: Builtin, key: &str) -> bool {
-    INTRINSIC_REMOVED.with(|removed| removed.borrow().contains(&(builtin, key.to_string())))
+    INTRINSIC_REMOVED.with(|removed| removed.borrow().contains_key(&(builtin, key.to_string())))
 }
 
 /// Drop every cached override and recorded deletion so a fresh program can

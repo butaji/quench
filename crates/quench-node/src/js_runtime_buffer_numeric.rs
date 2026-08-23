@@ -1,3 +1,17 @@
+fn buffer_numeric_error(code: &str, message: &str) -> VmError {
+    let builtin = if code == "ERR_INVALID_ARG_TYPE" {
+        quench_runtime::ops::Builtin::TypeError
+    } else {
+        quench_runtime::ops::Builtin::RangeError
+    };
+    let error = quench_runtime::builtins::error(builtin, &[Value::String(message.into())]);
+    VmError::Thrown(quench_runtime::execute::set_property(
+        error,
+        "code",
+        Value::String(code.into()),
+    ))
+}
+
 fn buffer_numeric(
     id: u16,
     receiver: Option<&Value>,
@@ -16,10 +30,10 @@ fn buffer_numeric(
     let offset_value = match arguments.get(offset_arg) {
         Some(Value::Number(value)) => *value,
         _ => {
-            return Err(VmError::Thrown(fs_error(
+            return Err(buffer_numeric_error(
                 "ERR_INVALID_ARG_TYPE",
                 "offset must be a number",
-            )))
+            ))
         }
     };
     let size = if variable {
@@ -30,10 +44,10 @@ fn buffer_numeric(
                 *value as usize
             }
             _ => {
-                return Err(VmError::Thrown(fs_error(
+                return Err(buffer_numeric_error(
                     "ERR_OUT_OF_RANGE",
                     "byteLength out of range",
-                )))
+                ))
             }
         }
     } else if index <= 3 {
@@ -56,23 +70,23 @@ fn buffer_numeric(
         offset_value.to_string()
     };
     if !offset_value.is_finite() || offset_value.fract() != 0.0 {
-        return Err(VmError::Thrown(fs_error(
+        return Err(buffer_numeric_error(
             "ERR_OUT_OF_RANGE",
             &format!("The value of \"offset\" is out of range. It must be an integer. Received {offset_display}"),
-        )));
+        ));
     }
     if offset_value < 0.0 || offset_value as usize > maximum_offset {
-        return Err(VmError::Thrown(fs_error(
+        return Err(buffer_numeric_error(
             "ERR_OUT_OF_RANGE",
             &format!("The value of \"offset\" is out of range. It must be >= 0 and <= {maximum_offset}. Received {offset_display}"),
-        )));
+        ));
     }
     let offset = offset_value as usize;
     if offset + size > view.length {
-        return Err(VmError::Thrown(fs_error(
+        return Err(buffer_numeric_error(
             "ERR_BUFFER_OUT_OF_BOUNDS",
             "offset out of bounds",
-        )));
+        ));
     }
     let little = matches!(
         index,
@@ -93,10 +107,10 @@ fn buffer_numeric(
         };
         if let Some((minimum, maximum)) = range {
             if !value.is_finite() || value.fract() != 0.0 || value < minimum || value > maximum {
-                return Err(VmError::Thrown(fs_error(
+                return Err(buffer_numeric_error(
                     "ERR_OUT_OF_RANGE",
                     &format!("The value of \"value\" is out of range. It must be >= {minimum} and <= {maximum}. Received {}", value),
-                )));
+                ));
             }
         }
         if index <= 3 || (index >= 6 && index <= 7) {
@@ -171,19 +185,40 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         Some(Value::String(value)) => value,
         _ => return Err(VmError::NotCallable),
     };
-    if matches!(arguments.get(1), Some(Value::String(_))) {
-        return Err(VmError::Thrown(fs_error(
+    if matches!(arguments.get(1), Some(Value::String(_))) && arguments.get(2).is_some() {
+        return Err(buffer_numeric_error(
             "ERR_INVALID_ARG_TYPE",
-            "offset must be a number",
-        )));
+            "The \"offset\" argument must be of type number. Received type string ('1')",
+        ));
     }
     let offset = arguments
         .get(1)
         .and_then(|value| match value {
-            Value::Number(value) => Some(*value as usize),
+            Value::Number(value) => Some(*value),
             _ => None,
         })
-        .unwrap_or(0);
+        .unwrap_or(0.0);
+    if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 || offset > view.length as f64 {
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::RangeError,
+            &[Value::String(format!(
+                "The value of \"offset\" is out of range. It must be >= 0 and <= {}. Received {}",
+                view.length, offset
+            ))],
+        );
+        return Err(VmError::Thrown(quench_runtime::execute::set_property(
+            error,
+            "code",
+            Value::String("ERR_OUT_OF_RANGE".into()),
+        )));
+    }
+    let offset = offset as usize;
+    if offset > view.length {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            &format!("The value of \"offset\" is out of range. It must be >= 0 and <= {}. Received {}", view.length, offset),
+        )));
+    }
     let encoding = arguments
         .get(if matches!(arguments.get(2), Some(Value::Number(_))) {
             3
@@ -197,7 +232,8 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         .unwrap_or("utf8");
     if !matches!(
         encoding.to_ascii_lowercase().as_str(),
-        "utf8" | "utf-8" | "hex" | "utf16le" | "ucs2" | "ucs-2"
+        "utf8" | "utf-8" | "hex" | "utf16le" | "ucs2" | "ucs-2" |
+        "ascii" | "latin1" | "binary" | "base64" | "base64url"
     ) {
         return Err(VmError::Thrown(fs_error(
             "ERR_UNKNOWN_ENCODING",
@@ -218,7 +254,22 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         text.as_bytes().to_vec()
     };
     let count = bytes.len().min(view.length.saturating_sub(offset));
-    view.buffer.bytes.borrow_mut()[view.byte_offset + offset..view.byte_offset + offset + count]
+    let buffer_len = view.buffer.bytes.borrow().len();
+    let end = view
+        .byte_offset
+        .checked_add(offset)
+        .and_then(|start| start.checked_add(count));
+    if end.is_none() || end.unwrap() > buffer_len {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            &format!(
+                "The value of \"offset\" is out of range. It must be >= 0 and <= {}. Received {}",
+                view.length, offset
+            ),
+        )));
+    }
+    let start = view.byte_offset + offset;
+    view.buffer.bytes.borrow_mut()[start..start + count]
         .copy_from_slice(&bytes[..count]);
     Ok(Value::Number(count as f64))
 }
@@ -324,6 +375,9 @@ fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
     let count = source_end
         .saturating_sub(source_start)
         .min(target_bytes.saturating_sub(target_start));
+    if count == 0 {
+        return Ok(Value::Number(0.0));
+    }
     target_buffer.bytes.borrow_mut()
         [target_offset + target_start..target_offset + target_start + count]
         .copy_from_slice(&source[source_start..source_start + count]);

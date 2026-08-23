@@ -4,25 +4,11 @@ fn array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmE
     if let Some(Value::Array(data)) = receiver {
         return Ok(crate::collections::iterator::make_array(Rc::clone(data)));
     }
-    if let Some(value) = receiver.filter(|value| value.is_typed_array()) {
+    if let Some(value) = receiver.filter(|value| is_typed_array(value)) {
         return Ok(crate::collections::iterator::make_typed(value.clone()));
     }
     Ok(crate::collections::iterator::make(array_iterator_values(receiver)?))
 }
-fn typed_array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let Some(value) = receiver.filter(|value| is_typed_array(value)) else {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.values called on incompatible receiver",
-        ));
-    };
-    if typed_array_is_detached(value) {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray iterator called on detached TypedArray",
-        ));
-    }
-    Ok(crate::collections::iterator::make_typed(value.clone()))
-}
-
 
 fn typed_array_is_detached(value: &Value) -> bool {
     let buffer = match value {

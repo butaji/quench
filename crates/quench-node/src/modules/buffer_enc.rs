@@ -152,9 +152,7 @@ fn decode_utf16le(bytes: &[u8]) -> Value {
         .collect();
     match String::from_utf16(&units) {
         Ok(s) => Value::String(s),
-        Err(_) => Value::StringUnits(std::rc::Rc::new(
-            quench_runtime::value::StringUnitsData::new(units),
-        )),
+        Err(_) => Value::StringUnits(std::rc::Rc::new(units)),
     }
 }
 

@@ -5,8 +5,21 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
     const moduleApi = globalThis.require("module");
     moduleApi.Module._resolveFilename ||= (name) => String(name);
     moduleApi.builtinModules ||= [];
-    if (!moduleApi.builtinModules.includes("test")) {
-      moduleApi.builtinModules.push("test");
+    for (const name of [
+      "constants",
+      "dgram",
+      "domain",
+      "inspector",
+      "inspector/promises",
+      "path/posix",
+      "path/win32",
+      "sea",
+      "sqlite",
+      "test",
+      "test/reporters",
+      "util/types",
+    ]) {
+      if (!moduleApi.builtinModules.includes(name)) moduleApi.builtinModules.push(name);
     }
     moduleApi.isBuiltin = (name) => {
       const value = String(name);

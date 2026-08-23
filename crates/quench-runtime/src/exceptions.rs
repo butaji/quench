@@ -1,4 +1,9 @@
-use crate::{completion::Completion, execute::VmError, ops::Op, value::Value};
+use crate::{
+    completion::Completion,
+    execute::{execute_completion_in_place, VmError},
+    ops::Op,
+    value::Value,
+};
 
 /// Execute a `try`/`catch`/`finally` container.
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion, VmError> {
@@ -13,7 +18,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
     else {
         return Err(VmError::MissingReturn);
     };
-    let Some(body) = body.code() else {
+    let Some(body) = body.ops() else {
         return Err(VmError::MissingReturn);
     };
     let body_completion = execute_try_body(body, registers)?;
@@ -23,11 +28,11 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
     let completion = match body_completion {
         Completion::Throw(value) => match handler {
             Some(ops) => {
-                let Some(ops) = ops.code() else {
+                let Some(ops) = ops.ops() else {
                     return Err(VmError::MissingReturn);
                 };
                 bind_caught(value, *catch_slot, registers);
-                crate::vm::execute_code_completion_in_current_frame(ops, registers)?
+                execute_completion_in_place(ops, registers)?
             }
             None => Completion::Throw(value),
         },
@@ -60,27 +65,38 @@ fn run_finalizer(
     let Some(finalizer) = finalizer else {
         return Ok(None);
     };
-    let Some(finalizer) = finalizer.code() else {
+    let Some(finalizer) = finalizer.ops() else {
         return Err(VmError::MissingReturn);
     };
-    match crate::vm::execute_code_completion_in_current_frame(finalizer, registers)? {
+    match execute_completion_in_place(finalizer, registers)? {
         Completion::Normal => Ok(None),
         abrupt => Ok(Some(abrupt)),
     }
 }
 
-pub(crate) fn execute_ops(
-    ops: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
-) -> Result<Completion, VmError> {
+pub(crate) fn execute_ops(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion, VmError> {
     execute_try_body(ops, registers)
 }
 
-fn execute_try_body(
-    ops: crate::machine::CodeView<'_>,
-    registers: &mut Vec<Value>,
-) -> Result<Completion, VmError> {
-    crate::vm::execute_code_completion_in_current_frame(ops, registers)
+fn execute_try_body(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion, VmError> {
+    for op in ops {
+        if matches!(op, Op::YieldStar { .. }) {
+            match crate::generator::execute_yield_star(registers, op, Completion::Normal) {
+                Ok(Some(completion)) => return Ok(completion),
+                Ok(None) => {}
+                Err(VmError::Thrown(value)) => return Ok(Completion::Throw(value)),
+                Err(error) => return Err(error),
+            }
+            continue;
+        }
+        match execute_completion_in_place(std::slice::from_ref(op), registers) {
+            Ok(Completion::Normal) => {}
+            Ok(completion) => return Ok(completion),
+            Err(VmError::Thrown(value)) => return Ok(Completion::Throw(value)),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(Completion::Normal)
 }
 
 fn bind_caught(value: Value, catch_slot: Option<u16>, registers: &mut Vec<Value>) {

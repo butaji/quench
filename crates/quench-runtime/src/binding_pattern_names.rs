@@ -17,7 +17,7 @@ fn default_value(
     });
     let consequent = fallback_ops(fallback, name, facts, next, locals)?;
     let dst = take_register(next);
-    let [consequent, alternate] = crate::machine::FunctionCode::pending_many(vec![
+    let [consequent, alternate] = crate::machine::FunctionCode::from_ops_many(vec![
         consequent,
         vec![Op::Return { src: source }],
     ])

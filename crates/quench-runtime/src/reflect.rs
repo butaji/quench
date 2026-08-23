@@ -117,11 +117,14 @@ pub(crate) fn wrap_shadow_function_with_caller(
     if let Some(caller) = caller.and_then(crate::vm::realm_token) {
         properties.push(("\0caller_realm".to_string(), caller));
     }
+    let realm_id = realm.unwrap_or(crate::ops::RealmId::ROOT);
+    let receiver = crate::vm::with_realm(realm_id, crate::vm::current_global_object)
+        .unwrap_or(Value::Undefined);
     Ok(Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
-            realm: realm.unwrap_or(crate::ops::RealmId::ROOT),
+            realm: realm_id,
             target: target.clone(),
-            receiver: Value::Undefined,
+            receiver,
             arguments: Vec::new(),
             properties: std::cell::RefCell::new(properties),
         },
@@ -360,8 +363,8 @@ fn evaluate(
     let program = crate::reduce::reduce_eval_source(&source, strict, true, false, &bindings, &[])
         .map_err(|errors| syntax_error(errors, error_realm))?;
     match realm {
-        Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.code()),
-        None => crate::vm::execute_indirect_eval(program.code()),
+        Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.ops()),
+        None => crate::vm::execute_indirect_eval(program.ops()),
     }
 }
 
@@ -391,40 +394,14 @@ fn evaluate_direct(
         grammar,
     )
     .map_err(|errors| syntax_error(errors, None))?;
-    let local_slot = program
-        .local_slots
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |slot| slot.saturating_add(1));
-    let eval_slot = program
-        .facts
-        .eval_deletable
-        .iter()
-        .map(|(_, slot)| slot.saturating_add(1))
-        .max()
-        .unwrap_or(0);
-    execute_direct_eval(
-        program.code(),
-        program.facts.strict,
-        local_slot.max(eval_slot),
-    )
+    execute_direct_eval(program.ops(), program.facts.strict)
 }
 
-fn execute_direct_eval(
-    code: crate::machine::CodeView<'_>,
-    strict: bool,
-    slot_count: u16,
-) -> Result<Value, VmError> {
-    let caller = crate::locals::current();
-    let additional = usize::from(slot_count.saturating_sub(caller.len() as u16));
-    let environment = crate::environment::Environment::child(
-        &caller,
-        vec![Value::Undefined; additional],
-    );
+fn execute_direct_eval(ops: &[crate::ops::Op], strict: bool) -> Result<Value, VmError> {
+    let environment = crate::environment::Environment::child(&crate::locals::current(), Vec::new());
+    let _guard = crate::locals::EnvironmentGuard::install(environment);
     let _strict_eval = crate::locals::StrictEvalGuard::install(strict);
-    let context = crate::vm::current_context_or_default();
-    crate::vm::execute_code_in_environment(code, &mut Vec::new(), &context, environment)
+    crate::execute::execute_in_place(ops, &mut Vec::new())
 }
 
 fn syntax_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
