@@ -134,6 +134,11 @@ pub(crate) fn execute_bound(
     bound: &crate::value::BoundFunctionValue,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let crate::value::Value::BindingCell(cell) = &bound.target {
+        let mut unwrapped = bound.clone();
+        unwrapped.target = cell.borrow().clone();
+        return execute_bound(&unwrapped, arguments);
+    }
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     match &bound.target {

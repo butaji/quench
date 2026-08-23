@@ -195,6 +195,13 @@ fn invoke_with_receiver(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    let receiver_value = if matches!(receiver, Value::Undefined) {
+        crate::with_scope::receiver_for_callable(callee_value)
+            .unwrap_or_else(|| receiver.clone())
+    } else {
+        receiver.clone()
+    };
+    let receiver = &receiver_value;
     // Dispatch host capabilities directly; callback values may be BindingCells,
     // but ordinary callbacks must not be re-entered through their receiver.
     if let Value::BoundFunction(bound) = callee_value {
