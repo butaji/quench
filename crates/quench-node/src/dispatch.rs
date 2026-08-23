@@ -414,6 +414,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
         0x0805 => buffer_new_construct,
+        0x081B => buffer_last_index_of_construct,
         0x2400 => crate::modules::sqlite::construct,
         _ => return None,
     })
