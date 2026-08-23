@@ -72,11 +72,6 @@ pub fn buffer_constructor() -> Value {
     constructor
 }
 
-/// Kept for `build_module` compatibility; pairs of the statics.
-pub fn build() -> Vec<(String, Value)> {
-    static_pairs()
-}
-
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 pub fn btoa(args: &[Value]) -> String {
