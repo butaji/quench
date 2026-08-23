@@ -66,7 +66,12 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     const setEncoding = function () {
       return this;
     };
-    const end = function () {
+    const end = function (chunk, encoding, callback) {
+      if (chunk !== undefined && chunk !== null) write.call(this, chunk, encoding);
+      this.writableEnded = true;
+      this.writableFinished = true;
+      this.writable = false;
+      if (typeof callback === "function") callback();
       return this;
     };
     const cork = function () {
