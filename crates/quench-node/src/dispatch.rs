@@ -29,6 +29,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_CONSOLE_COUNT => console_count,
         CAP_UTIL_FORMAT => util_format,
         CAP_UTIL_INSPECT => util_inspect,
+        CAP_INTERNAL_BINDING => internal_binding,
         CAP_STRING_DECODER => string_decoder_call,
         CAP_STRING_DECODER_WRITE => string_decoder_write,
         CAP_STRING_DECODER_END => string_decoder_end,
