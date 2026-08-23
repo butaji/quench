@@ -208,7 +208,9 @@ fn forbidden_eval_var_names(locals: &HashMap<String, u16>, facts: &ProgramDb) ->
 fn reusable_eval_var_names(locals: &HashMap<String, u16>, facts: &ProgramDb) -> Vec<String> {
     let mut names = locals
         .iter()
-        .filter(|(name, _)| !facts.eval_var_barrier.contains(name))
+        .filter(|(name, slot)| {
+            **slot >= facts.eval_var_scope_start && !facts.eval_var_barrier.contains(name)
+        })
         .map(|(name, _)| name.clone())
         .collect::<Vec<_>>();
     names.sort_unstable();
