@@ -238,8 +238,12 @@
       const st = this._readableState;
       const finishIfEnded = () => {
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
-          st.endEmitted = true;
-          this._emitter.emit("end");
+          nextTick(() => {
+            if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
+              st.endEmitted = true;
+              this._emitter.emit("end");
+            }
+          });
         }
       };
       if (st.buffer.length > 0) {
