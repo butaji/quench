@@ -367,11 +367,10 @@ fn invalid(message: &str) -> VmError {
     VmError::EvalError(message.to_string())
 }
 
+#[cold]
+#[inline(never)]
 fn syntax_error(message: &str) -> VmError {
-    VmError::Thrown(crate::builtins::error(
-        crate::ops::Builtin::SyntaxError,
-        &[Value::String(message.to_string())],
-    ))
+    crate::value::error::throw_syntax_error(message)
 }
 
 fn is_duplicate_param_error_str(message: &str) -> bool {

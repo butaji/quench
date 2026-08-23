@@ -49,7 +49,6 @@ pub fn run_script(script: &Path, script_args: &[String], source: &str) -> RunOut
 
 /// Same as `run_script`, but routes host output through `sink`.
 pub fn run_script_with_sink(
-
     script: &Path,
     script_args: &[String],
     source: &str,
@@ -97,7 +96,10 @@ pub fn eval_script(source: &str, sink: OutputSink) -> RunOutcome {
         Ok(ops) => ops,
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };
-    classify(execute_with_context(&ops, &context).map(|_| ()), host.exit_code())
+    classify(
+        execute_with_context(&ops, &context).map(|_| ()),
+        host.exit_code(),
+    )
 }
 
 /// Node dispatches top-level uncaught exceptions to

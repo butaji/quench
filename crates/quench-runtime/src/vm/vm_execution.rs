@@ -104,7 +104,7 @@ pub fn execute_with_registers_context(
 /// reserve a small hot-path working set up front; subsequent writes use Vec's
 /// geometric growth without introducing a second frame representation.
 fn prepare_register_stack(registers: &mut Vec<Value>) {
-    const INITIAL_REGISTER_CAPACITY: usize = 32;
+    const INITIAL_REGISTER_CAPACITY: usize = 16;
     const MAX_REGISTER_COUNT: usize = u16::MAX as usize + 1;
     debug_assert!(registers.len() <= MAX_REGISTER_COUNT);
     if registers.capacity() < INITIAL_REGISTER_CAPACITY {
@@ -195,7 +195,7 @@ pub(crate) fn execute_in_environment(
         let next = step.next;
         match completion {
             crate::completion::Completion::Call(mut continuation) => {
-                continuation.caller_ops = Rc::from(ops);
+                continuation.caller_code = machine.code_id();
                 continuation.caller_pc = next as u32;
                 machine.push_call_frame(continuation);
                 let continuation = machine.pop_call_frame().expect("call frame just pushed");
@@ -344,7 +344,17 @@ mod tests {
             if (target.answer !== 42) throw "call RHS lost assignment target";
         "#;
         let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result = crate::vm::execute_with_context(
+        for op in program.ops() {
+            if let crate::ops::Op::MakeFunctionWithKind { dst, body, .. } = op {
+                if let Some(ops) = body.ops() {
+                    for (idx, inner) in ops.iter().enumerate() {
+                        let brief = format!("{inner:?}");
+                        let brief = if brief.len() > 200 { format!("{}...", &brief[..200]) } else { brief };
+                        eprintln!("F[{dst}][{idx}] {brief}");
+                    }
+                }
+            }
+        }
             program.ops(),
             &crate::vm::VmContext::default(),
         )

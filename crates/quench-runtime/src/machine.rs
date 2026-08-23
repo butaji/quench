@@ -274,6 +274,14 @@ impl FrameStack {
     pub fn as_slice(&self) -> &[Frame] {
         &self.frames
     }
+    /// Check the canonical contiguous-storage invariant without exposing the
+    /// backing allocation or introducing a second frame representation.
+    pub fn invariant_holds(&self) -> bool {
+        self.frames.len() <= usize::from(self.limit)
+            && self.top_offset().is_none_or(|offset| {
+                usize::from(offset) + 1 == self.frames.len()
+            })
+    }
     /// Return the offset of the top frame in the contiguous frame storage.
     #[inline]
     pub fn top_offset(&self) -> Option<u16> {
@@ -664,6 +672,14 @@ impl Machine {
     }
 
     pub fn try_push_frame(&mut self, frame: Frame) -> Result<(), Frame> {
+        let valid = self
+            .store
+            .as_ref()
+            .map(|store| frame.ranges().into_iter().all(|range| store.get(range).is_some()))
+            .unwrap_or(false);
+        if !valid {
+            return Err(frame);
+        }
         self.frames.try_push(frame)
     }
 
@@ -695,17 +711,11 @@ impl Machine {
         destination: u16,
         guards: crate::completion::ContinuationGuards,
     ) {
-        let caller_ops = self
-            .store
-            .as_ref()
-            .and_then(|store| store.get(self.code_range()))
-            .map(Rc::from)
-            .unwrap_or_else(|| Rc::from([]));
         let continuation = crate::completion::CallContinuation {
             callee,
             receiver,
             arguments,
-            caller_ops,
+            caller_code: self.code,
             caller_pc: self.pc,
             caller_registers: self.take_registers(),
             caller_environment: self.environment,
@@ -717,13 +727,27 @@ impl Machine {
     }
 
     /// Restore the most recently suspended caller and deliver its result.
+    ///
+    /// A continuation is only executable when its return address belongs to
+    /// this machine's immutable code store. Keep that check at the resume
+    /// boundary so stale continuations cannot turn an integer into an
+    /// instruction pointer.
     pub(crate) fn resume_call(
         &mut self,
         value: Value,
     ) -> Option<crate::completion::CallContinuation> {
         let continuation = self.pop_call_frame()?;
+        let valid_source = self
+            .store
+            .as_ref()
+            .and_then(|store| store.range_len(continuation.caller_code))
+            .is_some_and(|len| continuation.caller_pc < len);
+        if !valid_source {
+            return None;
+        }
         self.restore_registers(continuation.caller_registers.clone());
         self.environment = continuation.caller_environment;
+        self.code = continuation.caller_code;
         self.pc = continuation.caller_pc;
         self.environment_data = None;
         crate::execute::write_value(&mut self.registers.values, continuation.destination, value);
@@ -822,6 +846,20 @@ impl Machine {
                     .and_then(|s| s.range_len(self.code))
                     .unwrap_or(u32::MAX)
     }
+    /// Borrow the canonical register storage without exposing the window
+    /// bookkeeping.  The immutable view keeps readers on the same storage
+    /// used by execution and avoids materializing a duplicate register list.
+    #[inline]
+    pub fn registers(&self) -> &[Value] {
+        &self.registers.values
+    }
+
+    /// Return the current completion/exception state owned by this machine.
+    #[inline]
+    pub fn completion(&self) -> &Completion {
+        &self.completion
+    }
+
     /// Borrow the contiguous register storage used by the active frame.
     #[inline]
     pub fn registers_mut(&mut self) -> &mut Vec<Value> {
@@ -924,23 +962,22 @@ mod tests {
             name: "temporal_name".to_string(),
         }]);
         let store = arena.freeze();
-
-        let instructions = store.get(range).expect("code range must resolve");
+        let instructions = store.get(range).expect("instruction range");
         assert_eq!(instructions.len(), 1);
         assert_eq!(store.range_len(range.code), Some(1));
-
         let metadata = store.metadata(range).expect("metadata must resolve");
         assert_eq!(metadata.len(), instructions.len());
         assert_eq!(metadata[0].name.as_deref(), Some("temporal_name"));
         assert_eq!(metadata[0].flags, 1);
     }
-
     #[test]
     fn machine_exposes_flat_execution_state() {
         let machine = Machine::with_register_count(super::CodeId(7), EnvironmentRef(3), 5);
         assert_eq!(machine.code_id(), super::CodeId(7));
         assert_eq!(machine.program_counter(), 0);
         assert_eq!(machine.register_count(), 5);
+        assert_eq!(machine.registers().len(), 5);
+        assert!(matches!(machine.completion(), Completion::Normal));
         assert_eq!(machine.frame_count(), 0);
     }
     #[test]

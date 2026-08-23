@@ -73,25 +73,32 @@ fn object_builtin_property(properties: &[(String, Value)], key: &str) -> Value {
 }
 
 fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
-    // A declaration batch materializes a fresh global object while preserving
-    // the old shape metadata.  Its shape slot can therefore still point at
-    // the pre-materialization value (notably `Math`), so use the authoritative
-    // property vector for the active global rather than the shape hint.
+    // The shape slot is only a hint: metadata tombstones and duplicate writes
+    // retain their complete slow-path meaning in the canonical vector.  Scan
+    // that vector once to establish the fast-path preconditions, then perform
+    // the shape/slot lookup.  This keeps the optimized path derived from the
+    // same source as the fallback rather than introducing a cache.
     let use_shape_hint = !crate::vm::is_global_object(&Value::Object(properties.clone()));
-    if use_shape_hint
-        && !properties.is_dictionary()
-        && !key.starts_with('\0')
-        && !properties.iter().any(|(name, _)| {
-            name == &crate::builtins::deleted_key(key)
-                || name == &crate::builtins::descriptor_key(key)
-        })
-        && properties.iter().filter(|(name, _)| name == key).count() == 1
-    {
-        if let Some(slot) = properties.slot_for(key) {
-            if let Some(value) =
-                properties.value_for_shape_slot(properties.shape_id(), slot)
-            {
-                return Some(property_value(value));
+    if use_shape_hint && !properties.is_dictionary() && !key.starts_with('\0') {
+        let deleted_key = crate::builtins::deleted_key(key);
+        let descriptor_key = crate::builtins::descriptor_key(key);
+        let mut matching = 0usize;
+        let mut shadowed = false;
+        for (name, _) in properties.hot_properties() {
+            if name == &deleted_key || name == &descriptor_key {
+                shadowed = true;
+            }
+            if name == key {
+                matching += 1;
+            }
+        }
+        if !shadowed && matching == 1 {
+            if let Some(slot) = properties.slot_for(key) {
+                if let Some(value) =
+                    properties.value_for_shape_slot(properties.shape().id, slot)
+                {
+                    return Some(property_value(value));
+                }
             }
         }
     }

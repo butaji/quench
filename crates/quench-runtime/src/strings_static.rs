@@ -97,7 +97,7 @@ pub(crate) fn source_value(source: &str) -> Value {
         units.extend(character.encode_utf16(&mut encoded).iter().copied());
     }
     if has_surrogate {
-        Value::StringUnits(std::rc::Rc::new(units))
+        Value::StringUnits(std::rc::Rc::new(crate::value::StringUnitsData::new(units)))
     } else {
         Value::String(source.to_string())
     }

@@ -49,7 +49,7 @@ fn from_live_array(
             break;
         }
         let item = array.get_index(index).unwrap_or(Value::Undefined);
-        let value = map_item(mapper, this_arg.clone(), item, index)?;
+        let value = map_item(mapper, &this_arg, item, index)?;
         values.push(value);
         index += 1;
     }
@@ -67,7 +67,7 @@ fn from_iterable(
     let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
     crate::collections::iterator::for_each_iterable(source, |item| {
         let index = values.len();
-        values.push(map_item(mapper, this_arg.clone(), item, index)?);
+        values.push(map_item(mapper, &this_arg, item, index)?);
         Ok(())
     })?;
     create_result(receiver, values, false)
@@ -83,7 +83,7 @@ fn collect_array_iterator(
     let mut index = 0;
     while index < array.logical_len() {
         let item = array.get_index(index).unwrap_or(Value::Undefined);
-        values.push(map_item(mapper, this_arg.clone(), item, index)?);
+        values.push(map_item(mapper, &this_arg, item, index)?);
         index += 1;
     }
     Ok(())
@@ -125,7 +125,7 @@ fn collect_array_like(
     let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
     for index in 0..length {
         let item = crate::execute::get_property_result(source, &index.to_string())?;
-        values.push(map_item(mapper, this_arg.clone(), item, index)?);
+        values.push(map_item(mapper, &this_arg, item, index)?);
     }
     Ok(())
 }
@@ -144,14 +144,14 @@ pub(crate) fn array_like_length(source: &Value) -> Result<usize, crate::execute:
 
 fn map_item(
     mapper: Option<&Value>,
-    this_arg: Value,
+    this_arg: &Value,
     item: Value,
     index: usize,
 ) -> Result<Value, crate::execute::VmError> {
     let Some(mapper) = mapper else {
         return Ok(item);
     };
-    crate::functions::execute_target(mapper, &this_arg, &[item, Value::Number(index as f64)])
+    crate::functions::execute_target(mapper, this_arg, &[item, Value::Number(index as f64)])
 }
 
 fn create_result(
@@ -212,6 +212,21 @@ fn write_result_element(
     let updated = crate::builtins::define_own_property(&result, &key, &descriptor)?;
     crate::locals::replace_value(&result, &updated);
     Ok(updated)
+}
+
+#[cfg(test)]
+mod arrays_from_tests {
+    use super::map_item;
+    use crate::value::Value;
+
+    #[test]
+    fn map_item_without_mapper_returns_item_without_touching_this_arg() {
+        let item = Value::String("canonical".into());
+        let this_arg = Value::String("receiver".into());
+
+        let result = map_item(None, &this_arg, item.clone(), 0).expect("mapping succeeds");
+        assert!(matches!(&result, Value::String(value) if value == "canonical"));
+    }
 }
 
 fn construct_result(

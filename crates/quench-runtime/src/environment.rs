@@ -63,9 +63,13 @@ impl TdzCells {
 
 #[derive(Debug)]
 struct SlotStore {
+    // SAFETY invariant: SlotStore is only reached through Rc and the VM is
+    // single-threaded. `values` and `bridges` are mutated only by these
+    // methods, and always have identical lengths. Before a bridge exists,
+    // `values[index]` owns the slot value; after bridging, the Rc cell is the
+    // authoritative source and `values[index]` is only the snapshot used to
+    // create it.
     values: UnsafeCell<Vec<Value>>,
-    // Execution is single-threaded; bridge identity remains Rc<RefCell<Value>>
-    // because host/module bindings expose that identity at the boundary.
     bridges: UnsafeCell<Vec<Option<Rc<RefCell<Value>>>>>,
 }
 
@@ -85,49 +89,67 @@ impl Default for SlotStore {
 }
 
 impl SlotStore {
+    fn invariant(&self) {
+        debug_assert_eq!(
+            self.values().len(),
+            self.bridges().len(),
+            "slot value and bridge vectors must remain aligned"
+        );
+    }
+
     fn from_values(values: Vec<Value>) -> Rc<Self> {
-        Rc::new(Self {
+        let store = Rc::new(Self {
             bridges: UnsafeCell::new((0..values.len()).map(|_| None).collect()),
             values: UnsafeCell::new(values),
-        })
+        });
+        store.invariant();
+        store
     }
 
     fn from_cell(cell: Rc<RefCell<Value>>) -> Rc<Self> {
         let value = cell.borrow().clone();
-        Rc::new(Self {
+        let store = Rc::new(Self {
             values: UnsafeCell::new(vec![value]),
             bridges: UnsafeCell::new(vec![Some(cell)]),
-        })
+        });
+        store.invariant();
+        store
     }
 
     fn values(&self) -> &Vec<Value> {
+        // SAFETY: VM execution is single-threaded; callers uphold the
+        // SlotStore invariant and never retain this reference across mutation.
         unsafe { &*self.values.get() }
     }
 
     #[allow(clippy::mut_from_ref)]
     fn values_mut(&self) -> &mut Vec<Value> {
+        // SAFETY: see `values`; mutation is confined to SlotStore methods.
         unsafe { &mut *self.values.get() }
     }
 
     fn bridges(&self) -> &Vec<Option<Rc<RefCell<Value>>>> {
+        // SAFETY: see `values`.
         unsafe { &*self.bridges.get() }
     }
 
     #[allow(clippy::mut_from_ref)]
     fn bridges_mut(&self) -> &mut Vec<Option<Rc<RefCell<Value>>>> {
+        // SAFETY: see `values_mut`.
         unsafe { &mut *self.bridges.get() }
     }
 
     fn ensure(&self, index: usize) {
+        self.invariant();
         while self.values().len() <= index {
             self.values_mut().push(Value::Undefined);
-        }
-        while self.bridges().len() <= index {
             self.bridges_mut().push(None);
         }
+        self.invariant();
     }
 
     fn len(&self) -> usize {
+        self.invariant();
         self.values().len()
     }
 
@@ -136,10 +158,7 @@ impl SlotStore {
         self.bridges()
             .get(index)
             .and_then(Option::as_ref)
-            .map_or_else(
-                || self.values()[index].clone(),
-                |cell| cell.borrow().clone(),
-            )
+            .map_or_else(|| self.values()[index].clone(), |cell| cell.borrow().clone())
     }
 
     fn store(&self, index: usize, value: Value) {
@@ -149,6 +168,7 @@ impl SlotStore {
         } else {
             self.values_mut()[index] = value;
         }
+        self.invariant();
     }
 
     fn bridge(&self, index: usize) -> Rc<RefCell<Value>> {
@@ -158,9 +178,11 @@ impl SlotStore {
         }
         let cell = Rc::new(RefCell::new(self.values()[index].clone()));
         self.bridges_mut()[index] = Some(Rc::clone(&cell));
+        self.invariant();
         cell
     }
 }
+
 
 #[derive(Debug, Clone, PartialEq)]
 struct BindingRef {
@@ -643,5 +665,15 @@ mod tests {
         let cell = store.bridge(0);
         store.store(0, Value::Number(3.0));
         assert_eq!(*cell.borrow(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn bridged_cell_is_authoritative_source_after_external_update() {
+        let cell = std::rc::Rc::new(std::cell::RefCell::new(Value::Number(4.0)));
+        let store = SlotStore::from_cell(std::rc::Rc::clone(&cell));
+        *cell.borrow_mut() = Value::Number(9.0);
+        assert_eq!(store.load(0), Value::Number(9.0));
+        store.store(0, Value::Number(12.0));
+        assert_eq!(*cell.borrow(), Value::Number(12.0));
     }
 }

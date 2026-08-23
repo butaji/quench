@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 "use strict";
+const { assertIterations, validateBenchmarkReport } = require("./microbenchmark-schema.cjs");
 const iterations = Number(process.env.QUENCH_LAYOUT_ITERATIONS || 1_000_000);
-if (!Number.isSafeInteger(iterations) || iterations < 1) {
-  throw new Error("QUENCH_LAYOUT_ITERATIONS must be a positive safe integer");
-}
+assertIterations(iterations);
 const fixed = new Uint16Array(iterations * 4);
 for (let i = 0; i < iterations; i++) {
   fixed[i * 4] = i & 7;
@@ -14,11 +13,13 @@ function measure(name, read) {
   let checksum = 0;
   const started = process.hrtime.bigint();
   for (let i = 0; i < iterations; i++) checksum += read(i);
-  return { layout: name, iterations, checksum, wall_ms: Number(process.hrtime.bigint() - started) / 1e6 };
+  return { name, iterations, checksum, wall_ms: Number(process.hrtime.bigint() - started) / 1e6 };
 }
 const results = [
   measure("fixed-width", (i) => fixed[i * 4] + fixed[i * 4 + 1]),
   measure("variable-width", (i) => variable[i][0] + variable[i][1]),
 ];
 if (results.some(({ checksum }) => checksum !== results[0].checksum)) throw new Error("layout checksum mismatch");
-console.log(JSON.stringify({ results, fixed_bytes: fixed.byteLength }));
+const report = { results, fixed_bytes: fixed.byteLength };
+validateBenchmarkReport(report, iterations);
+console.log(JSON.stringify(report));

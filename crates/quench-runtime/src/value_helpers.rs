@@ -66,6 +66,23 @@ mod tiny_primitive_tests {
         assert!(!values[5].is_number());
         assert!(!values[6].is_undefined());
     }
+    #[test]
+    fn number_semantics_keep_nan_and_signed_zero_distinct() {
+        let nan = Value::Number(f64::NAN);
+        let zero = Value::Number(0.0);
+        let negative_zero = Value::Number(-0.0);
+        assert!(nan.is_number());
+        assert!(nan.is_nan());
+        assert!(!nan.is_finite_number());
+        assert!(!nan.is_negative_zero());
+        assert!(zero.is_finite_number());
+        assert!(!zero.is_negative_zero());
+        assert!(negative_zero.is_finite_number());
+        assert!(negative_zero.is_negative_zero());
+        assert_eq!(negative_zero.number_bits(), Some((-0.0_f64).to_bits()));
+        assert!(!Value::Undefined.is_nan());
+    }
+
 
     #[test]
     fn binding_cell_classification_follows_canonical_value() {
@@ -126,6 +143,26 @@ impl Value {
             _ => None,
         }
     }
+    /// Fast IEEE-754 classification; NaN remains a Number, never a tag.
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn is_nan(&self) -> bool {
+        matches!(self, Self::Number(number) if number.is_nan())
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn is_finite_number(&self) -> bool {
+        matches!(self, Self::Number(number) if number.is_finite())
+    }
+
+    /// Preserve the distinct JavaScript `-0` number payload.
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn is_negative_zero(&self) -> bool {
+        matches!(self, Self::Number(number) if *number == 0.0 && number.is_sign_negative())
+    }
+
 
     #[inline(always)]
     #[must_use]

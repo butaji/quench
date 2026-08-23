@@ -405,4 +405,5 @@ crates/quench-runtime/src/vm/run_simple_op.rs:
 crates/quench-runtime/src/vm/vm_local.rs:
 crates/quench-runtime/src/vm/vm_array_build.rs:
 
+# env-dep:QUENCH_BUILD_LTO=fat
 # env-dep:QUENCH_BUILD_PROFILE=release
