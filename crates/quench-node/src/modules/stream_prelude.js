@@ -11,7 +11,10 @@
   const emitterMethods = {
     on(name, fn) {
       this._emitter.on(name, fn);
-      if (name === "data" && this._readableState) this.resume();
+      if (name === "data" && this._readableState &&
+                 this.listenerCount("readable") === 0) {
+        this.resume();
+      }
       // A stream may finish synchronously while a pipe/end callback is being
       // installed. Preserve Node's observable completion guarantee for those
       // late listeners by delivering the already-emitted terminal event.
@@ -99,7 +102,9 @@
       endEmitted: false,
       errored: null,
       closeEmitted: false,
-      encoding: null
+      encoding: null,
+      awaitDrainWriters: null,
+      pipeCount: 0
     };
     stream.readable = true;
     stream.destroyed = false;
@@ -117,6 +122,13 @@
     if (st.flowing) {
       while (st.flowing && st.buffer.length > 0) {
         stream._emitter.emit("data", st.buffer.shift());
+        if (st.awaitDrainWriters &&
+            (st.awaitDrainWriters instanceof Set
+              ? st.awaitDrainWriters.size > 0
+              : true)) {
+          st.flowing = false;
+          break;
+        }
       }
     }
     if (st.flowing && st.buffer.length === 0 && !st.ended && !st.reading) {
@@ -174,6 +186,10 @@
 
     get readableObjectMode() {
       return this._readableState.objectMode;
+    }
+
+    get readableFlowing() {
+      return this._readableState.flowing;
     }
 
     get readableErrored() {
@@ -280,10 +296,31 @@
 
     pipe(dest, options) {
       const source = this;
+      const sourceState = source._readableState;
+      sourceState.pipeCount += 1;
+      if (sourceState.pipeCount > 1 && !sourceState.awaitDrainWriters) {
+        sourceState.awaitDrainWriters = new Set();
+      }
       source.on("data", (chunk) => {
         if (dest.write(chunk) === false) {
-          source.pause();
-          dest.once("drain", () => source.resume());
+          const state = source._readableState;
+          if (!state.awaitDrainWriters) state.awaitDrainWriters = dest;
+          else if (state.awaitDrainWriters instanceof Set) state.awaitDrainWriters.add(dest);
+          else if (state.awaitDrainWriters !== dest) {
+            state.awaitDrainWriters = new Set([state.awaitDrainWriters, dest]);
+          }
+          dest.once("drain", () => {
+            const writers = state.awaitDrainWriters;
+            if (!writers) return;
+            if (writers instanceof Set) writers.delete(dest);
+            else if (writers === dest) state.awaitDrainWriters = null;
+            const drained = !state.awaitDrainWriters ||
+              (state.awaitDrainWriters instanceof Set && state.awaitDrainWriters.size === 0);
+            if (drained) {
+              state.awaitDrainWriters = null;
+              source.resume();
+            }
+          });
         }
       });
       if (!options || options.end !== false) {
