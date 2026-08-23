@@ -15,6 +15,8 @@
 //! compact representations (`Value`, `HeapRef`, `Shape`, `Frame`, `Code`,
 //! `Fact`, and `Continuation`) before adding breadth.
 
+pub mod build_profile;
+
 mod arrays;
 mod atomics;
 pub mod benchmark;
@@ -50,6 +52,7 @@ mod functions_write;
 mod generator;
 mod global_environment;
 mod globals;
+pub mod hardware_counters;
 pub mod heap;
 pub mod host_api;
 mod identifiers;

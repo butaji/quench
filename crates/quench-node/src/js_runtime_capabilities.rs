@@ -485,6 +485,6 @@ impl CapabilityName {
 }
 
 pub(crate) struct FilesystemNodeHost {
-    resolver: Resolver,
+    resolver: RefCell<Option<Resolver>>,
     source_cache: RefCell<HashMap<PathBuf, String>>,
 }

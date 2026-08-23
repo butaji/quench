@@ -57,7 +57,9 @@ fn run_compiled_octane(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if !bin_path.exists() {
         let work_dir = out_dir.join(format!("work-{}", hash));
         fs::create_dir_all(&work_dir)?;
-        let mut entry_source = source.clone();
+        // The hash is computed above, so transfer ownership instead of
+        // retaining a second full benchmark-source allocation.
+        let mut entry_source = source;
         if let Some(dir) = path.parent() {
             for name in FIXTURE_BASENAMES {
                 let marker = format!("load(\"{name}\");");

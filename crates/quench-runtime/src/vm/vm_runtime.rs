@@ -42,15 +42,18 @@ fn run_ops_completion_step_from(
     registers: &mut Vec<Value>,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
-    for (index, op) in ops.iter().enumerate().skip(start) {
+    let mut index = start;
+    while index < ops.len() {
+        let op = &ops[index];
         let result = match run_op(registers, op, context) {
             Ok(result) => result,
             Err(error) => return completion_step_after_error(registers, error, index + 1),
         };
+        index += 1;
         match result {
             None | Some(crate::completion::Completion::Normal) => {}
             Some(completion) => {
-                return completion_step_after_transition(registers, completion, index + 1);
+                return completion_step_after_transition(registers, completion, index);
             }
         }
     }

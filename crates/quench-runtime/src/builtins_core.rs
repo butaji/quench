@@ -1,14 +1,17 @@
-pub(crate) fn array(arguments: &[Value]) -> Value {
+pub(crate) fn array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     if let [Value::Number(length)] = arguments {
         if *length >= 0.0 && length.fract() == 0.0 && *length <= u32::MAX as f64 {
             let mut values = Value::array(Vec::new());
             if let Value::Array(values) = &mut values {
                 Rc::make_mut(values).set_length(*length as usize);
             }
-            return values;
+            return Ok(values);
         }
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
     }
-    Value::array(arguments.to_vec())
+    Ok(Value::array(arguments.to_vec()))
 }
 
 pub(crate) fn array_map(
@@ -192,6 +195,13 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
     let Some(receiver @ Value::Array(values)) = receiver else {
         return Value::Number(f64::NAN);
     };
+    if values.is_packed_ordinary() {
+        let mut result = values.to_vec();
+        result.extend_from_slice(arguments);
+        let length = result.len();
+        crate::locals::replace_value(receiver, &Value::array(result));
+        return Value::Number(length as f64);
+    }
     let mut result = values.to_vec();
     result.extend_from_slice(arguments);
     let length = result.len();

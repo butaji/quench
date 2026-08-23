@@ -279,21 +279,46 @@ pub(crate) fn execute_for_of(
     iterate_loop_values(registers, label, slot, body, per_iteration, iterator, dst)
 }
 
+/// Active `for-of` iterators are execution bookkeeping, never observable
+/// through the JavaScript object model. Keep this stack in an `UnsafeCell`
+/// rather than imposing a borrow-checking runtime guard on every VM step.
+///
+/// The VM is single-threaded and this value is thread-local, so callers must
+/// only access it through the methods below.
+struct LiveForOf(std::cell::UnsafeCell<Vec<crate::value::Value>>);
+
+impl LiveForOf {
+    const fn new() -> Self {
+        Self(std::cell::UnsafeCell::new(Vec::new()))
+    }
+
+    fn push(&self, iterator: crate::value::Value) {
+        unsafe { &mut *self.0.get() }.push(iterator);
+    }
+
+    fn last(&self) -> Option<crate::value::Value> {
+        unsafe { (&*self.0.get()).last().cloned() }
+    }
+
+    fn pop(&self) -> Option<crate::value::Value> {
+        unsafe { (&mut *self.0.get()).pop() }
+    }
+}
+
 thread_local! {
-    static LIVE_FOR_OF: std::cell::RefCell<Vec<crate::value::Value>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+    static LIVE_FOR_OF: LiveForOf = const { LiveForOf::new() };
 }
 
 fn remember_for_of(iterator: crate::value::Value) {
-    LIVE_FOR_OF.with(|live| live.borrow_mut().push(iterator));
+    LIVE_FOR_OF.with(|live| live.push(iterator));
 }
 
 pub(crate) fn live_for_of() -> Option<crate::value::Value> {
-    LIVE_FOR_OF.with(|live| live.borrow().last().cloned())
+    LIVE_FOR_OF.with(LiveForOf::last)
 }
 
 pub(crate) fn take_live_for_of() -> Option<crate::value::Value> {
-    LIVE_FOR_OF.with(|live| live.borrow_mut().pop())
+    LIVE_FOR_OF.with(LiveForOf::pop)
 }
 
 type ForInLoopData<'a> = (
@@ -482,3 +507,21 @@ fn execute_loop_body(
 include!("loops_run.rs");
 include!("loops_body.rs");
 include!("loops_while.rs");
+
+#[cfg(test)]
+mod tests {
+    use super::{live_for_of, take_live_for_of, LIVE_FOR_OF};
+    use crate::value::Value;
+
+    #[test]
+    fn live_for_of_stack_is_lifo_and_empty_after_pop() {
+        LIVE_FOR_OF.with(|live| {
+            live.push(Value::Number(1.0));
+            live.push(Value::Number(2.0));
+        });
+        assert_eq!(live_for_of(), Some(Value::Number(2.0)));
+        assert_eq!(take_live_for_of(), Some(Value::Number(2.0)));
+        assert_eq!(take_live_for_of(), Some(Value::Number(1.0)));
+        assert_eq!(take_live_for_of(), None);
+    }
+}

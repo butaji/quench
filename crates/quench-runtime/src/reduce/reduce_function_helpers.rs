@@ -33,14 +33,18 @@ fn declaration_slot(
     locals: &mut HashMap<String, u16>,
     _facts: &crate::facts::ProgramDb,
 ) -> u16 {
-    if let Some(slot) = locals.get(&format!("\0annex-b-lexical:{name}")) {
-        return *slot;
-    }
-    if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) {
-        return *slot;
-    }
-    if let Some(slot) = locals.get(name) {
-        return *slot;
+    // Function declarations are instantiated before the body is reduced.  A
+    // hoisted binding may therefore already have a slot below `next_slot`;
+    // advance the allocator past it so a later declaration/local cannot reuse
+    // the same slot and replace the function value.
+    let existing = locals
+        .get(&format!("\0annex-b-lexical:{name}"))
+        .or_else(|| locals.get(&format!("\0annex-b-outer:{name}")))
+        .or_else(|| locals.get(name))
+        .copied();
+    if let Some(slot) = existing {
+        *next_slot = (*next_slot).max(slot.saturating_add(1));
+        return slot;
     }
     reserve_blocked_function(name, next_slot, locals)
 }

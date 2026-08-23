@@ -14,7 +14,7 @@ impl LinkedModule {
             self.program.ops(),
             start,
             &mut registers,
-            host_context(),
+            &host_context(),
         );
         self.evaluating.set(false);
         self.complete_execute(result, registers)

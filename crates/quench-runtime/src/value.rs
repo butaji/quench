@@ -1,4 +1,5 @@
 use std::cell::UnsafeCell;
+use std::marker::PhantomData;
 
 use std::{
     cell::{Cell, RefCell},
@@ -14,40 +15,57 @@ use crate::{
 pub(crate) mod error {
     use super::Value;
 
+    /// Exceptional results are constructed only after a slow-path check fails.
+    /// This is the canonical owner of error-object creation and thrown VM state.
+    #[derive(Clone, Copy)]
+    enum Kind {
+        Type,
+        Reference,
+        Syntax,
+        Range,
+        Uri,
+    }
+
     #[cold]
+    #[inline(never)]
+    fn throw(kind: Kind, message: &str) -> crate::execute::VmError {
+        let builtin = match kind {
+            Kind::Type => crate::ops::Builtin::TypeError,
+            Kind::Reference => crate::ops::Builtin::ReferenceError,
+            Kind::Syntax => crate::ops::Builtin::SyntaxError,
+            Kind::Range => crate::ops::Builtin::RangeError,
+            Kind::Uri => crate::ops::Builtin::URIError,
+        };
+        crate::execute::VmError::Thrown(crate::builtins::error(
+            builtin,
+            &[Value::String(message.to_string())],
+        ))
+    }
+
+    #[cold]
+    #[inline(never)]
     pub(crate) fn throw_type_error(message: &str) -> crate::execute::VmError {
-        crate::execute::VmError::Thrown(crate::builtins::error(
-            crate::ops::Builtin::TypeError,
-            &[Value::String(message.to_string())],
-        ))
+        throw(Kind::Type, message)
     }
     #[cold]
+    #[inline(never)]
     pub(crate) fn throw_reference_error(message: &str) -> crate::execute::VmError {
-        crate::execute::VmError::Thrown(crate::builtins::error(
-            crate::ops::Builtin::ReferenceError,
-            &[Value::String(message.to_string())],
-        ))
+        throw(Kind::Reference, message)
     }
     #[cold]
+    #[inline(never)]
     pub(crate) fn throw_syntax_error(message: &str) -> crate::execute::VmError {
-        crate::execute::VmError::Thrown(crate::builtins::error(
-            crate::ops::Builtin::SyntaxError,
-            &[Value::String(message.to_string())],
-        ))
+        throw(Kind::Syntax, message)
     }
     #[cold]
+    #[inline(never)]
     pub(crate) fn throw_range_error(message: &str) -> crate::execute::VmError {
-        crate::execute::VmError::Thrown(crate::builtins::error(
-            crate::ops::Builtin::RangeError,
-            &[Value::String(message.to_string())],
-        ))
+        throw(Kind::Range, message)
     }
     #[cold]
+    #[inline(never)]
     pub(crate) fn throw_uri_error(message: &str) -> crate::execute::VmError {
-        crate::execute::VmError::Thrown(crate::builtins::error(
-            crate::ops::Builtin::URIError,
-            &[Value::String(message.to_string())],
-        ))
+        throw(Kind::Uri, message)
     }
 }
 /// Identity-bearing host capability kept outside the JavaScript value space.
@@ -241,15 +259,27 @@ include!("value_iterator.rs");
 
 #[derive(Debug)]
 ///
-/// A generator is protected by its `executing`/`running` state and is never
-/// shared across threads. `UnsafeCell` removes dynamic borrow bookkeeping from
-/// the execution path; callers must not retain returned references across a
-/// re-entrant generator step.
-pub struct ExecutionCell<T>(UnsafeCell<T>);
+/// `ExecutionCell` is intentionally single-thread owned. The generator's
+/// `executing`/`running` state is the runtime proof that these accesses do not
+/// overlap; `UnsafeCell` only removes redundant dynamic borrow bookkeeping.
+/// The type must therefore remain `!Send` and `!Sync`, so ownership cannot
+/// escape to another thread while a generator is suspended or executing.
+/// ```compile_fail
+/// use quench_runtime::value::ExecutionCell;
+/// fn consume<T>(_: T) {}
+/// let cell = ExecutionCell::new(1_u8);
+/// std::thread::spawn(move || {
+///     consume(cell);
+/// }).join().unwrap();
+/// ```
+///
+/// Callers must not retain returned references across a re-entrant generator
+/// step.
+pub struct ExecutionCell<T>(UnsafeCell<T>, PhantomData<Rc<()>>);
 
 impl<T> ExecutionCell<T> {
     pub fn new(value: T) -> Self {
-        Self(UnsafeCell::new(value))
+        Self(UnsafeCell::new(value), PhantomData)
     }
 
     pub fn borrow(&self) -> &T {
@@ -265,8 +295,10 @@ impl<T> ExecutionCell<T> {
     }
 }
 
-// GeneratorData is reference-counted but confined to the runtime thread.
-unsafe impl<T: Send> Send for ExecutionCell<T> {}
+// Deliberately do not implement `Send` or `Sync`: this cell relies on the
+// single-threaded generator state machine to uphold its aliasing invariant.
+// Keeping the auto-trait defaults makes accidental cross-thread ownership a
+// compile-time error instead of turning the `UnsafeCell` accesses into UB.
 impl<T: PartialEq> PartialEq for ExecutionCell<T> {
     fn eq(&self, other: &Self) -> bool {
         self.borrow() == other.borrow()
@@ -274,7 +306,6 @@ impl<T: PartialEq> PartialEq for ExecutionCell<T> {
 }
 
 impl<T: Eq> Eq for ExecutionCell<T> {}
-unsafe impl<T: Sync> Sync for ExecutionCell<T> {}
 
 #[derive(Debug, PartialEq)]
 pub struct GeneratorData {
@@ -302,15 +333,57 @@ pub struct GeneratorState {
 pub type ObjectProperties = Vec<(String, Value)>;
 pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 
+/// Canonical ordinary-object state. `properties` is the sole semantic store
+/// and is owned by the `ObjectData` allocation for the object's entire
+/// lifetime. Its source-level invariant is that public slots are the
+/// metadata-filtered projection of `properties`, in encounter order:
+/// `slot_for(key)` and `value_at_slot(slot)` must use that same projection.
+/// Internal metadata keys (which start with NUL) may be interleaved with
+/// public entries and never consume a public slot.
+/// `private_slots` is a shared lifecycle anchor because private-name storage
+/// is also used by derived objects; `original_prototype` and `created` are
+/// slow-path/debug-order metadata. None of these fields is independently
+/// nullable: an object always has all four fields, while
+/// `original_prototype == None` means "not explicitly captured" (not an invalid
+/// object). A physical hot/cold split is therefore not currently safe: callers
+/// construct and clone this value through the existing constructors, and the
+/// metadata has no separately owned handle/API to migrate.
+///
+/// The shape cache below is derived from `properties`; it is not a second
+/// semantic representation and must not become one during a future split.
+/// The representation is intentionally AoS: each public entry remains one
+/// `(name, value)` record in encounter order. Any field-wide scan must derive
+/// from this vector rather than retaining a parallel SoA cache, so mutation,
+/// cloning, and reuse have one source of truth.
+///
+/// Canonical lifecycle: `ObjectData` owns `properties` and `created` for its
+/// allocation's lifetime; `private_slots` is the shared private-name ownership
+/// anchor; `original_prototype == None` means no captured prototype. An object
+/// with empty properties is valid, while a slot index outside the
+/// metadata-filtered projection is invalid and must return `None`.
 #[derive(Debug, Clone)]
 pub struct ObjectData {
+    // Hot semantic storage. Keep the vector as the sole property storage.
+    // An inline first-slot representation would not remove the per-object
+    // `PrivateSlots` Rc (the ownership/lifecycle anchor), and would duplicate
+    // the authoritative property representation for no measured allocation
+    // win.
     pub(crate) properties: ObjectProperties,
+    // Cold/private metadata retained inline until ownership and API migration
+    // provide an independently managed side allocation.
     pub(crate) private_slots: PrivateSlots,
     original_prototype: RefCell<Option<Value>>,
     pub(crate) created: Vec<String>,
 }
 
 impl ObjectData {
+    /// Borrow the canonical hot property storage once for dependent-load-heavy
+    /// readers. Metadata remains owned by this object and is not mirrored here.
+    #[inline]
+    pub(crate) fn hot_properties(&self) -> &ObjectProperties {
+        &self.properties
+    }
+
     pub(crate) fn new(properties: ObjectProperties) -> Self {
         Self::with_private_slots(properties, Rc::new(RefCell::new(Vec::new())))
     }
@@ -382,24 +455,39 @@ pub(crate) struct ObjectShape {
     pub(crate) slots: u32,
     pub(crate) dictionary: bool,
 }
+// Keep the derived hot shape record cache-line friendly at compile time.  The
+// shape is a lookup hint only; ObjectData.properties remains authoritative.
+const _: () = {
+    assert!(std::mem::size_of::<ObjectShape>() <= crate::heap::HOT_HEADER_BYTES);
+    assert!(std::mem::align_of::<ObjectShape>() <= crate::heap::HOT_HEADER_BYTES);
+};
 
 pub(crate) const DICTIONARY_SLOT_THRESHOLD: u32 = 32;
+/// Tiny objects stay on the ordinary property vector; this limit is deliberately
+/// derived from the measured fast path rather than introducing a second store.
+pub(crate) const TINY_SLOT_LIMIT: u32 = 2;
 
 impl ObjectData {
     pub(crate) fn shape(&self) -> ObjectShape {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        // Hash the visible layout with a fixed algorithm.  Shape ids are used
+        // as transition-cache keys and must be reproducible across processes.
+        let mut hash = 0x811c9dc5u32;
         let mut slots = 0u32;
-        for (index, (name, _)) in self.properties.iter().enumerate() {
+        for (name, _) in self.properties.iter() {
             if name.starts_with('\0') {
                 continue;
             }
-            index.hash(&mut hasher);
-            name.hash(&mut hasher);
+            for byte in slots.to_le_bytes().iter().chain(name.as_bytes()) {
+                hash ^= u32::from(*byte);
+                hash = hash.wrapping_mul(0x01000193);
+            }
+            // Separate adjacent names (and avoid prefix ambiguity).
+            hash ^= 0xff;
+            hash = hash.wrapping_mul(0x01000193);
             slots = slots.saturating_add(1);
         }
         ObjectShape {
-            id: crate::identity::ShapeId(hasher.finish() as u32),
+            id: crate::identity::ShapeId(hash),
             slots,
             dictionary: slots > DICTIONARY_SLOT_THRESHOLD,
         }
@@ -408,7 +496,7 @@ impl ObjectData {
     #[inline]
     pub(crate) fn is_tiny(&self) -> bool {
         let shape = self.shape();
-        !shape.dictionary && shape.slots <= 2
+        !shape.dictionary && shape.slots <= TINY_SLOT_LIMIT
     }
 }
 
@@ -426,11 +514,35 @@ impl ObjectData {
         if self.shape().dictionary || key.starts_with('\0') {
             return None;
         }
-        self.properties.iter().position(|(name, _)| name == key)
+        self.properties
+            .iter()
+            .filter(|(name, _)| !name.starts_with('\0'))
+            .position(|(name, _)| name == key)
+    }
+    /// Check the canonical AoS projection used by shape/slot fast paths.
+    ///
+    /// Kept as a cheap debug-only assertion at call sites so optimized code
+    /// cannot accidentally grow a second semantic representation.
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_canonical_slots(&self) {
+        let visible: Vec<_> = self
+            .properties
+            .iter()
+            .filter(|(name, _)| !name.starts_with('\0'))
+            .collect();
+        debug_assert_eq!(self.shape().slots as usize, visible.len());
+        for (slot, (name, value)) in visible.iter().enumerate() {
+            debug_assert_eq!(self.slot_for(name), Some(slot));
+            debug_assert_eq!(self.value_at_slot(slot), Some(value));
+        }
     }
 
     pub(crate) fn value_at_slot(&self, slot: usize) -> Option<&Value> {
-        self.properties.get(slot).map(|(_, value)| value)
+        self.properties
+            .iter()
+            .filter(|(name, _)| !name.starts_with('\0'))
+            .nth(slot)
+            .map(|(_, value)| value)
     }
 }
 
@@ -490,14 +602,50 @@ impl PartialEq for PrivateName {
 
 impl Eq for PrivateName {}
 
+/// Shared, retargetable weak identity used by object-alias execution paths.
+///
+/// This remains `Rc<RefCell<_>>` deliberately: alias values are cloned into
+/// several properties, then retargeted in place when `Object.prototype`-style
+/// operations replace their target. The shared mutation is observable through
+/// every clone, so an ID/`UnsafeCell` conversion must preserve this exact
+/// lifecycle before this boundary can be removed.
 #[derive(Debug, Clone)]
 pub struct ObjectAliasValue(pub Rc<RefCell<WeakObject>>);
+
+impl ObjectAliasValue {
+    pub(crate) fn target(&self) -> Option<Rc<ObjectData>> {
+        self.0.borrow().upgrade()
+    }
+
+    pub(crate) fn retarget(&self, target: WeakObject) {
+        *self.0.borrow_mut() = target;
+    }
+}
 
 impl PartialEq for ObjectAliasValue {
     fn eq(&self, other: &Self) -> bool {
         let left = self.0.borrow();
         let right = other.0.borrow();
         left.ptr_eq(&right)
+    }
+}
+
+#[cfg(test)]
+mod object_alias_invariants {
+    use super::{ObjectAliasValue, ObjectData};
+    use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn cloned_aliases_share_retargeted_weak_identity() {
+        let first = Rc::new(ObjectData::new(Vec::new()));
+        let second = Rc::new(ObjectData::new(Vec::new()));
+        let alias = ObjectAliasValue(Rc::new(RefCell::new(Rc::downgrade(&first))));
+        let clone = alias.clone();
+
+        alias.retarget(Rc::downgrade(&second));
+
+        assert!(Rc::ptr_eq(&clone.target().expect("live target"), &second));
+        assert!(Rc::ptr_eq(&alias.target().expect("live target"), &second));
     }
 }
 
@@ -536,6 +684,15 @@ pub struct ProxyValue {
     pub(crate) private_slots: PrivateSlots,
 }
 
+/// Canonical JavaScript value representation.
+///
+/// Ownership is explicit: immediate primitives (`Number`, `Boolean`, `Null`,
+/// and `Undefined`) live directly in the enum, while variable-sized values and
+/// identity-bearing state are owned by their `String`/`Rc` payloads. Cloning a
+/// heap-backed value clones its `Rc`; lifecycle is therefore governed by the
+/// last owning clone. No variant is a borrowed view. Invalid states are
+/// rejected at construction or operation boundaries (for example, detached
+/// buffers and revoked proxies), rather than encoded as sentinel payloads.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
@@ -584,11 +741,21 @@ pub enum Value {
 pub const IMMEDIATE_WORD_BYTES: usize = std::mem::size_of::<u64>();
 pub const VALUE_SIZE_BUDGET: usize = 32;
 
+/// `Value` is a Rust enum, not an aligned heap pointer. Its alignment must not
+/// be used to infer tag bits or to mask payloads.
+pub const VALUE_ALIGNMENT_TAG_BITS: u8 = 0;
+
 // Keep the representation budget enforced at compile time, not only by tests.
 const _: () = assert!(std::mem::size_of::<Value>() <= VALUE_SIZE_BUDGET);
+const _: () = assert!(VALUE_ALIGNMENT_TAG_BITS == 0);
 impl Value {
+    /// Compiler-output contract: these tag-only operations are always inlined
+    /// at optimized call sites; the error constructors above remain cold and
+    /// out of line. `tools/audit-value-assembly.sh` checks the emitted `.s`.
+    ///
     /// Values represented without a heap reference or payload allocation.
-    #[inline]
+    #[inline(always)]
+    #[must_use]
     pub fn is_immediate(&self) -> bool {
         matches!(
             self,
@@ -597,19 +764,22 @@ impl Value {
     }
 
     /// Cheap predicate for the zero-payload primitive tags.
-    #[inline]
+    #[inline(always)]
+    #[must_use]
     pub fn is_primitive_tag(&self) -> bool {
         matches!(self, Self::Boolean(_) | Self::Null | Self::Undefined)
     }
 
     /// Inline nullish check used by conditional and property paths.
-    #[inline]
+    #[inline(always)]
+    #[must_use]
     pub fn is_nullish(&self) -> bool {
         matches!(self, Self::Null | Self::Undefined)
     }
 
     /// Inline extraction for boolean primitives.
-    #[inline]
+    #[inline(always)]
+    #[must_use]
     pub fn as_boolean(&self) -> Option<bool> {
         match self {
             Self::Boolean(value) => Some(*value),
@@ -617,22 +787,27 @@ impl Value {
         }
     }
 
+    #[inline(always)]
     pub fn from_small_integer(value: i32) -> Self {
         Self::Number(f64::from(value))
     }
 
-    #[inline]
+    #[inline(always)]
+    #[must_use]
     pub fn as_small_integer(&self) -> Option<i32> {
         let Self::Number(value) = self else {
             return None;
         };
-        (*value >= f64::from(i32::MIN) && *value <= f64::from(i32::MAX))
-            .then_some(*value as i32)
-            .filter(|integer| f64::from(*integer) == *value)
+        if !value.is_finite() || value.fract() != 0.0 {
+            return None;
+        }
+        let integer = *value as i32;
+        (f64::from(integer) == *value).then_some(integer)
     }
 
     /// Returns the exact IEEE-754 payload for an unboxed JavaScript number.
-    #[inline]
+    #[inline(always)]
+    #[must_use]
     pub fn number_bits(&self) -> Option<u64> {
         match self {
             Self::Number(value) => Some(value.to_bits()),
@@ -640,7 +815,8 @@ impl Value {
         }
     }
     /// Stable branch-light classification for zero-payload primitive tags.
-    #[inline]
+    #[inline(always)]
+    #[must_use]
     pub fn primitive_tag_code(&self) -> Option<u8> {
         match self {
             Self::Boolean(false) => Some(0),
@@ -650,36 +826,98 @@ impl Value {
             _ => None,
         }
     }
-    /// number semantics; `None` selects the ordinary floating-point path.
-    #[inline]
+    /// Checked small-integer addition; `None` selects ordinary floating-point
+    /// number semantics.
+    #[inline(always)]
+    #[must_use]
     pub fn checked_small_integer_add(left: i32, right: i32) -> Option<Self> {
         left.checked_add(right).map(Self::from_small_integer)
     }
 }
+
 #[cfg(test)]
 mod layout_tests {
-    use super::Value;
+    use super::{ObjectData, ObjectShape, Value, VALUE_ALIGNMENT_TAG_BITS};
+    use crate::heap::{CACHE_LINE_BYTES, HOT_HEADER_BYTES};
 
     #[test]
     fn value_layout_stays_within_budget() {
+        let size = std::mem::size_of::<Value>();
         assert!(
-            std::mem::size_of::<Value>() <= super::VALUE_SIZE_BUDGET,
-            "Value grew beyond the 32-byte layout budget: {} bytes",
-            std::mem::size_of::<Value>()
+            size <= super::VALUE_SIZE_BUDGET,
+            "Value grew beyond budget: {size}"
         );
+        assert_eq!(VALUE_ALIGNMENT_TAG_BITS, 0);
+        assert_eq!(std::mem::align_of::<Value>(), std::mem::align_of::<usize>());
     }
 
     #[test]
-    fn immediate_values_are_explicitly_classified() {
-        assert!(Value::Undefined.is_immediate());
-        assert!(Value::Number(1.0).is_immediate());
-        assert!(!Value::String("heap".into()).is_immediate());
+    fn object_shape_is_a_single_hot_header() {
+        let size = std::mem::size_of::<ObjectShape>();
+        let alignment = std::mem::align_of::<ObjectShape>();
+        assert!(size <= HOT_HEADER_BYTES);
+        assert!(HOT_HEADER_BYTES <= CACHE_LINE_BYTES);
+        assert!(alignment <= HOT_HEADER_BYTES);
+        // The fields used by the hot lookup are all contained in the record;
+        // this catches accidental tail growth or a cache-line-sized padding
+        // change while leaving the semantic ObjectData representation alone.
+        assert!(std::mem::offset_of!(ObjectShape, dictionary) < size);
+        assert!(std::mem::offset_of!(ObjectShape, slots) < size);
+        assert!(std::mem::offset_of!(ObjectShape, id) < size);
     }
     #[test]
-    fn immediate_word_target_is_explicit() {
-        assert_eq!(super::IMMEDIATE_WORD_BYTES, 8);
-        assert_eq!(std::mem::size_of::<f64>(), super::IMMEDIATE_WORD_BYTES);
+    fn object_aos_alignment_and_clone_reuse_preserve_slots() {
+        let object = ObjectData::new(vec![
+            ("\0shape".into(), Value::Undefined),
+            ("first".into(), Value::Number(1.0)),
+            ("second".into(), Value::Number(2.0)),
+        ]);
+        assert_eq!(
+            std::mem::align_of_val(&object),
+            std::mem::align_of::<usize>()
+        );
+        assert_eq!(object.shape().slots, 2);
+        assert_eq!(object.slot_for("second"), Some(1));
+        assert_eq!(object.value_at_slot(1), Some(&Value::Number(2.0)));
+        #[cfg(debug_assertions)]
+        object.assert_canonical_slots();
+
+        let reused = object.clone();
+        assert_eq!(reused.properties, object.properties);
+        assert_eq!(reused.shape(), object.shape());
+        #[cfg(debug_assertions)]
+        reused.assert_canonical_slots();
     }
+
+    #[test]
+    fn primitive_tag_predicates_are_exhaustive() {
+        let values = [
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Null,
+            Value::Undefined,
+            Value::Number(0.0),
+        ];
+        assert!(values[0].is_boolean());
+        assert!(values[1].is_boolean());
+        assert!(values[2].is_null());
+        assert!(values[3].is_undefined());
+        for value in &values {
+            assert_eq!(value.is_boolean(), matches!(value, Value::Boolean(_)));
+            assert_eq!(value.is_null(), matches!(value, Value::Null));
+            assert_eq!(value.is_undefined(), matches!(value, Value::Undefined));
+        }
+    }
+
+    #[test]
+    fn primitive_tag_predicates_do_not_alias_numeric_values() {
+        let number = Value::Number(0.0);
+        assert!(!number.is_boolean());
+        assert!(!number.is_null());
+        assert!(!number.is_undefined());
+        assert!(!number.is_nullish());
+    }
+
     #[test]
     fn small_integer_round_trip_stays_number_compatible() {
         let value = Value::from_small_integer(-42);
@@ -739,7 +977,7 @@ mod layout_tests {
 
 #[cfg(test)]
 mod shape_tests {
-    use super::{ObjectData, Value};
+    use super::{ObjectData, Value, TINY_SLOT_LIMIT};
 
     #[test]
     fn derives_stable_shape_and_dictionary_threshold() {
@@ -781,6 +1019,51 @@ mod shape_tests {
         assert_ne!(first.shape_id(), second.shape_id());
     }
     #[test]
+    fn tiny_classification_is_exact_at_slot_boundary() {
+        let at_limit = ObjectData::new(
+            (0..TINY_SLOT_LIMIT)
+                .map(|index| (format!("key{index}"), Value::Undefined))
+                .collect(),
+        );
+        let above_limit = ObjectData::new(
+            (0..=TINY_SLOT_LIMIT)
+                .map(|index| (format!("key{index}"), Value::Undefined))
+                .collect(),
+        );
+        assert_eq!(at_limit.shape().slots, TINY_SLOT_LIMIT);
+        assert!(at_limit.is_tiny());
+        assert_eq!(above_limit.shape().slots, TINY_SLOT_LIMIT + 1);
+        assert!(!above_limit.is_tiny());
+    }
+
+    #[test]
+    fn tiny_objects_have_one_authoritative_property_store() {
+        let mut object = ObjectData::new(vec![("key".into(), Value::Undefined)]);
+        assert_eq!(object.properties.len(), 1);
+        assert_eq!(object.slot_for("key"), Some(0));
+        object.properties[0].1 = Value::Number(7.0);
+        assert_eq!(object.value_at_slot(0), Some(&Value::Number(7.0)));
+        assert_eq!(object.properties.capacity(), 1);
+    }
+
+    #[test]
+    fn tiny_classification_tracks_public_slot_boundary() {
+        let empty = ObjectData::new(Vec::new());
+        let two = ObjectData::new(vec![
+            ("alpha".into(), Value::Undefined),
+            ("beta".into(), Value::Null),
+        ]);
+        let three = ObjectData::new(vec![
+            ("alpha".into(), Value::Undefined),
+            ("beta".into(), Value::Null),
+            ("gamma".into(), Value::Boolean(true)),
+        ]);
+        assert!(empty.is_tiny());
+        assert!(two.is_tiny());
+        assert!(!three.is_tiny());
+    }
+
+    #[test]
     fn tiny_objects_use_the_small_shape_class() {
         let object = ObjectData::new(vec![("alpha".into(), Value::Undefined)]);
         assert!(object.is_tiny());
@@ -813,22 +1096,56 @@ mod shape_tests {
         );
     }
     #[test]
-    fn dictionary_objects_are_explicitly_separated() {
-        let properties = (0..33)
+    fn dictionary_boundary_is_strictly_above_threshold() {
+        let at_threshold = (0..super::DICTIONARY_SLOT_THRESHOLD)
             .map(|index| (format!("key{index}"), Value::Undefined))
             .collect();
-        let object = ObjectData::new(properties);
-        assert!(object.is_dictionary());
-        assert!(!object.is_tiny());
+        let above_threshold = (0..=super::DICTIONARY_SLOT_THRESHOLD)
+            .map(|index| (format!("key{index}"), Value::Undefined))
+            .collect();
+        assert!(!ObjectData::new(at_threshold).is_dictionary());
+        assert!(ObjectData::new(above_threshold).is_dictionary());
     }
     #[test]
     fn internal_descriptor_names_stay_out_of_slots() {
         let object = ObjectData::new(vec![
             ("\0descriptor".into(), Value::Undefined),
             ("visible".into(), Value::Null),
+            ("\0other".into(), Value::Boolean(true)),
+            ("second".into(), Value::Number(2.0)),
         ]);
         assert_eq!(object.slot_for("\0descriptor"), None);
-        assert_eq!(object.slot_for("visible"), Some(1));
+        assert_eq!(object.slot_for("visible"), Some(0));
+        assert_eq!(object.slot_for("second"), Some(1));
+        assert_eq!(object.value_at_slot(0), Some(&Value::Null));
+        assert_eq!(object.value_at_slot(1), Some(&Value::Number(2.0)));
+        assert_eq!(object.value_at_slot(2), None);
+    }
+    #[test]
+    fn transition_key_changes_only_with_layout_or_property() {
+        let mut object = ObjectData::new(vec![("alpha".into(), Value::Undefined)]);
+        let initial = object.transition_key("alpha");
+        assert_eq!(initial, object.transition_key("alpha"));
+        assert_ne!(initial.1, object.transition_key("beta").1);
+
+        object.properties.push(("beta".into(), Value::Null));
+        let extended = object.transition_key("alpha");
+        assert_ne!(initial.0, extended.0);
+        assert_eq!(extended.1, initial.1);
+    }
+    #[test]
+    fn descriptor_metadata_does_not_change_visible_shape() {
+        let plain = ObjectData::new(vec![
+            ("alpha".into(), Value::Undefined),
+            ("beta".into(), Value::Null),
+        ]);
+        let with_metadata = ObjectData::new(vec![
+            ("\0quench:descriptor:\0alpha".into(), Value::Undefined),
+            ("alpha".into(), Value::Undefined),
+            ("beta".into(), Value::Null),
+        ]);
+        assert_eq!(plain.shape_id(), with_metadata.shape_id());
+        assert_eq!(with_metadata.slot_for("beta"), Some(1));
     }
 }
 
@@ -877,19 +1194,56 @@ mod array_growth_tests {
         assert_eq!(array.dense_value_at(1), None);
     }
     #[test]
-    fn dense_growth_reserves_geometrically() {
+    fn dense_growth_has_geometric_capacity_and_bounded_allocations() {
+        let mut array = ArrayData::new(Vec::new());
+        let mut previous_capacity = array.storage_capacity();
+        let mut allocations = 0;
+        for index in 0..1_024 {
+            array.set_index(index, Value::Undefined);
+            let capacity = array.storage_capacity();
+            assert!(capacity >= array.physical_len());
+            if capacity != previous_capacity {
+                allocations += 1;
+                assert!(capacity > previous_capacity);
+                previous_capacity = capacity;
+            }
+        }
+        // A geometric schedule needs logarithmically many backing-store
+        // allocations, rather than one allocation per append.
+        assert!(allocations <= 12, "too many allocations: {allocations}");
+    }
+
+    #[test]
+    fn sparse_write_does_not_trigger_dense_growth() {
         let mut array = ArrayData::new(Vec::new());
         array.set_index(0, Value::Undefined);
-        let first = array.storage_capacity();
-        array.set_index(1, Value::Null);
-        array.set_index(2, Value::Boolean(true));
-        assert!(array.storage_capacity() >= first);
-        assert!(array.storage_capacity() >= array.physical_len());
+        let capacity = array.storage_capacity();
+        array.set_index(10_000, Value::Boolean(true));
+        assert!(array.is_sparse());
+        assert_eq!(array.physical_len(), 1);
+        assert_eq!(array.storage_capacity(), capacity);
+        assert_eq!(array.get_index(10_000), Some(Value::Boolean(true)));
     }
     #[test]
     fn array_length_reads_header_field() {
         let array = ArrayData::new(vec![Value::Undefined, Value::Null]);
         assert_eq!(array.header_length(), 2);
+    }
+    #[test]
+    fn array_length_header_tracks_growth_shrink_and_sparse_writes() {
+        let mut array = ArrayData::new(vec![Value::Number(1.0)]);
+        assert_eq!(array.header_length(), 1);
+        array.set_length(128);
+        assert_eq!(array.header_length(), 128);
+        assert_eq!(array.physical_len(), 1);
+        array.set_length(0);
+        assert_eq!(array.header_length(), 0);
+        array.set_index(10_000, Value::Boolean(true));
+        assert_eq!(array.header_length(), 10_001);
+        assert_eq!(array.physical_len(), 0);
+        array.set_length(3);
+        assert_eq!(array.header_length(), 3);
+        assert_eq!(array.physical_len(), 0);
     }
     #[test]
     fn dense_mutation_uses_checked_slot() {
@@ -916,18 +1270,47 @@ mod array_growth_tests {
         assert_eq!(array.last_dense_value(), Some(&Value::Number(2.0)));
     }
     #[test]
-    fn dense_copy_supports_overlap() {
+    fn dense_copy_supports_overlap_without_holes() {
+        let mut array = ArrayData::new(vec![
+            Value::Number(1.0),
+            Value::Number(2.0),
+            Value::Number(3.0),
+            Value::Number(4.0),
+        ]);
+        assert!(array.copy_dense_within(0, 1, 3));
+        assert_eq!(
+            array.snapshot(),
+            vec![
+                Value::Number(1.0),
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+            ]
+        );
+
+        assert!(array.copy_dense_within(1, 0, 3));
+        assert_eq!(
+            array.snapshot(),
+            vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(3.0),
+            ]
+        );
+        assert!(!array.copy_dense_within(2, 3, 2));
+    }
+
+    #[test]
+    fn dense_copy_rejects_holes_in_source_or_destination() {
         let mut array = ArrayData::new(vec![
             Value::Number(1.0),
             Value::Number(2.0),
             Value::Number(3.0),
         ]);
-        assert!(array.copy_dense_within(0, 1, 2));
-        assert_eq!(
-            array.snapshot(),
-            vec![Value::Number(1.0), Value::Number(1.0), Value::Number(2.0),]
-        );
-        assert!(!array.copy_dense_within(2, 3, 2));
+        array.delete_property("1");
+        assert!(!array.copy_dense_within(0, 1, 1));
+        assert!(!array.copy_dense_within(1, 0, 1));
     }
 }
 
@@ -996,3 +1379,33 @@ pub struct BoundFunctionValue {
 }
 include!("value_constant.rs");
 include!("value_helpers.rs");
+
+#[cfg(test)]
+mod error_tests {
+    use super::error;
+    use crate::{execute::get_property, execute::VmError, value::Value};
+
+    #[test]
+    fn cold_error_helpers_preserve_error_kind_and_message() {
+        let cases = [
+            (error::throw_type_error("type"), "TypeError"),
+            (error::throw_reference_error("reference"), "ReferenceError"),
+            (error::throw_syntax_error("syntax"), "SyntaxError"),
+            (error::throw_range_error("range"), "RangeError"),
+            (error::throw_uri_error("uri"), "URIError"),
+        ];
+        for (result, name) in cases {
+            let VmError::Thrown(value) = result else {
+                panic!("error helper must produce a thrown completion");
+            };
+            assert_eq!(
+                get_property(&value, "name"),
+                Value::String(name.to_string())
+            );
+            assert_eq!(
+                get_property(&value, "message"),
+                Value::String(name.trim_end_matches("Error").to_lowercase())
+            );
+        }
+    }
+}

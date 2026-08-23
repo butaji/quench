@@ -49,6 +49,7 @@ pub fn run_script(script: &Path, script_args: &[String], source: &str) -> RunOut
 
 /// Same as `run_script`, but routes host output through `sink`.
 pub fn run_script_with_sink(
+
     script: &Path,
     script_args: &[String],
     source: &str,
@@ -81,6 +82,22 @@ pub fn run_script_with_sink(
         ok => ok.map(|_| ()),
     };
     classify(result, host.exit_code())
+}
+
+/// Run eval source directly in the canonical installed Node context.
+pub fn eval_script(source: &str, sink: OutputSink) -> RunOutcome {
+    let argv = vec![
+        std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "quench-node".to_string()),
+        "<eval>".to_string(),
+    ];
+    let (host, context) = crate::host::install_with_argv(RealmId::ROOT, sink, argv);
+    let ops = match reduce(source) {
+        Ok(ops) => ops,
+        Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
+    };
+    classify(execute_with_context(&ops, &context).map(|_| ()), host.exit_code())
 }
 
 /// Node dispatches top-level uncaught exceptions to

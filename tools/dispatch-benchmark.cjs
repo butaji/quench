@@ -2,8 +2,10 @@
 "use strict";
 
 const iterations = Number(process.env.QUENCH_DISPATCH_ITERATIONS || 1_000_000);
+if (!Number.isSafeInteger(iterations) || iterations < 1) {
+  throw new Error("QUENCH_DISPATCH_ITERATIONS must be a positive safe integer");
+}
 const opcodes = new Uint8Array(iterations);
-for (let i = 0; i < iterations; i++) opcodes[i] = i & 7;
 
 function match(op) {
   switch (op) {
