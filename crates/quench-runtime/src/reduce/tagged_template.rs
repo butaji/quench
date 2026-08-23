@@ -12,12 +12,16 @@ pub(super) fn reduce(
     let callee = super::reduce_expression(&tagged.tag, ops, facts, next_register, locals)?;
     let cooked = reduce_parts(&tagged.quasi, true, ops, next_register)?;
     let raw = reduce_parts(&tagged.quasi, false, ops, next_register)?;
-    ops.push(Op::SetProperty {
+    let raw_key = emit_string(ops, next_register, "raw");
+    ops.push(Op::DefineProperty {
         object: cooked,
-        key: "raw".to_string(),
-        src: raw,
-        strict: facts.strict,
+        key: raw_key,
+        value: raw,
+        kind: crate::ops::PropertyDefinitionKind::Data,
+        enumerable: false,
     });
+    freeze_template_object(ops, next_register, cooked);
+    freeze_template_object(ops, next_register, raw);
     let mut args = vec![cooked];
     for expression in &tagged.quasi.expressions {
         args.push(super::reduce_expression(
@@ -38,6 +42,22 @@ pub(super) fn reduce(
         spreads,
     });
     Some(dst)
+}
+
+fn freeze_template_object(ops: &mut Vec<Op>, next_register: &mut u16, object: u16) {
+    let callee = take_register(next_register);
+    ops.push(Op::MakeBuiltin {
+        dst: callee,
+        builtin: crate::ops::Builtin::ObjectFreeze,
+    });
+    let dst = take_register(next_register);
+    ops.push(Op::Call {
+        dst,
+        callee,
+        receiver: None,
+        args: vec![object],
+        spreads: vec![false],
+    });
 }
 
 fn reduce_parts(
