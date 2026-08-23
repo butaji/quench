@@ -50,6 +50,9 @@ fn checked_length(
         if *buffer.detached.borrow() {
             return Err(crate::collections::iterator::not_iterable());
         }
+        if buffer.byte_length() < byte_offset {
+            return Err(crate::collections::iterator::not_iterable());
+        }
         return Ok(logical_len);
     }
     let required = byte_offset.saturating_add(byte_length);
