@@ -3,11 +3,11 @@ use std::collections::HashSet;
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn names(target: Option<&Value>) -> Result<Value, VmError> {
-    pack_keys(listed(require_object(target)?, false)?)
+    pack_keys(listed(require_object(target)?, false)?, false)
 }
 
 pub(crate) fn symbols(target: Option<&Value>) -> Result<Value, VmError> {
-    pack_keys(listed(require_object(target)?, true)?)
+    pack_keys(listed(require_object(target)?, true)?, true)
 }
 
 pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
@@ -19,7 +19,7 @@ pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
     crate::module_bindings::exports(target, "")?;
     let mut values = keys(target, false);
     values.extend(keys(target, true));
-    pack_keys(values)
+    pack_keys(values, true)
 }
 
 fn listed(target: &Value, symbols: bool) -> Result<Vec<String>, VmError> {
@@ -27,10 +27,16 @@ fn listed(target: &Value, symbols: bool) -> Result<Vec<String>, VmError> {
     Ok(keys(target, symbols))
 }
 
-fn pack_keys(keys: Vec<String>) -> Result<Value, VmError> {
+fn pack_keys(keys: Vec<String>, symbols: bool) -> Result<Value, VmError> {
     Ok(Value::array(
         keys.into_iter()
-            .map(|key| crate::conversion::own_key_value(&key))
+            .map(|key| {
+                if symbols {
+                    crate::conversion::own_key_value(&key)
+                } else {
+                    Value::String(key)
+                }
+            })
             .collect(),
     ))
 }
@@ -433,7 +439,10 @@ fn builtin_keys(builtin: crate::ops::Builtin, symbols: bool) -> Vec<String> {
         }
     }
     keys.into_iter()
-        .filter(|key| key.contains('\0') == symbols)
+        .filter(|key| {
+            let is_symbol = key.contains('\0') || key.starts_with("Symbol.");
+            is_symbol == symbols
+        })
         .filter(
             |key| match crate::builtins::read_intrinsic_override(builtin, key) {
                 Some(descriptor) => descriptor_is_enumerable(&descriptor),
