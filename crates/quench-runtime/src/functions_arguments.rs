@@ -70,7 +70,7 @@ pub(crate) fn build_registers(
         environment.set(arguments_slot, arguments);
         mark_arguments_immutable(function, &environment, arguments_slot);
     }
-    let register_count = function.ops().len().max(32);
+    let register_count = function.code.len().max(32);
     (
         vec![crate::value::Value::Undefined; register_count],
         environment,
@@ -111,8 +111,8 @@ pub(crate) fn execute_construct(
         function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(function, this_value);
-    let result = crate::vm::execute_in_environment(
-        function.ops(),
+    let result = crate::vm::execute_code_in_environment(
+        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
         &mut registers,
         // Keep the active context so host-provided globals (console,
         // timers, capabilities) stay visible inside constructor bodies.
