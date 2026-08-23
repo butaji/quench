@@ -72,14 +72,17 @@ fn util_types_module() -> Value {
                     "isSetIterator",
                     "isTypedArray",
                     "isUint8Array",
+                    "arrayBufferViewHasBuffer",
                 ];
                 quench_runtime::host_api::object(names.into_iter().map(|name| {
-                    let capability = if name == "isDate" {
-                        CapabilityName::UtilIsDate
+                    let capability = if name == "arrayBufferViewHasBuffer" {
+                        HostCapabilityKind::Custom(0x0F0F)
+                    } else if name == "isDate" {
+                        HostCapabilityKind::Custom(CapabilityName::UtilIsDate)
                     } else {
-                        CapabilityName::InternalArrayBufferViewHasBuffer
+                        HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer)
                     };
-                    (name.into(), capability_function(HostCapabilityKind::Custom(capability)))
+                    (name.into(), capability_function(capability))
                 }).collect())
             })
             .clone()
@@ -132,7 +135,7 @@ fn internal_util_emit_experimental_warning(arguments: &[Value]) -> Result<Value,
     Ok(Value::Undefined)
 }
 
-fn internal_view_has_buffer(arguments: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn internal_view_has_buffer(arguments: &[Value]) -> Result<Value, VmError> {
     let length = quench_runtime::execute::get_property_result(
         arguments.first().ok_or(VmError::NotCallable)?,
         "byteLength",

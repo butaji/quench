@@ -7,7 +7,7 @@ pub(crate) fn execute_set_prototype(
     };
     let target = crate::execute::read_register(registers, *object)?.clone();
     let prototype = crate::execute::read_register(registers, *prototype)?.clone();
-    if !matches!(prototype, crate::value::Value::Null | crate::value::Value::Object(_)) {
+    if !matches!(prototype, crate::value::Value::Null) && !crate::value::is_object(&prototype) {
         return Ok(());
     }
     let updated = crate::builtins::set_property(target.clone(), "\0prototype", prototype);

@@ -13,6 +13,13 @@ pub(crate) fn assign_set_property(
         }
         return Ok(target.clone());
     }
+    if crate::typed_array_ops::is_view(target)
+        && crate::typed_array_ops::is_index_key(key)
+    {
+        if let Some(result) = crate::typed_array_ops::set_property(target, key, &value) {
+            return Ok(result.unwrap_or_else(|_| target.clone()));
+        }
+    }
     if let crate::value::Value::Object(properties) = target {
         if crate::builtins::boxed_string_immutable_key(properties, key) {
             return Err(crate::value::error::throw_type_error(
