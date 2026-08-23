@@ -220,6 +220,7 @@
         st.buffer.push(normalizeReadableChunk(this, chunk));
       }
       scheduleFlow(this);
+      if (chunk === null && st.flowing) nextTick(() => flowReadable(this));
       return !st.ended;
     }
 
@@ -489,7 +490,7 @@
                   st.writing = false;
                   for (const item of pending) if (item.callback) item.callback(batchError);
                   if (batchError) this._emitter.emit("error", batchError);
-                  if (st.buffered < st.highWaterMark) this._emitter.emit("drain");
+                  if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
                   finishWritable(this);
                 }
               );
@@ -504,7 +505,7 @@
           this.write(next.chunk, next.encoding, next.callback);
           return;
         }
-        if (st.buffered < st.highWaterMark) this._emitter.emit("drain");
+        if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
         finishWritable(this);
       };
       try {
@@ -606,6 +607,16 @@
         if (!error && data != null) this.push(data);
         callback(error);
       });
+    }
+  }
+
+  class PassThrough extends Transform {
+    constructor(options) {
+      super(options || {});
+      this._transform = (chunk, encoding, callback) => {
+        this.push(chunk);
+        callback();
+      };
     }
   }
 
@@ -722,6 +733,7 @@
     Writable,
     Duplex,
     Transform,
+    PassThrough,
     Stream: Readable,
     finished,
     pipeline,
