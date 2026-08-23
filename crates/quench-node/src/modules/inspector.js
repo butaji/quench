@@ -6,10 +6,10 @@
   Session.prototype.post = function (method, params, callback) {
     if (!this.connected) {
       var error = new Error('Session is not connected');
-      if (typeof callback === 'function') callback(error);
-      return;
+      error.code = 'ERR_INSPECTOR_NOT_CONNECTED';
+      throw error;
     }
-    if (typeof callback === 'function') callback(null, { method: method, params: params || {} });
+    if (typeof callback === 'function') callback(null, {});
   };
   module.exports = {
     Session: Session,
