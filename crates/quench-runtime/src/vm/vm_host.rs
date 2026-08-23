@@ -70,10 +70,14 @@ fn value_variant(value: Option<&Value>) -> u32 {
 
 fn host_capability_permitted(descriptor: HostCapabilityRef, kind: HostCapabilityKind) -> bool {
     CURRENT_CONTEXT.with(|context| {
-        context.borrow().as_ref().is_some_and(|context| {
+        let current = context.borrow();
+        current.as_ref().is_some_and(|context| {
             context.permits(descriptor)
                 || (kind == HostCapabilityKind::EvalScript
                     && realm::context(descriptor.realm).is_some())
+                || (matches!(kind, HostCapabilityKind::Custom(_))
+                    && realm::context(descriptor.realm)
+                        .is_some_and(|realm| realm.host_handle().is_some()))
         })
     })
 }
