@@ -451,7 +451,8 @@
       pending: [],
       writing: false,
       ended: false,
-      finished: false
+      finished: false,
+      corked: 0
     };
     stream.writable = true;
     if (options.write) stream._write = options.write;
@@ -491,6 +492,20 @@
 
     get writableObjectMode() {
       return this._writableState.objectMode;
+    }
+
+    get writableCorked() {
+      return this._writableState.corked;
+    }
+
+    cork() {
+      this._writableState.corked += 1;
+      return this;
+    }
+
+    uncork() {
+      if (this._writableState.corked > 0) this._writableState.corked -= 1;
+      return this;
     }
 
     write(chunk, encoding, callback) {
