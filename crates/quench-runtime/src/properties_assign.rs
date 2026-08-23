@@ -7,6 +7,13 @@ pub(crate) fn assign_set_property(
     if let crate::value::Value::Proxy(_) = target {
         return assign_proxy_target(target, key, value);
     }
+    if crate::typed_array_ops::is_view(target)
+        && crate::typed_array_ops::is_index_key(key)
+    {
+        if let Some(result) = crate::typed_array_ops::set_property(target, key, &value) {
+            return Ok(result.unwrap_or_else(|_| target.clone()));
+        }
+    }
     if let crate::value::Value::Object(properties) = target {
         if crate::builtins::boxed_string_immutable_key(properties, key) {
             return Err(crate::value::error::throw_type_error(
