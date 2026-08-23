@@ -263,8 +263,10 @@ pub fn get_event_listeners(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    // Node requires an event name; silently treating an omitted/non-string
-    // name as `""` makes malformed introspection calls look valid.
+    let valid_target = emitter_id(&target).is_some() || target_id(&target).is_some();
+    if !valid_target {
+        return Err(invalid_emitter_error(&target));
+    }
     let event = match args.get(1) {
         Some(Value::String(name)) => name.clone(),
         _ => {
