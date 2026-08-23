@@ -157,19 +157,13 @@ fn apply_fill(bytes: &mut [u8], args: &[Value]) -> Result<(), VmError> {
             let encoding = encoding_name(args.get(2))?;
             let encoded = enc::encode_value(&fill, &encoding)?;
             if encoded.is_empty() {
-                return Err(enc::invalid_arg_value(format!(
-                    "The argument 'value' is invalid.{}",
-                    crate::modules::util::invalid_arg_received(&fill)
-                )));
+                return Ok(());
             }
             encoded
         }
         Value::Uint8Array(view) => {
             if view.length == 0 {
-                return Err(enc::invalid_arg_value(format!(
-                    "The argument 'value' is invalid.{}",
-                    crate::modules::util::invalid_arg_received(&fill)
-                )));
+                return Ok(());
             }
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
