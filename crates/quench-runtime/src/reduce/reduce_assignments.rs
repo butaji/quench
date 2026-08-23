@@ -65,6 +65,7 @@ pub fn reduce_assignment(
     }
     let mut place = reduce_place(&assignment.left, ops, facts, next, locals)?;
     capture_name_target(&mut place, ops, next);
+    preserve_property_target(&mut place, ops, next);
     if let Place::Name {
         name, strict: true, ..
     } = &place
@@ -118,7 +119,8 @@ pub(crate) fn put_assignment_target(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
-    let place = reduce_place(target, ops, facts, next, locals)?;
+    let mut place = reduce_place(target, ops, facts, next, locals)?;
+    preserve_property_target(&mut place, ops, next);
     put(place, value, ops)
 }
 
@@ -289,6 +291,24 @@ fn identifier_place(
     )
 }
 
+/// Keep a member-assignment receiver in a register owned by the assignment.
+///
+/// A call on the RHS suspends the caller and restores its register snapshot
+/// into the destination register.  If the receiver shares a register with a
+/// later RHS result, that restore loses the receiver before `SetProperty`.
+/// Allocate a distinct canonical register before lowering the RHS.
+pub(crate) fn preserve_property_target(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
+    let Place::Property { object, .. } = place else {
+        return;
+    };
+    let preserved = take_register(next);
+    ops.push(Op::Move {
+        dst: preserved,
+        src: *object,
+    });
+    *object = preserved;
+}
+
 pub(crate) fn capture_name_target(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
     let Place::Name { name, target, .. } = place else {
         if let Place::DynamicLocal { name, target, .. } = place {
@@ -319,10 +339,16 @@ fn computed_place(
     if object.is_none() {
         ops.push(Op::CheckSuperThis);
     }
+    let mut place = finish_member_place(object, PlaceKey::Static("".to_string()), facts.strict)?;
     let key = crate::reduce::reduce_expression(&member.expression, ops, facts, next, locals)?;
-    finish_member_place(object, PlaceKey::Dynamic(key), facts.strict)
+    match &mut place {
+        Place::Property { key: place_key, .. } | Place::Super { key: place_key, .. } => {
+            *place_key = PlaceKey::Dynamic(key);
+        }
+        _ => unreachable!(),
+    }
+    Some(place)
 }
-
 pub(crate) fn prepare_get(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
     let (object, key) = match place {
         Place::Property {
@@ -385,7 +411,10 @@ fn reduce_member_object(
     if matches!(expression, Expression::Super(_)) {
         return Some(None);
     }
-    crate::reduce::reduce_expression(expression, ops, facts, next, locals).map(Some)
+    let object = crate::reduce::reduce_expression(expression, ops, facts, next, locals)?;
+    let preserved = take_register(next);
+    ops.push(Op::Move { dst: preserved, src: object });
+    Some(Some(preserved))
 }
 
 fn finish_member_place(object: Option<u16>, key: PlaceKey, strict: bool) -> Option<Place> {

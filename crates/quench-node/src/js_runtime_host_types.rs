@@ -1,7 +1,7 @@
 impl Default for FilesystemNodeHost {
     fn default() -> Self {
         Self {
-            resolver: Resolver::new(ResolveOptions::default()),
+            resolver: RefCell::new(None),
             source_cache: RefCell::new(HashMap::new()),
         }
     }
@@ -28,7 +28,10 @@ impl NodeHost for FilesystemNodeHost {
                 return Ok(fixture_common.to_path_buf());
             }
         }
-        self.resolver
+        let mut resolver = self.resolver.borrow_mut();
+        let resolver = resolver
+            .get_or_insert_with(|| Resolver::new(ResolveOptions::default()));
+        resolver
             .resolve(base, request)
             .map(|resolution| resolution.full_path().to_path_buf())
             .map_err(|error| error.to_string().into())

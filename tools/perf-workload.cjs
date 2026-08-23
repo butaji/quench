@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 "use strict";
+// Source-owned workload snapshot contract. One run owns one final JSON object;
+// counters are finite non-negative integers, peak_rss is a positive integer,
+// and timings are finite non-negative numbers. Consumers must not infer
+// missing fields or treat null as zero.
 const iterations = Number(process.env.QUENCH_PERF_ITERATIONS || 100000);
 let checksum = 0;
 let allocations = 0;

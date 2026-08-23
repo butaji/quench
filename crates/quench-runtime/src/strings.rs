@@ -1,64 +1,119 @@
 use crate::value::Value;
 
-/// Return the stable FNV-1a hash of UTF-16 code units without materializing
-/// cache keys.
+/// Return the stable FNV-1a hash of UTF-16 code units.
+///
+/// The hash is deliberately computed from the canonical value on demand.
+/// There is no mutable cache: `Value::String` owns its UTF-8 buffer and
+/// `Value::StringUnits` owns its `Rc<Vec<u16>>`; a cache would either be a
+/// second mutable semantic state or require cache invalidation on ownership
+/// transitions. Callers must treat this as a derived value with no lifecycle
+/// beyond the call.
 pub(crate) fn hash_units(units: &[u16]) -> u64 {
-    units.iter().fold(0xcbf29ce484222325, |hash, unit| {
-        (hash ^ u64::from(*unit)).wrapping_mul(0x100000001b3)
-    })
+    units
+        .iter()
+        .fold(0xcbf29ce484222325, |hash, unit| hash_unit(hash, *unit))
 }
 
-/// Hash a UTF-8 string without first allocating a UTF-16 buffer.
+#[inline]
+fn hash_unit(hash: u64, unit: u16) -> u64 {
+    (hash ^ u64::from(unit)).wrapping_mul(0x100000001b3)
+}
+
+/// Hash a UTF-8 string using the same UTF-16-unit algorithm as `hash_units`.
 pub(crate) fn hash_str(value: &str) -> u64 {
-    value.encode_utf16().fold(0xcbf29ce484222325, |hash, unit| {
-        (hash ^ u64::from(unit)).wrapping_mul(0x100000001b3)
-    })
+    value.encode_utf16().fold(0xcbf29ce484222325, hash_unit)
 }
 
-/// Compatibility name retained for callers while avoiding a duplicate cache.
+/// Hash a canonical runtime string without materializing a representation.
+///
+/// `Value::StringUnits` is the canonical source for lone-surrogate strings;
+/// `Value::String` is the source for well-formed strings. Non-string values
+/// have no string hash. The returned hash is derived state and is never stored
+/// in (or shared alongside) the value.
 #[inline]
-pub(crate) fn hash_str_cached(value: &str) -> u64 {
-    hash_str(value)
-}
-pub(crate) const ROPE_MIN_BYTES: usize = 4096;
-
-#[inline]
-pub(crate) fn should_use_rope(left_bytes: usize, right_bytes: usize) -> bool {
-    left_bytes.saturating_add(right_bytes) >= ROPE_MIN_BYTES
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConcatStrategy {
-    Flat,
-    Rope,
-}
-
-#[inline]
-pub(crate) fn concat_strategy(
-    left_bytes: usize,
-    right_bytes: usize,
-    boundary: bool,
-) -> ConcatStrategy {
-    if boundary || !should_use_rope(left_bytes, right_bytes) {
-        ConcatStrategy::Flat
-    } else {
-        ConcatStrategy::Rope
+pub(crate) fn hash_value(value: &Value) -> Option<u64> {
+    match value {
+        Value::String(value) => Some(hash_str(value)),
+        Value::StringUnits(value) => Some(hash_units(value)),
+        _ => None,
     }
 }
 
+/// Strings have one canonical representation today: `String` (UTF-8) or the
+/// UTF-16-unit container produced by `from_units`. Both are owned flat buffers.
+/// A rope would need runtime-owned nodes, flattening rules, and lifecycle/
+/// invalid-state handling; none exists, so concatenation must remain flat.
+///
+/// Flat concatenation policy: `concat` appends converted UTF-16 units directly
+/// into one newly-owned `Vec<u16>`. The receiver and each argument remain the
+/// semantic source of truth until conversion; no rope nodes, slices, or cached
+/// flattened copies are retained. The vector is born in the concat call, is
+/// transferred to `Value::String`/`Value::StringUnits` by `from_units`, and is
+/// dropped on conversion failure. A result is invalid if its checked UTF-16
+/// byte size exceeds this limit; the operation returns a RangeError before
+/// appending the offending argument.
 pub(crate) const MAX_STRING_BYTES: usize = 256 * 1024 * 1024;
 
 #[inline]
-pub(crate) fn string_bytes_fit_limit(value: &str) -> bool {
-    value.len() <= MAX_STRING_BYTES
+fn string_byte_len_fits_limit(bytes: usize) -> bool {
+    bytes <= MAX_STRING_BYTES
 }
+
+#[inline]
+fn units_fit_limit(units: usize) -> bool {
+    units
+        .checked_mul(std::mem::size_of::<u16>())
+        .is_some_and(string_byte_len_fits_limit)
+}
+
+#[inline]
+fn units_add_fits_limit(left: usize, right: usize) -> Option<usize> {
+    left.checked_add(right)
+        .filter(|total| units_fit_limit(*total))
+}
+
+#[inline]
+
+pub(crate) fn string_bytes_fit_limit(value: &str) -> bool {
+    string_byte_len_fits_limit(value.len())
+}
+
 #[cfg(test)]
 mod hash_tests {
     use super::{
-        concat_strategy, encoding_of, for_each_unit, hash_str, hash_str_cached, hash_units,
-        is_short_string, is_short_units, should_use_rope, string_bytes_fit_limit, ConcatStrategy,
-        StringEncoding, Value,
+        encoding_of, for_each_unit, hash_str, hash_units, is_short_string, is_short_units,
+        string_byte_len_fits_limit, string_bytes_fit_limit, units_add_fits_limit, units_fit_limit,
+        StringEncoding, Value, MAX_STRING_BYTES,
     };
+
+    // Hashes are derived on demand from the owned canonical value. No mutable
+    // cache is retained, so clones and drops cannot leave stale hash state.
+    #[test]
+    fn canonical_hash_uses_owned_value_and_has_no_cache_lifecycle() {
+        let value = super::from_units(vec![0xD800, 0x0061]);
+        let expected = hash_units(&[0xD800, 0x0061]);
+        assert_eq!(super::hash_value(&value), Some(expected));
+        let clone = value.clone();
+        drop(value);
+        assert_eq!(super::hash_value(&clone), Some(expected));
+    }
+
+    #[test]
+    fn canonical_hash_rejects_non_strings() {
+        assert_eq!(super::hash_value(&Value::Null), None);
+    }
+
+    #[test]
+    fn utf16_hash_is_stable_across_repeated_derivation() {
+        let units = [0, 0xFFFF, 0xD800, 0x61];
+        assert_eq!(hash_units(&units), hash_units(&units));
+    }
+
+    // String values are currently owned by `String` or `Rc<Vec<u16>>`; neither
+    // String values are currently owned by `String` or `Rc<Vec<u16>>`; neither
+    // has immutable, runtime-owned hash storage. Hash on demand rather than
+    // pretending a borrowed `&str` cache is safe across ownership changes.
+    #[test]
     fn utf8_hash_matches_utf16_hash_without_buffer() {
         let value = "héllo";
         let units: Vec<u16> = value.encode_utf16().collect();
@@ -86,39 +141,63 @@ mod hash_tests {
         assert_eq!(units, vec![b'h' as u16, 0xE9]);
     }
     #[test]
-    fn cached_hash_matches_direct_hash() {
-        assert_eq!(hash_str_cached("persistent"), hash_str("persistent"));
-        assert_eq!(hash_str_cached("persistent"), hash_str("persistent"));
-    }
-    #[test]
-    fn rope_policy_has_large_concat_boundary() {
-        assert!(!should_use_rope(2047, 2048));
-        assert!(should_use_rope(2048, 2049));
-    }
-    #[test]
-    fn concat_strategy_flattens_only_at_boundaries() {
-        assert_eq!(concat_strategy(3000, 2000, false), ConcatStrategy::Rope);
-        assert_eq!(concat_strategy(3000, 2000, true), ConcatStrategy::Flat);
-    }
-    #[test]
     fn string_memory_limit_is_explicit() {
         assert!(string_bytes_fit_limit("small"));
     }
+    #[test]
+    fn string_memory_limit_accepts_exact_boundary() {
+        assert!(string_byte_len_fits_limit(MAX_STRING_BYTES));
+    }
+
+    #[test]
+    fn flat_concat_limit_is_checked_in_utf16_bytes() {
+        let exact_units = MAX_STRING_BYTES / std::mem::size_of::<u16>();
+        assert_eq!(units_add_fits_limit(exact_units - 1, 1), Some(exact_units));
+        assert_eq!(units_add_fits_limit(exact_units, 1), None);
+        assert!(units_fit_limit(exact_units));
+        assert!(!units_fit_limit(exact_units + 1));
+    }
 }
 
-/// True when all code units can use a compact one-byte representation.
+/// Maximum number of UTF-16 code units eligible for the compact short form.
+///
+/// This is a policy boundary, not a second string representation: callers
+/// classify the existing owned value and must continue to use that value as
+/// the semantic source of truth.
+pub(crate) const SHORT_STRING_MAX_UNITS: usize = 22;
+
+#[inline]
 pub(crate) fn is_latin1(units: &[u16]) -> bool {
     units.iter().all(|unit| *unit <= 0xff)
 }
+
 #[inline]
 pub(crate) fn is_short_string(value: &str) -> bool {
-    value.len() <= 22
+    value.len() <= SHORT_STRING_MAX_UNITS
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StringEncoding {
     Latin1,
     Utf16,
+}
+
+/// Storage family derived from the canonical value; no semantic bytes retained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShortStringLayout {
+    Utf8,
+    Utf16,
+}
+
+#[inline]
+pub(crate) fn short_string_layout(value: &Value) -> Option<ShortStringLayout> {
+    match value {
+        Value::String(text) if text.encode_utf16().count() <= SHORT_STRING_MAX_UNITS => {
+            Some(ShortStringLayout::Utf8)
+        }
+        Value::StringUnits(units) if is_short_units(units) => Some(ShortStringLayout::Utf16),
+        _ => None,
+    }
 }
 
 #[inline]
@@ -129,22 +208,62 @@ pub(crate) fn encoding_of(units: &[u16]) -> StringEncoding {
         StringEncoding::Utf16
     }
 }
-pub(crate) fn is_short_units(units: &[u16]) -> bool {
-    units.len() <= 22
+/// Classify an owned runtime string without creating a second semantic value.
+///
+/// `Value::String` remains UTF-8-owned and `Value::StringUnits` remains the
+/// raw UTF-16 source of truth; this reports only the derived compact storage
+/// family. Latin-1 is valid exactly when every UTF-16 code unit is at most
+/// `0xff`, including empty strings.
+#[inline]
+pub(crate) fn encoding_of_value(value: &Value) -> Option<StringEncoding> {
+    match value {
+        Value::String(text) => Some(if text.encode_utf16().all(|unit| unit <= 0xff) {
+            StringEncoding::Latin1
+        } else {
+            StringEncoding::Utf16
+        }),
+        Value::StringUnits(units) => Some(encoding_of(units)),
+        _ => None,
+    }
 }
 
-/// Convert compact Latin-1 storage to UTF-16 only at an API boundary.
+/// Number of bytes needed by the derived compact representation.
+///
+/// This is an accounting helper only: bytes are not retained alongside the
+/// canonical `Value`, so classification cannot make semantic copies stale.
+#[inline]
+pub(crate) fn compact_storage_bytes(units: &[u16]) -> usize {
+    match encoding_of(units) {
+        StringEncoding::Latin1 => units.len(),
+        StringEncoding::Utf16 => units.len().saturating_mul(std::mem::size_of::<u16>()),
+    }
+}
+
+#[inline]
 pub(crate) fn latin1_to_units(bytes: &[u8]) -> Vec<u16> {
-    bytes.iter().map(|byte| u16::from(*byte)).collect()
+    bytes.iter().map(|&byte| u16::from(byte)).collect()
 }
 
-/// Build compact storage without expanding to UTF-16 when possible.
+#[inline]
 pub(crate) fn units_to_latin1(units: &[u16]) -> Option<Vec<u8>> {
-    is_latin1(units).then(|| units.iter().map(|unit| *unit as u8).collect())
+    if !is_latin1(units) {
+        return None;
+    }
+    Some(units.iter().map(|&unit| unit as u8).collect())
 }
 
-/// Builds the canonical string value for raw UTF-16 code units: a plain
-/// `String` when the units are valid UTF-16, otherwise `StringUnits`.
+#[inline]
+pub(crate) fn is_short_units(units: &[u16]) -> bool {
+    units.len() <= SHORT_STRING_MAX_UNITS
+}
+
+/// Convert raw UTF-16 units into the canonical runtime value.
+///
+/// `Value::String` is the sole well-formed UTF-16 source. Invalid UTF-16
+/// (lone surrogates) cannot be represented by Rust `String`, so the exact
+/// units remain owned by `Value::StringUnits`. Encoding classifications and
+/// compact layouts must be derived from these values, never stored as a
+/// competing semantic buffer.
 pub(crate) fn from_units(units: Vec<u16>) -> Value {
     match String::from_utf16(&units) {
         Ok(value) => Value::String(value),
@@ -154,11 +273,25 @@ pub(crate) fn from_units(units: Vec<u16>) -> Value {
 
 include!("strings_static.rs");
 
-/// The raw UTF-16 code units of a string value.
+/// Read the canonical value at the UTF-16 API boundary.
+///
+/// This is intentionally a materialized boundary view: callers needing
+/// code-unit semantics receive exact units from either canonical variant,
+/// while storage classification remains separate and non-owning.
 pub(crate) fn units_of(value: &Value) -> Option<Vec<u16>> {
     match value {
         Value::String(value) => Some(value.encode_utf16().collect()),
         Value::StringUnits(units) => Some((**units).clone()),
+        _ => None,
+    }
+}
+/// Materialize the canonical string at host/serialization boundaries.
+/// Lone surrogates use the replacement semantics of host string APIs.
+#[inline]
+pub(crate) fn materialize(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::StringUnits(units) => Some(String::from_utf16_lossy(units)),
         _ => None,
     }
 }
@@ -307,7 +440,23 @@ pub(crate) fn repeat(
         ));
     }
     let count = count_value.max(0.0) as usize;
-    Ok(Value::String(value.repeat(count)))
+    let source = receiver
+        .and_then(units_of)
+        .unwrap_or_else(|| value.encode_utf16().collect());
+    let total_units = source.len().checked_mul(count).ok_or_else(|| {
+        crate::value::error::throw_range_error("String.prototype.repeat: result is too large")
+    })?;
+    if !units_fit_limit(total_units) {
+        return Err(crate::value::error::throw_range_error(
+            "String.prototype.repeat: result is too large",
+        ));
+    }
+    let mut result = Vec::with_capacity(total_units);
+
+    for _ in 0..count {
+        result.extend_from_slice(&source);
+    }
+    Ok(from_units(result))
 }
 
 pub(crate) fn to_lower_case(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -323,7 +472,6 @@ pub(crate) fn char_at(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let text = string_receiver(receiver)?;
-    let units = text.encode_utf16().collect::<Vec<_>>();
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
@@ -332,7 +480,20 @@ pub(crate) fn char_at(
         return Ok(Value::String(String::new()));
     }
     let index = index as usize;
-    Ok(char_at_units(&units, index).unwrap_or_else(|| Value::String(String::new())))
+    let mut units = text.encode_utf16().skip(index);
+    let Some(first) = units.next() else {
+        return Ok(Value::String(String::new()));
+    };
+    let value = if is_high_surrogate(first) {
+        if let Some(second) = units.next().filter(|unit| is_low_surrogate(*unit)) {
+            from_units(vec![first, second])
+        } else {
+            from_units(vec![first])
+        }
+    } else {
+        from_units(vec![first])
+    };
+    Ok(value)
 }
 
 pub(crate) fn char_code_at(
@@ -340,7 +501,6 @@ pub(crate) fn char_code_at(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let text = string_receiver(receiver)?;
-    let units = text.encode_utf16().collect::<Vec<_>>();
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
@@ -348,10 +508,8 @@ pub(crate) fn char_code_at(
     if index < 0.0 {
         return Ok(Value::Number(f64::NAN));
     }
-    let index = index as usize;
-    Ok(units
-        .get(index)
-        .map_or(Value::Number(f64::NAN), |unit| Value::Number(*unit as f64)))
+    let unit = text.encode_utf16().nth(index as usize);
+    Ok(unit.map_or(Value::Number(f64::NAN), |unit| Value::Number(unit as f64)))
 }
 
 pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -438,23 +596,26 @@ fn string_index(value: Option<&Value>, length: isize) -> isize {
 }
 
 fn substring_index(value: Option<&Value>, length: isize) -> isize {
-    value
-        .and_then(number)
-        .unwrap_or(0.0)
-        .max(0.0)
-        .trunc()
-        .min(length as f64) as isize
+    let number = value.and_then(number).unwrap_or(0.0).trunc() as isize;
+    number.clamp(0, length)
 }
 
 pub(crate) fn concat(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let mut units = string_receiver(receiver)?
-        .encode_utf16()
-        .collect::<Vec<_>>();
+    let mut units = match receiver {
+        Some(Value::StringUnits(units)) => units.as_ref().clone(),
+        _ => string_receiver(receiver)?.encode_utf16().collect(),
+    };
     for argument in arguments {
-        units.extend(crate::conversion::to_string(argument)?.encode_utf16());
+        let converted = crate::conversion::to_string(argument)?;
+        let additional = converted.encode_utf16().count();
+        let total = units_add_fits_limit(units.len(), additional).ok_or_else(|| {
+            crate::value::error::throw_range_error("String.prototype.concat: result is too large")
+        })?;
+        units.reserve(total.saturating_sub(units.len()));
+        units.extend(converted.encode_utf16());
     }
     Ok(from_units(units))
 }
@@ -503,23 +664,30 @@ fn pad(
         ));
     };
     let target = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    // Per spec §String.prototype.pad{Start,End} step 6: if fillString is
-    // undefined, use the empty default, which is the single code-unit
-    // string " ". Coerce other primitives via ToString.
+    let value_units = utf16_len(&value);
+    let result_units = value_units.max(target);
+    if !units_fit_limit(result_units) {
+        return Err(crate::value::error::throw_range_error(
+            "String.prototype.padStart/padEnd: result is too large",
+        ));
+    }
     let fill = match arguments.get(1) {
         None | Some(Value::Undefined) => " ".to_string(),
         Some(value) => crate::conversion::to_string(value)?,
     };
-    let count = target.saturating_sub(utf16_len(&value));
+    let count = target.saturating_sub(value_units);
     let padding_units: Vec<u16> = fill.encode_utf16().cycle().take(count).collect();
     let padding = String::from_utf16_lossy(&padding_units);
-    if start {
-        Ok(Value::String(format!("{padding}{value}")))
-    } else {
-        Ok(Value::String(format!("{value}{padding}")))
+    if count == 0 {
+        return Ok(Value::String(value));
     }
+    let result = if start {
+        format!("{padding}{value}")
+    } else {
+        format!("{value}{padding}")
+    };
+    Ok(Value::String(result))
 }
-
 pub(crate) fn code_point_at(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -545,7 +713,6 @@ pub(crate) fn code_point_at(
     let code = code_point(&units, position as usize);
     Ok(Value::Number(code as f64))
 }
-
 pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
     Value::String(
         receiver
@@ -559,8 +726,25 @@ include!("strings_tail.rs");
 include!("strings_search.rs");
 
 #[cfg(test)]
+include!("strings_encoding_tests.rs");
 mod tests {
-    use super::{hash_units, is_latin1, latin1_to_units, units_to_latin1};
+    use super::{
+        char_at_units, encoding_of, from_units, hash_units, is_latin1, latin1_to_units,
+        materialize, short_string_layout, units_of, units_to_latin1, units_well_formed,
+        ShortStringLayout, StringEncoding,
+    };
+
+    use crate::value::Value;
+    #[test]
+    fn materialize_is_the_explicit_utf16_boundary() {
+        let units = from_units(vec![0x41, 0xd800, 0x42]);
+        assert_eq!(materialize(&units).as_deref(), Some("A�B"));
+        assert_eq!(
+            materialize(&Value::String("😀".into())).as_deref(),
+            Some("😀")
+        );
+        assert_eq!(materialize(&Value::Number(1.0)), None);
+    }
 
     #[test]
     fn latin1_round_trip_is_delayed() {
@@ -572,8 +756,126 @@ mod tests {
     }
 
     #[test]
+    fn encoding_classification_does_not_change_utf16_units() {
+        let latin1 = [0x41, 0xff];
+        let utf16 = [0x41, 0x100];
+        assert_eq!(encoding_of(&latin1), StringEncoding::Latin1);
+        assert_eq!(encoding_of(&utf16), StringEncoding::Utf16);
+        assert!(units_well_formed(&latin1));
+        assert!(units_well_formed(&utf16));
+    }
+
+    #[test]
+    fn invalid_surrogates_remain_raw_and_round_trip() {
+        let units = vec![0x0061, 0xd800, 0x0062, 0xdc00];
+        assert!(!units_well_formed(&units));
+        let value = from_units(units.clone());
+        assert!(matches!(value, Value::StringUnits(_)));
+        assert_eq!(units_of(&value), Some(units));
+    }
+
+    #[test]
+    fn char_at_preserves_lone_surrogate_boundaries() {
+        let units = [0xd800, 0x0061, 0xdc00];
+        let high = char_at_units(&units, 0).expect("high surrogate");
+        let plain = char_at_units(&units, 1).expect("ascii");
+        let low = char_at_units(&units, 2).expect("low surrogate");
+        assert!(matches!(high, Value::StringUnits(_)));
+        assert_eq!(plain, Value::String("a".to_string()));
+        assert!(matches!(low, Value::StringUnits(_)));
+    }
+
+    #[test]
+    fn char_at_expands_utf16_only_at_code_unit_boundary() {
+        let value = Value::String("A😀Z".to_string());
+        assert_eq!(
+            super::char_at(Some(&value), &[Value::Number(0.0)]).unwrap(),
+            Value::String("A".to_string())
+        );
+        assert_eq!(
+            super::char_at(Some(&value), &[Value::Number(1.0)]).unwrap(),
+            Value::String("😀".to_string())
+        );
+        assert_eq!(
+            super::char_at(Some(&value), &[Value::Number(2.0)]).unwrap(),
+            Value::StringUnits(std::rc::Rc::new(vec![0xde00]))
+        );
+        assert_eq!(
+            super::char_at(Some(&value), &[Value::Number(3.0)]).unwrap(),
+            Value::String("Z".to_string())
+        );
+        assert_eq!(
+            super::char_at(Some(&value), &[Value::Number(4.0)]).unwrap(),
+            Value::String(String::new())
+        );
+    }
+
+    #[test]
+    fn char_code_at_reports_utf16_units_without_code_point_folding() {
+        let value = Value::String("A😀Z".to_string());
+        for (index, expected) in [(0.0, 0x41), (1.0, 0xd83d), (2.0, 0xde00), (3.0, 0x5a)] {
+            assert_eq!(
+                super::char_code_at(Some(&value), &[Value::Number(index)]).unwrap(),
+                Value::Number(expected as f64)
+            );
+        }
+        assert!(matches!(
+            super::char_code_at(Some(&value), &[Value::Number(4.0)]).unwrap(),
+            Value::Number(value) if value.is_nan()
+        ));
+    }
+
+    #[test]
+    fn repeat_rejects_results_over_string_memory_limit() {
+        let result = super::repeat(
+            Some(&Value::String("x".to_string())),
+            &[Value::Number((super::MAX_STRING_BYTES as f64) + 1.0)],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn long_string_hash_is_stable_and_cached() {
         let units = [1, 2, 3, 4, 5, 6, 7, 8];
         assert_eq!(hash_units(&units), hash_units(&units));
+    }
+    #[test]
+    fn short_layout_is_derived_without_semantic_duplicate() {
+        assert_eq!(
+            short_string_layout(&Value::String("😀".repeat(11))),
+            Some(ShortStringLayout::Utf8)
+        );
+        assert_eq!(short_string_layout(&Value::String("😀".repeat(12))), None);
+        assert_eq!(
+            short_string_layout(&Value::StringUnits(std::rc::Rc::new(vec![0xd800; 22]))),
+            Some(ShortStringLayout::Utf16)
+        );
+        assert_eq!(
+            short_string_layout(&Value::StringUnits(std::rc::Rc::new(vec![0xd800; 23]))),
+            None
+        );
+    }
+
+    #[test]
+    fn latin1_classification_and_memory_boundary_are_exact() {
+        let ascii = Value::String("A\u{ff}".to_string());
+        let wide = Value::String("\u{100}".to_string());
+        assert_eq!(
+            super::encoding_of_value(&ascii),
+            Some(StringEncoding::Latin1)
+        );
+        assert_eq!(super::encoding_of_value(&wide), Some(StringEncoding::Utf16));
+        assert_eq!(super::compact_storage_bytes(&[0; 4]), 4);
+        assert_eq!(super::compact_storage_bytes(&[0x100; 4]), 8);
+        assert_eq!(super::encoding_of_value(&Value::Number(1.0)), None);
+    }
+
+    #[test]
+    fn latin1_conversion_preserves_empty_and_0xff_boundaries() {
+        for bytes in [vec![], vec![0], vec![0xff], vec![0, 0xff, 1]] {
+            let units = super::latin1_to_units(&bytes);
+            assert_eq!(super::units_to_latin1(&units), Some(bytes));
+        }
+        assert_eq!(super::units_to_latin1(&[0xff, 0x100]), None);
     }
 }

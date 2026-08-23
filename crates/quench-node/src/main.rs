@@ -1,15 +1,11 @@
-use std::{env, fs, path::PathBuf, sync::atomic::AtomicUsize};
+use std::{env, fs, path::{Path, PathBuf}, process, sync::atomic::AtomicUsize};
 use walkdir::WalkDir;
-mod esm;
-#[macro_use]
-mod host_context;
+use quench_node::run::eval_script;
+use quench_runtime::vm::OutputSink;
 mod bench_fast_path;
 mod js_runtime;
 mod polyfills;
 use js_runtime::{FilesystemNodeHost, JsRuntime, NodeHost, QuenchRuntime};
-#[rustfmt::skip]
-static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| polyfills::node_compat().bootstrap_source());
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,11 +28,14 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]");
             Ok(())
         }
-        Some("-e") | Some("--eval") => QuenchRuntime.execute(
-            args.get(mode_index + 1).map_or("", String::as_str),
-            None,
-            &host,
-        ),
+        Some("-e") | Some("--eval") => {
+            let source = args.get(mode_index + 1).map_or("", String::as_str);
+            let sink: OutputSink = std::sync::Arc::new(|line| println!("{line}"));
+            match eval_script(source, sink).error {
+                Some(error) => Err(error.into()),
+                None => Ok(()),
+            }
+        }
         Some("--stage") => run_directory(&PathBuf::from(format!(
             "tests/node-compat/stage-{}",
             args.get(mode_index + 1).map(String::as_str).unwrap_or("0")

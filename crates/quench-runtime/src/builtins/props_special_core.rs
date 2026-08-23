@@ -194,6 +194,7 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
+        (ArrayPrototype, "Symbol.unscopables") => Some(array_unscopables()),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
         (Map, "groupBy") => Some(Value::Builtin(MapGroupBy)),
         (Set, "Symbol.species") => Some(Value::Builtin(Set)),
@@ -316,4 +317,19 @@ fn weak_special(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakRefPrototype, "Symbol.toStringTag") => Some(Value::String("WeakRef".into())),
         _ => None,
     }
+}
+
+fn array_unscopables() -> Value {
+    use std::rc::Rc;
+    use crate::value::ObjectData;
+    const NAMES: &[&str] = &[
+        "at", "copyWithin", "entries", "fill", "find", "findIndex",
+        "findLast", "findLastIndex", "flat", "flatMap", "includes",
+        "keys", "toReversed", "toSorted", "toSpliced", "values",
+    ];
+    let mut properties = vec![("\0prototype".to_string(), Value::Null)];
+    properties.extend(
+        NAMES.iter().map(|name| ((*name).to_string(), Value::Boolean(true))),
+    );
+    Value::Object(Rc::new(ObjectData::new(properties)))
 }

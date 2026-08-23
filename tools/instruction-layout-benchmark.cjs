@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 "use strict";
 const iterations = Number(process.env.QUENCH_LAYOUT_ITERATIONS || 1_000_000);
+if (!Number.isSafeInteger(iterations) || iterations < 1) {
+  throw new Error("QUENCH_LAYOUT_ITERATIONS must be a positive safe integer");
+}
 const fixed = new Uint16Array(iterations * 4);
 for (let i = 0; i < iterations; i++) {
   fixed[i * 4] = i & 7;

@@ -62,31 +62,84 @@ pub(crate) fn execute_binary(
     lhs: u16,
     rhs: u16,
 ) -> Result<(), VmError> {
-    use crate::ops::BinaryOp;
     let left = read_register_unchecked(registers, lhs);
     let right = read_register_unchecked(registers, rhs);
-    if let (Value::Number(l), Value::Number(r)) = (&left, &right) {
-        let result = match operator {
-            BinaryOp::Add => Value::Number(l + r),
-            BinaryOp::Subtract => Value::Number(l - r),
-            BinaryOp::Multiply => Value::Number(l * r),
-            BinaryOp::Divide => Value::Number(l / r),
-            BinaryOp::Remainder => Value::Number(l % r),
-            BinaryOp::Exponentiate => Value::Number(l.powf(*r)),
-            BinaryOp::LessThan => Value::Boolean(l < r),
-            BinaryOp::LessEqual => Value::Boolean(l <= r),
-            BinaryOp::GreaterThan => Value::Boolean(l > r),
-            BinaryOp::GreaterEqual => Value::Boolean(l >= r),
-            _ => {
-                write_value(registers, dst, evaluate_binary(&left, &right, operator)?);
-                return Ok(());
-            }
-        };
+    // Shape-guarded fast instruction; all other values use the complete
+    // generic evaluator, which remains authoritative for JavaScript semantics.
+    if let Some(result) = fast_number_binary(&left, &right, operator) {
         write_value(registers, dst, result);
         return Ok(());
     }
     write_value(registers, dst, evaluate_binary(&left, &right, operator)?);
     Ok(())
+}
+
+#[inline]
+fn fast_number_binary(
+    left: &Value,
+    right: &Value,
+    operator: crate::ops::BinaryOp,
+) -> Option<Value> {
+    let (Value::Number(left), Value::Number(right)) = (left, right) else {
+        return None;
+    };
+    use crate::ops::BinaryOp;
+    Some(match operator {
+        BinaryOp::Add => {
+            if let (Some(left_int), Some(right_int)) = (
+                Value::Number(*left).as_small_integer(),
+                Value::Number(*right).as_small_integer(),
+            ) {
+                if let Some(value) = Value::checked_small_integer_add(left_int, right_int) {
+                    return Some(value);
+                }
+            }
+            Value::Number(*left + *right)
+        }
+        BinaryOp::Subtract => Value::Number(*left - *right),
+        BinaryOp::Multiply => Value::Number(*left * *right),
+        BinaryOp::Divide => Value::Number(*left / *right),
+        BinaryOp::Remainder => Value::Number(*left % *right),
+        BinaryOp::Exponentiate => Value::Number(left.powf(*right)),
+        BinaryOp::LessThan => Value::Boolean(left < right),
+        BinaryOp::LessEqual => Value::Boolean(left <= right),
+        BinaryOp::GreaterThan => Value::Boolean(left > right),
+        BinaryOp::GreaterEqual => Value::Boolean(left >= right),
+        _ => return None,
+    })
+}
+#[cfg(test)]
+mod immediate_integer_tests {
+    use super::fast_number_binary;
+    use crate::{ops::BinaryOp, value::Value};
+
+    #[test]
+    fn add_stays_exact_at_i32_boundaries() {
+        let max = Value::from_small_integer(i32::MAX);
+        let one = Value::from_small_integer(1);
+        assert_eq!(
+            fast_number_binary(&max, &Value::from_small_integer(-1), BinaryOp::Add)
+                .and_then(|value| value.as_small_integer()),
+            Some(i32::MAX - 1)
+        );
+        let overflow = fast_number_binary(&max, &one, BinaryOp::Add).unwrap();
+        assert_eq!(overflow, Value::Number(f64::from(i32::MAX) + 1.0));
+        assert_eq!(overflow.as_small_integer(), None);
+    }
+
+    #[test]
+    fn add_preserves_negative_zero_and_fractional_numbers() {
+        assert_eq!(
+            fast_number_binary(&Value::Number(-0.0), &Value::Number(0.0), BinaryOp::Add)
+                .unwrap()
+                .number_bits(),
+            Some(0)
+        );
+        assert_eq!(
+            fast_number_binary(&Value::Number(0.5), &Value::Number(0.25), BinaryOp::Add),
+            Some(Value::Number(0.75))
+        );
+    }
 }
 #[inline]
 fn evaluate_binary(
@@ -503,3 +556,71 @@ fn bigint_slot((key, value): &(String, Value)) -> Option<&str> {
 }
 
 include!("vm_compare.rs");
+
+#[cfg(test)]
+mod fast_path_tests {
+    use super::{evaluate_binary, fast_number_binary};
+    use crate::{ops::BinaryOp, value::Value};
+
+    #[test]
+    fn numeric_add_uses_specialized_result() {
+        assert_eq!(
+            fast_number_binary(&Value::Number(2.0), &Value::Number(3.0), BinaryOp::Add),
+            Some(Value::Number(5.0))
+        );
+    }
+
+    #[test]
+    fn non_numeric_add_falls_back_to_generic_path() {
+        let left = Value::String("a".to_string());
+        let right = Value::Number(1.0);
+        assert_eq!(fast_number_binary(&left, &right, BinaryOp::Add), None);
+        assert_eq!(
+            evaluate_binary(&left, &right, BinaryOp::Add).unwrap(),
+            Value::String("a1".to_string())
+        );
+    }
+
+    #[test]
+    fn unsupported_operator_falls_back_to_generic_path() {
+        let left = Value::Number(2.0);
+        let right = Value::Number(2.0);
+        assert_eq!(fast_number_binary(&left, &right, BinaryOp::Equal), None);
+        assert_eq!(
+            evaluate_binary(&left, &right, BinaryOp::Equal).unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn generic_path_reports_coercion_errors() {
+        let left = Value::BigInt("1".to_string());
+        let right = Value::Number(1.0);
+        assert_eq!(fast_number_binary(&left, &right, BinaryOp::Add), None);
+        assert!(evaluate_binary(&left, &right, BinaryOp::Add).is_err());
+    }
+
+    #[test]
+    fn specialized_numeric_results_match_generic_results() {
+        let left = Value::Number(8.0);
+        let right = Value::Number(3.0);
+        for operator in [
+            BinaryOp::Add,
+            BinaryOp::Subtract,
+            BinaryOp::Multiply,
+            BinaryOp::Divide,
+            BinaryOp::Remainder,
+            BinaryOp::Exponentiate,
+            BinaryOp::LessThan,
+            BinaryOp::LessEqual,
+            BinaryOp::GreaterThan,
+            BinaryOp::GreaterEqual,
+        ] {
+            assert_eq!(
+                fast_number_binary(&left, &right, operator),
+                Some(evaluate_binary(&left, &right, operator).unwrap()),
+                "operator {operator:?}"
+            );
+        }
+    }
+}
