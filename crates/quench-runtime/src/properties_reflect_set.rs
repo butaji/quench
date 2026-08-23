@@ -43,12 +43,21 @@ fn set_proven_own_data(
     if !std::rc::Rc::ptr_eq(target, receiver) || !plain_writable_own_data(target, key) {
         return false;
     }
-    let updated = crate::builtins::object_alias::set(
-        std::rc::Rc::clone(target),
-        key,
-        value.clone(),
+    if let Some(crate::value::Value::BindingCell(cell)) = target
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == key).then_some(value))
+    {
+        *cell.borrow_mut() = value.clone();
+        return true;
+    }
+    let value =
+        crate::value::Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(value.clone())));
+    let updated = crate::builtins::object_alias::set(std::rc::Rc::clone(target), key, value);
+    crate::locals::replace_value(
+        &crate::value::Value::Object(std::rc::Rc::clone(target)),
+        &updated,
     );
-    crate::locals::replace_value(&crate::value::Value::Object(std::rc::Rc::clone(target)), &updated);
     true
 }
 
@@ -68,10 +77,7 @@ fn plain_writable_own_data(properties: &crate::value::ObjectData, key: &str) -> 
             metadata = Some(value);
         }
     }
-    let Some(own) = own else {
-        return false;
-    };
-    if matches!(own, crate::value::Value::BindingCell(_)) {
+    if own.is_none() {
         return false;
     }
     metadata.is_none_or(writable_data_descriptor)
@@ -108,7 +114,10 @@ mod proven_own_data_tests {
 
     fn descriptor(fields: Vec<(&str, Value)>) -> Value {
         Value::Object(std::rc::Rc::new(ObjectData::new(
-            fields.into_iter().map(|(name, value)| (name.into(), value)).collect(),
+            fields
+                .into_iter()
+                .map(|(name, value)| (name.into(), value))
+                .collect(),
         )))
     }
 
@@ -120,19 +129,23 @@ mod proven_own_data_tests {
     }
 
     #[test]
-    fn rejects_non_writable_accessor_deleted_and_cell_properties() {
+    fn rejects_non_writable_accessor_and_deleted_properties() {
         let readonly = descriptor(vec![("writable", Value::Boolean(false))]);
         assert!(!plain_writable_own_data(&object(Some(readonly)), "field"));
         let getter = descriptor(vec![("get", Value::Undefined)]);
         assert!(!plain_writable_own_data(&object(Some(getter)), "field"));
         let mut deleted = object(None);
-        deleted
-            .properties
-            .push((crate::builtins::deleted_key("field").into(), Value::Undefined));
+        deleted.properties.push((
+            crate::builtins::deleted_key("field").into(),
+            Value::Undefined,
+        ));
         assert!(!plain_writable_own_data(&deleted, "field"));
         let cell = Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(Value::Undefined)));
         assert!(!plain_writable_own_data(&object(None), "missing"));
-        assert!(!plain_writable_own_data(&ObjectData::new(vec![("field".into(), cell)]), "field"));
+        assert!(plain_writable_own_data(
+            &ObjectData::new(vec![("field".into(), cell)]),
+            "field"
+        ));
     }
 }
 

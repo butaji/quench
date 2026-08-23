@@ -77,7 +77,7 @@ fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
     if metadata.is_some_and(accessor_descriptor) {
         return None;
     }
-    Some(own.clone())
+    Some(property_value(own))
 }
 
 fn accessor_descriptor(value: &Value) -> bool {
