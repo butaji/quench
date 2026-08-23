@@ -1,4 +1,4 @@
-// V8 compatibility surface backed by the embedded engine.
+let __quenchCachedDataVersionTag = 1;
 function encode(value) {
   return JSON.stringify(value, (key, item) => {
     if (typeof item === 'bigint') {
@@ -42,7 +42,7 @@ class Deserializer {
 class DefaultDeserializer extends Deserializer {}
 module.exports = {
   Serializer, DefaultSerializer, Deserializer, DefaultDeserializer,
-  cachedDataVersionTag() { return 0; },
+  cachedDataVersionTag() { return __quenchCachedDataVersionTag; },
   getHeapStatistics() {
     // Keep the public V8 shape useful even though the embedded runtime does
     // not expose V8's per-space allocator. These values are process-local and
@@ -138,6 +138,7 @@ module.exports = {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    __quenchCachedDataVersionTag += 1;
   },
   serialize, deserialize,
   promiseHooks: { createHook() { return { enable() {}, disable() {} }; } }
