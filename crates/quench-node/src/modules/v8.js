@@ -72,21 +72,40 @@ module.exports = {
   },
   getHeapSpaceStatistics() {
     const memory = process.memoryUsage();
-    const total = Number(memory.heapTotal) || 0;
-    const used = Math.min(Number(memory.heapUsed) || 0, total);
-    // Node exposes a version-dependent list, but always returns objects with
-    // these five fields. Use stable coarse spaces for the embedded engine.
-    const spaces = ['read_only_space', 'new_space', 'old_space', 'code_space'];
-    return spaces.map((space_name, index) => {
-      const space_size = index === 0 ? 0 : Math.floor(total / (spaces.length - 1));
-      const space_used_size = index === 0 ? 0 : Math.min(
-        space_size, index === spaces.length - 1 ? 0 : Math.floor(used / 2)
-      );
+    const total = Math.max(0, Number(memory.heapTotal) || 0);
+    const used = Math.min(Math.max(0, Number(memory.heapUsed) || 0), total);
+    // The embedded runtime does not expose per-space counters. Preserve the
+    // complete Node/V8 space shape and apportion aggregate heap counters
+    // between the two general-purpose spaces; specialized spaces are empty.
+    const spaces = [
+      'code_large_object_space',
+      'code_space',
+      'large_object_space',
+      'new_large_object_space',
+      'new_space',
+      'old_space',
+      'read_only_space',
+      'shared_large_object_space',
+      'shared_space',
+      'shared_trusted_large_object_space',
+      'shared_trusted_space',
+      'trusted_large_object_space',
+      'trusted_space'
+    ];
+    const newSize = Math.floor(total / 2);
+    const newUsed = Math.min(newSize, Math.floor(used / 2));
+    const oldSize = total - newSize;
+    const oldUsed = Math.min(oldSize, used - newUsed);
+    return spaces.map((space_name) => {
+      const space_size = space_name === 'new_space' ? newSize :
+        space_name === 'old_space' ? oldSize : 0;
+      const space_used_size = space_name === 'new_space' ? newUsed :
+        space_name === 'old_space' ? oldUsed : 0;
       return {
         space_name,
         space_size,
         space_used_size,
-        space_available_size: Math.max(0, space_size - space_used_size),
+        space_available_size: space_size - space_used_size,
         physical_space_size: space_size
       };
     });
