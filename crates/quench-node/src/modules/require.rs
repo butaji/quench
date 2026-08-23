@@ -226,6 +226,14 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     if let Some(cached) = state.borrow().module_cache.get(cache_key) {
         return Ok(cached.clone());
     }
+    if let Some(result) = resolve_compat_module(state, &spec) {
+        let ns = result?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert(cache_key.to_string(), ns.clone());
+        return Ok(ns);
+    }
     if let Some(ns) = resolve(state, &spec) {
         state
             .borrow_mut()
@@ -234,6 +242,27 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         return Ok(ns);
     }
     load_file_module(state, &spec)
+}
+
+fn resolve_compat_module(
+    state: &Rc<RefCell<HostState>>,
+    spec: &str,
+) -> Option<Result<Value, VmError>> {
+    match spec.strip_prefix("node:").unwrap_or(spec) {
+        "cluster" => Some(crate::modules::compat_extra::cluster(state)),
+        "diagnostics_channel" => Some(crate::modules::compat_extra::diagnostics_channel(state)),
+        "domain" => Some(cached_module(state, "domain", || {
+            crate::modules::compat_extra::domain(state)
+        })),
+        "v8" => Some(crate::modules::compat_extra::v8(state)),
+        "inspector" | "inspector/promises" => {
+            Some(crate::modules::compat_extra::inspector(state))
+        }
+        "repl" => Some(crate::modules::compat_extra::repl(state)),
+        "wasi" => Some(crate::modules::compat_extra::wasi(state)),
+        "worker_threads" => Some(crate::modules::compat_extra::worker_threads(state)),
+        _ => None,
+    }
 }
 /// CommonJS file loader: resolve, cache, wrap, execute, return exports.
 pub(crate) fn load_file_module(
@@ -384,7 +413,6 @@ fn resolve_dispatch(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value>
     let name = spec.strip_prefix("node:").unwrap_or(spec);
     resolve_dispatch_core(state, name)
         .or_else(|| resolve_dispatch_network(state, name))
-        .or_else(|| resolve_dispatch_compat_modules(state, name))
         .or_else(|| resolve_dispatch_compat_namespaces(name))
 }
 
@@ -443,27 +471,6 @@ fn resolve_dispatch_network(state: &Rc<RefCell<HostState>>, name: &str) -> Optio
         "zlib" => Some(crate::modules::zlib::build()),
         "perf_hooks" => resolve_perf_hooks(state),
         "tls" => Some(namespace_of_owned(vec![])),
-        _ => None,
-    }
-}
-
-fn resolve_dispatch_compat_modules(state: &Rc<RefCell<HostState>>, name: &str) -> Option<Value> {
-    match name {
-        "cluster" | "node:cluster" => crate::modules::compat_extra::cluster(state).ok(),
-        "diagnostics_channel" | "node:diagnostics_channel" => {
-            crate::modules::compat_extra::diagnostics_channel(state).ok()
-        }
-        "domain" | "node:domain" => Some(
-            cached_module(state, "domain", || {
-                crate::modules::compat_extra::domain(state)
-            })
-            .ok()?,
-        ),
-        "v8" => crate::modules::compat_extra::v8(state).ok(),
-        "inspector" | "inspector/promises" => crate::modules::compat_extra::inspector(state).ok(),
-        "repl" | "node:repl" => crate::modules::compat_extra::repl(state).ok(),
-        "wasi" => crate::modules::compat_extra::wasi(state).ok(),
-        "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         _ => None,
     }
 }
