@@ -10,6 +10,7 @@
 //! Usage:
 //!   cargo run -p quench-node-test --bin run-parallel
 //!   cargo run -p quench-node-test --bin run-parallel -- --triage [--filter NAME]
+//!   cargo run -p quench-node-test --bin run-parallel -- --all [--filter NAME]
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -41,12 +42,19 @@ fn main() -> ExitCode {
             _ => ExitCode::from(1),
         };
     }
+    if args.iter().any(|a| a == "--all") {
+        let filter = args
+            .iter()
+            .position(|a| a == "--filter")
+            .and_then(|i| args.get(i + 1));
+        return triage(filter, true);
+    }
     if args.iter().any(|a| a == "--triage") {
         let filter = args
             .iter()
             .position(|a| a == "--filter")
             .and_then(|i| args.get(i + 1));
-        return triage(filter);
+        return triage(filter, false);
     }
     run_manifest()
 }
@@ -110,7 +118,7 @@ fn run_manifest() -> ExitCode {
     }
 }
 
-fn triage(filter: Option<&String>) -> ExitCode {
+fn triage(filter: Option<&String>, gate: bool) -> ExitCode {
     let parallel_dir = repo_root().join(PARALLEL_REL);
     let mut entries: Vec<PathBuf> = std::fs::read_dir(parallel_dir)
         .map(|dir| {
@@ -137,8 +145,12 @@ fn triage(filter: Option<&String>) -> ExitCode {
             passed += 1;
         }
     }
-    eprintln!("triage: {passed} passed of {}", entries.len());
-    ExitCode::SUCCESS
+    eprintln!("parallel: {passed} passed of {}", entries.len());
+    if gate && passed != entries.len() {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 /// Run one fixture in a child process (crash isolation) with a
