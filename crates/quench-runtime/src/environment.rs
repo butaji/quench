@@ -433,12 +433,18 @@ impl Environment {
         {
             return true;
         }
-        if self.slot(slot).is_some() {
+        let Some(caller) = &self.caller else {
             return false;
-        }
-        self.caller
-            .as_ref()
-            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
+        };
+        // A call frame keeps captured bindings as the same cells while
+        // appending its own slots.  Only continue through the caller chain
+        // for a captured slot; a newly allocated local with the same index
+        // must continue to shadow an eval binding in the caller.
+        let captured = self
+            .slot(slot)
+            .zip(caller.slot(slot))
+            .is_some_and(|(current, parent)| current.same(&parent));
+        captured && caller.eval_name_aliases_slot(name, slot)
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
