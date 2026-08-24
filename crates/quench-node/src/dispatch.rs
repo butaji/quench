@@ -422,6 +422,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         0x0710 => internal_binding,
         0x0711 => internal_buffer_fill,
         0x0712 => internal_view_has_buffer,
+        0x0713 => internal_buffer_aligned_offset,
         _ => return os_buffer_dispatch(cap),
     })
 }
