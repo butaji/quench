@@ -179,6 +179,26 @@ impl SlotStore {
         }
     }
 
+    fn load_into(
+        &self,
+        registers: &mut crate::register_file::RegisterFile,
+        dst: u16,
+        index: usize,
+    ) {
+        self.ensure(index);
+        let value = self
+            .bridges()
+            .get(index)
+            .and_then(Option::as_ref)
+            .map(|cell| cell.borrow());
+        let value = value.as_deref().unwrap_or(&self.values()[index]);
+        if let Value::Number(number) = value {
+            registers.write_number(usize::from(dst), *number);
+        } else {
+            crate::execute::write_value(registers, dst, value.clone());
+        }
+    }
+
     fn store(&self, index: usize, value: Value) {
         self.ensure(index);
         if let Some(Some(cell)) = self.bridges().get(index) {
@@ -411,6 +431,20 @@ impl Environment {
 
     pub(crate) fn get_number(&self, slot: u16) -> Option<f64> {
         self.slot(slot)?.load_number()
+    }
+
+    pub(crate) fn load_into(
+        &self,
+        registers: &mut crate::register_file::RegisterFile,
+        dst: u16,
+        slot: u16,
+    ) {
+        let slots = self.slots.borrow();
+        if let Some(binding) = slots.get(usize::from(slot)) {
+            binding.store.load_into(registers, dst, binding.index);
+        } else {
+            crate::execute::write_value(registers, dst, Value::Undefined);
+        }
     }
 
     pub(crate) fn set(&self, slot: u16, value: Value) {
