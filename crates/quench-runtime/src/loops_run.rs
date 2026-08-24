@@ -64,6 +64,9 @@ fn run_loop(
         if let Some(completion) = run_montgomery_reduce_kernel(test, body, update) {
             return Ok(completion);
         }
+        if let Some(completion) = run_square_loop_kernel(test, body, update) {
+            return Ok(completion);
+        }
     }
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {

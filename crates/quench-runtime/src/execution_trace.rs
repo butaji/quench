@@ -298,7 +298,8 @@ fn dump_function_fragment(label: &str, code: Option<crate::machine::CodeView<'_>
     for pc in 0..code.len() {
         let instruction = code.instruction(pc).expect("valid function fragment");
         let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
-        eprintln!("      {pc}: {instruction:?} cold={cold:?}");
+        let name = code.metadata_at(pc).and_then(|metadata| metadata.name.as_deref());
+        eprintln!("      {pc}: {instruction:?} cold={cold:?} name={name:?}");
     }
 }
 
