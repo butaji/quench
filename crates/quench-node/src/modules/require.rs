@@ -279,9 +279,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let skip_fn = crate::host::capability(crate::registry::SPEC_TEST_SKIP);
             let _ = attach(&test_fn, "skip", skip_fn.clone());
             for alias in ["test", "describe", "it", "suite"] {
-                let entry = crate::host::capability(crate::registry::SPEC_TEST);
-                let _ = attach(&entry, "skip", skip_fn.clone());
-                let _ = attach(&test_fn, alias, entry);
+                let _ = attach(&test_fn, alias, test_fn.clone());
             }
             Some(test_fn)
         }
