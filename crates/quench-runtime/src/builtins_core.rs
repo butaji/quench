@@ -120,6 +120,7 @@ pub(crate) fn map_value(
     }
     crate::execute::get_property_result(&receiver, &key).map(Some)
 }
+
 pub(crate) fn array_for_each(
     receiver: Option<&Value>,
     arguments: &[Value],

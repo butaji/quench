@@ -23,6 +23,7 @@ fn execute_proven_leaf(
         .saturating_add(function.params);
     if function.code.uses_slot(arguments_slot)
         || code_uses_arguments(code)
+        || code_uses_call_opcode(code)
         || code_uses_function_call(code)
     {
         return None;
@@ -37,6 +38,32 @@ fn execute_proven_leaf(
         code,
         &mut registers,
     ))
+}
+
+fn code_uses_call_opcode(code: crate::machine::CodeView<'_>) -> bool {
+    (0..code.len()).any(|pc| {
+        let Some(instruction) = code.instruction(pc) else {
+            return false;
+        };
+        if instruction.opcode == crate::ir::Opcode::CallN {
+            return true;
+        }
+        if instruction.opcode != crate::ir::Opcode::Slow {
+            return false;
+        }
+        let Some(crate::ops::Op::Conditional {
+            consequent,
+            alternate,
+            ..
+        }) = code.cold(instruction)
+        else {
+            return false;
+        };
+        consequent
+            .code()
+            .is_some_and(code_uses_call_opcode)
+            || alternate.code().is_some_and(code_uses_call_opcode)
+    })
 }
 
 fn code_uses_arguments(code: crate::machine::CodeView<'_>) -> bool {
