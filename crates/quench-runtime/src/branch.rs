@@ -1,4 +1,4 @@
-use crate::{completion::Completion, execute::VmError, ops::Op, value::Value};
+use crate::{completion::Completion, execute::VmError, ops::Op};
 use std::collections::HashMap;
 
 #[cold]
@@ -20,12 +20,11 @@ pub(crate) fn execute(
     else {
         return missing_return();
     };
-    let value = crate::execute::read_register(registers, *condition)?;
-    let selected = if crate::execute::is_truthy(&value) {
-        then_ops
-    } else {
-        else_ops
+    let truthy = match registers.word_truthiness(usize::from(*condition)) {
+        Some(truthy) => truthy,
+        None => crate::execute::is_truthy(&crate::execute::read_register(registers, *condition)?),
     };
+    let selected = if truthy { then_ops } else { else_ops };
     let Some(selected) = selected.code() else {
         return missing_return();
     };
@@ -35,6 +34,7 @@ pub(crate) fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Value;
 
     fn branch_value(condition: Value) -> Value {
         let then_ops = crate::machine::FunctionCode::from_ops(vec![Op::Return { src: 1 }]);
