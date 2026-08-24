@@ -731,6 +731,10 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
         }
         replacement.value = new.clone();
     });
+    // Replacement maps cover stale registers, while captured lexical slots
+    // are the owning semantic bindings. Retarget those slots at the same
+    // boundary so a closure observes the live object after copy-on-write.
+    current().replace_value(old, new);
     REPLACEMENTS_ACTIVE.with(|active| active.set(true));
 }
 
