@@ -656,6 +656,13 @@ pub fn http_create_server(
     crate::modules::http::create_server(state, args)
 }
 
+pub fn http_create_server_construct(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::http::create_server(state, args)
+}
+
 // ---- stream ----
 pub fn stream_pipeline(
     state: &Rc<RefCell<HostState>>,

@@ -15,6 +15,7 @@ use crate::modules::net;
 
 /// Hidden property mapping a ClientRequest object to its state.
 const CLIENT_ID_PROP: &str = "\0quench:http:req:id";
+const RESPONSE_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 
 /// `(host, port, method, path, headers)` for one outbound request.
 type RequestOptions = (String, u16, String, String, Vec<(String, String)>);
@@ -32,6 +33,42 @@ pub struct ClientReq {
     pub buffer: Vec<u8>,
     pub res: Option<Value>,
     pub head_parsed: bool,
+}
+
+pub fn agent_call(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(host_api::object(Vec::new()))
+}
+
+pub fn agent_construct(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    Ok(host_api::object(Vec::new()))
+}
+
+pub fn res_set_encoding(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Some(receiver) = receiver {
+        let updated = execute::set_property(receiver.clone(), RESPONSE_ENCODING_PROP, value);
+        execute::replace_value(receiver, &updated);
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn response_data(response: &Value, bytes: &[u8]) -> Value {
+    match execute::get_property_result(response, RESPONSE_ENCODING_PROP).ok() {
+        Some(Value::String(encoding))
+            if encoding.eq_ignore_ascii_case("utf8") || encoding.eq_ignore_ascii_case("utf-8") =>
+        {
+            Value::String(String::from_utf8_lossy(bytes).into_owned())
+        }
+        _ => crate::modules::buffer_proto::make_buffer(bytes),
+    }
 }
 
 /// `http.request(options[, cb])` — an outbound ClientRequest.
@@ -91,6 +128,44 @@ pub fn req_write(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+pub fn req_set_header(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(id) = client_id(receiver) else {
+        return Ok(Value::Undefined);
+    };
+    let name = args
+        .first()
+        .map(execute::to_js_string)
+        .transpose()?
+        .unwrap_or_default();
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let values = if matches!(value, Value::Array(_)) {
+        let items: Vec<String> = execute::own_enumerable_keys(&value)
+            .into_iter()
+            .filter_map(|key| execute::get_property_result(&value, &key).ok())
+            .filter_map(|v| execute::to_js_string(&v).ok())
+            .collect();
+        if name.eq_ignore_ascii_case("cookie") {
+            vec![items.join("; ")]
+        } else {
+            items
+        }
+    } else {
+        vec![execute::to_js_string(&value)?]
+    };
+    let mut guard = state.borrow_mut();
+    if let Some(req) = guard.http.clientreqs.get_mut(&id) {
+        req.headers
+            .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
+        req.headers
+            .extend(values.into_iter().map(|value| (name.clone(), value)));
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
 /// `req.end([chunk])` — write the body, connect, and send the request.
 pub fn req_end(
     state: &Rc<RefCell<HostState>>,
@@ -119,6 +194,12 @@ pub fn req_end(
             req.body.clone(),
         )
     };
+    let head = request_head(&host, &method, &path, &headers, body.len());
+    if let Some(req) = state.borrow().http.clientreqs.get(&id) {
+        let updated =
+            execute::set_property(req.req.clone(), "_header", Value::String(head.clone()));
+        execute::replace_value(&req.req, &updated);
+    }
     let socket = send_request(state, &host, port, &method, &path, &headers, &body)?;
     let socket_id = net::net_id(&socket);
     let mut guard = state.borrow_mut();
@@ -146,23 +227,33 @@ fn send_request(
         state,
         &[Value::Number(port as f64), Value::String(host.to_string())],
     )?;
+    let head = request_head(host, method, path, headers, body.len());
+    let mut payload = head.into_bytes();
+    payload.extend_from_slice(body);
+    let payload = host_api::bytes(&payload);
+    net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
+    Ok(socket)
+}
+
+fn request_head(
+    host: &str,
+    method: &str,
+    path: &str,
+    headers: &[(String, String)],
+    body_len: usize,
+) -> String {
     let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n");
     for (key, value) in headers {
         head.push_str(&format!("{key}: {value}\r\n"));
     }
     if !headers
         .iter()
-        .any(|(k, _)| k.to_lowercase() == "content-length")
+        .any(|(key, _)| key.eq_ignore_ascii_case("content-length"))
     {
-        head.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        head.push_str(&format!("Content-Length: {body_len}\r\n"));
     }
-    // One-shot clients: ask the server to close so the response ends.
     head.push_str("Connection: close\r\n\r\n");
-    let mut payload = head.into_bytes();
-    payload.extend_from_slice(body);
-    let payload = host_api::bytes(&payload);
-    net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
-    Ok(socket)
+    head
 }
 
 fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<(), VmError> {
@@ -207,12 +298,7 @@ pub fn data_handler(
         }
         None if head_parsed => {
             if let Some(res) = client_value(state, client_id, false) {
-                net::emit(
-                    state,
-                    &res,
-                    "data",
-                    vec![crate::modules::buffer_proto::make_buffer(&bytes)],
-                )?;
+                net::emit(state, &res, "data", vec![response_data(&res, &bytes)])?;
             }
             Ok(())
         }
@@ -275,12 +361,7 @@ fn flush_body(state: &Rc<RefCell<HostState>>, client_id: u64) -> Result<(), VmEr
     };
     if let Some(res) = res {
         if !rest.is_empty() {
-            net::emit(
-                state,
-                &res,
-                "data",
-                vec![crate::modules::buffer_proto::make_buffer(&rest)],
-            )?;
+            net::emit(state, &res, "data", vec![response_data(&res, &rest)])?;
         }
     }
     Ok(())
@@ -333,7 +414,12 @@ fn build_req_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmEr
                 "end".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_END),
             ),
+            (
+                "setHeader".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_SET_HEADER),
+            ),
             (CLIENT_ID_PROP.to_string(), Value::Number(id as f64)),
+            ("_header".to_string(), Value::String(String::new())),
         ],
     )?;
     Ok((object, id))
@@ -411,6 +497,10 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
         ("statusMessage".to_string(), Value::String(message)),
         ("httpVersion".to_string(), Value::String("1.1".to_string())),
         ("headers".to_string(), host_api::object(headers)),
+        (
+            "setEncoding".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
+        ),
     ];
     install_methods(res, props)
 }
@@ -428,13 +518,42 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
             let path = opt(&options, "path")?.unwrap_or_else(|| "/".to_string());
             let mut headers: Vec<(String, String)> = Vec::new();
             if let Ok(hv) = execute::get_property_result(&options, "headers") {
-                if matches!(hv, Value::Object(_)) {
+                if matches!(hv, Value::Array(_)) {
                     for key in execute::own_enumerable_keys(&hv) {
-                        if let Ok(item) = execute::get_property_result(&hv, &key) {
-                            if let Ok(s) = execute::to_js_string(&item) {
-                                headers.push((key, s));
-                            }
+                        let Ok(pair) = execute::get_property_result(&hv, &key) else {
+                            continue;
+                        };
+                        let name = execute::get_property_result(&pair, "0")
+                            .ok()
+                            .and_then(|v| execute::to_js_string(&v).ok());
+                        let value = execute::get_property_result(&pair, "1")
+                            .ok()
+                            .and_then(|v| execute::to_js_string(&v).ok());
+                        if let (Some(name), Some(value)) = (name, value) {
+                            headers.push((name, value));
                         }
+                    }
+                } else {
+                    for key in execute::own_enumerable_keys(&hv) {
+                        let Ok(item) = execute::get_property_result(&hv, &key) else {
+                            continue;
+                        };
+                        let value = if key.eq_ignore_ascii_case("cookie")
+                            && matches!(item, Value::Array(_))
+                        {
+                            execute::own_enumerable_keys(&item)
+                                .into_iter()
+                                .filter_map(|i| {
+                                    execute::get_property_result(&item, &i)
+                                        .ok()
+                                        .and_then(|v| execute::to_js_string(&v).ok())
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        } else {
+                            execute::to_js_string(&item)?
+                        };
+                        headers.push((key, value));
                     }
                 }
             }
