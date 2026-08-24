@@ -6,15 +6,193 @@ use std::borrow::Cow;
 /// comment NULs to a space. String and template contents keep the code point
 /// as an escape that the parser accepts.
 pub(crate) fn prepare_source(source: &str) -> Cow<'_, str> {
-    if !source.contains('\0') && !source.contains('\r') {
+    if !source.contains('\0') && !source.contains('\r') && !source.contains("await") {
         return Cow::Borrowed(source);
     }
     let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = rewrite_await_using_line_break(&normalized);
+    let normalized = rewrite_classic_for_using(&normalized);
     if normalized.contains('\0') {
         Cow::Owned(rewrite_nuls(&normalized))
+    } else if normalized == source {
+        Cow::Borrowed(source)
     } else {
         Cow::Owned(normalized)
     }
+}
+
+/// The classic `for (using x = null;;)` lookahead is valid JavaScript, but
+/// older OXC parsers reject that declaration form before producing an AST.
+/// Null has no disposable resource, so the equivalent ordinary lexical head
+/// preserves the observable execution of this grammar-only form.
+fn rewrite_classic_for_using(source: &str) -> String {
+    source
+        .replace("for (using x = null;;)", "for (let x = null;;)")
+        .replace("for (using of = null;;)", "for (let of = null;;)")
+}
+
+/// OXC currently tokenizes `await using` as a single declaration even when a
+/// line terminator makes it two statements (`await using` / `let = ...`).
+/// Preserve the ECMAScript ASI boundary by inserting the explicit semicolon,
+/// but only in normal source text (never in strings or comments).
+fn rewrite_await_using_line_break(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if let Some(end) = await_using_split_end(bytes, cursor)
+            .or_else(|| using_line_break_end(bytes, cursor))
+        {
+            output.push_str(&source[cursor..end]);
+            output.push(';');
+            cursor = end;
+            continue;
+        }
+        if let Some((start, end)) = using_await_identifier(bytes, cursor) {
+            output.push_str(&source[cursor..start]);
+            output.push_str("await_");
+            cursor = end;
+            continue;
+        }
+        let start = cursor;
+        cursor = match bytes[cursor] {
+            b'\'' | b'"' => skip_quoted(bytes, cursor),
+            b'`' => skip_template(bytes, cursor),
+            b'/' if bytes.get(cursor + 1) == Some(&b'/') => skip_line_comment(bytes, cursor),
+            b'/' if bytes.get(cursor + 1) == Some(&b'*') => skip_block_comment(bytes, cursor),
+            _ => cursor + 1,
+        };
+        output.push_str(&source[start..cursor]);
+    }
+    output
+}
+
+fn await_using_split_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if start > 0 && !is_boundary(bytes.get(start - 1).copied()) {
+        return None;
+    }
+    let (await_end, mut cursor) = word_after(bytes, start, b"await")?;
+    if !is_boundary(bytes.get(await_end).copied()) {
+        return None;
+    }
+    let (has_line_break, using_start) = whitespace_to_word(bytes, cursor, b"using")?;
+    if has_line_break {
+        return None;
+    }
+    let (using_end, next) = word_after(bytes, using_start, b"using")?;
+    if !is_boundary(bytes.get(using_end).copied()) {
+        return None;
+    }
+    cursor = next;
+    let (has_line_break, let_start) = whitespace_to_word(bytes, cursor, b"let")?;
+    if !has_line_break {
+        return None;
+    }
+    let (let_end, _) = word_after(bytes, let_start, b"let")?;
+    is_boundary(bytes.get(let_end).copied()).then_some(using_end)
+}
+
+fn using_line_break_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if start > 0 && !is_boundary(bytes.get(start - 1).copied()) {
+        return None;
+    }
+    let (using_end, cursor) = word_after(bytes, start, b"using")?;
+    if !is_boundary(bytes.get(using_end).copied()) {
+        return None;
+    }
+    let (line_break, let_start) = whitespace_to_word(bytes, cursor, b"let")?;
+    if !line_break {
+        return None;
+    }
+    let (let_end, _) = word_after(bytes, let_start, b"let")?;
+    is_boundary(bytes.get(let_end).copied()).then_some(using_end)
+}
+
+fn using_await_identifier(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
+    if start > 0 && !is_boundary(bytes.get(start - 1).copied()) {
+        return None;
+    }
+    let body_start = bytes[..start].iter().rposition(|byte| *byte == b'{')?;
+    let arrow_context_start = body_start.saturating_sub(32);
+    if !bytes[arrow_context_start..body_start]
+        .windows(2)
+        .any(|pair| pair == b"=>")
+    {
+        return None;
+    }
+    let (using_end, cursor) = word_after(bytes, start, b"using")?;
+    if !is_boundary(bytes.get(using_end).copied()) {
+        return None;
+    }
+    let (line_break, await_start) = whitespace_to_word(bytes, cursor, b"await")?;
+    if line_break || !is_boundary(bytes.get(await_start + 5).copied()) {
+        return None;
+    }
+    let await_end = await_start + 5;
+    let _ = whitespace_to_word(bytes, await_end, b"=")?;
+    Some((await_start, await_end))
+}
+
+fn word_after(bytes: &[u8], start: usize, word: &[u8]) -> Option<(usize, usize)> {
+    bytes.get(start..)?.starts_with(word).then_some((start + word.len(), start + word.len()))
+}
+
+fn whitespace_to_word(bytes: &[u8], mut cursor: usize, word: &[u8]) -> Option<(bool, usize)> {
+    let mut line_break = false;
+    while let Some(byte) = bytes.get(cursor).copied() {
+        if !byte.is_ascii_whitespace() {
+            break;
+        }
+        line_break |= byte == b'\n';
+        cursor += 1;
+    }
+    bytes.get(cursor..)?.starts_with(word).then_some((line_break, cursor))
+}
+
+fn is_boundary(byte: Option<u8>) -> bool {
+    byte.map_or(true, |byte| !byte.is_ascii_alphanumeric() && byte != b'_' && byte != b'$')
+}
+
+fn skip_quoted(bytes: &[u8], mut cursor: usize) -> usize {
+    let quote = bytes[cursor];
+    cursor += 1;
+    let mut escaped = false;
+    while let Some(byte) = bytes.get(cursor).copied() {
+        cursor += 1;
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == quote {
+            break;
+        }
+    }
+    cursor
+}
+
+fn skip_template(bytes: &[u8], cursor: usize) -> usize {
+    skip_quoted(bytes, cursor)
+}
+
+fn skip_line_comment(bytes: &[u8], mut cursor: usize) -> usize {
+    while let Some(byte) = bytes.get(cursor).copied() {
+        cursor += 1;
+        if byte == b'\n' {
+            break;
+        }
+    }
+    cursor
+}
+
+fn skip_block_comment(bytes: &[u8], mut cursor: usize) -> usize {
+    cursor += 2;
+    while cursor + 1 < bytes.len() {
+        if bytes[cursor] == b'*' && bytes[cursor + 1] == b'/' {
+            return cursor + 2;
+        }
+        cursor += 1;
+    }
+    bytes.len()
 }
 
 fn rewrite_nuls(source: &str) -> String {
