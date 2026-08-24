@@ -31,6 +31,7 @@ enum ShapeKernelPlan {
     StateBitwise(StateBitwisePlan),
     NestedArrayLength(NestedArrayLengthPlan),
     NestedArrayIndex(NestedArrayIndexPlan),
+    PropertySelect(PropertySelectPlan),
 }
 
 #[derive(Clone)]
@@ -59,17 +60,16 @@ pub(crate) fn execute_shape_kernel(
         ShapeKernelPlan::NestedArrayIndex(plan) => {
             execute_nested_array_index(function, receiver, arguments, plan)
         }
+        ShapeKernelPlan::PropertySelect(plan) => execute_property_select(function, receiver, plan),
     }
 }
 
-pub(crate) fn is_nested_array_shape(function: &crate::value::FunctionValue) -> bool {
+pub(crate) fn is_shape_kernel_candidate(function: &crate::value::FunctionValue) -> bool {
     function.code.code().is_some_and(|code| {
-        (code.len() == 6 || code.len() == 7)
-            && code.instruction(1).is_some_and(|op| op.opcode == crate::ir::Opcode::GetN)
-            && code.instruction(2).is_some_and(|op| {
-                op.opcode == crate::ir::Opcode::GetN
-                    || op.opcode == crate::ir::Opcode::LoadLocalChecked
-            })
+        matches!(code.len(), 6 | 7 | 9)
+            && code
+                .instruction(1)
+                .is_some_and(|op| op.opcode == crate::ir::Opcode::GetN)
     })
 }
 
@@ -197,7 +197,8 @@ fn shape_kernel_fact(
         })
         .or_else(|| {
             match_nested_array_index(function).map(ShapeKernelPlan::NestedArrayIndex)
-        });
+        })
+        .or_else(|| match_property_select(function).map(ShapeKernelPlan::PropertySelect));
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -405,3 +406,5 @@ fn fragment_returns(code: Option<crate::machine::CodeView<'_>>, register: u16) -
         })
     })
 }
+
+include!("functions_shape_property_select.rs");
