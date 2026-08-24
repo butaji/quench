@@ -40,6 +40,7 @@ test-stream-writable-destroy-option.js
 test-stream-writable-ended-state.js
 test-stream-writable-write-after-end.js
 test-timers-promises.js
+test-timers-interval-promises.js
 test-timers-api-refs.js
 test-timers-args.js
 test-timers-clear-null-does-not-throw-error.js
