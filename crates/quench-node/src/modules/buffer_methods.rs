@@ -73,7 +73,10 @@ pub(crate) fn to_offset(value: Option<&Value>) -> f64 {
         Some(Value::BigInt(s)) => s.parse().unwrap_or(0.0),
         Some(Value::Array(array)) => match array.logical_len() {
             0 => 0.0,
-            1 => to_offset(array.index_value(0).as_ref()),
+            1 => {
+                let value = array.index_value(0);
+                to_offset(Some(&value))
+            }
             _ => f64::NAN,
         },
         _ => 0.0,
@@ -153,17 +156,12 @@ pub fn equals(
     args: &[Value],
 ) -> HandlerResult {
     let view = this_view(receiver)?;
-    let other = args
-        .first()
-        .and_then(as_byte_view)
-        .ok_or_else(|| {
-            enc::invalid_arg_type(format!(
-                "The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array.{}",
-                crate::modules::util::invalid_arg_received(
-                    args.first().unwrap_or(&Value::Undefined)
-                )
-            ))
-        })?;
+    let other = args.first().and_then(as_byte_view).ok_or_else(|| {
+        enc::invalid_arg_type(format!(
+            "The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array.{}",
+            crate::modules::util::invalid_arg_received(args.first().unwrap_or(&Value::Undefined))
+        ))
+    })?;
     let bytes = view_bytes(&view);
     let other_bytes = view_bytes(&other);
     Ok(Value::Boolean(bytes[..] == other_bytes[..]))

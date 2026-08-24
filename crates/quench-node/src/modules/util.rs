@@ -425,12 +425,14 @@ fn inspect_buffer(value: &Value, view: &quench_runtime::value::Uint8ArrayData) -
     let properties = quench_runtime::execute::own_enumerable_keys(value)
         .into_iter()
         .filter(|key| {
-            key != "parent"
-                && key != "offset"
-                && key != "toString"
-                && key.parse::<usize>().is_err()
+            key != "parent" && key != "offset" && key != "toString" && key.parse::<usize>().is_err()
         })
-        .map(|key| format!("{key}: {}", inspect_shallow(&quench_runtime::execute::get_property(value, &key))))
+        .map(|key| {
+            format!(
+                "{key}: {}",
+                inspect_shallow(&quench_runtime::execute::get_property(value, &key))
+            )
+        })
         .collect::<Vec<_>>();
     if !properties.is_empty() {
         if slice.is_empty() {

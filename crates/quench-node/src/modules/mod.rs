@@ -13,6 +13,7 @@ pub mod buffer_rw;
 pub mod buffer_write;
 pub mod child_process;
 pub mod clone;
+pub mod compat_extra;
 pub mod console;
 pub mod deep_equal;
 pub mod dns;

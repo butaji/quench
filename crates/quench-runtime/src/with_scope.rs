@@ -409,8 +409,8 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     for (index, object) in objects.iter().enumerate().rev() {
         let object = live_object(object);
         if has_property(&object, key)? && !is_unscopable(&object, key)? {
-            let global = crate::vm::is_global_object(&object)
-                .then(crate::vm::current_global_object);
+            let global =
+                crate::vm::is_global_object(&object).then(crate::vm::current_global_object);
             publish_set(&object, key, value)?;
             let updated = live_object(&object);
             if let Some(global) = global {

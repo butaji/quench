@@ -36,6 +36,7 @@ mod continuation;
 mod control_flow;
 mod conversion;
 pub use conversion::is_callable;
+pub use conversion::to_number;
 pub mod date;
 mod disposable_stack;
 mod environment;
