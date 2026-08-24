@@ -50,13 +50,13 @@ fn delete_object_property_value(
     if global_constant(&properties, key) || boxed_string_non_configurable(&properties, key) {
         return (Value::Object(properties), false);
     }
+    if descriptor_flag_in(&properties, key, "configurable") == Some(false) {
+        return (Value::Object(properties), false);
+    }
     if crate::vm::is_global_object(&Value::Object(properties.clone()))
         && !matches!(key, "undefined" | "Infinity" | "NaN")
     {
         return (delete_object_property(properties, key), true);
-    }
-    if descriptor_flag_in(&properties, key, "configurable") == Some(false) {
-        return (Value::Object(properties), false);
     }
     (delete_object_property(properties, key), true)
 }
