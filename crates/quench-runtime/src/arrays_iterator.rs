@@ -52,6 +52,9 @@ fn typed_array_is_detached(value: &Value) -> bool {
 }
 
 fn array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    if let Some(Value::Array(data)) = receiver {
+        return Ok(crate::collections::iterator::make_array_keys(Rc::clone(data)));
+    }
     if let Some(value) = receiver.filter(|value| is_typed_array(value)) {
         if typed_array_is_detached(value) {
             return Err(crate::value::error::throw_type_error(

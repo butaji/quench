@@ -64,6 +64,7 @@ pub enum IteratorState {
         typed_receiver: Option<Value>,
         typed_keys: bool,
         entries: bool,
+        keys: bool,
         index: usize,
         done: bool,
     },
