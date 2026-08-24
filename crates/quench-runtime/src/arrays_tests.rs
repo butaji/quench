@@ -78,7 +78,7 @@ mod tests {
             Some(&array),
             &[Value::Number(2.0), Value::Number(3.0)],
         );
-        assert_eq!(result, Value::Number(3.0));
+        assert_eq!(result.unwrap(), Value::Number(3.0));
         // Builtin calls replace the receiver binding through the locals
         // replacement channel; a direct Rc handle is intentionally unchanged.
     }
@@ -221,11 +221,14 @@ mod tests {
             Value::Number(2.0),
             Value::Array(Rc::new(ArrayData::new(vec![Value::Number(3.0)]))),
         ])));
-        let values = vec![Value::Number(1.0), nested];
-
-        let flattened = super::flatten(&values, 2);
+        let values = Value::Array(Rc::new(ArrayData::new(vec![Value::Number(1.0), nested])));
+        let Value::Array(flattened) = super::flat(Some(&values), &[Value::Number(2.0)]).unwrap() else {
+            panic!("flat must return an array");
+        };
         assert_eq!(
-            flattened,
+            (0..flattened.logical_len())
+                .map(|index| flattened.get_index(index).unwrap())
+                .collect::<Vec<_>>(),
             vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
