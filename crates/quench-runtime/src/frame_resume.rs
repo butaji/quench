@@ -67,6 +67,7 @@ impl Frame {
                 range,
                 yield_dst,
             ),
+            Self::Loop { .. } => return false,
             _ => return false,
         }
         true
@@ -84,6 +85,9 @@ impl Frame {
             Self::Iterator { body, body_resume, resume, .. } => vec![*body, *body_resume, *resume],
             Self::Branch { branch_resume, resume, .. } => vec![*branch_resume, *resume],
             Self::Private { body_resume, resume, .. } => vec![*body_resume, *resume],
+            Self::Loop { body, test, update, body_resume, resume, .. } => {
+                vec![*body, *test, *update, *body_resume, *resume]
+            }
             Self::Await { resume, .. } => vec![*resume],
             Self::Delegate { .. } => Vec::new(),
         }
@@ -104,6 +108,7 @@ impl Frame {
             Self::Iterator { binding, yield_dst, slot, .. } => vec![*binding, *yield_dst, *slot],
             Self::Branch { dst, yield_dst, .. } => vec![*dst, *yield_dst],
             Self::Private { yield_dst, .. } => vec![*yield_dst],
+            Self::Loop { dst, yield_dst, .. } => vec![*dst, *yield_dst],
             Self::Await { .. } | Self::Delegate { .. } => Vec::new(),
         }
     }

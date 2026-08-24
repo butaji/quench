@@ -187,6 +187,37 @@ fn run_generator_op(
 fn direct_suspension(op: &Op, pc: usize) -> Option<crate::continuation::SuspensionPoint> {
     match op {
         Op::Yield { src } => Some(crate::continuation::SuspensionPoint::Yield { pc, src: *src }),
+        Op::Loop {
+            label,
+            body,
+            test,
+            update,
+            post_test,
+            dst,
+            ..
+        } => {
+            let body_code = body.code()?;
+            let (index, Op::Yield { src }) =
+                body_code.find_cold(|candidate| matches!(candidate, Op::Yield { .. }))?
+            else {
+                return None;
+            };
+            Some(crate::continuation::SuspensionPoint::Loop {
+                pc,
+                label: label.clone(),
+                body: body.range,
+                test: test.range,
+                update: update.range,
+                body_resume: crate::machine::CodeRange {
+                    code: body.range.code,
+                    start: body.range.start.saturating_add(index as u32 + 1),
+                    end: body.range.end,
+                },
+                dst: *dst,
+                yield_dst: *src,
+                post_test: *post_test,
+            })
+        }
         _ => None,
     }
 }
