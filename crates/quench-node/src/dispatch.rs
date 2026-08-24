@@ -368,6 +368,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TIMERS_CLOSE => timers_method_close,
         0x0710 => internal_binding,
         0x0711 => internal_buffer_fill,
+        0x0712 => internal_view_has_buffer,
         _ => return os_buffer_dispatch(cap),
     })
 }

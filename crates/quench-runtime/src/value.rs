@@ -160,9 +160,18 @@ include!("value_promise.rs");
 pub(crate) struct TypedArrayMeta {
     prototype: RefCell<Option<Value>>,
     properties: RefCell<Vec<(String, Value)>>,
+    buffer_materialized: Cell<bool>,
 }
 
 impl TypedArrayMeta {
+    pub(crate) fn mark_buffer_materialized(&self) {
+        self.buffer_materialized.set(true);
+    }
+
+    pub(crate) fn buffer_materialized(&self) -> bool {
+        self.buffer_materialized.get()
+    }
+
     pub(crate) fn prototype(&self) -> Option<Value> {
         self.prototype.borrow().clone()
     }
@@ -1076,6 +1085,24 @@ const _: () = assert!(VALUE_ALIGNMENT_TAG_BITS == 0);
 const _: () = assert!(SMALL_INTEGER_TAG_BITS == 0);
 const _: () = assert!(SMALL_INTEGER_MIN < SMALL_INTEGER_MAX);
 impl Value {
+    /// Whether a typed-array view has materialized its `.buffer` accessor.
+    pub fn typed_array_buffer_materialized(&self) -> bool {
+        match self {
+            Self::Float64Array(view) => view.meta.buffer_materialized(),
+            Self::Float32Array(view) => view.meta.buffer_materialized(),
+            Self::Int8Array(view) => view.meta.buffer_materialized(),
+            Self::Int16Array(view) => view.meta.buffer_materialized(),
+            Self::Int32Array(view) => view.meta.buffer_materialized(),
+            Self::BigInt64Array(view) => view.meta.buffer_materialized(),
+            Self::BigUint64Array(view) => view.meta.buffer_materialized(),
+            Self::Uint32Array(view) => view.meta.buffer_materialized(),
+            Self::Uint8Array(view) => view.meta.buffer_materialized(),
+            Self::Uint8ClampedArray(view) => view.meta.buffer_materialized(),
+            Self::Uint16Array(view) => view.meta.buffer_materialized(),
+            _ => false,
+        }
+    }
+
     /// Compiler-output contract: these tag-only operations are always inlined
     /// at optimized call sites; the error constructors above remain cold and
     /// out of line. `tools/audit-value-assembly.sh` checks the emitted `.s`.
