@@ -50,11 +50,14 @@ pub(crate) fn array_map(
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
         mapped = create_data_property_or_throw(mapped, &index.to_string(), result)?;
     }
-    Ok(crate::builtins::set_property(
+    let previous = mapped.clone();
+    let result = crate::builtins::set_property(
         mapped,
         "length",
         Value::Number(length as f64),
-    ))
+    );
+    crate::locals::replace_value(&previous, &result);
+    Ok(result)
 }
 
 fn array_species_create(
@@ -106,11 +109,7 @@ pub(crate) fn map_value(
         return crate::execute::get_property_result(&receiver, &key).map(Some);
     }
     let key = index.to_string();
-    let has_intrinsic_property = matches!(
-        receiver,
-        Value::Builtin(builtin) if crate::builtins::object::builtin_owns_property(builtin, &key)
-    );
-    if !has_intrinsic_property && !crate::with_scope::has_property(&receiver, &key)? {
+    if !crate::with_scope::has_property(&receiver, &key)? {
         let descriptor = crate::builtins::object::descriptor(
             Some(&receiver),
             Some(&Value::String(key.clone())),
