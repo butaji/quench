@@ -348,6 +348,16 @@ impl RegisterFile {
         Some(unsafe { &*(pointer as *const crate::value::ArrayData) })
     }
 
+    #[inline(always)]
+    pub(crate) fn read_object(&self, index: usize) -> Option<&crate::value::ObjectData> {
+        let DecodedValue::ObjectPtr(pointer) = self.words.get(index)?.decode() else {
+            return None;
+        };
+        // SAFETY: the register word owns the `Rc<ObjectData>` for the returned
+        // lifetime; moving or resizing the word vector cannot move the object.
+        Some(unsafe { &*(pointer as *const crate::value::ObjectData) })
+    }
+
     /// Read the exact non-negative integer domain accepted by packed array
     /// indexing without applying JavaScript property-key coercion.
     #[inline(always)]
@@ -399,6 +409,14 @@ impl RegisterFile {
     pub fn write(&mut self, index: usize, value: Value) {
         self.resize_undefined(index + 1);
         release(std::mem::replace(&mut self.words[index], encode(value)));
+    }
+
+    #[inline(always)]
+    pub(crate) fn write_owned(&mut self, index: usize, value: &OwnedWord) {
+        self.resize_undefined(index + 1);
+        let word = value.tagged();
+        retain(word);
+        release(std::mem::replace(&mut self.words[index], word));
     }
 
     #[inline(always)]
