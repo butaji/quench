@@ -17,6 +17,9 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferWrite) => {
                 buffer_write(receiver, arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::BufferFill) => {
+                buffer_fill(receiver, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferIncludes) => {
                 buffer_includes(receiver, arguments)
             }
