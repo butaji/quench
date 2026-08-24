@@ -385,6 +385,7 @@ fn evaluate_direct(
         &source,
         strict,
         global,
+        crate::with_scope::is_active(),
         bindings,
         reusable_var_names,
         forbidden_var_names,
