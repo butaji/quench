@@ -698,6 +698,18 @@ pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
     inspect_depth(value, depth)
 }
 
+pub fn inspect_with_options(value: &Value, depth: usize, show_hidden: bool) -> String {
+    let rendered = inspect_with_depth(value, depth);
+    if show_hidden {
+        if let Value::Array(array) = value {
+            if let Some(body) = rendered.strip_suffix(" ]") {
+                return format!("{body}, [length]: {} ]", array.len());
+            }
+        }
+    }
+    rendered
+}
+
 fn inspect_string(value: &str) -> String {
     if value.len() > 60 && value.contains('\n') {
         let lines = value.split('\n').collect::<Vec<_>>();

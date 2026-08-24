@@ -120,8 +120,10 @@ pub fn util_inspect(
             }
             _ => None,
         });
+    let show_hidden = matches!(args.get(1), Some(Value::Boolean(true)));
     Ok(Value::String(match depth {
-        Some(depth) => crate::modules::util::inspect_with_depth(&arg, depth),
+        Some(depth) => crate::modules::util::inspect_with_options(&arg, depth, show_hidden),
+        None if show_hidden => crate::modules::util::inspect_with_options(&arg, 3, true),
         None => crate::modules::util::inspect(&arg),
     }))
 }
