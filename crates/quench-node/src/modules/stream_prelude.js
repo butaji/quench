@@ -562,7 +562,8 @@
       ending: false,
       ended: false,
       finished: false,
-      errored: false,
+      errored: null,
+      errorEmitted: false,
       corked: 0,
       prefinished: false,
       final: options.final || null,
@@ -611,10 +612,15 @@
         completed = true;
         if (st.destroyed) return;
         if (error) {
-          st.errored = true;
+          st.errored = error;
           stream.writable = false;
           completeEndCallbacks(st, error);
-          nextTick(() => stream._emitter.emit("error", error));
+          nextTick(() => {
+            if (!st.errorEmitted) {
+              st.errorEmitted = true;
+              stream._emitter.emit("error", error);
+            }
+          });
           return;
         }
         st.prefinishing = false;
@@ -646,9 +652,12 @@
         st.buffered -= total;
         updateNeedDrain(st);
         st.writing = false;
-        if (error) st.errored = true;
+        if (error) st.errored = error;
         for (const item of pending) if (item.callback) item.callback(error);
-        if (error) stream._emitter.emit("error", error);
+        if (error && !st.errorEmitted) {
+          st.errorEmitted = true;
+          stream._emitter.emit("error", error);
+        }
         if (!error && st.buffered <= st.highWaterMark) stream._emitter.emit("drain");
         if (!error) finishWritable(stream);
       };
@@ -727,10 +736,15 @@
         if (st.errored) return false;
         const error = new Error("write after end");
         error.code = "ERR_STREAM_WRITE_AFTER_END";
-        st.errored = true;
+        st.errored = error;
         nextTick(() => {
           if (callback) callback(error);
-          nextTick(() => this._emitter.emit("error", error));
+          nextTick(() => {
+            if (!st.errorEmitted) {
+              st.errorEmitted = true;
+              this._emitter.emit("error", error);
+            }
+          });
         });
         return false;
       }
@@ -794,12 +808,17 @@
         st.writing = false;
         if (error) {
           failed = true;
-          st.errored = true;
+          st.errored = error;
           this.writable = false;
           this.writableErrored = error;
           if (callback) callback(error);
           completeEndCallbacks(st, error);
-          nextTick(() => this._emitter.emit("error", error));
+          nextTick(() => {
+            if (!st.errorEmitted) {
+              st.errorEmitted = true;
+              this._emitter.emit("error", error);
+            }
+          });
           return;
         }
         if (callback) callback();
@@ -815,9 +834,12 @@
                   st.buffered -= total;
                   updateNeedDrain(st);
                   st.writing = false;
-                  if (batchError) st.errored = true;
+                  if (batchError) st.errored = batchError;
                   for (const item of pending) if (item.callback) item.callback(batchError);
-                  if (batchError) this._emitter.emit("error", batchError);
+                  if (batchError && !st.errorEmitted) {
+                    st.errorEmitted = true;
+                    this._emitter.emit("error", batchError);
+                  }
                   if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
                   if (!batchError) finishWritable(this);
                 }
@@ -826,9 +848,12 @@
               st.buffered -= total;
               updateNeedDrain(st);
               st.writing = false;
-              st.errored = true;
+              st.errored = batchError;
               for (const item of pending) if (item.callback) item.callback(batchError);
-              this._emitter.emit("error", batchError);
+              if (!st.errorEmitted) {
+                st.errorEmitted = true;
+                this._emitter.emit("error", batchError);
+              }
             }
             return;
           }
@@ -921,12 +946,18 @@
     this.writableAborted = this._writableState.writable !== false && !this.writableFinished;
     if (this._writableState) this._writableState.destroyed = true;
     this.writable = false;
-    if (error) this.writableErrored = error;
+    if (error) {
+      if (!this._writableState.errored) this._writableState.errored = error;
+      this.writableErrored = error;
+    }
     const stream = this;
     const destroy = this._destroy;
     nextTick(() => {
       const finish = (destroyError) => {
-        if (destroyError) stream._emitter.emit("error", destroyError);
+        if (destroyError && !stream._writableState.errorEmitted) {
+          stream._writableState.errorEmitted = true;
+          stream._emitter.emit("error", destroyError);
+        }
         stream._emitter.emit("close");
       };
       if (destroy) {
