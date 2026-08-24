@@ -797,6 +797,12 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         return symbol_string(value);
     }
     if matches!(
+        quench_runtime::execute::get_property_result(value, "__quench_external"),
+        Ok(Value::Boolean(true))
+    ) {
+        return "[External: 0]".into();
+    }
+    if matches!(
         quench_runtime::execute::get_property_result(value, "\0regexp"),
         Ok(Value::Boolean(true))
     ) {
@@ -818,6 +824,8 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => inspect_object(value, depth),
         Value::Array(_) => inspect_array(value, depth),
+        Value::ArrayBuffer(buffer) => inspect_array_buffer(value, buffer),
+        Value::DataView(view) => inspect_data_view(value, view),
         Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
         Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
         Value::Uint8Array(_) => "Uint8Array(0) []".into(),
@@ -966,6 +974,20 @@ fn inspect_array(value: &Value, depth: usize) -> String {
 }
 
 fn inspect_at(value: &Value, depth: usize) -> String {
+    if matches!(
+        quench_runtime::execute::get_property_result(value, "__quench_external"),
+        Ok(Value::Boolean(true))
+    ) || matches!(
+        quench_runtime::execute::get_property_result(value, "\0regexp"),
+        Ok(Value::Boolean(true))
+    ) || (quench_runtime::execute::has_own_property(value, "timeValue")
+        && matches!(
+            quench_runtime::execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
+        ))
+    {
+        return inspect_depth(value, depth);
+    }
     if depth == 0 {
         return inspect_shallow(value);
     }
@@ -1034,9 +1056,67 @@ fn inspect_shallow(value: &Value) -> String {
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => "[Object]".into(),
         Value::Array(_) => "[Array]".into(),
+        Value::ArrayBuffer(buffer) => inspect_array_buffer(value, buffer),
+        Value::DataView(view) => inspect_data_view(value, view),
         Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
         Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
         Value::Uint8Array(view) => format!("Uint8Array({}) []", view.length),
         _ => "<unknown>".into(),
     }
+}
+
+fn inspect_array_buffer(value: &Value, buffer: &quench_runtime::value::ArrayBufferData) -> String {
+    let length = buffer.byte_length();
+    let contents = if *buffer.detached.borrow() {
+        "(detached)".to_string()
+    } else {
+        let bytes = buffer.bytes.borrow();
+        let max = crate::modules::buffer::inspect_max_bytes();
+        let shown = bytes.iter().take(max).map(|byte| format!("{byte:02x}")).collect::<Vec<_>>();
+        let suffix = bytes.len().saturating_sub(max);
+        if suffix == 0 {
+            format!("<{}>", shown.join(" "))
+        } else {
+            let plural = if suffix == 1 { "byte" } else { "bytes" };
+            format!("<{} ... {suffix} more {plural}>", shown.join(" "))
+        }
+    };
+    let mut result = if *buffer.detached.borrow() {
+        format!("ArrayBuffer {{ (detached), [byteLength]: {length}")
+    } else {
+        format!("ArrayBuffer {{ [Uint8Contents]: {contents}, [byteLength]: {length}")
+    };
+    for key in quench_runtime::execute::own_enumerable_keys(value) {
+        result.push_str(&format!(", {key}: {}", inspect_shallow(&quench_runtime::execute::get_property(value, &key))));
+    }
+    result.push_str(" }");
+    result
+}
+
+fn inspect_data_view(value: &Value, view: &quench_runtime::value::DataViewData) -> String {
+    let detached = *view.buffer.detached.borrow();
+    let indent = if detached { "      " } else { "  " };
+    let closing_indent = if detached { "    " } else { "" };
+    let byte_length = if detached { 0 } else { view.byte_length };
+    let byte_offset = if detached { "undefined".to_string() } else { view.byte_offset.to_string() };
+    let buffer = inspect_array_buffer(&Value::ArrayBuffer(view.buffer.clone()), &view.buffer);
+    let mut lines = vec![
+        "DataView {".to_string(),
+        format!("{indent}[byteLength]: {byte_length},"),
+        format!("{indent}[byteOffset]: {byte_offset},"),
+        format!("{indent}[buffer]: {buffer}"),
+    ];
+    let properties = quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .map(|key| format!("{indent}{key}: {}", inspect_shallow(&quench_runtime::execute::get_property(value, &key))))
+        .collect::<Vec<_>>();
+    if !properties.is_empty() {
+        let last = lines.len() - 1;
+        lines[last].push(',');
+        lines.extend(properties.into_iter().map(|line| format!("{line},")));
+        let last = lines.len() - 1;
+        lines[last].pop();
+    }
+    lines.push(format!("{closing_indent}}}"));
+    lines.join("\n")
 }

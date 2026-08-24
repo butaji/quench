@@ -15,5 +15,14 @@ assert.strictEqual(
   util.inspect({ a: { b: { c: { d: 2 } } } }, false, null),
   '{\n  a: { b: { c: { d: 2 } } }\n}'
 );
+const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+assert.strictEqual(
+  util.inspect(buffer),
+  'ArrayBuffer { [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }'
+);
+assert.strictEqual(
+  util.inspect(new DataView(buffer, 1, 2)),
+  'DataView {\n  [byteLength]: 2,\n  [byteOffset]: 1,\n  [buffer]: ArrayBuffer { [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }\n}'
+);
 
 console.log('util.inspect function values: ok');
