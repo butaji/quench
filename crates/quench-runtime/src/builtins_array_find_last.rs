@@ -17,7 +17,7 @@ fn find_last(
     arguments: &[Value],
     index_result: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
         return Err(crate::value::error::throw_type_error("Array method called on incompatible receiver"));
     };
     let Some(callback) = arguments.first() else {
@@ -26,16 +26,18 @@ fn find_last(
     if !crate::conversion::is_callable(callback) {
         return Err(crate::value::error::throw_type_error("predicate must be callable"));
     }
-    for index in (0..values.len()).rev() {
-        let value = values.get_index(index).unwrap_or(Value::Undefined);
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
+    let length = crate::builtins::map_length(receiver)?;
+    for index in (0..length).rev() {
+        let value = crate::execute::get_property_result(receiver, &index.to_string())?;
         let args = [
             value.clone(),
             Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
+            receiver.clone(),
         ];
         if crate::execute::is_truthy(&crate::functions::execute_target(
             callback,
-            &Value::Undefined,
+            this_arg,
             &args,
         )?) {
             return Ok(if index_result {
