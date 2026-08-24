@@ -119,9 +119,16 @@ pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D)
 pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
 pub const SPEC_TIMERS_CLOSE: NodeSpec = NodeSpec::new("timers:close", 0x070F);
 pub const SPEC_TIMERS_GET_LIBUV_NOW: NodeSpec = NodeSpec::new("timers:getLibuvNow", 0x0714);
+pub const SPEC_LINKED_LIST_INIT: NodeSpec = NodeSpec::new("internal/linkedlist:init", 0x0718);
+pub const SPEC_LINKED_LIST_REMOVE: NodeSpec = NodeSpec::new("internal/linkedlist:remove", 0x0719);
+pub const SPEC_LINKED_LIST_APPEND: NodeSpec = NodeSpec::new("internal/linkedlist:append", 0x071A);
+pub const SPEC_LINKED_LIST_IS_EMPTY: NodeSpec =
+    NodeSpec::new("internal/linkedlist:isEmpty", 0x071B);
+pub const SPEC_LINKED_LIST_PEEK: NodeSpec = NodeSpec::new("internal/linkedlist:peek", 0x071C);
 pub const SPEC_TIMERS_SCHEDULE: NodeSpec = NodeSpec::new("timers:scheduleTimer", 0x0715);
 pub const SPEC_TIMERS_TOGGLE_REF: NodeSpec = NodeSpec::new("timers:toggleTimerRef", 0x0716);
-pub const SPEC_TIMERS_TOGGLE_IMMEDIATE_REF: NodeSpec = NodeSpec::new("timers:toggleImmediateRef", 0x0717);
+pub const SPEC_TIMERS_TOGGLE_IMMEDIATE_REF: NodeSpec =
+    NodeSpec::new("timers:toggleImmediateRef", 0x0717);
 pub const SPEC_INTERNAL_BINDING: NodeSpec = NodeSpec::new("internal:test-binding", 0x0710);
 pub const SPEC_INTERNAL_BUFFER_FILL: NodeSpec = NodeSpec::new("internal:buffer-fill", 0x0711);
 pub const SPEC_INTERNAL_VIEW_HAS_BUFFER: NodeSpec =
