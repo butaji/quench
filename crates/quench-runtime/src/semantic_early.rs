@@ -367,7 +367,10 @@ fn validate_nested(statements: &[Statement<'_>]) -> Result<(), Vec<String>> {
             Statement::DoWhileStatement(statement) => validate_loop_body(&statement.body)?,
             Statement::ForStatement(statement) => validate_loop_body(&statement.body)?,
             Statement::ForInStatement(statement) => validate_loop_body(&statement.body)?,
-            Statement::ForOfStatement(statement) => validate_loop_body(&statement.body)?,
+            Statement::ForOfStatement(statement) => {
+                validate_for_of_bound_names(statement)?;
+                validate_loop_body(&statement.body)?;
+            }
             Statement::LabeledStatement(statement) => {
                 validate_nested(std::slice::from_ref(&statement.body))?;
             }
@@ -387,6 +390,39 @@ fn validate_loop_body(body: &Statement<'_>) -> Result<(), Vec<String>> {
         ]);
     }
     validate_nested(std::slice::from_ref(body))
+}
+
+fn validate_for_of_bound_names(
+    statement: &oxc::ast::ast::ForOfStatement<'_>,
+) -> Result<(), Vec<String>> {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &statement.left else {
+        return Ok(());
+    };
+    if !matches!(
+        declaration.kind,
+        VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+    ) {
+        return Ok(());
+    }
+    let bound = declaration
+        .declarations
+        .iter()
+        .flat_map(|declarator| crate::binding_patterns::names(&declarator.id));
+    if bound.clone().any(|name| name == "let") {
+        return Err(vec![
+            "SyntaxError: using declaration may not bind let".to_string()
+        ]);
+    }
+    let declared = var_declared_names_in(std::slice::from_ref(&statement.body));
+    if bound
+        .into_iter()
+        .any(|name| declared.iter().any(|other| name == *other))
+    {
+        return Err(vec![
+            "SyntaxError: using declaration conflicts with loop body".to_string(),
+        ]);
+    }
+    Ok(())
 }
 
 fn is_labelled_function(statement: &Statement<'_>) -> bool {
