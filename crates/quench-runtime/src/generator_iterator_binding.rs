@@ -131,10 +131,10 @@ fn resume_iterator_frame(
         .clone()
         .ok_or(VmError::MissingReturn)?;
     let frame_body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
-    if frame.repeat && code_view_contains_yield(frame_body) {
+    if frame.repeat && code_needs_nested_resume(frame_body) {
         return resume_for_of_repeat_frame(generator, state, resume, &frame).map(Some);
     }
-    if !frame.repeat && code_view_contains_yield(frame_body) {
+    if !frame.repeat && code_needs_nested_resume(frame_body) {
         return resume_iterator_nested_frame(generator, state, resume, &frame).map(Some);
     }
     if !matches!(resume, crate::completion::Completion::Normal) {
@@ -349,6 +349,13 @@ fn op_contains_yield(op: &Op) -> bool {
 
 fn code_view_contains_yield(view: crate::machine::CodeView<'_>) -> bool {
     view.cold_ops().any(|(_, op)| op_contains_yield(op))
+}
+
+fn code_needs_nested_resume(view: crate::machine::CodeView<'_>) -> bool {
+    view.cold_ops().any(|(_, op)| {
+        matches!(op, Op::Conditional { .. } | Op::IteratorBinding { .. })
+            && op_contains_yield(op)
+    })
 }
 
 fn finish_iterator_frame(
