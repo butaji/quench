@@ -116,6 +116,9 @@ pub fn to_string(
     let view = this_view(receiver)?;
     let encoding = encoding_arg(args.first())?;
     let bytes = view_bytes(&view);
+    if bytes.len() as f64 > crate::modules::buffer::MAX_STRING_LENGTH {
+        return Err(enc::string_too_long());
+    }
     let start = clamp_to_string_bounds(args.get(1), bytes.len(), 0.0);
     let end = clamp_to_string_bounds(args.get(2), bytes.len(), bytes.len() as f64);
     Ok(enc::decode_str(&bytes[start..end.max(start)], &encoding))
