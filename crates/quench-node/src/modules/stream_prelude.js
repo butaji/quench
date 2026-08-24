@@ -62,7 +62,16 @@
       return this._emitter.emit(name, ...args);
     },
     eventNames() {
-      return this._emitter.eventNames();
+      const names = this._emitter.eventNames();
+      const internalOrder = {
+        error: 0,
+        data: 1,
+        prefinish: 2,
+        drain: 3,
+        finish: 4,
+      };
+      return names.sort((left, right) =>
+        (internalOrder[left] ?? 100) - (internalOrder[right] ?? 100));
     },
     listenerCount(name) {
       return this._emitter.listenerCount(name);
