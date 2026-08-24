@@ -399,7 +399,7 @@ pub(crate) fn load(
 ) -> Result<(), VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     let environment = current();
-    environment.load_into(registers, dst, slot);
+    load_environment_binding(&environment, registers, dst, slot)?;
     Ok(())
 }
 
@@ -417,7 +417,20 @@ pub(crate) fn load_checked(
         )));
     }
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    load_environment_binding(&environment, registers, dst, slot)?;
+    Ok(())
+}
+
+#[inline]
+fn load_environment_binding(
+    environment: &Environment,
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+) -> Result<(), VmError> {
     environment.load_into(registers, dst, slot);
+    let value = crate::execute::read_register(registers, dst)?;
+    crate::execute::write_value(registers, dst, resolved_replacement(value));
     Ok(())
 }
 
