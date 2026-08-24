@@ -1,5 +1,3 @@
-
-
 pub fn current_global_object() -> Value {
     if let Some(global) = batched_global_object() {
         return Value::Object(global);
@@ -17,6 +15,8 @@ pub fn current_global_object() -> Value {
         .unwrap_or_else(|| crate::locals::current().get(0))
 }
 
+pub(crate) const SCRIPT_GLOBAL_VIEW: &str = "\0quench:script-global-view";
+
 pub(crate) fn initialize_global_object(value: &Value) {
     let Value::Object(object) = value else {
         return;
@@ -32,9 +32,11 @@ pub(crate) fn is_global_object(value: &Value) -> bool {
     let Some(object) = global_object_target(value) else {
         return false;
     };
-    if GLOBAL_DECLARATION_BASE
-        .with(|base| base.borrow().as_ref().is_some_and(|base| Rc::ptr_eq(base, &object)))
-    {
+    if GLOBAL_DECLARATION_BASE.with(|base| {
+        base.borrow()
+            .as_ref()
+            .is_some_and(|base| Rc::ptr_eq(base, &object))
+    }) {
         return true;
     }
     matches!(current_global_object(), Value::Object(global) if global.identity() == object.identity())
@@ -44,6 +46,13 @@ pub(crate) fn is_global_object(value: &Value) -> bool {
 /// across declaration staging or copy-on-write replacement.
 pub(crate) fn resolve_global_owner(value: &Value) -> Option<Value> {
     let object = global_object_target(value)?;
+    if matches!(value, Value::Object(view) if view.iter().any(|(name, _)| name == SCRIPT_GLOBAL_VIEW))
+        || matches!(value, Value::ObjectAlias(alias) if alias
+            .target()
+            .is_some_and(|view| view.iter().any(|(name, _)| name == SCRIPT_GLOBAL_VIEW)))
+    {
+        return Some(current_global_object());
+    }
     if let Some(staged) = batched_global_object() {
         let base = GLOBAL_DECLARATION_BASE.with(|base| base.borrow().clone());
         if base.is_some_and(|base| Rc::ptr_eq(&base, &object)) {
@@ -156,10 +165,24 @@ fn current_global_base() -> Option<ObjectProperties> {
     GLOBAL_OBJECT.with(|global| global.borrow().clone())
 }
 
-pub(crate) fn synchronize_global_object(registers: &mut crate::register_file::RegisterFile, old: &Value, new: &Value) {
+pub(crate) fn synchronize_global_object(
+    registers: &mut crate::register_file::RegisterFile,
+    old: &Value,
+    new: &Value,
+) {
     let (Value::Object(old_object), Value::Object(new_object)) = (old, new) else {
         return;
     };
+    // Script `this` aliases resolve to the staged global while declaration
+    // instantiation is active.  A copy-on-write property write must update
+    // that batch; waiting for the final flush would otherwise discard the
+    // replacement and leave the real global view stale.
+    if batched_global_object().is_some_and(|staged| Rc::ptr_eq(&staged, old_object)) {
+        update_global_declaration_batch(new);
+        crate::locals::replace_value(old, new);
+        replace_register_aliases(registers, old_object, new_object);
+        return;
+    }
     let realm = realm::id_for_global(old_object);
     let singleton = singleton_matches(old_object);
     if realm.is_none() && !singleton {
@@ -206,12 +229,9 @@ fn current_realm() -> RealmId {
     // caller while GLOBAL_OBJECT is already the active realm's object.
     // Resolve the realm from that object first so intrinsic seeding uses the
     // same realm as the global binding cell.
-    if let Some(realm) = GLOBAL_OBJECT.with(|global| {
-        global
-            .borrow()
-            .as_ref()
-            .and_then(realm::id_for_global)
-    }) {
+    if let Some(realm) =
+        GLOBAL_OBJECT.with(|global| global.borrow().as_ref().and_then(realm::id_for_global))
+    {
         return realm;
     }
     CURRENT_CONTEXT.with(|context| {

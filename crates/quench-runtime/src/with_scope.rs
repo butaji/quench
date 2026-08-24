@@ -20,14 +20,20 @@ impl FunctionGuard {
     pub(crate) fn isolate() -> Self {
         let previous = OBJECTS.with(|objects| objects.replace(Vec::new()));
         let previous_base = CAPTURED_BASE.with(|base| base.replace(0));
-        Self { previous, previous_base }
+        Self {
+            previous,
+            previous_base,
+        }
     }
 
     pub(crate) fn install(captured: &[Value]) -> Self {
         let live = captured.iter().map(live_object).collect();
         let previous = OBJECTS.with(|objects| objects.replace(live));
         let previous_base = CAPTURED_BASE.with(|base| base.replace(captured.len()));
-        Self { previous, previous_base }
+        Self {
+            previous,
+            previous_base,
+        }
     }
 }
 
@@ -143,6 +149,10 @@ pub(crate) fn set_resolved(
         return Ok(());
     }
     publish_set(&target, key, &value)?;
+    // Dynamic local assignments use a captured `with` target directly. Keep
+    // the active object stack on the copy-on-write replacement so later
+    // identifier resolution in the same `with` body observes the write.
+    publish_active_replacement(&target);
     Ok(())
 }
 
@@ -396,7 +406,10 @@ pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
 /// shadow the function's own var bindings.
 pub(crate) fn resolve_active_binding(key: &str) -> Result<Option<Value>, VmError> {
     let (objects, base) = OBJECTS.with(|objects| {
-        (objects.borrow().clone(), CAPTURED_BASE.with(|base| base.get()))
+        (
+            objects.borrow().clone(),
+            CAPTURED_BASE.with(|base| base.get()),
+        )
     });
     for object in objects.iter().skip(base).rev() {
         let object = live_object(object);
@@ -421,6 +434,22 @@ pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
 /// Copy-on-write object sets publish a replacement; `with` must see it.
 fn live_object(value: &Value) -> Value {
     crate::locals::resolved_replacement(value.clone())
+}
+
+pub(crate) fn publish_active_replacement(original: &Value) {
+    let updated = live_object(original);
+    OBJECTS.with(|objects| {
+        let mut objects = objects.borrow_mut();
+        for object in objects.iter_mut() {
+            let same = match (&*object, original) {
+                (Value::Object(left), Value::Object(right)) => left.identity() == right.identity(),
+                _ => false,
+            };
+            if same {
+                *object = updated.clone();
+            }
+        }
+    });
 }
 
 /// `[[Set]]` returns a boolean; the live object is the published replacement.
@@ -462,6 +491,8 @@ fn is_unscopable(object: &Value, key: &str) -> Result<bool, VmError> {
 }
 
 pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
+    let owned = crate::vm::resolve_global_owner(value).unwrap_or_else(|| value.clone());
+    let value = &owned;
     // Host globals live in the execution context rather than as ordinary
     // properties on the realm global object.  They must nevertheless
     // participate in global binding existence checks (notably `process` and
