@@ -116,6 +116,8 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
         return keys;
     }
     match &target {
+        Value::ArrayBuffer(buffer) => buffer.own_property_names(),
+        Value::DataView(view) => view.own_property_names(),
         Value::Object(properties) => object_enumerable_keys(properties),
         Value::ObjectAlias(alias) => alias
             .0
