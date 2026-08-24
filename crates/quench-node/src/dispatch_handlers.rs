@@ -917,6 +917,7 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         Value::String(value) => value.clone(),
         Value::Number(value) => value.to_string(),
         Value::Boolean(value) => value.to_string(),
+        Value::Object(_) => "[object Object]".to_string(),
         _ => return Err(execute::type_error("Event type is invalid")),
     };
     let options = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -968,8 +969,10 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         ("\0event:cancelBubble".into(), Value::Boolean(false)),
         ("composed".into(), Value::Boolean(false)),
         ("isTrusted".into(), Value::Boolean(false)),
+        ("target".into(), Value::Undefined),
         ("eventPhase".into(), Value::Number(0.0)),
         ("timeStamp".into(), Value::Number(0.0)),
+        ("Symbol.toStringTag".into(), Value::String("Event".into())),
         (
             "preventDefault".into(),
             crate::host::capability(crate::registry::SPEC_EVENT_PREVENT_DEFAULT),
@@ -1001,6 +1004,36 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
             ),
             ("enumerable".into(), Value::Boolean(true)),
             ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )
+}
+
+pub fn custom_event_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let event = event_new(state, args)?;
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let detail = if matches!(options, Value::Undefined) {
+        Value::Null
+    } else {
+        execute::get_property(&options, "detail")
+    };
+    let event = execute::set_property(
+        event,
+        "Symbol.toStringTag",
+        Value::String("CustomEvent".into()),
+    );
+    let event = execute::set_property(
+        event,
+        "constructor",
+        host_api::object(vec![("name".into(), Value::String("CustomEvent".into()))]),
+    );
+    execute::define_property(
+        event,
+        "detail",
+        host_api::object(vec![
+            ("value".into(), detail),
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(false)),
         ]),
     )
 }
