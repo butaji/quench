@@ -1,5 +1,5 @@
 const LEAF_REGISTERS: usize = 96;
-const SMALL_LEAF_REGISTERS: usize = 48;
+const SMALL_LEAF_REGISTERS: usize = 32;
 const LEAF_LOCAL_SLOTS: usize = 128;
 const LEAF_FACT_SLOTS: usize = 256;
 
