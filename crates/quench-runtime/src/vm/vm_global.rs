@@ -96,7 +96,8 @@ pub(crate) fn begin_global_declaration_batch() {
             ));
         }
     }
-    let staged = Rc::new(crate::value::ObjectData::with_shared_properties(
+    let staged = Rc::new(crate::value::ObjectData::with_shared_properties_for_owner(
+        &current,
         properties,
         Rc::new(RefCell::new(current.private_slots.borrow().clone())),
     ));
@@ -130,7 +131,18 @@ pub(crate) fn update_global_declaration_batch(updated: &Value) {
     if !is_global_declaration_batch_active() {
         return;
     }
-    GLOBAL_DECLARATION_BATCH.with(|batch| batch.replace(Some(updated.clone())));
+    let owner = GLOBAL_DECLARATION_BASE.with(|base| base.borrow().clone());
+    let staged = owner
+        .as_ref()
+        .map(|owner| {
+            Rc::new(crate::value::ObjectData::with_shared_properties_for_owner(
+                owner,
+                updated.properties.clone(),
+                Rc::new(RefCell::new(updated.private_slots.borrow().clone())),
+            ))
+        })
+        .unwrap_or_else(|| updated.clone());
+    GLOBAL_DECLARATION_BATCH.with(|batch| batch.replace(Some(staged)));
 }
 
 fn batched_global_object() -> Option<ObjectProperties> {
