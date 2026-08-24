@@ -191,6 +191,7 @@ fn ordinary_own_descriptor(
 ) -> Result<Value, crate::execute::VmError> {
     let current = crate::builtins::object::descriptor(Some(target), Some(key_value))?;
     if !matches!(current, Value::Undefined) {
+        crate::execution_trace::descriptor_object("current");
         return Ok(current);
     }
     let owned = crate::builtins::object::has_own_property(Some(target), Some(key_value));
@@ -243,6 +244,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
         }
     }
     let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
+    crate::execution_trace::descriptor_object("metadata");
     match result {
         Value::Object(properties) => {
             let properties = Rc::make_mut(properties);
