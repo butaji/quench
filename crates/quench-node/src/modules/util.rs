@@ -201,37 +201,87 @@ pub fn build() -> Vec<(String, Value)> {
 
 pub fn types_object() -> Value {
     let names = [
-        "isArgumentsObject", "isArrayBuffer", "isAsyncFunction", "isBigIntObject",
-        "isBooleanObject", "isDate", "isExternal", "isGeneratorFunction",
-        "isGeneratorObject", "isMap", "isMapIterator", "isModuleNamespaceObject",
-        "isNativeError", "isNumberObject", "isPromise", "isProxy", "isRegExp",
-        "isSet", "isSetIterator", "isSharedArrayBuffer", "isStringObject",
-        "isSymbolObject", "isWeakMap", "isWeakSet", "isAnyArrayBuffer",
-        "isBoxedPrimitive", "isArrayBufferView", "isDataView", "isTypedArray",
-        "isUint8Array", "isUint8ClampedArray", "isUint16Array", "isUint32Array",
-        "isInt8Array", "isInt16Array", "isInt32Array", "isFloat16Array",
-        "isFloat32Array", "isFloat64Array", "isBigInt64Array", "isBigUint64Array",
-        "isKeyObject", "isCryptoKey",
+        "isArgumentsObject",
+        "isArrayBuffer",
+        "isAsyncFunction",
+        "isBigIntObject",
+        "isBooleanObject",
+        "isDate",
+        "isExternal",
+        "isGeneratorFunction",
+        "isGeneratorObject",
+        "isMap",
+        "isMapIterator",
+        "isModuleNamespaceObject",
+        "isNativeError",
+        "isNumberObject",
+        "isPromise",
+        "isProxy",
+        "isRegExp",
+        "isSet",
+        "isSetIterator",
+        "isSharedArrayBuffer",
+        "isStringObject",
+        "isSymbolObject",
+        "isWeakMap",
+        "isWeakSet",
+        "isAnyArrayBuffer",
+        "isBoxedPrimitive",
+        "isArrayBufferView",
+        "isDataView",
+        "isTypedArray",
+        "isUint8Array",
+        "isUint8ClampedArray",
+        "isUint16Array",
+        "isUint32Array",
+        "isInt8Array",
+        "isInt16Array",
+        "isInt32Array",
+        "isFloat16Array",
+        "isFloat32Array",
+        "isFloat64Array",
+        "isBigInt64Array",
+        "isBigUint64Array",
+        "isKeyObject",
+        "isCryptoKey",
     ];
-    quench_runtime::host_api::object(names.iter().map(|name| (
-        (*name).to_string(),
-        quench_runtime::host_api::bound_capability_with_arguments(
-            quench_runtime::ops::HostCapabilityRef {
-                realm: quench_runtime::ops::RealmId::ROOT,
-                kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_UTIL_TYPE_PREDICATE.cap),
-            },
-            vec![Value::String((*name).to_string())],
-        ),
-    )).collect())
+    quench_runtime::host_api::object(
+        names
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_string(),
+                    quench_runtime::host_api::bound_capability_with_arguments(
+                        quench_runtime::ops::HostCapabilityRef {
+                            realm: quench_runtime::ops::RealmId::ROOT,
+                            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                                crate::registry::SPEC_UTIL_TYPE_PREDICATE.cap,
+                            ),
+                        },
+                        vec![Value::String((*name).to_string())],
+                    ),
+                )
+            })
+            .collect(),
+    )
 }
 
 /// Runtime identity predicates share one capability and differ only by this data key.
 pub fn type_predicate(name: &str, value: &Value) -> bool {
-    let typed = matches!(value,
-        Value::Float64Array(_) | Value::Float32Array(_) | Value::Int8Array(_) |
-        Value::Int16Array(_) | Value::Int32Array(_) | Value::BigInt64Array(_) |
-        Value::BigUint64Array(_) | Value::Uint32Array(_) | Value::Uint8Array(_) |
-        Value::Uint8ClampedArray(_) | Value::Uint16Array(_));
+    let typed = matches!(
+        value,
+        Value::Float64Array(_)
+            | Value::Float32Array(_)
+            | Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+            | Value::Uint32Array(_)
+            | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+    );
     let view = typed || matches!(value, Value::DataView(_));
     match name {
         "isArrayBuffer" => matches!(value, Value::ArrayBuffer(_)),
@@ -253,14 +303,24 @@ pub fn type_predicate(name: &str, value: &Value) -> bool {
         "isBigUint64Array" => matches!(value, Value::BigUint64Array(_)),
         "isPromise" => matches!(value, Value::Promise(_)),
         "isProxy" => matches!(value, Value::Proxy(_)),
-        "isRegExp" => matches!(quench_runtime::execute::get_property_result(value, "\0regexp"), Ok(Value::Boolean(true))),
-        "isDate" => matches!(quench_runtime::execute::get_property_result(value, "timeValue"), Ok(Value::Number(_) | Value::BindingCell(_))),
+        "isRegExp" => matches!(
+            quench_runtime::execute::get_property_result(value, "\0regexp"),
+            Ok(Value::Boolean(true))
+        ),
+        "isDate" => matches!(
+            quench_runtime::execute::get_property_result(value, "timeValue"),
+            Ok(Value::Number(_) | Value::BindingCell(_))
+        ),
         "isMap" => matches!(value, Value::Map(data) if !data.is_weak()),
         "isWeakMap" => matches!(value, Value::Map(data) if data.is_weak()),
         "isSet" => matches!(value, Value::Set(data) if !data.is_weak()),
         "isWeakSet" => matches!(value, Value::Set(data) if data.is_weak()),
-        "isMapIterator" => matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Map { .. })),
-        "isSetIterator" => matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Set { .. })),
+        "isMapIterator" => {
+            matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Map { .. }))
+        }
+        "isSetIterator" => {
+            matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Set { .. }))
+        }
         "isGeneratorObject" => matches!(value, Value::Generator(_)),
         "isGeneratorFunction" => matches!(value, Value::Function(function) if function.kind == FunctionKind::Generator && !function.is_async),
         "isAsyncFunction" => matches!(value, Value::Function(function) if function.is_async && function.kind != FunctionKind::Generator),
@@ -657,7 +717,10 @@ fn inspect_buffer(value: &Value, view: &quench_runtime::value::Uint8ArrayData) -
     let mut result = if suffix == 0 {
         format!("<Buffer {}>", shown.join(" "))
     } else {
-        format!("<Buffer {} ... {suffix} more byte{plural}>", shown.join(" "))
+        format!(
+            "<Buffer {} ... {suffix} more byte{plural}>",
+            shown.join(" ")
+        )
     };
     let properties = quench_runtime::execute::own_enumerable_keys(value)
         .into_iter()
