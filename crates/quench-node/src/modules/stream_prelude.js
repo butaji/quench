@@ -605,7 +605,7 @@
         nextTick(() => this._emitter.emit("error", error));
         return false;
       }
-      if (chunk == null && !st.objectMode) {
+      if (chunk === null) {
         const error = new TypeError("May not write null values to stream");
         error.code = "ERR_STREAM_NULL_VALUES";
         throw error;
@@ -722,10 +722,21 @@
   }
   // Node permits Writable(options) as a callable factory as well as new Writable(options).
   function Writable(options) {
-    return new WritableClass(options);
+    if (!(this instanceof WritableClass)) return new WritableClass(options || {});
+    initWritable(this, options || {});
   }
   Writable.prototype = WritableClass.prototype;
   mixEmitter(Writable.prototype);
+  Object.defineProperty(Writable, Symbol.hasInstance, {
+    value(value) {
+      if (!value) return false;
+      if (value._writableState) return true;
+      for (let proto = value; proto; proto = Object.getPrototypeOf(proto)) {
+        if (proto === Writable.prototype) return true;
+      }
+      return false;
+    }
+  });
 
   Writable.prototype.destroy = function (error) {
     if (this.destroyed) return this;
