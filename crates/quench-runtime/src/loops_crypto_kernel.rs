@@ -47,15 +47,15 @@ impl IntegerMultiplyFact {
 
 fn recognize_integer_multiply_shape(code: crate::machine::CodeView<'_>) -> Option<()> {
     use crate::ir::Opcode::*;
-    const SHAPE: [crate::ir::Opcode; 66] = [
+    const SHAPE: [crate::ir::Opcode; 64] = [
         LoadLocalChecked, LoadLocalChecked, AGetI, LoadConst, Binary, Slow, Slow,
         LoadLocalChecked, UpdateLocal, Slow, AGetI, LoadConst, Binary, Slow, Slow,
         LoadLocalChecked, LoadLocalChecked, Mul, LoadLocalChecked, LoadLocalChecked, Mul, Add,
         Slow, Slow, LoadLocalChecked, LoadLocalChecked, Mul, LoadLocalChecked, LoadConst,
         Binary, LoadConst, Binary, Add, LoadLocalChecked, LoadLocalChecked, AGetI, Add,
-        LoadLocalChecked, Add, Slow, Slow, Move, LoadLocalChecked, LoadConst, Binary,
+        LoadLocalChecked, Add, StoreLocalChecked, Move, LoadLocalChecked, LoadConst, Binary,
         LoadLocalChecked, LoadConst, Binary, Add, LoadLocalChecked, LoadLocalChecked, Mul,
-        Add, Slow, Slow, Move, LoadLocalChecked, Move, UpdateLocal, Slow, Move,
+        Add, StoreLocalChecked, Move, LoadLocalChecked, Move, UpdateLocal, Slow, Move,
         LoadLocalChecked, LoadConst, Binary, ASetI, Move,
     ];
     (code.len() == SHAPE.len()).then_some(())?;
@@ -168,7 +168,7 @@ fn validate_integer_multiply_stores(
     (recognized_static_load(code, 37)?.1 == carry).then_some(())?;
     let with_carry = code.instruction(38)?;
     (with_carry.opcode == crate::ir::Opcode::Add && with_carry.b == with_output.a).then_some(())?;
-    kernel_checked_store(code, 39, 40, low, with_carry.a)?;
+    kernel_checked_store(code, 39, low, with_carry.a)?;
     validate_integer_multiply_tail(
         code,
         [output, output_index, carry, low, high, product, x_high],
@@ -180,22 +180,22 @@ fn validate_integer_multiply_tail(
     slots: [u16; 7],
 ) -> Option<()> {
     let [output, output_index, carry, low, high, product, x_high] = slots;
-    (recognized_static_load(code, 42)?.1 == low).then_some(())?;
-    let shift_28 = constant_number(code, 43, 28.0)?;
+    (recognized_static_load(code, 41)?.1 == low).then_some(())?;
+    let shift_28 = constant_number(code, 42, 28.0)?;
     let low_high = binary_is(
         code,
-        44,
+        43,
         crate::ops::BinaryOp::ShiftRight,
-        code.instruction(42)?.a,
+        code.instruction(41)?.a,
         shift_28,
     )?;
-    (recognized_static_load(code, 45)?.1 == product).then_some(())?;
-    let shift_14 = constant_number(code, 46, 14.0)?;
+    (recognized_static_load(code, 44)?.1 == product).then_some(())?;
+    let shift_14 = constant_number(code, 45, 14.0)?;
     let product_high = binary_is(
         code,
-        47,
+        46,
         crate::ops::BinaryOp::ShiftRight,
-        code.instruction(45)?.a,
+        code.instruction(44)?.a,
         shift_14,
     )?;
     validate_integer_carry(code, [carry, high, x_high], low_high, product_high)?;
@@ -209,21 +209,21 @@ fn validate_integer_carry(
     product_high: u16,
 ) -> Option<()> {
     let [carry, high, x_high] = slots;
-    let partial_carry = code.instruction(48)?;
+    let partial_carry = code.instruction(47)?;
     (partial_carry.opcode == crate::ir::Opcode::Add
         && partial_carry.b == low_high
         && partial_carry.c == product_high)
         .then_some(())?;
-    (recognized_static_load(code, 49)?.1 == x_high).then_some(())?;
-    (recognized_static_load(code, 50)?.1 == high).then_some(())?;
-    let high_product = code.instruction(51)?;
+    (recognized_static_load(code, 48)?.1 == x_high).then_some(())?;
+    (recognized_static_load(code, 49)?.1 == high).then_some(())?;
+    let high_product = code.instruction(50)?;
     (high_product.opcode == crate::ir::Opcode::Mul).then_some(())?;
-    let carry_sum = code.instruction(52)?;
+    let carry_sum = code.instruction(51)?;
     (carry_sum.opcode == crate::ir::Opcode::Add
         && carry_sum.b == partial_carry.a
         && carry_sum.c == high_product.a)
         .then_some(())?;
-    kernel_checked_store(code, 53, 54, carry, carry_sum.a)
+    kernel_checked_store(code, 52, carry, carry_sum.a)
 }
 
 fn validate_integer_output(
@@ -232,14 +232,14 @@ fn validate_integer_output(
     output_index: u16,
     low: u16,
 ) -> Option<()> {
-    (recognized_static_load(code, 56)?.1 == output).then_some(())?;
-    (recognized_static_load(code, 61)?.1 == low).then_some(())?;
-    let update = code.instruction(58)?;
+    (recognized_static_load(code, 54)?.1 == output).then_some(())?;
+    (recognized_static_load(code, 59)?.1 == low).then_some(())?;
+    let update = code.instruction(56)?;
     (update.c == output_index && update.flags == 0).then_some(())?;
-    let mask = constant_number(code, 62, 0xfffffff as f64)?;
-    let value = binary_is(code, 63, crate::ops::BinaryOp::BitwiseAnd, code.instruction(61)?.a, mask)?;
-    let set = code.instruction(64)?;
-    (set.a == code.instruction(60)?.a && set.c == value).then_some(())
+    let mask = constant_number(code, 60, 0xfffffff as f64)?;
+    let value = binary_is(code, 61, crate::ops::BinaryOp::BitwiseAnd, code.instruction(59)?.a, mask)?;
+    let set = code.instruction(62)?;
+    (set.a == code.instruction(58)?.a && set.c == value).then_some(())
 }
 
 fn run_crypto_integer_kernel(

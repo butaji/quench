@@ -216,13 +216,13 @@ pub(crate) fn store(
     slot: u16,
     source: u16,
 ) -> Result<(), VmError> {
-    let value = crate::execute::read_register(registers, source)?;
-    if current().is_deleted(&current().slot_cell(slot)) {
+    let environment = current();
+    if environment.is_deleted_slot(slot) {
         return Err(crate::value::error::throw_reference_error(&format!(
             "Cannot access deleted binding '{slot}'"
         )));
     }
-    if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {
+    if environment.is_immutable_slot(slot) && !environment.is_uninitialized(slot) {
         if ACTIVE_EVAL.with(|active| *active.borrow())
             && !STRICT_EVAL.with(|strict| *strict.borrow())
         {
@@ -232,10 +232,11 @@ pub(crate) fn store(
             "Cannot assign to immutable binding",
         ));
     }
-    current().set(slot, value);
-    current().initialize(slot);
+    if !environment.copy_from_register(slot, registers, source) {
+        environment.set(slot, crate::execute::read_register(registers, source)?);
+    }
     if slot == 0 {
-        crate::vm::initialize_global_object(&current().get(slot));
+        crate::vm::initialize_global_object(&environment.get(slot));
     }
     Ok(())
 }
@@ -271,7 +272,7 @@ pub(crate) fn load_binding(
             crate::execute::write_value(registers, dst, value);
             return Ok(());
         }
-        if environment.is_deleted(&environment.slot_cell(slot)) {
+        if environment.is_deleted_slot(slot) {
             return Err(crate::value::error::throw_reference_error(&format!(
                 "Cannot access deleted binding '{name}'"
             )));
