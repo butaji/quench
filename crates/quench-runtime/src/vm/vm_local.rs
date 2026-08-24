@@ -25,7 +25,8 @@ fn run_local_storage_op(registers: &mut crate::register_file::RegisterFile, op: 
             crate::locals::store_function_name(registers, *slot, *src, *strict)?
         }
         LoadCurrentGlobal { dst } => {
-            write_value(registers, *dst, crate::vm::current_global_object())
+            let global = crate::vm::current_global_object();
+            write_value(registers, *dst, crate::locals::resolved_replacement(global))
         }
         MarkUninitialized { slot, shared } => {
             if *shared {
