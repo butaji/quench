@@ -58,6 +58,7 @@ fn descriptor_object_with_flags(
     enumerable: bool,
     configurable: bool,
 ) -> Value {
+    crate::execution_trace::descriptor_object("view");
     Value::Object(Rc::new(ObjectData::new(vec![
         ("value".to_string(), public_value(&value)),
         ("writable".to_string(), Value::Boolean(writable)),
