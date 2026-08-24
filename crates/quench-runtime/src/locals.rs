@@ -397,6 +397,28 @@ pub(crate) fn load(
     Ok(())
 }
 
+#[inline(always)]
+pub(crate) fn load_checked(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let environment = current();
+    if environment.is_uninitialized(slot) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access '{name}' before initialization"
+        )));
+    }
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    if let Some(number) = environment.get_number(slot) {
+        registers.write_number(usize::from(dst), number);
+    } else {
+        crate::execute::write_value(registers, dst, environment.get(slot));
+    }
+    Ok(())
+}
+
 pub(crate) fn update(
     registers: &mut crate::register_file::RegisterFile,
     old_dst: u16,

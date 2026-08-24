@@ -52,7 +52,7 @@ fn run_generator_code_steps(
             }
             continue;
         }
-        let result = run_instruction(code, instruction, registers, context)?;
+        let result = run_instruction(code, next, instruction, registers, context)?;
         if let Some(completion) = result.filter(|value| !matches!(value, crate::completion::Completion::Normal)) {
             crate::vm::flush_global_declaration_batch(registers);
             let suspension = code.cold(instruction).and_then(|op| {
