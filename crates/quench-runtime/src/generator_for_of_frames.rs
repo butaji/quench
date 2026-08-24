@@ -53,6 +53,17 @@ fn collect_loop_body_frames(
             frames.pop();
             return Ok(false);
         }
+        if conditional_contains_yield(op) {
+            frames.push(for_of_repeat_frame(
+                iterator.clone(),
+                body,
+                range_after_iterator_op(body, index),
+                resume,
+                0,
+                slot,
+            ));
+            return Ok(true);
+        }
         if try_contains_yield(op) {
             frames.push(for_of_repeat_frame(
                 iterator.clone(),
@@ -66,6 +77,19 @@ fn collect_loop_body_frames(
         }
     }
     Ok(false)
+}
+
+fn conditional_contains_yield(op: &Op) -> bool {
+    let Op::Conditional {
+        consequent,
+        alternate,
+        ..
+    } = op
+    else {
+        return false;
+    };
+    consequent.code().is_some_and(ops_contain_yield)
+        || alternate.code().is_some_and(ops_contain_yield)
 }
 
 fn try_contains_yield(op: &Op) -> bool {
