@@ -92,6 +92,11 @@ fn run_instruction(
     crate::execution_trace::compact(instruction.opcode);
     crate::execution_trace::operands(instruction);
     match instruction.opcode {
+        Opcode::LoadConst => {
+            let (_, value) = code.constant_at(pc).ok_or(VmError::MissingReturn)?;
+            write_value(registers, instruction.a, value.into());
+            Ok(None)
+        }
         Opcode::Move => {
             copy_register(registers, instruction.a, instruction.b)?;
             Ok(None)
