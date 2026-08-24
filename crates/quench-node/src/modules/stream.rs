@@ -61,7 +61,7 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
         crate::modules::events::build(),
     ), (
         "string_decoder".to_string(),
-        crate::modules::string_decoder::build(),
+        crate::host::namespace_object_from_pairs(crate::modules::string_decoder::build()),
     )]);
     let module = match quench_runtime::vm::call_value(&factory, &Value::Undefined, &[deps]) {
         Ok(module) => module,
