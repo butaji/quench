@@ -707,7 +707,7 @@ include!("environment_alias.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::SlotStore;
+    use super::{Environment, SlotStore};
     use crate::value::Value;
 
     #[test]
@@ -754,5 +754,36 @@ mod tests {
         let store = SlotStore::from_values(vec![Value::String("4".into())]);
         assert_eq!(store.update_number(0, 1.0), None);
         assert_eq!(store.load(0), Value::String("4".into()));
+    }
+
+    #[test]
+    #[ignore = "release-only diagnostic; run with --release --ignored slot_access_cost_probe"]
+    fn slot_access_cost_probe() {
+        const ITERATIONS: usize = 20_000_000;
+        let environment = Environment::new();
+        environment.set(0, Value::Number(7.0));
+        let _guard = crate::locals::EnvironmentGuard::install(std::rc::Rc::clone(&environment));
+        let store = SlotStore::from_values(vec![Value::Number(7.0)]);
+
+        let measure = |mut read: Box<dyn FnMut() -> f64>| {
+            let started = std::time::Instant::now();
+            let mut sum = 0.0;
+            for _ in 0..ITERATIONS {
+                sum += std::hint::black_box(read());
+            }
+            (started.elapsed(), sum)
+        };
+        let (raw, _) = measure(Box::new(|| store.load_number(0).unwrap()));
+        let (slot, _) = measure(Box::new(|| environment.get_number(0).unwrap()));
+        let (checked, _) = measure(Box::new(|| {
+            assert!(!environment.is_uninitialized(0));
+            environment.get_number(0).unwrap()
+        }));
+        let (current, _) = measure(Box::new(|| {
+            let environment = crate::locals::current();
+            assert!(!environment.is_uninitialized(0));
+            environment.get_number(0).unwrap()
+        }));
+        eprintln!("slot_probe iterations={ITERATIONS} raw={raw:?} slot={slot:?} checked={checked:?} current={current:?}");
     }
 }
