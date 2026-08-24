@@ -456,6 +456,24 @@ pub fn process_next_tick(
 ) -> Result<Value, VmError> {
     crate::modules::process::next_tick(state, args)
 }
+
+pub fn queue_microtask(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !quench_runtime::is_callable(&callback) {
+        return Err(quench_runtime::execute::type_error(
+            "The \"callback\" argument must be of type function",
+        ));
+    }
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(callback, vec![]);
+    Ok(Value::Undefined)
+}
 pub fn process_hrtime(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
