@@ -121,19 +121,14 @@ pub fn buffer_prototype() -> Value {
         if let Some(prototype) = &*slot.borrow() {
             return prototype.clone();
         }
-        let mut to_string_fn: Option<Value> = None;
+        let mut capabilities = std::collections::HashMap::<u16, Value>::new();
         let methods: Vec<(&str, Value)> = PROTOTYPE_METHODS
             .iter()
             .map(|(name, spec)| {
-                // `toLocaleString` must be the same function object as
-                // `toString` (identity is observable).
-                let value = if spec.cap == r::SPEC_BUFFER_TOSTRING.cap {
-                    to_string_fn
-                        .get_or_insert_with(|| crate::host::capability(*spec))
-                        .clone()
-                } else {
-                    crate::host::capability(*spec)
-                };
+                let value = capabilities
+                    .entry(spec.cap)
+                    .or_insert_with(|| crate::host::capability(*spec))
+                    .clone();
                 (*name, value)
             })
             .collect();
