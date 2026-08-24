@@ -87,7 +87,12 @@ pub(crate) fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmEr
     if let Value::Array(values) = receiver {
         return Ok(values.logical_len());
     }
-    let length = crate::execute::get_property_result(receiver, "length")?;
+    let length = if let Value::Builtin(builtin) = receiver {
+        crate::builtins::read_descriptor_value(*builtin, "length")
+            .unwrap_or(crate::execute::get_property_result(receiver, "length")?)
+    } else {
+        crate::execute::get_property_result(receiver, "length")?
+    };
     let number = crate::conversion::to_number(&length)?;
     if number.is_nan() || number <= 0.0 {
         return Ok(0);
