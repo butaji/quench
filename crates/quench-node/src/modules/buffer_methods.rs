@@ -266,6 +266,9 @@ fn copy_transfer(
     source_start: usize,
     count: usize,
 ) -> Result<Value, VmError> {
+    if target.buffer.immutable {
+        return Ok(Value::Number(0.0));
+    }
     let mut source_bytes = view.buffer.bytes.borrow_mut();
     let same = Rc::ptr_eq(&view.buffer, &target.buffer);
     if same {
