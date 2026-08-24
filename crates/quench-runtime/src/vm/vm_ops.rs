@@ -70,6 +70,11 @@ pub fn execute_call_continuation(
         let Value::Function(function) = &continuation.callee else {
             return Ok(None);
         };
+        if crate::functions::is_class_constructor(function) {
+            return Err(crate::value::error::throw_type_error(
+                "Class constructor cannot be invoked without 'new'",
+            ));
+        }
         // Async and generator functions must go through the ordinary invocation
         // path: it creates the Promise/generator wrapper and performs the
         // corresponding completion setup. Inlining their raw ops would return
