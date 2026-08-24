@@ -677,6 +677,35 @@ pub fn inspect(value: &Value) -> String {
     inspect_depth(value, 2)
 }
 
+fn inspect_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    out.push(quote);
+    for character in value.chars() {
+        match character {
+            '\'' if quote == '\'' => out.push_str("\\'"),
+            '"' if quote == '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000C}' => out.push_str("\\f"),
+            '\u{000B}' => out.push_str("\\v"),
+            character if character.is_control() => {
+                out.push_str(&format!("\\x{:02X}", character as u32));
+            }
+            character => out.push(character),
+        }
+    }
+    out.push(quote);
+    out
+}
+
 fn inspect_depth(value: &Value, depth: usize) -> String {
     if quench_runtime::execute::is_symbol(value) {
         return symbol_string(value);
@@ -696,7 +725,7 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         return inspect_date(value);
     }
     match value {
-        Value::String(s) => format!("'{s}'"),
+        Value::String(s) => inspect_string(s),
         Value::Number(n) => js_number(*n),
         Value::Boolean(b) => b.to_string(),
         Value::Null => "null".into(),
@@ -905,7 +934,7 @@ fn inspect_shallow(value: &Value) -> String {
         return symbol_string(value);
     }
     match value {
-        Value::String(s) => format!("'{s}'"),
+        Value::String(s) => inspect_string(s),
         Value::Number(n) => js_number(*n),
         Value::Boolean(b) => b.to_string(),
         Value::Null => "null".into(),
