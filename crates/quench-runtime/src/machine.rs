@@ -339,6 +339,12 @@ impl CodeArena {
         let mut metadata = Vec::with_capacity(body.len());
         let mut cursor = 0;
         while cursor < body.len() {
+            if let Some(instruction) = lower_checked_local_load(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor]));
+                cursor += 2;
+                continue;
+            }
             if let Some(instruction) = lower_local_update(&body[cursor..]) {
                 self.instructions.push(instruction);
                 metadata.push(metadata_for(&body[cursor + 3]));
@@ -403,6 +409,13 @@ impl CodeArena {
             metadata: self.metadata.into_boxed_slice().into(),
         })
     }
+}
+
+fn lower_checked_local_load(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::CheckInitialized { slot: checked, .. }, Op::LoadLocal { dst, slot }, ..] = ops else {
+        return None;
+    };
+    (checked == slot).then(|| crate::ir::Instruction::load_local_checked(*dst, *slot))
 }
 
 fn lower_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
@@ -1164,6 +1177,30 @@ mod tests {
         assert_eq!(
             code.instruction(0),
             Some(crate::ir::Instruction::update_local(2, 4, 7, false))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn checked_local_load_lowers_as_one_physical_instruction() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::CheckInitialized {
+                slot: 7,
+                name: "value".into(),
+            },
+            super::Op::LoadLocal { dst: 2, slot: 7 },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::load_local_checked(2, 7))
+        );
+        assert_eq!(
+            code.metadata_at(0)
+                .and_then(|metadata| metadata.name.as_deref()),
+            Some("value")
         );
         assert!(code.cold_at(0).is_none());
     }
