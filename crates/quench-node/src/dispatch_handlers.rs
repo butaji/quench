@@ -112,6 +112,14 @@ pub fn util_inspect(
     Ok(Value::String(crate::modules::util::inspect(&arg)))
 }
 
+pub fn util_parse_env(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::util::parse_env(args)
+}
+
 pub fn util_promisify(
     state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
@@ -1816,4 +1824,19 @@ pub fn util_is_native_error(
         Ok(Value::Boolean(true))
     );
     Ok(Value::Boolean(native))
+}
+
+pub fn util_type_predicate(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let predicate = args.iter().find_map(|value| match value {
+        Value::String(name) => Some(name.as_str()),
+        _ => None,
+    }).unwrap_or("");
+    Ok(Value::Boolean(crate::modules::util::type_predicate(
+        predicate,
+        args.iter().find(|value| !matches!(value, Value::String(_))).unwrap_or(&Value::Undefined),
+    )))
 }

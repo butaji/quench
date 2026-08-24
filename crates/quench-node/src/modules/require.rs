@@ -240,6 +240,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "util" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::util::build(),
         )),
+        "util/types" => {
+            let util = require(state, &[Value::String("util".into())]).ok()?;
+            Some(quench_runtime::execute::get_property(&util, "types"))
+        }
         "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![(
             "sleep".to_string(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
