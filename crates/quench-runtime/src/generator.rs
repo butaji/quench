@@ -181,7 +181,12 @@ fn drain_async_next_queue(generator: &Rc<GeneratorData>) {
     *generator.executing.borrow_mut() = true;
     let completion = resume(generator, Resume::Next(value));
     *generator.executing.borrow_mut() = false;
-    crate::promise::settle_async_generator_completion(completion, Rc::clone(generator), promise);
+    crate::promise::settle_async_generator_completion(
+        completion,
+        Rc::clone(generator),
+        promise,
+        false,
+    );
 }
 pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "return")?;
