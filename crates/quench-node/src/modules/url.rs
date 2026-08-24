@@ -704,11 +704,69 @@ fn legacy_resolve(from: &str, to: &str) -> String {
     if to.contains("://") {
         return to.to_string();
     }
+    if to.starts_with("//") {
+        if let Some((protocol, _)) = from.split_once("://") {
+            let authority = to.trim_start_matches('/');
+            return format!("{protocol}://{authority}/");
+        }
+    }
     if to.to_ascii_lowercase().starts_with("javascript:") {
         return to.to_string();
     }
+    if to.find(':').is_some_and(|index| {
+        !to[..index].contains('/') && !to[index + 1..].starts_with(['/', '?', '#'])
+    }) {
+        let index = to.find(':').unwrap_or_default();
+        let scheme = &to[..index];
+        let rest = &to[index + 1..];
+        let same_scheme = from
+            .split_once("://")
+            .is_some_and(|(value, _)| value.eq_ignore_ascii_case(scheme));
+        return if same_scheme {
+            legacy_resolve(from, rest)
+        } else if matches!(rest, "." | "./") {
+            format!("{scheme}:")
+        } else {
+            to.to_string()
+        };
+    }
+    if let Some((scheme, rest)) = to.split_once(':') {
+        let same_scheme = from
+            .split_once("://")
+            .is_some_and(|(value, _)| value.eq_ignore_ascii_case(scheme));
+        if same_scheme && rest.starts_with('#') {
+            return format!(
+                "{}{}",
+                from.split_once('#').map_or(from, |(value, _)| value),
+                rest
+            );
+        }
+        if same_scheme && rest.starts_with('?') {
+            let base = from
+                .split_once('?')
+                .map_or(from, |(value, _)| value)
+                .split_once('#')
+                .map_or(from, |(value, _)| value);
+            return format!("{base}{rest}");
+        }
+        if !scheme.is_empty() && (rest.starts_with('#') || rest.starts_with('?')) {
+            return format!("{scheme}:///{rest}");
+        }
+        if !scheme.is_empty() && rest.starts_with('/') {
+            let base_scheme = from.split_once("://").map(|(value, _)| value);
+            if !base_scheme.is_some_and(|value| value.eq_ignore_ascii_case(scheme)) {
+                return format!("{scheme}://{}", rest.trim_start_matches('/'));
+            }
+            if let Some((_, authority_path)) = from.split_once("://") {
+                let authority = authority_path.split('/').next().unwrap_or_default();
+                return format!("{scheme}://{authority}{rest}");
+            }
+        }
+    }
     if to.starts_with('?') || to.starts_with('#') {
-        let base = if let Some(i) = from.find('?') {
+        let base = if to.starts_with('#') {
+            from.split_once('#').map_or(from, |(value, _)| value)
+        } else if let Some(i) = from.find('?') {
             &from[..i]
         } else if let Some(i) = from.find('#') {
             &from[..i]
@@ -717,11 +775,50 @@ fn legacy_resolve(from: &str, to: &str) -> String {
         };
         return format!("{base}{to}");
     }
+    if let Some(index) = to.find(['?', '#']) {
+        let path = &to[..index];
+        if !path.is_empty() {
+            let resolved = legacy_resolve(from, path);
+            return format!("{resolved}{}", &to[index..]);
+        }
+    }
     let (protocol, host_part) = split_protocol(from);
-    let (host, base_path) = match host_part.find('/') {
-        Some(i) => (host_part[..i].to_string(), host_part[i..].to_string()),
-        None => (host_part.to_string(), "/".to_string()),
+    if !protocol.is_empty() && !protocol.ends_with("//") {
+        let mut segments = host_part
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if !host_part.ends_with('/') {
+            segments.pop();
+        }
+        for segment in to.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    segments.pop();
+                }
+                value => segments.push(value.into()),
+            }
+        }
+        let path = segments.join("/");
+        return if to.starts_with('/') {
+            format!("{protocol}/{path}")
+        } else {
+            format!("{protocol}{path}")
+        };
+    }
+    let (host, base_path) = if protocol.is_empty() && !from.starts_with("//") {
+        (String::new(), from.to_string())
+    } else {
+        match host_part.find('/') {
+            Some(i) => (host_part[..i].to_string(), host_part[i..].to_string()),
+            None => (host_part.to_string(), "/".to_string()),
+        }
     };
+    let base_path = base_path
+        .split_once(['?', '#'])
+        .map_or(base_path.clone(), |(value, _)| value.to_string());
     let base_dir = if base_path.ends_with('/') {
         base_path
     } else {
@@ -746,13 +843,15 @@ fn legacy_resolve(from: &str, to: &str) -> String {
         }
         return segments.join("/");
     }
-    let combined = if to.starts_with('/') {
-        format!("{}{to}", host)
+    let path = if to.starts_with('/') {
+        to.to_string()
     } else {
         format!("{base_dir}{to}")
     };
-    let normalized = normalize_path(&combined);
-    let preserve_trailing = base_dir.ends_with('/') && matches!(to, "." | "./" | ".." | "../");
+    let normalized = format!("{}{}", host, normalize_path(&path));
+    let preserve_trailing = to.ends_with('/')
+        || matches!(to.split('/').next_back(), Some("." | ".."))
+        || matches!(to, "." | ".." | "/." | "/./" | "/.." | "/../");
     let normalized = if preserve_trailing && !normalized.ends_with('/') {
         format!("{normalized}/")
     } else {
@@ -761,13 +860,16 @@ fn legacy_resolve(from: &str, to: &str) -> String {
     if protocol.is_empty() {
         return normalized;
     }
-    format!("{protocol}//{normalized}")
+    format!("{protocol}{normalized}")
 }
 
 fn split_protocol(url: &str) -> (String, &str) {
     match url.find("://") {
         Some(i) => (url[..i + 3].to_string(), &url[i + 3..]),
-        None => (String::new(), url),
+        None => match url.find(':') {
+            Some(i) if !url[..i].contains('/') => (url[..i + 1].to_string(), &url[i + 1..]),
+            _ => (String::new(), url),
+        },
     }
 }
 
