@@ -170,6 +170,18 @@ fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Val
         view.byte_length(),
     );
     match key {
+        "constructor" if view.meta.property("\0float16_array").is_some() => {
+            let constructor = crate::host_api::bound_builtin(
+                Builtin::Uint16Array,
+                Value::Undefined,
+            );
+            let _ = crate::execute::set_callable_property(
+                &constructor,
+                "name",
+                Value::String("Float16Array".into()),
+            );
+            constructor
+        }
         "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
