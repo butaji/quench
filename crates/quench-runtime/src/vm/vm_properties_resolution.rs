@@ -25,6 +25,7 @@ pub(crate) fn get_named_property_result(
             let layout = object.semantic_layout_id();
             let cached = cache.get();
             if let Some(value) = prototype_cache_hit(object, layout, cached) {
+                crate::execution_trace::named_property_result("prototype", value);
                 crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
                 return Ok(property_value(value));
             }
@@ -32,6 +33,7 @@ pub(crate) fn get_named_property_result(
                 if let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cached) {
                     if layout == cached_layout {
                         if let Some((_, value)) = object.hot_properties().get(slot as usize) {
+                            crate::execution_trace::named_property_result("own", value);
                             crate::execution_trace::event(
                                 crate::execution_trace::Event::NamedPropertyHit,
                             );
