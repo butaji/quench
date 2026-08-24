@@ -557,6 +557,7 @@ pub enum Op {
     DynamicImport {
         dst: u16,
         specifier: u16,
+        options: Option<u16>,
         deferred: bool,
     },
 }
