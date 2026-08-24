@@ -89,9 +89,11 @@ pub fn execute_call_continuation(
         }))
     }
     if let Value::Function(function) = &continuation.callee {
-        if crate::functions::is_nested_array_length_shape(function) {
+        if crate::functions::is_nested_array_shape(function) {
             let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
-            if let Some(value) = crate::functions::execute_shape_kernel(function, &receiver) {
+            if let Some(value) =
+                crate::functions::execute_shape_kernel(function, &receiver, &continuation.arguments)
+            {
                 *registers = continuation.caller_registers;
                 super::write_value(registers, continuation.destination, value);
                 return Ok(());
