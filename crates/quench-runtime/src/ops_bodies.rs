@@ -1,4 +1,29 @@
 impl Op {
+    pub(crate) fn capture_slots(&self, slots: &mut Vec<u16>) {
+        use Op::*;
+        match self {
+            StoreLocal { slot, .. } | MakeRest { slot, .. } | AliasLocal { slot, .. }
+            | StoreFunctionName { slot, .. } | MarkUninitialized { slot, .. }
+            | MarkImmutable { slot } | CheckInitialized { slot, .. }
+            | InitializeLocal { slot } | LoadParameter { slot, .. }
+            | DeclareEvalBinding { slot, .. } | DeclareGlobalLexicalBinding { slot, .. }
+            | DeleteEvalBinding { slot, .. } | CreateGlobalFunction { slot, .. }
+            | CreateGlobalVar { slot, .. } | InitializeResolvedBinding { slot, .. }
+            | SetResolvedLocalBinding { slot, .. } | LoadResolvedLocalBinding { slot, .. }
+            | LoadLocal { slot, .. } | ForIn { slot, .. }
+            | ForOf { slot, .. } => slots.push(*slot),
+            LoadBinding { slot, dynamic: false, .. } => slots.push(*slot),
+            Try { catch_slot: Some(slot), .. } => slots.push(*slot),
+            Loop { per_iteration, .. } => slots.extend_from_slice(per_iteration),
+            Eval { .. } | ResolveName { .. } | ResolveNameOrUndefined { .. }
+            | SetName { .. } | DeleteName { .. } | LoadBinding { dynamic: true, .. } => {
+                slots.push(u16::MAX)
+            }
+            _ => {}
+        }
+        self.visit_bodies(&mut |body| slots.extend_from_slice(body.capture_slots()));
+    }
+
     pub(crate) fn rehome_bodies(
         &mut self,
         arena: &mut crate::machine::CodeArena,

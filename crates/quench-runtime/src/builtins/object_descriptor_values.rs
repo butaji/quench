@@ -47,6 +47,7 @@ fn public_descriptor(descriptor: &Value) -> Value {
 fn public_value(value: &Value) -> Value {
     match value {
         Value::BindingCell(cell) => public_value(&cell.borrow()),
+        Value::WeakFunction(function) => function.value(),
         value => value.clone(),
     }
 }

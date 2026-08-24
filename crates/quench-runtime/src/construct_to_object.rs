@@ -1,5 +1,6 @@
 pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
     match value {
+        Value::WeakFunction(function) => to_object(&function.value()),
         Value::Object(_)
         | Value::Array(_)
         | Value::ObjectAlias(_)

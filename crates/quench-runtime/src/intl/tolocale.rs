@@ -15,6 +15,9 @@ pub(crate) mod value {
         if let Some(Value::BindingCell(value)) = value {
             return to_string(Some(&value.borrow()));
         }
+        if let Some(Value::WeakFunction(value)) = value {
+            return to_string(Some(&value.value()));
+        }
         to_string_value(value)
     }
     #[rustfmt::skip]
@@ -56,6 +59,7 @@ pub(crate) mod value {
                 | Value::ObjectAlias(_),
             ) => "[object Object]".to_string(),
             Some(Value::BindingCell(value)) => to_string(Some(&value.borrow())),
+            Some(Value::WeakFunction(value)) => to_string(Some(&value.value())),
         }
     }
     fn object_string(value: &Value) -> String {
@@ -149,6 +153,7 @@ pub(crate) mod value {
         }
         match value {
             Value::BindingCell(value) => is_truthy(&value.borrow()),
+            Value::WeakFunction(_) => true,
             Value::Boolean(value) => *value,
             Value::Number(value) => *value != 0.0 && !value.is_nan(),
             Value::String(value) => !value.is_empty(),
