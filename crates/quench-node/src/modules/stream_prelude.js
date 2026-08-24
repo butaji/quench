@@ -479,6 +479,7 @@
       highWaterMark: defaultHwm(options),
       buffered: 0,
       needDrain: false,
+      bufferedRequestCount: 0,
       pending: [],
       writing: false,
       ending: false,
@@ -498,6 +499,10 @@
 
   function updateNeedDrain(state) {
     state.needDrain = state.buffered >= state.highWaterMark;
+  }
+
+  function updateBufferedRequestCount(state) {
+    state.bufferedRequestCount = state.pending.length;
   }
 
   function finishWritable(stream) {
@@ -532,6 +537,7 @@
     if (st.corked || st.writing || st.pending.length === 0) return;
     if (st.pending.length > 1 && stream._writev) {
       const pending = st.pending.splice(0);
+      updateBufferedRequestCount(st);
       const total = pending.reduce((sum, item) => sum + item.chunkLength, 0);
       st.writing = true;
       const complete = (error) => {
@@ -555,6 +561,7 @@
       return;
     }
     const item = st.pending.shift();
+    updateBufferedRequestCount(st);
     st.buffered -= item.chunkLength;
     updateNeedDrain(st);
     stream.write(item.chunk, item.encoding, item.callback);
@@ -648,10 +655,12 @@
       updateNeedDrain(st);
       if (st.corked) {
         st.pending.push({ chunk, encoding, callback, chunkLength });
+        updateBufferedRequestCount(st);
         return st.buffered < st.highWaterMark;
       }
       if (st.writing) {
         st.pending.push({ chunk, encoding, callback, chunkLength });
+        updateBufferedRequestCount(st);
         return st.buffered < st.highWaterMark;
       }
       st.writing = true;
@@ -680,6 +689,7 @@
         if (callback) callback();
         if (st.pending.length) {
           const pending = st.pending.splice(0);
+          updateBufferedRequestCount(st);
           if (this._writev && pending.length > 1) {
             const total = pending.reduce((sum, item) => sum + item.chunkLength, 0);
             try {
@@ -708,6 +718,7 @@
           }
           const next = pending.shift();
           st.pending.unshift(...pending);
+          updateBufferedRequestCount(st);
           st.writing = false;
           this.write(next.chunk, next.encoding, next.callback);
           return;
