@@ -193,17 +193,22 @@ fn run_instruction(
             let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
             let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
             if instruction.a != instruction.b {
-                let cell = registers
-                    .read_object(usize::from(instruction.b))
-                    .and_then(|object| {
-                        get_named_cached_cell(object, &metadata.named_cache)
-                    });
-                if let Some(cell) = cell {
-                    // SAFETY: the source register keeps the containing object
-                    // alive and is distinct from the destination register.
-                    unsafe { &*cell }.with_word(|word| {
-                        registers.write_owned(usize::from(instruction.a), word)
-                    });
+                let object = registers.read_object(usize::from(instruction.b));
+                if let Some(payload) = object.and_then(|object| {
+                    get_named_cached_payload(object, &metadata.named_cache)
+                }) {
+                    match payload {
+                        NamedCachedPayload::Cell(cell) => {
+                            // SAFETY: the source register keeps the containing
+                            // object alive until the word copy completes.
+                            unsafe { &*cell }.with_word(|word| {
+                                registers.write_owned(usize::from(instruction.a), word)
+                            });
+                        }
+                        NamedCachedPayload::Value(value) => {
+                            write_value(registers, instruction.a, value)
+                        }
+                    }
                     return Ok(None);
                 }
             }
