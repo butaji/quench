@@ -315,26 +315,47 @@ fn append_join_units(value: &Value, output: &mut Vec<u16>) {
     }
 }
 
-pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::Number(f64::NAN);
-    };
-    if values.is_packed_ordinary() {
-        let mut updated = std::rc::Rc::clone(values);
-        let data = std::rc::Rc::make_mut(&mut updated);
-        let start = data.logical_len();
-        for (offset, value) in arguments.iter().cloned().enumerate() {
-            data.set_index(start + offset, value);
-        }
-        let length = data.logical_len();
-        crate::locals::replace_value(receiver, &Value::Array(updated));
-        return Value::Number(length as f64);
+pub(crate) fn array_push(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
+    let length = crate::builtins::map_length(&receiver)?;
+    let final_length = length.checked_add(arguments.len()).ok_or_else(|| {
+        crate::value::error::throw_type_error("Array length exceeds maximum safe integer")
+    })?;
+    if final_length > 9_007_199_254_740_991usize {
+        return Err(crate::value::error::throw_type_error(
+            "Array length exceeds maximum safe integer",
+        ));
     }
-    let mut updated = std::rc::Rc::clone(values);
-    let data = std::rc::Rc::make_mut(&mut updated);
-    data.append_physical(arguments);
-    let length = data.logical_len();
-    data.append_live(arguments);
-    crate::locals::replace_value(receiver, &Value::Array(updated));
-    Value::Number(length as f64)
+    let mut updated = receiver.clone();
+    for (offset, value) in arguments.iter().cloned().enumerate() {
+        let key = (length + offset).to_string();
+        updated = crate::properties::assign_set_property(
+            &updated,
+            &key,
+            value.clone(),
+        )?;
+        updated = crate::locals::resolved_replacement(updated);
+        if key == u32::MAX.to_string() {
+            if let Value::Array(values) = &updated {
+                let mut values = std::rc::Rc::clone(values);
+                std::rc::Rc::make_mut(&mut values).set_property(&key, value);
+                updated = Value::Array(values);
+            }
+        }
+        crate::locals::replace_value(&receiver, &updated);
+    }
+    if matches!(receiver, Value::Array(_)) && final_length > u32::MAX as usize {
+        crate::locals::replace_value(&receiver, &updated);
+        return Err(crate::value::error::throw_range_error("Invalid array length"));
+    }
+    updated = crate::properties::assign_set_property(
+        &updated,
+        "length",
+        Value::Number(final_length as f64),
+    )?;
+    crate::locals::replace_value(&receiver, &updated);
+    Ok(Value::Number(final_length as f64))
 }
