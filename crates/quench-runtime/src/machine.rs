@@ -113,6 +113,7 @@ pub struct CodeArena {
     instructions: Vec<crate::ir::Instruction>,
     cold: Vec<Op>,
     ranges: Vec<(u32, u32)>,
+    parameter_ends: Vec<Option<u32>>,
     metadata: Vec<Vec<InstructionMeta>>,
 }
 
@@ -336,9 +337,15 @@ impl CodeArena {
         self.ranges.reserve(nested.saturating_add(1));
         let code = CodeId(self.ranges.len() as u32);
         let start = self.instructions.len() as u32;
+        let mut parameter_end = None;
         let mut metadata = Vec::with_capacity(body.len());
         let mut cursor = 0;
         while cursor < body.len() {
+            if matches!(body[cursor], Op::ParameterEnd) {
+                parameter_end.get_or_insert(self.instructions.len() as u32 - start);
+                cursor += 1;
+                continue;
+            }
             if let Some(instruction) = lower_checked_local_load(&body[cursor..]) {
                 self.instructions.push(instruction);
                 metadata.push(metadata_for(&body[cursor]));
@@ -364,6 +371,7 @@ impl CodeArena {
         self.metadata.push(metadata);
         let end = self.instructions.len() as u32;
         self.ranges.push((start, end));
+        self.parameter_ends.push(parameter_end);
         CodeRange { code, start, end }
     }
 
@@ -406,6 +414,7 @@ impl CodeArena {
             instructions: self.instructions.into_boxed_slice().into(),
             cold: self.cold.into_boxed_slice().into(),
             ranges: self.ranges.into_boxed_slice().into(),
+            parameter_ends: self.parameter_ends.into_boxed_slice().into(),
             metadata: self.metadata.into_boxed_slice().into(),
         })
     }
@@ -451,6 +460,7 @@ pub struct CodeStore {
     instructions: Rc<[crate::ir::Instruction]>,
     cold: Rc<[Op]>,
     ranges: Rc<[(u32, u32)]>,
+    parameter_ends: Rc<[Option<u32>]>,
     metadata: Rc<[Vec<InstructionMeta>]>,
 }
 
@@ -513,6 +523,19 @@ impl<'a> CodeView<'a> {
 
     pub fn is_empty(self) -> bool {
         self.range.start == self.range.end
+    }
+
+    pub fn parameter_end(self) -> Option<usize> {
+        let (code_start, _) = self.store.ranges.get(self.range.code.0 as usize)?;
+        let absolute = code_start.checked_add(
+            self.store
+                .parameter_ends
+                .get(self.range.code.0 as usize)?
+                .as_ref()
+                .copied()?,
+        )?;
+        (absolute >= self.range.start && absolute <= self.range.end)
+            .then(|| absolute.saturating_sub(self.range.start) as usize)
     }
 
     #[inline]
@@ -1126,15 +1149,12 @@ mod tests {
         let mut arena = super::CodeArena::new();
         let range = arena.append_slice(&[super::Op::ParameterEnd]);
         let store = arena.freeze();
-        assert_eq!(store.range_len(range.code), Some(1));
+        assert_eq!(store.range_len(range.code), Some(0));
         let code = store.code(range).expect("compact code range");
-        assert_eq!(code.len(), 1);
-        assert_eq!(
-            code.instruction(0).map(|word| word.opcode),
-            Some(crate::ir::Opcode::Slow)
-        );
-        assert!(matches!(code.cold_at(0), Some(super::Op::ParameterEnd)));
-        let invalid = super::CodeRange::new(range.code, 0, 2).unwrap();
+        assert!(code.is_empty());
+        assert_eq!(code.parameter_end(), Some(0));
+        assert!(code.cold_at(0).is_none());
+        let invalid = super::CodeRange::new(range.code, 0, 1).unwrap();
         assert!(store.code(invalid).is_none());
     }
 

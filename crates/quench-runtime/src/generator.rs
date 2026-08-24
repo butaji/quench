@@ -68,7 +68,7 @@ fn initialize_parameters(
     arguments: &[Value],
 ) -> Result<InitialGeneratorState, VmError> {
     let code = function.code.code().ok_or(VmError::MissingReturn)?;
-    let Some(marker) = code.position_cold(|op| matches!(op, Op::ParameterEnd)) else {
+    let Some(marker) = code.parameter_end() else {
         return Ok((None, crate::register_file::RegisterFile::new(), 0, None));
     };
     let (mut registers, environment) =
@@ -93,7 +93,7 @@ fn initialize_parameters(
             suspension: None,
         }),
         registers,
-        marker.saturating_add(1) as u32,
+        marker as u32,
         Some(environment),
     ))
 }

@@ -1,8 +1,8 @@
 #[test]
 fn call_frame_suspend_and_resume_restores_caller_state() {
     let function = super::FunctionCode::from_ops(vec![
-        super::Op::ParameterEnd,
-        super::Op::ParameterEnd,
+        super::Op::Move { dst: 0, src: 0 },
+        super::Op::Move { dst: 1, src: 1 },
     ]);
     let mut machine = super::Machine::with_function(&function, super::EnvironmentRef(7), 2);
     machine.set_program_counter(1);
@@ -53,7 +53,7 @@ fn machine_rejects_call_continuation_from_unknown_code_source() {
 fn machine_resolves_frame_ranges_from_its_function_store() {
     let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
     let machine = Machine::with_function(&function, EnvironmentRef(0), 1);
-    assert_eq!(machine.store.as_ref().and_then(|store| store.code(function.range)).map(|code| code.len()), Some(1));
+    assert_eq!(machine.store.as_ref().and_then(|store| store.code(function.range)).map(|code| code.len()), Some(0));
 }
 #[test]
 fn machine_rejects_frame_ranges_not_owned_by_its_code_store() {
@@ -79,7 +79,7 @@ fn code_arena_can_import_existing_function_ranges() {
     let function = super::FunctionCode::pending(vec![super::Op::ParameterEnd]);
     let mut arena = super::CodeArena::new();
     let range = arena.append_function(&function).expect("function range");
-    assert_eq!(arena.freeze().code(range).map(|code| code.len()), Some(1));
+    assert_eq!(arena.freeze().code(range).map(|code| code.len()), Some(0));
 }
 
 #[test]
