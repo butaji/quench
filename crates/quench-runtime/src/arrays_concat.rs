@@ -43,7 +43,9 @@ pub(crate) fn concat(
 
 fn sparse_array_items(items: &[Value]) -> Result<bool, crate::execute::VmError> {
     items.iter().try_fold(true, |all_arrays, item| {
-        Ok(all_arrays && matches!(item, Value::Array(_)) && is_concat_spreadable(item)?)
+        Ok(all_arrays
+            && matches!(item, Value::Array(values) if !values.is_arguments())
+            && is_concat_spreadable(item)?)
     })
 }
 
@@ -103,7 +105,13 @@ fn spread_concat_element(
     holes: &mut Vec<usize>,
     item: &Value,
 ) -> Result<(), crate::execute::VmError> {
-    let item = crate::locals::resolved_replacement(item.clone());
+    let item = match item {
+        // Arguments objects carry their observable `length` in the shared
+        // argument-live record.  COW replacement can otherwise select an
+        // older physical array and lose that override while spreading.
+        Value::Array(values) if values.is_arguments() => item.clone(),
+        _ => crate::locals::resolved_replacement(item.clone()),
+    };
     if !is_concat_spreadable(&item)? {
         elements.push(item);
         return Ok(());
@@ -146,7 +154,10 @@ fn proxy_targets_array(value: &Value) -> bool {
 }
 
 fn concat_array_like_length(value: &Value) -> Result<usize, crate::execute::VmError> {
-    let length = crate::execute::get_property_result(value, "length")?;
+    let length = match value {
+        Value::Array(values) if values.is_arguments() => values.arguments_length_value(),
+        _ => crate::execute::get_property_result(value, "length")?,
+    };
     let number = crate::conversion::to_number(&length)?;
     if number.is_nan() || number <= 0.0 {
         return Ok(0);
