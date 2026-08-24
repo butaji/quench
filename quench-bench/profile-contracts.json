@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "defaults": {
+    "ratios.value_decode_per_handler": { "max": 0.02 },
+    "ratios.l3_handler_share": { "max": 0.01 },
+    "lanes.l1.counted.deopts": { "max": 0 },
+    "lanes.l2.slow_gateways.main": { "max": 0 },
+    "lanes.l2.slow_gateways.leaf": { "max": 0 }
+  },
+  "benchmarks": {
+    "richards": {
+      "score": { "min": 5000 },
+      "ratios.environments_per_call": { "max": 0.01 },
+      "lanes.l0.value_decode_by_site.getn": { "max": 1000 },
+      "lanes.l0.property_payload.binding_cell": { "max": 1000 },
+      "lanes.l0.value_decode_by_site.load_checked": { "max": 1000 }
+    },
+    "deltablue": {
+      "score": { "min": 5000 },
+      "ratios.environments_per_call": { "max": 0.01 },
+      "lanes.l0.value_decode_by_site.getn": { "max": 1000 },
+      "lanes.l0.property_payload.binding_cell": { "max": 1000 },
+      "lanes.l0.value_decode_by_site.load_checked": { "max": 1000 }
+    },
+    "raytrace": {
+      "score": { "min": 5000 },
+      "lanes.l0.value_decode_by_site.getn": { "max": 1000 },
+      "lanes.l0.property_payload.binding_cell": { "max": 1000 }
+    },
+    "earley-boyer": {
+      "score": { "min": 5000 },
+      "lanes.l3.alloc.environment": { "max": 10000 },
+      "lanes.l3.descriptor_objects.view": { "max": 0 }
+    },
+    "splay": {
+      "score": { "min": 5000 },
+      "lanes.l3.alloc.environment": { "max": 10000 },
+      "lanes.l3.descriptor_objects.view": { "max": 0 }
+    },
+    "regexp": {
+      "score": { "min": 5000 },
+      "lanes.l3.last_index.header": { "min": 1 },
+      "lanes.l3.last_index.getn": { "max": 0 },
+      "lanes.l3.last_index.binding_cell": { "max": 0 },
+      "lanes.l3.descriptor_objects.view": { "max": 0 },
+      "lanes.l3.alloc.match_result": { "max": 10000 }
+    },
+    "crypto": {
+      "score": { "min": 5000 },
+      "ratios.crypto_hit_rate": { "min": 0.99 },
+      "lanes.l1.crypto.direct_iterations": { "min": 1 }
+    },
+    "navier-stokes": {
+      "score": { "min": 5000 },
+      "ratios.counted_hits_per_loop_iteration": { "min": 0.99 },
+      "vm.loop_iteration": { "min": 1 }
+    }
+  }
+}
