@@ -25,8 +25,14 @@ fn call_frame_suspend_and_resume_restores_caller_state() {
     assert_eq!(continuation.destination, 1);
     assert_eq!(continuation.guards.flags, 9);
     assert_eq!(machine.program_counter(), 1);
-    assert_eq!(machine.registers_mut().read(0), Some(super::Value::Number(11.0)));
-    assert_eq!(machine.registers_mut().read(1), Some(super::Value::Number(42.0)));
+    assert_eq!(
+        machine.registers_mut().read(0),
+        Some(super::Value::Number(11.0))
+    );
+    assert_eq!(
+        machine.registers_mut().read(1),
+        Some(super::Value::Number(42.0))
+    );
     assert!(machine.call_frames.is_empty());
 }
 
@@ -53,14 +59,25 @@ fn machine_rejects_call_continuation_from_unknown_code_source() {
 fn machine_resolves_frame_ranges_from_its_function_store() {
     let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
     let machine = Machine::with_function(&function, EnvironmentRef(0), 1);
-    assert_eq!(machine.store.as_ref().and_then(|store| store.code(function.range)).map(|code| code.len()), Some(0));
+    assert_eq!(
+        machine
+            .store
+            .as_ref()
+            .and_then(|store| store.code(function.range))
+            .map(|code| code.len()),
+        Some(0)
+    );
 }
 #[test]
 fn machine_rejects_frame_ranges_not_owned_by_its_code_store() {
     let function = super::FunctionCode::pending(vec![super::Op::ParameterEnd]);
     let mut machine = Machine::with_function(&function, EnvironmentRef(0), 1);
     let invalid = super::CodeRange::new(super::CodeId(99), 0, 1).unwrap();
-    let frame = super::Frame::Await { phase: 0, resume: invalid };
+    let frame = super::Frame::Await {
+        phase: 0,
+        resume: invalid,
+        destination: 0,
+    };
     assert!(machine.try_push_frame(frame).is_err());
     assert_eq!(machine.frame_count(), 0);
 }
@@ -69,7 +86,11 @@ fn machine_rejects_frame_ranges_not_owned_by_its_code_store() {
 fn machine_accepts_frame_ranges_from_its_immutable_store() {
     let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
     let mut machine = Machine::with_function(&function, EnvironmentRef(0), 1);
-    let frame = super::Frame::Await { phase: 0, resume: function.range };
+    let frame = super::Frame::Await {
+        phase: 0,
+        resume: function.range,
+        destination: 0,
+    };
     machine.try_push_frame(frame).unwrap();
     assert_eq!(machine.frame_count(), 1);
 }
@@ -90,7 +111,9 @@ fn linked_nested_bodies_share_one_immutable_code_store() {
         body: child,
         close_normal: false,
     }]);
-    let Some(super::Op::IteratorBinding { body, .. }) = root.code().and_then(|code| code.cold_at(0)) else {
+    let Some(super::Op::IteratorBinding { body, .. }) =
+        root.code().and_then(|code| code.cold_at(0))
+    else {
         panic!("iterator binding");
     };
     assert!(std::rc::Rc::ptr_eq(&root.store, &body.store));
@@ -108,6 +131,7 @@ fn frame_stack_grows_geometrically_before_hitting_hard_limit() {
     let frame = || super::Frame::Await {
         phase: 0,
         resume: range,
+        destination: 0,
     };
     let mut stack = super::FrameStack::with_capacity_and_limit(1, 3);
     assert_eq!(stack.capacity(), 1);
@@ -134,6 +158,7 @@ fn frame_stack_depth_is_the_single_source_of_active_frames() {
     let frame = || super::Frame::Await {
         phase: 0,
         resume: range,
+        destination: 0,
     };
     let mut stack = super::FrameStack::with_capacity_and_limit(1, 2);
     assert!(stack.is_empty());
@@ -158,12 +183,14 @@ fn frame_stack_rejects_at_limit_without_growing() {
         .try_push(super::Frame::Await {
             phase: 0,
             resume: range,
+            destination: 0,
         })
         .unwrap();
     stack
         .try_push(super::Frame::Await {
             phase: 0,
             resume: range,
+            destination: 0,
         })
         .unwrap();
     let capacity = stack.capacity();
@@ -171,6 +198,7 @@ fn frame_stack_rejects_at_limit_without_growing() {
         .try_push(super::Frame::Await {
             phase: 0,
             resume: range,
+            destination: 0,
         })
         .is_err());
     assert_eq!(stack.capacity(), capacity);
@@ -186,6 +214,7 @@ fn frame_stack_reports_remaining_hard_limit() {
         .try_push(super::Frame::Await {
             phase: 0,
             resume: range,
+            destination: 0,
         })
         .unwrap();
     assert_eq!(stack.remaining(), 2);
@@ -200,6 +229,7 @@ fn frame_stack_handles_deep_js_continuations_without_native_recursion() {
             .try_push(super::Frame::Await {
                 phase: 0,
                 resume: range,
+                destination: 0,
             })
             .expect("explicit VM stack should accept configured depth");
     }
@@ -209,7 +239,6 @@ fn frame_stack_handles_deep_js_continuations_without_native_recursion() {
     }
     assert!(stack.is_empty());
     assert!(stack.invariant_holds());
-
 }
 
 #[test]
@@ -220,14 +249,12 @@ fn frame_offsets_survive_contiguous_storage_growth() {
         .try_push(super::Frame::Await {
             phase: 7,
             resume: range,
+            destination: 0,
         })
         .unwrap();
     let first = stack.top_offset().expect("first frame offset");
     let first_ptr = stack.frame_at(first).expect("first frame");
-    assert!(matches!(
-        first_ptr,
-        super::Frame::Await { phase: 7, .. }
-    ));
+    assert!(matches!(first_ptr, super::Frame::Await { phase: 7, .. }));
 
     // Force Vec growth/reallocation. The offset, rather than a borrowed
     // reference, is the continuation identity and must still resolve.
@@ -235,6 +262,7 @@ fn frame_offsets_survive_contiguous_storage_growth() {
         .try_push(super::Frame::Await {
             phase: 9,
             resume: range,
+            destination: 0,
         })
         .unwrap();
     assert!(matches!(
@@ -293,7 +321,11 @@ fn frame_continuation_register_contract_uses_integer_ids() {
 #[test]
 fn frames_without_register_destinations_have_empty_contract() {
     let range = super::CodeRange::new(super::CodeId(0), 0, 1).unwrap();
-    let frame = super::Frame::Await { phase: 0, resume: range };
+    let frame = super::Frame::Await {
+        phase: 0,
+        resume: range,
+        destination: 0,
+    };
     assert!(frame.register_ids().is_empty());
     assert!(frame.has_valid_register_ids(0));
 }
