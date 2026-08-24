@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "metrics": {
+    "environment_per_call": {
+      "numerator": "heap_lifecycle.environment.allocated",
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "max": 0.01
+    },
+    "slow_call_per_iteration": {
+      "numerator": { "top": { "path": "lanes.l3.top_slow", "key": "op", "value": "Call" } },
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "max": 0.01
+    }
+  }
+}
