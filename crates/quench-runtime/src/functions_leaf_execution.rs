@@ -172,7 +172,7 @@ fn proven_leaf(
 ) -> Result<bool, LeafReject> {
     let arguments_slot = function.captures.len() as u16 + function.params;
     if function.code.uses_slot(arguments_slot) || function.mapped_arguments {
-        return Err(LeafReject::Opcode);
+        return Err(LeafReject::Opcode("Arguments"));
     }
     let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (LEAF_FACT_SLOTS - 1);
     let cached = LEAF_FACTS.with(|facts| facts.borrow().get(index).and_then(Clone::clone));
