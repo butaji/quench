@@ -48,7 +48,7 @@ pub(crate) fn array_map(
         };
         let args = [value, Value::Number(index as f64), receiver.clone()];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
-        mapped = crate::builtins::set_property(mapped, &index.to_string(), result);
+        mapped = create_data_property_or_throw(mapped, &index.to_string(), result)?;
     }
     Ok(crate::builtins::set_property(
         mapped,
@@ -66,7 +66,7 @@ fn array_species_create(
         return Ok(Value::array(Vec::new()));
     }
     let constructor = crate::execute::get_property_result(receiver, "constructor")?;
-    if matches!(constructor, Value::Undefined | Value::Null | Value::Builtin(crate::ops::Builtin::Array)) {
+    if matches!(constructor, Value::Undefined | Value::Builtin(crate::ops::Builtin::Array)) {
         return Ok(Value::array(Vec::new()));
     }
     if !crate::value::is_object(&constructor) {
@@ -96,7 +96,7 @@ pub(crate) fn map_value(
     index: usize,
 ) -> Result<Option<Value>, crate::execute::VmError> {
     let receiver = crate::locals::resolved_replacement(receiver.clone());
-    if let Value::Array(values) = &receiver {
+    if let Value::Array(_) = &receiver {
         let key = index.to_string();
         if !crate::with_scope::has_property(&receiver, &key)?
             && !crate::arrays::prototype_override_present(&key)
@@ -182,15 +182,94 @@ pub(crate) fn array_filter(
         let args = [value.clone(), Value::Number(index as f64), receiver.clone()];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
         if crate::execute::is_truthy(&result) {
-            filtered = crate::builtins::set_property(filtered, &output.to_string(), value);
+            filtered = create_data_property_or_throw(filtered, &output.to_string(), value)?;
             output = output.saturating_add(1);
         }
+    }
+    if matches!(&filtered, Value::Array(values) if values.logical_len() == output) {
+        return Ok(filtered);
     }
     Ok(crate::builtins::set_property(
         filtered,
         "length",
         Value::Number(output as f64),
     ))
+}
+
+fn create_data_property_or_throw(
+    target: Value,
+    key: &str,
+    value: Value,
+) -> Result<Value, crate::execute::VmError> {
+    if let Value::Array(values) = &target {
+        let index = key.parse::<usize>().ok();
+        let has_own = crate::builtins::object::has_own_property(
+            Some(&target),
+            Some(&Value::String(key.to_string())),
+        ) == Value::Boolean(true);
+        if !has_own && !crate::properties::object_is_extensible(&target) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot define a property on a non-extensible object",
+            ));
+        }
+        if let Some(descriptor) = values.descriptor(key) {
+            if crate::builtins::descriptor_flag(&target, key, "configurable") == Some(false) {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot redefine non-configurable property",
+                ));
+            }
+            if crate::builtins::descriptor_flag(&target, key, "writable") == Some(false)
+                && crate::builtins::descriptor_flag(&target, key, "configurable") != Some(true)
+            {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot redefine non-writable property",
+                ));
+            }
+            let _ = descriptor;
+        }
+        let Some(index) = index else {
+            return crate::builtins::define_own_property_public(&target, key, &[
+                ("value".to_string(), value),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(true)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]);
+        };
+        let mut updated = std::rc::Rc::clone(values);
+        let data = std::rc::Rc::make_mut(&mut updated);
+        data.set_index(index, value.clone());
+        data.define_descriptor(
+            key,
+            Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                ("value".to_string(), value),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(true)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        );
+        let replacement = Value::Array(updated.clone());
+        crate::locals::replace_value(&target, &replacement);
+        return Ok(replacement);
+    }
+    let target = if crate::builtins::descriptor_flag(&target, key, "configurable") == Some(true) {
+        let (target, deleted) = crate::execute::delete_property(target, key);
+        if deleted {
+            target
+        } else {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot redefine non-configurable property",
+            ));
+        }
+    } else {
+        target
+    };
+    let descriptor = vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ];
+    crate::builtins::define_own_property_public(&target, key, &descriptor)
 }
 
 pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
