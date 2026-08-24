@@ -12,9 +12,9 @@ use crate::value::Value;
 ///
 /// Environments are confined to the single-threaded VM. The vector is
 /// mutated through `UnsafeCell`; entries retain their externally observable
-/// `Rc<RefCell<Value>>` identity.
+/// `Rc<crate::value::BindingCell>` identity.
 #[derive(Debug)]
-struct DeletedCells(UnsafeCell<Vec<Rc<RefCell<Value>>>>);
+struct DeletedCells(UnsafeCell<Vec<Rc<crate::value::BindingCell>>>);
 
 impl PartialEq for DeletedCells {
     fn eq(&self, other: &Self) -> bool {
@@ -44,17 +44,6 @@ impl TdzCells {
         Rc::new(Self(UnsafeCell::new(copy)))
     }
 
-    fn clone_prefix(source: &Rc<Self>, count: usize) -> Rc<Self> {
-        let copy = unsafe {
-            (&*source.0.get())
-                .iter()
-                .copied()
-                .filter(|slot| usize::from(*slot) < count)
-                .collect()
-        };
-        Rc::new(Self(UnsafeCell::new(copy)))
-    }
-
     fn insert(&self, slot: u16) {
         unsafe {
             (&mut *self.0.get()).insert(slot);
@@ -81,7 +70,7 @@ struct SlotStore {
     // authoritative source and `values[index]` is only the snapshot used to
     // create it.
     values: UnsafeCell<crate::register_file::RegisterFile>,
-    bridges: UnsafeCell<Option<Vec<Option<Rc<RefCell<Value>>>>>>,
+    bridges: UnsafeCell<Option<Vec<Option<Rc<crate::value::BindingCell>>>>>,
 }
 
 impl PartialEq for SlotStore {
@@ -119,8 +108,8 @@ impl SlotStore {
         store
     }
 
-    fn from_cell(cell: Rc<RefCell<Value>>) -> Rc<Self> {
-        let value = cell.borrow().clone();
+    fn from_cell(cell: Rc<crate::value::BindingCell>) -> Rc<Self> {
+        let value = cell.load();
         let store = Rc::new(Self {
             values: UnsafeCell::new(crate::register_file::RegisterFile::from_values(vec![value])),
             bridges: UnsafeCell::new(Some(vec![Some(cell)])),
@@ -141,13 +130,13 @@ impl SlotStore {
         unsafe { &mut *self.values.get() }
     }
 
-    fn bridges(&self) -> Option<&Vec<Option<Rc<RefCell<Value>>>>> {
+    fn bridges(&self) -> Option<&Vec<Option<Rc<crate::value::BindingCell>>>> {
         // SAFETY: see `values`.
         unsafe { (&*self.bridges.get()).as_ref() }
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn bridges_mut(&self) -> &mut Vec<Option<Rc<RefCell<Value>>>> {
+    fn bridges_mut(&self) -> &mut Vec<Option<Rc<crate::value::BindingCell>>> {
         // SAFETY: see `values_mut`.
         let bridges = unsafe { &mut *self.bridges.get() };
         bridges.get_or_insert_with(|| vec![None; self.values().len()])
@@ -178,7 +167,7 @@ impl SlotStore {
             .and_then(Option::as_ref)
             .map_or_else(
                 || self.values().read(index).unwrap_or(Value::Undefined),
-                |cell| cell.borrow().clone(),
+                |cell| cell.load(),
             )
             .strong_function()
     }
@@ -218,10 +207,23 @@ impl SlotStore {
         }
     }
 
+    fn load_into_fixed<const N: usize>(
+        &self,
+        registers: &mut crate::register_file::FixedWordFile<N>,
+        dst: usize,
+        index: usize,
+    ) -> bool {
+        self.ensure(index);
+        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
+            return cell.with_word(|word| registers.write_owned(dst, word).is_some());
+        }
+        registers.copy_from(dst, self.values(), index).is_some()
+    }
+
     fn store(&self, index: usize, value: Value) {
         self.ensure(index);
         if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
-            *cell.borrow_mut() = value;
+            cell.store(value);
         } else {
             self.values_mut().write(index, value);
         }
@@ -239,14 +241,14 @@ impl SlotStore {
             let Some(value) = registers.read(usize::from(source)) else {
                 return false;
             };
-            *cell.borrow_mut() = value;
+            cell.store(value);
             return true;
         }
         self.values_mut()
             .copy_from(index, registers, usize::from(source))
     }
 
-    fn existing_cell(&self, index: usize) -> Option<Rc<RefCell<Value>>> {
+    fn existing_cell(&self, index: usize) -> Option<Rc<crate::value::BindingCell>> {
         self.bridges()
             .and_then(|bridges| bridges.get(index))
             .and_then(Option::as_ref)
@@ -271,14 +273,13 @@ impl SlotStore {
         }
     }
 
-    fn bridge(&self, index: usize) -> Rc<RefCell<Value>> {
+    fn bridge(&self, index: usize) -> Rc<crate::value::BindingCell> {
         self.ensure(index);
         if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
             return Rc::clone(cell);
         }
-        let cell = Rc::new(RefCell::new(
-            self.values().read(index).unwrap_or(Value::Undefined),
-        ));
+        let cell =
+            crate::value::BindingCell::new(self.values().read(index).unwrap_or(Value::Undefined));
         self.bridges_mut()[index] = Some(Rc::clone(&cell));
         self.invariant();
         cell
@@ -286,7 +287,7 @@ impl SlotStore {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct BindingRef {
+struct BindingRef {
     store: Rc<SlotStore>,
     index: usize,
 }
@@ -431,7 +432,7 @@ impl BindingRef {
         self.store.copy_from_register(self.index, registers, source)
     }
 
-    fn existing_cell(&self) -> Option<Rc<RefCell<Value>>> {
+    fn existing_cell(&self) -> Option<Rc<crate::value::BindingCell>> {
         self.store.existing_cell(self.index)
     }
 
@@ -439,7 +440,7 @@ impl BindingRef {
         self.store.update_number(self.index, delta)
     }
 
-    fn cell(&self) -> Rc<RefCell<Value>> {
+    fn cell(&self) -> Rc<crate::value::BindingCell> {
         self.store.bridge(self.index)
     }
 
@@ -471,22 +472,6 @@ fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
     source.as_ref().map(TdzCells::clone_values)
 }
 
-fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
-    source
-        .as_ref()
-        .map(|cells| TdzCells::clone_prefix(cells, count))
-}
-
-fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
-    source.borrow().as_ref().map(|slots| {
-        slots
-            .iter()
-            .copied()
-            .filter(|slot| usize::from(*slot) < limit)
-            .collect()
-    })
-}
-
 impl Environment {
     pub(crate) fn new() -> Rc<Self> {
         crate::execution_trace::environment_lifecycle(true);
@@ -513,7 +498,7 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(immutable_prefix(&environment.immutable_slots, count)),
+            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
@@ -554,20 +539,7 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(Some(
-                environment
-                    .immutable_slots
-                    .borrow()
-                    .as_ref()
-                    .map(|slots| {
-                        slots
-                            .iter()
-                            .copied()
-                            .filter(|slot| selected.contains(slot))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            )),
+            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: None,
@@ -607,17 +579,15 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        let captured_len = captures.slots.borrow().shared_prefix().len();
-        environment.uninitialized.replace(clone_tdz_prefix(
-            &captures.uninitialized.borrow(),
-            captured_len,
-        ));
+        environment
+            .uninitialized
+            .replace(clone_tdz(&captures.uninitialized.borrow()));
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
         environment
             .immutable_slots
-            .replace(immutable_prefix(&captures.immutable_slots, prefix_len));
+            .replace(captures.immutable_slots.borrow().clone());
         environment
     }
 
@@ -626,10 +596,6 @@ impl Environment {
     }
     pub(crate) fn len(&self) -> usize {
         self.slots.borrow().len()
-    }
-
-    pub(crate) fn captured_len(&self) -> usize {
-        self.slots.borrow().prefix_len
     }
 
     pub(crate) fn get(&self, slot: u16) -> Value {
@@ -654,6 +620,18 @@ impl Environment {
         }
     }
 
+    pub(crate) fn load_into_fixed<const N: usize>(
+        &self,
+        registers: &mut crate::register_file::FixedWordFile<N>,
+        dst: usize,
+        slot: u16,
+    ) -> bool {
+        let slots = self.slots.borrow();
+        slots
+            .get(usize::from(slot))
+            .is_some_and(|binding| binding.store.load_into_fixed(registers, dst, binding.index))
+    }
+
     pub(crate) fn set(&self, slot: u16, value: Value) {
         {
             let binding = self.ensure_slot(slot);
@@ -676,9 +654,6 @@ impl Environment {
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
-        if self.is_immutable_slot(slot) && !self.is_uninitialized(slot) {
-            return None;
-        }
         self.slot(slot)?.update_number(delta)
     }
 
@@ -697,11 +672,11 @@ impl Environment {
         }
     }
 
-    pub(crate) fn slot_cell(&self, slot: u16) -> Rc<RefCell<Value>> {
+    pub(crate) fn slot_cell(&self, slot: u16) -> Rc<crate::value::BindingCell> {
         self.ensure_slot(slot).cell()
     }
 
-    pub(crate) fn install_slot_cell(&self, slot: u16, cell: Rc<RefCell<Value>>) {
+    pub(crate) fn install_slot_cell(&self, slot: u16, cell: Rc<crate::value::BindingCell>) {
         let index = usize::from(slot);
         self.ensure_slot(slot);
         self.slots
@@ -736,7 +711,7 @@ impl Environment {
         }
     }
 
-    pub(crate) fn alias_binding(&self, name: &str, binding: Rc<RefCell<Value>>) {
+    pub(crate) fn alias_binding(&self, name: &str, binding: Rc<crate::value::BindingCell>) {
         self.alias_module_binding(name, ModuleBindingCell::from_shared(binding));
     }
 
@@ -809,27 +784,6 @@ impl Environment {
         self.eval_name_binding(name).map(|binding| binding.load())
     }
 
-    pub(crate) fn snapshot_eval_name_chain(&self) -> Vec<Option<HashMap<String, BindingRef>>> {
-        let mut snapshots = vec![self.eval_names.borrow().clone()];
-        if let Some(caller) = &self.caller {
-            snapshots.extend(caller.snapshot_eval_name_chain());
-        }
-        snapshots
-    }
-
-    pub(crate) fn restore_eval_name_chain(
-        &self,
-        snapshots: &[Option<HashMap<String, BindingRef>>],
-    ) {
-        let Some((current, rest)) = snapshots.split_first() else {
-            return;
-        };
-        self.eval_names.replace(current.clone());
-        if let Some(caller) = &self.caller {
-            caller.restore_eval_name_chain(rest);
-        }
-    }
-
     pub(crate) fn eval_name_aliases_slot(&self, name: &str, slot: u16) -> bool {
         if self
             .eval_names
@@ -839,14 +793,12 @@ impl Environment {
         {
             return true;
         }
-        let Some(caller) = &self.caller else {
+        if self.slot(slot).is_some() {
             return false;
-        };
-        let captured = self
-            .slot(slot)
-            .zip(caller.slot(slot))
-            .is_some_and(|(current, parent)| current.same(&parent));
-        captured && caller.eval_name_aliases_slot(name, slot)
+        }
+        self.caller
+            .as_ref()
+            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
@@ -912,7 +864,7 @@ impl Environment {
         self.ensure_slot(slot);
         self.shared_tdz().insert(slot);
     }
-    pub(crate) fn is_deleted(&self, cell: &Rc<RefCell<Value>>) -> bool {
+    pub(crate) fn is_deleted(&self, cell: &Rc<crate::value::BindingCell>) -> bool {
         self.deleted_cells.borrow().as_ref().is_some_and(|cells| {
             // SAFETY: VM execution is single-threaded; all access is through
             // Environment methods and the Rc keeps the vector alive.
@@ -931,14 +883,14 @@ impl Environment {
         self.is_deleted(&cell)
     }
 
-    fn mark_deleted_cell(&self, cell: Rc<RefCell<Value>>) {
+    fn mark_deleted_cell(&self, cell: Rc<crate::value::BindingCell>) {
         let mut state = self.deleted_cells.borrow_mut();
         let cells = state.get_or_insert_with(|| Rc::new(DeletedCells(UnsafeCell::new(Vec::new()))));
         // SAFETY: VM execution is single-threaded; no aliased mutable access
         // occurs while this method runs.
         unsafe { &mut *cells.0.get() }.push(cell);
     }
-    fn clear_deleted_cell(&self, cell: &Rc<RefCell<Value>>) {
+    fn clear_deleted_cell(&self, cell: &Rc<crate::value::BindingCell>) {
         if let Some(cells) = self.deleted_cells.borrow().as_ref() {
             // SAFETY: VM execution is single-threaded; see mark_deleted_cell.
             unsafe { &mut *cells.0.get() }.retain(|candidate| !Rc::ptr_eq(candidate, cell));
@@ -1031,7 +983,7 @@ impl Environment {
         }
     }
 
-    pub(crate) fn replace_slot(&self, slot: u16, value: Value) -> Rc<RefCell<Value>> {
+    pub(crate) fn replace_slot(&self, slot: u16, value: Value) -> Rc<crate::value::BindingCell> {
         let previous = self.ensure_slot(slot);
         let store = SlotStore::from_values(vec![value]);
         self.slots
@@ -1041,16 +993,15 @@ impl Environment {
         previous.cell()
     }
 
-    pub(crate) fn has_caller(&self) -> bool {
-        self.caller.is_some()
-    }
-
-    pub(crate) fn restore_slot(&self, slot: u16, value: Rc<RefCell<Value>>) {
+    pub(crate) fn restore_slot(&self, slot: u16, value: Rc<crate::value::BindingCell>) {
         let binding = BindingRef::new(SlotStore::from_cell(value), 0);
         self.slots.borrow_mut().replace(usize::from(slot), binding);
     }
 
     pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
+        if let Some(caller) = &self.caller {
+            caller.replace_value(old, new);
+        }
         for index in 0..self.slots.borrow().len() {
             let Some(slot) = self.slot(index as u16) else {
                 continue;
@@ -1112,9 +1063,9 @@ mod tests {
 
     #[test]
     fn bridged_cell_is_authoritative_source_after_external_update() {
-        let cell = std::rc::Rc::new(std::cell::RefCell::new(Value::Number(4.0)));
+        let cell = crate::value::BindingCell::new(Value::Number(4.0));
         let store = SlotStore::from_cell(std::rc::Rc::clone(&cell));
-        *cell.borrow_mut() = Value::Number(9.0);
+        cell.store(Value::Number(9.0));
         assert_eq!(store.load(0), Value::Number(9.0));
         store.store(0, Value::Number(12.0));
         assert_eq!(*cell.borrow(), Value::Number(12.0));
