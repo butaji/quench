@@ -419,6 +419,16 @@ fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
     source.as_ref().map(TdzCells::clone_values)
 }
 
+fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
+    source.borrow().as_ref().map(|slots| {
+        slots
+            .iter()
+            .copied()
+            .filter(|slot| usize::from(*slot) < limit)
+            .collect()
+    })
+}
+
 impl Environment {
     pub(crate) fn new() -> Rc<Self> {
         crate::execution_trace::environment_lifecycle(true);
@@ -445,7 +455,7 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            immutable_slots: RefCell::new(immutable_prefix(&environment.immutable_slots, count)),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
@@ -486,7 +496,20 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            immutable_slots: RefCell::new(Some(
+                environment
+                    .immutable_slots
+                    .borrow()
+                    .as_ref()
+                    .map(|slots| {
+                        slots
+                            .iter()
+                            .copied()
+                            .filter(|slot| selected.contains(slot))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            )),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: None,
@@ -524,7 +547,7 @@ impl Environment {
             .replace(captures.deleted_cells.borrow().clone());
         environment
             .immutable_slots
-            .replace(captures.immutable_slots.borrow().clone());
+            .replace(immutable_prefix(&captures.immutable_slots, prefix_len));
         environment
     }
 
