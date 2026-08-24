@@ -27,6 +27,8 @@ execution_events! {
     PackedArrayGet => "packed_array_get",
     PackedArraySet => "packed_array_set",
     PackedArrayMiss => "packed_array_miss",
+    NamedPropertyHit => "named_property_hit",
+    NamedPropertyMiss => "named_property_miss",
 }
 
 #[cfg(feature = "execution-trace")]
