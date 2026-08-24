@@ -285,12 +285,31 @@ fn construct_result(
             "TypedArray.from receiver is not a constructor",
         ));
     }
-    // Iterable sources construct with no arguments; array-like sources pass
-    // the collected length. This distinction is observable by custom
-    // constructors and is part of Array.from's calling convention.
-    let arguments = iterable
-        .then(Vec::new)
-        .unwrap_or_else(|| vec![Value::Number(length as f64)]);
+    // Built-in typed arrays must reserve the final extent before iterable
+    // elements are written: unlike a custom constructor, their views cannot
+    // grow after construction. Custom constructors retain the observable
+    // iterable-vs-array-like calling convention.
+    let builtin_typed = matches!(
+        constructor,
+        Value::Builtin(
+            crate::ops::Builtin::Float64Array
+                | crate::ops::Builtin::Float32Array
+                | crate::ops::Builtin::Int8Array
+                | crate::ops::Builtin::Int16Array
+                | crate::ops::Builtin::Int32Array
+                | crate::ops::Builtin::Uint8Array
+                | crate::ops::Builtin::Uint16Array
+                | crate::ops::Builtin::Uint32Array
+                | crate::ops::Builtin::Uint8ClampedArray
+                | crate::ops::Builtin::BigInt64Array
+                | crate::ops::Builtin::BigUint64Array
+        )
+    );
+    let arguments = if builtin_typed || !iterable {
+        vec![Value::Number(length as f64)]
+    } else {
+        Vec::new()
+    };
     crate::construct::construct_value(constructor, &arguments)
 }
 
