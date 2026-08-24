@@ -136,6 +136,17 @@ class AsyncLocalStorage {
     this.store = undefined;
     try { return callback(...args); } finally { this.store = previous; }
   }
+  withScope(store) {
+    const previous = this.store;
+    this.store = store;
+    let disposed = false;
+    const restore = () => {
+      if (disposed) return;
+      disposed = true;
+      this.store = previous;
+    };
+    return { dispose: restore, [Symbol.dispose]: restore };
+  }
 }
 
 module.exports = {
