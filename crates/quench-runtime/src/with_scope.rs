@@ -66,6 +66,10 @@ pub(crate) fn capture() -> Vec<Value> {
     OBJECTS.with(|objects| objects.borrow().clone())
 }
 
+pub(crate) fn is_active() -> bool {
+    OBJECTS.with(|objects| !objects.borrow().is_empty())
+}
+
 pub(crate) fn execute_resolve_global(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,

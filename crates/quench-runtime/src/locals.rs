@@ -292,7 +292,7 @@ pub(crate) fn load_binding(
         registers.write_number(usize::from(dst), number);
         return Ok(());
     }
-    crate::execute::write_value(registers, dst, environment.get(slot));
+    crate::execute::write_value(registers, dst, resolved_replacement(environment.get(slot)));
     Ok(())
 }
 

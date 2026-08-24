@@ -12,6 +12,7 @@ pub fn reduce_eval_source(
         source,
         inherited_strict,
         global,
+        false,
         bindings,
         &[],
         forbidden_var_names,
@@ -22,6 +23,7 @@ pub(crate) fn reduce_eval_source_in_context(
     source: &str,
     inherited_strict: bool,
     global: bool,
+    dynamic_scope: bool,
     bindings: &[(String, u16)],
     reusable_var_names: &[String],
     forbidden_var_names: &[String],
@@ -45,6 +47,9 @@ pub(crate) fn reduce_eval_source_in_context(
     let directive_completion =
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = eval_facts(&analysis, strict);
+    if dynamic_scope {
+        facts.enter_dynamic_scope();
+    }
     install_eval_facts(&mut facts, source, &analysis);
     if wrapped.is_some() {
         remap_eval_private_ids(&mut facts, &parsed.program);
