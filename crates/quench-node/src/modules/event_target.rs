@@ -258,6 +258,13 @@ pub fn dispatch_event(
                 execute::call(&handler, &listener.callback, std::slice::from_ref(event))?;
             }
         }
+        if execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
+            || event
+                .object_identity()
+                .is_some_and(|identity| state.borrow().stopped_events.contains(&identity))
+        {
+            break;
+        }
     }
     let prevented = event
         .object_identity()
