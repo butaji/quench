@@ -392,6 +392,7 @@ pub const SPEC_DEFINE_EVENT_HANDLER: NodeSpec =
     NodeSpec::new("internal:eventTarget:defineEventHandler", 0x0120);
 pub const SPEC_EVENT_HANDLER_GET: NodeSpec = NodeSpec::new("EventHandler.get", 0x0121);
 pub const SPEC_EVENT_HANDLER_SET: NodeSpec = NodeSpec::new("EventHandler.set", 0x0122);
+pub const SPEC_CUSTOM_EVENT: NodeSpec = NodeSpec::new("CustomEvent", 0x0123);
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1400);
 pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1401);
@@ -552,6 +553,30 @@ pub fn namespace_bindings(
         crate::host::namespace_object_from_pairs(Vec::new()),
     );
     out.push(("Event".to_string(), event));
+    let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
+    let _ = quench_runtime::execute::set_callable_property(
+        &custom_event,
+        "prototype",
+        crate::host::namespace_object_from_pairs(Vec::new()),
+    );
+    for (name, value) in [
+        ("NONE", 0.0),
+        ("CAPTURING_PHASE", 1.0),
+        ("AT_TARGET", 2.0),
+        ("BUBBLING_PHASE", 3.0),
+    ] {
+        let _ = quench_runtime::execute::set_callable_property(
+            &custom_event,
+            name,
+            quench_runtime::value::Value::Number(value),
+        );
+    }
+    let _ = quench_runtime::execute::set_callable_property(
+        &custom_event,
+        "length",
+        quench_runtime::value::Value::Number(1.0),
+    );
+    out.push(("CustomEvent".to_string(), custom_event));
     out.push((
         "atob".to_string(),
         crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
