@@ -492,6 +492,11 @@ fn descriptor_property_result(
     key: &str,
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
+    if let Value::Function(function) = value {
+        if let Some(result) = function_descriptor_result(function, value, key, receiver) {
+            return result;
+        }
+    }
     let Ok(descriptor) =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
     else {
@@ -513,6 +518,39 @@ fn descriptor_property_result(
         }
     }
     Some(Ok(receiver_property(value, key, receiver)))
+}
+
+fn function_descriptor_result(
+    function: &crate::value::FunctionValue,
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Option<Result<Value, VmError>>> {
+    let properties = function.properties.borrow();
+    if properties
+        .iter()
+        .any(|(name, _)| crate::builtins::is_deleted_key_for(name, key))
+    {
+        return Some(None);
+    }
+    if !properties.iter().any(|(name, _)| name == key) {
+        return Some(None);
+    }
+    let metadata = crate::builtins::descriptor_metadata(properties.as_slice(), key);
+    let getter = match metadata {
+        None => None,
+        Some(Value::Object(descriptor)) => descriptor
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "get").then(|| value.clone())),
+        Some(_) => return None,
+    };
+    drop(properties);
+    Some(Some(match getter {
+        Some(Value::Undefined) => Ok(Value::Undefined),
+        Some(getter) => invoke_accessor(&getter, receiver),
+        None => Ok(receiver_property(value, key, receiver)),
+    }))
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own
