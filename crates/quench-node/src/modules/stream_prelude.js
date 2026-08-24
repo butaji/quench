@@ -19,8 +19,7 @@
       if (name === "readable" && this._readableState &&
           !this._readableState.reading && !this._readableState.ended) {
         this._readableState.flowing = false;
-        this._readableState.reading = true;
-        this._read(this._readableState.highWaterMark);
+        requestRead(this);
       }
       // A stream may finish synchronously while a pipe/end callback is being
       // installed. Preserve Node's observable completion guarantee for those
@@ -128,6 +127,7 @@
       flowing: null,
       flowScheduled: false,
       reading: false,
+      readRequests: 0,
       ended: false,
       endEmitted: false,
       emittedReadable: false,
@@ -147,6 +147,13 @@
     if (options.destroy) stream._destroy = options.destroy;
   }
 
+  function requestRead(stream) {
+    const state = stream._readableState;
+    state.readRequests += 1;
+    state.reading = true;
+    stream._read(state.highWaterMark);
+  }
+
   function flowReadable(stream) {
     const st = stream._readableState;
     if (stream.listenerCount("readable") > 0 &&
@@ -157,8 +164,7 @@
     }
     if (st.flowing) {
       if (st.decoder && st.buffer.length > 0 && !st.ended && !st.reading) {
-        st.reading = true;
-        stream._read(st.highWaterMark);
+        requestRead(stream);
       }
       if (st.decoder && st.buffer.length > 1 && typeof Buffer !== "undefined") {
         st.buffer = [Buffer.concat(st.buffer)];
@@ -178,7 +184,7 @@
     }
     if (st.flowing && st.buffer.length === 0 && !st.ended && !st.reading) {
       st.reading = true;
-      stream._read(st.highWaterMark);
+      requestRead(stream);
       // _read may synchronously refill the queue. Continue pulling in the
       // same turn; flowScheduled is already set, so scheduling alone would
       // otherwise strand the newly queued chunks until another event arrives.
@@ -279,9 +285,12 @@
 
     push(chunk, encoding) {
       const st = this._readableState;
-      st.reading = false;
+      const pendingReads = st.readRequests;
+      if (pendingReads > 0) st.readRequests -= 1;
+      st.reading = st.readRequests > 0;
       if (st.ended || st.errored) {
         if (chunk !== null && !st.errored) {
+          if (pendingReads > 0) return false;
           const error = new Error("stream.push() after EOF");
           error.code = "ERR_STREAM_PUSH_AFTER_EOF";
           st.errored = error;
@@ -319,7 +328,7 @@
       if (typeof chunk === "string" && chunk.length === 0) return true;
       if (st.ended) st.ended = false;
       st.buffer.unshift(normalizeReadableChunk(this, chunk));
-      st.reading = false;
+      st.reading = st.readRequests > 0;
       scheduleFlow(this);
       return true;
     }
@@ -340,7 +349,7 @@
       };
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
-        st.reading = false;
+        st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
@@ -349,30 +358,27 @@
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
-          this._read(st.highWaterMark);
+          requestRead(this);
         }
         return chunk;
       }
       if (!st.ended && !st.reading) {
-        st.reading = true;
-        this._read(st.highWaterMark);
+        requestRead(this);
       }
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
-        st.reading = false;
+        st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          this._read(st.highWaterMark);
+          requestRead(this);
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          this._read(st.highWaterMark);
+          requestRead(this);
         }
         return chunk;
       }
