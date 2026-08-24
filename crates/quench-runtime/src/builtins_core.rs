@@ -277,42 +277,30 @@ pub(crate) fn create_data_property_or_throw(
     crate::builtins::define_own_property_public(&target, key, &descriptor)
 }
 
-pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn array_join(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver else {
-        return Value::String(String::new());
+        return Ok(Value::String(String::new()));
     };
-    let separator = arguments
-        .first()
-        .map_or_else(|| ",".encode_utf16().collect(), join_units);
-    let values = match receiver {
-        Value::Array(values) => values.snapshot(),
-        value if crate::typed_array_ops::is_view(value) => (0..crate::typed_array_ops::logical_len(value).unwrap_or(0))
-            .map(|index| crate::execute::get_property(value, &index.to_string()))
-            .collect(),
-        _ => return Value::String(String::new()),
+    let length = crate::builtins::map_length(receiver)?;
+    let separator: Vec<u16> = match arguments.first() {
+        Some(Value::Undefined) | None => ",".encode_utf16().collect(),
+        Some(value) => crate::conversion::to_string(value)?.encode_utf16().collect(),
     };
     let mut result = Vec::new();
-    for (index, value) in values.iter().enumerate() {
+    for index in 0..length {
         if index != 0 {
             result.extend_from_slice(&separator);
         }
-        append_join_units(value, &mut result);
+        let value = crate::execute::get_property_result(receiver, &index.to_string())?;
+        if matches!(value, Value::Null | Value::Undefined) {
+            continue;
+        }
+        result.extend(crate::conversion::to_string(&value)?.encode_utf16());
     }
-    crate::strings::from_units(result)
-}
-
-fn join_units(value: &Value) -> Vec<u16> {
-    let mut units = Vec::new();
-    append_join_units(value, &mut units);
-    units
-}
-
-fn append_join_units(value: &Value, output: &mut Vec<u16>) {
-    match value {
-        Value::String(value) => output.extend(value.encode_utf16()),
-        Value::StringUnits(units) => output.extend(units.iter().copied()),
-        _ => output.extend(value_to_string(value).encode_utf16()),
-    }
+    Ok(crate::strings::from_units(result))
 }
 
 pub(crate) fn array_push(
@@ -330,7 +318,18 @@ pub(crate) fn array_push(
         ));
     }
     if let Value::Array(array) = &receiver {
-        if array.is_packed_ordinary() {
+        let prototype_indices_clear = (0..arguments.len()).all(|offset| {
+            let key = (length + offset).to_string();
+            !crate::arrays::prototype_override_present(&key)
+                && crate::property_define::accessor(&receiver, &key, "set").is_none()
+        });
+        if array.is_packed_ordinary()
+            && crate::properties::object_is_extensible(&receiver)
+            && crate::builtins::descriptor_flag(&receiver, "length", "writable") != Some(false)
+            && crate::builtins::intrinsic_override_keys(crate::ops::Builtin::ArrayPrototype)
+                .is_empty()
+            && prototype_indices_clear
+        {
             let (mut values, _, _) = array.hot_storage();
             values.extend(arguments.iter().cloned());
             let updated = Value::array(values);
@@ -359,6 +358,7 @@ pub(crate) fn array_push(
         crate::locals::replace_value(&receiver, &updated);
         return Err(crate::value::error::throw_range_error("Invalid array length"));
     }
+    updated = crate::locals::resolved_replacement(updated);
     updated = crate::properties::assign_set_property(
         &updated,
         "length",

@@ -121,18 +121,16 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayReverse
         | Builtin::ArrayPop
         | Builtin::ArrayToReversed
-        | Builtin::ArrayJoin
         | Builtin::ArrayToString
         | Builtin::ArrayToLocaleString => Some(0.0),
+        Builtin::ArrayJoin => Some(1.0),
         _ => fn_len_tail(builtin),
     }
 }
 
 const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
     match builtin {
-        Builtin::ArrayCopyWithin
-        | Builtin::ArrayToSpliced
-        | Builtin::ArrayWith => Some(2.0),
+        Builtin::ArrayCopyWithin | Builtin::ArrayToSpliced | Builtin::ArrayWith => Some(2.0),
         Builtin::ArraySlice | Builtin::ArraySplice => Some(2.0),
         Builtin::ArrayConcat => Some(1.0),
         _ => None,

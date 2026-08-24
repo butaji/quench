@@ -51,6 +51,9 @@ fn prototype_builtin_tag(receiver: &Value) -> Option<&'static str> {
     let Value::Builtin(builtin) = receiver else {
         return None;
     };
+    if *builtin == Builtin::ArrayPrototype {
+        return Some("Array");
+    }
     if is_callable_prototype_builtin(*builtin) {
         Some("Object")
     } else {
