@@ -56,6 +56,32 @@ function createHook(callbacks = {}) {
   return hook;
 }
 
+if (!globalThis.__quenchPromiseHooksPatched) {
+  const NativePromise = globalThis.Promise;
+  const NativePromisePrototype = NativePromise.prototype;
+  const emitPromiseInit = (resource) => {
+    resource.asyncId = ++globalThis.__quenchAsyncId;
+    resource.triggerAsyncId = 1;
+    for (const hook of hooks) {
+      if (hook.callbacks && typeof hook.callbacks.init === "function") {
+        hook.callbacks.init(resource.asyncId, "PROMISE", 1, resource);
+      }
+    }
+  };
+  const PromiseWithHooks = function (executor) {
+    const resource = {};
+    emitPromiseInit(resource);
+    return new NativePromise(executor);
+  };
+  PromiseWithHooks.prototype = NativePromisePrototype;
+  Object.setPrototypeOf(PromiseWithHooks, NativePromise);
+  globalThis.Promise = PromiseWithHooks;
+  Object.defineProperty(globalThis, "__quenchPromiseHooksPatched", {
+    configurable: true,
+    value: true,
+  });
+}
+
 class AsyncResource {
   constructor(type, options = {}) {
     if (type === undefined) {
