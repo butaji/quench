@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "metrics": {
+    "kernel_hit_per_iteration": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "constraint_collection_loop", "field": "hits" } },
+      "denominator": "events.loop_iteration",
+      "min_traffic": 20000,
+      "min": 3.9,
+      "max": 4.1
+    }
+  }
+}
