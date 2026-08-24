@@ -247,7 +247,7 @@ fn non_configurable_redefinition(error: &crate::execute::VmError) -> bool {
     };
     properties.iter().any(|(name, value)| {
         name == "message"
-            && matches!(value, crate::value::Value::String(text) if text.starts_with("Cannot redefine"))
+            && matches!(value, crate::value::Value::String(text) if text.starts_with("Cannot redefine") || text.starts_with("Cannot delete non-configurable array element"))
     })
 }
 

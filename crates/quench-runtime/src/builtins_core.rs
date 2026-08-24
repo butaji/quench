@@ -85,6 +85,12 @@ pub(crate) fn map_value(
     index: usize,
 ) -> Result<Option<Value>, crate::execute::VmError> {
     if let Value::Array(values) = receiver {
+        let key = index.to_string();
+        if values.descriptor(&key).is_some() {
+            return Ok(crate::with_scope::has_property(receiver, &key)?
+                .then(|| crate::execute::get_property_result(receiver, &key))
+                .transpose()?);
+        }
         return Ok(values
             .has_index(index)
             .then(|| values.get_index(index))
