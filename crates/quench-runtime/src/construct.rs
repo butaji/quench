@@ -392,13 +392,19 @@ fn construct_function(
         let receiver = construct_with_new_target(&super_constructor, target, arguments)?;
         return initialize_instance_fields(function, receiver);
     }
-    if derived_constructor(function).is_ok() {
+    if crate::functions::is_derived_constructor(function) {
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
         let (result, final_this) =
             crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
         return finish_derived_construct(result, final_this);
     }
-    let object = initialize_instance_fields(function, constructor_receiver(target))?;
+    let receiver = constructor_receiver(target);
+    if function.instance_fields.borrow().is_empty() {
+        if let Some(object) = try_record_constructor(function, &receiver, arguments) {
+            return Ok(object);
+        }
+    }
+    let object = initialize_instance_fields(function, receiver)?;
     let (result, final_this) =
         crate::functions::execute_construct(function, &object, target, arguments)?;
     if crate::value::is_object(&result) {
@@ -409,6 +415,8 @@ fn construct_function(
         Ok(crate::locals::resolved_replacement(object))
     }
 }
+
+include!("construct_record.rs");
 
 fn finish_derived_construct(
     result: Value,
