@@ -58,6 +58,7 @@ fn run_dynamic_import(registers: &mut crate::register_file::RegisterFile, op: &O
     let Op::DynamicImport {
         dst,
         specifier,
+        options,
         deferred,
     } = op
     else {
@@ -72,6 +73,17 @@ fn run_dynamic_import(registers: &mut crate::register_file::RegisterFile, op: &O
         }
         Err(error) => return Err(error),
     };
+    if let Some(options) = options
+        .and_then(|register| crate::execute::read_register(registers, register).ok())
+    {
+        if let Err(error) = enumerate_import_attributes(&options) {
+            if let crate::execute::VmError::Thrown(reason) = error {
+                write_value(registers, *dst, rejected_promise(reason));
+                return Ok(());
+            }
+            return Err(error);
+        }
+    }
     let value = crate::module_bindings::resolve_dynamic_import(&specifier, *deferred)
         .unwrap_or_else(|| Value::String(specifier));
     let value = if let Some(thrown) = crate::module_bindings::take_pending_throw() {
@@ -80,6 +92,52 @@ fn run_dynamic_import(registers: &mut crate::register_file::RegisterFile, op: &O
         value
     };
     write_value(registers, *dst, value);
+    Ok(())
+}
+
+fn enumerate_import_attributes(options: &Value) -> Result<(), VmError> {
+    if matches!(options, Value::Null | Value::Undefined) {
+        return Ok(());
+    }
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error(
+            "dynamic import options must be an object",
+        ));
+    }
+    let attributes = crate::execute::get_property_result(options, "with")?;
+    let attributes = if matches!(attributes, Value::Undefined) {
+        crate::execute::get_property_result(options, "assert")?
+    } else {
+        attributes
+    };
+    if matches!(attributes, Value::Null | Value::Undefined) {
+        return Ok(());
+    }
+    if !crate::value::is_object(&attributes) {
+        return Err(crate::value::error::throw_type_error(
+            "dynamic import attributes must be an object",
+        ));
+    }
+    let keys = if matches!(attributes, Value::Proxy(_)) {
+        let keys = crate::proxy::proxy_own_keys(&attributes)?;
+        let Value::Array(keys) = keys else {
+            return Err(VmError::MissingReturn);
+        };
+        keys.snapshot()
+            .into_iter()
+            .filter_map(|key| match key {
+                Value::String(key) => Some(key),
+                _ => None,
+            })
+            .collect()
+    } else {
+        crate::own_keys::enumerable_key_strings(Some(&attributes))
+    };
+    for key in keys {
+        if crate::builtins::descriptor_flag(&attributes, &key, "enumerable") != Some(false) {
+            let _ = crate::execute::get_property_result(&attributes, &key)?;
+        }
+    }
     Ok(())
 }
 

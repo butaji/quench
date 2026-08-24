@@ -125,6 +125,9 @@ fn continue_started_module(
     if unit.evaluated.get() {
         return Ok(());
     }
+    if unit.evaluating.get() {
+        return Ok(());
+    }
     let metadata = unit.program.module_metadata.as_ref();
     let targets = evaluation_targets(graph_units, metadata, graph, id, skip_deferred);
     if let Some(thrown) = targets.iter().find_map(|dependency| {
@@ -359,5 +362,4 @@ fn gather_async_transitive(
         }
     }
 }
-
 
