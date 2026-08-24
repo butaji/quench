@@ -281,7 +281,10 @@ fn dynamic_value(
     is_async: bool,
 ) -> Value {
     let captures = crate::environment::Environment::new();
-    captures.set(0, crate::locals::current().get(0));
+    let realm = crate::vm::current_context_or_default().realm();
+    let global = crate::vm::realm_global_value(realm)
+        .unwrap_or_else(|| crate::locals::current().get(0));
+    captures.set(0, global);
     let value = crate::functions::make(
         crate::machine::FunctionCode::from_ops(ops),
         count,
@@ -296,14 +299,18 @@ fn dynamic_value(
         },
     );
     if let Value::Function(function) = &value {
-        let realm = crate::vm::current_context_or_default().realm();
         let mut properties = function.properties.borrow_mut();
         if let Some(token) = crate::vm::realm_token(realm) {
             properties.push(("\0realm".to_string(), token));
         }
+        let prototype = match (kind, is_async) {
+            (FunctionKind::Generator, true) => crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
+            (FunctionKind::Generator, false) => crate::ops::Builtin::GeneratorFunctionPrototype,
+            _ => crate::ops::Builtin::FunctionPrototype,
+        };
         properties.push((
             "\0function_prototype".to_string(),
-            crate::vm::realm_intrinsic(crate::ops::Builtin::FunctionPrototype),
+            crate::vm::realm_intrinsic(prototype),
         ));
     }
     value
