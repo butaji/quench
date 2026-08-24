@@ -33,11 +33,25 @@ pub(crate) fn execute_crypto_integer_function(
     let (Some(Value::Array(input)), Some(Value::Array(output))) = (input_value, output_value) else {
         return None;
     };
+    let input = packed_numeric_array(input)?;
+    let output = packed_numeric_array(output)?;
     let iterations = kernel_index(*n)?;
     let x = crate::vm::vm_arithmetic::numeric_to_int32(*x);
     let values = [*i, *j, *c, f64::from(x & 0x3fff), f64::from(x >> 14), *n];
-    let (_, _, carry, _, _, _) = multiply_integer_ranges(&input, &output, values, iterations)?;
+    let (_, _, carry, _, _, _) = multiply_integer_cells(&input, &output, values, iterations)?;
     Some(Value::Number(carry))
+}
+
+fn packed_numeric_array(array: std::rc::Rc<crate::value::ArrayData>) -> Option<std::rc::Rc<crate::value::ArrayData>> {
+    if array.is_packed_ordinary() && array.numeric_cells().is_some() {
+        return Some(array);
+    }
+    let old = Value::Array(std::rc::Rc::clone(&array));
+    let mut promoted = array.as_ref().clone();
+    promoted.promote_sparse_numeric().then_some(())?;
+    let promoted = std::rc::Rc::new(promoted);
+    crate::locals::replace_value(&old, &Value::Array(std::rc::Rc::clone(&promoted)));
+    Some(promoted)
 }
 
 fn recognized_integer_function(function: &std::rc::Rc<crate::value::FunctionValue>) -> Option<()> {
@@ -422,6 +436,54 @@ fn multiply_integer_ranges(
     );
     replace_integer_output(output, j - output_values.len(), &output_values);
     Some((i, j, carry, low, high, product))
+}
+
+fn multiply_integer_cells(
+    input: &std::rc::Rc<crate::value::ArrayData>,
+    output: &std::rc::Rc<crate::value::ArrayData>,
+    values: [f64; 6],
+    iterations: usize,
+) -> Option<(usize, usize, f64, f64, f64, f64)> {
+    (!std::rc::Rc::ptr_eq(input, output)).then_some(())?;
+    let [i, j, mut carry, x_low, x_high, _] = values;
+    let (mut i, mut j) = (kernel_index(i)?, kernel_index(j)?);
+    let input_values = input.numeric_cells()?;
+    let output_values = output.numeric_cells()?;
+    (i.checked_add(iterations)? <= input_values.len()
+        && j.checked_add(iterations)? <= output_values.len()).then_some(())?;
+    let (low, high, product) = integer_multiply_cell_loop(
+        &input_values[i..i + iterations], &output_values[j..j + iterations],
+        &mut i, &mut j, &mut carry, x_low, x_high,
+    );
+    Some((i, j, carry, low, high, product))
+}
+
+fn integer_multiply_cell_loop(
+    input: &[std::cell::Cell<f64>],
+    output: &[std::cell::Cell<f64>],
+    i: &mut usize,
+    j: &mut usize,
+    carry: &mut f64,
+    x_low: f64,
+    x_high: f64,
+) -> (f64, f64, f64) {
+    let (mut low, mut high, mut product) = (0.0, 0.0, 0.0);
+    for (input, output) in input.iter().zip(output) {
+        low = f64::from(crate::vm::vm_arithmetic::numeric_to_int32(input.get()) & 0x3fff);
+        high = f64::from(crate::vm::vm_arithmetic::numeric_to_int32(input.get()) >> 14);
+        *i += 1;
+        product = x_high * low + high * x_low;
+        low = x_low * low
+            + f64::from((crate::vm::vm_arithmetic::numeric_to_int32(product) & 0x3fff) << 14)
+            + output.get()
+            + *carry;
+        *carry = f64::from(crate::vm::vm_arithmetic::numeric_to_int32(low) >> 28)
+            + f64::from(crate::vm::vm_arithmetic::numeric_to_int32(product) >> 14)
+            + x_high * high;
+        output.set(f64::from(crate::vm::vm_arithmetic::numeric_to_int32(low) & 0xfffffff));
+        *j += 1;
+    }
+    (low, high, product)
 }
 
 fn trace_integer_multiply_storage() {
