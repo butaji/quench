@@ -220,6 +220,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::SPEC_EVENT),
             ),
             (
+                "defineEventHandler".to_string(),
+                crate::host::capability(crate::registry::SPEC_DEFINE_EVENT_HANDLER),
+            ),
+            (
                 "EventTarget".to_string(),
                 crate::host::capability(crate::registry::NodeSpec::new(
                     "events:EventTarget",
