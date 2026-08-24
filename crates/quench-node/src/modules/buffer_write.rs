@@ -66,6 +66,15 @@ fixed_write_method!(ascii_write, "ascii");
 fixed_write_method!(latin1_write, "latin1");
 fixed_write_method!(utf8_write, "utf8");
 
+pub fn internal_utf8_write(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = args.first();
+    utf8_write(state, receiver, args.get(1..).unwrap_or_default())
+}
+
 fn fixed_write(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,

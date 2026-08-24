@@ -28,6 +28,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
         )]));
     }
+    if name == "internal/buffer" {
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "utf8Write".into(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_UTF8_WRITE),
+            ),
+        ]));
+    }
     if name == "dns" || name == "node:dns" {
         let promises = quench_runtime::host_api::object(vec![(
             "lookupService".into(),
