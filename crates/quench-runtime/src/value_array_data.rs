@@ -163,6 +163,17 @@ impl DenseElements {
         true
     }
 
+    fn detach_numbers(&mut self) -> bool {
+        let Self::Numbers(values) = self else { return false };
+        let detached = values
+            .borrow()
+            .iter()
+            .map(|value| std::cell::Cell::new(value.get()))
+            .collect();
+        *values = Rc::new(RefCell::new(detached));
+        true
+    }
+
     fn append_number_shared(&self, number: f64) -> bool {
         let Self::Numbers(values) = self else { return false };
         values.borrow_mut().push(std::cell::Cell::new(number));
@@ -533,6 +544,44 @@ impl ArrayData {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Convert a fully numeric sparse tail into the canonical dense numeric
+    /// store. This is a representation-only transition: every logical index
+    /// must already exist as ordinary own data and no observable metadata may
+    /// intercept indexed access.
+    pub(crate) fn promote_sparse_numeric(&mut self) -> bool {
+        if !self.is_sparse()
+            || !self.descriptors.is_empty()
+            || self.prototype.borrow().is_some()
+            || self.arguments
+            || self.argument_live.is_some()
+            || self.deleted.iter().any(|deleted| *deleted)
+            || self.mapped.iter().any(Option::is_some)
+        {
+            return false;
+        }
+        let start = self.values.len();
+        let Some(mut tail) = self.numeric_sparse_tail(start) else { return false };
+        if !self.values.detach_numbers() { return false; }
+        for number in tail.drain(..) {
+            if !self.values.append_number(number) { return false; }
+        }
+        self.properties.clear();
+        self.kind.set(self.values.kind_with_holes(&self.deleted, self.length));
+        self.is_packed_ordinary()
+    }
+
+    fn numeric_sparse_tail(&self, start: usize) -> Option<Vec<f64>> {
+        (start <= self.length).then_some(())?;
+        let mut tail = vec![None; self.length - start];
+        for (key, value) in &self.properties {
+            let index = usize::try_from(crate::arrays::array_index(key)?).ok()?;
+            let Value::Number(number) = value else { return None };
+            let slot = index.checked_sub(start)?;
+            *tail.get_mut(slot)? = Some(*number);
+        }
+        tail.into_iter().collect()
     }
 
     /// Store an unboxed numeric slot while retaining canonical `Value`
@@ -952,6 +1001,29 @@ mod array_data_tests {
         assert!(!data.is_dense());
         assert_eq!(data.logical_len(), 10_001);
         assert_eq!(data.get_index(10_000), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn numeric_sparse_tail_promotes_once_without_changing_values() {
+        let mut sparse = ArrayData::new(Vec::new());
+        sparse.set_length(64);
+        for index in 0..64 {
+            sparse.set_index(index, Value::Number(index as f64 + 0.5));
+        }
+        assert!(sparse.is_sparse());
+        let original = sparse.clone();
+        assert!(sparse.promote_sparse_numeric());
+        assert!(sparse.is_packed_ordinary());
+        assert_eq!(sparse.numeric_kernel_range(0, 64), original.numeric_kernel_range(0, 64));
+        assert!(original.is_sparse());
+    }
+
+    #[test]
+    fn numeric_sparse_promotion_rejects_non_index_properties() {
+        let mut sparse = ArrayData::new(Vec::new());
+        sparse.set_length(64);
+        sparse.set_property("metadata", Value::Number(1.0));
+        assert!(!sparse.promote_sparse_numeric());
     }
     #[test]
     fn numeric_fast_path_reads_scalars_and_preserves_value_boundary() {
