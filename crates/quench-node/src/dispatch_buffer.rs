@@ -39,6 +39,8 @@ const BUFFER_TABLE: &[(u16, CallHandler)] = &[
     (0x081F, |state, _receiver, args| {
         crate::modules::buffer_from::copy_bytes_from(state, args)
     }),
+    (0x0854, crate::modules::buffer::inspect_max_bytes_get),
+    (0x0855, crate::modules::buffer::inspect_max_bytes_set),
     (0x0850, w::ascii_write),
     (0x0851, w::latin1_write),
     (0x0852, w::utf8_write),
