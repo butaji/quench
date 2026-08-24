@@ -1,9 +1,25 @@
 // Domain API: callbacks execute with the active domain and errors can be routed.
+var stack = [];
 function create() {
   const d = {
     members: [], active: false, disposed: false,
-    enter() { if (!d.disposed) { module.exports.active = d; d.active = true; } return d; },
-    exit() { if (module.exports.active === d) module.exports.active = null; d.active = false; return d; },
+    enter() {
+      if (!d.disposed) {
+        var index = stack.indexOf(d);
+        if (index >= 0) stack.splice(index, 1);
+        stack.push(d);
+        module.exports.active = d;
+        d.active = true;
+      }
+      return d;
+    },
+    exit() {
+      var index = stack.indexOf(d);
+      if (index >= 0) stack.splice(index);
+      d.active = false;
+      module.exports.active = stack.length ? stack[stack.length - 1] : null;
+      return d;
+    },
     add(x) { if (!d.disposed && d.members.indexOf(x) < 0) { d.members.push(x); if (x && (typeof x === 'object' || typeof x === 'function')) Object.defineProperty(x, 'domain', { configurable: true, enumerable: false, value: d, writable: true }); } return d; },
     remove(x) { const i = d.members.indexOf(x); if (i >= 0) d.members.splice(i, 1); if (x && x.domain === d) delete x.domain; return d; },
     run(fn) { d.enter(); try { return fn(); } catch (e) { if (d._handler) return d._handler(e); throw e; } finally { d.exit(); } },
@@ -16,4 +32,4 @@ function create() {
   return d;
 }
 function Domain() { return create(); }
-module.exports = { active: null, Domain, create, createDomain: create };
+module.exports = { active: null, _stack: stack, Domain, create, createDomain: create };

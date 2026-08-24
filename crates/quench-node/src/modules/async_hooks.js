@@ -4,6 +4,31 @@ const hooks = globalThis.__quenchAsyncHooks || [];
 Object.defineProperty(globalThis, "__quenchAsyncHooks", { configurable: true, value: hooks });
 let nextId = globalThis.__quenchAsyncId || 1;
 Object.defineProperty(globalThis, "__quenchAsyncId", { configurable: true, writable: true, value: nextId });
+Object.defineProperty(globalThis, "__quenchAsyncInit", {
+  configurable: true,
+  value(type, resource) {
+    const asyncId = ++globalThis.__quenchAsyncId;
+    resource.asyncId = asyncId;
+    resource.triggerAsyncId = 1;
+    for (const hook of hooks) {
+      if (hook.callbacks && typeof hook.callbacks.init === "function") {
+        hook.callbacks.init.call(hook, asyncId, type, 1, resource);
+      }
+    }
+    return resource;
+  }
+});
+Object.defineProperty(globalThis, "__quenchAsyncDestroy", {
+  configurable: true,
+  value(resource) {
+    for (const hook of hooks) {
+      if (hook.callbacks && typeof hook.callbacks.destroy === "function") {
+        hook.callbacks.destroy.call(hook, resource.asyncId);
+      }
+    }
+  }
+});
+
 
 function createHook(callbacks = {}) {
   for (const name of ["init", "before", "after", "destroy", "promiseResolve"]) {
@@ -29,6 +54,32 @@ function createHook(callbacks = {}) {
     }
   };
   return hook;
+}
+
+if (!globalThis.__quenchPromiseHooksPatched) {
+  const NativePromise = globalThis.Promise;
+  const NativePromisePrototype = NativePromise.prototype;
+  const emitPromiseInit = (resource) => {
+    resource.asyncId = ++globalThis.__quenchAsyncId;
+    resource.triggerAsyncId = 1;
+    for (const hook of hooks) {
+      if (hook.callbacks && typeof hook.callbacks.init === "function") {
+        hook.callbacks.init(resource.asyncId, "PROMISE", 1, resource);
+      }
+    }
+  };
+  const PromiseWithHooks = function (executor) {
+    const resource = {};
+    emitPromiseInit(resource);
+    return new NativePromise(executor);
+  };
+  PromiseWithHooks.prototype = NativePromisePrototype;
+  Object.setPrototypeOf(PromiseWithHooks, NativePromise);
+  globalThis.Promise = PromiseWithHooks;
+  Object.defineProperty(globalThis, "__quenchPromiseHooksPatched", {
+    configurable: true,
+    value: true,
+  });
 }
 
 class AsyncResource {

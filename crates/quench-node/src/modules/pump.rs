@@ -210,7 +210,7 @@ fn fire_due_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 }
 
 fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(), VmError> {
-    let (cb, receiver, args) = {
+    let (cb, receiver, args, resource, destroy) = {
         let mut guard = state.borrow_mut();
         let registry = &mut guard.timers;
         let Some(timer) = registry.timers.get_mut(&id) else {
@@ -224,6 +224,8 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                     timer.callback.clone(),
                     timer.object.clone(),
                     timer.args.clone(),
+                    timer.async_resource.clone(),
+                    true,
                 )
             }
             _ => {
@@ -232,11 +234,17 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                     timer.callback.clone(),
                     timer.object.clone(),
                     timer.args.clone(),
+                    timer.async_resource.clone(),
+                    false,
                 )
             }
         }
     };
-    call_guarded(state, &cb, &receiver, &args)
+    let result = call_guarded(state, &cb, &receiver, &args);
+    if destroy {
+        super::timers::async_destroy(&resource);
+    }
+    result
 }
 
 fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
@@ -264,7 +272,9 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             continue;
         };
         super::timers::mark_destroyed(&timer);
-        call_guarded(state, &timer.callback, &timer.object, &timer.args)?;
+        let result = call_guarded(state, &timer.callback, &timer.object, &timer.args);
+        super::timers::async_destroy(&timer.async_resource);
+        result?;
         drain_ticks(state)?;
     }
     Ok(())
