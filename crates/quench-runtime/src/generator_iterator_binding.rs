@@ -131,10 +131,10 @@ fn resume_iterator_frame(
         .clone()
         .ok_or(VmError::MissingReturn)?;
     let frame_body = store.code(frame.body).ok_or(VmError::MissingReturn)?;
-    if frame.repeat && code_needs_nested_resume(frame_body) {
+    if frame.repeat && code_needs_nested_resume(frame_body, true) {
         return resume_for_of_repeat_frame(generator, state, resume, &frame).map(Some);
     }
-    if !frame.repeat && code_needs_nested_resume(frame_body) {
+    if !frame.repeat && code_needs_nested_resume(frame_body, false) {
         return resume_iterator_nested_frame(generator, state, resume, &frame).map(Some);
     }
     if !matches!(resume, crate::completion::Completion::Normal) {
@@ -313,13 +313,38 @@ fn resume_nested_code(
             let suffix = view.slice(index + 1, view.len()).ok_or(VmError::MissingReturn)?;
             crate::vm::execute_code_completion_in_current_frame(suffix, registers)
         }
+        Op::Try {
+            body,
+            handler,
+            finalizer,
+            ..
+        } => {
+            let nested = if body.code().is_some_and(code_view_contains_yield) {
+                body.code()
+            } else if handler
+                .as_ref()
+                .and_then(|body| body.code())
+                .is_some_and(code_view_contains_yield)
+            {
+                handler.as_ref().and_then(|body| body.code())
+            } else {
+                finalizer.as_ref().and_then(|body| body.code())
+            }
+            .ok_or(VmError::MissingReturn)?;
+            let completion = resume_nested_code(nested, registers)?;
+            if !matches!(completion, crate::completion::Completion::Normal) {
+                return Ok(completion);
+            }
+            let suffix = view.slice(index + 1, view.len()).ok_or(VmError::MissingReturn)?;
+            crate::vm::execute_code_completion_in_current_frame(suffix, registers)
+        }
         _ => Err(VmError::MissingReturn),
     }
 }
 
 fn op_contains_yield(op: &Op) -> bool {
     match op {
-        Op::Yield { .. } => true,
+        Op::Yield { .. } | Op::YieldStar { .. } => true,
         Op::Conditional {
             consequent,
             alternate,
@@ -351,9 +376,10 @@ fn code_view_contains_yield(view: crate::machine::CodeView<'_>) -> bool {
     view.cold_ops().any(|(_, op)| op_contains_yield(op))
 }
 
-fn code_needs_nested_resume(view: crate::machine::CodeView<'_>) -> bool {
+fn code_needs_nested_resume(view: crate::machine::CodeView<'_>, repeat: bool) -> bool {
     view.cold_ops().any(|(_, op)| {
-        matches!(op, Op::Conditional { .. } | Op::IteratorBinding { .. })
+        (matches!(op, Op::Conditional { .. } | Op::IteratorBinding { .. })
+            || (!repeat && matches!(op, Op::Try { .. })))
             && op_contains_yield(op)
     })
 }
@@ -398,11 +424,20 @@ fn continue_for_of(
             );
         };
         let step = execute_with_generator_registers(generator, |registers| {
+            reset_yield_star_iterators(body, registers);
             crate::locals::write(frame.slot, value.clone());
-            crate::vm::execute_code_completion_step_in_place(body, registers)
+            crate::vm::execute_generator_code_step(
+                body,
+                registers,
+                machine_environment(generator)?,
+                0,
+                crate::completion::Completion::Normal,
+            )
         })?;
         if step.completion.is_suspension() {
-            let _ = advance_frame_after_yield(generator, frame.body, step.next);
+            if !push_for_of_body_frame(generator, frame, &body)? {
+                advance_frame_after_yield(generator, frame.body, step.pc)?;
+            }
             set_iterator_phase(generator, crate::machine::IteratorPhase::Body);
             return Ok(step.completion);
         }
@@ -410,6 +445,111 @@ fn continue_for_of(
             return finish_iterator_frame(generator, state, frame, step.completion);
         }
     }
+}
+
+fn reset_yield_star_iterators(
+    view: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+) {
+    for (_, op) in view.cold_ops() {
+        match op {
+            Op::YieldStar { iterator, .. } => {
+                crate::execute::write_value(registers, *iterator, Value::Undefined);
+            }
+            Op::Conditional {
+                consequent,
+                alternate,
+                ..
+            } => {
+                if let Some(branch) = consequent.code() {
+                    reset_yield_star_iterators(branch, registers);
+                }
+                if let Some(branch) = alternate.code() {
+                    reset_yield_star_iterators(branch, registers);
+                }
+            }
+            Op::Try {
+                body,
+                handler,
+                finalizer,
+                ..
+            } => {
+                if let Some(body) = body.code() {
+                    reset_yield_star_iterators(body, registers);
+                }
+                if let Some(handler) = handler.as_ref().and_then(|body| body.code()) {
+                    reset_yield_star_iterators(handler, registers);
+                }
+                if let Some(finalizer) = finalizer.as_ref().and_then(|body| body.code()) {
+                    reset_yield_star_iterators(finalizer, registers);
+                }
+            }
+            Op::IteratorBinding { body, .. }
+            | Op::ForOf { body, .. }
+            | Op::ForIn { body, .. } => {
+                if let Some(body) = body.code() {
+                    reset_yield_star_iterators(body, registers);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn push_for_of_body_frame(
+    generator: &GeneratorData,
+    frame: &IteratorFrameResume,
+    body: &crate::machine::CodeView<'_>,
+) -> Result<bool, VmError> {
+    let Some((index, op)) = body.cold_ops().find(|(_, op)| {
+        matches!(op, Op::YieldStar { .. }) || try_contains_yield(op)
+    }) else {
+        return Ok(false);
+    };
+    if let Op::YieldStar {
+        dst,
+        source,
+        iterator,
+    } = op
+    {
+        let iterator_value = crate::execute::read_register(&registers(generator), *iterator)?;
+        let iterator_value = if matches!(iterator_value, Value::Undefined) {
+            let source = crate::execute::read_register(&registers(generator), *source)?;
+            let iterator_value = crate::collections::iterator::delegate_start(source)?;
+            crate::execute::write_value(
+                &mut registers_mut(generator),
+                *iterator,
+                iterator_value.clone(),
+            );
+            iterator_value
+        } else {
+            iterator_value
+        };
+        let mut machine = generator.machine.borrow_mut();
+        try_push_frame(
+            &mut machine,
+            crate::machine::Frame::Delegate {
+                phase: 0,
+                iterator: iterator_value,
+                destination: *dst,
+            },
+        )?;
+        return Ok(true);
+    }
+    let mut frames = Vec::new();
+    if !collect_try_frames(
+        op,
+        range_after_iterator_op(frame.body, index),
+        &registers(generator),
+        &mut frames,
+    )? {
+        return Ok(false);
+    }
+    let mut machine = generator.machine.borrow_mut();
+    for nested in frames {
+        try_push_frame(&mut machine, nested)?;
+    }
+    Ok(true)
 }
 
 fn resume_after_iterator(
