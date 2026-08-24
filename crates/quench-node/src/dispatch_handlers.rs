@@ -1149,11 +1149,14 @@ pub fn event_stop_propagation(
 }
 
 pub fn event_stop_immediate(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
+        if let Some(identity) = receiver.object_identity() {
+            state.borrow_mut().stopped_events.insert(identity);
+        }
         let updated = execute::set_property(
             receiver.clone(),
             "\0event:cancelBubble",
