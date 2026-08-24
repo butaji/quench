@@ -369,6 +369,12 @@ impl CodeArena {
                 cursor += 2;
                 continue;
             }
+            if let Some(instruction) = lower_named_call(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor]));
+                cursor += 2;
+                continue;
+            }
             if let Some(instruction) = lower_local_update(&body[cursor..]) {
                 self.instructions.push(instruction);
                 metadata.push(metadata_for(&body[cursor + 3]));
@@ -447,6 +453,30 @@ fn lower_checked_local_store(ops: &[Op]) -> Option<crate::ir::Instruction> {
         return None;
     };
     (checked == slot).then(|| crate::ir::Instruction::store_local_checked(*slot, *src))
+}
+
+fn lower_named_call(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::GetProperty {
+        dst: callee,
+        object,
+        key,
+    }, Op::CallMethod {
+        dst,
+        object: receiver,
+        key: called_key,
+        callee: Some(called),
+        args,
+        spreads,
+    }, ..] = ops
+    else {
+        return None;
+    };
+    (*object == *receiver
+        && *callee == *called
+        && key == called_key
+        && args.len() <= 1
+        && spreads.iter().all(|spread| !spread))
+    .then(|| crate::ir::Instruction::call_named(*dst, *object, args.first().copied()))
 }
 
 fn lower_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
@@ -1328,6 +1358,68 @@ mod tests {
             Some(crate::ir::Instruction::store_local_checked(7, 2))
         );
         assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn named_method_get_and_call_lower_as_one_physical_instruction() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::GetProperty {
+                dst: 4,
+                object: 2,
+                key: "run".into(),
+            },
+            super::Op::CallMethod {
+                dst: 6,
+                object: 2,
+                key: "run".into(),
+                callee: Some(4),
+                args: vec![5],
+                spreads: vec![false],
+            },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::call_named(6, 2, Some(5)))
+        );
+        assert_eq!(
+            code.metadata_at(0)
+                .and_then(|metadata| metadata.name.as_deref()),
+            Some("run")
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn adjacent_single_argument_method_call_uses_registered_call_word() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::GetProperty {
+                dst: 4,
+                object: 2,
+                key: "run".into(),
+            },
+            super::Op::Const {
+                dst: 5,
+                value: super::Constant::Number(1.0),
+            },
+            super::Op::CallMethod {
+                dst: 6,
+                object: 2,
+                key: "run".into(),
+                callee: Some(4),
+                args: vec![5],
+                spreads: vec![false],
+            },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(2),
+            Some(crate::ir::Instruction::call_registered_one(6, 2, 4))
+        );
+        assert!(code.cold_at(2).is_none());
     }
     #[test]
     fn frozen_code_store_owns_metadata_after_builder_drop() {

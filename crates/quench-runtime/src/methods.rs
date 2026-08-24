@@ -43,6 +43,79 @@ pub(crate) fn execute(
     Ok(())
 }
 
+pub(crate) fn execute_named(
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Result<(), VmError> {
+    let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
+    let callee = crate::vm::get_named_property_result(&receiver, key, cache)?;
+    let argument = (instruction.flags == 1)
+        .then(|| read_register(registers, instruction.c))
+        .transpose()?;
+    crate::execution_trace::call_method(
+        usize::from(instruction.flags),
+        false,
+        true,
+        call_target_name(&callee),
+    );
+    let value = execute_named_callee(
+        callee,
+        &receiver,
+        argument.as_ref(),
+        [instruction.b, instruction.c],
+        registers,
+    )?;
+    write_value(registers, instruction.a, value);
+    Ok(())
+}
+
+pub(crate) fn execute_registered_one(
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+) -> Result<(), VmError> {
+    let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
+    let callee = read_register(registers, instruction.c)?;
+    let argument_register = instruction.a - 1;
+    let argument = read_register(registers, argument_register)?;
+    crate::execution_trace::call_method(1, false, true, call_target_name(&callee));
+    let value = execute_named_callee(
+        callee,
+        &receiver,
+        Some(&argument),
+        [instruction.b, argument_register],
+        registers,
+    )?;
+    write_value(registers, instruction.a, value);
+    Ok(())
+}
+
+fn execute_named_callee(
+    callee: Value,
+    receiver: &Value,
+    argument: Option<&Value>,
+    call_registers: [u16; 2],
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<Value, VmError> {
+    let arguments = argument.map(std::slice::from_ref).unwrap_or_default();
+    let register = argument.map(|_| call_registers[1]);
+    let propagates = matches!(
+        callee,
+        Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)
+    );
+    let value = execute_callee(callee, receiver, arguments, register.as_slice(), registers)?;
+    if propagates {
+        crate::properties::propagate_updated_object(
+            registers,
+            Some(call_registers[0]),
+            receiver,
+            &value,
+        );
+    }
+    Ok(value)
+}
+
 fn call_target_name(value: &Value) -> &'static str {
     match value {
         Value::Function(_) => "Function",
