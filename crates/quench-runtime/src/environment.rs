@@ -287,7 +287,7 @@ impl SlotStore {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct BindingRef {
+pub(crate) struct BindingRef {
     store: Rc<SlotStore>,
     index: usize,
 }
@@ -472,6 +472,16 @@ fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
     source.as_ref().map(TdzCells::clone_values)
 }
 
+fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
+    source.borrow().as_ref().map(|slots| {
+        slots
+            .iter()
+            .copied()
+            .filter(|slot| usize::from(*slot) < limit)
+            .collect()
+    })
+}
+
 impl Environment {
     pub(crate) fn new() -> Rc<Self> {
         crate::execution_trace::environment_lifecycle(true);
@@ -498,7 +508,7 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            immutable_slots: RefCell::new(immutable_prefix(&environment.immutable_slots, count)),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
@@ -539,7 +549,20 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            immutable_slots: RefCell::new(Some(
+                environment
+                    .immutable_slots
+                    .borrow()
+                    .as_ref()
+                    .map(|slots| {
+                        slots
+                            .iter()
+                            .copied()
+                            .filter(|slot| selected.contains(slot))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            )),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: None,
@@ -587,7 +610,7 @@ impl Environment {
             .replace(captures.deleted_cells.borrow().clone());
         environment
             .immutable_slots
-            .replace(captures.immutable_slots.borrow().clone());
+            .replace(immutable_prefix(&captures.immutable_slots, prefix_len));
         environment
     }
 
@@ -596,6 +619,10 @@ impl Environment {
     }
     pub(crate) fn len(&self) -> usize {
         self.slots.borrow().len()
+    }
+
+    pub(crate) fn captured_len(&self) -> usize {
+        self.slots.borrow().prefix_len
     }
 
     pub(crate) fn get(&self, slot: u16) -> Value {
@@ -782,6 +809,27 @@ impl Environment {
 
     pub(crate) fn resolve_eval_name(&self, name: &str) -> Option<Value> {
         self.eval_name_binding(name).map(|binding| binding.load())
+    }
+
+    pub(crate) fn snapshot_eval_name_chain(&self) -> Vec<Option<HashMap<String, BindingRef>>> {
+        let mut snapshots = vec![self.eval_names.borrow().clone()];
+        if let Some(caller) = &self.caller {
+            snapshots.extend(caller.snapshot_eval_name_chain());
+        }
+        snapshots
+    }
+
+    pub(crate) fn restore_eval_name_chain(
+        &self,
+        snapshots: &[Option<HashMap<String, BindingRef>>],
+    ) {
+        let Some((current, rest)) = snapshots.split_first() else {
+            return;
+        };
+        self.eval_names.replace(current.clone());
+        if let Some(caller) = &self.caller {
+            caller.restore_eval_name_chain(rest);
+        }
     }
 
     pub(crate) fn eval_name_aliases_slot(&self, name: &str, slot: u16) -> bool {
@@ -996,6 +1044,10 @@ impl Environment {
     pub(crate) fn restore_slot(&self, slot: u16, value: Rc<crate::value::BindingCell>) {
         let binding = BindingRef::new(SlotStore::from_cell(value), 0);
         self.slots.borrow_mut().replace(usize::from(slot), binding);
+    }
+
+    pub(crate) fn has_caller(&self) -> bool {
+        self.caller.is_some()
     }
 
     pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
