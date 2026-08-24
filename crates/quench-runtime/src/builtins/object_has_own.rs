@@ -150,7 +150,7 @@ pub(crate) fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     }
     (builtin == Builtin::Object && key == "hasOwn")
         || crate::builtins::read_intrinsic_override(builtin, key).is_some()
-        || builtin_descriptor(builtin, key).is_some()
+        || super::own_property_names(builtin).contains(&key)
         || super::callable_property(builtin, key).is_some()
         || super::special_property(builtin, key).is_some()
 }
