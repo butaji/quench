@@ -500,5 +500,6 @@ fn bound_function_length(target: &crate::value::Value, bound_args: f64) -> f64 {
 
 include!("functions_leaf_execution.rs");
 include!("functions_shape_kernels.rs");
+include!("functions_plan_kernel.rs");
 include!("functions_arguments_execution.rs");
 include!("functions_arguments_helpers.rs");
