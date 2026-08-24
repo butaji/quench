@@ -689,10 +689,29 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => inspect_object(value, depth),
         Value::Array(_) => inspect_array(value, depth),
+        Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
         Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
         Value::Uint8Array(_) => "Uint8Array(0) []".into(),
         Value::BigInt(digits) => format!("{digits}n"),
         _ => "<unknown>".into(),
+    }
+}
+
+fn inspect_function(value: &Value) -> String {
+    let prefix = match value {
+        Value::Function(function) if function.is_async && function.kind == quench_runtime::ops::FunctionKind::Generator => "AsyncGeneratorFunction",
+        Value::Function(function) if function.is_async => "AsyncFunction",
+        Value::Function(function) if function.kind == quench_runtime::ops::FunctionKind::Generator => "GeneratorFunction",
+        _ => "Function",
+    };
+    let name = match quench_runtime::execute::get_property(value, "name") {
+        Value::String(name) if !name.is_empty() => name,
+        _ => "(anonymous)".into(),
+    };
+    if name == "(anonymous)" {
+        format!("[{prefix} (anonymous)]")
+    } else {
+        format!("[{prefix}: {name}]")
     }
 }
 
