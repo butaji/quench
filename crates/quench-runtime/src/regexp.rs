@@ -1,6 +1,7 @@
 include!("regexp_validation.rs");
 include!("regexp_named_groups.rs");
 include!("regexp_surrogates.rs");
+include!("regexp_cache.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
@@ -244,6 +245,41 @@ fn find_match<'a>(
     .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
 }
 
+fn find_match_from<'a>(
+    regex: &'a Regex,
+    text: &'a str,
+    start: usize,
+) -> Result<Option<regress::Match>, VmError> {
+    catch_unwind(AssertUnwindSafe(|| regex.find_from(text, start).next()))
+        .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+}
+
+fn compile_and_find<'a>(
+    receiver: &Value,
+    source: &str,
+    flags: &str,
+    text: &'a str,
+    sticky: bool,
+) -> Result<Option<regress::Match>, VmError> {
+    #[cfg(feature = "execution-trace")]
+    let compile_start = std::time::Instant::now();
+    let regex = compiled_for(receiver, source, flags)?;
+    #[cfg(feature = "execution-trace")]
+    let compile_ns = compile_start.elapsed().as_nanos();
+    #[cfg(feature = "execution-trace")]
+    let match_start = std::time::Instant::now();
+    let result = find_match(&regex, text, sticky);
+    #[cfg(feature = "execution-trace")]
+    {
+        let match_ns = match_start.elapsed().as_nanos();
+        crate::execution_trace::regexp(source, compile_ns, match_ns);
+        if match_ns >= 10_000_000 {
+            eprintln!("QUENCH_REGEXP_SLOW {match_ns} {source:?}");
+        }
+    }
+    result
+}
+
 fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> bool {
     if last_index == 0 || !source.starts_with('^') {
         return true;
@@ -274,9 +310,16 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
-    let re = compile(pattern, &re_flags).map_err(VmError::EvalError)?;
     let found = anchored_match(&source, &flags, last_index, &s)
-        .then(|| find_match(&re, search_string, flags.contains('y')))
+        .then(|| {
+            compile_and_find(
+                receiver,
+                pattern,
+                &re_flags,
+                search_string,
+                flags.contains('y'),
+            )
+        })
         .transpose()?
         .flatten();
     let matched = found.is_some();
@@ -305,9 +348,16 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
-    let re = compile(pattern, &re_flags).map_err(VmError::EvalError)?;
     if let Some(m) = anchored_match(&source, &flags, last_index, &s)
-        .then(|| find_match(&re, search_string, flags.contains('y')))
+        .then(|| {
+            compile_and_find(
+                receiver,
+                pattern,
+                &re_flags,
+                search_string,
+                flags.contains('y'),
+            )
+        })
         .transpose()?
         .flatten()
     {
@@ -510,7 +560,7 @@ include!("regexp_tail.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, has_regexp_internal_slot};
+    use super::{compile, has_regexp_internal_slot, replace_with_template};
     use crate::value::{ObjectData, Value};
 
     #[test]
@@ -526,5 +576,34 @@ mod tests {
     #[test]
     fn unicode_ranges_are_checked_by_the_regex_parser() {
         compile(r"^[\w\u0128-\uffff*_-]+$", "").expect("valid Unicode range");
+    }
+
+    #[test]
+    fn global_empty_replace_advances_over_the_original_input() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                (
+                    "source".to_string(),
+                    Value::String(r"^\s*|\s*$".to_string()),
+                ),
+                ("flags".to_string(), Value::String("g".to_string())),
+            ])
+            .into(),
+        );
+        let result = replace_with_template(&regexp, "abc", "").expect("replace");
+        assert_eq!(result, Value::String("abc".to_string()));
+    }
+
+    #[test]
+    fn global_empty_replace_inserts_once_at_each_position() {
+        let regexp = Value::Object(
+            ObjectData::new(vec![
+                ("source".to_string(), Value::String("(?:)".to_string())),
+                ("flags".to_string(), Value::String("g".to_string())),
+            ])
+            .into(),
+        );
+        let result = replace_with_template(&regexp, "ab", "x").expect("replace");
+        assert_eq!(result, Value::String("xaxbx".to_string()));
     }
 }
