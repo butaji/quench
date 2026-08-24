@@ -230,8 +230,17 @@ pub(crate) fn make_pooled_buffer(bytes: &[u8]) -> Value {
     BUFFER_POOL.with(|pool| {
         let mut pool = pool.borrow_mut();
         let (buffer, offset) = match pool.as_mut() {
-            Some((buffer, offset)) if *offset + bytes.len() <= POOL_SIZE => {
-                (buffer.clone(), *offset)
+            Some((buffer, offset)) => {
+                let aligned = offset.saturating_add(7) & !7;
+                if aligned + bytes.len() <= POOL_SIZE {
+                    (buffer.clone(), aligned)
+                } else {
+                    let mut pooled = ArrayBufferData::new(POOL_SIZE);
+                    pooled.untransferable = true;
+                    let buffer = Rc::new(pooled);
+                    *pool = Some((buffer.clone(), 0));
+                    (buffer, 0)
+                }
             }
             _ => {
                 let mut pooled = ArrayBufferData::new(POOL_SIZE);
