@@ -294,6 +294,14 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::SymbolPrototype && key == "constructor" {
+        return Some(descriptor_object_with_flags(
+            super::property(builtin, key),
+            true,
+            false,
+            true,
+        ));
+    }
     if let Some(descriptor) = builtin_special_descriptor(builtin, key) {
         return Some(descriptor);
     }
