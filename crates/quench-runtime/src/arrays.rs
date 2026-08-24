@@ -310,6 +310,18 @@ pub(crate) fn prototype_override_getter(key: &str) -> Option<Value> {
         .find_map(|(name, value)| (name == "get").then(|| value.clone()))
 }
 
+pub(crate) fn prototype_override_setter(key: &str) -> Option<Value> {
+    let descriptor =
+        crate::builtins::read_intrinsic_override(crate::ops::Builtin::ArrayPrototype, key)?;
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "set").then(|| value.clone()))
+}
+
 pub(crate) fn prototype_override_present(key: &str) -> bool {
     crate::builtins::read_intrinsic_override(crate::ops::Builtin::ArrayPrototype, key).is_some()
 }
@@ -596,9 +608,7 @@ pub(crate) fn reduce_values(
             let key = index.to_string();
             if crate::with_scope::has_property(&receiver, &key)? {
                 found = Some(crate::execute::get_property_result(&receiver, &key)?);
-                if reverse {
-                    index += 1;
-                } else {
+                if !reverse {
                     index += 1;
                 }
                 break;
