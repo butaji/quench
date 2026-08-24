@@ -16,7 +16,7 @@ const BUFFER_TABLE: &[(u16, CallHandler)] = &[
     (0x0805, handlers::buffer_new),
     (0x0808, m::to_string),
     (0x080B, handlers::buffer_alloc_unsafe),
-    (0x080C, handlers::buffer_alloc_unsafe),
+    (0x080C, handlers::buffer_alloc_unsafe_slow),
     (0x080D, handlers::buffer_is_encoding),
     (0x080E, handlers::buffer_is_utf8),
     (0x080F, handlers::buffer_is_ascii),
