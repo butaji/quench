@@ -52,6 +52,8 @@ pub const SPEC_UTIL_FORMAT_WITH_OPTIONS: NodeSpec = NodeSpec::new("util:formatWi
 pub const SPEC_UTIL_STYLE_TEXT: NodeSpec = NodeSpec::new("util:styleText", 0x0307);
 pub const SPEC_UTIL_IS_DEEP_STRICT_EQUAL: NodeSpec =
     NodeSpec::new("util:isDeepStrictEqual", 0x0308);
+pub const SPEC_UTIL_TO_USV_STRING: NodeSpec = NodeSpec::new("util:toUSVString", 0x0309);
+pub const SPEC_UTIL_IS_NATIVE_ERROR: NodeSpec = NodeSpec::new("util.types:isNativeError", 0x030A);
 pub const SPEC_TEXT_DECODER_NEW: NodeSpec = NodeSpec::new("TextDecoder:new", 0x0809);
 pub const SPEC_TEXT_DECODER_DECODE: NodeSpec = NodeSpec::new("TextDecoder:decode", 0x080A);
 pub const SPEC_TEXT_ENCODER_NEW: NodeSpec = NodeSpec::new("TextEncoder:new", 0x084C);
@@ -409,6 +411,7 @@ pub const SPEC_ASSERT_FAIL: NodeSpec = NodeSpec::new("assert:fail", 0x1409);
 pub const SPEC_ASSERT_IF_ERROR: NodeSpec = NodeSpec::new("assert:ifError", 0x140A);
 pub const SPEC_ASSERT_MATCH: NodeSpec = NodeSpec::new("assert:match", 0x140B);
 pub const SPEC_ASSERT_DOES_NOT_MATCH: NodeSpec = NodeSpec::new("assert:doesNotMatch", 0x140C);
+pub const SPEC_ASSERT_CONSTRUCTOR: NodeSpec = NodeSpec::new("assert:Assert", 0x140D);
 
 pub const SPEC_VM_RUN_IN_NEW_CONTEXT: NodeSpec = NodeSpec::new("vm:runInNewContext", 0x1600);
 
