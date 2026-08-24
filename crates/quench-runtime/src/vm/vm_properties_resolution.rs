@@ -457,11 +457,46 @@ fn descriptor_property_result(
     key: &str,
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
+    if let Value::Builtin(builtin) = value {
+        if let Some(getter) = crate::builtins::object::intrinsic_getter(*builtin, key) {
+            return Some(invoke_accessor(&Value::Builtin(getter), receiver));
+        }
+        let property = receiver_property(value, key, receiver);
+        return (!matches!(property, Value::Undefined)).then_some(Ok(property));
+    }
+    if let Value::Array(values) = value {
+        if key == "length" {
+            return Some(Ok(Value::Number(values.logical_len() as f64)));
+        }
+        if let Ok(index) = key.parse::<usize>() {
+            return values.get_index(index).map(Ok);
+        }
+        if values.descriptor(key).is_none() {
+            return values.property(key).map(|value| Ok(property_value(&value)));
+        }
+    }
+    if let Value::String(text) = value {
+        if key == "length" {
+            return Some(Ok(Value::Number(crate::strings::utf16_len(text) as f64)));
+        }
+        if let Ok(index) = key.parse::<usize>() {
+            return crate::strings::char_at_utf16(text, index).map(|value| Ok(Value::String(value)));
+        }
+        return None;
+    }
     if let Value::Function(function) = value {
         if let Some(result) = function_descriptor_result(function, value, key, receiver) {
             return result;
         }
     }
+    #[cfg(feature = "execution-trace")]
+    crate::execution_trace::descriptor_object(match value {
+        Value::Object(_) | Value::ObjectAlias(_) => "internal:object",
+        Value::Array(_) => "internal:array",
+        Value::Function(_) | Value::BoundFunction(_) => "internal:function",
+        Value::String(_) | Value::StringUnits(_) => "internal:string",
+        _ => "internal:other",
+    });
     let Ok(descriptor) =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
     else {
