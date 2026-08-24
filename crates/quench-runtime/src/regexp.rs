@@ -14,6 +14,15 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     .map_err(|e| e.to_string())
 }
 
+pub(crate) fn ensure_compiled(pattern: &str, flags: &str) -> Result<(), String> {
+    compiled_for(&Value::Undefined, pattern, flags)
+        .map(|_| ())
+        .map_err(|error| match error {
+            VmError::EvalError(message) => message,
+            error => format!("{error:?}"),
+        })
+}
+
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))

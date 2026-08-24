@@ -142,7 +142,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     }
     let (source, observable_source, flags) = regexp_source_and_flags(arguments)?;
     let visible_flags = crate::regexp::canonical_flags(&flags);
-    crate::regexp::compile(&source, &flags)
+    crate::regexp::ensure_compiled(&source, &flags)
         .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
     let mut entries = vec![
