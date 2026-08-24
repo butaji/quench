@@ -116,9 +116,22 @@ pub fn to_string(
     let view = this_view(receiver)?;
     let encoding = encoding_arg(args.first())?;
     let bytes = view_bytes(&view);
-    let start = clamp_bounds(args, 1, bytes.len(), 0.0);
-    let end = clamp_bounds(args, 2, bytes.len(), bytes.len() as f64);
+    let start = clamp_to_string_bounds(args.get(1), bytes.len(), 0.0);
+    let end = clamp_to_string_bounds(args.get(2), bytes.len(), bytes.len() as f64);
     Ok(enc::decode_str(&bytes[start..end.max(start)], &encoding))
+}
+
+fn clamp_to_string_bounds(value: Option<&Value>, len: usize, default: f64) -> usize {
+    let raw = if value.is_none() || matches!(value, Some(Value::Undefined)) {
+        default
+    } else {
+        to_offset(value)
+    };
+    if raw.is_sign_negative() {
+        0
+    } else {
+        (raw as usize).min(len)
+    }
 }
 
 fn encoding_arg(arg: Option<&Value>) -> Result<String, VmError> {
@@ -127,6 +140,32 @@ fn encoding_arg(arg: Option<&Value>) -> Result<String, VmError> {
         Some(Value::String(s)) => enc::canonical_encoding(s)
             .map(str::to_string)
             .ok_or_else(|| enc::unknown_encoding(s)),
+        Some(Value::Object(object)) => {
+            let method = quench_runtime::execute::get_property_result(
+                &Value::Object(object.clone()),
+                "toString",
+            )?;
+            if !quench_runtime::is_callable(&method) {
+                return Err(enc::invalid_arg_type(format!(
+                    "The \"encoding\" argument must be of type string.{}",
+                    crate::modules::util::invalid_arg_received(&Value::Object(object.clone()))
+                )));
+            }
+            let converted =
+                quench_runtime::execute::call(&method, &Value::Object(object.clone()), &[])?;
+            let Value::String(converted) = converted else {
+                return Err(enc::invalid_arg_type(
+                    "The \"encoding\" argument must be of type string.".into(),
+                ));
+            };
+            enc::canonical_encoding(&converted)
+                .map(str::to_string)
+                .ok_or_else(|| enc::unknown_encoding(&converted))
+        }
+        Some(Value::Null) => Err(enc::unknown_encoding("null")),
+        Some(Value::Number(value)) => Err(enc::unknown_encoding(&value.to_string())),
+        Some(Value::Boolean(value)) => Err(enc::unknown_encoding(&value.to_string())),
+        Some(Value::BigInt(value)) => Err(enc::unknown_encoding(value)),
         Some(other) => Err(enc::invalid_arg_type(format!(
             "The \"encoding\" argument must be of type string.{}",
             crate::modules::util::invalid_arg_received(other)
