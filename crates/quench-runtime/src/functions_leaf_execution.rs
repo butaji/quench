@@ -17,8 +17,13 @@ fn execute_proven_leaf(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
+    crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
     let code = function.code.code()?;
-    proven_leaf(function, code)?;
+    if proven_leaf(function, code).is_none() {
+        crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
+        return None;
+    }
+    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     let mut registers: [crate::value::Value; LEAF_REGISTERS] =
         std::array::from_fn(|_| crate::value::Value::Undefined);
     Some(run_leaf(
