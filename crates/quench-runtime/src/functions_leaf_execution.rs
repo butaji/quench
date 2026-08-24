@@ -1,4 +1,4 @@
-const LEAF_REGISTERS: usize = 16;
+const LEAF_REGISTERS: usize = 48;
 const LEAF_FACT_SLOTS: usize = 256;
 
 #[derive(Clone)]
@@ -73,6 +73,7 @@ fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Option<
                 | crate::ir::Opcode::Move
                 | crate::ir::Opcode::LoadLocalChecked
                 | crate::ir::Opcode::GetN
+                | crate::ir::Opcode::SetN
                 | crate::ir::Opcode::AGetI
                 | crate::ir::Opcode::Binary
                 | crate::ir::Opcode::CallN
@@ -88,23 +89,55 @@ fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Option<
             (op.flags <= 1).then_some(())?;
         }
         if op.opcode == crate::ir::Opcode::Slow {
-            let crate::ops::Op::Conditional {
-                dst,
-                condition,
-                consequent,
-                alternate,
-            } = code.cold(op)?
-            else {
-                return None;
-            };
-            [*dst, *condition]
-                .into_iter()
-                .all(|register| usize::from(register) < LEAF_REGISTERS)
-                .then_some(())?;
-            validate_leaf_depth(consequent.code()?, depth + 1)?;
-            validate_leaf_depth(alternate.code()?, depth + 1)?;
+            validate_leaf_control(code.cold(op)?, depth)?;
         }
     }
+    Some(())
+}
+
+fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Option<()> {
+    let registers = match op {
+        crate::ops::Op::Conditional {
+            dst,
+            condition,
+            consequent,
+            alternate,
+        } => {
+            validate_leaf_depth(consequent.code()?, depth + 1)?;
+            validate_leaf_depth(alternate.code()?, depth + 1)?;
+            [*dst, *condition]
+        }
+        crate::ops::Op::Branch {
+            condition,
+            then_ops,
+            else_ops,
+        } => {
+            validate_leaf_depth(then_ops.code()?, depth + 1)?;
+            validate_leaf_depth(else_ops.code()?, depth + 1)?;
+            [*condition, 0]
+        }
+        crate::ops::Op::Loop {
+            label,
+            init,
+            test,
+            body,
+            update,
+            post_test,
+            dst,
+            per_iteration,
+        } if label.is_none() && !post_test && per_iteration.is_empty() => {
+            validate_leaf_depth(init.code()?, depth + 1)?;
+            validate_leaf_depth(test.code()?, depth + 1)?;
+            validate_leaf_depth(body.code()?, depth + 1)?;
+            validate_leaf_depth(update.code()?, depth + 1)?;
+            [*dst, 0]
+        }
+        _ => return None,
+    };
+    registers
+        .into_iter()
+        .all(|register| usize::from(register) < LEAF_REGISTERS)
+        .then_some(())?;
     Some(())
 }
 
@@ -113,7 +146,7 @@ fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
     match op.opcode {
         LoadConst | LoadLocalChecked | Return => [op.a, 0, 0],
         Move => [op.a, op.b, 0],
-        GetN => [op.a, op.b, 0],
+        GetN | SetN => [op.a, op.b, 0],
         AGetI | Binary => [op.a, op.b, op.c],
         CallN if op.flags == 0 => [op.a, op.b, 0],
         CallN => [op.a, op.b, op.c],
@@ -129,15 +162,26 @@ fn run_leaf(
     code: crate::machine::CodeView<'_>,
     registers: &mut [crate::value::Value; LEAF_REGISTERS],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    run_leaf_fragment(function, receiver, arguments, code, registers)?
+        .ok_or(crate::execute::VmError::MissingReturn)
+}
+
+fn run_leaf_fragment(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+    code: crate::machine::CodeView<'_>,
+    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     for pc in 0..code.len() {
         let op = code
             .instruction(pc)
             .ok_or(crate::execute::VmError::MissingReturn)?;
         if let Some(value) = run_leaf_op(function, receiver, arguments, code, pc, op, registers)? {
-            return Ok(value);
+            return Ok(Some(value));
         }
     }
-    Err(crate::execute::VmError::MissingReturn)
+    Ok(None)
 }
 
 fn run_leaf_op(
@@ -155,6 +199,10 @@ fn run_leaf_op(
         Move => Some(registers[usize::from(op.b)].clone()),
         LoadLocalChecked => Some(leaf_local(function, receiver, arguments, code, pc, op.b)?),
         GetN => Some(leaf_get_named(code, pc, &registers[usize::from(op.b)])?),
+        SetN => {
+            leaf_set_named(code, pc, op, registers)?;
+            return Ok(None);
+        }
         AGetI => Some(leaf_get_index(
             &registers[usize::from(op.b)],
             &registers[usize::from(op.c)],
@@ -166,12 +214,7 @@ fn run_leaf_op(
                 .ok_or(crate::execute::VmError::MissingReturn)?,
         )?),
         CallN => Some(leaf_call(code, pc, op, registers)?),
-        Slow => {
-            let (dst, value) =
-                leaf_conditional(function, receiver, arguments, code, op, registers)?;
-            registers[usize::from(dst)] = value;
-            return Ok(None);
-        }
+        Slow => return leaf_control(function, receiver, arguments, code, op, registers),
         Return => return Ok(Some(registers[usize::from(op.a)].clone())),
         _ => None,
     };
@@ -213,6 +256,92 @@ fn leaf_conditional(
         registers,
     )?;
     Ok((*dst, value))
+}
+
+fn leaf_control(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+    code: crate::machine::CodeView<'_>,
+    op: crate::ir::Instruction,
+    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    match code.cold(op) {
+        Some(crate::ops::Op::Conditional { .. }) => {
+            let (dst, value) = leaf_conditional(function, receiver, arguments, code, op, registers)?;
+            registers[usize::from(dst)] = value;
+            Ok(None)
+        }
+        Some(crate::ops::Op::Branch {
+            condition,
+            then_ops,
+            else_ops,
+        }) => {
+            let selected = if crate::vm::is_truthy(&registers[usize::from(*condition)]) {
+                then_ops
+            } else {
+                else_ops
+            };
+            run_leaf_fragment(
+                function,
+                receiver,
+                arguments,
+                selected.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                registers,
+            )
+        }
+        Some(crate::ops::Op::Loop {
+            init,
+            test,
+            body,
+            update,
+            dst,
+            ..
+        }) => {
+            if let Some(value) = run_leaf_fragment(
+                function,
+                receiver,
+                arguments,
+                init.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                registers,
+            )? {
+                return Ok(Some(value));
+            }
+            loop {
+                let condition = run_leaf(
+                    function,
+                    receiver,
+                    arguments,
+                    test.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                    registers,
+                )?;
+                if !crate::vm::is_truthy(&condition) {
+                    break;
+                }
+                registers[usize::from(*dst)] = crate::value::Value::Undefined;
+                if let Some(value) = run_leaf_fragment(
+                    function,
+                    receiver,
+                    arguments,
+                    body.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                    registers,
+                )? {
+                    return Ok(Some(value));
+                }
+                if let Some(value) = run_leaf_fragment(
+                    function,
+                    receiver,
+                    arguments,
+                    update.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                    registers,
+                )? {
+                    return Ok(Some(value));
+                }
+            }
+            Ok(None)
+        }
+        _ => Err(crate::execute::VmError::MissingReturn),
+    }
 }
 
 fn leaf_local(
@@ -262,6 +391,48 @@ fn leaf_get_named(
         .as_deref()
         .ok_or(crate::execute::VmError::MissingReturn)?;
     crate::vm::get_named_property_result(object, key, &metadata.named_cache)
+}
+
+fn leaf_set_named(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    op: crate::ir::Instruction,
+    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+) -> Result<(), crate::execute::VmError> {
+    let metadata = code
+        .metadata_at(pc)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let key = metadata
+        .name
+        .as_deref()
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let target = registers[usize::from(op.a)].clone();
+    let value = registers[usize::from(op.b)].clone();
+    if let crate::value::Value::Object(object) = &target {
+        if !object.has_replacement() {
+            if let Some((layout, slot)) = crate::machine::unpack_named_cache(metadata.named_cache.get()) {
+                if object.semantic_layout_id() == layout {
+                    if let Some((_, crate::value::Value::BindingCell(cell))) =
+                        object.hot_properties().get(slot as usize)
+                    {
+                        *cell.borrow_mut() = value;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+    let mut temporary = crate::register_file::RegisterFile::from_values(vec![target, value]);
+    crate::properties::execute_set_named_cached(
+        &mut temporary,
+        0,
+        key,
+        1,
+        op.flags != 0,
+        &metadata.named_cache,
+    )?;
+    registers[usize::from(op.a)] = crate::execute::read_register(&temporary, 0)?;
+    Ok(())
 }
 
 fn leaf_get_index(
