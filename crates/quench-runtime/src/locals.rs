@@ -261,6 +261,10 @@ pub(crate) fn load_binding(
     name: &str,
     dynamic: bool,
 ) -> Result<(), VmError> {
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    if dynamic {
+        crate::execution_trace::event(crate::execution_trace::Event::DynamicBindingLoad);
+    }
     let environment = current();
     if dynamic {
         if let Some(value) = crate::with_scope::resolve_binding(name)? {
@@ -379,6 +383,7 @@ pub(crate) fn load(
     dst: u16,
     slot: u16,
 ) -> Result<(), VmError> {
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
 }
