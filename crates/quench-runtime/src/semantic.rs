@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use oxc::{
     ast::AstKind,
@@ -88,10 +88,18 @@ fn analyze_with_context(
     let semantic = SemanticBuilder::new()
         .with_check_syntax_error(true)
         .build(program);
+    let using_for_of_names = using_for_of_bound_names(program);
     let mut errors = semantic
         .errors
         .iter()
         .filter(|error| !context.permits(error, &semantic.semantic))
+        .filter(|error| {
+            !using_for_of_names.iter().any(|name| {
+                error
+                    .message
+                    .contains(&format!("Identifier `{name}` has already been declared"))
+            })
+        })
         .map(|error| format!("SyntaxError: {error}"))
         .collect::<Vec<_>>();
     if context.arguments && contains_arguments(&semantic.semantic) {
@@ -113,6 +121,36 @@ fn analyze_with_context(
             .map(|(index, node)| (node.kind().span(), crate::facts::FactSiteId(index as u32)))
             .collect(),
     })
+}
+
+fn using_for_of_bound_names(program: &oxc::ast::ast::Program<'_>) -> HashSet<String> {
+    struct Finder {
+        names: HashSet<String>,
+    }
+    impl<'a> oxc::ast::visit::Visit<'a> for Finder {
+        fn visit_for_of_statement(&mut self, statement: &oxc::ast::ast::ForOfStatement<'a>) {
+            if let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) =
+                &statement.left
+            {
+                if matches!(
+                    declaration.kind,
+                    oxc::ast::ast::VariableDeclarationKind::Using
+                        | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
+                ) {
+                    for declarator in &declaration.declarations {
+                        self.names
+                            .extend(crate::binding_patterns::names(&declarator.id));
+                    }
+                }
+            }
+            oxc::ast::visit::walk::walk_for_of_statement(self, statement);
+        }
+    }
+    let mut finder = Finder {
+        names: HashSet::new(),
+    };
+    oxc::ast::visit::walk::walk_program(&mut finder, program);
+    finder.names
 }
 
 impl EvalGrammarContext {
