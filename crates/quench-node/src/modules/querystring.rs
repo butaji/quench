@@ -204,6 +204,21 @@ pub(crate) fn units_of_value(value: &Value) -> Result<Vec<u16>, VmError> {
     }
     match execute::string_units(value) {
         Some(units) => Ok(units),
+        None if matches!(value, Value::Array(_)) => {
+            let Value::Array(array) = value else { unreachable!() };
+            let mut text = String::new();
+            for index in 0..array.logical_len() {
+                if index != 0 {
+                    text.push(',');
+                }
+                let Some(element) = array.get(index) else { continue };
+                if matches!(element, Value::Undefined | Value::Null) {
+                    continue;
+                }
+                text.push_str(&execute::to_js_string(&element)?);
+            }
+            Ok(text.encode_utf16().collect())
+        }
         None => Ok(execute::to_js_string(value)?.encode_utf16().collect()),
     }
 }

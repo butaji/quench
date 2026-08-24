@@ -27,6 +27,20 @@ pub fn capability_function(capability: HostCapabilityRef) -> Value {
     )))
 }
 
+/// Construct a host-visible callable/constructable wrapper for an intrinsic.
+/// The wrapper owns its observable properties, so Node-facing modules can
+/// specialize a constructor without mutating the shared intrinsic.
+pub fn bound_builtin(target: Builtin, receiver: Value) -> Value {
+    let realm = crate::vm::current_context().realm();
+    Value::BoundFunction(Rc::new(BoundFunctionValue {
+        realm,
+        target: Value::Builtin(target),
+        receiver,
+        arguments: Vec::new(),
+        properties: std::cell::RefCell::new(Vec::new()),
+    }))
+}
+
 pub fn custom_function(realm: crate::ops::RealmId, kind: u16) -> Value {
     capability_function(HostCapabilityRef {
         realm,
