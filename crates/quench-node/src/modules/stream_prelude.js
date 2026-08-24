@@ -480,6 +480,7 @@
       needDrain: false,
       pending: [],
       writing: false,
+      ending: false,
       ended: false,
       finished: false,
       errored: false,
@@ -650,6 +651,7 @@
       }
       st.writing = true;
       let called = false;
+      let failed = false;
       const done = (error) => {
         if (called) {
           const multiple = new Error("callback called multiple times");
@@ -662,6 +664,7 @@
         updateNeedDrain(st);
         st.writing = false;
         if (error) {
+          failed = true;
           st.errored = true;
           this.writable = false;
           this.writableErrored = error;
@@ -712,7 +715,7 @@
       } catch (error) {
         done(error);
       }
-      return st.buffered < st.highWaterMark;
+      return !failed && st.buffered < st.highWaterMark;
     }
 
     end(chunk, encoding, callback) {
@@ -727,7 +730,9 @@
       if (chunk != null) this.write(chunk, encoding);
       this._writableState.corked = 0;
       flushCorked(this);
+      this._writableState.ending = true;
       this._writableState.ended = true;
+      this.writable = false;
       const stream = this;
       finishWritable(stream);
       return this;
