@@ -201,6 +201,20 @@ impl<const N: usize> FixedWordFile<N> {
     }
 
     #[inline(always)]
+    pub(crate) fn copy_from(
+        &mut self,
+        destination: usize,
+        source: &RegisterFile,
+        index: usize,
+    ) -> Option<()> {
+        let word = *source.words.get(index)?;
+        retain(word);
+        let previous = std::mem::replace(self.words.get_mut(destination)?, word);
+        release(previous);
+        Some(())
+    }
+
+    #[inline(always)]
     pub(crate) fn truthiness(&self, index: usize) -> Option<bool> {
         match self.words.get(index)?.decode() {
             DecodedValue::Number(value) => Some(value != 0.0 && !value.is_nan()),
