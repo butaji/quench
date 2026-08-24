@@ -489,6 +489,7 @@
       corked: 0,
       prefinished: false,
       final: options.final || null,
+      endCallback: null,
       destroyed: false
     };
     stream.writable = options.writable !== false;
@@ -514,8 +515,16 @@
     if (!st.prefinished) {
       st.prefinishing = true;
       const complete = (error) => {
+        if (st.destroyed) return;
         if (error) {
-          stream._emitter.emit("error", error);
+          st.errored = true;
+          stream.writable = false;
+          if (st.endCallback) {
+            const callback = st.endCallback;
+            st.endCallback = null;
+            callback(error);
+          }
+          nextTick(() => stream._emitter.emit("error", error));
           return;
         }
         st.prefinishing = false;
@@ -523,8 +532,9 @@
         stream._emitter.emit("prefinish");
         nextTick(() => finishWritable(stream));
       };
-      if (st.final) {
-        try { st.final.call(stream, complete); } catch (error) { complete(error); }
+      const final = st.final || stream._final;
+      if (final) {
+        try { final.call(stream, complete); } catch (error) { complete(error); }
       } else complete();
       return;
     }
@@ -746,6 +756,7 @@
         callback = encoding;
         encoding = undefined;
       }
+      this._writableState.endCallback = callback || null;
       if (callback) this._emitter.once("finish", callback);
       if (chunk != null) this.write(chunk, encoding);
       this._writableState.corked = 0;
