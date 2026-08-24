@@ -436,15 +436,14 @@ fn recover_home_object(context: &Context) -> Option<Value> {
     None
 }
 
-fn holder_contains_function(
-    holder: &Value,
-    function: &Rc<crate::value::FunctionValue>,
-) -> bool {
+fn holder_contains_function(holder: &Value, function: &Rc<crate::value::FunctionValue>) -> bool {
     let properties = match holder {
         Value::Object(properties) => &properties.properties,
         _ => return false,
     };
-    properties.iter().any(|(_, value)| contains_function(value, function))
+    properties
+        .iter()
+        .any(|(_, value)| contains_function(value, function))
 }
 
 fn contains_function(value: &Value, function: &Rc<crate::value::FunctionValue>) -> bool {

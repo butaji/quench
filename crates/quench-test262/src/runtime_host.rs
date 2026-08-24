@@ -70,9 +70,7 @@ impl LinkedModuleGraph {
                 match LinkedModule::compile(&unit.source) {
                     Ok(module) => module,
                     Err(error) if graph.is_dynamic_target(unit.id) => {
-                        let message = error
-                            .strip_prefix("SyntaxError: ")
-                            .unwrap_or(&error);
+                        let message = error.strip_prefix("SyntaxError: ").unwrap_or(&error);
                         let source = format!(
                             "throw new SyntaxError({});",
                             serde_json::to_string(message)
