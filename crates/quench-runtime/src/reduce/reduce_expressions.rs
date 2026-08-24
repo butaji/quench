@@ -233,7 +233,7 @@ pub fn reduce_declaration(
         // its initializer runs.  Capture that target now so an initializer
         // such as `delete obj.x` cannot change which environment receives the
         // declaration's result.
-        let resolved_target = if facts.has_dynamic_scope() {
+        let resolved_target = if facts.has_dynamic_scope() && !facts.in_function {
             match &declarator.id.kind {
                 oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) => {
                     let Some(&slot) = locals.get(identifier.name.as_str()) else {
@@ -262,7 +262,24 @@ pub fn reduce_declaration(
             return Err(vec!["Unsupported variable initializer".to_string()]);
         };
         infer_declaration_name(&declarator.id, declarator.init.as_ref(), register, ops);
-        if let Some((target, slot, name)) = resolved_target {
+        if facts.in_function
+            && declaration.kind == VariableDeclarationKind::Var
+            && matches!(
+                &declarator.id.kind,
+                oxc::ast::ast::BindingPatternKind::BindingIdentifier(_)
+            )
+        {
+            let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                &declarator.id.kind
+            else {
+                unreachable!();
+            };
+            let slot = locals[identifier.name.as_str()];
+            ops.push(Op::StoreLocal {
+                slot,
+                src: register,
+            });
+        } else if let Some((target, slot, name)) = resolved_target {
             ops.push(Op::InitializeResolvedBinding {
                 target,
                 slot,
