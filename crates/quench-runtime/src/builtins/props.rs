@@ -316,17 +316,19 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         .or_else(|| uint8_array_base64_method(builtin, key))
 }
 fn uint8_array_base64_method(builtin: Builtin, key: &str) -> Option<Builtin> {
-    if builtin != Builtin::Uint8ArrayPrototype {
-        return None;
+    if builtin == Builtin::Uint8ArrayPrototype {
+        if let Some(method) = match key {
+            "setFromBase64" => Some(Builtin::Uint8ArraySetFromBase64),
+            "setFromHex" => Some(Builtin::Uint8ArraySetFromHex),
+            "toBase64" => Some(Builtin::Uint8ArrayToBase64),
+            "toHex" => Some(Builtin::Uint8ArrayToHex),
+            _ => None,
+        } {
+            return Some(method);
+        }
     }
-    Some(match key {
-        "setFromBase64" => Builtin::Uint8ArraySetFromBase64,
-        "setFromHex" => Builtin::Uint8ArraySetFromHex,
-        "toBase64" => Builtin::Uint8ArrayToBase64,
-        "toHex" => Builtin::Uint8ArrayToHex,
-        "subarray" => Builtin::Uint8ArraySubarray,
-        _ => return None,
-    })
+    (key == "subarray" && is_typed_array_prototype(builtin))
+        .then_some(Builtin::Uint8ArraySubarray)
 }
 fn is_typed_array_prototype(builtin: Builtin) -> bool {
     use Builtin::*;
