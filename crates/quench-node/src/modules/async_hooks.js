@@ -2,6 +2,13 @@
 
 const hooks = globalThis.__quenchAsyncHooks || [];
 Object.defineProperty(globalThis, "__quenchAsyncHooks", { configurable: true, value: hooks });
+if (!globalThis.__nodeCurrentAsyncResource) {
+  Object.defineProperty(globalThis, "__nodeCurrentAsyncResource", {
+    configurable: true,
+    writable: true,
+    value: { asyncId: 1, triggerAsyncId: 0 }
+  });
+}
 Object.defineProperty(globalThis, "\0quench:process_next_tick_init", {
   configurable: true,
   value: () => {
@@ -108,13 +115,16 @@ class AsyncResource {
     this.type = String(type);
     this._asyncId = ++nextId;
     this._triggerAsyncId = typeof options === "number" ? options : (options.triggerAsyncId || 0);
-    this._resource = { asyncId: this._asyncId };
+    this._resource = { asyncId: this._asyncId, triggerAsyncId: this._triggerAsyncId };
   }
   asyncId() { return this._asyncId; }
   triggerAsyncId() { return this._triggerAsyncId; }
   runInAsyncScope(callback, thisArg, ...args) {
     if (typeof callback !== "function") throw new TypeError("The callback argument must be of type function");
-    return callback.apply(thisArg, args);
+    const previous = globalThis.__nodeCurrentAsyncResource;
+    globalThis.__nodeCurrentAsyncResource = this._resource;
+    try { return callback.apply(thisArg, args); }
+    finally { globalThis.__nodeCurrentAsyncResource = previous; }
   }
   bind(callback, thisArg) { return (...args) => this.runInAsyncScope(callback, thisArg, ...args); }
   emitDestroy() { return this; }
@@ -153,7 +163,7 @@ module.exports = {
   createHook,
   AsyncResource,
   AsyncLocalStorage,
-  executionAsyncId: () => 1,
-  triggerAsyncId: () => 0,
-  executionAsyncResource: () => ({})
+  executionAsyncId: () => globalThis.__nodeCurrentAsyncResource?.asyncId || 1,
+  triggerAsyncId: () => globalThis.__nodeCurrentAsyncResource?.triggerAsyncId || 0,
+  executionAsyncResource: () => globalThis.__nodeCurrentAsyncResource
 };
