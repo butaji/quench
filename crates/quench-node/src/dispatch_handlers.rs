@@ -374,6 +374,13 @@ fn buffer_new_impl(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    crate::modules::process::emit_warning(
+        state,
+        "DeprecationWarning",
+        "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.",
+        Some("DEP0005"),
+        true,
+    );
     if matches!(args.first(), Some(Value::Number(_))) {
         if args.len() > 1 {
             return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
