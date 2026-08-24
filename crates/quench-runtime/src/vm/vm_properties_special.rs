@@ -271,6 +271,9 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         Builtin::IntlCollatorCompare => RefCell::new(collator_bound_properties()),
         _ => RefCell::new(Vec::new()),
     };
+    properties
+        .borrow_mut()
+        .push(("\0receiver_bound_method".to_string(), Value::Boolean(true)));
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
