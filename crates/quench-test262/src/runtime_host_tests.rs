@@ -171,6 +171,16 @@ fn cross_realm_class_evaluations_keep_private_static_brands_distinct() {
 }
 
 #[test]
+fn cross_realm_global_alias_writes_owned_realm() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var other = $262.createRealm().global; other.value = 1;\n\
+         if (other.eval('value') !== 1) throw new Error('cross-realm global write');",
+    )
+    .expect("writes through a realm global alias must stay in that realm");
+}
+
+#[test]
 fn script_this_define_delete_preserves_global_owner() {
     let mut host = super::RuntimeHost;
     host.run_harnessed_script(
