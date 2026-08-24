@@ -7,10 +7,22 @@ struct StatePredicatePlan {
     suspended_slot: u16,
 }
 
+#[derive(Clone, Copy)]
+struct StateBitOrPlan {
+    state_pc: usize,
+    mask_slot: u16,
+}
+
+#[derive(Clone, Copy)]
+enum ShapeKernelPlan {
+    StatePredicate(StatePredicatePlan),
+    StateBitOr(StateBitOrPlan),
+}
+
 #[derive(Clone)]
 struct ShapeKernelFact {
     function: std::rc::Weak<crate::value::FunctionValue>,
-    plan: Option<StatePredicatePlan>,
+    plan: Option<ShapeKernelPlan>,
 }
 
 thread_local! {
@@ -22,7 +34,18 @@ fn execute_shape_kernel(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
 ) -> Option<crate::value::Value> {
-    let plan = state_predicate_fact(function)?;
+    let plan = shape_kernel_fact(function)?;
+    match plan {
+        ShapeKernelPlan::StatePredicate(plan) => execute_state_predicate(function, receiver, plan),
+        ShapeKernelPlan::StateBitOr(plan) => execute_state_bit_or(function, receiver, plan),
+    }
+}
+
+fn execute_state_predicate(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+    plan: StatePredicatePlan,
+) -> Option<crate::value::Value> {
     let crate::value::Value::Object(object) = receiver else { return None };
     let code = function.code.code()?;
     let metadata = code.metadata_at(plan.state_pc)?;
@@ -39,6 +62,23 @@ fn execute_shape_kernel(
     ))
 }
 
+fn execute_state_bit_or(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+    plan: StateBitOrPlan,
+) -> Option<crate::value::Value> {
+    let crate::value::Value::Object(object) = receiver else { return None };
+    let metadata = function.code.code()?.metadata_at(plan.state_pc)?;
+    let cell = crate::vm::get_named_cached_cell(object, &metadata.named_cache)?;
+    // SAFETY: the receiver retains the cached ordinary data-property cell.
+    let cell = unsafe { &*cell };
+    let state = exact_i32(cell.load_number()?)?;
+    let mask = exact_i32(function.captures.get_number(plan.mask_slot)?)?;
+    cell.store(crate::value::Value::Number(f64::from(state | mask)));
+    crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
+    Some(crate::value::Value::Undefined)
+}
+
 fn exact_i32(value: f64) -> Option<i32> {
     (value.is_finite()
         && value.fract() == 0.0
@@ -47,9 +87,9 @@ fn exact_i32(value: f64) -> Option<i32> {
     .then_some(value as i32)
 }
 
-fn state_predicate_fact(
+fn shape_kernel_fact(
     function: &std::rc::Rc<crate::value::FunctionValue>,
-) -> Option<StatePredicatePlan> {
+) -> Option<ShapeKernelPlan> {
     let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (SHAPE_KERNEL_FACT_SLOTS - 1);
     let cached = SHAPE_KERNEL_FACTS.with(|facts| facts.borrow().get(index).and_then(Clone::clone));
     if let Some(cached) = cached.filter(|cached| {
@@ -57,7 +97,9 @@ fn state_predicate_fact(
     }) {
         return cached.plan;
     }
-    let plan = match_state_predicate(function);
+    let plan = match_state_predicate(function)
+        .map(ShapeKernelPlan::StatePredicate)
+        .or_else(|| match_state_bit_or(function).map(ShapeKernelPlan::StateBitOr));
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -138,6 +180,67 @@ fn match_state_predicate_alternate(
         held_slot: load_held.b,
         suspended_slot: load_suspended.b,
     })
+}
+
+fn match_state_bit_or(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+) -> Option<StateBitOrPlan> {
+    let code = function.code.code()?;
+    let load_this = code.instruction(0)?;
+    let move_one = code.instruction(1)?;
+    let move_two = code.instruction(2)?;
+    let load_again = code.instruction(3)?;
+    let get_state = code.instruction(4)?;
+    let load_mask = code.instruction(5)?;
+    let bit_or = code.instruction(6)?;
+    let set_state = code.instruction(7)?;
+    let load_undefined = code.instruction(8)?;
+    let return_op = code.instruction(9)?;
+    if !state_bit_or_ops_match(
+        code,
+        [
+            load_this,
+            move_one,
+            move_two,
+            load_again,
+            get_state,
+            load_mask,
+            bit_or,
+            set_state,
+            load_undefined,
+            return_op,
+        ],
+    ) {
+        return None;
+    }
+    Some(StateBitOrPlan {
+        state_pc: 4,
+        mask_slot: load_mask.b,
+    })
+}
+
+fn state_bit_or_ops_match(
+    code: crate::machine::CodeView<'_>,
+    ops: [crate::ir::Instruction; 10],
+) -> bool {
+    let [load_this, move_one, move_two, load_again, get_state, load_mask, bit_or, set_state, load_undefined, return_op] = ops;
+    code.len() == 10
+        && load_this.opcode == crate::ir::Opcode::LoadLocalChecked
+        && (move_one.opcode, move_one.b) == (crate::ir::Opcode::Move, load_this.a)
+        && (move_two.opcode, move_two.b) == (crate::ir::Opcode::Move, move_one.a)
+        && (load_again.opcode, load_again.b) == (crate::ir::Opcode::LoadLocalChecked, load_this.b)
+        && (get_state.opcode, get_state.b) == (crate::ir::Opcode::GetN, load_again.a)
+        && load_mask.opcode == crate::ir::Opcode::LoadLocalChecked
+        && bit_or.opcode == crate::ir::Opcode::Binary
+        && bit_or.flags == crate::ir::compact_binary_id(crate::ops::BinaryOp::BitwiseOr)
+        && (bit_or.b, bit_or.c) == (get_state.a, load_mask.a)
+        && (set_state.opcode, set_state.a, set_state.b)
+            == (crate::ir::Opcode::SetN, move_two.a, bit_or.a)
+        && code.metadata_at(4).and_then(|meta| meta.name.as_deref())
+            == code.metadata_at(7).and_then(|meta| meta.name.as_deref())
+        && matches!(code.constant_at(8), Some((_, crate::ops::Constant::Undefined)))
+        && load_undefined.opcode == crate::ir::Opcode::LoadConst
+        && (return_op.opcode, return_op.a) == (crate::ir::Opcode::Return, load_undefined.a)
 }
 
 fn fragment_returns(code: Option<crate::machine::CodeView<'_>>, register: u16) -> bool {
