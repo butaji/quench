@@ -14,4 +14,18 @@ assert.throws(
   { code: 'ERR_INVALID_ARG_TYPE', name: 'TypeError' }
 );
 
+const captured = new EventEmitter({ captureRejections: true });
+const error = new Error('captured');
+let seen;
+captured.on('event', () => ({ then(_resolve, reject) { reject(error); } }));
+captured.on('error', (value) => { seen = value; });
+captured.emit('event');
+assert.strictEqual(seen, error);
+
+assert.strictEqual(EventEmitter.captureRejections, false);
+EventEmitter.captureRejections = true;
+const inherited = new EventEmitter();
+assert.strictEqual(inherited.captureRejections, undefined);
+EventEmitter.captureRejections = false;
+
 console.log('EventEmitter prototype deletion: ok');
