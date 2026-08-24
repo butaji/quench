@@ -186,6 +186,31 @@ TracingChannel.prototype.tracePromise = function (fn, context, thisArg) {
     throw error;
   });
 };
+TracingChannel.prototype.traceCallback = function (fn, type, context, thisArg, callback) {
+  var args = Array.prototype.slice.call(arguments, 5);
+  if (typeof fn !== 'function') throw new TypeError('The "fn" argument must be of type function');
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  if (!this.hasSubscribers) return fn.apply(thisArg, [callback].concat(args));
+  if (this.start) this.start.publish(context);
+  var self = this;
+  var done = function (error, result) {
+    var completion = Object.assign({}, context);
+    Object.defineProperty(completion, 'error', { value: error || undefined, enumerable: false });
+    Object.defineProperty(completion, 'result', { value: result, enumerable: false });
+    if (error && self.error) self.error.publish(completion);
+    if (self.asyncStart) self.asyncStart.publish(completion);
+    if (self.asyncEnd) self.asyncEnd.publish(completion);
+    return callback(error, result);
+  };
+  try {
+    fn.apply(thisArg, [done].concat(args));
+    if (this.end) this.end.publish(context);
+  } catch (error) {
+    if (this.error) this.error.publish(Object.assign({}, context, { error: error }));
+    if (this.end) this.end.publish(context);
+    throw error;
+  }
+};
 
 function BoundedChannel(nameOrChannels) {
   var names;
