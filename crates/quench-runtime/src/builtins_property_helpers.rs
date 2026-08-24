@@ -136,6 +136,11 @@ pub(crate) fn define_own_property(
     }
     let key_value = Value::String(key.to_string());
     let current = ordinary_own_descriptor(&target, key, &key_value)?;
+    if matches!(current, Value::Undefined) && !crate::properties::object_is_extensible(&target) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot define a property on a non-extensible object",
+        ));
+    }
     validate_redefinition(&current, descriptor)?;
     let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
