@@ -348,6 +348,29 @@ fn sleep_error(name: &str, message: &str) -> VmError {
 }
 
 // ---- buffer ----
+fn number_display(value: &Value) -> String {
+    match value {
+        Value::Number(number) => number.to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn buffer_new_impl(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if matches!(args.first(), Some(Value::Number(_))) {
+        if args.len() > 1 {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"string\" argument must be of type string. Received type number ({})",
+                number_display(args.first().unwrap()),
+            )));
+        }
+        return crate::modules::buffer::alloc(state, args);
+    }
+    crate::modules::buffer_from::from(state, args)
+}
+
 pub fn buffer_from(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -388,13 +411,7 @@ pub fn buffer_new(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    // Deprecated `Buffer(value)` constructor: numbers allocate,
-    // everything else follows `Buffer.from`.
-    if matches!(args.first(), Some(Value::Number(_))) {
-        crate::modules::buffer::alloc(state, args)
-    } else {
-        crate::modules::buffer_from::from(state, args)
-    }
+    buffer_new_impl(state, args)
 }
 pub fn buffer_alloc_unsafe(
     state: &Rc<RefCell<HostState>>,
@@ -430,12 +447,7 @@ pub fn buffer_new_construct(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    // `new Buffer(value)`: numbers allocate, everything else is `from`.
-    if matches!(args.first(), Some(Value::Number(_))) {
-        crate::modules::buffer::alloc(state, args)
-    } else {
-        crate::modules::buffer_from::from(state, args)
-    }
+    buffer_new_impl(state, args)
 }
 
 // ---- tty ----
