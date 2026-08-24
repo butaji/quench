@@ -40,10 +40,9 @@ pub(crate) fn build_registers(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> (
-    Vec<crate::value::Value>,
+    crate::register_file::RegisterFile,
     std::rc::Rc<crate::environment::Environment>,
 ) {
-    let original_arguments = arguments.to_vec();
     let mut parameters = arguments.to_vec();
     parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
     parameters.truncate(usize::from(function.params));
@@ -63,16 +62,16 @@ pub(crate) fn build_registers(
     let environment = crate::environment::Environment::in_place_child(&function.captures, parameters);
     let arguments_slot = function.captures.len() as u16 + function.params;
     if matches!(function.kind, FunctionKind::Arrow) {
-        let arguments = arguments_object(function, original_arguments, &environment);
+        let arguments = arguments_object(function, arguments.to_vec(), &environment);
         environment.set(arguments_slot, arguments);
     } else {
-        let arguments = arguments_object(function, original_arguments, &environment);
+        let arguments = arguments_object(function, arguments.to_vec(), &environment);
         environment.set(arguments_slot, arguments);
         mark_arguments_immutable(function, &environment, arguments_slot);
     }
     let register_count = function.code.len().max(32);
     (
-        vec![crate::value::Value::Undefined; register_count],
+        crate::register_file::RegisterFile::with_undefined(register_count),
         environment,
     )
 }
@@ -111,7 +110,6 @@ pub(crate) fn execute_construct(
         function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(function, this_value);
-    let mut registers = crate::register_file::RegisterFile::from_values(registers);
     let result = crate::vm::execute_code_in_environment(
         function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
         &mut registers,

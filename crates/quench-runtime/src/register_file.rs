@@ -78,6 +78,12 @@ impl RegisterFile {
         Self { words: Vec::new() }
     }
 
+    pub fn with_undefined(len: usize) -> Self {
+        Self {
+            words: vec![TaggedValue::undefined(); len],
+        }
+    }
+
     pub fn from_values(values: Vec<Value>) -> Self {
         let mut registers = Self::new();
         registers.reserve(values.len());
