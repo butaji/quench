@@ -59,11 +59,12 @@ pub(crate) fn find(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = expect_array_like(receiver, "Array.prototype.find")?;
-    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    let callback = arguments.first();
+    let length = crate::builtins::map_length(&receiver)?;
+    let callback = callback.ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(callback) {
         return Err(crate::vm::not_callable());
     }
-    let length = crate::builtins::map_length(&receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for index in 0..length {
         let value = crate::builtins::map_value(&receiver, index)?.unwrap_or(Value::Undefined);
@@ -85,11 +86,12 @@ pub(crate) fn find_index(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = expect_array_like(receiver, "Array.prototype.findIndex")?;
-    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    let callback = arguments.first();
+    let length = crate::builtins::map_length(&receiver)?;
+    let callback = callback.ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(callback) {
         return Err(crate::vm::not_callable());
     }
-    let length = crate::builtins::map_length(&receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for index in 0..length {
         let value = crate::builtins::map_value(&receiver, index)?.unwrap_or(Value::Undefined);

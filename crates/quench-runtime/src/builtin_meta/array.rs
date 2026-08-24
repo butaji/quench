@@ -96,6 +96,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArraySome
         | Builtin::ArrayEvery
         | Builtin::ArrayFind
+        | Builtin::ArrayFindIndex
         | Builtin::ArrayFindLast
         | Builtin::ArrayFindLastIndex
         | Builtin::ArrayIncludes
