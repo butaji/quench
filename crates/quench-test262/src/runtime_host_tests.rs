@@ -247,6 +247,20 @@ fn reduce_right_walks_inherited_array_indices() {
 }
 
 #[test]
+fn slice_species_create_overwrites_target_descriptor() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var a = [1]; a.constructor = {}; a.constructor[Symbol.species] = function() { var q = []; Object.defineProperty(q, 0, { value: 0, writable: false, configurable: true, enumerable: false }); return q; };\n\
+         var r = a.slice(0); if (!Array.isArray(r)) throw new Error('slice array'); var d = Object.getOwnPropertyDescriptor(r, 0);\n\
+         if (r[0] !== 1) throw new Error('slice value');\n\
+         if (d.writable !== true) throw new Error('slice writable');\n\
+         if (d.enumerable !== true) throw new Error('slice enumerable');\n\
+         if (d.configurable !== true) throw new Error('slice configurable');",
+    )
+    .expect("slice must overwrite configurable target descriptors");
+}
+
+#[test]
 fn with_global_copy_on_write_updates_the_active_realm() {
     let mut host = super::RuntimeHost;
     host.run_script(
