@@ -887,9 +887,22 @@ pub fn abort_controller_abort(
     });
     let signal = quench_runtime::execute::set_property(signal, "reason", reason);
     let _ = quench_runtime::execute::set_property(controller.clone(), "signal", signal.clone());
-    let event =
-        quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+    let event = quench_runtime::host_api::object(vec![
+        ("type".into(), Value::String("abort".into())),
+        (
+            "stopImmediatePropagation".into(),
+            crate::host::capability(crate::registry::SPEC_ABORT_EVENT_STOP_IMMEDIATE),
+        ),
+    ]);
     crate::modules::event_target::dispatch_event(state, Some(&signal), &[event])
+}
+
+pub fn abort_event_stop_immediate(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
 }
 
 pub fn abort_signal_new(

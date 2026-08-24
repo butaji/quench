@@ -378,6 +378,8 @@ pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1
 pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1f05);
 pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1f03);
 pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1f04);
+pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
+    NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1f06);
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1400);
 pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1401);
