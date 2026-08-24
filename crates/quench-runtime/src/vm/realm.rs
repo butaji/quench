@@ -160,7 +160,9 @@ pub(super) fn id_for_global(global: &ObjectProperties) -> Option<RealmId> {
             .borrow()
             .iter()
             .flatten()
-            .find_map(|state| Rc::ptr_eq(&state.global.borrow(), global).then_some(state.id))
+            .find_map(|state| {
+                (state.global.borrow().identity() == global.identity()).then_some(state.id)
+            })
     })
 }
 
