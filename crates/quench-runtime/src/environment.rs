@@ -425,6 +425,10 @@ impl Environment {
         self.slots.borrow().len()
     }
 
+    pub(crate) fn captured_len(&self) -> usize {
+        self.slots.borrow().prefix.len()
+    }
+
     pub(crate) fn get(&self, slot: u16) -> Value {
         self.slot(slot).map_or(Value::Undefined, |slot| slot.load())
     }
