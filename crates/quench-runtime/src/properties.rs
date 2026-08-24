@@ -199,6 +199,69 @@ pub(crate) fn execute_set_property(
     finish_set_property(registers, object, &target, &key, value, strict)
 }
 
+pub(crate) fn execute_set_named_cached(
+    registers: &mut crate::register_file::RegisterFile,
+    object: u16,
+    key: &str,
+    src: u16,
+    strict: bool,
+    cache: &std::cell::Cell<u64>,
+) -> Result<(), crate::execute::VmError> {
+    let target = crate::execute::read_register(registers, object)?;
+    if let crate::value::Value::Object(data) = &target {
+        if !data.has_replacement() {
+            if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
+                if data.semantic_layout_id() == layout {
+                    if let Some((_, crate::value::Value::BindingCell(cell))) =
+                        data.hot_properties().get(slot as usize)
+                    {
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::NamedPropertySetHit,
+                        );
+                        *cell.borrow_mut() = crate::execute::read_register(registers, src)?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+    crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetMiss);
+    execute_set_property(
+        registers,
+        &Op::SetProperty {
+            object,
+            key: key.to_owned(),
+            src,
+            strict,
+        },
+    )?;
+    let updated = crate::execute::read_register(registers, object)?;
+    if let crate::value::Value::Object(data) = &updated {
+        if let Some(slot) = cacheable_named_write_slot(data, key) {
+            cache.set(crate::machine::pack_named_cache(
+                data.semantic_layout_id(),
+                slot,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn cacheable_named_write_slot(data: &crate::value::ObjectData, key: &str) -> Option<u32> {
+    if !plain_writable_own_data(data, key) {
+        return None;
+    }
+    data.hot_properties()
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(slot, (name, value))| {
+            (name == key && matches!(value, crate::value::Value::BindingCell(_)))
+                .then(|| u32::try_from(slot).ok())
+                .flatten()
+        })
+}
+
 fn finish_set_property(
     registers: &mut crate::register_file::RegisterFile,
     object: u16,

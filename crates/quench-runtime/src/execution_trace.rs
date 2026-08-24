@@ -29,6 +29,10 @@ execution_events! {
     PackedArrayMiss => "packed_array_miss",
     NamedPropertyHit => "named_property_hit",
     NamedPropertyMiss => "named_property_miss",
+    EqualityWordHit => "equality_word_hit",
+    EqualityWordMiss => "equality_word_miss",
+    NamedPropertySetHit => "named_property_set_hit",
+    NamedPropertySetMiss => "named_property_set_miss",
 }
 
 #[cfg(feature = "execution-trace")]
@@ -45,6 +49,7 @@ struct OperandKey {
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
     slow: HashMap<&'static str, u64>,
+    binary: HashMap<&'static str, u64>,
     events: [u64; EVENT_NAMES.len()],
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
@@ -135,6 +140,9 @@ pub(crate) fn slow(op: &crate::ops::Op) {
             let mut counters = counters.borrow_mut();
             let name = op.variant_name();
             *counters.slow.entry(name).or_default() += 1;
+            if let crate::ops::Op::Binary { operator, .. } = op {
+                *counters.binary.entry(binary_name(*operator)).or_default() += 1;
+            }
             counters.retire(name);
             let (a, b, c) = match op {
                 crate::ops::Op::LoadBinding {
@@ -146,6 +154,36 @@ pub(crate) fn slow(op: &crate::ops::Op) {
             };
             counters.retire_operands(OperandKey { name, a, b, c });
         });
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn binary_name(operator: crate::ops::BinaryOp) -> &'static str {
+    use crate::ops::BinaryOp::*;
+    match operator {
+        Add => "Add",
+        Subtract => "Subtract",
+        Multiply => "Multiply",
+        Divide => "Divide",
+        Remainder => "Remainder",
+        Exponentiate => "Exponentiate",
+        NumericAdd => "NumericAdd",
+        NumericSubtract => "NumericSubtract",
+        Equal => "Equal",
+        NotEqual => "NotEqual",
+        StrictEqual => "StrictEqual",
+        StrictNotEqual => "StrictNotEqual",
+        LessThan => "LessThan",
+        LessEqual => "LessEqual",
+        GreaterThan => "GreaterThan",
+        GreaterEqual => "GreaterEqual",
+        BitwiseOr => "BitwiseOr",
+        BitwiseXor => "BitwiseXor",
+        BitwiseAnd => "BitwiseAnd",
+        ShiftLeft => "ShiftLeft",
+        ShiftRight => "ShiftRight",
+        ShiftRightZeroFill => "ShiftRightZeroFill",
+        Instanceof => "Instanceof",
     }
 }
 
@@ -183,6 +221,11 @@ pub fn snapshot() -> Option<serde_json::Value> {
             slow.sort_unstable_by_key(|(name, _)| *name);
             let slow = slow
                 .into_iter()
+                .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
+                .collect::<serde_json::Map<_, _>>();
+            let binary = counters
+                .binary
+                .iter()
                 .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
                 .collect::<serde_json::Map<_, _>>();
             let events = EVENT_NAMES
@@ -229,6 +272,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "handler_total": compact_total + slow_total,
                 "compact": compact,
                 "slow": slow,
+                "binary": binary,
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
