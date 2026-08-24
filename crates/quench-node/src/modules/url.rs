@@ -70,14 +70,16 @@ pub fn format(
         };
         let parsed = legacy_parse_url(&s);
         let get = |k: &str| parsed.get(k).cloned().unwrap_or_default();
-        return Ok(Value::String(assemble_url(
+        let formatted = assemble_url(
             &get("protocol"),
             &get("auth"),
             &get("host"),
             &get("pathname"),
             &get("search"),
             &get("hash"),
-        )));
+            s.contains("://"),
+        );
+        return Ok(Value::String(formatted));
     }
     if !is_object_arg(&obj) {
         return Err(invalid_arg_type_object(&obj));
@@ -85,10 +87,20 @@ pub fn format(
     if crate::modules::url_whatwg::is_url_instance(&obj) {
         return format_whatwg(&obj, args.get(1));
     }
-    let (protocol, auth, host, pathname, query, hash) = read_url_parts(args);
+    let (protocol, auth, host, pathname, query, hash) = read_url_parts(_state, args);
+    let slashes = execute::is_truthy(&execute::get_property(&obj, "slashes"))
+        || protocol_uses_authority_slashes(&protocol);
     Ok(Value::String(assemble_url(
-        &protocol, &auth, &host, &pathname, &query, &hash,
+        &protocol, &auth, &host, &pathname, &query, &hash, slashes,
     )))
+}
+
+fn protocol_uses_authority_slashes(protocol: &str) -> bool {
+    let protocol = protocol.trim_end_matches(':');
+    matches!(
+        protocol.to_ascii_lowercase().as_str(),
+        "http" | "https" | "ftp" | "gopher" | "file" | "ws" | "wss"
+    )
 }
 
 pub(crate) fn is_object_arg(value: &Value) -> bool {
@@ -152,11 +164,16 @@ fn flag(options: &Value, key: &str, slot: &mut bool) {
     }
 }
 
-fn read_url_parts(args: &[Value]) -> (String, String, String, String, String, String) {
+fn read_url_parts(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> (String, String, String, String, String, String) {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     let mut protocol = String::new();
     let mut auth = String::new();
     let mut host = String::new();
+    let mut hostname = String::new();
+    let mut port = String::new();
     let mut pathname = String::new();
     let mut query = String::new();
     let mut hash = String::new();
@@ -170,16 +187,44 @@ fn read_url_parts(args: &[Value]) -> (String, String, String, String, String, St
             "protocol" => protocol = value,
             "auth" => auth = value,
             "host" => host = value,
-            "hostname" if host.is_empty() => host = value,
-            "port" if host.is_empty() && !value.is_empty() => {
-                host.push(':');
-                host.push_str(&value);
-            }
-            "pathname" => pathname = value,
+            "hostname" => hostname = value,
+            "port" => port = value,
+            "pathname" => pathname = encode_path_component(&value),
             "search" => query = value,
-            "query" => query = value,
+            "query"
+                if !value.is_empty()
+                    && !matches!(
+                        raw,
+                        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+                    ) =>
+            {
+                query = value
+            }
             "hash" => hash = value,
             _ => {}
+        }
+    }
+    if host.is_empty() {
+        host = hostname;
+        if !port.is_empty() {
+            if host.contains(':') && !host.starts_with('[') {
+                host = format!("[{host}]");
+            }
+            host.push(':');
+            host.push_str(&port);
+        }
+    }
+    let query_value = quench_runtime::vm::get_property(&obj, "query");
+    if matches!(
+        query_value,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+    ) {
+        if let Ok(Value::String(serialized)) =
+            crate::modules::querystring_stringify::stringify(state, None, &[query_value])
+        {
+            if !serialized.is_empty() {
+                query = serialized;
+            }
         }
     }
     (protocol, auth, host, pathname, query, hash)
@@ -192,32 +237,58 @@ fn assemble_url(
     pathname: &str,
     query: &str,
     hash: &str,
+    slashes: bool,
 ) -> String {
     let mut out = String::new();
+    let host = if host.len() > 255 { "" } else { host };
     out.push_str(protocol);
     if !protocol.is_empty() && !out.ends_with(':') {
         out.push(':');
     }
-    if !host.is_empty() || !auth.is_empty() {
+    if slashes {
         out.push_str("//");
+    }
+    if !host.is_empty() || !auth.is_empty() {
         if !auth.is_empty() {
-            out.push_str(auth);
+            out.push_str(&encode_auth(&auth));
             out.push('@');
         }
         out.push_str(host);
     }
+    if (!host.is_empty() || !auth.is_empty()) && !pathname.is_empty() && !pathname.starts_with('/')
+    {
+        out.push('/');
+    }
     out.push_str(pathname);
+    if pathname.is_empty()
+        && (!host.is_empty() || !auth.is_empty())
+        && (!query.is_empty() || !hash.is_empty())
+    {
+        out.push('/');
+    }
     if !query.is_empty() {
         if !query.starts_with('?') {
             out.push('?');
         }
-        out.push_str(query);
+        out.push_str(&query.replace('#', "%23"));
     }
     if !hash.is_empty() {
         if !hash.starts_with('#') {
             out.push('#');
         }
         out.push_str(hash);
+    }
+    out
+}
+
+fn encode_auth(auth: &str) -> String {
+    let mut out = String::new();
+    for byte in auth.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b':' | b'%') {
+            out.push(*byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
     }
     out
 }
@@ -276,32 +347,59 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
         out.insert("query".into(), rest[i + 1..].to_string());
         rest = &rest[..i];
     }
-    let (auth_host, pathname) = match rest.find('/') {
-        Some(i) => (&rest[..i], rest[i..].to_string()),
-        None => (rest, String::new()),
+    let after_protocol = if let Some(i) = rest.find("://") {
+        out.insert("protocol".into(), rest[..i + 1].to_string());
+        &rest[i + 3..]
+    } else if let Some(i) = rest.find(':') {
+        out.insert("protocol".into(), rest[..i + 1].to_string());
+        &rest[i + 1..]
+    } else {
+        rest
     };
-    let after_protocol = match auth_host.find("://") {
-        Some(i) => {
-            out.insert("protocol".into(), auth_host[..i + 3].to_string());
-            &auth_host[i + 3..]
-        }
-        None => auth_host,
+    let split = after_protocol
+        .char_indices()
+        .find(|(_, character)| matches!(character, '/' | ' ' | '"'));
+    let (auth_host, pathname) = match split {
+        Some((index, character)) if character == '/' => (
+            &after_protocol[..index],
+            after_protocol[index..].to_string(),
+        ),
+        Some((index, _)) => (
+            &after_protocol[..index],
+            format!("/{}", &after_protocol[index..]),
+        ),
+        None => (after_protocol, String::new()),
     };
-    if let Some(at) = after_protocol.find('@') {
-        let (a, host) = after_protocol.split_at(at);
+    if let Some(at) = auth_host.find('@') {
+        let (a, host) = auth_host.split_at(at);
         out.insert("auth".into(), a.to_string());
         let host = &host[1..];
         split_host_port(host, &mut out);
     } else {
-        split_host_port(after_protocol, &mut out);
+        split_host_port(auth_host, &mut out);
     }
     if !pathname.is_empty() {
-        out.insert("pathname".into(), pathname);
+        out.insert("pathname".into(), encode_path_component(&pathname));
     }
     if let Some(s) = out.get("search") {
         out.insert("query".into(), s.trim_start_matches('?').to_string());
     }
     out
+}
+
+fn encode_path_component(path: &str) -> String {
+    path.chars()
+        .map(|character| match character {
+            ' ' => "%20".to_string(),
+            '"' => "%22".to_string(),
+            '<' => "%3C".to_string(),
+            '>' => "%3E".to_string(),
+            '`' => "%60".to_string(),
+            '#' => "%23".to_string(),
+            '?' => "%3F".to_string(),
+            _ => character.to_string(),
+        })
+        .collect()
 }
 
 fn split_host_port(host: &str, out: &mut BTreeMap<String, String>) {
@@ -387,7 +485,7 @@ fn value_to_string(value: &Value) -> String {
         Value::Boolean(b) => b.to_string(),
         Value::Null => "null".into(),
         Value::Undefined => "undefined".into(),
-        _ => String::new(),
+        _ => execute::to_js_string(value).unwrap_or_default(),
     }
 }
 
