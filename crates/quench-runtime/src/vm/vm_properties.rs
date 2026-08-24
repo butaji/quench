@@ -1,5 +1,12 @@
-pub fn copy_register(registers: &mut crate::register_file::RegisterFile, dst: u16, src: u16) -> Result<(), VmError> {
-    registers.copy(usize::from(dst), usize::from(src)).then_some(()).ok_or(VmError::MissingReturn)
+pub fn copy_register(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    src: u16,
+) -> Result<(), VmError> {
+    registers
+        .copy(usize::from(dst), usize::from(src))
+        .then_some(())
+        .ok_or(VmError::MissingReturn)
 }
 #[inline]
 pub fn write_value(registers: &mut crate::register_file::RegisterFile, index: u16, value: Value) {
@@ -9,12 +16,19 @@ pub fn write_value(registers: &mut crate::register_file::RegisterFile, index: u1
 /// Unchecked variant for hot arithmetic paths where the compiler already
 /// guarantees the register index is in bounds.
 #[inline]
-pub(crate) fn write_value_unchecked(registers: &mut crate::register_file::RegisterFile, index: u16, value: Value) {
+pub(crate) fn write_value_unchecked(
+    registers: &mut crate::register_file::RegisterFile,
+    index: u16,
+    value: Value,
+) {
     registers.write(usize::from(index), value);
 }
 
 #[inline]
-pub fn read_register(registers: &crate::register_file::RegisterFile, index: u16) -> Result<Value, VmError> {
+pub fn read_register(
+    registers: &crate::register_file::RegisterFile,
+    index: u16,
+) -> Result<Value, VmError> {
     registers
         .read(usize::from(index))
         .map(crate::locals::resolved_replacement)
@@ -24,8 +38,13 @@ pub fn read_register(registers: &crate::register_file::RegisterFile, index: u16)
 /// Unchecked variant for hot arithmetic paths where the compiler already
 /// guarantees the register index is in bounds.
 #[inline]
-pub(crate) fn read_register_unchecked(registers: &crate::register_file::RegisterFile, index: u16) -> Value {
-    let value = registers.read(usize::from(index)).expect("register index out of bounds");
+pub(crate) fn read_register_unchecked(
+    registers: &crate::register_file::RegisterFile,
+    index: u16,
+) -> Value {
+    let value = registers
+        .read(usize::from(index))
+        .expect("register index out of bounds");
     crate::locals::resolved_replacement(value)
 }
 pub fn get_property(value: &Value, key: &str) -> Value {
@@ -44,13 +63,21 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     // Property lookup must observe the latest physical object for this
     // semantic identity. Resolving only the result reads stale scalar fields
     // after an immutable object transition (for example `this.x++`).
-    let owner = match value {
-        Value::Array(_)
-        | Value::Object(_)
-        | Value::ObjectAlias(_)
-        | Value::Function(_)
-        | Value::BindingCell(_) => crate::locals::resolved_replacement(value.clone()),
-        _ => value.clone(),
+    let owner = if matches!(value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+        || matches!(value, Value::ObjectAlias(alias) if alias
+            .target()
+            .is_some_and(|view| view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)))
+    {
+        crate::vm::current_global_object()
+    } else {
+        match value {
+            Value::Array(_)
+            | Value::Object(_)
+            | Value::ObjectAlias(_)
+            | Value::Function(_)
+            | Value::BindingCell(_) => crate::locals::resolved_replacement(value.clone()),
+            _ => value.clone(),
+        }
     };
     let result = direct_or_primitive_property(&owner, key);
     // Primitive results cannot participate in replacement aliases. Avoid the

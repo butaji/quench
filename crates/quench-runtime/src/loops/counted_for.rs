@@ -133,8 +133,21 @@ fn reduce_dynamic_for(
     let var_names = body_var_names(&statement.body);
     propagate_body_vars(locals, next_slot, &var_names);
     let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals, dst)?;
-    let update =
+    let mut update =
         super::reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
+    if statement.init.as_ref().is_some_and(|init| {
+        matches!(
+            init,
+            ForStatementInit::VariableDeclaration(declaration)
+                if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Const
+        )
+    }) {
+        for name in &lexical_names {
+            if let Some(&slot) = locals.get(name) {
+                update.insert(0, Op::MarkImmutable { slot });
+            }
+        }
+    }
     let [init, test, body, update] =
         crate::machine::FunctionCode::pending_many(vec![init, test, body, update])
             .try_into()
