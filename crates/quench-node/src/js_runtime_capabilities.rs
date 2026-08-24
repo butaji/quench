@@ -450,6 +450,7 @@ impl CapabilityName {
     const BufferSlice: u16 = 1583;
     const BufferCopy: u16 = 1584;
     const BufferFill: u16 = 1585;
+    const BufferArrayBufferAlignedOffset: u16 = 1587;
     const BufferCompare: u16 = 1586;
     const BufferNumericFirst: u16 = 2000;
     const PathParse: u16 = 2035;

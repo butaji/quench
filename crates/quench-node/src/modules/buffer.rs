@@ -137,7 +137,41 @@ pub fn alloc_unsafe(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    validate_alignment(args.get(1))?;
     alloc_impl(args, false)
+}
+
+fn validate_alignment(value: Option<&Value>) -> Result<(), VmError> {
+    let Some(value) = value.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(());
+    };
+    let Value::Number(alignment) = value else {
+        return Err(enc::invalid_arg_type(format!(
+            "The \"alignment\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(value)
+        )));
+    };
+    if !alignment.is_finite() || alignment.fract() != 0.0 {
+        return Err(enc::out_of_range(
+            "alignment",
+            "an integer",
+            &enc::fmt_num(*alignment),
+        ));
+    }
+    if *alignment < 1.0 || !(*alignment as u64).is_power_of_two() {
+        return Err(enc::invalid_arg_value(
+            "The \"alignment\" argument must be a power of two".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn array_buffer_aligned_offset(args: &[Value]) -> Result<Value, VmError> {
+    if !matches!(args.first(), Some(Value::ArrayBuffer(_))) {
+        return Err(VmError::EvalError("ArrayBuffer expected".into()));
+    }
+    validate_alignment(args.get(1))?;
+    Ok(Value::Number(0.0))
 }
 
 fn alloc_impl(args: &[Value], zero_fill: bool) -> Result<Value, VmError> {
