@@ -368,8 +368,8 @@ pub fn fill_view(receiver: Option<&Value>, args: &[Value]) -> HandlerResult {
     let fill = args.first().cloned().unwrap_or(Value::Undefined);
     let (offset_arg, end_arg, encoding_arg) = fill_args(args);
     let encoding = match encoding_arg {
+        Some(Value::Undefined) | None => None,
         Some(value) => Some(encoding_arg_from(value, &fill)?),
-        None => None,
     };
     let pattern = fill_pattern(&fill, encoding.as_deref())?;
     validate_fill_bound(args.get(offset_arg), view.length, "offset")?;
@@ -397,7 +397,10 @@ pub fn internal_fill(args: &[Value]) -> HandlerResult {
         args.get(1).cloned().unwrap_or(Value::Undefined),
         args.get(2).cloned().unwrap_or(Value::Undefined),
         args.get(3).cloned().unwrap_or(Value::Undefined),
-        args.get(4).cloned().unwrap_or(Value::Undefined),
+        match args.get(4) {
+            Some(Value::String(value)) => Value::String(value.clone()),
+            _ => Value::Undefined,
+        },
     ];
     fill_view(Some(buffer), &reordered)
 }
