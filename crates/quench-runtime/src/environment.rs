@@ -252,7 +252,7 @@ impl SlotStore {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct BindingRef {
+pub(crate) struct BindingRef {
     store: Rc<SlotStore>,
     index: usize,
 }
@@ -607,6 +607,38 @@ impl Environment {
 
     pub(crate) fn resolve_eval_name(&self, name: &str) -> Option<Value> {
         self.eval_name_binding(name).map(|binding| binding.load())
+    }
+
+    /// Direct eval temporarily publishes non-strict var/function names into
+    /// its caller's variable environment.  Keep the caller's prior aliases
+    /// so the publication can be scoped to the eval activation.
+    pub(crate) fn snapshot_eval_names(&self) -> Option<HashMap<String, BindingRef>> {
+        self.eval_names.borrow().clone()
+    }
+
+    pub(crate) fn restore_eval_names(&self, names: Option<HashMap<String, BindingRef>>) {
+        self.eval_names.replace(names);
+    }
+
+    pub(crate) fn snapshot_eval_name_chain(&self) -> Vec<Option<HashMap<String, BindingRef>>> {
+        let mut snapshots = vec![self.snapshot_eval_names()];
+        if let Some(caller) = &self.caller {
+            snapshots.extend(caller.snapshot_eval_name_chain());
+        }
+        snapshots
+    }
+
+    pub(crate) fn restore_eval_name_chain(
+        &self,
+        snapshots: &[Option<HashMap<String, BindingRef>>],
+    ) {
+        let Some((current, rest)) = snapshots.split_first() else {
+            return;
+        };
+        self.restore_eval_names(current.clone());
+        if let Some(caller) = &self.caller {
+            caller.restore_eval_name_chain(rest);
+        }
     }
 
     pub(crate) fn eval_name_aliases_slot(&self, name: &str, slot: u16) -> bool {

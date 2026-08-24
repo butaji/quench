@@ -99,6 +99,9 @@ pub(crate) struct EnvironmentGuard {
     previous: Option<Rc<Environment>>,
     previous_global: Option<Rc<Environment>>,
     previous_global_realm: Option<crate::ops::RealmId>,
+    eval_environment: Option<Rc<Environment>>,
+    eval_names:
+        Option<Vec<Option<std::collections::HashMap<String, crate::environment::BindingRef>>>>,
 }
 
 pub(crate) struct GlobalLexicalGuard {
@@ -146,6 +149,28 @@ impl Drop for IterationBinding {
 
 impl EnvironmentGuard {
     pub(crate) fn install(environment: Rc<Environment>) -> Self {
+        let preserve_eval = CURRENT_ENVIRONMENT.with(|current| {
+            current
+                .borrow()
+                .as_ref()
+                .is_none_or(|installed| !Rc::ptr_eq(installed, &environment))
+        });
+        let eval_names = preserve_eval.then(|| environment.snapshot_eval_name_chain());
+        let eval_environment = preserve_eval.then(|| Rc::clone(&environment));
+        Self::install_with_snapshot(environment, eval_environment, eval_names)
+    }
+
+    pub(crate) fn install_eval(environment: Rc<Environment>) -> Self {
+        Self::install_with_snapshot(environment, None, None)
+    }
+
+    fn install_with_snapshot(
+        environment: Rc<Environment>,
+        eval_environment: Option<Rc<Environment>>,
+        eval_names: Option<
+            Vec<Option<std::collections::HashMap<String, crate::environment::BindingRef>>>,
+        >,
+    ) -> Self {
         let previous = CURRENT_ENVIRONMENT.with(|current| current.replace(Some(environment)));
         // Slot zero is the global object binding.  Install it before any
         // identifier/property resolution so host values attached to the
@@ -168,12 +193,19 @@ impl EnvironmentGuard {
             previous,
             previous_global,
             previous_global_realm,
+            eval_environment,
+            eval_names,
         }
     }
 }
 
 impl Drop for EnvironmentGuard {
     fn drop(&mut self) {
+        if let (Some(environment), Some(names)) =
+            (self.eval_environment.take(), self.eval_names.take())
+        {
+            environment.restore_eval_name_chain(&names);
+        }
         CURRENT_ENVIRONMENT.with(|current| current.replace(self.previous.take()));
         GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(self.previous_global.take()));
         GLOBAL_LEXICAL_REALM.with(|value| value.replace(self.previous_global_realm));
