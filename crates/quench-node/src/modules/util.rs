@@ -483,12 +483,6 @@ fn value_to_string(value: &Value) -> String {
         Value::Undefined => "undefined".into(),
         // Node: objects with a custom `toString` go through `String(arg)`;
         // plain objects inspect.
-        // Arrow source is observable through `%s`; reduced functions do not
-        // retain parser text, so preserve Node's source form for the common
-        // expression-bodied literal used by the compatibility surface.
-        Value::Function(function)
-            if function.kind == quench_runtime::ops::FunctionKind::Arrow
-                && function.params == 0 => "() => 5".into(),
         Value::Object(_)
         | Value::ObjectAlias(_)
         | Value::Array(_)

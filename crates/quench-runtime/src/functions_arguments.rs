@@ -7,7 +7,7 @@ fn emit_function_expression(
     metadata: FunctionMetadata,
     declared_name: Option<&str>,
 ) -> u16 {
-    let function = emit_function_op(ops, next, body, params, captures, metadata);
+    let function = emit_function_op(ops, next, body, params, captures, metadata, None);
     if let Some(name) = declared_name {
         ops.push(Op::SetFunctionName {
             function,
