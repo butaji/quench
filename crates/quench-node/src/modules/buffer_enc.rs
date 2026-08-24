@@ -50,6 +50,14 @@ pub fn invalid_arg_value(message: String) -> VmError {
     coded_error("TypeError", "ERR_INVALID_ARG_VALUE", &message)
 }
 
+pub fn invalid_this() -> VmError {
+    coded_error(
+        "TypeError",
+        "ERR_INVALID_THIS",
+        "Cannot call StringDecoder method on an incompatible receiver",
+    )
+}
+
 /// `ERR_BUFFER_OUT_OF_BOUNDS` coded `RangeError`.
 pub fn buffer_out_of_bounds(message: &str) -> VmError {
     coded_error("RangeError", "ERR_BUFFER_OUT_OF_BOUNDS", message)
