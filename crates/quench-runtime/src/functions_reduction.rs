@@ -360,6 +360,7 @@ fn emit_function_op(
     params: u16,
     captures: u16,
     metadata: FunctionMetadata,
+    source: Option<String>,
 ) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
@@ -373,6 +374,7 @@ fn emit_function_op(
         strictness: metadata.strictness,
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
+        source,
     });
     register
 }
@@ -466,6 +468,10 @@ pub(crate) fn reduce_arrow(
             is_async: function.r#async,
             mapped_arguments: false,
         },
+        facts
+            .reduction_source
+            .get(function.span.start as usize..function.span.end as usize)
+            .map(str::to_string),
     ))
 }
 

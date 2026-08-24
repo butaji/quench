@@ -21,6 +21,7 @@ fn emit_default_constructor(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
         strictness: FunctionStrictness::Strict,
         is_async: false,
         mapped_arguments: false,
+        source: None,
     });
     dst
 }

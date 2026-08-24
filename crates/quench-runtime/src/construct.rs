@@ -360,12 +360,15 @@ fn construct_bound(
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     let new_target = bound_construct_new_target(target, new_target);
-    let value = construct_bound_target(bound, &bound.target, &new_target, &combined)?;
+    let mut value = construct_bound_target(bound, &bound.target, &new_target, &combined)?;
     if matches!(
         crate::execute::get_property_result(&bound.receiver, "\0float16_constructor"),
         Ok(Value::Boolean(true))
     ) {
         value.mark_float16_array();
+        if let Ok(prototype) = crate::execute::get_property_result(&bound.receiver, "\0prototype") {
+            value = crate::execute::set_prototype_of(&value, &prototype)?;
+        }
     }
     if let Value::HostCapability(capability) = &bound.receiver {
         // Host-created objects are owned by the host implementation. Adding
