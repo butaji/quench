@@ -51,6 +51,7 @@ fn set_proven_own_data(
         *cell.borrow_mut() = value.clone();
         return true;
     }
+    crate::execution_trace::event(crate::execution_trace::Event::NamedSetPromoteCell);
     let value =
         crate::value::Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(value.clone())));
     let updated = crate::builtins::object_alias::set(std::rc::Rc::clone(target), key, value);
@@ -222,18 +223,27 @@ fn set_receiver_data(
     } else if rejects_new_property(receiver, key) {
         return Ok(false);
     }
-    let descriptor =
-        receiver_data_descriptor(value, matches!(current, crate::value::Value::Undefined));
+    let descriptor = receiver_data_descriptor(
+        &receiver_resolved,
+        value,
+        matches!(current, crate::value::Value::Undefined),
+    );
     let updated = crate::builtins::define_own_property(receiver, key, &descriptor)?;
     crate::locals::replace_value(receiver, &updated);
     Ok(true)
 }
 
 fn receiver_data_descriptor(
+    receiver: &crate::value::Value,
     value: &crate::value::Value,
     create: bool,
 ) -> Vec<(String, crate::value::Value)> {
-    let mut descriptor = vec![("value".to_string(), value.clone())];
+    let value = if create && matches!(receiver, crate::value::Value::Object(_)) {
+        crate::value::Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(value.clone())))
+    } else {
+        value.clone()
+    };
+    let mut descriptor = vec![("value".to_string(), value)];
     if create {
         descriptor.extend([
             ("writable".to_string(), crate::value::Value::Boolean(true)),
