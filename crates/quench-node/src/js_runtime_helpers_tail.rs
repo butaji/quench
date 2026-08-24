@@ -24,6 +24,9 @@ fn crypto_random_fill(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn events_module() -> Value {
     let mut emitter = capability_function(HostCapabilityKind::Custom(CapabilityName::EventEmitter));
+    if let Ok(prototype) = crate::modules::events::emitter_prototype() {
+        let _ = quench_runtime::execute::set_callable_property(&emitter, "prototype", prototype);
+    }
     emitter =
         quench_runtime::execute::set_property(emitter, "captureRejections", Value::Boolean(false));
     quench_runtime::host_api::object(vec![
