@@ -67,6 +67,9 @@ var parentPort = workerEnv ? emitter({
   }
 }) : null;
 function cloneMessage(value) {
+  if (value && typeof value.postMessage === 'function' && typeof value.close === 'function') {
+    return value;
+  }
   if (value instanceof Uint8Array) return new Uint8Array(value);
   if (Array.isArray(value)) {
     var array = [];
@@ -102,14 +105,15 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
     set: function (fn) {
       if (onmessageListener) port.removeListener('message', onmessageListener);
       onmessage = typeof fn === 'function' ? fn : null;
-      onmessageListener = onmessage ? function (value) {
-        onmessage.call(port, { data: value, target: port, ports: [] });
+      onmessageListener = onmessage ? function (value, ports) {
+        onmessage.call(port, { data: value, target: port, ports: ports || [] });
       } : null;
       if (onmessageListener) port.on('message', onmessageListener);
     }
   });
   port.postMessage = function (value) {
     var cloned = cloneMessage(value);
+    var transferredPorts = [];
     var transfer = arguments[1];
     var options = transfer && typeof transfer === 'object' && !Array.isArray(transfer) &&
       Object.prototype.hasOwnProperty.call(transfer, 'transfer');
@@ -160,6 +164,10 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
     if (transfer && typeof transfer.length === 'number') {
       for (var t = 0; t < transfer.length; t++) {
         var item = transfer[t];
+        if (item && typeof item.postMessage === 'function' && typeof item.close === 'function') {
+          transferredPorts.push(item);
+          continue;
+        }
         var buffer = item instanceof ArrayBuffer ? item : item && item.buffer;
         if (buffer instanceof ArrayBuffer) {
           try { buffer.transfer(); } catch (_) {
@@ -170,12 +178,20 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
         }
       }
     }
-    if (!this._closed && this._peer && !this._peer._closed) this._peer.emit('message', cloned);
+    if (!this._closed && this._peer && !this._peer._closed) {
+      this._peer.emit('message', cloned, transferredPorts);
+    }
   };
   port.start = function () { return this; };
   port.addEventListener = function (name, fn) {
     return this.on(name, function (value) {
-      fn.call(port, { type: name, detail: value, target: port });
+      fn.call(port, {
+        type: name,
+        detail: value,
+        data: name === 'message' ? value : undefined,
+        ports: name === 'message' ? (arguments[1] || []) : undefined,
+        target: port
+      });
     });
   };
   port.removeEventListener = function (name, fn) {
