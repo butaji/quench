@@ -596,11 +596,33 @@ pub fn build() -> Value {
         }"#,
     )
     .unwrap_or(Value::Undefined);
+    let add_abort_listener = eval_function(
+        r#"(signal, listener) => {
+          if (!signal || typeof signal.addEventListener !== "function") {
+            const error = new TypeError("The \"signal\" argument must be an AbortSignal");
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+          if (typeof listener !== "function") {
+            const error = new TypeError("The \"listener\" argument must be a function");
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+          const wrapped = (event) => listener(event);
+          wrapped["\0quench:abort-listener"] = true;
+          signal.addEventListener("abort", wrapped);
+          if (signal.aborted) queueMicrotask(() => wrapped(new Event("abort")));
+          const dispose = () => signal.removeEventListener("abort", wrapped);
+          return { [Symbol.dispose]: dispose };
+        }"#,
+    )
+    .unwrap_or(Value::Undefined);
     let props: Vec<(String, Value)> = vec![
         ("EventEmitter".to_string(), value.clone()),
         ("defaultMaxListeners".to_string(), Value::Number(10.0)),
         ("once".to_string(), once),
         ("on".to_string(), on),
+        ("addAbortListener".to_string(), add_abort_listener),
         (
             "getMaxListeners".to_string(),
             cap("events:getMaxListeners:static", 0x0112),
