@@ -51,7 +51,7 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
-    if let Some(result) = execute_shape_kernel(function, &receiver) {
+    if let Some(result) = execute_shape_kernel(function, &receiver, arguments) {
         return Ok(result);
     }
     if let Some(result) =
