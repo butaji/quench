@@ -83,7 +83,7 @@ pub fn execute_call_continuation(
         Ok(Some(ActiveCall {
             code: function.code.clone(),
             continuation,
-            registers: crate::register_file::RegisterFile::from_values(callee_registers),
+            registers: callee_registers,
             environment,
             pc: 0,
         }))
