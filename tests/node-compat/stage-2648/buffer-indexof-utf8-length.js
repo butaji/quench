@@ -1,0 +1,10 @@
+"use strict";
+const assert = require("assert");
+const chars = Array.from({ length: 65536 }, (_, i) => String.fromCharCode(i)).join("");
+assert.strictEqual(chars.length, 65536);
+const utf8 = Buffer.from(chars);
+assert.strictEqual(utf8.length, 194430);
+const index = 0x2f77b;
+const pattern = utf8.slice(index, index + 15);
+assert.strictEqual(utf8.indexOf(pattern), index);
+assert.strictEqual(utf8.indexOf(pattern.toString()), index);

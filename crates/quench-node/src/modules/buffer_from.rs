@@ -125,6 +125,7 @@ fn from_array_buffer(
     }
     let view_length = match args.get(2) {
         Some(value) => crate::modules::buffer_methods::to_offset(Some(value)),
+        None if buf.max_byte_length.is_some() => f64::NAN,
         None => length - offset,
     };
     if view_length < 0.0 || offset + view_length > length {
@@ -132,10 +133,15 @@ fn from_array_buffer(
             "\"length\" is outside of buffer bounds",
         ));
     }
+    let view_length = if view_length.is_nan() {
+        usize::MAX
+    } else {
+        view_length as usize
+    };
     Ok(crate::modules::buffer_proto::make_view(
         buf.clone(),
         offset as usize,
-        view_length as usize,
+        view_length,
     ))
 }
 

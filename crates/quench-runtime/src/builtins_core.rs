@@ -181,15 +181,29 @@ pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value
     };
     let separator = arguments
         .first()
-        .map_or_else(|| ",".to_string(), value_to_string);
-    Value::String(
-        values
-            .snapshot()
-            .iter()
-            .map(value_to_string)
-            .collect::<Vec<_>>()
-            .join(&separator),
-    )
+        .map_or_else(|| ",".encode_utf16().collect(), join_units);
+    let mut result = Vec::new();
+    for (index, value) in values.snapshot().iter().enumerate() {
+        if index != 0 {
+            result.extend_from_slice(&separator);
+        }
+        append_join_units(value, &mut result);
+    }
+    crate::strings::from_units(result)
+}
+
+fn join_units(value: &Value) -> Vec<u16> {
+    let mut units = Vec::new();
+    append_join_units(value, &mut units);
+    units
+}
+
+fn append_join_units(value: &Value, output: &mut Vec<u16>) {
+    match value {
+        Value::String(value) => output.extend(value.encode_utf16()),
+        Value::StringUnits(units) => output.extend(units.iter().copied()),
+        _ => output.extend(value_to_string(value).encode_utf16()),
+    }
 }
 
 pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value {
