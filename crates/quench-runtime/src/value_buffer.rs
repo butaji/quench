@@ -133,6 +133,15 @@ impl ArrayBufferData {
             .find_map(|(name, value)| (name == key).then(|| value.clone()))
     }
 
+    pub(crate) fn own_property_names(&self) -> Vec<String> {
+        self.properties
+            .borrow()
+            .iter()
+            .filter(|(name, _)| !name.starts_with("\0quench:descriptor:"))
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
     pub(crate) fn set_own_property(&self, key: &str, value: Value) {
         let mut properties = self.properties.borrow_mut();
         properties.retain(|(name, _)| name != key);
@@ -168,6 +177,15 @@ impl DataViewData {
             .rev()
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn own_property_names(&self) -> Vec<String> {
+        self.properties
+            .borrow()
+            .iter()
+            .filter(|(name, _)| !name.starts_with("\0quench:descriptor:"))
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     pub(crate) fn set_own_property(&self, key: &str, value: Value) {
