@@ -277,6 +277,29 @@ fn is_error_builtin(builtin: crate::ops::Builtin) -> bool {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::construct_regexp;
+    use crate::value::Value;
+
+    #[test]
+    fn regexp_last_index_is_non_configurable() {
+        let regexp = construct_regexp(&[Value::String(".".into()), Value::String(String::new())])
+            .expect("regexp constructs");
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&regexp),
+            Some(&Value::String("lastIndex".into())),
+        )
+        .expect("descriptor reads");
+        assert_eq!(
+            crate::execute::get_property_result(&descriptor, "configurable").expect("flag"),
+            Value::Boolean(false)
+        );
+        let (_, deleted) = crate::builtins::delete_property(regexp, "lastIndex");
+        assert!(!deleted, "lastIndex must resist deletion");
+    }
+}
+
 fn construct_promise(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let executor = arguments.first().ok_or_else(crate::vm::not_callable)?;
     crate::promise::construct_promise(executor)
