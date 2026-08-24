@@ -1053,6 +1053,9 @@ impl Environment {
         previous.cell()
     }
 
+    pub(crate) fn has_caller(&self) -> bool {
+        self.caller.is_some()
+    }
     pub(crate) fn restore_slot(&self, slot: u16, value: Rc<crate::value::BindingCell>) {
         let binding = BindingRef::new(SlotStore::from_cell(value), 0);
         self.slots.borrow_mut().replace(usize::from(slot), binding);
