@@ -55,7 +55,7 @@ fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> V
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -88,7 +88,7 @@ fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> V
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -109,7 +109,7 @@ fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -128,7 +128,7 @@ fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -149,7 +149,7 @@ fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -170,7 +170,7 @@ fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Val
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -194,7 +194,7 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -226,7 +226,7 @@ fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Val
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -247,7 +247,7 @@ fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key:
         view.byte_length(),
     );
     match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "buffer" => { view.meta.mark_buffer_materialized(); Value::ArrayBuffer(view.buffer.clone()) },
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
         "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
@@ -257,4 +257,3 @@ fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key:
         _ => crate::builtins::property(Builtin::Uint8ClampedArrayPrototype, key),
     }
 }
-
