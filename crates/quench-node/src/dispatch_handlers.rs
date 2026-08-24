@@ -730,6 +730,22 @@ pub fn string_decoder_new(
     crate::modules::string_decoder::new_decoder(state, args)
 }
 
+pub fn string_decoder_invoke(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    match receiver {
+        Some(Value::HostCapability(_)) => crate::modules::string_decoder::new_decoder(state, args),
+        Some(target) => {
+            let mut call_args = vec![target.clone()];
+            call_args.extend_from_slice(args);
+            crate::modules::string_decoder::call(state, &call_args)
+        }
+        None => crate::modules::string_decoder::new_decoder(state, args),
+    }
+}
+
 pub fn string_decoder_write(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
