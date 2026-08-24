@@ -322,19 +322,34 @@ pub fn type_predicate(name: &str, value: &Value) -> bool {
             matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Set { .. }))
         }
         "isGeneratorObject" => matches!(value, Value::Generator(_)),
-        "isGeneratorFunction" => matches!(value, Value::Function(function) if function.kind == FunctionKind::Generator && !function.is_async),
-        "isAsyncFunction" => matches!(value, Value::Function(function) if function.is_async && function.kind != FunctionKind::Generator),
+        "isGeneratorFunction" => {
+            matches!(value, Value::Function(function) if function.kind == FunctionKind::Generator && !function.is_async)
+        }
+        "isAsyncFunction" => {
+            matches!(value, Value::Function(function) if function.is_async && function.kind != FunctionKind::Generator)
+        }
         "isArgumentsObject" => value.is_arguments_object(),
         "isBooleanObject" => boxed_constructor(value, "Boolean"),
         "isNumberObject" => boxed_constructor(value, "Number"),
         "isStringObject" => boxed_constructor(value, "String"),
         "isSymbolObject" => boxed_constructor(value, "Symbol"),
         "isBigIntObject" => boxed_constructor(value, "BigInt"),
-        "isBoxedPrimitive" => ["Boolean", "Number", "String", "Symbol", "BigInt"].iter().any(|kind| boxed_constructor(value, kind)),
-        "isNativeError" => matches!(quench_runtime::execute::get_property_result(value, "\0error_slot"), Ok(Value::Boolean(true))),
-        "isExternal" => matches!(quench_runtime::execute::get_property_result(value, "__quench_external"), Ok(Value::Boolean(true))),
+        "isBoxedPrimitive" => ["Boolean", "Number", "String", "Symbol", "BigInt"]
+            .iter()
+            .any(|kind| boxed_constructor(value, kind)),
+        "isNativeError" => matches!(
+            quench_runtime::execute::get_property_result(value, "\0error_slot"),
+            Ok(Value::Boolean(true))
+        ),
+        "isExternal" => matches!(
+            quench_runtime::execute::get_property_result(value, "__quench_external"),
+            Ok(Value::Boolean(true))
+        ),
         "isFloat16Array" => value.is_float16_array(),
-        "isModuleNamespaceObject" => matches!(quench_runtime::execute::get_property_result(value, "\0module_namespace"), Ok(Value::Boolean(true))),
+        "isModuleNamespaceObject" => matches!(
+            quench_runtime::execute::get_property_result(value, "\0module_namespace"),
+            Ok(Value::Boolean(true))
+        ),
         "isKeyObject" | "isCryptoKey" => false,
         _ => false,
     }
@@ -350,9 +365,14 @@ fn boxed_constructor(value: &Value, name: &str) -> bool {
         "BigInt" => quench_runtime::ops::Builtin::BigIntPrototype,
         _ => return false,
     };
-    matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::BindingCell(_))
-        && matches!(prototype, Ok(Value::Builtin(actual)) if actual == expected)
-        && matches!(quench_runtime::execute::get_property_result(value, "_value"), Ok(Value::Boolean(_) | Value::Number(_) | Value::String(_) | Value::BigInt(_)))
+    matches!(
+        value,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::BindingCell(_)
+    ) && matches!(prototype, Ok(Value::Builtin(actual)) if actual == expected)
+        && matches!(
+            quench_runtime::execute::get_property_result(value, "_value"),
+            Ok(Value::Boolean(_) | Value::Number(_) | Value::String(_) | Value::BigInt(_))
+        )
 }
 
 fn inspect_capability() -> Value {
@@ -674,45 +694,287 @@ pub use crate::modules::buffer_enc::invalid_arg_received;
 
 /// `util.inspect` — string-only, sufficient for fixtures.
 pub fn inspect(value: &Value) -> String {
-    inspect_depth(value, 2)
+    inspect_depth(value, 3)
+}
+
+pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
+    if depth > 100 && matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        let keys = quench_runtime::execute::own_enumerable_keys(value);
+        if !keys.is_empty() {
+            let body = keys
+                .iter()
+                .map(|key| {
+                    format!(
+                        "  {}: {}",
+                        if key.parse::<usize>().is_ok() {
+                            format!("'{key}'")
+                        } else {
+                            key.clone()
+                        },
+                        inspect_at(&quench_runtime::execute::get_property(value, key), 100)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",\n");
+            return format!("{{\n{body}\n}}");
+        }
+    }
+    inspect_depth(value, depth)
+}
+
+pub fn inspect_with_options(
+    value: &Value,
+    depth: usize,
+    show_hidden: bool,
+    max_array_length: Option<usize>,
+) -> String {
+    let rendered = match (value, max_array_length) {
+        (Value::ArrayBuffer(buffer), Some(limit)) => {
+            inspect_array_buffer_with_limit(value, buffer, limit)
+        }
+        _ => inspect_with_depth(value, depth),
+    };
+    if show_hidden {
+        if let Value::Array(array) = value {
+            if let Some(body) = rendered.strip_suffix(" ]") {
+                return format!("{body}, [length]: {} ]", array.len());
+            }
+        }
+        if matches!(
+            value,
+            Value::Uint8Array(_)
+                | Value::Uint8ClampedArray(_)
+                | Value::Uint16Array(_)
+                | Value::Uint32Array(_)
+                | Value::Int8Array(_)
+                | Value::Int16Array(_)
+                | Value::Int32Array(_)
+                | Value::Float32Array(_)
+                | Value::Float64Array(_)
+                | Value::BigInt64Array(_)
+                | Value::BigUint64Array(_)
+        ) {
+            if let Some((name, length, bytes_per_element, byte_offset, buffer)) =
+                typed_array_info(value)
+            {
+                return inspect_typed_array(
+                    value,
+                    name,
+                    length,
+                    bytes_per_element,
+                    byte_offset,
+                    &buffer,
+                );
+            }
+            return format!("{rendered} [buffer]");
+        }
+        if let Ok(Value::Builtin(quench_runtime::ops::Builtin::StringPrototype)) =
+            quench_runtime::execute::get_prototype_of(value)
+        {
+            if let Value::String(string) = quench_runtime::execute::get_property(value, "_value") {
+                let symbols = quench_runtime::execute::own_keys(value)
+                    .into_iter()
+                    .filter_map(|key| {
+                        if !quench_runtime::execute::is_symbol(&key) {
+                            return None;
+                        }
+                        let name = symbol_string(&key);
+                        let raw = match key {
+                            Value::String(raw) => raw,
+                            _ => return None,
+                        };
+                        let value = quench_runtime::execute::get_property(value, &raw);
+                        Some(format!("{name}: {}", inspect_shallow(&value)))
+                    })
+                    .collect::<Vec<_>>();
+                let suffix = if symbols.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {}", symbols.join(", "))
+                };
+                return format!(
+                    "[String: {}] {{ [length]: {}{} }}",
+                    inspect_string(&string),
+                    string.chars().count(),
+                    suffix
+                );
+            }
+        }
+    }
+    rendered
+}
+
+fn inspect_string(value: &str) -> String {
+    if value.len() > 60 && value.contains('\n') {
+        let lines = value.split('\n').collect::<Vec<_>>();
+        let mut result = inspect_string_segment(lines[0]);
+        for line in lines.iter().skip(1) {
+            if let Some(quote) = result.pop() {
+                result.push_str("\\n");
+                result.push(quote);
+            }
+            result.push_str(" +\n  ");
+            result.push_str(&inspect_string_segment(line));
+        }
+        return result;
+    }
+    inspect_string_segment(value)
+}
+
+fn inspect_string_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    out.push(quote);
+    for character in value.chars() {
+        match character {
+            '\'' if quote == '\'' => out.push_str("\\'"),
+            '"' if quote == '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000C}' => out.push_str("\\f"),
+            '\u{000B}' => out.push_str("\\v"),
+            character if character.is_control() => {
+                out.push_str(&format!("\\x{:02X}", character as u32));
+            }
+            character => out.push(character),
+        }
+    }
+    out.push(quote);
+    out
 }
 
 fn inspect_depth(value: &Value, depth: usize) -> String {
     if quench_runtime::execute::is_symbol(value) {
         return symbol_string(value);
     }
+    if matches!(
+        quench_runtime::execute::get_property_result(value, "__quench_external"),
+        Ok(Value::Boolean(true))
+    ) {
+        return "[External: 0]".into();
+    }
+    if matches!(
+        quench_runtime::execute::get_property_result(value, "\0regexp"),
+        Ok(Value::Boolean(true))
+    ) {
+        return inspect_regexp(value);
+    }
+    if quench_runtime::execute::has_own_property(value, "timeValue")
+        && matches!(
+            quench_runtime::execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
+        )
+    {
+        return inspect_date(value);
+    }
     match value {
-        Value::String(s) => format!("'{s}'"),
+        Value::String(s) => inspect_string(s),
         Value::Number(n) => js_number(*n),
         Value::Boolean(b) => b.to_string(),
         Value::Null => "null".into(),
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => inspect_object(value, depth),
         Value::Array(_) => inspect_array(value, depth),
+        Value::ArrayBuffer(buffer) => inspect_array_buffer(value, buffer),
+        Value::DataView(view) => inspect_data_view(value, view),
+        Value::Float64Array(_)
+        | Value::Float32Array(_)
+        | Value::Int8Array(_)
+        | Value::Int16Array(_)
+        | Value::Int32Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::Uint32Array(_)
+        | Value::Uint8ClampedArray(_)
+        | Value::Uint16Array(_) => inspect_typed_array_compact(value),
         Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
         Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
-        Value::Uint8Array(_) => "Uint8Array(0) []".into(),
+        Value::Uint8Array(_) => inspect_typed_array_compact(value),
         Value::BigInt(digits) => format!("{digits}n"),
         _ => "<unknown>".into(),
     }
 }
 
+fn inspect_regexp(value: &Value) -> String {
+    let source = match quench_runtime::execute::get_property(value, "source") {
+        Value::String(source) => source,
+        _ => "(?:)".into(),
+    };
+    let flags = match quench_runtime::execute::get_property(value, "flags") {
+        Value::String(flags) => flags,
+        _ => String::new(),
+    };
+    format!("/{source}/{flags}")
+}
+
+fn inspect_date(value: &Value) -> String {
+    let method = quench_runtime::execute::get_property(value, "toISOString");
+    match quench_runtime::execute::call(&method, value, &[]) {
+        Ok(Value::String(date)) => date,
+        _ => "Invalid Date".into(),
+    }
+}
+
 fn inspect_function(value: &Value) -> String {
-    let prefix = match value {
-        Value::Function(function) if function.is_async && function.kind == quench_runtime::ops::FunctionKind::Generator => "AsyncGeneratorFunction",
-        Value::Function(function) if function.is_async => "AsyncFunction",
-        Value::Function(function) if function.kind == quench_runtime::ops::FunctionKind::Generator => "GeneratorFunction",
-        _ => "Function",
+    let is_generator = matches!(value, Value::Function(function) if function.kind == quench_runtime::ops::FunctionKind::Generator);
+    let is_async = matches!(value, Value::Function(function) if function.is_async);
+    let prefix = match (is_generator, is_async) {
+        (true, true) => "AsyncGeneratorFunction",
+        (true, false) => "GeneratorFunction",
+        (false, true) => "AsyncFunction",
+        (false, false) => "Function",
     };
     let name = match quench_runtime::execute::get_property(value, "name") {
         Value::String(name) if !name.is_empty() => name,
+        Value::String(_) => "(anonymous)".into(),
+        Value::Number(number) => js_number(number),
+        other if !matches!(other, Value::Undefined) => {
+            quench_runtime::execute::to_js_string(&other).unwrap_or_else(|_| "(anonymous)".into())
+        }
         _ => "(anonymous)".into(),
     };
-    if name == "(anonymous)" {
+    let null_prototype = matches!(
+        quench_runtime::execute::get_prototype_of(value),
+        Ok(Value::Null)
+    );
+    let tag = match quench_runtime::execute::has_own_property(value, "Symbol.toStringTag")
+        .then(|| quench_runtime::execute::get_property(value, "Symbol.toStringTag"))
+    {
+        Some(Value::String(tag)) if !tag.is_empty() => Some(tag),
+        _ => None,
+    };
+    let tag = if prefix == "AsyncFunction" { None } else { tag };
+    let display_name = if null_prototype && is_generator {
+        format!("(null prototype): {name}")
+    } else {
+        name
+    };
+    let body = if null_prototype && is_generator {
+        format!("[{prefix} {display_name}]")
+    } else if display_name == "(anonymous)" {
         format!("[{prefix} (anonymous)]")
     } else {
-        format!("[{prefix}: {name}]")
-    }
+        format!("[{prefix}: {display_name}]")
+    };
+    let body = if prefix == "GeneratorFunction"
+        && matches!(
+            quench_runtime::execute::get_prototype_of(value),
+            Ok(Value::Builtin(
+                quench_runtime::ops::Builtin::AsyncFunctionPrototype
+            ))
+        ) {
+        format!("{body} AsyncFunction")
+    } else {
+        body
+    };
+    tag.map_or(body.clone(), |tag| format!("{body} [{tag}]"))
 }
 
 fn is_buffer_view(value: &Value) -> bool {
@@ -785,12 +1047,26 @@ fn inspect_array(value: &Value, depth: usize) -> String {
 }
 
 fn inspect_at(value: &Value, depth: usize) -> String {
+    if matches!(
+        quench_runtime::execute::get_property_result(value, "__quench_external"),
+        Ok(Value::Boolean(true))
+    ) || matches!(
+        quench_runtime::execute::get_property_result(value, "\0regexp"),
+        Ok(Value::Boolean(true))
+    ) || (quench_runtime::execute::has_own_property(value, "timeValue")
+        && matches!(
+            quench_runtime::execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
+        ))
+    {
+        return inspect_depth(value, depth);
+    }
     if depth == 0 {
         return inspect_shallow(value);
     }
     match value {
-        Value::Object(_) | Value::ObjectAlias(_) if depth > 0 => inspect_object(value, depth),
-        Value::Array(_) if depth > 0 => inspect_array(value, depth),
+        Value::Object(_) | Value::ObjectAlias(_) => inspect_object(value, depth),
+        Value::Array(_) => inspect_array(value, depth),
         _ => inspect_shallow(value),
     }
 }
@@ -800,19 +1076,27 @@ fn inspect_object(value: &Value, depth: usize) -> String {
     let prototype = quench_runtime::execute::get_prototype_of(value).ok();
     let original_prototype = value.original_prototype();
     let null_prototype = matches!(prototype, Some(Value::Null));
-    let constructor_name = original_prototype.as_ref().or(prototype.as_ref()).and_then(|prototype| {
-        let constructor = quench_runtime::execute::get_property(prototype, "constructor");
-        match quench_runtime::execute::get_property(&constructor, "name") {
-            Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
-            _ => None,
-        }
-    });
+    let constructor_name =
+        original_prototype
+            .as_ref()
+            .or(prototype.as_ref())
+            .and_then(|prototype| {
+                let constructor = quench_runtime::execute::get_property(prototype, "constructor");
+                match quench_runtime::execute::get_property(&constructor, "name") {
+                    Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+                    _ => None,
+                }
+            });
     let keys = quench_runtime::execute::own_enumerable_keys(value);
     if keys.is_empty() {
-        return if let Some(name) = constructor_name {
-            format!("[{name}: null prototype] {{}}")
-        } else if null_prototype {
-            "[Object: null prototype] {}".into()
+        return if null_prototype {
+            if let Some(name) = constructor_name {
+                format!("[{name}: null prototype] {{}}")
+            } else {
+                "[Object: null prototype] {}".into()
+            }
+        } else if let Some(name) = constructor_name {
+            format!("{name} {{}}")
         } else {
             "{}".into()
         };
@@ -821,8 +1105,16 @@ fn inspect_object(value: &Value, depth: usize) -> String {
         .iter()
         .map(|key| {
             format!(
-                "{key}: {}",
-                inspect_at(&quench_runtime::execute::get_property(value, key), depth)
+                "{}: {}",
+                if key.parse::<usize>().is_ok() {
+                    format!("'{key}'")
+                } else {
+                    key.clone()
+                },
+                inspect_at(
+                    &quench_runtime::execute::get_property(value, key),
+                    depth - 1,
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -838,15 +1130,192 @@ fn inspect_shallow(value: &Value) -> String {
         return symbol_string(value);
     }
     match value {
-        Value::String(s) => format!("'{s}'"),
+        Value::String(s) => inspect_string(s),
         Value::Number(n) => js_number(*n),
         Value::Boolean(b) => b.to_string(),
         Value::Null => "null".into(),
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => "[Object]".into(),
         Value::Array(_) => "[Array]".into(),
+        Value::ArrayBuffer(buffer) => inspect_array_buffer(value, buffer),
+        Value::DataView(view) => inspect_data_view(value, view),
+        Value::Float64Array(_)
+        | Value::Float32Array(_)
+        | Value::Int8Array(_)
+        | Value::Int16Array(_)
+        | Value::Int32Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::Uint32Array(_)
+        | Value::Uint8ClampedArray(_)
+        | Value::Uint16Array(_) => inspect_typed_array_compact(value),
+        Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
         Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
-        Value::Uint8Array(view) => format!("Uint8Array({}) []", view.length),
+        Value::Uint8Array(_) => inspect_typed_array_compact(value),
         _ => "<unknown>".into(),
     }
+}
+
+fn inspect_array_buffer(value: &Value, buffer: &quench_runtime::value::ArrayBufferData) -> String {
+    inspect_array_buffer_with_limit(value, buffer, crate::modules::buffer::inspect_max_bytes())
+}
+
+fn inspect_array_buffer_with_limit(
+    value: &Value,
+    buffer: &quench_runtime::value::ArrayBufferData,
+    max: usize,
+) -> String {
+    let length = buffer.byte_length();
+    let contents = if *buffer.detached.borrow() {
+        "(detached)".to_string()
+    } else {
+        let bytes = buffer.bytes.borrow();
+        let shown = bytes
+            .iter()
+            .take(max)
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<Vec<_>>();
+        let suffix = bytes.len().saturating_sub(max);
+        if suffix == 0 {
+            format!("<{}>", shown.join(" "))
+        } else {
+            let plural = if suffix == 1 { "byte" } else { "bytes" };
+            format!("<{} ... {suffix} more {plural}>", shown.join(" "))
+        }
+    };
+    let mut result = if *buffer.detached.borrow() {
+        format!("ArrayBuffer {{ (detached), [byteLength]: {length}")
+    } else {
+        format!("ArrayBuffer {{ [Uint8Contents]: {contents}, [byteLength]: {length}")
+    };
+    for key in quench_runtime::execute::own_enumerable_keys(value) {
+        result.push_str(&format!(
+            ", {key}: {}",
+            inspect_shallow(&quench_runtime::execute::get_property(value, &key))
+        ));
+    }
+    result.push_str(" }");
+    result
+}
+
+fn inspect_data_view(value: &Value, view: &quench_runtime::value::DataViewData) -> String {
+    let detached = *view.buffer.detached.borrow();
+    let indent = if detached { "      " } else { "  " };
+    let closing_indent = if detached { "    " } else { "" };
+    let byte_length = if detached { 0 } else { view.byte_length };
+    let byte_offset = if detached {
+        "undefined".to_string()
+    } else {
+        view.byte_offset.to_string()
+    };
+    let buffer = inspect_array_buffer(&Value::ArrayBuffer(view.buffer.clone()), &view.buffer);
+    let mut lines = vec![
+        "DataView {".to_string(),
+        format!("{indent}[byteLength]: {byte_length},"),
+        format!("{indent}[byteOffset]: {byte_offset},"),
+        format!("{indent}[buffer]: {buffer}"),
+    ];
+    let properties = quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .map(|key| {
+            format!(
+                "{indent}{key}: {}",
+                inspect_shallow(&quench_runtime::execute::get_property(value, &key))
+            )
+        })
+        .collect::<Vec<_>>();
+    if !properties.is_empty() {
+        let last = lines.len() - 1;
+        lines[last].push(',');
+        lines.extend(properties.into_iter().map(|line| format!("{line},")));
+        let last = lines.len() - 1;
+        lines[last].pop();
+    }
+    lines.push(format!("{closing_indent}}}"));
+    lines.join("\n")
+}
+
+fn typed_array_info(
+    value: &Value,
+) -> Option<(
+    &'static str,
+    usize,
+    usize,
+    usize,
+    std::rc::Rc<quench_runtime::value::ArrayBufferData>,
+)> {
+    macro_rules! info {
+        ($($variant:ident => ($name:literal, $bpe:expr)),+ $(,)?) => {
+            match value {
+                $(Value::$variant(view) => Some(($name, view.logical_len(), $bpe, view.byte_offset, view.buffer.clone())),)+
+                _ => None,
+            }
+        };
+    }
+    info!(
+        Float64Array => ("Float64Array", std::mem::size_of::<f64>()),
+        Float32Array => ("Float32Array", std::mem::size_of::<f32>()),
+        Int8Array => ("Int8Array", std::mem::size_of::<i8>()),
+        Int16Array => ("Int16Array", std::mem::size_of::<i16>()),
+        Int32Array => ("Int32Array", std::mem::size_of::<i32>()),
+        BigInt64Array => ("BigInt64Array", std::mem::size_of::<i64>()),
+        BigUint64Array => ("BigUint64Array", std::mem::size_of::<u64>()),
+        Uint32Array => ("Uint32Array", std::mem::size_of::<u32>()),
+        Uint8Array => ("Uint8Array", std::mem::size_of::<u8>()),
+        Uint8ClampedArray => ("Uint8ClampedArray", std::mem::size_of::<u8>()),
+        Uint16Array => ("Uint16Array", std::mem::size_of::<u16>()),
+    )
+}
+
+fn inspect_typed_array_compact(value: &Value) -> String {
+    let Some((name, length, _, _, _)) = typed_array_info(value) else {
+        return "<unknown>".into();
+    };
+    let values = (0..length)
+        .map(|index| {
+            inspect_shallow(&quench_runtime::execute::get_property(
+                value,
+                &index.to_string(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        format!("{name}({length}) []")
+    } else {
+        format!("{name}({length}) [ {} ]", values.join(", "))
+    }
+}
+
+fn inspect_typed_array(
+    value: &Value,
+    name: &str,
+    length: usize,
+    bytes_per_element: usize,
+    byte_offset: usize,
+    buffer: &quench_runtime::value::ArrayBufferData,
+) -> String {
+    let mut lines = vec![format!("{name}({length}) [")];
+    for index in 0..length {
+        lines.push(format!(
+            "  {},",
+            inspect_shallow(&quench_runtime::execute::get_property(
+                value,
+                &index.to_string()
+            ))
+        ));
+    }
+    if length > 0 {
+        lines.last_mut().expect("typed array value").pop();
+        lines.last_mut().expect("typed array value").push(',');
+    }
+    lines.push(format!("  [BYTES_PER_ELEMENT]: {bytes_per_element},"));
+    lines.push(format!("  [length]: {length},"));
+    lines.push(format!("  [byteLength]: {},", length * bytes_per_element));
+    lines.push(format!("  [byteOffset]: {byte_offset},"));
+    lines.push(format!(
+        "  [buffer]: ArrayBuffer {{ [byteLength]: {} }}",
+        buffer.byte_length()
+    ));
+    lines.push("]".into());
+    lines.join("\n")
 }
