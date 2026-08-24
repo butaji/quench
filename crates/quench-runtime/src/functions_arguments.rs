@@ -391,6 +391,19 @@ fn execute_function_call_in_realm(
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
     if let crate::value::Value::BoundFunction(bound) = receiver {
+        let receiver_bound = bound
+            .properties
+            .borrow()
+            .iter()
+            .any(|(key, value)| {
+                key == "\0receiver_bound_method"
+                    && *value == crate::value::Value::Boolean(true)
+            });
+        if receiver_bound {
+            return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
+        }
+    }
+    if let crate::value::Value::BoundFunction(bound) = receiver {
         if let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target
         {
             let capability = match &bound.receiver {
