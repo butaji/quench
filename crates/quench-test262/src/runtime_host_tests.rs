@@ -276,6 +276,13 @@ fn default_export_cell_observes_module_execution() {
 }
 
 #[test]
+fn default_export_propagates_function_throw() {
+    let module = LinkedModule::compile("export default (function() { throw 1; })();")
+        .expect("module compiles");
+    assert!(module.execute().is_err(), "default expression must execute");
+}
+
+#[test]
 fn json_module_exports_recursive_runtime_values() {
     let module = LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
     let cell = module.export_cell("default").expect("default export cell");
