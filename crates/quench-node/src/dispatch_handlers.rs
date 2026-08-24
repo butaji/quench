@@ -797,8 +797,9 @@ pub fn structured_clone(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(crate::modules::clone::deep_clone(
+    Ok(crate::modules::clone::structured_clone(
         args.first().cloned().unwrap_or(Value::Undefined),
+        args.get(1),
     ))
 }
 
