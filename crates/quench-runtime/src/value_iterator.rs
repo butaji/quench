@@ -63,6 +63,7 @@ pub enum IteratorState {
         receiver: Option<Rc<crate::value::ArrayData>>,
         typed_receiver: Option<Value>,
         typed_keys: bool,
+        entries: bool,
         index: usize,
         done: bool,
     },

@@ -32,6 +32,7 @@ pub fn delegate_next(
                 receiver,
                 typed_receiver,
                 typed_keys,
+                entries,
                 index,
                 done,
             } => {
@@ -40,6 +41,7 @@ pub fn delegate_next(
                     receiver.as_ref(),
                     typed_receiver.as_ref(),
                     *typed_keys,
+                    *entries,
                     index,
                     done,
                 );
@@ -112,10 +114,19 @@ fn native_delegation_step(
     receiver: Option<&Rc<crate::value::ArrayData>>,
     typed_receiver: Option<&Value>,
     typed_keys: bool,
+    entries: bool,
     index: &mut usize,
     done: &mut bool,
 ) -> Result<DelegationResult, crate::execute::VmError> {
-    let value = native_step(values, receiver, typed_receiver, typed_keys, index, done)?
+    let value = native_step(
+        values,
+        receiver,
+        typed_receiver,
+        typed_keys,
+        entries,
+        index,
+        done,
+    )?
         .unwrap_or(Value::Undefined);
     if *done {
         Ok(DelegationResult::Done(value))
