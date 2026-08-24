@@ -9,6 +9,7 @@ fn complete_step(
         Completion::Return(value) => finish(generator, value),
         Completion::Normal => finish(generator, Value::Undefined),
         Completion::Throw(value) => throw_and_finish(generator, value),
+        Completion::Suspend(promise) => Err(VmError::Suspended(promise)),
         _ => Err(VmError::MissingReturn),
     }
 }

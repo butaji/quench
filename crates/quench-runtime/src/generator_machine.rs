@@ -8,6 +8,7 @@ fn execute_generator_step(
     );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
+    let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
     let machine = generator.machine.borrow_mut();
     machine.pop_await_frame();
     let store = machine.store.clone().ok_or(VmError::MissingReturn)?;
