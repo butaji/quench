@@ -46,12 +46,10 @@ pub fn parse(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let raw_url = args
-        .first()
-        .map(value_to_string)
-        .unwrap_or_default()
-        .trim_matches(|character: char| character <= '\u{20}')
-        .to_string();
+    let raw_url =
+        crate::modules::path::validate_string(args.first().unwrap_or(&Value::Undefined), "url")?
+            .trim_matches(|character: char| character <= '\u{20}')
+            .to_string();
     let url = if let Some((head, fragment)) = raw_url.split_once('#') {
         format!("{}#{}", normalize_legacy_input(head), fragment)
     } else {
@@ -82,11 +80,25 @@ pub fn parse(
         }
     }
     if !url.contains(':') && !url.contains('?') && !url.contains('#') && !url.starts_with("//") {
-        return Ok(legacy_object(vec![
+        let mut entries = vec![
             ("pathname".into(), Value::String(url.clone())),
             ("path".into(), Value::String(url.clone())),
             ("href".into(), Value::String(url)),
-        ]));
+        ];
+        if args.get(1).is_some_and(execute::is_truthy) {
+            let query = host_api::object(vec![("__query_empty".into(), Value::Undefined)]);
+            execute::define_property(
+                query.clone(),
+                "__query_empty",
+                host_api::object(vec![("enumerable".into(), Value::Boolean(false))]),
+            )?;
+            let query = execute::delete_property(query, "__query_empty").0;
+            entries.push((
+                "query".into(),
+                execute::set_prototype_of(&query, &Value::Null)?,
+            ));
+        }
+        return Ok(legacy_object(entries));
     }
     let mut parsed = legacy_parse_url(&url);
     for key in ["search", "query"] {
@@ -180,14 +192,39 @@ pub fn parse(
         let search = parsed.get("search").cloned().unwrap_or_default();
         parsed.insert("path".into(), format!("{pathname}{search}"));
     }
+    let query_object = args
+        .get(1)
+        .is_some_and(execute::is_truthy)
+        .then(|| {
+            let query = parsed.get("query").cloned().unwrap_or_default();
+            if query.is_empty() {
+                let object = host_api::object(vec![("__query_empty".into(), Value::Undefined)]);
+                execute::define_property(
+                    object.clone(),
+                    "__query_empty",
+                    host_api::object(vec![("enumerable".into(), Value::Boolean(false))]),
+                )?;
+                let object = execute::delete_property(object, "__query_empty").0;
+                Ok(execute::set_prototype_of(&object, &Value::Null)?)
+            } else {
+                crate::modules::querystring_parse::parse(_state, None, &[Value::String(query)])
+            }
+        })
+        .transpose()?;
     let mut out = Vec::new();
     for (k, v) in parsed {
+        if k == "query" && query_object.is_some() {
+            continue;
+        }
         let value = if k == "slashes" && v == "true" {
             Value::Boolean(true)
         } else {
             Value::String(v)
         };
         out.push((k, value));
+    }
+    if let Some(query) = query_object {
+        out.push(("query".into(), query));
     }
     Ok(legacy_object(out))
 }
