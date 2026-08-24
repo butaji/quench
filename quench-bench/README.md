@@ -35,3 +35,21 @@ node quench-bench/run-quench-runtime.mjs \
   --only richards,deltablue \
   --runs 3
 ```
+
+## Instruction-origin analysis
+
+Build a separate trace-enabled binary. The ordinary benchmark binary has no
+counter branch or counter storage compiled into its execute path.
+
+```sh
+cargo build --profile bench-throughput -p quench-node --features execution-trace
+node tools/analyze-quench-bench.cjs navier-stokes \
+  --quench target/bench-throughput/quench-node \
+  --out /tmp/navier-analysis.json
+```
+
+The report combines guest opcode and slow-`Op` retirements, loop/binding/value
+events, wall time, peak RSS, and host counters exposed by `/usr/bin/time -l`.
+Use `--sample-seconds N` for an optional macOS stack sample. Use
+`--baseline FILE` to calculate before/after wall, RSS, host-instruction, and
+guest-instruction ratios. Unavailable host counters remain `null`, never zero.
