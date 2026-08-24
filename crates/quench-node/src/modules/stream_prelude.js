@@ -5,6 +5,7 @@
 (function (deps) {
   "use strict";
   const EventEmitter = deps.events.EventEmitter;
+  const StringDecoder = deps.string_decoder.StringDecoder;
   const nextTick = process.nextTick;
 
   // Shared EventEmitter delegation, mixed into every stream prototype.
@@ -124,6 +125,7 @@
       errored: null,
       closeEmitted: false,
       encoding: options.encoding ? validateEncoding(options.encoding) : null,
+      decoder: options.encoding ? new StringDecoder(options.encoding) : null,
       awaitDrainWriters: null,
       pipeCount: 0,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
@@ -146,7 +148,9 @@
     }
     if (st.flowing) {
       while (st.flowing && st.buffer.length > 0) {
-        stream._emitter.emit("data", st.buffer.shift());
+        let chunk = st.buffer.shift();
+        if (st.decoder) chunk = st.decoder.write(chunk);
+        if (chunk !== "") stream._emitter.emit("data", chunk);
         if (st.awaitDrainWriters &&
             (st.awaitDrainWriters instanceof Set
               ? st.awaitDrainWriters.size > 0
@@ -321,9 +325,9 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = false;
-        if (st.encoding) {
-          chunk = chunk.toString(st.encoding);
-          while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
+        if (st.decoder) {
+          chunk = st.decoder.write(chunk);
+          while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
@@ -340,9 +344,9 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = false;
-        if (st.encoding) {
-          chunk = chunk.toString(st.encoding);
-          while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
+        if (st.decoder) {
+          chunk = st.decoder.write(chunk);
+          while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
@@ -362,7 +366,15 @@
     }
 
     setEncoding(encoding) {
-      this._readableState.encoding = validateEncoding(encoding || "utf8");
+      const st = this._readableState;
+      st.encoding = validateEncoding(encoding || "utf8");
+      st.decoder = new StringDecoder(st.encoding);
+      if (st.buffer.length > 0 && typeof Buffer !== "undefined") {
+        const buffered = Buffer.concat(st.buffer);
+        st.buffer = [];
+        const decoded = st.decoder.write(buffered);
+        if (decoded) st.buffer.push(decoded);
+      }
       return this;
     }
 
