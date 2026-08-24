@@ -130,6 +130,16 @@ fn emit_function_declarations(
             next_slot,
             locals,
         )?;
+        if behavior == EvalBehavior::Local {
+            if let Some(identifier) = &function.id {
+                if let Some(&slot) = locals.get(identifier.name.as_str()) {
+                    ops.push(Op::DeclareEvalBinding {
+                        name: identifier.name.to_string(),
+                        slot,
+                    });
+                }
+            }
+        }
         if emit_global {
             emit_global_function(function, locals, ops, behavior == EvalBehavior::Global);
         }

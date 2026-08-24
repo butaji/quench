@@ -342,6 +342,14 @@ impl Drop for GlobalObjectGuard {
         if let Some(realm) = self.realm {
             let current = GLOBAL_OBJECT.with(|slot| slot.replace(self.previous.take()));
             if let Some(current) = current {
+                let current = if current.iter().any(|(name, _)| name == SCRIPT_GLOBAL_VIEW) {
+                    match resolve_global_owner(&Value::Object(current.clone())) {
+                        Some(Value::Object(owner)) => owner,
+                        _ => current,
+                    }
+                } else {
+                    current
+                };
                 replace_realm_global(realm, current);
             }
         } else if self.restore {
