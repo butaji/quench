@@ -393,6 +393,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::VmCompileFunction,
                     )),
                 ),
+                (
+                    "SourceTextModule".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::VmSourceTextModule,
+                    )),
+                ),
             ]));
         }
         if name == "internal/errors" {

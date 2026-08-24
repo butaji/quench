@@ -199,6 +199,9 @@ fn get_property_value_collection_tail(value: &Value, key: &str) -> Value {
 }
 
 fn set_property(data: &crate::value::SetData, key: &str) -> Value {
+    if key == "constructor" {
+        return Value::Builtin(if data.weak { Builtin::WeakSet } else { Builtin::Set });
+    }
     if key == "size" && !data.weak {
         return Value::Number(data.values.borrow().len() as f64);
     }
@@ -218,6 +221,15 @@ fn get_property_value_async_tail(value: &Value, key: &str) -> Value {
 }
 
 fn iterator_property(value: &Value, key: &str) -> Value {
+    if key == "constructor" {
+        return Value::Builtin(match crate::collections::iterator::builtin_for(
+            match value { Value::Iterator(data) => data, _ => unreachable!() },
+        ) {
+            Builtin::MapIteratorPrototype => Builtin::Map,
+            Builtin::SetIteratorPrototype => Builtin::Set,
+            _ => Builtin::Object,
+        });
+    }
     let property = crate::collections::iterator::property_for(value, key);
     iterator_property_value(value, property)
 }

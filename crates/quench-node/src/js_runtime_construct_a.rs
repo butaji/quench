@@ -5,6 +5,16 @@ impl QuenchNodeHost {
         arguments: &[Value],
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::VmSourceTextModule) {
+            let namespace = quench_runtime::host_api::object(vec![
+                ("\0module_namespace".into(), Value::Boolean(true)),
+            ]);
+            return Ok(quench_runtime::host_api::object(vec![
+                ("namespace".into(), namespace),
+                ("link".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+                ("evaluate".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+            ]));
+        }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::UrlSearchParams) {
             return url_search_params_construct(self, arguments);
         }
