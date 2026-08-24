@@ -20,7 +20,7 @@ pub fn reduce_script_sources(sources: &[ScriptSource<'_>]) -> Result<ResidualPro
             program_scope: true,
         })
         .collect::<Vec<_>>();
-    reduce_units(&units)
+    reduce_units_with_global(&units, false)
 }
 
 pub fn reduce_module_sequence(
@@ -42,7 +42,7 @@ pub fn reduce_module_sequence(
         strict: true,
         program_scope: false,
     });
-    reduce_units(&units)
+    reduce_units_with_global(&units, true)
 }
 
 #[derive(Clone, Copy)]
@@ -53,10 +53,16 @@ struct SourceUnit<'a> {
     program_scope: bool,
 }
 
-fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>> {
+fn reduce_units_with_global(
+    units: &[SourceUnit<'_>],
+    shared_global: bool,
+) -> Result<ResidualProgram, Vec<String>> {
     let allocator = Allocator::default();
-    let shared_global = units.iter().any(|unit| unit.source_type.is_module());
-    let mut state = StatementReducer::new_with_global(SourceType::cjs(), shared_global);
+    let mut state = if shared_global {
+        StatementReducer::new_with_global(SourceType::cjs(), true)
+    } else {
+        StatementReducer::new_with_script_this_global(SourceType::cjs())
+    };
     let mut totals = (0, 0);
     let mut last = None;
     let mut facts_out = ProgramDb::default();

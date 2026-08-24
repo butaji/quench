@@ -20,7 +20,7 @@ fn run_simple_single_op(
         Const { dst, value } => write_value(registers, *dst, value.into()),
         MakeArray { .. } | BuildArray { .. } => run_make_array(registers, op)?,
         TemplateObject { .. } => crate::templates::execute_tagged_template(registers, op)?,
-        MakeObject { .. } => run_make_object(registers, op)?,
+        MakeObject { .. } | MakeGlobalObjectView { .. } => run_make_object(registers, op)?,
         MakeBuiltin { .. } => run_make_builtin(registers, op),
         RequireObjectCoercible { .. }
         | GetIterator { .. }
