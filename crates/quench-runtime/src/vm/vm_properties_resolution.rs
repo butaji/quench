@@ -15,6 +15,58 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     Ok(crate::locals::resolved_replacement(result))
 }
 
+pub(crate) fn get_named_property_result(
+    value: &Value,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Result<Value, VmError> {
+    if let Value::Object(object) = value {
+        if !object.has_replacement() {
+            let layout = object.semantic_layout_id();
+            if let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
+                if layout == cached_layout {
+                    if let Some((_, value)) = object.hot_properties().get(slot as usize) {
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::NamedPropertyHit,
+                        );
+                        return Ok(property_value(value));
+                    }
+                }
+            }
+        }
+    }
+    crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyMiss);
+    let resolved = crate::locals::resolved_replacement(value.clone());
+    let result = get_property_result(&resolved, key)?;
+    if let Value::Object(object) = &resolved {
+        if let Some(slot) = cacheable_own_slot(&resolved, key) {
+            cache.set(crate::machine::pack_named_cache(
+                object.semantic_layout_id(),
+                slot,
+            ));
+        }
+    }
+    Ok(result)
+}
+
+fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
+    let Value::Object(object) = value else { return None };
+    if crate::vm::is_global_object(value) { return None; }
+    let mut own = None;
+    let mut metadata = None;
+    for (slot, (name, candidate)) in object.hot_properties().iter().enumerate().rev() {
+        if crate::builtins::is_deleted_key_for(name, key) { return None; }
+        if name == key && own.is_none() { own = Some((slot, candidate)); }
+        if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
+            metadata = Some(candidate);
+        }
+    }
+    let (slot, value) = own?;
+    if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) { return None; }
+    if metadata.is_some_and(accessor_descriptor) { return None; }
+    u32::try_from(slot).ok()
+}
+
 pub(crate) fn get_property_with_receiver(
     value: &Value,
     key: &str,

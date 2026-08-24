@@ -27,6 +27,12 @@ execution_events! {
     PackedArrayGet => "packed_array_get",
     PackedArraySet => "packed_array_set",
     PackedArrayMiss => "packed_array_miss",
+    NamedPropertyHit => "named_property_hit",
+    NamedPropertyMiss => "named_property_miss",
+    EqualityWordHit => "equality_word_hit",
+    EqualityWordMiss => "equality_word_miss",
+    NamedPropertySetHit => "named_property_set_hit",
+    NamedPropertySetMiss => "named_property_set_miss",
 }
 
 #[cfg(feature = "execution-trace")]
@@ -43,6 +49,9 @@ struct OperandKey {
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
     slow: HashMap<&'static str, u64>,
+    binary: HashMap<&'static str, u64>,
+    constant: HashMap<&'static str, u64>,
+    environment_children: HashMap<(usize, usize), u64>,
     events: [u64; EVENT_NAMES.len()],
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
@@ -133,6 +142,12 @@ pub(crate) fn slow(op: &crate::ops::Op) {
             let mut counters = counters.borrow_mut();
             let name = op.variant_name();
             *counters.slow.entry(name).or_default() += 1;
+            if let crate::ops::Op::Binary { operator, .. } = op {
+                *counters.binary.entry(binary_name(*operator)).or_default() += 1;
+            }
+            if let crate::ops::Op::Const { value, .. } = op {
+                *counters.constant.entry(constant_name(value)).or_default() += 1;
+            }
             counters.retire(name);
             let (a, b, c) = match op {
                 crate::ops::Op::LoadBinding {
@@ -147,9 +162,70 @@ pub(crate) fn slow(op: &crate::ops::Op) {
     }
 }
 
+#[cfg(feature = "execution-trace")]
+fn binary_name(operator: crate::ops::BinaryOp) -> &'static str {
+    use crate::ops::BinaryOp::*;
+    match operator {
+        Add => "Add",
+        Subtract => "Subtract",
+        Multiply => "Multiply",
+        Divide => "Divide",
+        Remainder => "Remainder",
+        Exponentiate => "Exponentiate",
+        NumericAdd => "NumericAdd",
+        NumericSubtract => "NumericSubtract",
+        Equal => "Equal",
+        NotEqual => "NotEqual",
+        StrictEqual => "StrictEqual",
+        StrictNotEqual => "StrictNotEqual",
+        LessThan => "LessThan",
+        LessEqual => "LessEqual",
+        GreaterThan => "GreaterThan",
+        GreaterEqual => "GreaterEqual",
+        BitwiseOr => "BitwiseOr",
+        BitwiseXor => "BitwiseXor",
+        BitwiseAnd => "BitwiseAnd",
+        ShiftLeft => "ShiftLeft",
+        ShiftRight => "ShiftRight",
+        ShiftRightZeroFill => "ShiftRightZeroFill",
+        Instanceof => "Instanceof",
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn constant_name(value: &crate::ops::Constant) -> &'static str {
+    match value {
+        crate::ops::Constant::Number(_) => "Number",
+        crate::ops::Constant::Boolean(_) => "Boolean",
+        crate::ops::Constant::String(_) => "String",
+        crate::ops::Constant::StringUnits(_) => "StringUnits",
+        crate::ops::Constant::BigInt(_) => "BigInt",
+        crate::ops::Constant::Null => "Null",
+        crate::ops::Constant::Undefined => "Undefined",
+    }
+}
+
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn slow(_: &crate::ops::Op) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
+pub(crate) fn environment_child(captures: usize, locals: usize) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .environment_children
+                .entry((captures, locals))
+                .or_default() += 1;
+        });
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn environment_child(_: usize, _: usize) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
@@ -183,6 +259,16 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 .into_iter()
                 .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
                 .collect::<serde_json::Map<_, _>>();
+            let binary = counters
+                .binary
+                .iter()
+                .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
+                .collect::<serde_json::Map<_, _>>();
+            let constant = counters
+                .constant
+                .iter()
+                .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
+                .collect::<serde_json::Map<_, _>>();
             let events = EVENT_NAMES
                 .iter()
                 .enumerate()
@@ -191,6 +277,13 @@ pub fn snapshot() -> Option<serde_json::Value> {
                         (*name).to_owned(),
                         serde_json::json!(counters.events[index]),
                     )
+                })
+                .collect::<serde_json::Map<_, _>>();
+            let environment_children = counters
+                .environment_children
+                .iter()
+                .map(|(&(captures, locals), count)| {
+                    (format!("{captures}:{locals}"), serde_json::json!(count))
                 })
                 .collect::<serde_json::Map<_, _>>();
             let compact_total: u64 = counters.compact.iter().sum();
@@ -227,6 +320,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "handler_total": compact_total + slow_total,
                 "compact": compact,
                 "slow": slow,
+                "binary": binary,
+                "constant": constant,
+                "environment_children": environment_children,
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
