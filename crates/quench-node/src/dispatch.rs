@@ -41,6 +41,8 @@ const CAP_CONSOLE_DEBUG: u16 = 0x0204;
 const CAP_CONSOLE_TRACE: u16 = 0x0205;
 const CAP_UTIL_FORMAT: u16 = 0x0300;
 const CAP_UTIL_INSPECT: u16 = 0x0301;
+const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
+const CAP_UTIL_IS_NATIVE_ERROR: u16 = 0x030A;
 const CAP_PATH_JOIN: u16 = 0x0400;
 const CAP_PATH_RESOLVE: u16 = 0x0401;
 const CAP_PATH_NORMALIZE: u16 = 0x0402;
@@ -199,6 +201,7 @@ const CAP_ASSERT_FAIL: u16 = 0x1409;
 const CAP_ASSERT_IF_ERROR: u16 = 0x140A;
 const CAP_ASSERT_MATCH: u16 = 0x140B;
 const CAP_ASSERT_DOES_NOT_MATCH: u16 = 0x140C;
+const CAP_ASSERT_CONSTRUCTOR: u16 = 0x140D;
 const CAP_CJS_WRAP: u16 = 0x1d00;
 const CAP_UTIL_GETCALLSITES: u16 = 0x0303;
 const CAP_BUFFER_ATOB: u16 = 0x0806;
@@ -387,6 +390,8 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_UTIL_FORMAT_WITH_OPTIONS => util_format_with_options,
         CAP_UTIL_STYLE_TEXT => crate::modules::util_style_text::style_text,
         CAP_UTIL_IS_DEEP_STRICT_EQUAL => util_is_deep_strict_equal,
+        CAP_UTIL_TO_USV_STRING => util_to_usv_string,
+        CAP_UTIL_IS_NATIVE_ERROR => util_is_native_error,
         CAP_TEXT_DECODER_DECODE => crate::modules::text_decoder::decode,
         _ => return timers_dispatch(cap),
     })
@@ -552,6 +557,7 @@ pub fn assert_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_ASSERT_IF_ERROR => assert::if_error,
         CAP_ASSERT_MATCH => assert_validate::matches,
         CAP_ASSERT_DOES_NOT_MATCH => assert_validate::does_not_match,
+        CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_call,
         _ => return None,
     })
 }
@@ -581,6 +587,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_ABORT_SIGNAL => abort_signal_new,
         CAP_EVENT => handlers::event_new,
         CAP_CUSTOM_EVENT => handlers::custom_event_new,
+        CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_new,
         _ => return None,
     })
 }
