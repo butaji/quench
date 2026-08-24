@@ -532,6 +532,12 @@ pub struct ObjectData {
     pub(crate) created: Vec<PropertyName>,
 }
 
+impl Drop for ObjectData {
+    fn drop(&mut self) {
+        crate::execution_trace::object_lifecycle(false);
+    }
+}
+
 impl Clone for ObjectData {
     fn clone(&self) -> Self {
         Self {
@@ -631,6 +637,8 @@ impl ObjectData {
         private_slots: PrivateSlots,
         created: Vec<PropertyName>,
     ) -> Self {
+        crate::execution_trace::object_lifecycle(true);
+        crate::execution_trace::object_shape(&properties);
         Self {
             identity: next_object_identity(),
             layout_id: std::cell::Cell::new(0),
@@ -1954,6 +1962,11 @@ pub struct FunctionValue {
     /// Whether invocation produces an async completion and Promise result.
     pub is_async: bool,
     pub mapped_arguments: bool,
+}
+impl Drop for FunctionValue {
+    fn drop(&mut self) {
+        crate::execution_trace::function_lifecycle(false);
+    }
 }
 impl PartialEq for FunctionValue {
     fn eq(&self, other: &Self) -> bool {
