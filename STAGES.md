@@ -161,6 +161,7 @@ Evidence:
 ```sh
 cargo test -p quench-node-test
 cargo run -p quench-node-test --bin run-parallel -- --all --timeout-secs 30
+# Add --results PATH for a machine-readable inventory/result record.
 ```
 
 Exit criteria: deterministic counts, structured pass/fail/skip/timeout/crash
