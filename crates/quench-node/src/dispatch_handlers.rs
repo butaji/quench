@@ -973,10 +973,15 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
             ),
         ])));
     }
-    let cancelable = execute::is_truthy(&execute::get_property(&options, "cancelable"));
+    let bubbles = execute::get_property_result(&options, "bubbles")
+        .map(|value| execute::is_truthy(&value))
+        .unwrap_or(false);
+    let cancelable = execute::get_property_result(&options, "cancelable")
+        .map(|value| execute::is_truthy(&value))
+        .unwrap_or(false);
     let event = host_api::object(vec![
         ("type".into(), Value::String(event_type)),
-        ("bubbles".into(), Value::Boolean(false)),
+        ("bubbles".into(), Value::Boolean(bubbles)),
         ("cancelable".into(), Value::Boolean(cancelable)),
         ("defaultPrevented".into(), Value::Boolean(false)),
         ("returnValue".into(), Value::Boolean(true)),
@@ -1177,6 +1182,9 @@ pub fn event_prevent_default(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
+        if execute::is_truthy(&execute::get_property(receiver, "\0event:passive")) {
+            return Ok(Value::Undefined);
+        }
         if let Some(identity) = receiver.object_identity() {
             state.borrow_mut().prevented_events.insert(identity);
         }
