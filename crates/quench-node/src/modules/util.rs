@@ -677,6 +677,27 @@ pub fn inspect(value: &Value) -> String {
     inspect_depth(value, 3)
 }
 
+pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
+    if depth > 100 && matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        let keys = quench_runtime::execute::own_enumerable_keys(value);
+        if !keys.is_empty() {
+            let body = keys
+                .iter()
+                .map(|key| {
+                    format!(
+                        "  {}: {}",
+                        if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() },
+                        inspect_at(&quench_runtime::execute::get_property(value, key), 100)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",\n");
+            return format!("{{\n{body}\n}}");
+        }
+    }
+    inspect_depth(value, depth)
+}
+
 fn inspect_string(value: &str) -> String {
     if value.len() > 60 && value.contains('\n') {
         let lines = value.split('\n').collect::<Vec<_>>();
