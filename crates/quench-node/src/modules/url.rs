@@ -704,6 +704,9 @@ fn legacy_resolve(from: &str, to: &str) -> String {
             .map_or_else(|| from.to_string(), |(value, _)| value.to_string());
     }
     if to.contains("://") {
+        if let Some(value) = resolve_absolute_authority_edge(from, to) {
+            return value;
+        }
         return if to
             .split_once("://")
             .is_some_and(|(_, value)| !value.contains(['/', '?', '#']))
@@ -903,6 +906,59 @@ fn legacy_resolve(from: &str, to: &str) -> String {
         return normalized;
     }
     format!("{protocol}{normalized}")
+}
+
+fn resolve_absolute_authority_edge(from: &str, to: &str) -> Option<String> {
+    let (target_scheme, target_rest) = to.split_once("://")?;
+    let target_end = target_rest
+        .find(['/', '?', '#'])
+        .unwrap_or(target_rest.len());
+    let target_authority = &target_rest[..target_end];
+    let target_host = target_authority
+        .rsplit_once('@')
+        .map_or(target_authority, |(_, value)| value)
+        .split(':')
+        .next()
+        .unwrap_or_default();
+    let (base_scheme, base_rest) = from.split_once("://")?;
+    if !base_scheme.eq_ignore_ascii_case(target_scheme) {
+        return None;
+    }
+    let base_end = base_rest.find(['/', '?', '#']).unwrap_or(base_rest.len());
+    let base_authority = &base_rest[..base_end];
+    let base_host = base_authority
+        .rsplit_once('@')
+        .map_or(base_authority, |(_, value)| value)
+        .split(':')
+        .next()
+        .unwrap_or_default();
+    let base_path = base_rest[base_end..]
+        .split_once(['?', '#'])
+        .map_or(&base_rest[base_end..], |(value, _)| value);
+    if target_end == target_rest.len() {
+        if target_host.eq_ignore_ascii_case(base_host) && !base_path.is_empty() && base_path != "/"
+        {
+            return Some(format!("{target_scheme}://{target_authority}{base_path}"));
+        }
+        let base = from.split_once('#').map_or(from, |(value, _)| value);
+        return Some(if base_rest[base_end..].is_empty() {
+            format!("{base}/")
+        } else {
+            base.to_string()
+        });
+    }
+    if matches!(
+        target_rest[target_end..].as_bytes(),
+        [b'/', b'?' | b'#'] | [b'/']
+    ) && !target_host.eq_ignore_ascii_case(base_host)
+    {
+        return Some(
+            from.split_once('#')
+                .map_or(from, |(value, _)| value)
+                .to_string(),
+        );
+    }
+    None
 }
 
 fn split_protocol(url: &str) -> (String, &str) {
