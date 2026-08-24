@@ -15,9 +15,16 @@ struct StateBitwisePlan {
 }
 
 #[derive(Clone, Copy)]
+struct NestedArrayLengthPlan {
+    first_pc: usize,
+    second_pc: usize,
+}
+
+#[derive(Clone, Copy)]
 enum ShapeKernelPlan {
     StatePredicate(StatePredicatePlan),
     StateBitwise(StateBitwisePlan),
+    NestedArrayLength(NestedArrayLengthPlan),
 }
 
 #[derive(Clone)]
@@ -31,7 +38,7 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn execute_shape_kernel(
+pub(crate) fn execute_shape_kernel(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
 ) -> Option<crate::value::Value> {
@@ -39,7 +46,41 @@ fn execute_shape_kernel(
     match plan {
         ShapeKernelPlan::StatePredicate(plan) => execute_state_predicate(function, receiver, plan),
         ShapeKernelPlan::StateBitwise(plan) => execute_state_bitwise(function, receiver, plan),
+        ShapeKernelPlan::NestedArrayLength(plan) => {
+            execute_nested_array_length(function, receiver, plan)
+        }
     }
+}
+
+pub(crate) fn is_nested_array_length_shape(function: &crate::value::FunctionValue) -> bool {
+    function.code.code().is_some_and(|code| {
+        code.len() == 6
+            && code.instruction(1).is_some_and(|op| op.opcode == crate::ir::Opcode::GetN)
+            && code.instruction(2).is_some_and(|op| op.opcode == crate::ir::Opcode::GetN)
+            && code.metadata_at(2).and_then(|meta| meta.name.as_deref()) == Some("length")
+    })
+}
+
+fn execute_nested_array_length(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+    plan: NestedArrayLengthPlan,
+) -> Option<crate::value::Value> {
+    let crate::value::Value::Object(receiver) = receiver else { return None };
+    let code = function.code.code()?;
+    let first = code.metadata_at(plan.first_pc)?;
+    let nested = crate::vm::get_named_cached_object(receiver, &first.named_cache)?;
+    let nested = crate::locals::resolved_replacement(nested);
+    let second = code.metadata_at(plan.second_pc)?;
+    let value = match nested {
+        crate::value::Value::Array(array) if second.name.as_deref() == Some("length") => {
+            crate::arrays::property(&array, "length")
+        }
+        _ => return None,
+    };
+    crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
+    crate::execution_trace::kernel("shape_nested_array_length", false);
+    Some(value)
 }
 
 fn execute_state_predicate(
@@ -107,7 +148,10 @@ fn shape_kernel_fact(
     }
     let plan = match_state_predicate(function)
         .map(ShapeKernelPlan::StatePredicate)
-        .or_else(|| match_state_bitwise(function).map(ShapeKernelPlan::StateBitwise));
+        .or_else(|| match_state_bitwise(function).map(ShapeKernelPlan::StateBitwise))
+        .or_else(|| {
+            match_nested_array_length(function).map(ShapeKernelPlan::NestedArrayLength)
+        });
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -119,6 +163,30 @@ fn shape_kernel_fact(
         });
     });
     plan
+}
+
+fn match_nested_array_length(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+) -> Option<NestedArrayLengthPlan> {
+    let code = function.code.code()?;
+    if code.len() != 6 {
+        return None;
+    }
+    let [receiver, first, second, returned, fallback, fallback_return] =
+        std::array::from_fn(|pc| code.instruction(pc).unwrap());
+    use crate::ir::Opcode::*;
+    (receiver.opcode == LoadLocalChecked
+        && first.opcode == GetN
+        && first.b == receiver.a
+        && second.opcode == GetN
+        && second.b == first.a
+        && code.metadata_at(2).and_then(|meta| meta.name.as_deref()) == Some("length")
+        && returned.opcode == Return
+        && returned.a == second.a
+        && fallback.opcode == LoadConst
+        && fallback_return.opcode == Return
+        && fallback_return.a == fallback.a)
+        .then_some(NestedArrayLengthPlan { first_pc: 1, second_pc: 2 })
 }
 
 fn match_state_predicate(
