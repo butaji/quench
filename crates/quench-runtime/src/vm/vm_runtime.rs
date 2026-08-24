@@ -113,6 +113,15 @@ fn run_instruction(
             crate::locals::load_checked(registers, instruction.a, instruction.b, name)?;
             Ok(None)
         }
+        Opcode::StoreLocalChecked => {
+            let name = code
+                .metadata_at(pc)
+                .and_then(|metadata| metadata.name.as_deref())
+                .unwrap_or("binding");
+            crate::locals::check_initialized(instruction.a, name)?;
+            crate::locals::store(registers, instruction.a, instruction.b)?;
+            Ok(None)
+        }
         Opcode::UpdateLocal => {
             crate::locals::update(
                 registers,
@@ -188,6 +197,21 @@ fn run_instruction(
                 instruction.flags != 0,
                 &metadata.named_cache,
             )?;
+            Ok(None)
+        }
+        Opcode::CallN => {
+            if instruction.flags == 1 {
+                crate::methods::execute_registered_one(registers, instruction)?;
+            } else {
+                let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
+                let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
+                crate::methods::execute_named(
+                    registers,
+                    instruction,
+                    key,
+                    &metadata.named_cache,
+                )?;
+            }
             Ok(None)
         }
         Opcode::ASetI => {
