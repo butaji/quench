@@ -9,7 +9,7 @@ mod helpers;
 mod impl_;
 mod setter;
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use crate::value::Value;
 
@@ -63,7 +63,7 @@ pub fn extract_time(receiver: Option<&Value>) -> f64 {
 }
 
 pub fn time_property(ms: f64) -> Value {
-    Value::BindingCell(Rc::new(RefCell::new(Value::Number(ms))))
+    Value::BindingCell(crate::value::BindingCell::new(Value::Number(ms)))
 }
 
 /// Construct a Date instance for host APIs that need to return a timestamp.

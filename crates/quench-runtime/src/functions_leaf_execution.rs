@@ -3,65 +3,38 @@ const SMALL_LEAF_REGISTERS: usize = 48;
 const LEAF_LOCAL_SLOTS: usize = 128;
 const LEAF_FACT_SLOTS: usize = 256;
 
-struct LeafRegisters {
-    values: [std::mem::MaybeUninit<crate::value::Value>; LEAF_REGISTERS],
-    initialized: [u64; 2],
+trait LeafRegisterFile {
+    fn read(&self, index: usize) -> Option<crate::value::Value>;
+    fn write(&mut self, index: usize, value: crate::value::Value) -> Option<()>;
+    fn copy(&mut self, destination: usize, source: usize) -> Option<()>;
+    fn truthiness(&self, index: usize) -> Option<bool>;
+    fn number(&self, index: usize) -> Option<f64>;
+    fn object(&self, index: usize) -> Option<&crate::value::ObjectData>;
+    fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()>;
 }
 
-impl LeafRegisters {
-    fn new() -> Self {
-        Self {
-            values: [const { std::mem::MaybeUninit::uninit() }; LEAF_REGISTERS],
-            initialized: [0; 2],
-        }
+impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N> {
+    fn read(&self, index: usize) -> Option<crate::value::Value> {
+        self.read(index)
     }
-
-    fn contains(&self, index: usize) -> bool {
-        self.initialized[index / 64] & (1 << (index % 64)) != 0
+    fn write(&mut self, index: usize, value: crate::value::Value) -> Option<()> {
+        self.write(index, value)
     }
-}
-
-impl std::ops::Index<usize> for LeafRegisters {
-    type Output = crate::value::Value;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        if self.contains(index) {
-            return unsafe { self.values[index].assume_init_ref() };
-        }
-        &crate::value::Value::Undefined
+    fn copy(&mut self, destination: usize, source: usize) -> Option<()> {
+        self.copy(destination, source)
     }
-}
-
-impl std::ops::IndexMut<usize> for LeafRegisters {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        if !self.contains(index) {
-            self.values[index].write(crate::value::Value::Undefined);
-            self.initialized[index / 64] |= 1 << (index % 64);
-        }
-        unsafe { self.values[index].assume_init_mut() }
+    fn truthiness(&self, index: usize) -> Option<bool> {
+        self.truthiness(index)
     }
-}
-
-impl Drop for LeafRegisters {
-    fn drop(&mut self) {
-        for index in 0..LEAF_REGISTERS {
-            if self.contains(index) {
-                unsafe { self.values[index].assume_init_drop() };
-            }
-        }
+    fn number(&self, index: usize) -> Option<f64> {
+        self.number(index)
     }
-}
-
-trait LeafRegisterFile:
-    std::ops::Index<usize, Output = crate::value::Value>
-    + std::ops::IndexMut<usize, Output = crate::value::Value>
-{
-}
-
-impl<T> LeafRegisterFile for T where
-    T: std::ops::Index<usize, Output = crate::value::Value>
-        + std::ops::IndexMut<usize, Output = crate::value::Value>
-{
+    fn object(&self, index: usize) -> Option<&crate::value::ObjectData> {
+        self.object(index)
+    }
+    fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()> {
+        cell.with_word(|word| self.write_owned(index, word))
+    }
 }
 
 trait LeafLocalFile {
@@ -144,7 +117,7 @@ fn execute_proven_leaf(
     };
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     if extended {
-        let mut registers = LeafRegisters::new();
+        let mut registers = crate::register_file::FixedWordFile::<LEAF_REGISTERS>::new();
         let mut locals = crate::register_file::LocalWordFile::<LEAF_LOCAL_SLOTS>::new();
         return Some(run_leaf(
             function,
@@ -155,8 +128,7 @@ fn execute_proven_leaf(
             &mut locals,
         ));
     }
-    let mut registers: [crate::value::Value; SMALL_LEAF_REGISTERS] =
-        std::array::from_fn(|_| crate::value::Value::Undefined);
+    let mut registers = crate::register_file::FixedWordFile::<SMALL_LEAF_REGISTERS>::new();
     let mut locals = NoLeafLocals;
     Some(run_leaf(
         function,
@@ -444,41 +416,90 @@ fn run_leaf_op(
     crate::execution_trace::leaf_compact(op.opcode);
     let value = match op.opcode {
         LoadConst => code.constant_at(pc).map(|(_, value)| value.into()),
-        Move => Some(registers[usize::from(op.b)].clone()),
+        Move => {
+            registers
+                .copy(usize::from(op.a), usize::from(op.b))
+                .ok_or(crate::execute::VmError::MissingReturn)?;
+            return Ok(None);
+        }
         LoadLocalChecked => Some(leaf_local(
             function, receiver, arguments, code, pc, op.b, locals,
         )?),
         StoreLocalChecked => {
-            leaf_store(function, op.a, registers[usize::from(op.b)].clone(), locals)?;
+            leaf_store(function, op.a, leaf_register(registers, op.b)?, locals)?;
             return Ok(None);
         }
         UpdateLocal => Some(leaf_update_local(
             function, receiver, arguments, code, pc, op, registers, locals,
         )?),
-        GetN => Some(leaf_get_named(code, pc, &registers[usize::from(op.b)])?),
+        GetN if leaf_get_named_word(code, pc, op, registers)? => return Ok(None),
+        GetN => Some(leaf_get_named_register(code, pc, op.b, registers)?),
         SetN => {
             leaf_set_named(code, pc, op, registers)?;
             return Ok(None);
         }
         AGetI => Some(leaf_get_index(
-            &registers[usize::from(op.b)],
-            &registers[usize::from(op.c)],
+            &leaf_register(registers, op.b)?,
+            &leaf_register(registers, op.c)?,
         )?),
-        Binary => Some(crate::vm::vm_arithmetic::evaluate_binary(
-            &registers[usize::from(op.b)],
-            &registers[usize::from(op.c)],
-            crate::ir::compact_binary_operator(op.flags)
-                .ok_or(crate::execute::VmError::MissingReturn)?,
-        )?),
+        Binary => if let Some(value) = leaf_number_binary(op, registers) {
+            Some(value)
+        } else {
+            let left = leaf_register(registers, op.b)?;
+            let right = leaf_register(registers, op.c)?;
+            Some(crate::vm::vm_arithmetic::evaluate_binary(
+                &left,
+                &right,
+                crate::ir::compact_binary_operator(op.flags)
+                    .ok_or(crate::execute::VmError::MissingReturn)?,
+            )?)
+        },
         CallN => Some(leaf_call(code, pc, op, registers)?),
         Slow => {
             return leaf_control(function, receiver, arguments, code, op, registers, locals);
         }
-        Return => return Ok(Some(registers[usize::from(op.a)].clone())),
+        Return => return Ok(Some(leaf_register(registers, op.a)?)),
         _ => None,
     };
-    registers[usize::from(op.a)] = value.ok_or(crate::execute::VmError::MissingReturn)?;
+    registers
+        .write(
+            usize::from(op.a),
+            value.ok_or(crate::execute::VmError::MissingReturn)?,
+        )
+        .ok_or(crate::execute::VmError::MissingReturn)?;
     Ok(None)
+}
+
+#[inline(always)]
+fn leaf_register(
+    registers: &impl LeafRegisterFile,
+    index: u16,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    registers
+        .read(usize::from(index))
+        .ok_or(crate::execute::VmError::MissingReturn)
+}
+
+#[inline(always)]
+fn leaf_number_binary(
+    op: crate::ir::Instruction,
+    registers: &impl LeafRegisterFile,
+) -> Option<crate::value::Value> {
+    let operator = crate::ir::compact_binary_operator(op.flags)?;
+    let left = registers.number(usize::from(op.b))?;
+    let right = registers.number(usize::from(op.c))?;
+    crate::vm::vm_arithmetic::fast_number_binary(left, right, operator)
+}
+
+#[inline(always)]
+fn leaf_truthy(
+    registers: &impl LeafRegisterFile,
+    index: u16,
+) -> Result<bool, crate::execute::VmError> {
+    if let Some(value) = registers.truthiness(usize::from(index)) {
+        return Ok(value);
+    }
+    Ok(crate::vm::is_truthy(&leaf_register(registers, index)?))
 }
 
 fn leaf_conditional(
@@ -501,7 +522,7 @@ fn leaf_conditional(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let branch = if crate::vm::is_truthy(&registers[usize::from(*condition)]) {
+    let branch = if leaf_truthy(registers, *condition)? {
         consequent
     } else {
         alternate
@@ -532,7 +553,9 @@ fn leaf_control(
         Some(crate::ops::Op::Conditional { .. }) => {
             let (dst, value) =
                 leaf_conditional(function, receiver, arguments, code, op, registers, locals)?;
-            registers[usize::from(dst)] = value;
+            registers
+                .write(usize::from(dst), value)
+                .ok_or(crate::execute::VmError::MissingReturn)?;
             Ok(None)
         }
         Some(crate::ops::Op::Branch {
@@ -540,7 +563,7 @@ fn leaf_control(
             then_ops,
             else_ops,
         }) => {
-            let selected = if crate::vm::is_truthy(&registers[usize::from(*condition)]) {
+            let selected = if leaf_truthy(registers, *condition)? {
                 then_ops
             } else {
                 else_ops
@@ -586,7 +609,9 @@ fn leaf_control(
                 if !crate::vm::is_truthy(&condition) {
                     break;
                 }
-                registers[usize::from(*dst)] = crate::value::Value::Undefined;
+                registers
+                    .write(usize::from(*dst), crate::value::Value::Undefined)
+                    .ok_or(crate::execute::VmError::MissingReturn)?;
                 if let Some(value) = run_leaf_fragment(
                     function,
                     receiver,
@@ -613,14 +638,16 @@ fn leaf_control(
             Ok(None)
         }
         Some(crate::ops::Op::ResolveBindingTarget { dst, .. }) => {
-            registers[usize::from(*dst)] = crate::value::Value::Undefined;
+            registers
+                .write(usize::from(*dst), crate::value::Value::Undefined)
+                .ok_or(crate::execute::VmError::MissingReturn)?;
             Ok(None)
         }
         Some(crate::ops::Op::InitializeResolvedBinding { slot, src, .. }) => {
             leaf_store(
                 function,
                 *slot,
-                registers[usize::from(*src)].clone(),
+                leaf_register(registers, *src)?,
                 locals,
             )?;
             Ok(None)
@@ -697,7 +724,9 @@ fn leaf_update_local(
     let delta = crate::value::Value::Number(if op.flags == 0 { 1.0 } else { -1.0 });
     let updated =
         crate::vm::vm_arithmetic::evaluate_binary(&old, &delta, crate::ops::BinaryOp::NumericAdd)?;
-    registers[usize::from(op.b)] = updated.clone();
+    registers
+        .write(usize::from(op.b), updated.clone())
+        .ok_or(crate::execute::VmError::MissingReturn)?;
     leaf_store(function, op.c, updated, locals)?;
     Ok(old)
 }
@@ -717,6 +746,51 @@ fn leaf_get_named(
     crate::vm::get_named_property_result(object, key, &metadata.named_cache)
 }
 
+fn leaf_get_named_register(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    register: u16,
+    registers: &impl LeafRegisterFile,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let metadata = code
+        .metadata_at(pc)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    if let Some(object) = registers.object(usize::from(register)) {
+        if let Some(value) =
+            crate::vm::get_named_cached_object(object, &metadata.named_cache)
+        {
+            return Ok(value);
+        }
+    }
+    leaf_get_named(code, pc, &leaf_register(registers, register)?)
+}
+
+fn leaf_get_named_word(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    op: crate::ir::Instruction,
+    registers: &mut impl LeafRegisterFile,
+) -> Result<bool, crate::execute::VmError> {
+    if op.a == op.b {
+        return Ok(false);
+    }
+    let metadata = code
+        .metadata_at(pc)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let cell = registers
+        .object(usize::from(op.b))
+        .and_then(|object| crate::vm::get_named_cached_cell(object, &metadata.named_cache));
+    let Some(cell) = cell else { return Ok(false) };
+    // SAFETY: the source register still owns the object containing this cell;
+    // admission rejects an in-place destination, so the following write cannot
+    // release that owner before the word copy completes.
+    let cell = unsafe { &*cell };
+    registers
+        .write_cell(usize::from(op.a), cell)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    Ok(true)
+}
+
 fn leaf_set_named(
     code: crate::machine::CodeView<'_>,
     pc: usize,
@@ -730,8 +804,8 @@ fn leaf_set_named(
         .name
         .as_deref()
         .ok_or(crate::execute::VmError::MissingReturn)?;
-    let target = registers[usize::from(op.a)].clone();
-    let value = registers[usize::from(op.b)].clone();
+    let target = leaf_register(registers, op.a)?;
+    let value = leaf_register(registers, op.b)?;
     if let crate::value::Value::Object(object) = &target {
         if !object.has_replacement() {
             if let Some((layout, slot)) =
@@ -741,7 +815,7 @@ fn leaf_set_named(
                     if let Some((_, crate::value::Value::BindingCell(cell))) =
                         object.hot_properties().get(slot as usize)
                     {
-                        *cell.borrow_mut() = value;
+                        cell.store(value);
                         return Ok(());
                     }
                 }
@@ -757,7 +831,12 @@ fn leaf_set_named(
         op.flags != 0,
         &metadata.named_cache,
     )?;
-    registers[usize::from(op.a)] = crate::execute::read_register(&temporary, 0)?;
+    registers
+        .write(
+            usize::from(op.a),
+            crate::execute::read_register(&temporary, 0)?,
+        )
+        .ok_or(crate::execute::VmError::MissingReturn)?;
     Ok(())
 }
 
@@ -790,7 +869,7 @@ fn leaf_call(
     op: crate::ir::Instruction,
     registers: &impl LeafRegisterFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    let receiver = crate::locals::resolved_replacement(registers[usize::from(op.b)].clone());
+    let receiver = crate::locals::resolved_replacement(leaf_register(registers, op.b)?);
     let (callee, argument) = if op.flags == 0 {
         (leaf_get_named(code, pc, &receiver)?, None)
     } else {
@@ -798,8 +877,8 @@ fn leaf_call(
             op.a.checked_sub(1)
                 .ok_or(crate::execute::VmError::MissingReturn)?;
         (
-            registers[usize::from(op.c)].clone(),
-            Some(registers[usize::from(argument)].clone()),
+            leaf_register(registers, op.c)?,
+            Some(leaf_register(registers, argument)?),
         )
     };
     let arguments = argument

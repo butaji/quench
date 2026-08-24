@@ -144,7 +144,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     let visible_flags = crate::regexp::canonical_flags(&flags);
     crate::regexp::ensure_compiled(&source, &flags)
         .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
-    let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
+    let last_index = Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0)));
     let mut entries = vec![
         (
             "\0realm".to_string(),
@@ -159,7 +159,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         ),
         (
             "source".to_string(),
-            Value::BindingCell(Rc::new(RefCell::new(observable_source.clone()))),
+            Value::BindingCell(crate::value::BindingCell::new(observable_source.clone())),
         ),
         (
             crate::builtins::descriptor_key("source"),
@@ -167,7 +167,9 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         ),
         (
             "flags".to_string(),
-            Value::BindingCell(Rc::new(RefCell::new(Value::String(visible_flags.clone())))),
+            Value::BindingCell(crate::value::BindingCell::new(Value::String(
+                visible_flags.clone(),
+            ))),
         ),
         (
             crate::builtins::descriptor_key("flags"),

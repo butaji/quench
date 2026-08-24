@@ -121,7 +121,7 @@ fn try_record_constructor(
             .unwrap_or(crate::value::Value::Undefined);
         properties.push((
             key.to_string(),
-            crate::value::Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(value))),
+            crate::value::Value::BindingCell(crate::value::BindingCell::new(value)),
         ));
     }
     Some(crate::value::Value::Object(std::rc::Rc::new(
