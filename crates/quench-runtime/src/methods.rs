@@ -21,19 +21,36 @@ pub(crate) fn execute(
     else {
         return Err(VmError::NotCallable);
     };
+    let registered_callee = callee.is_some();
     let receiver = crate::locals::resolved_replacement(read_register(registers, *object)?);
     let callee = resolved_callee(registers, *callee, &receiver, key)?;
-    let arguments = crate::vm::vm_ops::collect_call_arguments(registers, args, spreads)?;
+    crate::execution_trace::call_method(
+        args.len(),
+        spreads.iter().any(|spread| *spread),
+        registered_callee,
+        call_target_name(&callee),
+    );
     let propagates = matches!(
         callee,
         Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)
     );
+    let arguments = crate::vm::vm_ops::collect_call_arguments(registers, args, spreads)?;
     let value = execute_callee(callee, &receiver, &arguments, args, registers)?;
     if propagates {
         crate::properties::propagate_updated_object(registers, Some(*object), &receiver, &value);
     }
     write_value(registers, *dst, value);
     Ok(())
+}
+
+fn call_target_name(value: &Value) -> &'static str {
+    match value {
+        Value::Function(_) => "Function",
+        Value::Builtin(_) => "Builtin",
+        Value::BoundFunction(_) => "BoundFunction",
+        Value::Undefined => "Undefined",
+        _ => "Other",
+    }
 }
 
 fn resolved_callee(
