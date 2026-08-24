@@ -344,6 +344,12 @@ pub fn fill(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
+    let _ = state;
+    fill_view(receiver, args)
+}
+
+/// Shared implementation for the public prototype method and internal binding.
+pub(crate) fn fill_view(receiver: Option<&Value>, args: &[Value]) -> HandlerResult {
     let view = this_view(receiver)?;
     if let Some(receiver) = receiver {
         if let Ok(Value::Number(length)) =
