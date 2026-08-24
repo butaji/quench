@@ -246,7 +246,7 @@ impl SlotStore {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct BindingRef {
+pub(crate) struct BindingRef {
     store: Rc<SlotStore>,
     index: usize,
 }
@@ -535,6 +535,10 @@ impl Environment {
         self.slots.borrow().len()
     }
 
+    pub(crate) fn captured_len(&self) -> usize {
+        self.slots.borrow().prefix_len
+    }
+
     pub(crate) fn get(&self, slot: u16) -> Value {
         self.slot(slot).map_or(Value::Undefined, |slot| slot.load())
     }
@@ -694,6 +698,27 @@ impl Environment {
 
     pub(crate) fn resolve_eval_name(&self, name: &str) -> Option<Value> {
         self.eval_name_binding(name).map(|binding| binding.load())
+    }
+
+    pub(crate) fn snapshot_eval_name_chain(&self) -> Vec<Option<HashMap<String, BindingRef>>> {
+        let mut snapshots = vec![self.eval_names.borrow().clone()];
+        if let Some(caller) = &self.caller {
+            snapshots.extend(caller.snapshot_eval_name_chain());
+        }
+        snapshots
+    }
+
+    pub(crate) fn restore_eval_name_chain(
+        &self,
+        snapshots: &[Option<HashMap<String, BindingRef>>],
+    ) {
+        let Some((current, rest)) = snapshots.split_first() else {
+            return;
+        };
+        self.eval_names.replace(current.clone());
+        if let Some(caller) = &self.caller {
+            caller.restore_eval_name_chain(rest);
+        }
     }
 
     pub(crate) fn eval_name_aliases_slot(&self, name: &str, slot: u16) -> bool {
