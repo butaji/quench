@@ -122,7 +122,11 @@ pub(crate) fn map_value(
             .flatten());
     }
     let key = index.to_string();
-    if !crate::with_scope::has_property(&receiver, &key)? {
+    let has_intrinsic_property = matches!(
+        receiver,
+        Value::Builtin(builtin) if crate::builtins::object::builtin_owns_property(builtin, &key)
+    );
+    if !has_intrinsic_property && !crate::with_scope::has_property(&receiver, &key)? {
         let descriptor = crate::builtins::object::descriptor(
             Some(&receiver),
             Some(&Value::String(key.clone())),
