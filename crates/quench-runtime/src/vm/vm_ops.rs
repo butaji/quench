@@ -423,11 +423,13 @@ fn invoke_with_receiver(
             let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
                 unreachable!()
             };
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
             crate::vm::execute_host_capability_with_receiver(
                 kind,
                 Some(&bound.receiver),
                 Some(receiver),
-                arguments,
+                &combined,
             )
         }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
