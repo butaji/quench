@@ -265,21 +265,19 @@ fn run_control_op(
         Break { label, value } => {
             let carried = value
                 .map(|src| read_register(registers, src))
-                .transpose()?
-                .unwrap_or(Value::Undefined);
+                .transpose()?;
             Ok(Some(Completion::Break {
                 label: label.clone(),
-                value: Some(carried),
+                value: carried,
             }))
         }
         Continue { label, value } => {
             let carried = value
                 .map(|src| read_register(registers, src))
-                .transpose()?
-                .unwrap_or(Value::Undefined);
+                .transpose()?;
             Ok(Some(Completion::Continue {
                 label: label.clone(),
-                value: Some(carried),
+                value: carried,
             }))
         }
         TailCall { .. } => run_tail_call(registers, op).map(Some),
