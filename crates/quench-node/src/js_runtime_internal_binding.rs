@@ -65,42 +65,7 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 pub(crate) fn util_types_module() -> Value {
-    NODE_UTIL_TYPES.with(|module| {
-        module
-            .borrow_mut()
-            .get_or_insert_with(|| {
-                let names = [
-                    "isAnyArrayBuffer",
-                    "isArrayBuffer",
-                    "isArrayBufferView",
-                    "isAsyncFunction",
-                    "isDataView",
-                    "isDate",
-                    "isExternal",
-                    "isMap",
-                    "isMapIterator",
-                    "isNativeError",
-                    "isPromise",
-                    "isRegExp",
-                    "isSet",
-                    "isSetIterator",
-                    "isTypedArray",
-                    "isUint8Array",
-                    "arrayBufferViewHasBuffer",
-                ];
-                quench_runtime::host_api::object(names.into_iter().map(|name| {
-                    let capability = if name == "arrayBufferViewHasBuffer" {
-                        HostCapabilityKind::Custom(0x0F0F)
-                    } else if name == "isDate" {
-                        HostCapabilityKind::Custom(CapabilityName::UtilIsDate)
-                    } else {
-                        HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer)
-                    };
-                    (name.into(), capability_function(capability))
-                }).collect())
-            })
-            .clone()
-    })
+    crate::modules::util::types_object()
 }
 
 fn internal_util_sleep(arguments: &[Value]) -> Result<Value, VmError> {
