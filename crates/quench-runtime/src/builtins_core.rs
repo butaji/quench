@@ -60,7 +60,7 @@ pub(crate) fn array_map(
     Ok(result)
 }
 
-fn array_species_create(
+pub(crate) fn array_species_create(
     receiver: &Value,
     length: usize,
 ) -> Result<Value, crate::execute::VmError> {
@@ -196,7 +196,7 @@ pub(crate) fn array_filter(
     ))
 }
 
-fn create_data_property_or_throw(
+pub(crate) fn create_data_property_or_throw(
     target: Value,
     key: &str,
     value: Value,
