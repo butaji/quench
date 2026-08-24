@@ -1163,6 +1163,15 @@ const _: () = assert!(VALUE_ALIGNMENT_TAG_BITS == 0);
 const _: () = assert!(SMALL_INTEGER_TAG_BITS == 0);
 const _: () = assert!(SMALL_INTEGER_MIN < SMALL_INTEGER_MAX);
 impl Value {
+    /// Stable identity for ordinary objects, used by host-side event state.
+    pub fn object_identity(&self) -> Option<u64> {
+        match self {
+            Self::Object(object) => Some(object.identity()),
+            Self::ObjectAlias(alias) => alias.target().map(|object| object.identity()),
+            _ => None,
+        }
+    }
+
     /// Whether a typed-array view has materialized its `.buffer` accessor.
     pub fn typed_array_buffer_materialized(&self) -> bool {
         match self {

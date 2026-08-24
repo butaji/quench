@@ -582,7 +582,14 @@ pub fn build() -> Value {
               return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
             },
             return() { finish(); return Promise.resolve({ value: undefined, done: true }); },
-            throw(reason) { finish(reason); return Promise.reject(reason); },
+            throw(reason) {
+              if (reason === undefined) {
+                const error = new TypeError("The \"EventEmitter.AsyncIterator\" property must be an instance of Error. Received undefined");
+                throw error;
+              }
+              finish(reason);
+              return Promise.reject(reason);
+            },
             [Symbol.asyncIterator]() { return this; }
           };
           return iterator;
