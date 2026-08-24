@@ -267,6 +267,24 @@ impl RegisterFile {
         true
     }
 
+    /// Copy one canonical execute word between storage owners. This is the
+    /// lexical-slot fast path: heap values retain once, immediates are a u64
+    /// copy, and neither side materializes the 32-byte semantic `Value`.
+    pub(crate) fn copy_from(
+        &mut self,
+        destination: usize,
+        source: &Self,
+        source_index: usize,
+    ) -> bool {
+        let Some(word) = source.words.get(source_index).copied() else {
+            return false;
+        };
+        self.resize_undefined(destination + 1);
+        retain(word);
+        release(std::mem::replace(&mut self.words[destination], word));
+        true
+    }
+
     pub fn push(&mut self, value: Value) {
         self.words.push(encode(value));
     }
@@ -344,6 +362,15 @@ mod tests {
             DecodedValue::HeapPtr(_)
         ));
         assert_eq!(registers.read(1), Some(Value::String("payload".into())));
+    }
+
+    #[test]
+    fn lexical_storage_copies_one_word_between_owners() {
+        let source = RegisterFile::from_values(vec![Value::Number(42.0)]);
+        let mut destination = RegisterFile::with_undefined(1);
+        assert!(destination.copy_from(0, &source, 0));
+        assert_eq!(destination.read_number(0), Some(42.0));
+        assert_eq!(source.read_number(0), Some(42.0));
     }
 
     #[test]
