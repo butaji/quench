@@ -229,7 +229,7 @@
     return false;
   }
 
-  class Readable {
+  class ReadableClass {
     constructor(options) {
       initReadable(this, options || {});
     }
@@ -442,7 +442,7 @@
       return this;
     }
   }
-  Readable.from = function (source, options) {
+  ReadableClass.from = function (source, options) {
     options = options || {};
     if (source == null) throw new TypeError("Readable.from requires a source");
     const asyncIterator = source[Symbol.asyncIterator];
@@ -454,7 +454,7 @@
 
     let pending = false;
     let finished = false;
-    const readable = new Readable(Object.assign({}, options, {
+    const readable = new ReadableClass(Object.assign({}, options, {
       objectMode: options.objectMode !== false,
       read() {
         if (pending || finished) return;
@@ -497,9 +497,9 @@
     return readable;
   };
 
-  mixEmitter(Readable.prototype);
+  mixEmitter(ReadableClass.prototype);
 
-  Readable.prototype.destroy = function (error) {
+  ReadableClass.prototype.destroy = function (error) {
     if (this.destroyed) return this;
     this.destroyed = true;
     this.readableAborted = this.readable !== false && !this.readableEnded;
@@ -527,6 +527,16 @@
     });
     return this;
   }
+
+  // Node permits Readable(options) as a callable factory as well as
+  // `new Readable(options)`. Keep one prototype and one state initializer.
+  function Readable(options) {
+    if (!(this instanceof ReadableClass)) return new ReadableClass(options || {});
+    initReadable(this, options || {});
+  }
+  Readable.prototype = ReadableClass.prototype;
+  Readable.prototype.constructor = Readable;
+  Readable.from = ReadableClass.from;
 
   function writableChunkLength(stream, chunk) {
     if (stream._writableState.objectMode) return 1;
