@@ -17,7 +17,8 @@ function resolve(snapshot, source) {
   if (typeof source === "string") return readPath(snapshot, source);
   if (source.sum) return source.sum.reduce((sum, item) => sum + resolve(snapshot, item), 0);
   const rows = readPath(snapshot, source.top.path) || [];
-  return rows.find((row) => row[source.top.key] === source.top.value)?.count || 0;
+  const row = rows.find((entry) => entry[source.top.key] === source.top.value);
+  return row?.[source.top.field || "count"] || 0;
 }
 
 function measure(snapshot, fact) {

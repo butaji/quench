@@ -103,6 +103,16 @@ pub fn execute_call_continuation(
             pc: 0,
         }))
     }
+    if let Value::Function(function) = &continuation.callee {
+        if crate::functions::is_nested_array_length_shape(function) {
+            let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
+            if let Some(value) = crate::functions::execute_shape_kernel(function, &receiver) {
+                *registers = continuation.caller_registers;
+                super::write_value(registers, continuation.destination, value);
+                return Ok(());
+            }
+        }
+    }
     let mut stack: Vec<ActiveCall> = Vec::new();
     let mut current = match start(continuation.clone())? {
         Some(active) => active,
