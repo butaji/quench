@@ -39,5 +39,6 @@ fn function_declaration_op(
         strictness: metadata.strictness,
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
+        source: None,
     }
 }
