@@ -39,6 +39,7 @@ test-stream-writable-error-callbacks.js
 test-stream-writable-destroy-option.js
 test-stream-writable-ended-state.js
 test-stream-writable-write-after-end.js
+test-async-local-storage-context.js
 test-timers-promises.js
 test-timers-interval-promises.js
 test-timers-api-refs.js
