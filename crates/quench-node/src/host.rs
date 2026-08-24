@@ -16,6 +16,13 @@ use quench_runtime::vm::{Host, OutputSink, VmContext};
 
 use crate::registry::{CapId, NodeSpec};
 
+pub fn scheduler_capability(kind: u16) -> Value {
+    host_api::capability_function(HostCapabilityRef {
+        realm: RealmId::ROOT,
+        kind: HostCapabilityKind::Custom(kind),
+    })
+}
+
 pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
 }

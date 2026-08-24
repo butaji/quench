@@ -496,6 +496,11 @@ impl ArrayData {
             .or_else(|| self.property(&index.to_string()))
     }
 
+    /// Public host-facing indexed read for API adapters that consume arrays as data.
+    pub fn index_value(&self, index: usize) -> Value {
+        self.get_index(index).unwrap_or(Value::Undefined)
+    }
+
     /// Read a packed numeric slot without materializing an owned `Value`.
     ///
     /// The returned scalar is the unboxed representation used by numeric
