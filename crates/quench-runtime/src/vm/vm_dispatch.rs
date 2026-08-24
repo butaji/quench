@@ -311,10 +311,30 @@ fn run_make_array(registers: &mut crate::register_file::RegisterFile, op: &Op) -
 }
 
 fn run_make_object(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
-    if let Op::MakeObject { dst, properties } = op {
+    if let Op::MakeObject { dst, properties } | Op::MakeGlobalObjectView { dst, properties } = op {
         execute_object(registers, *dst, properties)?;
+        if matches!(op, Op::MakeGlobalObjectView { .. }) {
+            let view = crate::execute::read_register(registers, *dst)?.clone();
+            if let Value::Object(view) = view {
+                let owner = crate::vm::current_global_object();
+                if let Value::Object(owner) = owner {
+                    let value = Value::Object(std::rc::Rc::new(
+                        crate::value::ObjectData::with_shared_properties_for_owner(
+                            &owner,
+                            view.properties.clone(),
+                            std::rc::Rc::new(std::cell::RefCell::new(
+                                view.private_slots.borrow().clone(),
+                            )),
+                        ),
+                    ));
+                    crate::execute::write_value(registers, *dst, value);
+                }
+            }
+        }
         if let Value::Object(object) = read_register(registers, *dst)? {
-            realm::initialize_current_global(object);
+            if matches!(op, Op::MakeObject { .. }) {
+                realm::initialize_current_global(object);
+            }
         }
     }
     Ok(())
