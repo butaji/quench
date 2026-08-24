@@ -164,6 +164,21 @@ impl SlotStore {
             )
     }
 
+    fn load_number(&self, index: usize) -> Option<f64> {
+        self.ensure(index);
+        if let Some(Some(cell)) = self.bridges().get(index) {
+            let value = cell.borrow();
+            return match &*value {
+                Value::Number(number) => Some(*number),
+                _ => None,
+            };
+        }
+        match &self.values()[index] {
+            Value::Number(number) => Some(*number),
+            _ => None,
+        }
+    }
+
     fn store(&self, index: usize, value: Value) {
         self.ensure(index);
         if let Some(Some(cell)) = self.bridges().get(index) {
@@ -172,6 +187,27 @@ impl SlotStore {
             self.values_mut()[index] = value;
         }
         self.invariant();
+    }
+
+    fn update_number(&self, index: usize, delta: f64) -> Option<(f64, f64)> {
+        self.ensure(index);
+        let value = if let Some(Some(cell)) = self.bridges().get(index) {
+            let mut value = cell.borrow_mut();
+            let Value::Number(old) = &mut *value else {
+                return None;
+            };
+            let before = *old;
+            *old += delta;
+            return Some((before, *old));
+        } else {
+            &mut self.values_mut()[index]
+        };
+        let Value::Number(old) = value else {
+            return None;
+        };
+        let before = *old;
+        *old += delta;
+        Some((before, *old))
     }
 
     fn bridge(&self, index: usize) -> Rc<RefCell<Value>> {
@@ -202,8 +238,16 @@ impl BindingRef {
         self.store.load(self.index)
     }
 
+    fn load_number(&self) -> Option<f64> {
+        self.store.load_number(self.index)
+    }
+
     fn store(&self, value: Value) {
         self.store.store(self.index, value);
+    }
+
+    fn update_number(&self, delta: f64) -> Option<(f64, f64)> {
+        self.store.update_number(self.index, delta)
     }
 
     fn cell(&self) -> Rc<RefCell<Value>> {
@@ -293,12 +337,20 @@ impl Environment {
         self.slot(slot).map_or(Value::Undefined, |slot| slot.load())
     }
 
+    pub(crate) fn get_number(&self, slot: u16) -> Option<f64> {
+        self.slot(slot)?.load_number()
+    }
+
     pub(crate) fn set(&self, slot: u16, value: Value) {
         {
             let binding = self.ensure_slot(slot);
             binding.store(value);
         }
         self.initialize(slot);
+    }
+
+    pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
+        self.slot(slot)?.update_number(delta)
     }
 
     fn slot(&self, slot: u16) -> Option<BindingRef> {
@@ -683,5 +735,24 @@ mod tests {
         assert_eq!(store.load(0), Value::Number(9.0));
         store.store(0, Value::Number(12.0));
         assert_eq!(*cell.borrow(), Value::Number(12.0));
+    }
+
+    #[test]
+    fn numeric_update_mutates_direct_and_bridged_slots_once() {
+        let direct = SlotStore::from_values(vec![Value::Number(4.0)]);
+        assert_eq!(direct.update_number(0, 1.0), Some((4.0, 5.0)));
+        assert_eq!(direct.load(0), Value::Number(5.0));
+
+        let bridged = SlotStore::from_values(vec![Value::Number(7.0)]);
+        let cell = bridged.bridge(0);
+        assert_eq!(bridged.update_number(0, -1.0), Some((7.0, 6.0)));
+        assert_eq!(*cell.borrow(), Value::Number(6.0));
+    }
+
+    #[test]
+    fn numeric_update_rejects_non_numbers_without_mutation() {
+        let store = SlotStore::from_values(vec![Value::String("4".into())]);
+        assert_eq!(store.update_number(0, 1.0), None);
+        assert_eq!(store.load(0), Value::String("4".into()));
     }
 }
