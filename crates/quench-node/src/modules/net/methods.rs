@@ -275,10 +275,12 @@ pub fn socket_end(
     if let Some(sock) = state.borrow().net.sockets.get(&id).cloned() {
         let mut guard = sock.borrow_mut();
         guard.state = SocketState::Closing;
-        if let Some(stream) = guard.stream.as_mut() {
-            let _ = stream.shutdown(Shutdown::Write);
-        }
         try_flush(&mut guard);
+        if guard.write_buf.is_empty() {
+            if let Some(stream) = guard.stream.as_mut() {
+                let _ = stream.shutdown(Shutdown::Write);
+            }
+        }
     }
     let _ = state;
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
