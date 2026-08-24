@@ -216,6 +216,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => {
             let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
+            let _ = quench_runtime::execute::set_callable_property(
+                &custom_event,
+                "prototype",
+                crate::host::namespace_object_from_pairs(Vec::new()),
+            );
             for (name, value) in [
                 ("NONE", 0.0),
                 ("CAPTURING_PHASE", 1.0),
