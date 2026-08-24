@@ -148,13 +148,17 @@ fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
     };
     match resolved.as_ref() {
         Some(Value::String(value)) => Ok(value.as_bytes().to_vec()),
-        Some(Value::Uint8Array(view)) => Ok(view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length]
-            .to_vec()),
-        Some(Value::DataView(view)) => Ok(view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.byte_length]
-            .to_vec()),
-        _ => Err(VmError::Thrown(fs_error(
+        Some(value) => crate::modules::buffer_methods::as_byte_view(value)
+            .map(|view| {
+                view.buffer.bytes.borrow()
+                    [view.byte_offset..view.byte_offset + view.length]
+                    .to_vec()
+            })
+            .ok_or_else(|| VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "value must be a string or Buffer",
+            ))),
+        None => Err(VmError::Thrown(fs_error(
             "ERR_INVALID_ARG_TYPE",
             "value must be a string or Buffer",
         ))),
