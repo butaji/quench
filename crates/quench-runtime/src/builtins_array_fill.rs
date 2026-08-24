@@ -1,31 +1,57 @@
-pub(crate) fn array_fill(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::Undefined;
-    };
-    // Preserve the array's logical length, including holes created by
-    // `Array(length)`.  Copying only the physical value vector collapses
-    // those holes and makes fill a no-op on sparse arrays.
-    let length = values.logical_len();
-    let mut result = Value::Array(values.clone());
-    let start = fill_index(arguments.get(1), length, 0);
-    let end = fill_index(arguments.get(2), length, length);
+pub(crate) fn array_fill(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = receiver.unwrap_or(&Value::Undefined);
+    let mut object = crate::construct::to_object(receiver)?;
+    let length = to_length(&crate::execute::get_property_result(&object, "length")?)?;
+    let start = fill_index(arguments.get(1), length, 0)?;
+    let end = fill_index(
+        arguments
+            .get(2)
+            .filter(|value| !matches!(value, Value::Undefined)),
+        length,
+        length,
+    )?;
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-    if let Value::Array(updated) = &mut result {
-        let data = std::rc::Rc::make_mut(updated);
-        for index in start..end {
-            data.set_index(index, value.clone());
-        }
+    for index in start..end {
+        let updated = crate::properties::assign_set_property(
+            &object,
+            &index.to_string(),
+            value.clone(),
+        )?;
+        crate::locals::replace_value(&object, &updated);
+        object = updated;
     }
-    crate::locals::replace_value(receiver, &result);
-    result
+    Ok(object)
 }
 
-fn fill_index(value: Option<&Value>, length: usize, default: usize) -> usize {
-    let Some(value) = value else { return default; };
-    let number = crate::intl::tolocale::value::to_number(Some(value));
-    if number.is_nan() { return 0; }
-    if number.is_sign_negative() {
-        return length.saturating_sub(number.abs().floor() as usize);
+fn to_length(value: &Value) -> Result<usize, crate::execute::VmError> {
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
     }
-    (number.floor() as usize).min(length)
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    Ok(number.floor().min(MAX_SAFE_INTEGER) as usize)
+}
+
+fn fill_index(
+    value: Option<&Value>,
+    length: usize,
+    default: usize,
+) -> Result<usize, crate::execute::VmError> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number == 0.0 || number == f64::NEG_INFINITY {
+        return Ok(0);
+    }
+    if number == f64::INFINITY {
+        return Ok(length);
+    }
+    if number.is_sign_negative() {
+        return Ok(length.saturating_sub(number.abs().trunc() as usize));
+    }
+    Ok((number.trunc() as usize).min(length))
 }
