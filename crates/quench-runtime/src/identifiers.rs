@@ -46,7 +46,7 @@ fn reduce_local(
         dst: register,
         slot,
         name,
-        dynamic: facts.in_function && slot < facts.eval_var_scope_start,
+        dynamic: facts.binding_is_dynamic(slot),
     });
     Some(register)
 }
