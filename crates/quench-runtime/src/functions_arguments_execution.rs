@@ -54,6 +54,11 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    crate::execution_trace::function_call_shape(
+        function.params,
+        function.code.capture_slots().len(),
+        function.code.len(),
+    );
     if is_class_constructor(function) {
         return Err(crate::value::error::throw_type_error(
             "Class constructor cannot be invoked without 'new'",
