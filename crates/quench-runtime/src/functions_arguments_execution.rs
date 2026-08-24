@@ -93,7 +93,7 @@ pub(crate) fn execute(
         );
         let _home = crate::super_scope::Guard::install(&function, &receiver);
         let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
-        let mut registers = crate::register_file::RegisterFile::from_values(registers);
+        let mut registers = registers;
         let completion = crate::vm::execute_code_frame_completion(
             function
                 .code
