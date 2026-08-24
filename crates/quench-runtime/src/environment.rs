@@ -593,6 +593,9 @@ impl Environment {
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
+        if self.is_immutable_slot(slot) && !self.is_uninitialized(slot) {
+            return None;
+        }
         self.slot(slot)?.update_number(delta)
     }
 
@@ -753,12 +756,14 @@ impl Environment {
         {
             return true;
         }
-        if self.slot(slot).is_some() {
+        let Some(caller) = &self.caller else {
             return false;
-        }
-        self.caller
-            .as_ref()
-            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
+        };
+        let captured = self
+            .slot(slot)
+            .zip(caller.slot(slot))
+            .is_some_and(|(current, parent)| current.same(&parent));
+        captured && caller.eval_name_aliases_slot(name, slot)
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
