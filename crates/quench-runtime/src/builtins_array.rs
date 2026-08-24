@@ -466,6 +466,9 @@ pub(crate) fn array_with(
         ));
     };
     let length = crate::builtins::map_length(receiver)?;
+    if length > 1 << 32 {
+        return Err(crate::value::error::throw_range_error("Invalid array length"));
+    }
     let number = arguments
         .first()
         .map(crate::conversion::to_number)
@@ -480,13 +483,17 @@ pub(crate) fn array_with(
     if index < 0 || index as usize >= length {
         return Err(crate::value::error::throw_range_error("Invalid index"));
     }
-    let mut result = (0..length)
-        .map(|index| {
-            crate::builtins::map_value(receiver, index)
-                .map(|value| value.unwrap_or(Value::Undefined))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    result[index as usize] = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    let mut result = Vec::with_capacity(length);
+    for current in 0..length {
+        if current == index as usize {
+            result.push(arguments.get(1).cloned().unwrap_or(Value::Undefined));
+        } else {
+            result.push(crate::execute::get_property_result(
+                receiver,
+                &current.to_string(),
+            )?);
+        }
+    }
     Ok(Value::array(result))
 }
 
@@ -534,15 +541,19 @@ pub(crate) fn array_to_spliced(
             .trunc() as usize
     }
     .min(length - start);
-    let mut result = (0..length)
-        .map(|index| {
-            crate::builtins::map_value(receiver, index)
-                .map(|value| value.unwrap_or(Value::Undefined))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    result.splice(
-        start..start + delete_count,
-        arguments.iter().skip(2).cloned(),
-    );
+    let mut result = Vec::with_capacity(length - delete_count + arguments.len().saturating_sub(2));
+    for index in 0..start {
+        result.push(crate::execute::get_property_result(
+            receiver,
+            &index.to_string(),
+        )?);
+    }
+    result.extend(arguments.iter().skip(2).cloned());
+    for index in start + delete_count..length {
+        result.push(crate::execute::get_property_result(
+            receiver,
+            &index.to_string(),
+        )?);
+    }
     Ok(Value::array(result))
 }
