@@ -12,3 +12,7 @@ assert.strictEqual(
   url.resolve('https://example.com/foo', 'https://user:password@example.com'),
   'https://user:password@example.com/foo',
 );
+assert.strictEqual(
+  url.resolve('https://user:password@example.com', 'https://example.com/foo'),
+  'https://user:password@example.com/foo',
+);
