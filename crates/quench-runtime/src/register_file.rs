@@ -63,6 +63,45 @@ fn release(word: TaggedValue) {
     }
 }
 
+/// One owning execute word shared by registers, slots, and mutable cells.
+pub(crate) struct OwnedWord(TaggedValue);
+
+const _: () = assert!(std::mem::size_of::<OwnedWord>() == 8);
+
+impl OwnedWord {
+    pub(crate) fn new(value: Value) -> Self {
+        Self(encode(value))
+    }
+
+    #[inline(always)]
+    pub(crate) fn load(&self) -> Value {
+        decode_owned(self.0).expect("owned execute word must decode")
+    }
+
+    pub(crate) fn replace(&mut self, value: Value) -> Value {
+        let previous = std::mem::replace(&mut self.0, encode(value));
+        let value = decode_owned(previous).expect("owned execute word must decode");
+        release(previous);
+        value
+    }
+
+    pub(crate) fn store(&mut self, value: Value) {
+        let previous = std::mem::replace(&mut self.0, encode(value));
+        release(previous);
+    }
+
+    #[inline(always)]
+    fn tagged(&self) -> TaggedValue {
+        self.0
+    }
+}
+
+impl Drop for OwnedWord {
+    fn drop(&mut self) {
+        release(self.0);
+    }
+}
+
 #[inline(always)]
 fn decode_owned(word: TaggedValue) -> Option<Value> {
     match word.decode() {
@@ -113,6 +152,92 @@ pub struct RegisterFile {
 pub(crate) struct LocalWordFile<const N: usize> {
     words: [std::mem::MaybeUninit<TaggedValue>; N],
     initialized: [u64; 2],
+}
+
+/// Fixed-capacity execute words for proven frames.
+///
+/// Every slot owns exactly one word. `copy` is the canonical Move operation:
+/// retain the source word, replace the destination, then release its old owner.
+pub(crate) struct FixedWordFile<const N: usize> {
+    words: [TaggedValue; N],
+}
+
+impl<const N: usize> FixedWordFile<N> {
+    pub(crate) fn new() -> Self {
+        Self {
+            words: [TaggedValue::undefined(); N],
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn read(&self, index: usize) -> Option<Value> {
+        decode_owned(*self.words.get(index)?)
+    }
+
+    #[inline(always)]
+    pub(crate) fn write(&mut self, index: usize, value: Value) -> Option<()> {
+        let destination = self.words.get_mut(index)?;
+        let previous = std::mem::replace(destination, encode(value));
+        release(previous);
+        Some(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy(&mut self, destination: usize, source: usize) -> Option<()> {
+        let word = *self.words.get(source)?;
+        retain(word);
+        let previous = std::mem::replace(self.words.get_mut(destination)?, word);
+        release(previous);
+        Some(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn write_owned(&mut self, index: usize, value: &OwnedWord) -> Option<()> {
+        let word = value.tagged();
+        retain(word);
+        let previous = std::mem::replace(self.words.get_mut(index)?, word);
+        release(previous);
+        Some(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn truthiness(&self, index: usize) -> Option<bool> {
+        match self.words.get(index)?.decode() {
+            DecodedValue::Number(value) => Some(value != 0.0 && !value.is_nan()),
+            DecodedValue::I31(value) => Some(value != 0),
+            DecodedValue::Bool(value) => Some(value),
+            DecodedValue::Null | DecodedValue::Undefined => Some(false),
+            DecodedValue::ObjectPtr(_)
+            | DecodedValue::ArrayPtr(_)
+            | DecodedValue::FunctionPtr(_) => Some(true),
+            DecodedValue::HeapPtr(_) | DecodedValue::HeapRef(_) => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn number(&self, index: usize) -> Option<f64> {
+        match self.words.get(index)?.decode() {
+            DecodedValue::Number(value) => Some(value),
+            DecodedValue::I31(value) => Some(f64::from(value)),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn object(&self, index: usize) -> Option<&crate::value::ObjectData> {
+        let DecodedValue::ObjectPtr(pointer) = self.words.get(index)?.decode() else {
+            return None;
+        };
+        // SAFETY: the tagged word owns an `Rc<ObjectData>` for this file's
+        // lifetime, and mutation always releases it after the borrow ends.
+        Some(unsafe { &*(pointer as *const crate::value::ObjectData) })
+    }
+}
+
+impl<const N: usize> Drop for FixedWordFile<N> {
+    fn drop(&mut self) {
+        self.words.iter().copied().for_each(release);
+    }
 }
 
 impl<const N: usize> LocalWordFile<N> {
