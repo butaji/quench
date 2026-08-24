@@ -455,6 +455,12 @@
           if (step == null || (iteratorResult && step.done)) {
             finished = true;
             readable.push(null);
+          } else if (iteratorResult && step.value === null) {
+            finished = true;
+            const error = new TypeError("May not write null values to stream");
+            error.code = "ERR_STREAM_NULL_VALUES";
+            readable._readableState.errored = error;
+            readable._emitter.emit("error", error);
           } else {
             readable.push(iteratorResult ? step.value : step);
           }
