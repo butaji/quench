@@ -49,6 +49,87 @@ pub(crate) fn run_montgomery_reduce_kernel(
     Some(crate::completion::Completion::Normal)
 }
 
+pub(crate) fn run_square_loop_kernel(
+    test: crate::machine::CodeView<'_>,
+    body: crate::machine::CodeView<'_>,
+    update: crate::machine::CodeView<'_>,
+) -> Option<crate::completion::Completion> {
+    recognize_square_loop(test, body, update)?;
+    let environment = crate::locals::current();
+    let x = environment.get(187);
+    let output = environment.get(182);
+    let Value::Array(input) = crate::locals::resolved_replacement(environment.get(188)) else {
+        return None;
+    };
+    let Value::Array(output_array) = crate::locals::resolved_replacement(environment.get(189)) else {
+        return None;
+    };
+    let length = kernel_index(crate::vm::proven_own_data(&x, "t")?.as_number()?)?;
+    array_field_is(&x, &input)?;
+    array_field_is(&output, &output_array)?;
+    proven_integer_method(&x, "am")?;
+    let input = packed_numeric_array(input)?;
+    let output = packed_numeric_array(output_array)?;
+    execute_square_loop(&input, &output, length)?;
+    environment.set(190, Value::Number(length.saturating_sub(1) as f64));
+    Some(crate::completion::Completion::Normal)
+}
+
+fn array_field_is(value: &Value, expected: &std::rc::Rc<crate::value::ArrayData>) -> Option<()> {
+    let Value::Array(actual) = crate::locals::resolved_replacement(
+        crate::vm::proven_own_data(value, "array")?,
+    ) else { return None };
+    std::rc::Rc::ptr_eq(&actual, expected).then_some(())
+}
+
+fn execute_square_loop(
+    input: &std::rc::Rc<crate::value::ArrayData>,
+    output: &std::rc::Rc<crate::value::ArrayData>,
+    length: usize,
+) -> Option<()> {
+    (!std::rc::Rc::ptr_eq(input, output)).then_some(())?;
+    let input_values = input.numeric_cells()?;
+    let output_values = output.numeric_cells()?;
+    (length <= input_values.len() && length.checked_mul(2)? <= output_values.len()).then_some(())?;
+    for i in 0..length.saturating_sub(1) {
+        let limb = input_values.get(i)?.get();
+        let (low, high) = split_integer_word(crate::vm::vm_arithmetic::numeric_to_int32(limb));
+        let (_, _, carry, _, _, _) = multiply_integer_cells(
+            input,
+            output,
+            [i as f64, (2 * i) as f64, 0.0, low, high, 1.0],
+            1,
+        )?;
+        let doubled = crate::vm::vm_arithmetic::numeric_to_int32(2.0 * limb);
+        let (low, high) = split_integer_word(doubled);
+        let remaining = length.checked_sub(i + 1)?;
+        let (_, _, carry, _, _, _) = multiply_integer_cells(
+            input,
+            output,
+            [(i + 1) as f64, (2 * i + 1) as f64, carry, low, high, remaining as f64],
+            remaining,
+        )?;
+        finish_square_limb(&output_values, i.checked_add(length)?, carry)?;
+    }
+    Some(())
+}
+
+fn finish_square_limb(
+    values: &[std::cell::Cell<f64>],
+    index: usize,
+    carry: f64,
+) -> Option<()> {
+    let slot = values.get(index)?;
+    let sum = slot.get() + carry;
+    if sum < 268_435_456.0 {
+        slot.set(sum);
+        return Some(());
+    }
+    slot.set(sum - 268_435_456.0);
+    values.get(index.checked_add(1)?)?.set(1.0);
+    Some(())
+}
+
 fn execute_montgomery_loop(
     x: &std::rc::Rc<crate::value::ArrayData>,
     m: &std::rc::Rc<crate::value::ArrayData>,
@@ -156,6 +237,42 @@ fn recognize_montgomery_loop(
         && body.instruction(0)?.b == 187
         && body.instruction(8)?.b == 184
         && update.instruction(0)?.c == 188)
+        .then_some(())
+}
+
+fn recognize_square_loop(
+    test: crate::machine::CodeView<'_>,
+    body: crate::machine::CodeView<'_>,
+    update: crate::machine::CodeView<'_>,
+) -> Option<()> {
+    use crate::ir::Opcode::*;
+    const TEST: [crate::ir::Opcode; 7] = [
+        LoadLocalChecked, LoadLocalChecked, GetN, LoadConst, Sub, Binary, Return,
+    ];
+    const UPDATE: [crate::ir::Opcode; 2] = [UpdateLocal, Return];
+    const BODY: [crate::ir::Opcode; 56] = [
+        LoadLocalChecked, GetN, LoadLocalChecked, LoadLocalChecked, LoadLocalChecked,
+        AGetI, LoadLocalChecked, LoadConst, LoadLocalChecked, Mul, LoadConst, LoadConst,
+        Slow, Slow, Slow, LoadLocalChecked, Move, LoadLocalChecked, LoadLocalChecked,
+        GetN, Add, Move, Slow, Slow, AGetI, LoadLocalChecked, GetN, LoadLocalChecked,
+        LoadConst, Add, LoadConst, LoadLocalChecked, LoadLocalChecked, AGetI, Mul,
+        LoadLocalChecked, LoadConst, LoadLocalChecked, Mul, LoadConst, Add,
+        LoadLocalChecked, LoadLocalChecked, GetN, LoadLocalChecked, Sub, LoadConst,
+        Sub, Slow, Add, ASetI, LoadLocalChecked, Binary, LoadConst, Slow, Move,
+    ];
+    code_has_shape(test, &TEST)?;
+    code_has_shape(body, &BODY)?;
+    code_has_shape(update, &UPDATE)?;
+    named_is(body, 1, "am")?;
+    named_is(body, 19, "t")?;
+    named_is(body, 26, "am")?;
+    named_is(body, 43, "t")?;
+    constant_number(test, 3, 1.0)?;
+    (test.instruction(0)?.b == 190
+        && body.instruction(0)?.b == 187
+        && body.instruction(3)?.b == 188
+        && body.instruction(15)?.b == 189
+        && update.instruction(0)?.c == 190)
         .then_some(())
 }
 
