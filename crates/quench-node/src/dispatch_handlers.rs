@@ -232,6 +232,13 @@ pub fn timers_method_refresh(
 ) -> Result<Value, VmError> {
     Ok(crate::modules::timers::method_refresh(state, receiver))
 }
+pub fn timers_method_to_primitive(
+    _: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::timers::method_to_primitive(receiver))
+}
 pub fn timers_run_loop(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
