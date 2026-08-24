@@ -56,6 +56,7 @@ pub const SPEC_UTIL_TO_USV_STRING: NodeSpec = NodeSpec::new("util:toUSVString", 
 pub const SPEC_UTIL_IS_NATIVE_ERROR: NodeSpec = NodeSpec::new("util.types:isNativeError", 0x030A);
 pub const SPEC_UTIL_PARSE_ENV: NodeSpec = NodeSpec::new("util:parseEnv", 0x030B);
 pub const SPEC_UTIL_TYPE_PREDICATE: NodeSpec = NodeSpec::new("util.types:predicate", 0x030C);
+pub const SPEC_INTERNAL_JS_STREAM: NodeSpec = NodeSpec::new("internal:js_stream", 0x0F10);
 pub const SPEC_TEXT_DECODER_NEW: NodeSpec = NodeSpec::new("TextDecoder:new", 0x0809);
 pub const SPEC_TEXT_DECODER_DECODE: NodeSpec = NodeSpec::new("TextDecoder:decode", 0x080A);
 pub const SPEC_TEXT_ENCODER_NEW: NodeSpec = NodeSpec::new("TextEncoder:new", 0x084C);
