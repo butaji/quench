@@ -303,10 +303,16 @@ pub fn internal_binding(
         return Err(VmError::EvalError("binding name must be a string".into()));
     };
     if name == "buffer" {
-        return Ok(crate::host::namespace_object_from_pairs(vec![(
-            "fill".to_string(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_FILL),
-        )]));
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            (
+                "fill".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_FILL),
+            ),
+            (
+                "arrayBufferAlignedOffset".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_ALIGNED_OFFSET),
+            ),
+        ]));
     }
     if name == "util" {
         return Ok(crate::host::namespace_object_from_pairs(vec![(
@@ -324,6 +330,15 @@ pub fn internal_buffer_fill(
 ) -> Result<Value, VmError> {
     crate::modules::buffer_methods::internal_fill(args)
 }
+
+pub fn internal_buffer_aligned_offset(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::buffer::array_buffer_aligned_offset(args)
+}
+
 
 pub fn internal_view_has_buffer(
     _state: &Rc<RefCell<HostState>>,
@@ -419,6 +434,13 @@ pub fn buffer_alloc_unsafe(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::buffer::alloc_unsafe(state, args)
+}
+pub fn buffer_alloc_unsafe_slow(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::buffer::alloc_unsafe_slow(state, args)
 }
 pub fn buffer_is_encoding(
     _state: &Rc<RefCell<HostState>>,
