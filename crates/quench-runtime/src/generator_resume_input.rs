@@ -45,7 +45,8 @@ fn install_frame_resume_input(
         crate::execute::write_value(&mut registers_mut(generator), *dst, input.clone());
         return true;
     }
-    install_try_frame_input(generator, input)
+    install_delegate_frame_input(generator, input)
+        || install_try_frame_input(generator, input)
         || install_iterator_frame_input(generator, input)
         || install_private_frame_input(generator, input)
         || install_loop_frame_input(generator, input)
