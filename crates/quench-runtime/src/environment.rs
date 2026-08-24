@@ -164,6 +164,7 @@ impl SlotStore {
                 || self.values().read(index).unwrap_or(Value::Undefined),
                 |cell| cell.borrow().clone(),
             )
+            .strong_function()
     }
 
     fn load_number(&self, index: usize) -> Option<f64> {
@@ -191,7 +192,10 @@ impl SlotStore {
             .and_then(Option::as_ref)
             .map(|cell| cell.borrow());
         if let Some(value) = value.as_deref() {
-            crate::execute::write_value(registers, dst, value.clone());
+            crate::execute::write_value(registers, dst, value.clone().strong_function());
+        } else if let Some(crate::value::Value::WeakFunction(function)) = self.values().read(index)
+        {
+            crate::execute::write_value(registers, dst, function.value());
         } else {
             let copied = registers.copy_from(usize::from(dst), self.values(), index);
             debug_assert!(copied, "ensured lexical slot must own an execute word");
@@ -251,38 +255,59 @@ struct BindingRef {
 /// Child calls therefore share that prefix and allocate only their local tail.
 #[derive(Debug, Default, PartialEq)]
 struct SlotRefs {
-    prefix: Rc<[BindingRef]>,
+    prefix_len: usize,
+    prefix: Rc<[CapturedRef]>,
     suffix: Vec<BindingRef>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct CapturedRef {
+    slot: usize,
+    binding: BindingRef,
+}
+
 impl SlotRefs {
-    fn from_prefix(prefix: Rc<[BindingRef]>) -> Self {
+    fn from_prefix(prefix_len: usize, prefix: Rc<[CapturedRef]>) -> Self {
         Self {
+            prefix_len,
             prefix,
             suffix: Vec::new(),
         }
     }
 
     fn len(&self) -> usize {
-        self.prefix.len() + self.suffix.len()
+        self.prefix_len + self.suffix.len()
     }
 
     fn get(&self, index: usize) -> Option<&BindingRef> {
-        if index < self.prefix.len() {
-            self.prefix.get(index)
+        if index < self.prefix_len {
+            self.prefix
+                .binary_search_by_key(&index, |capture| capture.slot)
+                .ok()
+                .and_then(|found| self.prefix.get(found))
+                .map(|capture| &capture.binding)
         } else {
-            self.suffix.get(index - self.prefix.len())
+            self.suffix.get(index - self.prefix_len)
         }
     }
 
-    fn shared_prefix(&self) -> Rc<[BindingRef]> {
+    fn shared_prefix(&self) -> Rc<[CapturedRef]> {
         if self.suffix.is_empty() {
             return Rc::clone(&self.prefix);
         }
         self.prefix
             .iter()
-            .chain(&self.suffix)
             .cloned()
+            .chain(
+                self.suffix
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(index, binding)| CapturedRef {
+                        slot: self.prefix_len + index,
+                        binding,
+                    }),
+            )
             .collect::<Vec<_>>()
             .into()
     }
@@ -292,13 +317,22 @@ impl SlotRefs {
     }
 
     fn replace(&mut self, index: usize, binding: BindingRef) {
-        if index < self.prefix.len() {
-            let mut owned = self.prefix.to_vec();
-            owned.append(&mut self.suffix);
-            self.prefix = Rc::from([]);
-            self.suffix = owned;
+        if index < self.prefix_len {
+            let mut prefix = self.prefix.to_vec();
+            match prefix.binary_search_by_key(&index, |capture| capture.slot) {
+                Ok(found) => prefix[found].binding = binding,
+                Err(insert) => prefix.insert(
+                    insert,
+                    CapturedRef {
+                        slot: index,
+                        binding,
+                    },
+                ),
+            }
+            self.prefix = prefix.into();
+            return;
         }
-        self.suffix[index - self.prefix.len()] = binding;
+        self.suffix[index - self.prefix_len] = binding;
     }
 }
 
@@ -367,13 +401,18 @@ impl Environment {
         for index in 0..count {
             environment.ensure_slot(index as u16);
         }
-        let refs: Rc<[BindingRef]> = (0..count)
-            .filter_map(|index| environment.slot(index as u16))
+        let refs: Rc<[CapturedRef]> = (0..count)
+            .filter_map(|index| {
+                environment.slot(index as u16).map(|binding| CapturedRef {
+                    slot: index,
+                    binding,
+                })
+            })
             .collect::<Vec<_>>()
             .into();
         crate::execution_trace::environment_lifecycle(true);
         Rc::new(Self {
-            slots: RefCell::new(SlotRefs::from_prefix(refs)),
+            slots: RefCell::new(SlotRefs::from_prefix(count, refs)),
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
@@ -384,16 +423,62 @@ impl Environment {
         })
     }
 
+    pub(crate) fn capture_selected(
+        environment: &Rc<Self>,
+        count: u16,
+        selected: &[u16],
+    ) -> Rc<Self> {
+        if selected.contains(&u16::MAX) {
+            return Self::capture(environment, count);
+        }
+        let count_usize = usize::from(count);
+        for slot in selected
+            .iter()
+            .copied()
+            .filter(|slot| usize::from(*slot) < count_usize)
+        {
+            environment.ensure_slot(slot);
+        }
+        let refs = selected
+            .iter()
+            .copied()
+            .filter(|slot| usize::from(*slot) < count_usize)
+            .filter_map(|slot| {
+                environment.slot(slot).map(|binding| CapturedRef {
+                    slot: usize::from(slot),
+                    binding,
+                })
+            })
+            .collect::<Vec<_>>()
+            .into();
+        crate::execution_trace::environment_lifecycle(true);
+        Rc::new(Self {
+            slots: RefCell::new(SlotRefs::from_prefix(count_usize, refs)),
+            names: RefCell::new(environment.names.borrow().clone()),
+            eval_names: RefCell::new(environment.eval_names.borrow().clone()),
+            immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
+            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
+            deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
+            caller: None,
+        })
+    }
+
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
         crate::execution_trace::environment_child(captures.len(), values.len());
         let store = SlotStore::from_values(values);
         let prefix = captures.slots.borrow().shared_prefix();
+        let prefix_len = captures.len();
         let suffix = (0..store.len())
             .map(|index| BindingRef::new(Rc::clone(&store), index))
             .collect();
         crate::execution_trace::environment_lifecycle(true);
         let environment = Rc::new(Self {
-            slots: RefCell::new(SlotRefs { prefix, suffix }),
+            slots: RefCell::new(SlotRefs {
+                prefix_len,
+                prefix,
+                suffix,
+            }),
             names: RefCell::new(None),
             eval_names: RefCell::new(None),
             immutable_names: RefCell::new(None),
@@ -740,6 +825,12 @@ impl Environment {
         }
         let index = usize::from(slot);
         let mut slots = self.slots.borrow_mut();
+        if index < slots.prefix_len {
+            let store = SlotStore::from_values(vec![Value::Undefined]);
+            let binding = BindingRef::new(store, 0);
+            slots.replace(index, binding.clone());
+            return binding;
+        }
         while slots.len() <= index {
             let store = SlotStore::from_values(vec![Value::Undefined]);
             slots.push(BindingRef::new(store, 0));
