@@ -79,15 +79,45 @@ pub(crate) fn execute(
         ));
     }
 
+    // The packed continuation path intentionally omits dynamic object-scope
+    // guards.  A function created inside `with` must retain that scope while a
+    // promoted tail call replaces its activation, so drive this small class
+    // through the guard-aware machine loop instead.
+    if !function.with_captures.is_empty() {
+        return execute_with_dynamic_scope(function, receiver, arguments);
+    }
+
     // Ordinary calls enter the same explicit machine loop used by top-level
-    // execution. A promoted tail call replaces this activation's function
-    // inputs and re-enters the loop, so recursive tail chains consume one Rust
-    // frame regardless of their JavaScript depth.
+    // execution. Keeping function entry here means every nested JS call is
+    // represented by a VM continuation and never by Rust recursion.
+    let (mut registers, environment) = build_registers(function, &receiver, arguments);
+    let _private_environment = crate::private_environment::Guard::install_environment(
+        function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(function, &receiver);
+    let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
+    crate::vm::execute_code_in_environment(
+        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
+        &mut registers,
+        crate::vm::current_context().as_ref(),
+        environment,
+    )
+}
+
+fn execute_with_dynamic_scope(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
     let mut function = std::rc::Rc::clone(function);
     let mut receiver = receiver;
     let mut arguments = arguments.to_vec();
     loop {
-        let (registers, environment) = build_registers(&function, &receiver, &arguments);
+        let (registers, environment) = crate::functions::build_registers(
+            &function,
+            &receiver,
+            &arguments,
+        );
         let _private_environment = crate::private_environment::Guard::install_environment(
             function.private_environment.clone(),
         );
