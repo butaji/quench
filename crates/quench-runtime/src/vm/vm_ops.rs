@@ -6,246 +6,32 @@ use crate::value::Value;
 use crate::vm::VmError;
 
 pub fn execute_call(
-    registers: &mut crate::register_file::RegisterFile,
+    registers: &mut Vec<Value>,
     dst: u16,
     callee: u16,
     receiver: Option<u16>,
     args: &[u16],
     spreads: &[bool],
-) -> Result<crate::completion::Completion, VmError> {
-    let raw_callee = super::read_register(registers, callee)?;
-    let arguments = collect_call_arguments(registers, args, spreads)?;
-    let callee_value = peel_binding_cell(raw_callee);
-    let receiver_value = match receiver {
-        Some(receiver) => {
-            let value = super::read_register(registers, receiver)?;
-            peel_binding_cell(value)
-        }
-        None => crate::with_scope::receiver_for_callable(&callee_value)
-            .map(peel_binding_cell)
-            .unwrap_or(Value::Undefined),
-    };
-    Ok(crate::completion::Completion::Call(
-        crate::completion::CallContinuation {
-            callee: callee_value,
-            receiver: receiver_value,
-            arguments,
-            caller_code: crate::identity::CodeId(0),
-            caller_pc: 0,
-            caller_registers: std::mem::take(registers),
-            caller_environment: crate::identity::EnvironmentRef(0),
-            destination: dst,
-            guards: crate::completion::ContinuationGuards::default(),
-        },
-    ))
-}
-
-fn peel_binding_cell(mut value: Value) -> Value {
-    let mut seen = std::collections::HashSet::new();
-    loop {
-        let Value::BindingCell(cell) = value else {
-            return value;
-        };
-        if !seen.insert(std::rc::Rc::as_ptr(&cell)) {
-            return Value::BindingCell(cell);
-        }
-        value = cell.borrow().clone();
-    }
-}
-
-pub fn execute_call_continuation(
-    registers: &mut crate::register_file::RegisterFile,
-    continuation: crate::completion::CallContinuation,
 ) -> Result<(), VmError> {
-    struct ActiveCall {
-        continuation: crate::completion::CallContinuation,
-        code: crate::machine::FunctionCode,
-        registers: crate::register_file::RegisterFile,
-        environment: std::rc::Rc<crate::environment::Environment>,
-        pc: usize,
-    }
-    fn start(
-        continuation: crate::completion::CallContinuation,
-    ) -> Result<Option<ActiveCall>, VmError> {
-        let Value::Function(function) = &continuation.callee else {
-            return Ok(None);
-        };
-        // Async and generator functions must go through the ordinary invocation
-        // path: it creates the Promise/generator wrapper and performs the
-        // corresponding completion setup. Inlining their raw ops would return
-        // the body value directly and skip that observable protocol.
-        if function.is_async || matches!(function.kind, crate::ops::FunctionKind::Generator) {
-            return Ok(None);
+    let arguments = collect_call_arguments(registers, args, spreads)?;
+    let callee_value = super::read_register(registers, callee)?;
+    let value = match receiver {
+        Some(receiver) => {
+            let this_value = super::read_register(registers, receiver)?;
+            invoke_with_receiver(&callee_value, &this_value, &arguments)?
         }
-        // Functions created inside a `with` scope carry a dynamic object
-        // environment. The optimized continuation path has no per-frame
-        // scope guard, so use the ordinary invocation path for these
-        // closures to restore the captured object lookup semantics.
-        if !function.with_captures.is_empty() {
-            return Ok(None);
-        }
-        let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
-        let (callee_registers, environment) =
-            crate::functions::build_registers(function, &receiver, &continuation.arguments);
-        Ok(Some(ActiveCall {
-            code: function.code.clone(),
-            continuation,
-            registers: crate::register_file::RegisterFile::from_values(callee_registers),
-            environment,
-            pc: 0,
-        }))
-    }
-    let mut stack: Vec<ActiveCall> = Vec::new();
-    let mut current = match start(continuation.clone())? {
-        Some(active) => active,
-        None => {
-            let value = invoke_with_receiver(
-                &continuation.callee,
-                &continuation.receiver,
-                &continuation.arguments,
-            )?;
-            *registers = continuation.caller_registers;
-            super::write_value(registers, continuation.destination, value);
-            return Ok(());
-        }
+        None => match crate::with_scope::receiver_for_callable(&callee_value) {
+            Some(this_value) => invoke_with_receiver(&callee_value, &this_value, &arguments)?,
+            None => invoke_callee(&callee_value, &arguments)?,
+        },
     };
-    let context = crate::vm::current_context_or_default();
-    let value = loop {
-        let code = current.code.code().ok_or(VmError::MissingReturn)?;
-        let (completion, next) = match crate::vm::execute_code_from(
-            code,
-            current.pc,
-            &mut current.registers,
-            &context,
-            current.environment.clone(),
-        ) {
-            Ok(step) => step,
-            Err(error) => {
-                // Calls move the caller's register file into the continuation.
-                // On an abrupt completion, restore the nearest suspended caller
-                // before returning so an enclosing try/assert.throws can observe
-                // the original thrown value instead of an empty register set.
-                if let Some(parent) = stack.last() {
-                    *registers = parent.continuation.caller_registers.clone();
-                } else {
-                    *registers = current.continuation.caller_registers.clone();
-                }
-                return Err(error);
-            }
-        };
-        current.pc = next;
-        let result = match completion {
-            crate::completion::Completion::Normal => Some(Value::Undefined),
-            crate::completion::Completion::Return(value) => Some(value),
-            crate::completion::Completion::Call(mut nested) => {
-                // `execute_call` moves the caller frame's registers into the
-                // continuation. Restore them on the suspended parent before
-                // pushing it, so nested results are written into the live
-                // parent frame rather than an empty register vector.
-                current.registers = std::mem::take(&mut nested.caller_registers);
-                stack.push(current);
-                current = match start(nested.clone())? {
-                    Some(active) => active,
-                    None => {
-                        let value = match invoke_with_receiver(
-                            &nested.callee,
-                            &nested.receiver,
-                            &nested.arguments,
-                        ) {
-                            Ok(value) => value,
-                            Err(error) => {
-                                // A native nested call can throw before a child frame
-                                let parent = stack.pop().expect("caller frame just pushed");
-                                *registers = parent.registers;
-                                return Err(error);
-                            }
-                        };
-                        let mut parent = stack.pop().expect("caller frame just pushed");
-                        super::write_value(&mut parent.registers, nested.destination, value);
-                        parent
-                    }
-                };
-                None
-            }
-            crate::completion::Completion::TailCall(request) => {
-                // A reducer may promote the final call in a function body to a
-                // tail call.  Treat it as a frame replacement, not as an
-                // unconsumed completion: otherwise nested assert.throws sees an
-                // internal EvalError instead of the callback's own error value.
-                let tail = crate::completion::CallContinuation {
-                    callee: request.callee,
-                    receiver: request.receiver,
-                    arguments: request.arguments,
-                    caller_code: current.continuation.caller_code,
-                    caller_pc: current.continuation.caller_pc,
-                    caller_registers: current.continuation.caller_registers.clone(),
-                    caller_environment: current.continuation.caller_environment.clone(),
-                    destination: current.continuation.destination,
-                    guards: current.continuation.guards,
-                };
-                current = match start(tail.clone()) {
-                    Ok(Some(active)) => active,
-                    Ok(None) => {
-                        let value = match invoke_with_receiver(
-                            &tail.callee,
-                            &tail.receiver,
-                            &tail.arguments,
-                        ) {
-                            Ok(value) => value,
-                            Err(error) => {
-                                if let Some(parent) = stack.last() {
-                                    *registers = parent.registers.clone();
-                                } else {
-                                    *registers = tail.caller_registers.clone();
-                                }
-                                return Err(error);
-                            }
-                        };
-                        *registers = tail.caller_registers;
-                        super::write_value(registers, tail.destination, value);
-                        return Ok(());
-                    }
-                    Err(error) => {
-                        if let Some(parent) = stack.last() {
-                            *registers = parent.registers.clone();
-                        } else {
-                            *registers = tail.caller_registers.clone();
-                        }
-                        return Err(error);
-                    }
-                };
-                continue;
-            }
-            other => match crate::vm::completion_result(other) {
-                Ok(value) => Some(value),
-                Err(error) => {
-                    if let Some(parent) = stack.last() {
-                        *registers = parent.registers.clone();
-                    } else {
-                        *registers = current.continuation.caller_registers.clone();
-                    }
-                    return Err(error);
-                }
-            },
-        };
-        let Some(value) = result else { continue };
-        if let Some(mut parent) = stack.pop() {
-            super::write_value(
-                &mut parent.registers,
-                current.continuation.destination,
-                value,
-            );
-            current = parent;
-        } else {
-            break value;
-        }
-    };
-    *registers = current.continuation.caller_registers;
-    super::write_value(registers, current.continuation.destination, value);
+    propagate_object_mutation(registers, &callee_value, args, &arguments, &value);
+    super::write_value(registers, dst, value);
     Ok(())
 }
+
 pub fn execute_optional_call(
-    registers: &mut crate::register_file::RegisterFile,
+    registers: &mut Vec<Value>,
     dst: u16,
     callee: u16,
     receiver: Option<u16>,
@@ -278,7 +64,7 @@ pub fn execute_optional_call(
 }
 
 pub fn prepare_tail_call(
-    registers: &crate::register_file::RegisterFile,
+    registers: &[Value],
     callee: u16,
     args: &[u16],
     spreads: &[bool],
@@ -292,7 +78,7 @@ pub fn prepare_tail_call(
 }
 
 fn propagate_object_mutation(
-    registers: &mut crate::register_file::RegisterFile,
+    registers: &mut Vec<Value>,
     callee: &Value,
     args: &[u16],
     arguments: &[Value],
@@ -309,11 +95,7 @@ fn propagate_object_mutation(
 }
 
 /// Resolve an await operand, suspending only for a pending Promise.
-pub fn execute_await(
-    registers: &mut crate::register_file::RegisterFile,
-    dst: u16,
-    src: u16,
-) -> Result<(), VmError> {
+pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
     let value = super::read_register(registers, src)?;
     let value = crate::promise::promise_resolve(std::slice::from_ref(&value));
     match value {
@@ -322,30 +104,11 @@ pub fn execute_await(
             match state {
                 crate::value::PromiseState::Fulfilled(value) => {
                     super::write_value(registers, dst, value);
-                    if crate::module_bindings::fulfilled_await_defers() {
-                        crate::module_bindings::mark_await_advanced(true);
-                        return Err(VmError::Suspended(promise));
-                    }
                     Ok(())
                 }
                 crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
                 crate::value::PromiseState::Pending => {
-                    if crate::module_bindings::fulfilled_await_defers() {
-                        crate::module_bindings::mark_await_advanced(false);
-                        return Err(VmError::Suspended(promise));
-                    }
-                    crate::promise::drain_microtasks_all();
-                    let state = promise.state.borrow().clone();
-                    match state {
-                        crate::value::PromiseState::Fulfilled(value) => {
-                            super::write_value(registers, dst, value);
-                            Ok(())
-                        }
-                        crate::value::PromiseState::Rejected(reason) => {
-                            Err(VmError::Thrown(reason))
-                        }
-                        crate::value::PromiseState::Pending => Err(VmError::Suspended(promise)),
-                    }
+                    execute_pending_await(registers, dst, promise)
                 }
             }
         }
@@ -356,12 +119,33 @@ pub fn execute_await(
     }
 }
 
+fn execute_pending_await(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    promise: std::rc::Rc<crate::value::PromiseData>,
+) -> Result<(), VmError> {
+    if crate::module_bindings::fulfilled_await_defers() {
+        crate::module_bindings::mark_await_advanced(false);
+        return Err(VmError::Suspended(promise));
+    }
+    crate::promise::drain_microtasks_all();
+    let state = promise.state.borrow().clone();
+    match state {
+        crate::value::PromiseState::Fulfilled(value) => {
+            super::write_value(registers, dst, value);
+            Ok(())
+        }
+        crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
+        crate::value::PromiseState::Pending => Err(VmError::Suspended(promise)),
+    }
+}
+
 pub(crate) fn collect_call_arguments(
-    registers: &crate::register_file::RegisterFile,
+    registers: &[Value],
     args: &[u16],
     spreads: &[bool],
 ) -> Result<Vec<Value>, VmError> {
-    let mut arguments = Vec::with_capacity(args.len());
+    let mut arguments = Vec::new();
     for (i, index) in args.iter().enumerate() {
         push_argument_value(
             &mut arguments,
@@ -390,7 +174,10 @@ fn push_argument_value(
 
 fn map_not_callable(error: crate::execute::VmError) -> crate::execute::VmError {
     if matches!(error, crate::execute::VmError::NotCallable) {
-        return crate::vm::not_callable();
+        return VmError::Thrown(crate::builtins::error(
+            crate::ops::Builtin::TypeError,
+            &[Value::String("value is not callable [VM-MAP-NOT-CALLABLE]".to_string())],
+        ));
     }
     error
 }
@@ -404,23 +191,209 @@ fn invoke_with_receiver(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    let receiver_value = if matches!(receiver, Value::Undefined) {
+        crate::with_scope::receiver_for_callable(callee_value)
+            .unwrap_or_else(|| receiver.clone())
+    } else {
+        receiver.clone()
+    };
+    let receiver = &receiver_value;
+    // Dispatch host capabilities directly; callback values may be BindingCells,
+    // but ordinary callbacks must not be re-entered through their receiver.
+    if let Value::BoundFunction(bound) = callee_value {
+        if let Value::HostCapability(capability) = &bound.target {
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            if capability.descriptor.kind == crate::ops::HostCapabilityKind::Custom(1) {
+                return crate::vm::execute_legacy_require_direct(&bound.target, &combined);
+            }
+            let receiver = if capability.descriptor.kind == crate::ops::HostCapabilityKind::Custom(1) {
+                super::current_global_object()
+            } else {
+                bound.receiver.clone()
+            };
+            return crate::vm::execute_host_capability_with_receiver(
+                capability.descriptor.kind,
+                Some(&bound.target),
+                Some(&receiver),
+                &combined,
+            );
+        }
+    }
+    if let Value::BoundFunction(bound) = callee_value {
+        if matches!(
+            bound.target,
+            Value::Builtin(crate::ops::Builtin::HostCapability(
+                crate::ops::HostCapabilityKind::Custom(1)
+            ))
+        ) {
+            let capability = bound_capability(bound)?;
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            return crate::vm::execute_legacy_require_direct(&capability, &combined);
+        }
+    }
+    if let Value::BoundFunction(bound) = callee_value {
+        if let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target {
+            let capability = bound_capability(bound)?;
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            return crate::vm::execute_host_capability_with_receiver(
+                kind,
+                Some(&capability),
+                Some(&bound.receiver),
+                &combined,
+            );
+        }
+    }
+    let callee_detail = match callee_value {
+        Value::BoundFunction(bound) => match &bound.target {
+            Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
+                format!("bound_target=host_capability:{}", host_kind_id(*kind))
+            }
+            other => format!("bound_target_variant={}", value_variant(Some(other))),
+        },
+        Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
+            format!("capability={}", host_kind_id(*kind))
+        }
+        _ => String::new(),
+    };
+    crate::vm::set_not_callable_context(format!(
+        "caller=vm_ops::invoke_with_receiver callee_variant={} receiver_variant={} {callee_detail}",
+        value_variant(Some(callee_value)),
+        value_variant(Some(receiver)),
+    ));
     match callee_value {
-        Value::Function(_) => crate::functions::execute_target(callee_value, receiver, arguments),
-        Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                Value::Builtin(crate::ops::Builtin::HostCapability(_))
-            ) =>
-        {
-            let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
-                unreachable!()
+        Value::BindingCell(cell) => {
+            let target = cell.borrow().clone();
+            invoke_with_receiver(&target, receiver, arguments)
+        }
+        Value::Builtin(crate::ops::Builtin::HostCapability(kind)) => {
+            let Some(capability_receiver) = super::realm_token(super::current_context_or_default().realm()) else {
+                return Err(VmError::Thrown(crate::builtins::error(
+                    crate::ops::Builtin::TypeError,
+                    &[Value::String(format!("value is not callable [host capability id={} missing realm]", host_kind_id(*kind)))],
+                )));
+            };
+            let js_receiver = if matches!(kind, crate::ops::HostCapabilityKind::Custom(1))
+                && matches!(receiver, Value::Undefined)
+            {
+                super::current_global_object()
+            } else {
+                receiver.clone()
             };
             crate::vm::execute_host_capability_with_receiver(
-                kind,
-                Some(&bound.receiver),
+                *kind,
+                Some(&capability_receiver),
+                Some(&js_receiver),
+                arguments,
+            )
+        }
+        Value::HostCapability(capability) => {
+            crate::vm::execute_host_capability_with_receiver(
+                capability.descriptor.kind,
+                Some(callee_value),
                 Some(receiver),
                 arguments,
             )
+        }
+        Value::BoundFunction(bound)
+            if matches!(
+                &bound.target,
+                Value::HostCapability(capability)
+                    if matches!(capability.descriptor.kind, crate::ops::HostCapabilityKind::Custom(1))
+            ) =>
+        {
+            let capability_receiver = super::realm_token(super::current_context_or_default().realm())
+                .or_else(|| match &bound.target {
+                    Value::HostCapability(capability) => Some(Value::HostCapability(capability.clone())),
+                    _ => None,
+                })
+                .ok_or(crate::execute::VmError::NotCallable)?;
+            let js_receiver = super::current_global_object();
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            crate::vm::execute_legacy_require_direct(&bound.target, &combined)
+        }
+        Value::BoundFunction(bound)
+            if matches!(bound.target, Value::HostCapability(_)) =>
+        {
+            let Value::HostCapability(capability) = &bound.target else {
+                unreachable!()
+            };
+            let capability_receiver = Value::HostCapability(capability.clone());
+            let bound_receiver = if matches!(&bound.receiver, Value::Undefined)
+                && matches!(capability.descriptor.kind, crate::ops::HostCapabilityKind::Custom(1))
+            {
+                super::current_global_object()
+            } else if matches!(&bound.receiver, Value::Undefined) {
+                capability_receiver.clone()
+            } else {
+                bound.receiver.clone()
+            };
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            crate::vm::execute_host_capability_with_receiver(
+                capability.descriptor.kind,
+                Some(&capability_receiver),
+                Some(&bound_receiver),
+                &combined,
+            )
+        }
+        Value::Builtin(crate::ops::Builtin::DateNow) => {
+            super::execute_builtin_with_receiver(crate::ops::Builtin::DateNow, arguments, Some(receiver))
+        }
+        // `require` is exposed as a bound host capability.  Keep this path
+        // explicit: the host handle is the current realm token, while an
+        // unbound JS receiver is the current realm global object.
+        Value::BoundFunction(bound)
+            if matches!(
+                &bound.target,
+                Value::Builtin(crate::ops::Builtin::HostCapability(
+                    crate::ops::HostCapabilityKind::Custom(1)
+                ))
+            ) =>
+        {
+            let capability_receiver = super::realm_token(bound.realm)
+                .or_else(|| super::realm_token(super::current_context_or_default().realm()))
+                .ok_or(crate::execute::VmError::NotCallable)?;
+            let js_receiver = super::current_global_object();
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            let capability = super::realm_token(bound.realm)
+                .ok_or(crate::execute::VmError::NotCallable)?;
+            crate::vm::execute_legacy_require_direct(&capability, &combined)
+        }
+        Value::BoundFunction(bound)
+            if matches!(&bound.target, Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
+        {
+            let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = &bound.target else {
+                unreachable!()
+            };
+            let capability_receiver = match &bound.receiver {
+                Value::HostCapability(capability) => Value::HostCapability(capability.clone()),
+                Value::BindingCell(cell) => cell.borrow().clone(),
+                Value::Undefined => super::realm_token(bound.realm)
+                    .or_else(|| super::realm_token(super::current_context_or_default().realm()))
+                    .ok_or(crate::execute::VmError::NotCallable)?,
+                value => value.clone(),
+            };
+            let mut combined = bound.arguments.clone();
+            combined.extend_from_slice(arguments);
+            let js_receiver = if matches!(kind, crate::ops::HostCapabilityKind::Custom(1)) {
+                super::current_global_object()
+            } else {
+                receiver.clone()
+            };
+            crate::vm::execute_host_capability_with_receiver(
+                *kind,
+                Some(&capability_receiver),
+                Some(&js_receiver),
+                &combined,
+            )
+        }
+        Value::Function(function) => {
+            crate::functions::execute_in_function_realm(function, receiver, arguments)
         }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
         Value::Builtin(builtin) if crate::conversion::is_callable(callee_value) => {
@@ -429,7 +402,50 @@ fn invoke_with_receiver(
         Value::Proxy(proxy) if crate::conversion::is_callable(callee_value) => {
             crate::proxy::proxy_apply(callee_value, receiver, arguments)
         }
-        _ => Err(super::not_callable()),
+        _ => {
+            let callee_variant = value_variant(Some(callee_value));
+            let receiver_variant = value_variant(Some(receiver));
+            let message = format!(
+                "value is not callable (callee_variant={callee_variant} receiver_variant={receiver_variant})"
+            );
+            Err(VmError::Thrown(crate::builtins::error(
+                crate::ops::Builtin::TypeError,
+                &[Value::String(message)],
+            )))
+        }
+    }
+}
+
+fn bound_capability(bound: &crate::value::BoundFunctionValue) -> Result<Value, VmError> {
+    match &bound.receiver {
+        Value::HostCapability(_) => Ok(bound.receiver.clone()),
+        _ => super::realm_token(bound.realm).ok_or(VmError::NotCallable),
+    }
+}
+fn host_kind_id(kind: crate::ops::HostCapabilityKind) -> u32 {
+    match kind {
+        crate::ops::HostCapabilityKind::GetGlobal => 0,
+        crate::ops::HostCapabilityKind::CreateRealm => 1,
+        crate::ops::HostCapabilityKind::EvalScript => 2,
+        crate::ops::HostCapabilityKind::DetachArrayBuffer => 3,
+        crate::ops::HostCapabilityKind::IsHTMLDDA => 4,
+        crate::ops::HostCapabilityKind::Custom(id) => 0x10000 | u32::from(id),
+    }
+}
+fn value_variant(value: Option<&Value>) -> u32 {
+    match value {
+        None => 0,
+        Some(Value::Undefined) => 1,
+        Some(Value::Null) => 2,
+        Some(Value::Boolean(_)) => 3,
+        Some(Value::Number(_)) => 4,
+        Some(Value::String(_)) => 5,
+        Some(Value::HostCapability(_)) => 6,
+        Some(Value::Builtin(_)) => 7,
+        Some(Value::Function(_)) => 8,
+        Some(Value::BoundFunction(_)) => 9,
+        Some(Value::Proxy(_)) => 10,
+        Some(_) => 11,
     }
 }
 
