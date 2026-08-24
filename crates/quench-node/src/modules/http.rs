@@ -396,6 +396,15 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
             if key == "connection" {
                 connection = value.to_lowercase();
             }
+            if key == "cookie" {
+                if let Some((_, Value::String(existing))) =
+                    headers.iter_mut().find(|(name, _)| name == &key)
+                {
+                    existing.push_str("; ");
+                    existing.push_str(value);
+                    continue;
+                }
+            }
             headers.push((key, Value::String(value.to_string())));
         }
     }
