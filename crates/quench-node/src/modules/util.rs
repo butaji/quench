@@ -272,7 +272,8 @@ pub fn type_predicate(name: &str, value: &Value) -> bool {
         "isBigIntObject" => boxed_constructor(value, "BigInt"),
         "isBoxedPrimitive" => ["Boolean", "Number", "String", "Symbol", "BigInt"].iter().any(|kind| boxed_constructor(value, kind)),
         "isNativeError" => matches!(quench_runtime::execute::get_property_result(value, "\0error_slot"), Ok(Value::Boolean(true))),
-        "isFloat16Array" | "isExternal" | "isModuleNamespaceObject" | "isKeyObject" | "isCryptoKey" => false,
+        "isExternal" => matches!(quench_runtime::execute::get_property_result(value, "__quench_external"), Ok(Value::Boolean(true))),
+        "isFloat16Array" | "isModuleNamespaceObject" | "isKeyObject" | "isCryptoKey" => false,
         _ => false,
     }
 }
