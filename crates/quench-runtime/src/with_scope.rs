@@ -305,11 +305,11 @@ pub(crate) fn resolve_name(
         || immutable.is_some()
         || host_value.is_some()
         || host_binding.is_some();
-    let value = match binding
+    let value = match host_value
+        .or(binding)
         .or(eval)
         .or_else(|| crate::locals::resolve_name(key))
         .or(immutable)
-        .or(host_value)
         .or_else(|| host_binding.map(crate::host_api::capability_function))
     {
         Some(value) => value,
