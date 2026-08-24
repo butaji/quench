@@ -42,6 +42,7 @@ mod environment;
 mod equality;
 mod exceptions;
 pub mod execute;
+pub mod execution_trace;
 pub mod facts;
 mod finalization_registry;
 mod function_code;
