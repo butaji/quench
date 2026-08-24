@@ -244,7 +244,7 @@ pub(crate) fn get_property_with_receiver(
     finish_property_access(value, key, receiver)
 }
 
-fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
+pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
     let Value::Object(properties) = value else {
         return None;
     };
