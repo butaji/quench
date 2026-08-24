@@ -529,7 +529,11 @@ pub(crate) fn array_to_spliced(
     } else {
         (start_number as usize).min(length)
     };
-    let delete_count = if arguments.len() < 2 {
+    // With no arguments, the method returns a shallow copy.  A present start
+    // with an omitted deleteCount instead deletes through the end.
+    let delete_count = if arguments.is_empty() {
+        0
+    } else if arguments.len() < 2 {
         length - start
     } else {
         arguments
