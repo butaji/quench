@@ -24,6 +24,9 @@ impl QuenchNodeHost {
                     buffer_fill(receiver, arguments)
                 }
             }
+            HostCapabilityKind::Custom(CapabilityName::BufferArrayBufferAlignedOffset) => {
+                buffer_array_buffer_aligned_offset(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferIncludes) => {
                 buffer_includes(receiver, arguments)
             }
@@ -110,4 +113,8 @@ impl QuenchNodeHost {
             result => Some(result),
         }
     }
+}
+
+fn buffer_array_buffer_aligned_offset(arguments: &[Value]) -> Result<Value, VmError> {
+    crate::modules::buffer::array_buffer_aligned_offset(arguments)
 }
