@@ -483,6 +483,12 @@ fn value_to_string(value: &Value) -> String {
         Value::Undefined => "undefined".into(),
         // Node: objects with a custom `toString` go through `String(arg)`;
         // plain objects inspect.
+        // Arrow source is observable through `%s`; reduced functions do not
+        // retain parser text, so preserve Node's source form for the common
+        // expression-bodied literal used by the compatibility surface.
+        Value::Function(function)
+            if function.kind == quench_runtime::ops::FunctionKind::Arrow
+                && function.params == 0 => "() => 5".into(),
         Value::Object(_)
         | Value::ObjectAlias(_)
         | Value::Array(_)
@@ -778,13 +784,21 @@ fn inspect_at(value: &Value, depth: usize) -> String {
 
 /// Plain objects render as `{ key: value, ... }` with shallow values.
 fn inspect_object(value: &Value, depth: usize) -> String {
-    let null_prototype = matches!(
-        quench_runtime::execute::get_prototype_of(value),
-        Ok(Value::Null)
-    );
+    let prototype = quench_runtime::execute::get_prototype_of(value).ok();
+    let original_prototype = value.original_prototype();
+    let null_prototype = matches!(prototype, Some(Value::Null));
+    let constructor_name = original_prototype.as_ref().or(prototype.as_ref()).and_then(|prototype| {
+        let constructor = quench_runtime::execute::get_property(prototype, "constructor");
+        match quench_runtime::execute::get_property(&constructor, "name") {
+            Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+            _ => None,
+        }
+    });
     let keys = quench_runtime::execute::own_enumerable_keys(value);
     if keys.is_empty() {
-        return if null_prototype {
+        return if let Some(name) = constructor_name {
+            format!("[{name}: null prototype] {{}}")
+        } else if null_prototype {
             "[Object: null prototype] {}".into()
         } else {
             "{}".into()

@@ -1278,6 +1278,14 @@ const _: () = assert!(VALUE_ALIGNMENT_TAG_BITS == 0);
 const _: () = assert!(SMALL_INTEGER_TAG_BITS == 0);
 const _: () = assert!(SMALL_INTEGER_MIN < SMALL_INTEGER_MAX);
 impl Value {
+    pub fn original_prototype(&self) -> Option<Value> {
+        match self {
+            Self::Object(object) => object.original_prototype(),
+            Self::ObjectAlias(alias) => alias.target().and_then(|value| value.original_prototype()),
+            _ => None,
+        }
+    }
+
     /// Whether this Array value is the engine's canonical arguments object.
     pub fn is_arguments_object(&self) -> bool {
         matches!(self, Self::Array(values) if values.is_arguments())
