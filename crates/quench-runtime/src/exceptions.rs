@@ -29,8 +29,12 @@ pub(crate) fn execute(
                 let Some(ops) = ops.code() else {
                     return Err(VmError::MissingReturn);
                 };
-                bind_caught(value, *catch_slot, registers);
-                crate::vm::execute_code_completion_in_current_frame(ops, registers)?
+                let previous = bind_caught(value, *catch_slot, registers);
+                let completion = crate::vm::execute_code_completion_in_current_frame(ops, registers)?;
+                if let Some((slot, cell)) = previous {
+                    crate::locals::current().restore_slot(slot, cell);
+                }
+                completion
             }
             None => Completion::Throw(value),
         },
@@ -90,9 +94,11 @@ fn bind_caught(
     value: Value,
     catch_slot: Option<u16>,
     registers: &mut crate::register_file::RegisterFile,
-) {
+) -> Option<(u16, std::rc::Rc<crate::value::BindingCell>)> {
     if let Some(slot) = catch_slot {
         crate::execute::write_value(registers, slot, value.clone());
-        crate::locals::write(slot, value);
+        let previous = crate::locals::current().replace_slot(slot, value);
+        return Some((slot, previous));
     }
+    None
 }
