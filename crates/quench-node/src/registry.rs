@@ -388,6 +388,10 @@ pub const SPEC_EVENT_STOP_IMMEDIATE: NodeSpec =
 pub const SPEC_EVENT_COMPOSED_PATH: NodeSpec = NodeSpec::new("Event.composedPath", 0x011d);
 pub const SPEC_EVENT_GET_CANCEL_BUBBLE: NodeSpec = NodeSpec::new("Event.cancelBubble.get", 0x011e);
 pub const SPEC_EVENT_SET_CANCEL_BUBBLE: NodeSpec = NodeSpec::new("Event.cancelBubble.set", 0x011f);
+pub const SPEC_DEFINE_EVENT_HANDLER: NodeSpec =
+    NodeSpec::new("internal:eventTarget:defineEventHandler", 0x0120);
+pub const SPEC_EVENT_HANDLER_GET: NodeSpec = NodeSpec::new("EventHandler.get", 0x0121);
+pub const SPEC_EVENT_HANDLER_SET: NodeSpec = NodeSpec::new("EventHandler.set", 0x0122);
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1400);
 pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1401);
