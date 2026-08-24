@@ -33,6 +33,8 @@ pub const SPEC_EVENTS_NEW: NodeSpec = NodeSpec::new("events:EventEmitter", 0x010
 pub const SPEC_EVENTS_FROM: NodeSpec = NodeSpec::new("events:from", 0x0101);
 pub const SPEC_EVENTS_ON: NodeSpec = NodeSpec::new("events:on", 0x0102);
 pub const SPEC_EVENTS_EMIT: NodeSpec = NodeSpec::new("events:emit", 0x0103);
+pub const SPEC_EVENTS_CAPTURE_GET: NodeSpec = NodeSpec::new("events:captureRejections:get", 0x0104);
+pub const SPEC_EVENTS_CAPTURE_SET: NodeSpec = NodeSpec::new("events:captureRejections:set", 0x0119);
 
 pub const SPEC_CONSOLE_LOG: NodeSpec = NodeSpec::new("console:log", 0x0200);
 pub const SPEC_CONSOLE_INFO: NodeSpec = NodeSpec::new("console:info", 0x0201);
@@ -519,13 +521,16 @@ pub fn namespace_bindings(
     // element conversion is available.
     let float16_prototype = quench_runtime::host_api::object(vec![]);
     let float16_receiver = quench_runtime::host_api::object(vec![
-        ("\0float16_constructor".into(), quench_runtime::value::Value::Boolean(true)),
+        (
+            "\0float16_constructor".into(),
+            quench_runtime::value::Value::Boolean(true),
+        ),
         ("\0prototype".into(), float16_prototype.clone()),
     ]);
     let float16_constructor = quench_runtime::host_api::bound_builtin(
-            quench_runtime::ops::Builtin::Uint16Array,
-            float16_receiver,
-        );
+        quench_runtime::ops::Builtin::Uint16Array,
+        float16_receiver,
+    );
     let float16_constructor = quench_runtime::execute::set_property(
         float16_constructor,
         "prototype",

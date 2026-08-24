@@ -4,6 +4,7 @@
 //! statics live in `modules::event_target`. Every emitter method is
 //! a host capability dispatched with the JS receiver.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -13,6 +14,32 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 use crate::modules::emitter::{emitter_id, EmitterId, EventEmitter, Listener, EMITTER_ID_PROP};
+
+thread_local! {
+    static CAPTURE_REJECTIONS: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn capture_rejections_get(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(CAPTURE_REJECTIONS.with(Cell::get)))
+}
+
+pub fn capture_rejections_set(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(value, Value::Boolean(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"EventEmitter.captureRejections\" property must be of type boolean.{}",
+            crate::modules::util::invalid_arg_received(&value)
+        )));
+    }
+    CAPTURE_REJECTIONS.with(|capture| capture.set(matches!(value, Value::Boolean(true))));
+    Ok(Value::Undefined)
+}
 
 /// Resolve the emitter for a receiver, throwing Node-style when the
 /// receiver is not an emitter at all.
@@ -40,10 +67,9 @@ fn ensure_emitter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> O
         return None;
     }
     let id = state.borrow_mut().emitters.allocate();
-    state
-        .borrow_mut()
-        .emitters
-        .insert(id, Rc::new(RefCell::new(EventEmitter::new())));
+    let emitter = Rc::new(RefCell::new(EventEmitter::new()));
+    emitter.borrow_mut().capture_rejections = CAPTURE_REJECTIONS.with(Cell::get);
+    state.borrow_mut().emitters.insert(id, emitter);
     let events = execute::set_property(host_api::object(Vec::new()), "\0prototype", Value::Null);
     let mut updated = execute::set_property(receiver.clone(), "_events", events);
     updated = execute::set_property(updated, EMITTER_ID_PROP, Value::Number(id.0 as f64));
@@ -190,6 +216,7 @@ pub fn method_emit(
     let Some(emitter) = state.borrow().emitters.get(id) else {
         return Ok(Value::Boolean(false));
     };
+    let capture_rejections = emitter.borrow().capture_rejections;
     let snapshot: Vec<Listener> = emitter.borrow().listeners_of(&event).to_vec();
     if snapshot.is_empty() {
         if event == "error" {
@@ -205,9 +232,73 @@ pub fn method_emit(
         if listener.once {
             emitter.borrow_mut().remove(&event, &listener.callback);
         }
-        execute::call(&listener.callback, receiver, &rest)?;
+        let result = execute::call(&listener.callback, receiver, &rest)?;
+        if capture_rejections
+            && matches!(
+                result,
+                Value::Promise(_)
+                    | Value::Object(_)
+                    | Value::ObjectAlias(_)
+                    | Value::Function(_)
+                    | Value::BoundFunction(_)
+            )
+        {
+            attach_rejection_handler(state, receiver, &event, &result)?;
+        }
     }
     Ok(Value::Boolean(true))
+}
+
+fn attach_rejection_handler(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    event: &str,
+    promise: &Value,
+) -> Result<(), VmError> {
+    let handler = eval_function(
+        r#"(emitter, event, error) => {
+          const rejection = emitter[Symbol.for('nodejs.rejection')];
+          if (typeof rejection === 'function') rejection.call(emitter, error, event);
+          else emitter.emit('error', error);
+        }"#,
+    )?;
+    let bind = execute::get_property_result(&handler, "bind")?;
+    let bound = execute::call(
+        &bind,
+        &handler,
+        &[
+            Value::Undefined,
+            receiver.clone(),
+            Value::String(event.to_string()),
+        ],
+    )?;
+    let then = match execute::get_property_result(promise, "then") {
+        Ok(then) => then,
+        Err(error) => {
+            if let VmError::Thrown(reason) = error {
+                let _ = method_emit(
+                    state,
+                    Some(receiver),
+                    &[Value::String("error".into()), reason],
+                )?;
+            }
+            return Ok(());
+        }
+    };
+    if !quench_runtime::is_callable(&then) {
+        return Ok(());
+    }
+    let result = execute::call(&then, promise, &[Value::Undefined, bound]);
+    if let Err(error) = result {
+        if let VmError::Thrown(reason) = error {
+            let _ = method_emit(
+                state,
+                Some(receiver),
+                &[Value::String("error".into()), reason],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Domain membership is an edge concern: EventEmitter owns the emission, and
@@ -411,9 +502,14 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
             Some(Ok(matches!(value, Value::Boolean(true))))
         })
         .transpose()?
-        .unwrap_or(false);
+        .unwrap_or_else(|| CAPTURE_REJECTIONS.with(Cell::get));
     if capture {
         object = execute::set_property(object, "Symbol.kCapture\0quench", Value::Boolean(true));
+    }
+    if let Some(id) = emitter_id(&object) {
+        if let Some(emitter) = state.borrow().emitters.get(id) {
+            emitter.borrow_mut().capture_rejections = capture;
+        }
     }
     install_emitter_props(object)
 }
@@ -666,6 +762,13 @@ pub fn build() -> Value {
             cap("events:listenerCount:static", 0x0111),
         ),
     ];
+    let descriptor = host_api::object(vec![
+        ("get".into(), cap("events:captureRejections:get", 0x0104)),
+        ("set".into(), cap("events:captureRejections:set", 0x0119)),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    let _ = execute::define_property(value.clone(), "captureRejections", descriptor);
     for (key, property) in props {
         let _ = execute::set_callable_property(&value, &key, property);
     }
