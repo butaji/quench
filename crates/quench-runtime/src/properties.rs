@@ -501,6 +501,11 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
             .borrow()
             .iter()
             .any(|(name, _)| name == NON_EXTENSIBLE),
+        crate::value::Value::HostCapability(capability) => !capability
+            .properties
+            .borrow()
+            .iter()
+            .any(|(name, _)| name == NON_EXTENSIBLE),
         value => crate::value::is_object(value),
     }
 }
