@@ -476,6 +476,15 @@ fn array_property_result(
             receiver,
         ));
     }
+    let intrinsic = crate::arrays::property(values, key);
+    if !matches!(intrinsic, Value::Undefined) {
+        let property = if matches!(key, "constructor" | "prototype") {
+            intrinsic
+        } else {
+            crate::vm::bind_receiver_property(intrinsic, receiver)
+        };
+        return Some(Ok(property));
+    }
     crate::arrays::prototype_override_getter(key).map(|getter| match getter {
         Value::Undefined => Ok(Value::Undefined),
         getter => invoke_accessor(&getter, receiver),
