@@ -22,6 +22,7 @@ pub const EMITTER_ID_PROP: &str = "\0quench:emitter:id";
 pub struct Listener {
     pub callback: Value,
     pub once: bool,
+    pub weak: bool,
 }
 
 pub struct EventEmitter {
@@ -62,9 +63,20 @@ impl EventEmitter {
     pub fn add(&mut self, event: &str, callback: Value, once: bool, prepend: bool) -> usize {
         let list = self.entry(event);
         if prepend {
-            list.insert(0, Listener { callback, once });
+            list.insert(
+                0,
+                Listener {
+                    callback,
+                    once,
+                    weak: false,
+                },
+            );
         } else {
-            list.push(Listener { callback, once });
+            list.push(Listener {
+                callback,
+                once,
+                weak: false,
+            });
         }
         list.len()
     }
