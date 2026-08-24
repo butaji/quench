@@ -104,18 +104,14 @@ fn set_record_origin(
 
 fn try_record_constructor(
     function: &crate::value::FunctionValue,
-    receiver: &crate::value::Value,
+    target: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Option<crate::value::Value> {
     let fact = RecordConstructorFact::recognize(function)?;
-    record_prototype_is_data_only(receiver, &fact)?;
-    let crate::value::Value::Object(receiver) = receiver else {
-        return None;
-    };
-    let prototype = receiver
-        .hot_properties()
-        .iter()
-        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))?;
+    let prototype = crate::construct::get_prototype_from_constructor(target, |realm| {
+        crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
+    });
+    record_prototype_is_data_only(&prototype, &fact)?;
     let mut properties = Vec::with_capacity(3);
     properties.push(("\0prototype".to_string(), prototype));
     for (key, argument) in fact.fields {
@@ -134,16 +130,9 @@ fn try_record_constructor(
 }
 
 fn record_prototype_is_data_only(
-    receiver: &crate::value::Value,
+    prototype: &crate::value::Value,
     fact: &RecordConstructorFact<'_>,
 ) -> Option<()> {
-    let crate::value::Value::Object(receiver) = receiver else {
-        return None;
-    };
-    let prototype = receiver
-        .hot_properties()
-        .iter()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
     let crate::value::Value::Object(prototype) = prototype else {
         return None;
     };
