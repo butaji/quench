@@ -16,6 +16,10 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::registry::*;
 
+thread_local! {
+    static ASSERTION_ERROR_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
 /// Namespace pairs following the module convention; `build_value`
 /// also attaches them to the callable `assert` capability value.
 pub fn build() -> Vec<(String, Value)> {
@@ -123,10 +127,34 @@ fn pair(name: &str, spec: NodeSpec) -> (String, Value) {
 }
 
 fn assertion_error_type() -> Value {
-    host_api::object(vec![(
-        "name".to_string(),
-        Value::String("AssertionError".to_string()),
-    )])
+    let prototype = assertion_error_prototype();
+    let constructor = host_api::bound_builtin(
+        quench_runtime::ops::Builtin::Error,
+        Value::Undefined,
+    );
+    let constructor = execute::set_property(constructor, "name", Value::String("AssertionError".into()));
+    execute::set_property(constructor, "prototype", prototype)
+}
+
+fn assertion_error_prototype() -> Value {
+    ASSERTION_ERROR_PROTOTYPE.with(|slot| {
+        if let Some(prototype) = slot.borrow().as_ref() {
+            return prototype.clone();
+        }
+        let prototype = host_api::object(vec![]);
+        let global = quench_runtime::vm::current_global_object();
+        let prototype = quench_runtime::execute::get_property_result(&global, "Error")
+            .ok()
+            .and_then(|error| {
+                quench_runtime::execute::get_property_result(&error, "prototype").ok()
+            })
+            .and_then(|error_prototype| {
+                quench_runtime::execute::set_prototype_of(&prototype, &error_prototype).ok()
+            })
+            .unwrap_or(prototype);
+        *slot.borrow_mut() = Some(prototype.clone());
+        prototype
+    })
 }
 
 /// AssertionError-shaped thrown value, catchable from JavaScript.
@@ -139,7 +167,7 @@ pub fn assertion_error(
     expected: Value,
     generated: bool,
 ) -> VmError {
-    VmError::Thrown(host_api::object(vec![
+    let error = host_api::object(vec![
         (
             "name".to_string(),
             Value::String("AssertionError".to_string()),
@@ -157,7 +185,11 @@ pub fn assertion_error(
             "stack".to_string(),
             Value::String(format!("AssertionError: {message}")),
         ),
-    ]))
+    ]);
+    VmError::Thrown(
+        quench_runtime::execute::set_prototype_of(&error, &assertion_error_prototype())
+            .unwrap_or(error),
+    )
 }
 
 /// Optional trailing message argument; `None` when absent/undefined.
