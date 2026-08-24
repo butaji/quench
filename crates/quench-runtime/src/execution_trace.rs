@@ -275,6 +275,30 @@ fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeV
         let instruction = code.instruction(pc).expect("valid function instruction");
         let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
         eprintln!("  {pc}: {instruction:?} cold={cold:?}");
+        if let Some(crate::ops::Op::Loop {
+            init,
+            test,
+            body,
+            update,
+            ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("init", init.code());
+            dump_function_fragment("test", test.code());
+            dump_function_fragment("body", body.code());
+            dump_function_fragment("update", update.code());
+        }
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_function_fragment(label: &str, code: Option<crate::machine::CodeView<'_>>) {
+    let Some(code) = code else { return };
+    eprintln!("    {label} len={}", code.len());
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).expect("valid function fragment");
+        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
+        eprintln!("      {pc}: {instruction:?} cold={cold:?}");
     }
 }
 
