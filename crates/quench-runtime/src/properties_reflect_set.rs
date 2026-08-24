@@ -228,9 +228,33 @@ fn set_receiver_data(
         value,
         matches!(current, crate::value::Value::Undefined),
     );
-    let updated = crate::builtins::define_own_property(receiver, key, &descriptor)?;
+    let updated = match crate::builtins::define_own_property(receiver, key, &descriptor) {
+        Err(error)
+            if key == "length"
+                && matches!(receiver_resolved, crate::value::Value::Array(_))
+                && non_configurable_redefinition(&error) =>
+        {
+            // ArraySetLength coerces the value before it reads the current
+            // length descriptor.  If that coercion makes length read-only,
+            // the already-started [[Set]] must report false (and let strict
+            // assignment turn it into its own TypeError), not leak the
+            // internal defineProperty rejection.
+            return Ok(false);
+        }
+        result => result?,
+    };
     crate::locals::replace_value(receiver, &updated);
     Ok(true)
+}
+
+fn non_configurable_redefinition(error: &crate::execute::VmError) -> bool {
+    let crate::execute::VmError::Thrown(crate::value::Value::Object(properties)) = error else {
+        return false;
+    };
+    properties.iter().any(|(name, value)| {
+        name == "message"
+            && matches!(value, crate::value::Value::String(text) if text.starts_with("Cannot redefine"))
+    })
 }
 
 fn receiver_data_descriptor(
