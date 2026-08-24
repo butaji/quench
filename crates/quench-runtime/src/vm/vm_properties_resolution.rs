@@ -556,7 +556,7 @@ fn descriptor_property_result(
             return Some(Ok(Value::Number(crate::strings::utf16_len(text) as f64)));
         }
         if let Ok(index) = key.parse::<usize>() {
-            return crate::strings::char_at_utf16(text, index).map(|value| Ok(Value::String(value)));
+            return crate::strings::char_at_utf16(text, index).map(Ok);
         }
         return None;
     }
