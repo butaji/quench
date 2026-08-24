@@ -8,7 +8,7 @@ use std::{cell::RefCell, rc::Rc};
 
 #[test]
 fn binding_cell_property_mutates_without_escaping() {
-    let cell = Rc::new(RefCell::new(Value::Number(1.0)));
+    let cell = crate::value::BindingCell::new(Value::Number(1.0));
     let binding = Value::BindingCell(Rc::clone(&cell));
     let metadata = Value::Object(Rc::new(ObjectData::new(vec![
         ("value".to_string(), binding.clone()),

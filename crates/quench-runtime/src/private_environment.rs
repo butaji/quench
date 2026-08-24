@@ -128,7 +128,7 @@ impl ClassNameGuard {
     fn install(name: &str) -> Self {
         let parent = crate::locals::current();
         let child = crate::environment::Environment::child(&parent, Vec::new());
-        let cell = std::rc::Rc::new(std::cell::RefCell::new(crate::value::Value::Undefined));
+        let cell = crate::value::BindingCell::new(crate::value::Value::Undefined);
         child.alias_binding(name, cell);
         child.mark_immutable(name);
         crate::locals::begin_class_name(name);
