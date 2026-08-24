@@ -206,6 +206,37 @@ fn array_from_splice_deletions_terminate_at_live_length() {
 }
 
 #[test]
+fn splice_moves_suffix_before_inserting_items() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var array = [0, 1, 2, 3];\n\
+         var removed = array.splice(0, 3, 4, 5);\n\
+         if (removed.length !== 3 || removed[2] !== 2) throw new Error('removed');\n\
+         if (array.length !== 3) throw new Error('suffix length');\n\
+         if (array[0] !== 4) throw new Error('suffix zero');\n\
+         if (array[1] !== 5) throw new Error('suffix one');\n\
+         if (array[2] !== 3) throw new Error('suffix two');",
+    )
+    .expect("splice must preserve the suffix when inserting fewer items than deleted");
+}
+
+#[test]
+fn splice_moves_suffix_on_array_like_object() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var object = {0: 0, 1: 1, 2: 2, 3: 3}; object.length = 4;\n\
+         object.splice = Array.prototype.splice;\n\
+         var removed = object.splice(0, 3, 4, 5);\n\
+         if (removed[2] !== 2) throw new Error('removed');\n\
+         if (object.length !== 3) throw new Error('length');\n\
+         if (object[0] !== 4) throw new Error('zero');\n\
+         if (object[1] !== 5) throw new Error('one');\n\
+         if (object[2] !== 3) throw new Error('two');",
+    )
+    .expect("splice must preserve the suffix on array-like objects");
+}
+
+#[test]
 fn ordinary_function_arguments_binding_is_an_object() {
     let mut host = super::RuntimeHost;
     host.run_script(
@@ -244,6 +275,20 @@ fn reduce_right_walks_inherited_array_indices() {
          if (result !== 6) throw new Error('reduceRight');",
     )
     .expect("reduceRight must include inherited array elements");
+}
+
+#[test]
+fn slice_species_create_overwrites_target_descriptor() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var a = [1]; a.constructor = {}; a.constructor[Symbol.species] = function() { var q = []; Object.defineProperty(q, 0, { value: 0, writable: false, configurable: true, enumerable: false }); return q; };\n\
+         var r = a.slice(0); if (!Array.isArray(r)) throw new Error('slice array'); var d = Object.getOwnPropertyDescriptor(r, 0);\n\
+         if (r[0] !== 1) throw new Error('slice value');\n\
+         if (d.writable !== true) throw new Error('slice writable');\n\
+         if (d.enumerable !== true) throw new Error('slice enumerable');\n\
+         if (d.configurable !== true) throw new Error('slice configurable');",
+    )
+    .expect("slice must overwrite configurable target descriptors");
 }
 
 #[test]
