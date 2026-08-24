@@ -7,10 +7,13 @@ fn array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmE
     if let Some(value) = receiver.filter(|value| value.is_typed_array()) {
         return Ok(crate::collections::iterator::make_typed(value.clone()));
     }
-    Ok(crate::collections::iterator::make(array_iterator_values(receiver)?))
+    Ok(crate::collections::iterator::make(array_iterator_values(
+        receiver,
+    )?))
 }
 fn typed_array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let Some(value) = receiver.filter(|value| is_typed_array(value)) else {
+    let value = receiver.map(unwrap_binding_cells);
+    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
         return Err(crate::value::error::throw_type_error(
             "TypedArray.prototype.values called on incompatible receiver",
         ));
@@ -23,6 +26,12 @@ fn typed_array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execut
     Ok(crate::collections::iterator::make_typed(value.clone()))
 }
 
+fn unwrap_binding_cells(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => unwrap_binding_cells(&cell.borrow()),
+        value => value.clone(),
+    }
+}
 
 fn typed_array_is_detached(value: &Value) -> bool {
     let buffer = match value {
