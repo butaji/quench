@@ -5,6 +5,9 @@ edition = "2021"
 description = "Residual VM kernel for the Quench program reducer"
 license = "MIT"
 
+[features]
+execution-trace = []
+
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
