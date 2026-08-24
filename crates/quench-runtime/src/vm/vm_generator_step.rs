@@ -11,7 +11,7 @@ pub(crate) fn execute_generator_step(
     pc: usize,
     resume: crate::completion::Completion,
 ) -> Result<GeneratorStep, VmError> {
-    let context = VmContext::default();
+    let context = crate::vm::current_context_or_default();
     let _context_guard = ContextGuard::install(&context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
@@ -25,7 +25,7 @@ pub(crate) fn execute_generator_code_step(
     pc: usize,
     resume: crate::completion::Completion,
 ) -> Result<GeneratorStep, VmError> {
-    let context = VmContext::default();
+    let context = crate::vm::current_context_or_default();
     let _context_guard = ContextGuard::install(&context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
