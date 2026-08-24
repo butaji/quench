@@ -186,6 +186,21 @@ pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModul
         globalThis.__nodeCaptureAsyncCallback(callback, captured)(...args);
     }
   }
+  Object.defineProperty(globalThis, "\0quench:process_next_tick_init", {
+    configurable: true,
+    value: () => {
+    const resource = {
+      asyncId: ++globalThis.__nodeNextAsyncId,
+      triggerAsyncId: globalThis.__nodeCurrentAsyncResource?.asyncId || 1
+    };
+    for (const hook of globalThis.__nodeAsyncHooks || []) {
+      if (typeof hook.callbacks?.init === "function") {
+        hook.callbacks.init(resource.asyncId, "TickObject", resource.triggerAsyncId, resource);
+      }
+    }
+      return resource;
+    }
+  });
   __quenchAsyncHooksModule = {
     AsyncResource,
     AsyncLocalStorage,
