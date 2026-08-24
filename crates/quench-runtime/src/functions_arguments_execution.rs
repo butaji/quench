@@ -7,11 +7,10 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::Function
         | crate::ops::Builtin::AsyncFunction
         | crate::ops::Builtin::GeneratorFunction
-        | crate::ops::Builtin::AsyncGeneratorFunction => crate::functions_dynamic::construct_builtin(
-            builtin,
-            arguments,
-        )
-        .unwrap_or_else(|| Err(crate::execute::VmError::NotCallable)),
+        | crate::ops::Builtin::AsyncGeneratorFunction => {
+            crate::functions_dynamic::construct_builtin(builtin, arguments)
+                .unwrap_or_else(|| Err(crate::execute::VmError::NotCallable))
+        }
         crate::ops::Builtin::FunctionCall => execute_function_call(receiver, arguments),
         crate::ops::Builtin::FunctionApply => {
             crate::vm::execute_function_apply(receiver, arguments)
@@ -73,9 +72,8 @@ pub(crate) fn execute(
             &generator,
             crate::generator::Resume::Next(crate::value::Value::Undefined),
         );
-        return Ok(crate::promise::from_async_generator_completion(
-            completion,
-            generator,
+        return Ok(crate::promise::from_async_function_completion(
+            completion, generator,
         ));
     }
 
@@ -135,11 +133,8 @@ fn execute_with_dynamic_scope(
     let mut receiver = receiver;
     let mut arguments = arguments.to_vec();
     loop {
-        let (registers, environment) = crate::functions::build_registers(
-            &function,
-            &receiver,
-            &arguments,
-        );
+        let (registers, environment) =
+            crate::functions::build_registers(&function, &receiver, &arguments);
         let _private_environment = crate::private_environment::Guard::install_environment(
             function.private_environment.clone(),
         );

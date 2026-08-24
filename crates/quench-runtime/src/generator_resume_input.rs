@@ -40,8 +40,16 @@ fn install_frame_resume_input(
     _state: &mut GeneratorState,
     input: &Value,
 ) -> bool {
+    if let Some(crate::machine::Frame::Await { destination, .. }) =
+        generator.machine.borrow().frames.frames.last()
+    {
+        crate::execute::write_value(&mut registers_mut(generator), *destination, input.clone());
+        return true;
+    }
     let code = generator.function.code.code();
-    if let Some(Op::YieldStar { dst, .. }) = code.and_then(|code| code.cold_at(machine_pc(generator))) {
+    if let Some(Op::YieldStar { dst, .. }) =
+        code.and_then(|code| code.cold_at(machine_pc(generator)))
+    {
         crate::execute::write_value(&mut registers_mut(generator), *dst, input.clone());
         return true;
     }
@@ -62,7 +70,12 @@ fn install_scanned_resume_input(
     let Some(index) = machine_pc(generator).checked_sub(1) else {
         return;
     };
-    let Some(Op::Yield { src }) = generator.function.code.code().and_then(|code| code.cold_at(index)) else {
+    let Some(Op::Yield { src }) = generator
+        .function
+        .code
+        .code()
+        .and_then(|code| code.cold_at(index))
+    else {
         install_nested_resume_input(generator, state, input);
         return;
     };

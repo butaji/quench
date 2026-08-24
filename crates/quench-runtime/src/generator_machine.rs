@@ -36,7 +36,6 @@ fn execute_generator_step(
     Ok(step)
 }
 
-
 fn execute_with_generator_registers<T>(
     generator: &GeneratorData,
     execute: impl FnOnce(&mut crate::register_file::RegisterFile) -> Result<T, VmError>,
@@ -112,18 +111,28 @@ fn update_await_frame(
     if !matches!(completion, crate::completion::Completion::Suspend(_)) {
         return Ok(());
     }
-    let pc = machine_pc(generator) as u32;
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Await {
             phase: 0,
-            resume: crate::machine::CodeRange {
-                code: generator.function.code_id(),
-                start: pc,
-                end: pc + 1,
-            },
+            // Await is a stack marker; resumption continues from the machine
+            // PC, while frame validation still needs a canonical code range.
+            resume: generator.function.code.range,
+            destination: await_destination(generator),
         },
     )
+}
+
+fn await_destination(generator: &GeneratorData) -> u16 {
+    match generator
+        .function
+        .code
+        .code()
+        .and_then(|code| code.cold_at(machine_pc(generator).saturating_sub(1)))
+    {
+        Some(crate::ops::Op::Await { dst, .. }) => *dst,
+        _ => 0,
+    }
 }
 
 fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
