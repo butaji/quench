@@ -436,6 +436,9 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         return None;
     };
     array_accessor_value(values, key, field).or_else(|| {
+        if key == "length" {
+            return None;
+        }
         let prototype = values
             .prototype()
             .unwrap_or_else(|| crate::vm::realm_intrinsic(Builtin::ArrayPrototype));
