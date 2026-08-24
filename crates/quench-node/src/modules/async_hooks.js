@@ -36,6 +36,12 @@ class AsyncResource {
     if (type === undefined) {
       throw Object.assign(new TypeError('The "type" argument must be specified'), { code: "ERR_INVALID_ARG_TYPE" });
     }
+    if (String(type).length === 0) {
+      throw Object.assign(new TypeError("Invalid asyncId type"), { code: "ERR_ASYNC_TYPE" });
+    }
+    if (typeof options === "number" && (!Number.isInteger(options) || options < 0)) {
+      throw Object.assign(new RangeError("Invalid asyncId"), { code: "ERR_INVALID_ASYNC_ID" });
+    }
     this.type = String(type);
     this._asyncId = ++nextId;
     this._triggerAsyncId = typeof options === "number" ? options : (options.triggerAsyncId || 0);
