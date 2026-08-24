@@ -289,6 +289,14 @@ fn invoke_with_receiver(
                 arguments,
             )
         }
+        Value::HostCapability(capability) => {
+            crate::vm::execute_host_capability_with_receiver(
+                capability.descriptor.kind,
+                Some(callee_value),
+                Some(receiver),
+                arguments,
+            )
+        }
         Value::BoundFunction(bound)
             if matches!(
                 &bound.target,
