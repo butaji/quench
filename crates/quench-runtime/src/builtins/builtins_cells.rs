@@ -27,27 +27,27 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
             Rc::clone(&properties.private_slots),
             created,
         ));
-        *cell.borrow_mut() = public_value(value);
+        cell.store(public_value(value));
         return Value::Object(properties);
     }
     if !same_binding_cell(&cell, &value) {
-        *cell.borrow_mut() = public_value(value);
+        cell.store(public_value(value));
     }
     Value::Object(properties)
 }
 
-fn same_binding_cell(cell: &Rc<std::cell::RefCell<Value>>, value: &Value) -> bool {
+fn same_binding_cell(cell: &Rc<crate::value::BindingCell>, value: &Value) -> bool {
     matches!(value, Value::BindingCell(value_cell) if Rc::ptr_eq(cell, value_cell))
 }
 
 fn public_value(value: Value) -> Value {
     match value {
-        Value::BindingCell(cell) => cell.borrow().clone(),
+        Value::BindingCell(cell) => cell.load(),
         value => value,
     }
 }
 
-fn binding_cell(value: &Value) -> Option<Rc<std::cell::RefCell<Value>>> {
+fn binding_cell(value: &Value) -> Option<Rc<crate::value::BindingCell>> {
     match value {
         Value::BindingCell(cell) => Some(Rc::clone(cell)),
         _ => None,
@@ -57,7 +57,7 @@ fn binding_cell(value: &Value) -> Option<Rc<std::cell::RefCell<Value>>> {
 fn deleted_binding_cell(
     properties: &ObjectData,
     key: &str,
-) -> Option<Rc<std::cell::RefCell<Value>>> {
+) -> Option<Rc<crate::value::BindingCell>> {
     properties
         .iter()
         .rev()

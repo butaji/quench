@@ -77,7 +77,7 @@ fn object_keys_dispatch(target: Option<&Value>) -> Result<Value, VmError> {
     };
     let mut resolved = target.clone();
     while let Value::BindingCell(cell) = resolved {
-        resolved = cell.borrow().clone();
+        resolved = cell.load();
     }
     object_keys(Some(&resolved))
 }
@@ -173,7 +173,7 @@ fn set_object_prototype(data: &Rc<crate::value::ObjectData>, prototype: Value) -
     if let Some((_, Value::BindingCell(cell))) =
         data.iter().rev().find(|(key, _)| key == "\0prototype")
     {
-        *cell.borrow_mut() = prototype;
+        cell.store(prototype);
         return Value::Object(Rc::clone(data));
     }
     crate::builtins::set_property(Value::Object(Rc::clone(data)), "\0prototype", prototype)
@@ -192,7 +192,7 @@ fn set_function_prototype(target: &Value, prototype: Value) -> Value {
         .find(|(key, _)| key == "\0function_prototype")
     {
         if let Value::BindingCell(cell) = value {
-            *cell.borrow_mut() = prototype;
+            cell.store(prototype);
         } else {
             *value = prototype;
         }
@@ -300,7 +300,7 @@ pub(crate) fn descriptor(
 
 fn unwrap_binding_cells(value: Value) -> Value {
     match value {
-        Value::BindingCell(cell) => unwrap_binding_cells(cell.borrow().clone()),
+        Value::BindingCell(cell) => unwrap_binding_cells(cell.load()),
         value => value,
     }
 }

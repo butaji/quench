@@ -111,7 +111,11 @@ pub(crate) fn execute_binary(
 }
 
 #[inline]
-fn fast_number_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> Option<Value> {
+pub(crate) fn fast_number_binary(
+    left: f64,
+    right: f64,
+    operator: crate::ops::BinaryOp,
+) -> Option<Value> {
     use crate::ops::BinaryOp;
     Some(match operator {
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
