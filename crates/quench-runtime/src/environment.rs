@@ -228,6 +228,62 @@ struct BindingRef {
     index: usize,
 }
 
+/// A closure's captured binding references are immutable facts: their values
+/// mutate through `SlotStore`, but the mapping from slot to store does not.
+/// Child calls therefore share that prefix and allocate only their local tail.
+#[derive(Debug, Default, PartialEq)]
+struct SlotRefs {
+    prefix: Rc<[BindingRef]>,
+    suffix: Vec<BindingRef>,
+}
+
+impl SlotRefs {
+    fn from_prefix(prefix: Rc<[BindingRef]>) -> Self {
+        Self {
+            prefix,
+            suffix: Vec::new(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.prefix.len() + self.suffix.len()
+    }
+
+    fn get(&self, index: usize) -> Option<&BindingRef> {
+        if index < self.prefix.len() {
+            self.prefix.get(index)
+        } else {
+            self.suffix.get(index - self.prefix.len())
+        }
+    }
+
+    fn shared_prefix(&self) -> Rc<[BindingRef]> {
+        if self.suffix.is_empty() {
+            return Rc::clone(&self.prefix);
+        }
+        self.prefix
+            .iter()
+            .chain(&self.suffix)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into()
+    }
+
+    fn push(&mut self, binding: BindingRef) {
+        self.suffix.push(binding);
+    }
+
+    fn replace(&mut self, index: usize, binding: BindingRef) {
+        if index < self.prefix.len() {
+            let mut owned = self.prefix.to_vec();
+            owned.append(&mut self.suffix);
+            self.prefix = Rc::from([]);
+            self.suffix = owned;
+        }
+        self.suffix[index - self.prefix.len()] = binding;
+    }
+}
+
 impl BindingRef {
     fn new(store: Rc<SlotStore>, index: usize) -> Self {
         store.ensure(index);
@@ -262,7 +318,7 @@ impl BindingRef {
 /// Shared indexed lexical bindings. Captured prefixes share their slot cells.
 #[derive(Debug, Default, PartialEq)]
 pub struct Environment {
-    slots: RefCell<Vec<BindingRef>>,
+    slots: RefCell<SlotRefs>,
     names: RefCell<Option<HashMap<String, BindingRef>>>,
     eval_names: RefCell<Option<HashMap<String, BindingRef>>>,
     immutable_names: RefCell<Option<HashSet<String>>>,
@@ -286,10 +342,12 @@ impl Environment {
         for index in 0..count {
             environment.ensure_slot(index as u16);
         }
-        let slots = environment.slots.borrow();
-        let refs = slots.iter().take(count).cloned().collect();
+        let refs: Rc<[BindingRef]> = (0..count)
+            .filter_map(|index| environment.slot(index as u16))
+            .collect::<Vec<_>>()
+            .into();
         Rc::new(Self {
-            slots: RefCell::new(refs),
+            slots: RefCell::new(SlotRefs::from_prefix(refs)),
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
@@ -301,11 +359,14 @@ impl Environment {
     }
 
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
+        crate::execution_trace::environment_child(captures.len(), values.len());
         let store = SlotStore::from_values(values);
-        let mut combined = captures.slots.borrow().clone();
-        combined.extend((0..store.len()).map(|index| BindingRef::new(Rc::clone(&store), index)));
+        let prefix = captures.slots.borrow().shared_prefix();
+        let suffix = (0..store.len())
+            .map(|index| BindingRef::new(Rc::clone(&store), index))
+            .collect();
         let environment = Rc::new(Self {
-            slots: RefCell::new(combined),
+            slots: RefCell::new(SlotRefs { prefix, suffix }),
             names: RefCell::new(None),
             eval_names: RefCell::new(None),
             immutable_names: RefCell::new(None),
@@ -378,7 +439,9 @@ impl Environment {
     pub(crate) fn install_slot_cell(&self, slot: u16, cell: Rc<RefCell<Value>>) {
         let index = usize::from(slot);
         self.ensure_slot(slot);
-        self.slots.borrow_mut()[index] = BindingRef::new(SlotStore::from_cell(cell), 0);
+        self.slots
+            .borrow_mut()
+            .replace(index, BindingRef::new(SlotStore::from_cell(cell), 0));
     }
 
     pub(crate) fn alias_eval_caller_name(&self, name: &str, slot: u16) -> bool {
@@ -649,7 +712,7 @@ impl Environment {
             let store = SlotStore::from_values(vec![Value::Undefined]);
             slots.push(BindingRef::new(store, 0));
         }
-        slots[index].clone()
+        slots.get(index).expect("ensured environment slot").clone()
     }
 
     pub(crate) fn initialize(&self, slot: u16) {
@@ -676,14 +739,16 @@ impl Environment {
     pub(crate) fn replace_slot(&self, slot: u16, value: Value) -> Rc<RefCell<Value>> {
         let previous = self.ensure_slot(slot);
         let store = SlotStore::from_values(vec![value]);
-        self.slots.borrow_mut()[usize::from(slot)] = BindingRef::new(store, 0);
+        self.slots
+            .borrow_mut()
+            .replace(usize::from(slot), BindingRef::new(store, 0));
         self.initialize(slot);
         previous.cell()
     }
 
     pub(crate) fn restore_slot(&self, slot: u16, value: Rc<RefCell<Value>>) {
         let binding = BindingRef::new(SlotStore::from_cell(value), 0);
-        self.slots.borrow_mut()[usize::from(slot)] = binding;
+        self.slots.borrow_mut().replace(usize::from(slot), binding);
     }
 
     pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
@@ -712,6 +777,25 @@ include!("environment_alias.rs");
 mod tests {
     use super::{Environment, SlotStore};
     use crate::value::Value;
+
+    #[test]
+    fn child_frames_share_captured_bindings_but_not_slot_replacements() {
+        let root = Environment::new();
+        let parent = Environment::child(&root, vec![Value::Number(1.0)]);
+        let captures = Environment::capture(&parent, 1);
+        let first = Environment::child(&captures, vec![Value::Number(10.0)]);
+        let second = Environment::child(&captures, vec![Value::Number(20.0)]);
+
+        first.set(0, Value::Number(2.0));
+        assert_eq!(second.get(0), Value::Number(2.0));
+        assert_eq!(parent.get(0), Value::Number(2.0));
+        assert_eq!(first.get(1), Value::Number(10.0));
+        assert_eq!(second.get(1), Value::Number(20.0));
+
+        first.replace_slot(0, Value::Number(3.0));
+        assert_eq!(first.get(0), Value::Number(3.0));
+        assert_eq!(second.get(0), Value::Number(2.0));
+    }
 
     #[test]
     fn slot_store_round_trips_values_without_borrow_tracking() {
