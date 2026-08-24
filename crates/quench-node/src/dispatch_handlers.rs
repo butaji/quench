@@ -133,15 +133,28 @@ pub fn util_inspect(
             }
             _ => None,
         });
+    let getters = args.iter().any(|value| {
+        matches!(
+            value,
+            Value::Object(_) | Value::ObjectAlias(_)
+        ) && matches!(execute::get_property(value, "getters"), Value::Boolean(true))
+    });
     Ok(Value::String(match depth {
         Some(depth) => crate::modules::util::inspect_with_options(
             &arg,
             depth,
             show_hidden,
             max_array_length,
+            getters,
         ),
-        None if show_hidden => {
-            crate::modules::util::inspect_with_options(&arg, 3, true, max_array_length)
+        None if show_hidden || getters || max_array_length.is_some() => {
+            crate::modules::util::inspect_with_options(
+                &arg,
+                3,
+                show_hidden,
+                max_array_length,
+                getters,
+            )
         }
         None => crate::modules::util::inspect(&arg),
     }))

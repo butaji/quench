@@ -131,6 +131,18 @@ pub fn same_value(left: &crate::value::Value, right: &crate::value::Value) -> bo
     crate::builtins::same_value(Some(left), Some(right))
 }
 
+/// Compare object identity through copy-on-write replacements.
+pub fn same_identity(left: &crate::value::Value, right: &crate::value::Value) -> bool {
+    let left = crate::locals::resolved_replacement(left.clone());
+    let right = crate::locals::resolved_replacement(right.clone());
+    crate::builtins::same_value(Some(&left), Some(&right))
+}
+
+/// Return the live value after copy-on-write replacement resolution.
+pub fn canonical_value(value: &crate::value::Value) -> crate::value::Value {
+    crate::locals::resolved_replacement(value.clone())
+}
+
 /// Throw a canonical `TypeError` from host code.
 pub fn type_error(message: &str) -> VmError {
     crate::value::error::throw_type_error(message)

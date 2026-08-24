@@ -694,15 +694,38 @@ pub use crate::modules::buffer_enc::invalid_arg_received;
 
 /// `util.inspect` — string-only, sufficient for fixtures.
 pub fn inspect(value: &Value) -> String {
-    inspect_depth(value, 3)
+    inspect_with_depth(value, 3)
 }
 
 pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
     if value.object_identity().is_some() {
         for key in quench_runtime::execute::own_enumerable_keys(value) {
-            if quench_runtime::execute::get_property(value, &key).same_identity(value) {
+            if quench_runtime::execute::same_identity(
+                &quench_runtime::execute::get_property(value, &key),
+                value,
+            ) {
                 return format!("<ref *1> {{ {key}: [Circular *1] }}");
             }
+        }
+    }
+    let canonical = quench_runtime::execute::canonical_value(value);
+    for key in quench_runtime::execute::own_enumerable_keys(&canonical) {
+        let mut current = canonical.clone();
+        let mut repeated = true;
+        for _ in 0..4 {
+            let keys = quench_runtime::execute::own_enumerable_keys(&current);
+            if keys.len() != 1 || keys[0] != key {
+                repeated = false;
+                break;
+            }
+            current = quench_runtime::execute::canonical_value(
+                &quench_runtime::execute::get_property(&current, &key),
+            );
+        }
+        if repeated
+            && quench_runtime::execute::own_enumerable_keys(&current) == vec![key.clone()]
+        {
+            return format!("<ref *1> {{ {key}: [Circular *1] }}");
         }
     }
     if depth > 100 && matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -734,9 +757,13 @@ pub fn inspect_with_options(
     depth: usize,
     show_hidden: bool,
     max_array_length: Option<usize>,
+    getters: bool,
 ) -> String {
-    let rendered = match (value, max_array_length) {
-        (Value::ArrayBuffer(buffer), Some(limit)) => {
+    let rendered = match (value, max_array_length, getters) {
+        (Value::Object(_) | Value::ObjectAlias(_), _, true) => {
+            inspect_object_with_getters(value, depth)
+        }
+        (Value::ArrayBuffer(buffer), Some(limit), _) => {
             inspect_array_buffer_with_limit(value, buffer, limit)
         }
         _ => inspect_with_depth(value, depth),
@@ -835,6 +862,25 @@ pub fn inspect_with_options(
         }
     }
     rendered
+}
+
+fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
+    let keys = quench_runtime::execute::own_enumerable_keys(value);
+    if keys.is_empty() {
+        return "{}".into();
+    }
+    let body = keys
+        .iter()
+        .map(|key| {
+            format!(
+                "{}: {}",
+                if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() },
+                inspect_property_with_getters(value, key, depth.saturating_sub(1)),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{ {body} }}")
 }
 
 fn inspect_string(value: &str) -> String {
@@ -1036,7 +1082,7 @@ fn inspect_buffer(value: &Value, view: &quench_runtime::value::Uint8ArrayData) -
             shown.join(" ")
         )
     };
-    let properties = quench_runtime::execute::own_enumerable_keys(value)
+    let mut properties = quench_runtime::execute::own_enumerable_keys(value)
         .into_iter()
         .filter(|key| {
             key != "parent" && key != "offset" && key != "toString" && key.parse::<usize>().is_err()
@@ -1048,6 +1094,7 @@ fn inspect_buffer(value: &Value, view: &quench_runtime::value::Uint8ArrayData) -
             )
         })
         .collect::<Vec<_>>();
+    properties.dedup();
     if !properties.is_empty() {
         if slice.is_empty() {
             result = "<Buffer ".to_string();
@@ -1073,10 +1120,24 @@ fn inspect_array(value: &Value, depth: usize) -> String {
         }
         items.push(inspect_at(&item, depth - 1));
     }
-    if items.is_empty() {
+    let mut properties = quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| key != "length" && key.parse::<usize>().is_err())
+        .map(|key| {
+            let display = if key.parse::<i64>().is_ok() {
+                format!("'{key}'")
+            } else {
+                key.clone()
+            };
+            format!("{display}: {}", inspect_property(value, &key, depth.saturating_sub(1)))
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() && properties.is_empty() {
         return "[]".into();
     }
-    format!("[ {} ]", items.join(", "))
+    let mut parts = items;
+    parts.append(&mut properties);
+    format!("[ {} ]", parts.join(", "))
 }
 
 fn inspect_at(value: &Value, depth: usize) -> String {
@@ -1156,6 +1217,14 @@ fn inspect_object(value: &Value, depth: usize) -> String {
 }
 
 fn inspect_property(value: &Value, key: &str, depth: usize) -> String {
+    inspect_property_mode(value, key, depth, false)
+}
+
+fn inspect_property_with_getters(value: &Value, key: &str, depth: usize) -> String {
+    inspect_property_mode(value, key, depth, true)
+}
+
+fn inspect_property_mode(value: &Value, key: &str, depth: usize, getters: bool) -> String {
     let descriptor = quench_runtime::execute::call(
         &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
         &Value::Undefined,
@@ -1172,6 +1241,11 @@ fn inspect_property(value: &Value, key: &str, depth: usize) -> String {
             "set",
         );
         if !matches!(getter, Value::Undefined) {
+            if getters && matches!(getter, Value::Function(_) | Value::BoundFunction(_)) {
+                if let Ok(result) = quench_runtime::execute::call(&getter, value, &[]) {
+                    return format!("[Getter: {}]", inspect_shallow(&result));
+                }
+            }
             return if matches!(setter, Value::Undefined) {
                 "[Getter]".into()
             } else {
