@@ -192,6 +192,61 @@ fn typed_array_subclass_values_keep_the_typed_receiver() {
 }
 
 #[test]
+fn array_from_splice_deletions_terminate_at_live_length() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var array = [0, 1, -2, 4, -8, 16]; var calls = 0;\n\
+         var result = Array.from(array, function(value, index) {\n\
+           calls++; if (calls > 10) throw new Error('non-terminating iterator');\n\
+           array.splice(array.length - 1, 1); return 127;\n\
+         });\n\
+         if (calls !== 3 || result.length !== 3) throw new Error('live length');",
+    )
+    .expect("Array.from must observe splice deletions and terminate");
+}
+
+#[test]
+fn ordinary_function_arguments_binding_is_an_object() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var fn = function(a, b, c) { return arguments; };\n\
+         var value = fn(1, 2, 3);\n\
+         if (value == null || value.length !== 3 || value[1] !== 2) throw new Error('arguments');",
+    )
+    .expect("ordinary function calls must initialize arguments");
+}
+
+#[test]
+fn array_prototype_numeric_setter_is_visible_to_array_writes() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var calls = 0; Object.defineProperty(Array.prototype, '0', { set: function() { calls++; Object.freeze(array); } });\n\
+         var array = [];\n\
+         var descriptor = Object.getOwnPropertyDescriptor(Array.prototype, '0');\n\
+         if (typeof descriptor.set !== 'function') throw new Error('setter descriptor');\n\
+         var threw = false; try { array.push(1); } catch (_) { threw = true; }\n\
+         if (calls !== 1) throw new Error('setter calls');\n\
+         if (!threw) throw new Error('setter did not throw');\n\
+         if (array.length !== 0) throw new Error('setter length');\n\
+         var lengthThrew = false; try { Object.defineProperty(Array.prototype, 'length', { configurable: true }); } catch (_) { lengthThrew = true; }\n\
+         if (!lengthThrew) throw new Error('length configurable');",
+    )
+    .expect("Array.prototype numeric setters must remain observable");
+}
+
+#[test]
+fn reduce_right_walks_inherited_array_indices() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "foo.prototype = new Array(0, 1, 2, 3); function foo() {} var f = new foo();\n\
+         if (f.length !== 4 || f[3] !== 3) throw new Error('inherited array');\n\
+         var result = f.reduceRight(function(prev, value) { return prev + value; });\n\
+         if (result !== 6) throw new Error('reduceRight');",
+    )
+    .expect("reduceRight must include inherited array elements");
+}
+
+#[test]
 fn with_global_copy_on_write_updates_the_active_realm() {
     let mut host = super::RuntimeHost;
     host.run_script(
