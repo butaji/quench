@@ -47,6 +47,7 @@ fn prototype_for_value(value: &Value) -> Value {
     }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
+        Value::Builtin(Builtin::ArrayPrototype) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(
             Builtin::Math
             | Builtin::Reflect
