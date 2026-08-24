@@ -141,6 +141,13 @@ pub fn own_enumerable_keys(value: &crate::value::Value) -> Vec<String> {
     crate::own_keys::enumerable_key_strings(Some(value))
 }
 
+pub fn has_own_property(value: &crate::value::Value, key: &str) -> bool {
+    matches!(crate::builtins::object::has_own_property(
+        Some(value),
+        Some(&crate::value::Value::String(key.to_string())),
+    ), crate::value::Value::Boolean(true))
+}
+
 /// Canonical JavaScript `ToString` (may run user `toString`/`valueOf`).
 pub fn to_js_string(value: &crate::value::Value) -> Result<String, VmError> {
     crate::conversion::to_string(value)
