@@ -123,6 +123,7 @@ struct Counters {
     function_opcode_shapes: HashMap<(u16, u8, [u8; 16]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
+    crypto_direct_iterations: u64,
 }
 
 #[cfg(feature = "execution-trace")]
@@ -306,6 +307,18 @@ pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Va
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn named_property_result(_: &'static str, _: &crate::value::Value) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn crypto_direct_iterations(count: usize) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            counters.borrow_mut().crypto_direct_iterations += count as u64;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn crypto_direct_iterations(_: usize) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -655,6 +668,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "function_opcode_shapes": function_opcode_shapes,
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
+                "crypto_direct_iterations": counters.crypto_direct_iterations,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
             })
         })
