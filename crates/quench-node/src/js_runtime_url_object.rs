@@ -1,15 +1,16 @@
 fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
     let string = url.to_string();
-    let password_cell = Rc::new(RefCell::new(Value::String(
+    let password_cell = quench_runtime::value::BindingCell::new(Value::String(
         url.password().unwrap_or_default().into(),
-    )));
-    let pathname_cell = Rc::new(RefCell::new(Value::String(url.path().into())));
-    let search_cell = Rc::new(RefCell::new(Value::String(
+    ));
+    let pathname_cell =
+        quench_runtime::value::BindingCell::new(Value::String(url.path().into()));
+    let search_cell = quench_runtime::value::BindingCell::new(Value::String(
         url.query()
             .map(|query| format!("?{query}"))
             .unwrap_or_default()
             .into(),
-    )));
+    ));
     let search_params = Value::object(vec![
         (
             "get".into(),

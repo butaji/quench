@@ -21,27 +21,8 @@ pub(crate) fn get_named_property_result(
     cache: &std::cell::Cell<u64>,
 ) -> Result<Value, VmError> {
     if let Value::Object(object) = value {
-        if !object.has_replacement() {
-            let layout = object.semantic_layout_id();
-            let cached = cache.get();
-            if let Some(value) = prototype_cache_hit(object, layout, cached) {
-                crate::execution_trace::named_property_result("prototype", value);
-                crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-                return Ok(property_value(value));
-            }
-            if cached & PROTOTYPE_CACHE_TAG == 0 {
-                if let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cached) {
-                    if layout == cached_layout {
-                        if let Some((_, value)) = object.hot_properties().get(slot as usize) {
-                            crate::execution_trace::named_property_result("own", value);
-                            crate::execution_trace::event(
-                                crate::execution_trace::Event::NamedPropertyHit,
-                            );
-                            return Ok(property_value(value));
-                        }
-                    }
-                }
-            }
+        if let Some(value) = get_named_cached_object(object, cache) {
+            return Ok(value);
         }
     }
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyMiss);
@@ -58,6 +39,61 @@ pub(crate) fn get_named_property_result(
         }
     }
     Ok(result)
+}
+
+/// Resolve an already-proven object word without constructing an owning
+/// `Value::Object`. A cache miss deliberately returns to complete semantics.
+#[inline(always)]
+pub(crate) fn get_named_cached_object(
+    object: &crate::value::ObjectData,
+    cache: &std::cell::Cell<u64>,
+) -> Option<Value> {
+    if object.has_replacement() {
+        return None;
+    }
+    let layout = object.semantic_layout_id();
+    let cached = cache.get();
+    if let Some(value) = prototype_cache_hit(object, layout, cached) {
+        crate::execution_trace::named_property_result("prototype", value);
+        crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+        return Some(property_value(value));
+    }
+    let (cached_layout, slot) = (cached & PROTOTYPE_CACHE_TAG == 0)
+        .then(|| crate::machine::unpack_named_cache(cached))??;
+    let (_, value) = (layout == cached_layout)
+        .then(|| object.hot_properties().get(slot as usize))??;
+    crate::execution_trace::named_property_result("own", value);
+    crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+    Some(property_value(value))
+}
+
+/// Return a raw pointer to the canonical word cell on a guarded named hit.
+/// The pointer remains owned by `object`; callers must keep that object alive
+/// until the word has been copied.
+#[inline(always)]
+pub(crate) fn get_named_cached_cell(
+    object: &crate::value::ObjectData,
+    cache: &std::cell::Cell<u64>,
+) -> Option<*const crate::value::BindingCell> {
+    if object.has_replacement() {
+        return None;
+    }
+    let layout = object.semantic_layout_id();
+    let cached = cache.get();
+    let value = if cached & PROTOTYPE_CACHE_TAG != 0 {
+        prototype_cache_hit(object, layout, cached)?
+    } else {
+        let (expected, slot) = crate::machine::unpack_named_cache(cached)?;
+        let (_, value) = (layout == expected)
+            .then(|| object.hot_properties().get(slot as usize))??;
+        value
+    };
+    let Value::BindingCell(cell) = value else {
+        return None;
+    };
+    crate::execution_trace::named_property_result("word", value);
+    crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+    Some(std::rc::Rc::as_ptr(cell))
 }
 
 const PROTOTYPE_CACHE_TAG: u64 = 1 << 63;
@@ -639,7 +675,7 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     // Accessor descriptors may retain a live global/module binding cell.
     // Resolve the cell before applying the getter's callable dispatch.
     if let Value::BindingCell(cell) = getter {
-        let value = cell.borrow().clone();
+        let value = cell.load();
         return invoke_accessor(&value, receiver);
     }
     match getter {

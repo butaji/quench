@@ -3,7 +3,7 @@ use crate::{
     ops::Op,
     value::{ObjectData, Value},
 };
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc};
 pub(crate) fn reduce(
     expression: &oxc::ast::ast::NewExpression<'_>,
     ops: &mut Vec<Op>,

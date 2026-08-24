@@ -293,7 +293,7 @@ pub(crate) fn execute_target(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match target {
         crate::value::Value::BindingCell(cell) => {
-            let value = cell.borrow().clone();
+            let value = cell.load();
             execute_target(&value, receiver, arguments)
         }
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(target) => {
