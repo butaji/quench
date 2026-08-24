@@ -59,6 +59,16 @@ fn run_loop(
     crate::execution_trace::event(crate::execution_trace::Event::LoopEntry);
     let (post_test, dst, per_iteration) = config;
     run_fragment(init, registers)?;
+    if label.is_none() && !post_test {
+        if let Some(fact) = CountedForFact::recognize(test, update) {
+            if let Some(completion) = run_linear_solve_kernel(fact, body) {
+                return Ok(completion);
+            }
+            if let Some(completion) = run_advect_kernel(fact, body) {
+                return Ok(completion);
+            }
+        }
+    }
     if label.is_none() && !post_test && per_iteration.is_empty() {
         if let Some(fact) = CountedForFact::recognize(test, update) {
             if let Some(completion) = run_counted_for(fact, body, update, dst, registers)? {
@@ -107,7 +117,10 @@ fn run_counted_for(
         let Some(index) = environment.get_number(fact.slot) else {
             return Ok(None);
         };
-        if !counted_comparison(fact.comparison, index, fact.bound) {
+        let Some(bound) = fact.bound.number(&environment) else {
+            return Ok(None);
+        };
+        if !counted_comparison(fact.comparison, index, bound) {
             return Ok(Some(crate::completion::Completion::Normal));
         }
         match execute_loop_body(registers, &None, body)? {
@@ -150,9 +163,24 @@ counted_comparisons! {
 #[derive(Clone, Copy)]
 struct CountedForFact {
     slot: u16,
-    bound: f64,
+    bound: CountedBound,
     comparison: crate::ops::BinaryOp,
     step: f64,
+}
+
+#[derive(Clone, Copy)]
+enum CountedBound {
+    Constant(f64),
+    Slot(u16),
+}
+
+impl CountedBound {
+    fn number(self, environment: &crate::environment::Environment) -> Option<f64> {
+        match self {
+            Self::Constant(value) => Some(value),
+            Self::Slot(slot) => environment.get_number(slot),
+        }
+    }
 }
 
 impl CountedForFact {
@@ -163,29 +191,72 @@ impl CountedForFact {
         if test.len() != 4 {
             return None;
         }
-        let Op::LoadBinding { dst: index, slot, dynamic: false, .. } = test.cold_at(0)? else { return None };
-        let Op::Const { dst: bound_register, value: crate::ops::Constant::Number(bound) } = test.cold_at(1)? else { return None };
+        let (index, slot) = recognized_static_load(test, 0)?;
+        let (bound_register, bound) = recognized_counted_bound(test, 1)?;
         let Op::Binary { dst: condition, operator: comparison, lhs, rhs } = test.cold_at(2)? else { return None };
         let returned = test.instruction(3)?;
         if returned.opcode != crate::ir::Opcode::Return || returned.a != *condition {
             return None;
         }
-        if lhs != index || rhs != bound_register {
+        if *lhs != index || *rhs != bound_register {
             return None;
         }
-        let step = recognize_counted_update(update, *slot)?;
-        Some(Self { slot: *slot, bound: *bound, comparison: *comparison, step })
+        let step = recognize_counted_update(update, slot)?;
+        Some(Self { slot, bound, comparison: *comparison, step })
     }
 }
 
+fn recognized_counted_bound(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+) -> Option<(u16, CountedBound)> {
+    if let Some((register, slot)) = recognized_static_load(code, pc) {
+        return Some((register, CountedBound::Slot(slot)));
+    }
+    let Op::Const {
+        dst,
+        value: crate::ops::Constant::Number(value),
+    } = code.cold_at(pc)?
+    else {
+        return None;
+    };
+    Some((*dst, CountedBound::Constant(*value)))
+}
+
+fn recognized_static_load(code: crate::machine::CodeView<'_>, pc: usize) -> Option<(u16, u16)> {
+    let instruction = code.instruction(pc)?;
+    matches!(
+        instruction.opcode,
+        crate::ir::Opcode::LoadLocal | crate::ir::Opcode::LoadLocalChecked
+    )
+    .then_some((instruction.a, instruction.b))
+}
+
 fn recognize_counted_update(update: crate::machine::CodeView<'_>, slot: u16) -> Option<f64> {
-    if update.len() == 2 {
+    if matches!(update.len(), 2 | 3) {
         let instruction = update.instruction(0)?;
-        let returned = update.instruction(1)?;
+        let returned = update.instruction(update.len() - 1)?;
+        let valid_return = if update.len() == 2 {
+            returned.a == instruction.b
+        } else {
+            match update.cold_at(1)? {
+                Op::Unary {
+                    dst,
+                    operator: crate::ops::UnaryOp::Void,
+                    src,
+                } => *src == instruction.b && returned.a == *dst,
+                Op::Unary {
+                    dst,
+                    operator: crate::ops::UnaryOp::ToNumeric,
+                    src,
+                } => *src == instruction.a && returned.a == *dst,
+                _ => false,
+            }
+        };
         if instruction.opcode == crate::ir::Opcode::UpdateLocal
             && instruction.c == slot
             && returned.opcode == crate::ir::Opcode::Return
-            && returned.a == instruction.b
+            && valid_return
         {
             return Some(if instruction.flags == 0 { 1.0 } else { -1.0 });
         }
