@@ -476,6 +476,14 @@ fn set_property_tail(target: Value, key: &str, value: Value) -> Value {
 
 include!("builtins_string_core.rs");
 include!("builtins_property_helpers.rs");
+
+pub fn define_own_property_public(
+    target: &Value,
+    key: &str,
+    descriptor: &[(String, Value)],
+) -> Result<Value, crate::execute::VmError> {
+    define_own_property(target, key, descriptor)
+}
 fn set_function_property(
     function: Rc<crate::value::FunctionValue>,
     key: &str,
