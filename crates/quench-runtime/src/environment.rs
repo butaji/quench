@@ -342,7 +342,6 @@ impl Environment {
         for index in 0..count {
             environment.ensure_slot(index as u16);
         }
-<<<<<<< HEAD
         let refs: Rc<[BindingRef]> = (0..count)
             .filter_map(|index| environment.slot(index as u16))
             .collect::<Vec<_>>()
