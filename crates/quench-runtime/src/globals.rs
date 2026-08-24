@@ -101,6 +101,9 @@ fn script_property_names() -> &'static [&'static str] {
         "ShadowRealm",
         "Float64Array",
         "Float32Array",
+        // Float16Array is represented by the nearest supported floating view
+        // until the engine grows a distinct binary16 value representation.
+        "Float16Array",
         "Int8Array",
         "Int16Array",
         "Int32Array",
@@ -150,6 +153,7 @@ fn typed_array_builtin(name: &str) -> Option<crate::ops::Builtin> {
     match name {
         "Float64Array" => Some(crate::ops::Builtin::Float64Array),
         "Float32Array" => Some(crate::ops::Builtin::Float32Array),
+        "Float16Array" => Some(crate::ops::Builtin::Float32Array),
         "Int8Array" => Some(crate::ops::Builtin::Int8Array),
         "Int16Array" => Some(crate::ops::Builtin::Int16Array),
         "Int32Array" => Some(crate::ops::Builtin::Int32Array),
