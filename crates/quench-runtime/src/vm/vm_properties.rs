@@ -115,6 +115,14 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
         Array(values) => {
             let property = crate::arrays::property(values, key);
+            let property = if matches!(property, Value::Undefined) {
+                values
+                    .prototype()
+                    .map(|prototype| get_property(&prototype, key))
+                    .unwrap_or(property)
+            } else {
+                property
+            };
             if key == "toLocaleString" {
                 crate::vm::bind_receiver_property(property, value)
             } else {

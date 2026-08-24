@@ -3,18 +3,33 @@ pub(crate) fn array_copy_within(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let object = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
-    let Value::Array(values) = &object else {
-        return Ok(object);
+    let original_length = crate::arrays::array_like_length(&object)?;
+    let target = copy_index(arguments.first(), original_length)?;
+    let start = copy_index(arguments.get(1), original_length)?;
+    let explicit_end = arguments
+        .get(2)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(|value| copy_index(Some(value), original_length))
+        .transpose()?;
+    let current = crate::locals::resolved_replacement(object.clone());
+    let Value::Array(values) = &current else {
+        let end = explicit_end.unwrap_or(original_length);
+        let count = end
+            .saturating_sub(start)
+            .min(original_length.saturating_sub(target));
+        return copy_within_object(current, target, start, count);
     };
-    let receiver = &object;
-    let length = values.logical_len();
-    let target = copy_index(arguments.first(), length)?;
-    let start = copy_index(arguments.get(1), length)?;
-    let end = match arguments.get(2) {
-        None | Some(Value::Undefined) => length,
-        Some(value) => copy_index(Some(value), length)?,
-    };
-    let count = end.saturating_sub(start).min(length.saturating_sub(target));
+    let receiver = &current;
+    let end = explicit_end.unwrap_or(original_length);
+    let count = end
+        .saturating_sub(start)
+        .min(original_length.saturating_sub(target));
+
+    // A custom prototype or indexed accessor makes HasProperty observable;
+    // keep those receivers on the ordinary property path.
+    if values.prototype().is_some() || values.has_indexed_accessor() {
+        return copy_within_object(current, target, start, count);
+    }
 
     // The dense backing store is canonical only for packed ordinary arrays.
     // In that state copy_dense_within supplies memmove ordering without a
@@ -28,12 +43,68 @@ pub(crate) fn array_copy_within(
         return Ok(result);
     }
 
-    let mut updated = values.to_vec();
-    let source = updated[start..start + count].to_vec();
-    updated[target..target + count].clone_from_slice(&source);
-    let result = Value::array(updated);
+    let mut updated = values.as_ref().clone();
+    if target < start {
+        for offset in 0..count {
+            copy_dense_property(&mut updated, start + offset, target + offset);
+        }
+    } else {
+        for offset in (0..count).rev() {
+            copy_dense_property(&mut updated, start + offset, target + offset);
+        }
+    }
+    let result = Value::Array(std::rc::Rc::new(updated));
     crate::locals::replace_value(receiver, &result);
     Ok(result)
+}
+
+fn copy_within_object(
+    mut target: Value,
+    destination: usize,
+    source: usize,
+    count: usize,
+) -> Result<Value, crate::execute::VmError> {
+    let forward = destination < source;
+    let offsets: Box<dyn Iterator<Item = usize>> = if forward {
+        Box::new(0..count)
+    } else {
+        Box::new((0..count).rev())
+    };
+    for offset in offsets {
+        let from = (source + offset).to_string();
+        let to = (destination + offset).to_string();
+        if crate::with_scope::has_property(&target, &from)? {
+            let value = crate::execute::get_property_result(&target, &from)?;
+            let updated = crate::properties::assign_set_property(&target, &to, value)?;
+            crate::locals::replace_value(&target, &updated);
+            target = updated;
+        } else {
+            let (updated, deleted) = if matches!(target, Value::Proxy(_)) {
+                let result = crate::proxy::proxy_delete(&target, &to)?;
+                (target.clone(), crate::execute::is_truthy(&result))
+            } else {
+                crate::execute::delete_property(target.clone(), &to)
+            };
+            if !deleted {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot delete property during copyWithin",
+                ));
+            }
+            crate::locals::replace_value(&target, &updated);
+            target = updated;
+        }
+    }
+    Ok(target)
+}
+
+fn copy_dense_property(values: &mut crate::value::ArrayData, source: usize, destination: usize) {
+    if values.has_index(source) {
+        if let Some(value) = values.get_index(source) {
+            values.set_index(destination, value);
+        }
+    } else {
+        values.delete_property(&destination.to_string());
+    }
 }
 
 fn copy_index(value: Option<&Value>, length: usize) -> Result<usize, crate::execute::VmError> {
