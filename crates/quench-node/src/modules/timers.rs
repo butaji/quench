@@ -22,7 +22,6 @@ use crate::host::HostState;
 const TIMER_ID_PROP: &str = "\0quench:timer:id";
 /// Node's `TIMEOUT_MAX` (2^31 - 1); larger delays clamp to 1ms.
 const TIMEOUT_MAX: f64 = 2_147_483_647.0;
-const PROMISES_PRELUDE: &str = include_str!("timers_promises.js");
 
 pub enum TimerKind {
     Timeout,
@@ -37,8 +36,7 @@ pub struct Timer {
     pub callback: Value,
     pub args: Vec<Value>,
     pub object: Value,
-    pub async_resource: Value,
-    pub destroyed: Rc<RefCell<Value>>,
+    pub destroyed: Rc<quench_runtime::value::BindingCell>,
     pub referenced: bool,
     pub active: bool,
 }
@@ -100,9 +98,8 @@ fn schedule(
     };
     let id = state.borrow_mut().timers.allocate();
     let fire_at = monotonic_ms().saturating_add(delay);
-    let destroyed = Rc::new(RefCell::new(Value::Boolean(false)));
+    let destroyed = quench_runtime::value::BindingCell::new(Value::Boolean(false));
     let object = timer_object(id, &destroyed)?;
-    let async_resource = async_resource(state, &kind)?;
     state.borrow_mut().timers.timers.insert(
         id,
         Timer {
@@ -112,7 +109,6 @@ fn schedule(
             callback: cb,
             args: rest,
             object: object.clone(),
-            async_resource,
             destroyed,
             referenced: true,
             active: true,
@@ -121,38 +117,12 @@ fn schedule(
     Ok(object)
 }
 
-fn async_resource(
-    _state: &Rc<RefCell<HostState>>,
-    kind: &TimerKind,
-) -> Result<Value, VmError> {
-    let resource = crate::host::namespace_object_from_pairs(Vec::new());
-    let global = quench_runtime::vm::current_global_object();
-    let helper = quench_runtime::execute::get_property(&global, "__quenchAsyncInit");
-    if quench_runtime::is_callable(&helper) {
-        let name = match kind {
-            TimerKind::Immediate => "Immediate",
-            TimerKind::Timeout | TimerKind::Interval => "Timeout",
-        };
-        return quench_runtime::execute::call(
-            &helper,
-            &Value::Undefined,
-            &[Value::String(name.to_string()), resource],
-        );
-    }
-    Ok(resource)
-}
-
-pub(crate) fn async_destroy(resource: &Value) {
-    let global = quench_runtime::vm::current_global_object();
-    let helper = quench_runtime::execute::get_property(&global, "__quenchAsyncDestroy");
-    if quench_runtime::is_callable(&helper) {
-        let _ = quench_runtime::execute::call(&helper, &Value::Undefined, std::slice::from_ref(resource));
-    }
-}
-
 /// Build the JS Timeout/Immediate object: hidden id plus the
 /// `unref`/`ref`/`hasRef`/`refresh` capability methods.
-fn timer_object(id: u64, destroyed: &Rc<RefCell<Value>>) -> Result<Value, VmError> {
+fn timer_object(
+    id: u64,
+    destroyed: &Rc<quench_runtime::value::BindingCell>,
+) -> Result<Value, VmError> {
     let object = crate::host::namespace_object_from_pairs(vec![
         (TIMER_ID_PROP.to_string(), Value::Number(id as f64)),
         (
@@ -213,7 +183,7 @@ fn clear_matching(
 }
 
 pub(crate) fn mark_destroyed(timer: &Timer) {
-    *timer.destroyed.borrow_mut() = Value::Boolean(true);
+    timer.destroyed.store(Value::Boolean(true));
 }
 
 fn timer_id_of(receiver: Option<&Value>) -> Option<u64> {
@@ -261,7 +231,7 @@ pub fn method_refresh(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) 
         if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
             timer.fire_at = monotonic_ms().saturating_add(timer.period.max(1));
             timer.active = true;
-            *timer.destroyed.borrow_mut() = Value::Boolean(false);
+            timer.destroyed.store(Value::Boolean(false));
         }
     }
     receiver.cloned().unwrap_or(Value::Undefined)
@@ -395,18 +365,4 @@ pub fn build() -> Vec<(String, Value)> {
             crate::host::capability(crate::registry::SPEC_TIMERS_CLEARIMMEDIATE),
         ),
     ]
-}
-
-/// Build the Promise-returning timer namespace from the same timer
-/// capabilities as the callback API.
-pub fn build_promises() -> Result<Value, VmError> {
-    let program = quench_runtime::reduce::reduce_global_script_source(PROMISES_PRELUDE)
-        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let context = quench_runtime::vm::current_context();
-    let mut registers = quench_runtime::register_file::RegisterFile::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
-    })?;
-    let timers = crate::host::namespace_object_from_pairs(build());
-    quench_runtime::vm::call_value(&factory, &Value::Undefined, &[timers])
 }
