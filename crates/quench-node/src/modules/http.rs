@@ -256,7 +256,17 @@ fn emit_request(
             .map(|conn| conn.server.clone())
             .unwrap_or(Value::Undefined)
     };
-    net::emit(state, &server, "request", vec![req, res])?;
+    net::emit(state, &server, "request", vec![req.clone(), res])?;
+    let body_done = state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .map(|conn| conn.body_done)
+        .unwrap_or(false);
+    if body_done {
+        net::emit(state, &req, "end", Vec::new())?;
+    }
     // With keep-alive, reset the connection so the next pipelined request
     // on the same socket parses; otherwise the net layer's socket_end
     // closes it after the response.
@@ -314,6 +324,10 @@ fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usiz
             ("url".to_string(), Value::String(url)),
             ("httpVersion".to_string(), Value::String(version)),
             ("headers".to_string(), host_api::object(headers)),
+            (
+                "resume".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_REQ_RESUME),
+            ),
         ],
     )?;
     Ok((req, content_length, keep_alive))
@@ -442,6 +456,14 @@ pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     crate::modules::http_client::request(state, args)
 }
 
+pub fn request_resume(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
 /// `http.get(options[, cb])` — `request` with method GET, auto-ended.
 pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::http_client::get(state, args)
@@ -455,12 +477,20 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_HTTP_SERVER),
         ),
         (
+            "Server",
+            crate::host::capability(crate::registry::SPEC_HTTP_SERVER),
+        ),
+        (
             "request",
             crate::host::capability(crate::registry::SPEC_HTTP_REQUEST),
         ),
         (
             "get",
             crate::host::capability(crate::registry::SPEC_HTTP_GET),
+        ),
+        (
+            "Agent",
+            crate::host::capability(crate::registry::SPEC_HTTP_AGENT),
         ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
