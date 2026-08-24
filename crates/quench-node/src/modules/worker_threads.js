@@ -3,13 +3,40 @@
 // isolated VM while preserving deterministic event delivery to the parent.
 var proc = process;
 var workerArgs = proc.argv || [];
-var workerEnv = proc.env && proc.env.QUENCH_WORKER;
+var workerEnv = (proc.env && proc.env.QUENCH_WORKER) || globalThis.__quench_worker_mode;
 var workerArgData = null;
 for (var wa = 0; wa < workerArgs.length; wa++) {
   if (workerArgs[wa] === '--quench-worker') workerEnv = '1';
   if (String(workerArgs[wa]).indexOf('--quench-worker-data=') === 0) workerArgData = String(workerArgs[wa]).slice(21);
 }
 var workerData = workerEnv ? JSON.parse(workerArgData || (proc.env && proc.env.QUENCH_WORKER_DATA) || 'null') : null;
+var workerMessage = (workerEnv && proc.env && proc.env.QUENCH_WORKER_MESSAGE) || globalThis.__quench_worker_message;
+function workerPortProxy(token) {
+  var port = {
+    __quench_port: token,
+    postMessage: function (value) {
+      proc.stdout.write('__QUENCH_WORKER_PORT__' + JSON.stringify({ token: token, value: value }) + '\n');
+    },
+    close: function () {}
+  };
+  if (typeof messagePort === 'function') Object.setPrototypeOf(port, messagePort.prototype);
+  return port;
+}
+function reviveWorkerMessage(value) {
+  if (value && typeof value === 'object') {
+    if (value.__quench_port !== undefined) return workerPortProxy(value.__quench_port);
+    if (Array.isArray(value)) return value.map(reviveWorkerMessage);
+    var object = {};
+    var keys = Object.keys(value);
+    for (var i = 0; i < keys.length; i++) object[keys[i]] = reviveWorkerMessage(value[keys[i]]);
+    return object;
+  }
+  return value;
+}
+Object.defineProperty(globalThis, '__quench_worker_revive', {
+  configurable: true,
+  value: reviveWorkerMessage
+});
 function emitter(target) {
   var listeners = {};
   var pending = target._queueEvents ? [] : null;
@@ -70,6 +97,7 @@ function cloneMessage(value) {
   if (value && typeof value.postMessage === 'function' && typeof value.close === 'function') {
     return value;
   }
+  if (value && value.__quench_port !== undefined) return value;
   if (value instanceof ArrayBuffer) return value.slice(0);
   if (value instanceof Uint8Array) return new Uint8Array(value);
   if (Array.isArray(value)) {
@@ -232,21 +260,56 @@ var api = {
       env.QUENCH_WORKER = '1';
       var data = options.workerData === undefined ? null : options.workerData;
       env.QUENCH_WORKER_DATA = JSON.stringify(data);
-      var result = cp.spawnSync(proc.execPath, [String(filename), '--quench-worker', '--quench-worker-data=' + JSON.stringify(data)], { env: env, cwd: options.cwd });
-      var status = result && result.status === null ? 1 : (result ? result.status : 1);
-      var output = result && result.stdout && typeof result.stdout.toString === 'function' ? result.stdout.toString() : String(result && result.stdout || '');
-      var lines = output.split('\n');
-      for (var j = 0; j < lines.length; j++) {
-        var marker = '__QUENCH_WORKER_MESSAGE__';
-        if (lines[j].indexOf(marker) !== 0) continue;
-        try { self.emit('message', JSON.parse(lines[j].slice(marker.length))); } catch (_) {}
+      function runWorker(message, transferredPort) {
+        if (message !== undefined) env.QUENCH_WORKER_MESSAGE = JSON.stringify(message);
+        var evalPath = null;
+        var args;
+        if (options.eval) {
+          var evalDirectory = options.cwd || (typeof proc.cwd === 'function' ? proc.cwd() : '.');
+          evalPath = String(evalDirectory) + '/.quench-worker-' + String(Date.now()) + '-' + String(Math.random()).slice(2) + '.js';
+          var evalSource = 'globalThis.__quench_worker_mode = true;\n';
+          if (message !== undefined) evalSource += 'globalThis.__quench_worker_message = ' + JSON.stringify(message) + ';\n';
+          evalSource += String(filename);
+          if (message !== undefined) evalSource += '\nrequire("worker_threads").parentPort.emit("message", globalThis.__quench_worker_revive(globalThis.__quench_worker_message));\n';
+          require('fs').writeFileSync(evalPath, evalSource);
+          args = [evalPath];
+        } else {
+          args = [String(filename)];
+        }
+        args.push('--quench-worker', '--quench-worker-data=' + JSON.stringify(data));
+        var result = cp.spawnSync(proc.execPath, args, { env: env, cwd: options.cwd });
+        if (evalPath) {
+          try { require('fs').unlinkSync(evalPath); } catch (_) {}
+        }
+        var status = result && result.status === null ? 1 : (result ? result.status : 1);
+        var output = result && result.stdout && typeof result.stdout.toString === 'function' ? result.stdout.toString() : String(result && result.stdout || '');
+        var lines = output.split('\n');
+        for (var j = 0; j < lines.length; j++) {
+          var marker = '__QUENCH_WORKER_MESSAGE__';
+          var portMarker = '__QUENCH_WORKER_PORT__';
+          if (lines[j].indexOf(marker) === 0) {
+            try { self.emit('message', JSON.parse(lines[j].slice(marker.length))); } catch (_) {}
+          } else if (lines[j].indexOf(portMarker) === 0 && transferredPort) {
+            try { transferredPort.postMessage(JSON.parse(lines[j].slice(portMarker.length)).value); } catch (_) {}
+          }
+        }
+        self.exited = true;
+        self.emit('online');
+        self.emit('exit', status);
+        if (status !== 0 && result && result.stderr) self.emit('error', new Error(String(result.stderr)));
+        return status;
       }
-      self.exited = true;
-      self.emit('online');
-      self.emit('exit', status);
-      if (status !== 0 && result && result.stderr) self.emit('error', new Error(String(result.stderr)));
-      self.postMessage = function () {};
-      self.terminate = function () { self.exited = true; return Promise.resolve(status); };
+      if (options.eval) {
+        self.postMessage = function (message, transferList) {
+          var transferredPort = message && message.port && typeof message.port.postMessage === 'function' ? message.port : null;
+          var tokenized = transferredPort ? { port: { __quench_port: 0 } } : message;
+          return runWorker(tokenized, transferredPort);
+        };
+      } else {
+        runWorker(undefined, null);
+        self.postMessage = function () {};
+      }
+      self.terminate = function () { self.exited = true; return Promise.resolve(0); };
       self.ref = self.unref = function () { return self; };
       return self;
     },
@@ -262,3 +325,9 @@ var api = {
   }
 };
 module.exports = api;
+if (workerEnv && workerMessage && parentPort) {
+  try {
+    var decodedWorkerMessage = typeof workerMessage === 'string' ? JSON.parse(workerMessage) : workerMessage;
+    parentPort.emit('message', reviveWorkerMessage(decodedWorkerMessage));
+  } catch (_) {}
+}
