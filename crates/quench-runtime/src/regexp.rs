@@ -500,10 +500,65 @@ fn argument_string(arguments: &[Value]) -> Result<String, VmError> {
 }
 
 fn extract_regex_parts(receiver: &Value) -> Result<(String, String, usize), VmError> {
+    if let Some((source, flags, last_index)) = fast_regex_parts(receiver) {
+        return Ok((source, flags, last_index));
+    }
     let source = extract_source(receiver);
     let flags = extract_flags(receiver);
     let last_index = extract_last_index(receiver)?;
     Ok((source, flags, last_index))
+}
+
+const REGEXP_SOURCE_SLOT: usize = 2;
+const REGEXP_FLAGS_SLOT: usize = 3;
+const REGEXP_LAST_INDEX_SLOT: usize = 9;
+const REGEXP_LAST_INDEX_DESCRIPTOR_SLOT: usize = 10;
+
+fn regexp_slot<'a>(receiver: &'a Value, slot: usize, key: &str) -> Option<&'a Value> {
+    let Value::Object(object) = receiver else {
+        return None;
+    };
+    let (name, value) = object.hot_properties().get(slot)?;
+    (name == key).then_some(value)
+}
+
+fn fast_regex_parts(receiver: &Value) -> Option<(String, String, usize)> {
+    let Value::String(source) = regexp_slot(receiver, REGEXP_SOURCE_SLOT, "\0regexp_source")?
+    else {
+        return None;
+    };
+    let Value::String(flags) = regexp_slot(receiver, REGEXP_FLAGS_SLOT, "\0regexp_flags")? else {
+        return None;
+    };
+    let Value::BindingCell(last_index) =
+        regexp_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex")?
+    else {
+        return None;
+    };
+    let index = crate::conversion::to_number(&last_index.borrow()).ok()?;
+    Some((source.clone(), flags.clone(), to_length(index)))
+}
+
+fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
+    let Some(Value::BindingCell(cell)) = regexp_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex")
+    else {
+        return false;
+    };
+    let Some(Value::Object(descriptor)) = regexp_slot(
+        receiver,
+        REGEXP_LAST_INDEX_DESCRIPTOR_SLOT,
+        &crate::builtins::descriptor_key("lastIndex"),
+    ) else {
+        return false;
+    };
+    let writable = descriptor
+        .hot_properties()
+        .get(1)
+        .is_some_and(|(name, flag)| name == "writable" && matches!(flag, Value::Boolean(true)));
+    if writable {
+        cell.replace(value.clone());
+    }
+    writable
 }
 
 fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a str) {
@@ -543,6 +598,9 @@ fn set_last_index(receiver: &Value, index: f64) -> Result<(), VmError> {
 }
 
 fn set_last_index_value(receiver: &Value, value: Value) -> Result<(), VmError> {
+    if fast_set_last_index(receiver, &value) {
+        return Ok(());
+    }
     let updated = crate::properties::assign_set_property(receiver, "lastIndex", value)?;
     crate::properties::propagate_updated_object(
         &mut crate::register_file::RegisterFile::new(),
