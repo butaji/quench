@@ -75,6 +75,12 @@ pub(super) fn instantiate_functions(
             ops,
             behavior == EvalBehavior::Global,
         )?;
+    } else if behavior == EvalBehavior::Local {
+        for name in variables {
+            if let Some(&slot) = locals.get(&name) {
+                ops.push(Op::DeclareEvalBinding { name, slot });
+            }
+        }
     }
     if behavior == EvalBehavior::Script {
         emit_global_lexical_bindings(statements, locals, ops);
