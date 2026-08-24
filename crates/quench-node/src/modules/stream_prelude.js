@@ -749,7 +749,10 @@
           st.pending.unshift(...pending);
           updateBufferedRequestCount(st);
           st.writing = false;
+          const wasEnded = st.ended;
+          st.ended = false;
           this.write(next.chunk, next.encoding, next.callback);
+          st.ended = wasEnded;
           return;
         }
         if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
