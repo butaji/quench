@@ -292,7 +292,9 @@ pub(crate) fn descriptor(
     let (Some(value), Some(key)) = (value, key) else {
         return Ok(Value::Undefined);
     };
-    let value = unwrap_binding_cells(crate::locals::resolved_replacement(value.clone()));
+    let value = crate::vm::resolve_global_owner(value)
+        .unwrap_or_else(|| crate::locals::resolved_replacement(value.clone()));
+    let value = unwrap_binding_cells(value);
     let key = crate::conversion::to_property_key(key)?;
     crate::module_bindings::exports(&value, &key)?;
     let descriptor = descriptor_for_value(&value, &key);
