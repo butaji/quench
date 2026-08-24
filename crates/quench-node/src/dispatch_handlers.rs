@@ -41,6 +41,26 @@ pub fn events_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
     crate::modules::events::new_emitter(state, args)
 }
 
+pub fn events_call(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        crate::modules::events::initialize_emitter(state, receiver)?;
+        return Ok(receiver.clone());
+    }
+    crate::modules::events::new_emitter(state, &[])
+}
+
+pub fn buffer_of(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::buffer_from::of(args)
+}
+
 // ---- console ----
 pub fn console_log(
     state: &Rc<RefCell<HostState>>,

@@ -1,7 +1,14 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SuspensionPoint {
-    Yield { pc: usize, src: u16 },
-    YieldStar { pc: usize, dst: u16, iterator: u16 },
+    Yield {
+        pc: usize,
+        src: u16,
+    },
+    YieldStar {
+        pc: usize,
+        dst: u16,
+        iterator: u16,
+    },
     Loop {
         pc: usize,
         label: Option<String>,
