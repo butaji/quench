@@ -230,6 +230,7 @@ const CAP_ABORT_CONTROLLER: u16 = 0x1f02;
 const CAP_ABORT_SIGNAL: u16 = 0x1f03;
 const CAP_ABORT_SIGNAL_ABORT: u16 = 0x1f04;
 const CAP_ABORT_CONTROLLER_ABORT: u16 = 0x1f05;
+const CAP_ABORT_EVENT_STOP_IMMEDIATE: u16 = 0x1f06;
 const CAP_TEST_RUN: u16 = 0x1b00;
 const CAP_TEST_SKIP: u16 = 0x1b01;
 
@@ -240,6 +241,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         0x1200 => node_require,
         CAP_EVENTS_NEW => handlers::events_call,
         CAP_ABORT_CONTROLLER_ABORT => handlers::abort_controller_abort,
+        CAP_ABORT_EVENT_STOP_IMMEDIATE => handlers::abort_event_stop_immediate,
         CAP_ABORT_SIGNAL_ABORT => handlers::abort_signal_abort,
         2044 => handlers::buffer_of,
         0x1a00 => crate::modules::compat_extra::sea_is_sea,
