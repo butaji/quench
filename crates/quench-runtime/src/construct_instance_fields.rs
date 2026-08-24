@@ -173,10 +173,12 @@ fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {
     let prototype = crate::construct::get_prototype_from_constructor(&target, |realm| {
         crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
     });
-    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
+    let object = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
         "\0prototype".to_string(),
-        prototype,
-    )])))
+        prototype.clone(),
+    )]));
+    object.capture_original_prototype(prototype);
+    crate::value::Value::Object(object)
 }
 
 fn builtin_default_prototype(target: &crate::value::Value) -> Option<crate::value::Value> {

@@ -124,9 +124,9 @@ fn try_record_constructor(
             crate::value::Value::BindingCell(crate::value::BindingCell::new(value)),
         ));
     }
-    Some(crate::value::Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(properties),
-    )))
+    let object = std::rc::Rc::new(crate::value::ObjectData::new(properties));
+    object.capture_original_prototype(prototype);
+    Some(crate::value::Value::Object(object))
 }
 
 fn record_prototype_is_data_only(
