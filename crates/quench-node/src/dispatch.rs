@@ -43,6 +43,7 @@ const CAP_UTIL_FORMAT: u16 = 0x0300;
 const CAP_UTIL_INSPECT: u16 = 0x0301;
 const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
 const CAP_UTIL_IS_NATIVE_ERROR: u16 = 0x030A;
+const CAP_UTIL_PARSE_ENV: u16 = 0x030B;
 const CAP_PATH_JOIN: u16 = 0x0400;
 const CAP_PATH_RESOLVE: u16 = 0x0401;
 const CAP_PATH_NORMALIZE: u16 = 0x0402;
@@ -298,6 +299,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_CONSOLE_TRACE => console_trace,
         CAP_UTIL_FORMAT => util_format,
         CAP_UTIL_INSPECT => util_inspect,
+        CAP_UTIL_PARSE_ENV => util_parse_env,
         CAP_UTIL_PROMISIFY => util_promisify,
         CAP_UTIL_PROMISIFIED_CALL => util_promisified_call,
         CAP_UTIL_PROMISIFIED_CALLBACK => util_promisified_callback,
