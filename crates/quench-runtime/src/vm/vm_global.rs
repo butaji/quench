@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 pub fn current_global_object() -> Value {
     if let Some(global) = batched_global_object() {
         return Value::Object(global);
@@ -16,6 +18,10 @@ pub fn current_global_object() -> Value {
 }
 
 pub(crate) const SCRIPT_GLOBAL_VIEW: &str = "\0quench:script-global-view";
+
+thread_local! {
+    static RESOLVING_GLOBAL_OWNER: Cell<bool> = const { Cell::new(false) };
+}
 
 pub(crate) fn initialize_global_object(value: &Value) {
     let Value::Object(object) = value else {
@@ -62,8 +68,15 @@ pub(crate) fn resolve_global_owner(value: &Value) -> Option<Value> {
     // Global aliases expose a self-referential `globalThis` property.  That
     // owner marker survives copy-on-write storage replacement even when the
     // alias itself still points at the previous object allocation.
-    if crate::execute::get_property_result(value, "globalThis")
-        .ok()
+    let global_this = RESOLVING_GLOBAL_OWNER.with(|active| {
+        if active.replace(true) {
+            return None;
+        }
+        let result = crate::execute::get_property_result(value, "globalThis");
+        active.set(false);
+        result.ok()
+    });
+    if global_this
         .and_then(|global_this| global_object_target(&global_this))
         .is_some_and(|global_this| global_this.identity() == object.identity())
     {
