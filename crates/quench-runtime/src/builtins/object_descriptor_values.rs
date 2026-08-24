@@ -3,7 +3,7 @@ fn string_descriptor(value: &str, key: &str) -> Option<Value> {
         return Some(string_length_descriptor(value));
     }
     crate::strings::char_at_utf16(value, key.parse::<usize>().ok()?)
-        .map(|character| descriptor_object_with_flags(Value::String(character), false, true, false))
+        .map(|character| descriptor_object_with_flags(character, false, true, false))
 }
 
 fn string_length_descriptor(value: &str) -> Value {

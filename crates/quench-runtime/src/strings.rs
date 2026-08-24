@@ -436,14 +436,7 @@ pub(crate) fn for_each_unit(value: &Value, mut visit: impl FnMut(u16)) -> bool {
 /// a lone surrogate as a one-unit `StringUnits`.
 pub(crate) fn char_at_units(units: &[u16], index: usize) -> Option<Value> {
     let unit = *units.get(index)?;
-    let code = code_point(units, index);
-    if code > 0xFFFF {
-        Some(from_units(units[index..index + 2].to_vec()))
-    } else if is_surrogate(code) {
-        Some(from_units(vec![unit]))
-    } else {
-        char::from_u32(code).map(|character| Value::String(character.to_string()))
-    }
+    Some(from_units(vec![unit]))
 }
 
 /// The code point beginning at `index` within `units`, folding a valid
