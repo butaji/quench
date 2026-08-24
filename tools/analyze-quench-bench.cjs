@@ -107,6 +107,7 @@ function explain(report) {
         ? "Value materialization is frequent relative to guest retirement"
         : "Value materialization is below half of guest retirement",
     ],
+    hot_transitions: (vm.transitions || []).slice(0, 20),
   };
 }
 
