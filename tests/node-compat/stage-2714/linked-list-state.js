@@ -1,0 +1,12 @@
+'use strict';
+const assert = require('assert');
+const L = require('internal/linkedlist');
+const list={name:'list'}, A={name:'A'}, B={name:'B'}, C={name:'C'}, D={name:'D'};
+for (const x of [list,A,B,C,D]) L.init(x);
+L.append(list,A); assert.strictEqual(L.peek(list),A);
+L.append(list,B); assert.strictEqual(L.peek(list),A);
+L.append(list,C); assert.strictEqual(L.peek(list),A);
+L.append(list,D); assert.strictEqual(L.peek(list),A);
+L.remove(A); assert.strictEqual(L.peek(list), B); L.remove(B); assert.strictEqual(L.peek(list), C); L.remove(B); assert.strictEqual(L.peek(list),C);
+L.append(list,B); assert.strictEqual(L.peek(list),C);
+L.remove(C); assert.strictEqual(L.peek(list),D);
