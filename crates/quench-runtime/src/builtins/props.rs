@@ -76,6 +76,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == Array && key == "from" {
         return Some(ArrayFrom);
     }
+    if builtin == Array && key == "fromAsync" {
+        return Some(ArrayFromAsync);
+    }
     if builtin == Array && key == "of" {
         return Some(ArrayOf);
     }
