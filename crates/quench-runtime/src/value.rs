@@ -1930,7 +1930,11 @@ pub struct FunctionValue {
 impl Drop for FunctionValue {
     fn drop(&mut self) {
         crate::execution_trace::function_lifecycle(false);
-        crate::execution_trace::function_shape(self.captures.len(), self.code.len(), false);
+        crate::execution_trace::function_shape(
+            self.code.capture_slots().len(),
+            self.code.len(),
+            false,
+        );
     }
 }
 impl PartialEq for FunctionValue {
