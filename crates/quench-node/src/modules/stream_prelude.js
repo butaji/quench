@@ -584,7 +584,14 @@
     if (st.finished || st.errored || !st.ended || st.buffered > 0 || st.writing || st.prefinishing) return;
     if (!st.prefinished) {
       st.prefinishing = true;
+      let completed = false;
       const complete = (error) => {
+        if (completed) {
+          const multiple = new Error("Callback called multiple times");
+          nextTick(() => stream._emitter.emit("error", multiple));
+          return;
+        }
+        completed = true;
         if (st.destroyed) return;
         if (error) {
           st.errored = true;
