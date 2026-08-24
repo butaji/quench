@@ -192,20 +192,32 @@ mod named_prototype_cache_tests {
 }
 
 fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
-    let Value::Object(object) = value else { return None };
-    if crate::vm::is_global_object(value) { return None; }
+    let Value::Object(object) = value else {
+        return None;
+    };
+    if crate::vm::is_global_object(value) {
+        return None;
+    }
     let mut own = None;
     let mut metadata = None;
     for (slot, (name, candidate)) in object.hot_properties().iter().enumerate().rev() {
-        if crate::builtins::is_deleted_key_for(name, key) { return None; }
-        if name == key && own.is_none() { own = Some((slot, candidate)); }
+        if crate::builtins::is_deleted_key_for(name, key) {
+            return None;
+        }
+        if name == key && own.is_none() {
+            own = Some((slot, candidate));
+        }
         if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
             metadata = Some(candidate);
         }
     }
     let (slot, value) = own?;
-    if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) { return None; }
-    if metadata.is_some_and(accessor_descriptor) { return None; }
+    if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
+        return None;
+    }
+    if metadata.is_some_and(accessor_descriptor) {
+        return None;
+    }
     u32::try_from(slot).ok()
 }
 
@@ -609,8 +621,22 @@ pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value
         {
             bind_method(receiver, Value::Builtin(builtin))
         }
+        Value::BoundFunction(bound)
+            if receiver_bound_builtin(&bound) =>
+        {
+            bind_method(receiver, bound.target.clone())
+        }
         other => other,
     }
+}
+
+fn receiver_bound_builtin(bound: &crate::value::BoundFunctionValue) -> bool {
+    matches!(
+        bound.target,
+        Value::Builtin(crate::ops::Builtin::TypedArrayIterator)
+    )
+        && bound.arguments.is_empty()
+        && bound.properties.borrow().is_empty()
 }
 
 fn is_iterator_next_builtin(builtin: Builtin) -> bool {
