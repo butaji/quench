@@ -375,7 +375,11 @@ pub const SPEC_URL_DOMAIN_TO_UNICODE: NodeSpec = NodeSpec::new("url:domainToUnic
 pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1f00);
 pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1f01);
 pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1f02);
+pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1f05);
 pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1f03);
+pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1f04);
+pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
+    NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1f06);
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1400);
 pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1401);
@@ -497,14 +501,16 @@ pub fn namespace_bindings(
         "fetch".to_string(),
         crate::host::capability(crate::registry::SPEC_FETCH),
     ));
-    out.push((
-        "AbortController".to_string(),
-        crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER),
-    ));
-    out.push((
-        "AbortSignal".to_string(),
-        crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL),
-    ));
+    let abort_controller = crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER);
+    let abort_controller_abort =
+        crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER_ABORT);
+    let abort_controller =
+        quench_runtime::execute::set_property(abort_controller, "abort", abort_controller_abort);
+    out.push(("AbortController".to_string(), abort_controller));
+    let abort_signal = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL);
+    let abort = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_ABORT);
+    let abort_signal = quench_runtime::execute::set_property(abort_signal, "abort", abort);
+    out.push(("AbortSignal".to_string(), abort_signal));
     out.push((
         "console".to_string(),
         crate::host::namespace_object_from_pairs(vec![
