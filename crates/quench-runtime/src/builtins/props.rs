@@ -288,6 +288,9 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
                 .then_some(Builtin::ArrayToString)
         })
         .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "slice").then_some(Builtin::ArraySlice)
+        })
+        .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "values")
                 .then_some(Builtin::TypedArrayIterator)
         })
