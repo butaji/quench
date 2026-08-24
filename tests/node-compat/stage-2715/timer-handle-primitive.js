@@ -1,0 +1,12 @@
+'use strict';
+const assert = require('assert');
+const mustNotCall = () => { const callSite = undefined; return () => callSite.scriptName; };
+const timer = setTimeout(mustNotCall(), 1);
+const interval = setInterval(mustNotCall(), 1);
+assert.strictEqual(typeof timer[Symbol.toPrimitive], 'function');
+assert.strictEqual(+timer, timer[Symbol.toPrimitive]());
+assert.strictEqual(+interval, interval[Symbol.toPrimitive]());
+assert.strictEqual(`${timer}`, timer[Symbol.toPrimitive]().toString());
+assert.deepStrictEqual(Object.keys({ [timer]: timer }), [`${timer}`]);
+clearTimeout(+timer);
+clearTimeout(+interval);

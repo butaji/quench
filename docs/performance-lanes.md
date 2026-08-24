@@ -8,22 +8,27 @@ CARGO_TARGET_DIR=target-exec-trace cargo build \
   --profile bench-throughput -p quench-node --features execution-trace
 QUENCH_EXEC_TRACE=1 target-exec-trace/bench-throughput/quench-node program.js \
   2>trace.json
-sed 's/^QUENCH_EXEC_TRACE //' trace.json | jq '.lanes, .heap_lifecycle'
+sed 's/^QUENCH_EXEC_TRACE //' trace.json | jq \
+  '.lanes, .heap_lifecycle, .function_call_shapes[:8], .loop_shapes[:8]'
 ```
 
-`lanes` separates exclusive VM retirement from nested substrate work:
+Schema 5 `lanes` contains:
 
-- `l0` reports representation pressure: word reads and copies, `Value`
-  materialization, property cache outcomes, and packed-array accesses. Heap and
-  Environment allocation counts remain in `heap_lifecycle`.
-- `l1` reports native admission and work. A proven counted loop is healthy only
-  when hits match its iterations and deopts are zero.
-- `l2.handlers` counts compact and proven-leaf semantic handlers, excluding
-  `Slow` gateways.
-- `l3.handlers` counts slow semantic handlers plus cold `Slow` operations still
-  executed by the leaf lane.
-- `l4.host_calls` counts non-JavaScript call targets. Host work is nested under
-  a call handler, so it is intentionally not added to the L2/L3 share.
+- `l0`: `word_reads.{fixed,local,register,owned}`, `word_copies`,
+  `value_decode`, `value_decode_by_site`, property hit/miss and payload kinds,
+  and packed get/set/miss counts split by miss reason. The bounded
+  `value_decode_other_by_op` ranking resolves the residual `other` site.
+- `l1`: shape hits, crypto hits/direct iterations, counted-loop admission,
+  leaf admission/rejection classes, and the top native kernel IDs with hits and
+  deopts.
+- `l2`: handler count/share, main and leaf `Slow` gateways, and the top eight
+  compact opcodes for both dispatch paths.
+- `l3`: handler count/share, top eight slow operations, descriptor-object
+  origins, allocation origins, and RegExp `lastIndex` access paths.
+- `l4`: host-call count and non-Function call targets.
+
+`loop_shapes`, `function_call_shapes`, and `heap_lifecycle` remain beside
+`lanes` in the snapshot.
 
 `vm_share_ppm` divides only L2 and L3 handlers. L0 operations and L1/L4 entries
 overlap those handlers and therefore must not be presented as exclusive time.
