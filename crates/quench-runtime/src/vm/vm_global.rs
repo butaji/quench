@@ -162,6 +162,43 @@ pub(crate) fn is_global_declaration_batch_active() -> bool {
     GLOBAL_DECLARATION_ACTIVE.with(|active| active.get())
 }
 
+pub(crate) fn define_global_declaration_property(
+    name: &str,
+    descriptor: &[(String, crate::value::Value)],
+) -> bool {
+    GLOBAL_DECLARATION_BATCH.with(|batch| {
+        let mut batch = batch.borrow_mut();
+        let Some(staged) = batch.as_mut() else {
+            return false;
+        };
+        let Some(staged) = std::rc::Rc::get_mut(staged) else {
+            return false;
+        };
+        let descriptor_key = crate::builtins::descriptor_key(name);
+        let deleted_key = crate::builtins::deleted_key(name);
+        staged.properties.retain(|(key, _)| {
+            key != name && key != &descriptor_key && key != &deleted_key
+        });
+        let value = descriptor
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == "value").then(|| value.clone()))
+            .unwrap_or(crate::value::Value::Undefined);
+        staged.properties.push((name.into(), value));
+        staged.properties.push((
+            descriptor_key.into(),
+            crate::value::Value::Object(std::rc::Rc::new(
+                crate::value::ObjectData::new(descriptor.to_vec()),
+            )),
+        ));
+        if !staged.created.iter().any(|key| key == name) {
+            staged.created.push(name.into());
+        }
+        staged.invalidate_layout();
+        true
+    })
+}
+
 pub(crate) fn update_global_declaration_batch(updated: &Value) {
     let Value::Object(updated) = updated else {
         return;
