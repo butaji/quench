@@ -73,7 +73,7 @@ pub(crate) fn execute_binary(
             BinaryOp::Multiply => Some(left * right),
             BinaryOp::Divide => Some(left / right),
             BinaryOp::Remainder => Some(left % right),
-            BinaryOp::Exponentiate => Some(left.powf(right)),
+            BinaryOp::Exponentiate => Some(exponentiate(left, right)),
             _ => None,
         };
         if let Some(result) = result {
