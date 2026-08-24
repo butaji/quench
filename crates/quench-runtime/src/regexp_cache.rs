@@ -13,30 +13,27 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
-fn regexp_identity(receiver: &Value) -> Option<u64> {
-    match receiver {
-        Value::Object(object) => Some(object.identity()),
-        Value::ObjectAlias(alias) => alias.target().map(|object| object.identity()),
-        _ => None,
-    }
+#[inline]
+fn regexp_cache_key(source: &str, flags: &str) -> u64 {
+    crate::strings::hash_str(source) ^ crate::strings::hash_str(flags).rotate_left(23)
 }
 
-fn compiled_for(receiver: &Value, source: &str, flags: &str) -> Result<Rc<Regex>, VmError> {
-    let Some(identity) = regexp_identity(receiver) else {
-        return compile_linear(source, flags).map(Rc::new).map_err(VmError::EvalError);
-    };
+fn compiled_for(_: &Value, source: &str, flags: &str) -> Result<Rc<Regex>, VmError> {
+    let key = regexp_cache_key(source, flags);
     COMPILED_REGEXPS.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some(entry) = cache.get(&identity) {
+        if let Some(entry) = cache.get(&key) {
             if entry.source == source && entry.flags == flags {
+                crate::execution_trace::event(crate::execution_trace::Event::RegExpCacheHit);
                 return Ok(Rc::clone(&entry.regex));
             }
         }
+        crate::execution_trace::event(crate::execution_trace::Event::RegExpCacheMiss);
         let regex = Rc::new(compile_linear(source, flags).map_err(VmError::EvalError)?);
-        if cache.len() >= REGEXP_CACHE_LIMIT && !cache.contains_key(&identity) {
+        if cache.len() >= REGEXP_CACHE_LIMIT && !cache.contains_key(&key) {
             cache.clear();
         }
-        cache.insert(identity, CompiledEntry {
+        cache.insert(key, CompiledEntry {
             source: source.to_string(),
             flags: flags.to_string(),
             regex: Rc::clone(&regex),

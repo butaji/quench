@@ -158,16 +158,21 @@ fn run_instruction(
         Opcode::GetProperty | Opcode::AGetI => {
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
-                let number = index.and_then(|index| {
-                    registers
-                        .read_array(usize::from(instruction.b))
-                        .filter(|array| array.is_packed_ordinary())
-                        .and_then(|array| array.dense_number_at(index))
-                });
-                if let Some(number) = number {
-                    crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
-                    registers.write_number(usize::from(instruction.a), number);
-                    return Ok(None);
+                if let Some((array, index)) = registers
+                    .read_array(usize::from(instruction.b))
+                    .filter(|array| array.is_packed_ordinary())
+                    .zip(index)
+                {
+                    if let Some(number) = array.dense_number_at(index) {
+                        crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
+                        registers.write_number(usize::from(instruction.a), number);
+                        return Ok(None);
+                    }
+                    if let Some(value) = array.dense_value_at(index) {
+                        crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
+                        write_value(registers, instruction.a, value);
+                        return Ok(None);
+                    }
                 }
                 crate::execution_trace::event(crate::execution_trace::Event::PackedArrayMiss);
             }
