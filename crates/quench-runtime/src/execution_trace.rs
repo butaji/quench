@@ -30,6 +30,15 @@ execution_events! {
 }
 
 #[cfg(feature = "execution-trace")]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct OperandKey {
+    name: &'static str,
+    a: u16,
+    b: u16,
+    c: u16,
+}
+
+#[cfg(feature = "execution-trace")]
 #[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
@@ -37,6 +46,8 @@ struct Counters {
     events: [u64; EVENT_NAMES.len()],
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
+    operand_transitions: HashMap<(OperandKey, OperandKey), u64>,
+    previous_operand: Option<OperandKey>,
 }
 
 #[cfg(feature = "execution-trace")]
@@ -45,6 +56,13 @@ impl Counters {
     fn retire(&mut self, name: &'static str) {
         if let Some(previous) = self.previous.replace(name) {
             *self.transitions.entry((previous, name)).or_default() += 1;
+        }
+    }
+
+    #[inline]
+    fn retire_operands(&mut self, key: OperandKey) {
+        if let Some(previous) = self.previous_operand.replace(key) {
+            *self.operand_transitions.entry((previous, key)).or_default() += 1;
         }
     }
 }
@@ -90,6 +108,25 @@ pub(crate) fn compact(_: crate::ir::Opcode) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
+pub(crate) fn operands(instruction: crate::ir::Instruction) {
+    if enabled() && !instruction.opcode.is_slow() {
+        COUNTERS.with(|counters| {
+            counters.borrow_mut().retire_operands(OperandKey {
+                name: instruction.opcode.name(),
+                a: instruction.a,
+                b: instruction.b,
+                c: instruction.c,
+            });
+        });
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn operands(_: crate::ir::Instruction) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
 pub(crate) fn slow(op: &crate::ops::Op) {
     if enabled() {
         COUNTERS.with(|counters| {
@@ -97,6 +134,15 @@ pub(crate) fn slow(op: &crate::ops::Op) {
             let name = op.variant_name();
             *counters.slow.entry(name).or_default() += 1;
             counters.retire(name);
+            let (a, b, c) = match op {
+                crate::ops::Op::LoadBinding {
+                    dst, slot, dynamic, ..
+                } => (*dst, *slot, u16::from(*dynamic)),
+                crate::ops::Op::Binary { dst, lhs, rhs, .. } => (*dst, *lhs, *rhs),
+                crate::ops::Op::Const { dst, .. } => (*dst, 0, 0),
+                _ => (0, 0, 0),
+            };
+            counters.retire_operands(OperandKey { name, a, b, c });
         });
     }
 }
@@ -160,6 +206,19 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     })
                 })
                 .collect::<Vec<_>>();
+            let mut operand_transitions: Vec<_> = counters.operand_transitions.iter().collect();
+            operand_transitions.sort_unstable_by(|left, right| right.1.cmp(left.1));
+            let operand_transitions = operand_transitions
+                .into_iter()
+                .take(128)
+                .map(|(&(from, to), &count)| {
+                    serde_json::json!({
+                        "from": { "name": from.name, "a": from.a, "b": from.b, "c": from.c },
+                        "to": { "name": to.name, "a": to.a, "b": to.b, "c": to.c },
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
             serde_json::json!({
                 "schema": 2,
                 "compact_total": compact_total,
@@ -170,6 +229,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "slow": slow,
                 "events": events,
                 "transitions": transitions,
+                "operand_transitions": operand_transitions,
             })
         })
     })
