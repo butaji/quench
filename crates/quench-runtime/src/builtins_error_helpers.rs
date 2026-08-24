@@ -33,6 +33,7 @@ fn error_parts(builtin: Builtin) -> (&'static str, Builtin, Builtin) {
     }
 }
 
+
 pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let error = arguments.first().cloned().unwrap_or(Value::Undefined);
     let suppressed = arguments.get(1).cloned().unwrap_or(Value::Undefined);
@@ -77,6 +78,10 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     let (Some(left), Some(right)) = (left, right) else {
         return matches!((left, right), (None, None));
     };
+    let left_resolved = crate::locals::resolved_replacement(left.clone());
+    let right_resolved = crate::locals::resolved_replacement(right.clone());
+    let left = &left_resolved;
+    let right = &right_resolved;
     if let (Value::Number(left), Value::Number(right)) = (left, right) {
         return (left.is_nan() && right.is_nan())
             || (left == right && left.is_sign_negative() == right.is_sign_negative());
@@ -155,4 +160,3 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         _ => set_property_tail(target, key, value),
     }
 }
-
