@@ -1192,6 +1192,11 @@ impl BindingCell {
     ) -> R {
         use_word(&self.0.borrow())
     }
+
+    #[inline(always)]
+    pub(crate) fn load_number(&self) -> Option<f64> {
+        self.0.borrow().number()
+    }
 }
 
 /// Canonical JavaScript value representation.
