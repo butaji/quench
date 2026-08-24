@@ -2,6 +2,13 @@
 
 const hooks = globalThis.__quenchAsyncHooks || [];
 Object.defineProperty(globalThis, "__quenchAsyncHooks", { configurable: true, value: hooks });
+if (!globalThis.__nodeCurrentAsyncResource) {
+  Object.defineProperty(globalThis, "__nodeCurrentAsyncResource", {
+    configurable: true,
+    writable: true,
+    value: { asyncId: 1, triggerAsyncId: 0 }
+  });
+}
 Object.defineProperty(globalThis, "\0quench:process_next_tick_init", {
   configurable: true,
   value: () => {
@@ -88,9 +95,43 @@ if (!globalThis.__quenchPromiseHooksPatched) {
   PromiseWithHooks.prototype = NativePromisePrototype;
   Object.setPrototypeOf(PromiseWithHooks, NativePromise);
   globalThis.Promise = PromiseWithHooks;
+  if (!globalThis.__quenchPromiseContextPatched) {
+    const nativeThen = NativePromisePrototype.then;
+    NativePromisePrototype.then = function (onFulfilled, onRejected) {
+      const captured = globalThis.__nodeCurrentAsyncResource;
+      const wrap = (callback) => typeof callback !== "function" ? callback : function (...args) {
+        const previous = globalThis.__nodeCurrentAsyncResource;
+        globalThis.__nodeCurrentAsyncResource = captured;
+        try { return callback.apply(this, args); }
+        finally { globalThis.__nodeCurrentAsyncResource = previous; }
+      };
+      return nativeThen.call(this, wrap(onFulfilled), wrap(onRejected));
+    };
+    Object.defineProperty(globalThis, "__quenchPromiseContextPatched", {
+      configurable: true, value: true
+    });
+  }
   Object.defineProperty(globalThis, "__quenchPromiseHooksPatched", {
     configurable: true,
     value: true,
+  });
+}
+
+if (!globalThis.__quenchPromiseContextPatched) {
+  const promisePrototype = globalThis.Promise.prototype;
+  const nativeThen = promisePrototype.then;
+  promisePrototype.then = function (onFulfilled, onRejected) {
+    const captured = globalThis.__nodeCurrentAsyncResource;
+    const wrap = (callback) => typeof callback !== "function" ? callback : function (...args) {
+      const previous = globalThis.__nodeCurrentAsyncResource;
+      globalThis.__nodeCurrentAsyncResource = captured;
+      try { return callback.apply(this, args); }
+      finally { globalThis.__nodeCurrentAsyncResource = previous; }
+    };
+    return nativeThen.call(this, wrap(onFulfilled), wrap(onRejected));
+  };
+  Object.defineProperty(globalThis, "__quenchPromiseContextPatched", {
+    configurable: true, value: true
   });
 }
 
@@ -108,13 +149,16 @@ class AsyncResource {
     this.type = String(type);
     this._asyncId = ++nextId;
     this._triggerAsyncId = typeof options === "number" ? options : (options.triggerAsyncId || 0);
-    this._resource = { asyncId: this._asyncId };
+    this._resource = { asyncId: this._asyncId, triggerAsyncId: this._triggerAsyncId };
   }
   asyncId() { return this._asyncId; }
   triggerAsyncId() { return this._triggerAsyncId; }
   runInAsyncScope(callback, thisArg, ...args) {
     if (typeof callback !== "function") throw new TypeError("The callback argument must be of type function");
-    return callback.apply(thisArg, args);
+    const previous = globalThis.__nodeCurrentAsyncResource;
+    globalThis.__nodeCurrentAsyncResource = this._resource;
+    try { return callback.apply(thisArg, args); }
+    finally { globalThis.__nodeCurrentAsyncResource = previous; }
   }
   bind(callback, thisArg) { return (...args) => this.runInAsyncScope(callback, thisArg, ...args); }
   emitDestroy() { return this; }
@@ -122,28 +166,54 @@ class AsyncResource {
 }
 
 class AsyncLocalStorage {
-  constructor(options = {}) { this.defaultValue = options.defaultValue; this.store = undefined; }
-  disable() { this.store = undefined; }
-  getStore() { return this.store === undefined ? this.defaultValue : this.store; }
-  run(store, callback, ...args) {
-    const previous = this.store;
-    this.store = store;
-    try { return callback(...args); } finally { this.store = previous; }
+  constructor(options = {}) { this.defaultValue = options.defaultValue; this.disabled = false; }
+  disable() { this.disabled = true; }
+  getStore() {
+    if (this.disabled) return undefined;
+    const resource = globalThis.__nodeCurrentAsyncResource;
+    const stores = resource && resource.__quenchAsyncLocalStores;
+    return stores && stores.has(this) ? stores.get(this) : this.defaultValue;
   }
-  enterWith(store) { this.store = store; }
+  run(store, callback, ...args) {
+    const resource = globalThis.__nodeCurrentAsyncResource;
+    const previous = resource && resource.__quenchAsyncLocalStores;
+    if (resource) {
+      const stores = previous ? new Map(previous) : new Map();
+      stores.set(this, store);
+      resource.__quenchAsyncLocalStores = stores;
+    }
+    try { return callback(...args); }
+    finally { if (resource) resource.__quenchAsyncLocalStores = previous; }
+  }
+  enterWith(store) {
+    const resource = globalThis.__nodeCurrentAsyncResource;
+    if (resource) {
+      const previous = resource.__quenchAsyncLocalStores;
+      const stores = previous ? new Map(previous) : new Map();
+      stores.set(this, store);
+      resource.__quenchAsyncLocalStores = stores;
+    }
+  }
   exit(callback, ...args) {
-    const previous = this.store;
-    this.store = undefined;
-    try { return callback(...args); } finally { this.store = previous; }
+    const resource = globalThis.__nodeCurrentAsyncResource;
+    const previous = resource && resource.__quenchAsyncLocalStores;
+    if (resource) {
+      const stores = previous ? new Map(previous) : new Map();
+      stores.delete(this);
+      resource.__quenchAsyncLocalStores = stores;
+    }
+    try { return callback(...args); }
+    finally { if (resource) resource.__quenchAsyncLocalStores = previous; }
   }
   withScope(store) {
-    const previous = this.store;
-    this.store = store;
+    const resource = globalThis.__nodeCurrentAsyncResource;
+    const previous = resource && resource.__quenchAsyncLocalStores;
+    this.enterWith(store);
     let disposed = false;
     const restore = () => {
       if (disposed) return;
       disposed = true;
-      this.store = previous;
+      if (resource) resource.__quenchAsyncLocalStores = previous;
     };
     return { dispose: restore, [Symbol.dispose]: restore };
   }
@@ -153,7 +223,7 @@ module.exports = {
   createHook,
   AsyncResource,
   AsyncLocalStorage,
-  executionAsyncId: () => 1,
-  triggerAsyncId: () => 0,
-  executionAsyncResource: () => ({})
+  executionAsyncId: () => globalThis.__nodeCurrentAsyncResource?.asyncId || 1,
+  triggerAsyncId: () => globalThis.__nodeCurrentAsyncResource?.triggerAsyncId || 0,
+  executionAsyncResource: () => globalThis.__nodeCurrentAsyncResource
 };

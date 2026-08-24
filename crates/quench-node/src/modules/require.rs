@@ -64,6 +64,44 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .insert("stream".to_string(), value.clone());
         return Ok(value);
     }
+    if matches!(
+        spec.as_str(),
+        "timers" | "node:timers" | "timers/promises" | "node:timers/promises"
+    ) {
+        let timers_key = "node:timers";
+        let promises_key = "node:timers/promises";
+        let requested_key = if spec.ends_with("/promises") {
+            promises_key
+        } else {
+            timers_key
+        };
+        if let Some(cached) = state.borrow().module_cache.get(requested_key) {
+            return Ok(cached.clone());
+        }
+        let promises = crate::modules::timers::build_promises()
+            .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+        let mut bindings = crate::modules::timers::build();
+        bindings.push(("promises".to_string(), promises.clone()));
+        let timers = crate::host::namespace_object_from_pairs(bindings);
+        state
+            .borrow_mut()
+            .module_cache
+            .insert(timers_key.to_string(), timers.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert(promises_key.to_string(), promises);
+        return Ok(if requested_key == promises_key {
+            state
+                .borrow()
+                .module_cache
+                .get(promises_key)
+                .cloned()
+                .unwrap_or(Value::Undefined)
+        } else {
+            timers
+        });
+    }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
         return Ok(cached.clone());
     }
@@ -375,12 +413,17 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 )),
             ),
         ])),
-        "timers" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::timers::build(),
-        )),
-        "timers/promises" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::timers::build(),
-        )),
+        "timers" => {
+            let mut bindings = crate::modules::timers::build();
+            let promises = crate::modules::timers::build_promises()
+                .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new()));
+            bindings.push(("promises".to_string(), promises));
+            Some(crate::host::namespace_object_from_pairs(bindings))
+        }
+        "timers/promises" => Some(
+            crate::modules::timers::build_promises()
+                .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new())),
+        ),
         "child_process" => Some(crate::host::namespace_object_from_pairs(vec![
             (
                 "spawnSync".to_string(),

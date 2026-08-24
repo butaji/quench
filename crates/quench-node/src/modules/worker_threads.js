@@ -309,8 +309,10 @@ var api = {
         var evalPath = null;
         var args;
         if (options.eval) {
-          var evalDirectory = options.cwd || (typeof proc.cwd === 'function' ? proc.cwd() : '.');
-          evalPath = String(evalDirectory) + '/.quench-worker-' + String(Date.now()) + '-' + String(Math.random()).slice(2) + '.js';
+          // Keep generated worker source out of the fixture checkout. A
+          // killed runner may not reach the synchronous cleanup below.
+          var evalDirectory = require('os').tmpdir();
+          evalPath = String(evalDirectory) + '/quench-worker-' + String(Date.now()) + '-' + String(Math.random()).slice(2) + '.js';
           var evalSource = 'globalThis.__quench_worker_mode = true;\n';
           if (message !== undefined) evalSource += 'globalThis.__quench_worker_message = ' + JSON.stringify(message) + ';\n';
           evalSource += String(filename);
