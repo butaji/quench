@@ -46,6 +46,7 @@ pub(crate) fn execute_static_block(
         strictness: crate::ops::FunctionStrictness::Strict,
         is_async: false,
         mapped_arguments: false,
+        source: None,
     };
     let receiver = crate::execute::read_register(registers, *constructor)?;
     let mut block_registers = crate::register_file::RegisterFile::new();
