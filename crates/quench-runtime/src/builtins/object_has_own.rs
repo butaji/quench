@@ -140,7 +140,7 @@ fn array_owns(values: &crate::value::ArrayData, key: &str) -> bool {
 fn object_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
     object_data_owns(properties, key)
 }
-fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
+pub(crate) fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return false;
     }
