@@ -96,7 +96,7 @@
   function validateEncoding(encoding) {
     const name = String(encoding).toLowerCase();
     const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
-      "binary", "ascii", "base64", "base64url", "hex"];
+      "binary", "ascii", "base64", "base64url", "hex", "buffer"];
     if (!valid.includes(name)) {
       const error = new TypeError("Unknown encoding: " + encoding);
       error.code = "ERR_UNKNOWN_ENCODING";
@@ -111,6 +111,7 @@
     if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._readableState = {
       objectMode: !!options.objectMode,
+      decodeStrings: options.decodeStrings !== false,
       highWaterMark: defaultHwm(options),
       buffer: [],
       flowing: null,
@@ -626,6 +627,10 @@
         throw error;
       }
       if (typeof encoding === "string") validateEncoding(encoding);
+      if (!st.objectMode && st.decodeStrings && typeof chunk === "string") {
+        chunk = Buffer.from(chunk, encoding || "utf8");
+        encoding = "buffer";
+      }
       // Node normalizes binary views to Buffer for byte-mode Writable
       // callbacks; object-mode streams preserve the original view identity.
       const isByteView = chunk && typeof chunk.byteLength === "number" &&
