@@ -577,6 +577,7 @@
     stream.writableAborted = false;
     if (options.write) stream._write = options.write;
     if (options.writev) stream._writev = options.writev;
+    if (options.destroy) stream._destroy = options.destroy;
   }
 
   function updateNeedDrain(state) {
@@ -921,15 +922,13 @@
     const stream = this;
     const destroy = this._destroy;
     nextTick(() => {
-      const finish = () => {
-        if (error) stream._emitter.emit("error", error);
+      const finish = (destroyError) => {
+        if (destroyError) stream._emitter.emit("error", destroyError);
         stream._emitter.emit("close");
       };
       if (destroy) {
         destroy.call(stream, error, finish);
-      } else {
-        finish();
-      }
+      } else finish(error);
     });
     return this;
   };
