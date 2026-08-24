@@ -18,6 +18,7 @@ include!("generator_branch.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
 include!("generator_try_frame.rs");
+include!("generator_loop.rs");
 include!("generator_iterator_binding.rs");
 include!("generator_suspension.rs");
 include!("generator_reduce.rs");
@@ -294,7 +295,13 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
         }
     }
     let completion = resume.completion();
-    let direct_suspension = state.suspension.is_some();
+    let direct_suspension = matches!(
+        state.suspension,
+        Some(
+            crate::continuation::SuspensionPoint::Yield { .. }
+                | crate::continuation::SuspensionPoint::YieldStar { .. }
+        )
+    );
     if let Resume::Next(input) = resume {
         install_resume_input(generator, &mut state, input);
     }
@@ -325,15 +332,44 @@ fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
 }
 
 fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+    if let Some(crate::continuation::SuspensionPoint::Loop {
+        label,
+        body,
+        test,
+        update,
+        body_resume,
+        dst,
+        yield_dst,
+        post_test,
+        ..
+    }) = state.suspension.clone()
+    {
+        let resume = parent_resume_range(generator, state);
+        try_push_frame(
+            &mut generator.machine.borrow_mut(),
+            crate::machine::Frame::Loop {
+                label,
+                body,
+                test,
+                update,
+                body_resume,
+                resume,
+                dst,
+                yield_dst,
+                post_test,
+            },
+        )?;
+        return Ok(());
+    }
     if push_nested_frame(generator, state)? {
         return Ok(());
     }
     let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
-        state.suspension
+        state.suspension.as_ref()
     else {
         return Ok(());
     };
-    let Ok(iterator) = crate::execute::read_register(&registers(generator), iterator) else {
+    let Ok(iterator) = crate::execute::read_register(&registers(generator), *iterator) else {
         return Ok(());
     };
     try_push_frame(
@@ -341,7 +377,7 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
         crate::machine::Frame::Delegate {
             phase: 0,
             iterator,
-            destination: dst,
+            destination: *dst,
         },
     )
 }
@@ -376,6 +412,9 @@ fn resume_suspended_contexts(
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
+    if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
+        return resume_machine_frame(generator, state, completion).map(Some);
+    }
     if let Some(completion) = resume_private_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
