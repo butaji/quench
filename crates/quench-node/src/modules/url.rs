@@ -226,9 +226,18 @@ pub fn resolve_object(
             Value::String(value) if !value.is_empty() => Some(value),
             _ => None,
         });
-    let (base, relative) = match method_base {
-        Some(base) => (base, args.first().map(value_to_string).unwrap_or_default()),
-        None => (
+    let argument_base = args.first().and_then(|value| {
+        execute::get_property_result(value, "href")
+            .ok()
+            .and_then(|value| match value {
+                Value::String(value) if !value.is_empty() => Some(value),
+                _ => None,
+            })
+    });
+    let (base, relative) = match (method_base, argument_base) {
+        (Some(base), _) => (base, args.first().map(value_to_string).unwrap_or_default()),
+        (None, Some(base)) => (base, args.get(1).map(value_to_string).unwrap_or_default()),
+        (None, None) => (
             args.first().map(value_to_string).unwrap_or_default(),
             args.get(1).map(value_to_string).unwrap_or_default(),
         ),
@@ -941,6 +950,13 @@ fn resolve_absolute_authority_edge(from: &str, to: &str) -> Option<String> {
             return Some(format!("{target_scheme}://{target_authority}{base_path}"));
         }
         return None;
+    }
+    if base_authority.contains('@')
+        && !target_authority.contains('@')
+        && target_host.eq_ignore_ascii_case(base_host)
+    {
+        let target_path = &target_rest[target_end..];
+        return Some(format!("{base_scheme}://{base_authority}{target_path}"));
     }
     None
 }
