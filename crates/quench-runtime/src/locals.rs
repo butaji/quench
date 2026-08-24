@@ -50,7 +50,7 @@ impl Hasher for ReplacementHasher {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReplacementIdentity {
-    Array(usize),
+    Array(u64),
     Object(u64),
     Function(usize),
 }
@@ -59,7 +59,7 @@ impl std::hash::Hash for ReplacementIdentity {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         let (value, tag) = match *self {
-            Self::Array(value) => (value as u64, 0),
+            Self::Array(value) => (value, 0),
             Self::Object(value) => (value, 1),
             Self::Function(value) => (value as u64, 2),
         };
@@ -612,7 +612,7 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
     };
     // Canonical interior mutation keeps identity and storage unchanged. It
     // must not publish a replacement entry or retain another owner per write.
-    if replacement_identity(new) == Some(identity) {
+    if same_replacement_value(old, new) {
         return;
     }
     let root = REPLACEMENT_ROOTS.with(|roots| {
@@ -707,7 +707,7 @@ pub(crate) fn resolved_replacement(value: Value) -> Value {
     }
     let mut value = value;
     while let Some(updated) = replacement(&value) {
-        if replacement_identity(&value) == replacement_identity(&updated) {
+        if same_replacement_value(&value, &updated) {
             break;
         }
         value = updated;
@@ -731,7 +731,7 @@ fn resolved_object_replacement(value: &Value) -> Option<Value> {
 #[inline]
 fn replacement_identity(value: &Value) -> Option<ReplacementIdentity> {
     match value {
-        Value::Array(value) => Some(ReplacementIdentity::Array(Rc::as_ptr(value) as usize)),
+        Value::Array(value) => Some(ReplacementIdentity::Array(value.identity())),
         Value::Object(value) => Some(ReplacementIdentity::Object(value.identity())),
         Value::ObjectAlias(value) => value
             .0
@@ -743,11 +743,20 @@ fn replacement_identity(value: &Value) -> Option<ReplacementIdentity> {
     }
 }
 
+fn same_replacement_value(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Object(left), Value::Object(right)) => left.identity() == right.identity(),
+        (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
+        _ => false,
+    }
+}
+
 fn replacement_owner(value: &Value) -> Option<Value> {
     match value {
         Value::Object(object) if Rc::weak_count(object) == 0 => None,
         Value::ObjectAlias(alias) => alias.target().map(Value::Object),
-        Value::Array(_) | Value::Object(_) | Value::Function(_) => Some(value.clone()),
+        Value::Object(_) | Value::Function(_) => Some(value.clone()),
         _ => None,
     }
 }
@@ -795,6 +804,30 @@ mod replacement_tests {
     fn ordinary_object_without_alias_needs_no_retained_owner() {
         let owner = Value::Object(Rc::new(ObjectData::new(Vec::new())));
         assert!(replacement_owner(&owner).is_none());
+    }
+
+    #[test]
+    fn array_replacement_keeps_identity_without_retaining_ancestors() {
+        super::reset_replacements();
+        let original = Rc::new(crate::value::ArrayData::new(vec![Value::Boolean(false)]));
+        let stale = Value::Array(Rc::clone(&original));
+        let weak = Rc::downgrade(&original);
+        let mut updated = (*original).clone();
+        updated.set_index(0, Value::Boolean(true));
+        let latest = Value::Array(Rc::new(updated));
+
+        replace_value(&stale, &latest);
+        let resolved = resolved_replacement(stale.clone());
+        assert_eq!(
+            crate::execute::get_property_result(&resolved, "0").unwrap(),
+            Value::Boolean(true)
+        );
+        assert!(replacement_owner(&stale).is_none());
+
+        drop(stale);
+        drop(original);
+        assert!(weak.upgrade().is_none());
+        super::reset_replacements();
     }
 
     #[test]
