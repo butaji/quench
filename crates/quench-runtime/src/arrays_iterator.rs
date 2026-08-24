@@ -69,6 +69,12 @@ fn array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError
 }
 
 fn array_entries(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    if let Some(Value::Array(data)) = receiver {
+        return Ok(crate::collections::iterator::make_array_entries(Rc::clone(data)));
+    }
+    if let Some(value) = receiver.filter(|value| value.is_typed_array()) {
+        return Ok(crate::collections::iterator::make_typed_entries(value.clone()));
+    }
     let values = array_iterator_values(receiver)?;
     Ok(crate::collections::iterator::make(
         values
