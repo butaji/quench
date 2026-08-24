@@ -10,6 +10,7 @@ assert.strictEqual(util.inspect(/foo(bar\n)?/gi), '/foo(bar\\n)?/gi');
 assert.strictEqual(util.inspect(new Date('2010-02-14T11:48:40.000Z')), '2010-02-14T11:48:40.000Z');
 assert.strictEqual(util.inspect('\n\x01'), "'\\n\\x01'");
 assert.strictEqual(util.inspect([1, 2, 3], true), '[ 1, 2, 3, [length]: 3 ]');
+assert.ok(util.inspect(new Uint8Array(0), { showHidden: true }).includes('[buffer]'));
 assert.strictEqual(
   util.inspect({ a: { b: { c: { d: 2 } } } }, false, null),
   '{\n  a: { b: { c: { d: 2 } } }\n}'
