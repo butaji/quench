@@ -216,7 +216,7 @@ fn clear_matching(
 }
 
 pub(crate) fn mark_destroyed(timer: &Timer) {
-    timer.destroyed.store(Value::Boolean(true));
+    *timer.destroyed.borrow_mut() = Value::Boolean(true);
 }
 
 fn timer_id_of(receiver: Option<&Value>) -> Option<u64> {
@@ -264,7 +264,7 @@ pub fn method_refresh(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) 
         if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
             timer.fire_at = monotonic_ms().saturating_add(timer.period.max(1));
             timer.active = true;
-            timer.destroyed.store(Value::Boolean(false));
+            *timer.destroyed.borrow_mut() = Value::Boolean(false);
         }
     }
     receiver.cloned().unwrap_or(Value::Undefined)

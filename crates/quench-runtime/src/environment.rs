@@ -479,14 +479,8 @@ impl Drop for Environment {
     }
 }
 
-fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
-    source.as_ref().map(TdzCells::clone_values)
-}
-
 fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
-    source
-        .as_ref()
-        .map(|cells| TdzCells::clone_prefix(cells, count))
+    source.as_ref().map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
@@ -619,10 +613,9 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        let captured_len = captures.slots.borrow().shared_prefix().len();
         environment.uninitialized.replace(clone_tdz_prefix(
             &captures.uninitialized.borrow(),
-            captured_len,
+            prefix_len,
         ));
         environment
             .deleted_cells
@@ -700,9 +693,6 @@ impl Environment {
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
-        if self.is_immutable_slot(slot) && !self.is_uninitialized(slot) {
-            return None;
-        }
         self.slot(slot)?.update_number(delta)
     }
 
@@ -863,14 +853,12 @@ impl Environment {
         {
             return true;
         }
-        let Some(caller) = &self.caller else {
+        if self.slot(slot).is_some() {
             return false;
-        };
-        let captured = self
-            .slot(slot)
-            .zip(caller.slot(slot))
-            .is_some_and(|(current, parent)| current.same(&parent));
-        captured && caller.eval_name_aliases_slot(name, slot)
+        }
+        self.caller
+            .as_ref()
+            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
@@ -1065,16 +1053,19 @@ impl Environment {
         previous.cell()
     }
 
-    pub(crate) fn has_caller(&self) -> bool {
-        self.caller.is_some()
-    }
-
     pub(crate) fn restore_slot(&self, slot: u16, value: Rc<crate::value::BindingCell>) {
         let binding = BindingRef::new(SlotStore::from_cell(value), 0);
         self.slots.borrow_mut().replace(usize::from(slot), binding);
     }
 
+    pub(crate) fn has_caller(&self) -> bool {
+        self.caller.is_some()
+    }
+
     pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
+        if let Some(caller) = &self.caller {
+            caller.replace_value(old, new);
+        }
         for index in 0..self.slots.borrow().len() {
             let Some(slot) = self.slot(index as u16) else {
                 continue;
