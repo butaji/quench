@@ -109,7 +109,21 @@ pub fn util_inspect(
             return Ok(tag);
         }
     }
-    Ok(Value::String(crate::modules::util::inspect(&arg)))
+    let depth = args
+        .get(1)
+        .filter(|options| matches!(options, Value::Object(_) | Value::ObjectAlias(_)))
+        .or_else(|| args.get(2))
+        .and_then(|options| match options {
+            Value::Null => Some(usize::MAX / 2),
+            Value::Number(value) if value.is_finite() && *value >= 0.0 => {
+                Some(value.floor() as usize + 1)
+            }
+            _ => None,
+        });
+    Ok(Value::String(match depth {
+        Some(depth) => crate::modules::util::inspect_with_depth(&arg, depth),
+        None => crate::modules::util::inspect(&arg),
+    }))
 }
 
 pub fn util_parse_env(
