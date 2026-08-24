@@ -61,6 +61,9 @@ fn run_local_binding_op(registers: &mut crate::register_file::RegisterFile, op: 
             name,
             dynamic,
         } => crate::locals::load_binding(registers, *dst, *slot, name, *dynamic)?,
+        LoadResolvedBinding { dst, target, name } => {
+            crate::locals::load_resolved_binding(registers, *dst, *target, name)?
+        }
         _ => return run_local_resolved_op(registers, op),
     }
     Ok(true)
@@ -70,6 +73,9 @@ fn run_local_resolved_op(registers: &mut crate::register_file::RegisterFile, op:
     use Op::*;
     match op {
         ResolveBindingTarget { dst, name } => crate::locals::resolve_target(registers, *dst, name)?,
+        ResolveActiveBindingTarget { dst, name } => {
+            crate::locals::resolve_active_target(registers, *dst, name)?
+        }
         InitializeResolvedBinding {
             target,
             slot,

@@ -317,7 +317,7 @@ fn store_identifier(
 ) -> Option<()> {
     let slot = *locals.get(name)?;
     let target = take_register(next);
-    ops.push(Op::ResolveBindingTarget {
+    ops.push(Op::ResolveActiveBindingTarget {
         dst: target,
         name: name.to_string(),
     });
@@ -402,7 +402,7 @@ fn pre_resolve(
     };
     let slot = *locals.get(name)?;
     let target = take_register(next);
-    ops.push(Op::ResolveBindingTarget {
+    ops.push(Op::ResolveActiveBindingTarget {
         dst: target,
         name: name.to_string(),
     });

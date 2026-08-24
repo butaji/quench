@@ -233,7 +233,7 @@ pub fn reduce_declaration(
         // its initializer runs.  Capture that target now so an initializer
         // such as `delete obj.x` cannot change which environment receives the
         // declaration's result.
-        let resolved_target = if facts.has_dynamic_scope() {
+        let resolved_target = if facts.has_active_dynamic_scope() {
             match &declarator.id.kind {
                 oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) => {
                     let Some(&slot) = locals.get(identifier.name.as_str()) else {
@@ -241,7 +241,7 @@ pub fn reduce_declaration(
                     };
                     let target = *next_register;
                     *next_register = next_register.saturating_add(1);
-                    ops.push(Op::ResolveBindingTarget {
+                    ops.push(Op::ResolveActiveBindingTarget {
                         dst: target,
                         name: identifier.name.to_string(),
                     });

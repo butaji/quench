@@ -131,10 +131,13 @@ fn metadata_for(op: &Op) -> InstructionMeta {
         | Op::CheckGlobalVar { name, .. }
         | Op::CreateGlobalFunction { name, .. }
         | Op::ResolveBindingTarget { name, .. }
+        | Op::ResolveActiveBindingTarget { name, .. }
         | Op::InitializeResolvedBinding { name, .. }
         | Op::SetResolvedLocalBinding { name, .. }
         | Op::LoadResolvedLocalBinding { name, .. }
         | Op::LoadBinding { name, .. }
+        | Op::LoadResolvedBinding { name, .. }
+        | Op::ResolveStrictName { key: name, .. }
         | Op::GetProperty { key: name, .. }
         | Op::SetProperty { key: name, .. } => Some(Rc::<str>::from(name.as_str())),
         _ => None,

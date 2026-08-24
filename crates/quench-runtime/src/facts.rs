@@ -104,6 +104,7 @@ pub struct ProgramDb {
     pub(crate) eval_deletable: Vec<(String, u16)>,
     pub(crate) epochs: Epochs,
     pub(crate) dynamic_scope_depth: u16,
+    pub(crate) function_dynamic_scope_floor: u16,
     pub(crate) reduction_source: String,
 }
 #[derive(Debug, Default, PartialEq)]
@@ -188,6 +189,10 @@ impl ProgramDb {
 
     pub(crate) fn has_dynamic_scope(&self) -> bool {
         self.dynamic_scope_depth != 0
+    }
+
+    pub(crate) fn has_active_dynamic_scope(&self) -> bool {
+        self.dynamic_scope_depth > self.function_dynamic_scope_floor
     }
 
     pub(crate) fn install_fact_sites(&mut self, sites: HashMap<Span, FactSiteId>) {
