@@ -134,6 +134,8 @@ pub const SPEC_BUFFER_BTOA: NodeSpec = NodeSpec::new("buffer:btoa", 0x0807);
 pub const SPEC_BUFFER_ASCII_WRITE: NodeSpec = NodeSpec::new("buffer:asciiWrite", 0x0850);
 pub const SPEC_BUFFER_LATIN1_WRITE: NodeSpec = NodeSpec::new("buffer:latin1Write", 0x0851);
 pub const SPEC_BUFFER_UTF8_WRITE: NodeSpec = NodeSpec::new("buffer:utf8Write", 0x0852);
+pub const SPEC_INTERNAL_BUFFER_UTF8_WRITE: NodeSpec =
+    NodeSpec::new("internal/buffer:utf8Write", 0x0856);
 pub const SPEC_BUFFER_SUBARRAY: NodeSpec = NodeSpec::new("buffer:subarray", 0x0853);
 pub const SPEC_BUFFER_TOSTRING: NodeSpec = NodeSpec::new("buffer:toString", 0x0808);
 pub const SPEC_BUFFER_ALLOC_UNSAFE: NodeSpec = NodeSpec::new("buffer:allocUnsafe", 0x080B);

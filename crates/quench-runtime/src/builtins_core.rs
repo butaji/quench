@@ -273,14 +273,21 @@ fn create_data_property_or_throw(
 }
 
 pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
+    let Some(receiver) = receiver else {
         return Value::String(String::new());
     };
     let separator = arguments
         .first()
         .map_or_else(|| ",".encode_utf16().collect(), join_units);
+    let values = match receiver {
+        Value::Array(values) => values.snapshot(),
+        value if crate::typed_array_ops::is_view(value) => (0..crate::typed_array_ops::logical_len(value).unwrap_or(0))
+            .map(|index| crate::execute::get_property(value, &index.to_string()))
+            .collect(),
+        _ => return Value::String(String::new()),
+    };
     let mut result = Vec::new();
-    for (index, value) in values.snapshot().iter().enumerate() {
+    for (index, value) in values.iter().enumerate() {
         if index != 0 {
             result.extend_from_slice(&separator);
         }

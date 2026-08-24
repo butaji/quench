@@ -273,6 +273,25 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     }
     Ok(make_protocol(iterator))
 }
+
+pub(crate) fn open_async(value: Value) -> Result<Value, crate::execute::VmError> {
+    if matches!(value, Value::Iterator(_)) {
+        return Ok(value);
+    }
+    let method = crate::execute::get_property_result(&value, "Symbol.asyncIterator")?;
+    if !matches!(method, Value::Undefined) {
+        let iterator = call(&method, &value)?;
+        if !crate::value::is_object(&iterator) {
+            return Err(not_iterable());
+        }
+        return Ok(if matches!(iterator, Value::Iterator(_)) {
+            iterator
+        } else {
+            make_protocol(iterator)
+        });
+    }
+    open(value)
+}
 pub(crate) fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError> {
     Ok(make_protocol(iterator))
 }

@@ -195,6 +195,12 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             &state.borrow().process.exec_path,
         )),
         "buffer" => Some(crate::modules::buffer::build_module()),
+        "internal/buffer" => Some(crate::host::namespace_object_from_pairs(vec![
+            (
+                "utf8Write".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_UTF8_WRITE),
+            ),
+        ])),
         "util" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::util::build(),
         )),
