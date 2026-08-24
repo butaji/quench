@@ -111,7 +111,6 @@
     if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._readableState = {
       objectMode: !!options.objectMode,
-      decodeStrings: options.decodeStrings !== false,
       highWaterMark: defaultHwm(options),
       buffer: [],
       flowing: null,
@@ -476,6 +475,7 @@
     if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._writableState = {
       objectMode: !!options.objectMode,
+      decodeStrings: options.decodeStrings !== false,
       highWaterMark: defaultHwm(options),
       buffered: 0,
       needDrain: false,
