@@ -4,7 +4,24 @@ const LEAF_FACT_SLOTS: usize = 256;
 #[derive(Clone)]
 struct LeafFact {
     function: std::rc::Weak<crate::value::FunctionValue>,
-    proven: bool,
+    rejection: Option<LeafReject>,
+}
+
+#[derive(Clone, Copy)]
+enum LeafReject { Length, Opcode, Register, Call, Control, Depth }
+
+impl LeafReject {
+    fn event(self) -> crate::execution_trace::Event {
+        use crate::execution_trace::Event::*;
+        match self {
+            Self::Length => LeafRejectLength,
+            Self::Opcode => LeafRejectOpcode,
+            Self::Register => LeafRejectRegister,
+            Self::Call => LeafRejectCall,
+            Self::Control => LeafRejectControl,
+            Self::Depth => LeafRejectDepth,
+        }
+    }
 }
 
 thread_local! {
@@ -19,8 +36,9 @@ fn execute_proven_leaf(
 ) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
     crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
     let code = function.code.code()?;
-    if proven_leaf(function, code).is_none() {
+    if let Err(rejection) = proven_leaf(function, code) {
         crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
+        crate::execution_trace::event(rejection.event());
         return None;
     }
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
@@ -38,7 +56,7 @@ fn execute_proven_leaf(
 fn proven_leaf(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     code: crate::machine::CodeView<'_>,
-) -> Option<()> {
+) -> Result<(), LeafReject> {
     let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (LEAF_FACT_SLOTS - 1);
     let cached = LEAF_FACTS.with(|facts| facts.borrow().get(index).and_then(Clone::clone));
     if let Some(cached) = cached.filter(|cached| {
@@ -47,9 +65,9 @@ fn proven_leaf(
             .upgrade()
             .is_some_and(|value| std::rc::Rc::ptr_eq(&value, function))
     }) {
-        return cached.proven.then_some(());
+        return cached.rejection.map_or(Ok(()), Err);
     }
-    let proven = validate_leaf(code).is_some();
+    let rejection = validate_leaf(code).err();
     LEAF_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -57,21 +75,21 @@ fn proven_leaf(
         }
         facts[index] = Some(LeafFact {
             function: std::rc::Rc::downgrade(function),
-            proven,
+            rejection,
         });
     });
-    proven.then_some(())
+    rejection.map_or(Ok(()), Err)
 }
 
-fn validate_leaf(code: crate::machine::CodeView<'_>) -> Option<()> {
+fn validate_leaf(code: crate::machine::CodeView<'_>) -> Result<(), LeafReject> {
     validate_leaf_depth(code, 0)
 }
 
-fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Option<()> {
-    (depth < 4).then_some(())?;
-    (code.len() <= 16).then_some(())?;
+fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Result<(), LeafReject> {
+    (depth < 4).then_some(()).ok_or(LeafReject::Depth)?;
+    (code.len() <= 16).then_some(()).ok_or(LeafReject::Length)?;
     for pc in 0..code.len() {
-        let op = code.instruction(pc)?;
+        let op = code.instruction(pc).ok_or(LeafReject::Opcode)?;
         matches!(
             op.opcode,
             crate::ir::Opcode::LoadConst
@@ -85,22 +103,22 @@ fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Option<
                 | crate::ir::Opcode::Return
                 | crate::ir::Opcode::Slow
         )
-        .then_some(())?;
+        .then_some(()).ok_or(LeafReject::Opcode)?;
         leaf_registers(op)
             .into_iter()
             .all(|register| usize::from(register) < LEAF_REGISTERS)
-            .then_some(())?;
+            .then_some(()).ok_or(LeafReject::Register)?;
         if op.opcode == crate::ir::Opcode::CallN {
-            (op.flags <= 1).then_some(())?;
+            (op.flags <= 1).then_some(()).ok_or(LeafReject::Call)?;
         }
         if op.opcode == crate::ir::Opcode::Slow {
-            validate_leaf_control(code.cold(op)?, depth)?;
+            validate_leaf_control(code.cold(op).ok_or(LeafReject::Control)?, depth)?;
         }
     }
-    Some(())
+    Ok(())
 }
 
-fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Option<()> {
+fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Result<(), LeafReject> {
     let registers = match op {
         crate::ops::Op::Conditional {
             dst,
@@ -108,8 +126,8 @@ fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Option<()> {
             consequent,
             alternate,
         } => {
-            validate_leaf_depth(consequent.code()?, depth + 1)?;
-            validate_leaf_depth(alternate.code()?, depth + 1)?;
+            validate_leaf_depth(consequent.code().ok_or(LeafReject::Control)?, depth + 1)?;
+            validate_leaf_depth(alternate.code().ok_or(LeafReject::Control)?, depth + 1)?;
             [*dst, *condition]
         }
         crate::ops::Op::Branch {
@@ -117,8 +135,8 @@ fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Option<()> {
             then_ops,
             else_ops,
         } => {
-            validate_leaf_depth(then_ops.code()?, depth + 1)?;
-            validate_leaf_depth(else_ops.code()?, depth + 1)?;
+            validate_leaf_depth(then_ops.code().ok_or(LeafReject::Control)?, depth + 1)?;
+            validate_leaf_depth(else_ops.code().ok_or(LeafReject::Control)?, depth + 1)?;
             [*condition, 0]
         }
         crate::ops::Op::Loop {
@@ -131,19 +149,18 @@ fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Option<()> {
             dst,
             per_iteration,
         } if label.is_none() && !post_test && per_iteration.is_empty() => {
-            validate_leaf_depth(init.code()?, depth + 1)?;
-            validate_leaf_depth(test.code()?, depth + 1)?;
-            validate_leaf_depth(body.code()?, depth + 1)?;
-            validate_leaf_depth(update.code()?, depth + 1)?;
+            validate_leaf_depth(init.code().ok_or(LeafReject::Control)?, depth + 1)?;
+            validate_leaf_depth(test.code().ok_or(LeafReject::Control)?, depth + 1)?;
+            validate_leaf_depth(body.code().ok_or(LeafReject::Control)?, depth + 1)?;
+            validate_leaf_depth(update.code().ok_or(LeafReject::Control)?, depth + 1)?;
             [*dst, 0]
         }
-        _ => return None,
+        _ => return Err(LeafReject::Control),
     };
     registers
         .into_iter()
         .all(|register| usize::from(register) < LEAF_REGISTERS)
-        .then_some(())?;
-    Some(())
+        .then_some(()).ok_or(LeafReject::Register)
 }
 
 fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
