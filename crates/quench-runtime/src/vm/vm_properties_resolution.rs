@@ -23,13 +23,20 @@ pub(crate) fn get_named_property_result(
     if let Value::Object(object) = value {
         if !object.has_replacement() {
             let layout = object.semantic_layout_id();
-            if let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
-                if layout == cached_layout {
-                    if let Some((_, value)) = object.hot_properties().get(slot as usize) {
-                        crate::execution_trace::event(
-                            crate::execution_trace::Event::NamedPropertyHit,
-                        );
-                        return Ok(property_value(value));
+            let cached = cache.get();
+            if let Some(value) = prototype_cache_hit(object, layout, cached) {
+                crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+                return Ok(property_value(value));
+            }
+            if cached & PROTOTYPE_CACHE_TAG == 0 {
+                if let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cached) {
+                    if layout == cached_layout {
+                        if let Some((_, value)) = object.hot_properties().get(slot as usize) {
+                            crate::execution_trace::event(
+                                crate::execution_trace::Event::NamedPropertyHit,
+                            );
+                            return Ok(property_value(value));
+                        }
                     }
                 }
             }
@@ -44,9 +51,144 @@ pub(crate) fn get_named_property_result(
                 object.semantic_layout_id(),
                 slot,
             ));
+        } else if let Some(entry) = cacheable_immediate_prototype(object, key) {
+            install_prototype_cache(cache, entry);
         }
     }
     Ok(result)
+}
+
+const PROTOTYPE_CACHE_TAG: u64 = 1 << 63;
+
+#[derive(Clone)]
+struct PrototypeNamedCache {
+    receiver_layout: u32,
+    prototype_slot: u32,
+    prototype: std::rc::Weak<crate::value::ObjectData>,
+    prototype_layout: u32,
+    value_slot: u32,
+}
+
+thread_local! {
+    static PROTOTYPE_NAMED_CACHES: std::cell::RefCell<Vec<Option<PrototypeNamedCache>>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
+const PROTOTYPE_CACHE_SLOTS: usize = 4096;
+
+fn prototype_cache_hit<'a>(
+    receiver: &'a crate::value::ObjectData,
+    receiver_layout: u32,
+    cache: u64,
+) -> Option<&'a Value> {
+    if cache & PROTOTYPE_CACHE_TAG == 0 {
+        return None;
+    }
+    let index = usize::try_from((cache & !PROTOTYPE_CACHE_TAG).checked_sub(1)?).ok()?;
+    PROTOTYPE_NAMED_CACHES.with(|caches| {
+        let caches = caches.borrow();
+        let entry = caches.get(index)?.as_ref()?;
+        if entry.receiver_layout != receiver_layout {
+            return None;
+        }
+        let (_, Value::Object(prototype)) = receiver
+            .hot_properties()
+            .get(entry.prototype_slot as usize)?
+        else {
+            return None;
+        };
+        let expected = entry.prototype.upgrade()?;
+        if !std::rc::Rc::ptr_eq(prototype, &expected)
+            || prototype.semantic_layout_id() != entry.prototype_layout
+        {
+            return None;
+        }
+        prototype
+            .hot_properties()
+            .get(entry.value_slot as usize)
+            .map(|(_, value)| value)
+    })
+}
+
+fn cacheable_immediate_prototype(
+    receiver: &crate::value::ObjectData,
+    key: &str,
+) -> Option<PrototypeNamedCache> {
+    if receiver.hot_properties().iter().any(|(name, _)| {
+        name == key
+            || crate::builtins::is_deleted_key_for(name, key)
+            || crate::builtins::is_descriptor_key_for(name, key)
+    }) {
+        return None;
+    }
+    let (prototype_slot, (_, prototype)) = receiver
+        .hot_properties()
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, (name, _))| name.as_str() == "\0prototype")?;
+    let Value::Object(prototype) = prototype else {
+        return None;
+    };
+    let value_slot = cacheable_own_slot(&Value::Object(std::rc::Rc::clone(prototype)), key)?;
+    Some(PrototypeNamedCache {
+        receiver_layout: receiver.semantic_layout_id(),
+        prototype_slot: u32::try_from(prototype_slot).ok()?,
+        prototype: std::rc::Rc::downgrade(prototype),
+        prototype_layout: prototype.semantic_layout_id(),
+        value_slot,
+    })
+}
+
+fn install_prototype_cache(cache: &std::cell::Cell<u64>, entry: PrototypeNamedCache) {
+    PROTOTYPE_NAMED_CACHES.with(|caches| {
+        let mut caches = caches.borrow_mut();
+        if caches.is_empty() {
+            caches.resize_with(PROTOTYPE_CACHE_SLOTS, || None);
+        }
+        let pointer = entry.prototype.as_ptr() as usize;
+        let index = pointer
+            .wrapping_add(entry.receiver_layout as usize)
+            .wrapping_mul(0x9e37_79b1)
+            .wrapping_add(entry.prototype_layout as usize)
+            .wrapping_add((entry.prototype_slot as usize) << 8)
+            .wrapping_add(entry.value_slot as usize)
+            & (PROTOTYPE_CACHE_SLOTS - 1);
+        caches[index] = Some(entry);
+        cache.set(PROTOTYPE_CACHE_TAG | index as u64 + 1);
+    });
+}
+
+#[cfg(test)]
+mod named_prototype_cache_tests {
+    use super::get_named_property_result;
+    use crate::value::{ObjectData, Value};
+    use std::{cell::Cell, rc::Rc};
+
+    fn receiver(prototype_value: f64) -> Value {
+        let prototype = Rc::new(ObjectData::new(vec![(
+            "method".into(),
+            Value::Number(prototype_value),
+        )]));
+        Value::Object(Rc::new(ObjectData::new(vec![(
+            "\0prototype".into(),
+            Value::Object(prototype),
+        )])))
+    }
+
+    #[test]
+    fn prototype_cache_guards_identity_when_receiver_layout_matches() {
+        let cache = Cell::new(0);
+        assert_eq!(
+            get_named_property_result(&receiver(1.0), "method", &cache).unwrap(),
+            Value::Number(1.0)
+        );
+        assert_eq!(
+            get_named_property_result(&receiver(2.0), "method", &cache).unwrap(),
+            Value::Number(2.0)
+        );
+    }
 }
 
 fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
