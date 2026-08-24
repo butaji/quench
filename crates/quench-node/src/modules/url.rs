@@ -706,8 +706,15 @@ fn legacy_resolve(from: &str, to: &str) -> String {
     }
     if to.starts_with("//") {
         if let Some((protocol, _)) = from.split_once("://") {
+            if to.starts_with("///") {
+                return format!("{protocol}:///{}", to.trim_start_matches('/'));
+            }
             let authority = to.trim_start_matches('/');
-            return format!("{protocol}://{authority}/");
+            return if protocol_is_known_authority(&format!("{protocol}://")) {
+                format!("{protocol}://{authority}/")
+            } else {
+                format!("{protocol}://{authority}")
+            };
         }
     }
     if to.to_ascii_lowercase().starts_with("javascript:") {
@@ -848,7 +855,12 @@ fn legacy_resolve(from: &str, to: &str) -> String {
     } else {
         format!("{base_dir}{to}")
     };
-    let normalized = format!("{}{}", host, normalize_path(&path));
+    let normalized_path = if protocol_is_known_authority(&protocol) {
+        normalize_path(&path)
+    } else {
+        normalize_path_preserving_empty(&path)
+    };
+    let normalized = format!("{}{}", host, normalized_path);
     let preserve_trailing = to.ends_with('/')
         || matches!(to.split('/').next_back(), Some("." | ".."))
         || matches!(to, "." | ".." | "/." | "/./" | "/.." | "/../");
@@ -892,6 +904,39 @@ fn normalize_path(path: &str) -> String {
         out.insert(0, '/');
     }
     out
+}
+
+fn normalize_path_preserving_empty(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let body = path.trim_start_matches('/');
+    let mut parts = Vec::new();
+    for part in body.split('/') {
+        match part {
+            "." => {}
+            ".." => {
+                if let Some(index) = parts.iter().rposition(|value: &String| !value.is_empty()) {
+                    parts.remove(index);
+                }
+            }
+            value => parts.push(value.to_string()),
+        }
+    }
+    let joined = parts.join("/");
+    if absolute {
+        format!("/{joined}")
+    } else {
+        joined
+    }
+}
+
+fn protocol_is_known_authority(protocol: &str) -> bool {
+    matches!(
+        protocol
+            .trim_end_matches("://")
+            .to_ascii_lowercase()
+            .as_str(),
+        "http" | "https" | "ftp" | "file" | "ws" | "wss"
+    )
 }
 
 fn value_to_string(value: &Value) -> String {
