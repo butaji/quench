@@ -743,7 +743,9 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
 }
 
 fn array_has_observable_owner(value: &Value) -> bool {
-    let Value::Array(values) = value else { return false };
+    let Value::Array(values) = value else {
+        return false;
+    };
     values.has_indexed_accessor()
 }
 
@@ -837,15 +839,14 @@ pub(crate) fn reset_replacements() {
 
 #[inline]
 pub(crate) fn resolved_replacement(value: Value) -> Value {
-    // Preserve the script-level `this` view as an owner-bearing alias.  Its
-    // marker is what lets property reads/deletes retarget to the live realm
-    // global after copy-on-write replacement; collapsing it to the physical
-    // replacement here would erase that semantic owner fact.
+    // Script-level `this` is an owner-bearing view. Resolve it to the live
+    // realm global before property operations so copy-on-write replacements
+    // cannot leave a stale physical view behind.
     if matches!(&value, Value::Object(object) if object
         .iter()
         .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
     {
-        return value;
+        return crate::vm::current_global_object();
     }
     if let Some(resolved) = resolved_object_replacement(&value) {
         return resolved;

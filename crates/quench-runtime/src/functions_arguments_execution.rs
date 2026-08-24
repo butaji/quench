@@ -26,7 +26,7 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayUnshift => {
             Ok(crate::builtins::array_unshift(receiver, arguments))
         }
-        crate::ops::Builtin::ArrayFill => Ok(crate::builtins::array_fill(receiver, arguments)),
+        crate::ops::Builtin::ArrayFill => crate::builtins::array_fill(receiver, arguments),
         crate::ops::Builtin::ArrayCopyWithin => {
             crate::builtins::array_copy_within(receiver, arguments)
         }

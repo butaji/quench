@@ -55,24 +55,7 @@ fn well_known_symbol(name: &str) -> Option<crate::ops::Builtin> {
 }
 
 pub(crate) fn property_key_value(key: &str) -> Value {
-    match key {
-        "Symbol.iterator"
-        | "Symbol.asyncIterator"
-        | "Symbol.dispose"
-        | "Symbol.asyncDispose"
-        | "Symbol.unscopables"
-        | "Symbol.toStringTag"
-        | "Symbol.toPrimitive"
-        | "Symbol.hasInstance"
-        | "Symbol.isConcatSpreadable"
-        | "Symbol.species"
-        | "Symbol.match"
-        | "Symbol.replace"
-        | "Symbol.search"
-        | "Symbol.split"
-        | "Symbol.matchAll" => Value::String(format!("{key}\0")),
-        _ => Value::String(key.to_string()),
-    }
+    well_known_symbol(key).map_or_else(|| Value::String(key.to_string()), Value::Builtin)
 }
 
 pub(crate) fn number_to_string(value: f64) -> String {
