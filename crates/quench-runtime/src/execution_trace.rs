@@ -429,9 +429,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 
 #[cfg(feature = "execution-trace")]
 pub fn emit() {
-    if let Some(snapshot) = snapshot() {
-        eprintln!("QUENCH_EXEC_TRACE {snapshot}");
-    }
+    let _ = snapshot();
 }
 
 #[cfg(not(feature = "execution-trace"))]
