@@ -25,14 +25,41 @@ fn string_data(data: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError>
             s,
             encoding.unwrap_or("utf8"),
         )),
-        Value::Uint8Array(view) => Ok(view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length]
-            .to_vec()),
+        Value::Float64Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 8),
+        Value::Float32Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 4),
+        Value::Int8Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length),
+        Value::Int16Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 2),
+        Value::Int32Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 4),
+        Value::BigInt64Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 8),
+        Value::BigUint64Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 8),
+        Value::Uint32Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 4),
+        Value::Uint8Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length),
+        Value::Uint8ClampedArray(view) => view_bytes(&view.buffer, view.byte_offset, view.length),
+        Value::Uint16Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 2),
+        Value::DataView(view) => view_bytes(&view.buffer, view.byte_offset, view.byte_length),
         other => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
             "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView.{}",
             crate::modules::util::invalid_arg_received(other)
         ))),
     }
+}
+
+fn view_bytes(
+    buffer: &Rc<quench_runtime::value::ArrayBufferData>,
+    offset: usize,
+    length: usize,
+) -> Result<Vec<u8>, VmError> {
+    let bytes = buffer.bytes.borrow();
+    let end = offset.checked_add(length).ok_or_else(|| {
+        crate::modules::buffer_enc::invalid_arg_type(
+            "The \"data\" argument contains an invalid view".to_string(),
+        )
+    })?;
+    bytes.get(offset..end).map(ToOwned::to_owned).ok_or_else(|| {
+        crate::modules::buffer_enc::invalid_arg_type(
+            "The \"data\" argument contains an invalid view".to_string(),
+        )
+    })
 }
 
 fn write_open(path: &str, flag: Option<&str>, syscall: &str) -> Result<std::fs::File, VmError> {

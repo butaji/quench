@@ -135,7 +135,7 @@ fn triage(filter: Option<&String>) -> ExitCode {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;
     for path in &entries {
-        if triage_one(&exe, path, 30) {
+        if matches!(triage_one(&exe, path, 30), RunResult::Pass) {
             println!("{}", path.file_name().unwrap().to_string_lossy());
             passed += 1;
         }
@@ -146,7 +146,15 @@ fn triage(filter: Option<&String>) -> ExitCode {
 
 /// Run one fixture in a child process (crash isolation) with a
 /// 30-second timeout; report pass only on a clean zero exit.
-fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunResult {
+    Pass,
+    Fail,
+    Timeout,
+    Crash,
+}
+
+fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
     use std::process::{Command, Stdio};
     let Ok(mut child) = Command::new(exe)
         .arg("--triage-one")
@@ -155,18 +163,26 @@ fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> bool {
         .stderr(Stdio::null())
         .spawn()
     else {
-        return false;
+        return RunResult::Crash;
     };
     for _ in 0..timeout_secs.saturating_mul(20) {
         match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+            Ok(Some(status)) => {
+                return if status.success() {
+                    RunResult::Pass
+                } else if status.code().is_none() {
+                    RunResult::Crash
+                } else {
+                    RunResult::Fail
+                };
+            }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
-            Err(_) => return false,
+            Err(_) => return RunResult::Crash,
         }
     }
     let _ = child.kill();
     let _ = child.wait();
-    false
+    RunResult::Timeout
 }
 
 fn run_all(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
@@ -183,21 +199,23 @@ fn run_all(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
             })
     });
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
-    let mut passed = 0;
+    let mut counts = [0usize; 4];
     for path in &entries {
-        if triage_one(&exe, path, timeout_secs) {
-            passed += 1;
-            println!("PASS {}", path.display());
-        } else {
-            println!("FAIL {}", path.display());
-        }
+        let result = triage_one(&exe, path, timeout_secs);
+        counts[result as usize] += 1;
+        println!("{:?} {}", result, path.display());
     }
+    let inventory_hash = entries.iter().fold(0xcbf29ce484222325u64, |hash, path| {
+        path.to_string_lossy().bytes().fold(hash, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        })
+    });
+    let [passed, failed, timeout, crash] = counts;
     println!(
-        "all: {passed} passed, {} failed, {} total",
-        entries.len() - passed,
+        "all: pass={passed} fail={failed} timeout={timeout} crash={crash} total={} inventory_hash={inventory_hash:016x}",
         entries.len()
     );
-    if passed == entries.len() {
+    if failed == 0 && timeout == 0 && crash == 0 {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
