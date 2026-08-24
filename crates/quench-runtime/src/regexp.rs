@@ -273,9 +273,6 @@ fn compile_and_find<'a>(
     {
         let match_ns = match_start.elapsed().as_nanos();
         crate::execution_trace::regexp(source, compile_ns, match_ns);
-        if match_ns >= 10_000_000 {
-            eprintln!("QUENCH_REGEXP_SLOW {match_ns} {source:?}");
-        }
     }
     result
 }
