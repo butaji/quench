@@ -118,6 +118,7 @@
       reading: false,
       ended: false,
       endEmitted: false,
+      emittedReadable: false,
       errored: null,
       closeEmitted: false,
       encoding: null,
@@ -136,6 +137,7 @@
     const st = stream._readableState;
     if (stream.listenerCount("readable") > 0 &&
         (st.buffer.length > 0 || st.ended)) {
+      st.emittedReadable = true;
       stream._emitter.emit("readable");
       if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
     }
@@ -273,8 +275,9 @@
       return true;
     }
 
-    read() {
+    read(size) {
       const st = this._readableState;
+      if (size !== 0) st.emittedReadable = false;
       if (this._passThrough) this._passThroughRead = true;
       const finishIfEnded = () => {
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
