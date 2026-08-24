@@ -1,9 +1,12 @@
 fn require_stream_http_modules(name: &str) -> Option<Value> {
         if name == "node:test" {
-            return Some(quench_runtime::host_api::object(vec![(
-                "test".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::NodeTest)),
-            )]));
+            let test = capability_function(HostCapabilityKind::Custom(CapabilityName::NodeTest));
+            let skip = test.clone();
+            let _ = quench_runtime::execute::set_callable_property(&test, "skip", skip);
+            for alias in ["test", "describe", "it", "suite"] {
+                let _ = quench_runtime::execute::set_callable_property(&test, alias, test.clone());
+            }
+            return Some(test);
         }
         if name == "node:child_process" || name == "child_process" {
             return Some(Value::object(vec![
