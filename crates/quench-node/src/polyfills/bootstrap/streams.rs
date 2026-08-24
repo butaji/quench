@@ -225,7 +225,11 @@ class NodeAbortController {
     this.signal.reason = reason === undefined
       ? new DOMException("This operation was aborted", "AbortError")
       : reason;
-    const event = { type: "abort", target: this.signal };
+    const event = {
+      type: "abort",
+      target: this.signal,
+      stopImmediatePropagation() {},
+    };
     this.signal._listeners
       .slice()
       .forEach((listener) => listener.call(this.signal, event));

@@ -847,20 +847,62 @@ pub fn fetch(
 }
 
 pub fn abort_controller_new(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let signal = quench_runtime::host_api::object(vec![
-        ("aborted".to_string(), Value::Boolean(false)),
+    let signal = crate::modules::event_target::new_target(state, &[])?;
+    let signal = quench_runtime::execute::set_property(signal, "aborted", Value::Boolean(false));
+    let signal = quench_runtime::execute::set_property(
+        signal,
+        crate::modules::event_target::ABORT_SIGNAL_BRAND,
+        Value::Boolean(true),
+    );
+    Ok(quench_runtime::host_api::object(vec![
+        ("signal".to_string(), signal),
         (
-            crate::modules::event_target::ABORT_SIGNAL_BRAND.to_string(),
-            Value::Boolean(true),
+            "abort".to_string(),
+            crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER_ABORT),
+        ),
+    ]))
+}
+
+pub fn abort_controller_abort(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(controller) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let signal = quench_runtime::execute::get_property(controller, "signal");
+    let signal = quench_runtime::execute::set_property(signal, "aborted", Value::Boolean(true));
+    let reason = args.first().cloned().unwrap_or_else(|| {
+        quench_runtime::host_api::object(vec![
+            ("name".into(), Value::String("AbortError".into())),
+            (
+                "message".into(),
+                Value::String("This operation was aborted".into()),
+            ),
+        ])
+    });
+    let signal = quench_runtime::execute::set_property(signal, "reason", reason);
+    let _ = quench_runtime::execute::set_property(controller.clone(), "signal", signal.clone());
+    let event = quench_runtime::host_api::object(vec![
+        ("type".into(), Value::String("abort".into())),
+        (
+            "stopImmediatePropagation".into(),
+            crate::host::capability(crate::registry::SPEC_ABORT_EVENT_STOP_IMMEDIATE),
         ),
     ]);
-    Ok(quench_runtime::host_api::object(vec![(
-        "signal".to_string(),
-        signal,
-    )]))
+    crate::modules::event_target::dispatch_event(state, Some(&signal), &[event])
+}
+
+pub fn abort_event_stop_immediate(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
 }
 
 pub fn abort_signal_new(
@@ -871,6 +913,33 @@ pub fn abort_signal_new(
         "aborted".to_string(),
         Value::Boolean(false),
     )]))
+}
+
+pub fn abort_signal_abort(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let signal = crate::modules::event_target::new_target(state, &[])?;
+    let signal = quench_runtime::execute::set_property(signal, "aborted", Value::Boolean(true));
+    let signal = quench_runtime::execute::set_property(
+        signal,
+        crate::modules::event_target::ABORT_SIGNAL_BRAND,
+        Value::Boolean(true),
+    );
+    Ok(quench_runtime::execute::set_property(
+        signal,
+        "reason",
+        args.first().cloned().unwrap_or_else(|| {
+            quench_runtime::host_api::object(vec![
+                ("name".into(), Value::String("AbortError".into())),
+                (
+                    "message".into(),
+                    Value::String("This operation was aborted".into()),
+                ),
+            ])
+        }),
+    ))
 }
 
 pub fn process_on(
