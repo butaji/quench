@@ -81,7 +81,7 @@ struct SlotStore {
     // authoritative source and `values[index]` is only the snapshot used to
     // create it.
     values: UnsafeCell<crate::register_file::RegisterFile>,
-    bridges: UnsafeCell<Vec<Option<Rc<RefCell<Value>>>>>,
+    bridges: UnsafeCell<Option<Vec<Option<Rc<RefCell<Value>>>>>>,
 }
 
 impl PartialEq for SlotStore {
@@ -94,23 +94,21 @@ impl Default for SlotStore {
     fn default() -> Self {
         Self {
             values: UnsafeCell::new(crate::register_file::RegisterFile::new()),
-            bridges: UnsafeCell::new(Vec::new()),
+            bridges: UnsafeCell::new(None),
         }
     }
 }
 
 impl SlotStore {
     fn invariant(&self) {
-        debug_assert_eq!(
-            self.values().len(),
-            self.bridges().len(),
-            "slot value and bridge vectors must remain aligned"
-        );
+        if let Some(bridges) = self.bridges() {
+            debug_assert_eq!(self.values().len(), bridges.len());
+        }
     }
 
     fn from_values(values: Vec<Value>) -> Rc<Self> {
         let store = Rc::new(Self {
-            bridges: UnsafeCell::new((0..values.len()).map(|_| None).collect()),
+            bridges: UnsafeCell::new(None),
             values: UnsafeCell::new(crate::register_file::RegisterFile::from_values(values)),
         });
         store.invariant();
@@ -121,7 +119,7 @@ impl SlotStore {
         let value = cell.borrow().clone();
         let store = Rc::new(Self {
             values: UnsafeCell::new(crate::register_file::RegisterFile::from_values(vec![value])),
-            bridges: UnsafeCell::new(vec![Some(cell)]),
+            bridges: UnsafeCell::new(Some(vec![Some(cell)])),
         });
         store.invariant();
         store
@@ -139,15 +137,16 @@ impl SlotStore {
         unsafe { &mut *self.values.get() }
     }
 
-    fn bridges(&self) -> &Vec<Option<Rc<RefCell<Value>>>> {
+    fn bridges(&self) -> Option<&Vec<Option<Rc<RefCell<Value>>>>> {
         // SAFETY: see `values`.
-        unsafe { &*self.bridges.get() }
+        unsafe { (&*self.bridges.get()).as_ref() }
     }
 
     #[allow(clippy::mut_from_ref)]
     fn bridges_mut(&self) -> &mut Vec<Option<Rc<RefCell<Value>>>> {
         // SAFETY: see `values_mut`.
-        unsafe { &mut *self.bridges.get() }
+        let bridges = unsafe { &mut *self.bridges.get() };
+        bridges.get_or_insert_with(|| vec![None; self.values().len()])
     }
 
     fn ensure(&self, index: usize) {
@@ -155,8 +154,10 @@ impl SlotStore {
         if self.values().len() <= index {
             self.values_mut().resize_undefined(index + 1);
         }
-        while self.bridges().len() <= index {
-            self.bridges_mut().push(None);
+        if self.bridges().is_some() {
+            while self.bridges().is_some_and(|bridges| bridges.len() <= index) {
+                self.bridges_mut().push(None);
+            }
         }
         self.invariant();
     }
@@ -169,7 +170,7 @@ impl SlotStore {
     fn load(&self, index: usize) -> Value {
         self.ensure(index);
         self.bridges()
-            .get(index)
+            .and_then(|bridges| bridges.get(index))
             .and_then(Option::as_ref)
             .map_or_else(
                 || self.values().read(index).unwrap_or(Value::Undefined),
@@ -180,7 +181,7 @@ impl SlotStore {
 
     fn load_number(&self, index: usize) -> Option<f64> {
         self.ensure(index);
-        if let Some(Some(cell)) = self.bridges().get(index) {
+        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
             let value = cell.borrow();
             return match &*value {
                 Value::Number(number) => Some(*number),
@@ -199,7 +200,7 @@ impl SlotStore {
         self.ensure(index);
         let value = self
             .bridges()
-            .get(index)
+            .and_then(|bridges| bridges.get(index))
             .and_then(Option::as_ref)
             .map(|cell| cell.borrow());
         if let Some(value) = value.as_deref() {
@@ -215,7 +216,7 @@ impl SlotStore {
 
     fn store(&self, index: usize, value: Value) {
         self.ensure(index);
-        if let Some(Some(cell)) = self.bridges().get(index) {
+        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
             *cell.borrow_mut() = value;
         } else {
             self.values_mut().write(index, value);
@@ -225,7 +226,7 @@ impl SlotStore {
 
     fn update_number(&self, index: usize, delta: f64) -> Option<(f64, f64)> {
         self.ensure(index);
-        if let Some(Some(cell)) = self.bridges().get(index) {
+        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
             let mut value = cell.borrow_mut();
             let Value::Number(old) = &mut *value else {
                 return None;
@@ -243,7 +244,7 @@ impl SlotStore {
 
     fn bridge(&self, index: usize) -> Rc<RefCell<Value>> {
         self.ensure(index);
-        if let Some(Some(cell)) = self.bridges().get(index) {
+        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
             return Rc::clone(cell);
         }
         let cell = Rc::new(RefCell::new(
@@ -268,7 +269,9 @@ pub(crate) struct BindingRef {
 struct SlotRefs {
     prefix_len: usize,
     prefix: Rc<[CapturedRef]>,
-    suffix: Vec<BindingRef>,
+    suffix_store: Option<Rc<SlotStore>>,
+    suffix_len: usize,
+    suffix_overrides: Vec<CapturedRef>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -282,49 +285,63 @@ impl SlotRefs {
         Self {
             prefix_len,
             prefix,
-            suffix: Vec::new(),
+            suffix_store: None,
+            suffix_len: 0,
+            suffix_overrides: Vec::new(),
         }
     }
 
     fn len(&self) -> usize {
-        self.prefix_len + self.suffix.len()
+        self.prefix_len + self.suffix_len
     }
 
-    fn get(&self, index: usize) -> Option<&BindingRef> {
+    fn get(&self, index: usize) -> Option<BindingRef> {
         if index < self.prefix_len {
-            self.prefix
+            return self
+                .prefix
                 .binary_search_by_key(&index, |capture| capture.slot)
                 .ok()
                 .and_then(|found| self.prefix.get(found))
-                .map(|capture| &capture.binding)
-        } else {
-            self.suffix.get(index - self.prefix_len)
+                .map(|capture| capture.binding.clone());
         }
+        if index >= self.len() {
+            return None;
+        }
+        if let Ok(found) = self
+            .suffix_overrides
+            .binary_search_by_key(&index, |entry| entry.slot)
+        {
+            return self
+                .suffix_overrides
+                .get(found)
+                .map(|entry| entry.binding.clone());
+        }
+        let store = Rc::clone(self.suffix_store.as_ref()?);
+        Some(BindingRef {
+            store,
+            index: index - self.prefix_len,
+        })
     }
 
     fn shared_prefix(&self) -> Rc<[CapturedRef]> {
-        if self.suffix.is_empty() {
+        if self.suffix_len == 0 {
             return Rc::clone(&self.prefix);
         }
         self.prefix
             .iter()
             .cloned()
             .chain(
-                self.suffix
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .map(|(index, binding)| CapturedRef {
-                        slot: self.prefix_len + index,
-                        binding,
-                    }),
+                (self.prefix_len..self.len())
+                    .filter_map(|slot| self.get(slot).map(|binding| CapturedRef { slot, binding })),
             )
             .collect::<Vec<_>>()
             .into()
     }
 
     fn push(&mut self, binding: BindingRef) {
-        self.suffix.push(binding);
+        let slot = self.len();
+        self.suffix_len += 1;
+        self.suffix_overrides.push(CapturedRef { slot, binding });
     }
 
     fn replace(&mut self, index: usize, binding: BindingRef) {
@@ -343,7 +360,19 @@ impl SlotRefs {
             self.prefix = prefix.into();
             return;
         }
-        self.suffix[index - self.prefix_len] = binding;
+        match self
+            .suffix_overrides
+            .binary_search_by_key(&index, |entry| entry.slot)
+        {
+            Ok(found) => self.suffix_overrides[found].binding = binding,
+            Err(insert) => self.suffix_overrides.insert(
+                insert,
+                CapturedRef {
+                    slot: index,
+                    binding,
+                },
+            ),
+        }
     }
 }
 
@@ -488,14 +517,15 @@ impl Environment {
         let store = SlotStore::from_values(values);
         let prefix = captures.slots.borrow().shared_prefix();
         let prefix_len = captures.len();
-        let suffix = (0..store.len())
-            .map(|index| BindingRef::new(Rc::clone(&store), index))
-            .collect();
+        let suffix_len = store.len();
+        crate::execution_trace::environment_lifecycle(true);
         let environment = Rc::new(Self {
             slots: RefCell::new(SlotRefs {
                 prefix_len,
                 prefix,
-                suffix,
+                suffix_store: Some(store),
+                suffix_len,
+                suffix_overrides: Vec::new(),
             }),
             names: RefCell::new(None),
             eval_names: RefCell::new(None),
@@ -568,7 +598,7 @@ impl Environment {
     }
 
     fn slot(&self, slot: u16) -> Option<BindingRef> {
-        self.slots.borrow().get(usize::from(slot)).cloned()
+        self.slots.borrow().get(usize::from(slot))
     }
 
     pub(crate) fn map_argument(
@@ -900,7 +930,7 @@ impl Environment {
             let store = SlotStore::from_values(vec![Value::Undefined]);
             slots.push(BindingRef::new(store, 0));
         }
-        slots.get(index).expect("ensured environment slot").clone()
+        slots.get(index).expect("ensured environment slot")
     }
 
     pub(crate) fn initialize(&self, slot: u16) {
