@@ -396,10 +396,16 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(quench_runtime::host_api::object(vec![
                 (
                     "codes".into(),
-                    quench_runtime::host_api::object(vec![(
-                        "ERR_OUT_OF_RANGE".into(),
-                        Value::Builtin(quench_runtime::ops::Builtin::RangeError),
-                    )]),
+                    quench_runtime::host_api::object(vec![
+                        (
+                            "ERR_OUT_OF_RANGE".into(),
+                            Value::Builtin(quench_runtime::ops::Builtin::RangeError),
+                        ),
+                        (
+                            "ERR_IPC_CHANNEL_CLOSED".into(),
+                            Value::Builtin(quench_runtime::ops::Builtin::Error),
+                        ),
+                    ]),
                 ),
                 (
                     "determineSpecificType".into(),
