@@ -389,14 +389,28 @@ NodeBuffer._validateSize = (size) => {
   }
   return Math.trunc(size);
 };
+const __nodeBufferValidateAlignment = (alignment) => {
+  if (alignment === undefined) return;
+  if (typeof alignment !== "number") {
+    throw Object.assign(new TypeError('The "alignment" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
+  }
+  if (!Number.isFinite(alignment) || !Number.isInteger(alignment)) {
+    throw Object.assign(new RangeError('The "alignment" argument must be an integer'), { code: "ERR_OUT_OF_RANGE" });
+  }
+  if (alignment < 1 || (alignment & (alignment - 1)) !== 0) {
+    throw Object.assign(new TypeError('The "alignment" argument must be a power of two'), { code: "ERR_INVALID_ARG_VALUE" });
+  }
+};
 NodeBuffer.alloc = (size, fill = 0, encoding) => {
   const length = NodeBuffer._validateSize(size);
   __nodeAllocatorCounts.zeroFilled++;
   return new NodeBuffer(length).fill(fill, 0, length, encoding);
 };
-NodeBuffer.allocUnsafe = (size) => {
+NodeBuffer.allocUnsafe = (size, alignment) => {
+  __nodeBufferValidateAlignment(alignment);
   __nodeAllocatorCounts.uninitialized++;
-  return new NodeBuffer(NodeBuffer._validateSize(size));
+  const length = NodeBuffer._validateSize(size);
+  return __nodeBufferPoolFrom(new NodeBuffer(length), alignment || 1) || new NodeBuffer(length);
 };
 NodeBuffer.allocUnsafeSlow = NodeBuffer.allocUnsafe;
 NodeBuffer.of = (...values) => new NodeBuffer(values);

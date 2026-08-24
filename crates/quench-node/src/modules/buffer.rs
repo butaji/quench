@@ -130,7 +130,7 @@ pub fn alloc(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    alloc_impl(args, true)
+    alloc_impl(args, true, false)
 }
 
 pub fn alloc_unsafe(
@@ -138,10 +138,18 @@ pub fn alloc_unsafe(
     args: &[Value],
 ) -> Result<Value, VmError> {
     validate_alignment(args.get(1))?;
-    alloc_impl(args, false)
+    alloc_impl(args, false, true)
 }
 
-fn validate_alignment(value: Option<&Value>) -> Result<(), VmError> {
+pub fn alloc_unsafe_slow(
+    _state: &Rc<RefCell<crate::host::HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    validate_alignment(args.get(1))?;
+    alloc_impl(args, false, false)
+}
+
+pub(crate) fn validate_alignment(value: Option<&Value>) -> Result<(), VmError> {
     let Some(value) = value.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(());
     };
@@ -174,20 +182,30 @@ pub fn array_buffer_aligned_offset(args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Number(0.0))
 }
 
-fn alloc_impl(args: &[Value], zero_fill: bool) -> Result<Value, VmError> {
+fn alloc_impl(args: &[Value], zero_fill: bool, pooled: bool) -> Result<Value, VmError> {
     let size = size_arg(args.first(), "size")?;
     // Node defers to the allocator; past a sanity bound, fail the way
     // an allocation failure surfaces instead of panicking in `vec!`.
     if size > 1 << 33 {
-        return Err(VmError::EvalError(
-            "Array buffer allocation failed".to_string(),
+        return Err(enc::out_of_range(
+            "size",
+            &format!(">= 0 && <= {}", MAX_LENGTH as u64),
+            &enc::fmt_num(size as f64),
         ));
     }
     let mut bytes = vec![0u8; size];
     if zero_fill && args.get(1).is_some_and(|v| !matches!(v, Value::Undefined)) {
         apply_fill(&mut bytes, args)?;
     }
-    Ok(crate::modules::buffer_proto::make_buffer(&bytes))
+    if pooled {
+        let alignment = match args.get(1) {
+            Some(Value::Number(value)) => *value as usize,
+            _ => 8,
+        };
+        Ok(crate::modules::buffer_proto::make_pooled_buffer_aligned(&bytes, alignment))
+    } else {
+        Ok(crate::modules::buffer_proto::make_buffer(&bytes))
+    }
 }
 
 fn apply_fill(bytes: &mut [u8], args: &[Value]) -> Result<(), VmError> {
