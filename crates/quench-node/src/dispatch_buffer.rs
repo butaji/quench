@@ -44,6 +44,7 @@ const BUFFER_TABLE: &[(u16, CallHandler)] = &[
     (0x0850, w::ascii_write),
     (0x0851, w::latin1_write),
     (0x0852, w::utf8_write),
+    (0x0856, w::internal_utf8_write),
     (0x084C, |state, _receiver, args| {
         crate::modules::text_encoder::new_text_encoder(state, args)
     }),
