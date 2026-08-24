@@ -89,6 +89,9 @@ pub fn execute_call_continuation(
         if !function.with_captures.is_empty() {
             return Ok(None);
         }
+        if crate::with_scope::is_active() {
+            return Ok(None);
+        }
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
