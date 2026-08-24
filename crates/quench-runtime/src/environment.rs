@@ -350,6 +350,9 @@ impl Environment {
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
+        if self.is_immutable_slot(slot) && !self.is_uninitialized(slot) {
+            return None;
+        }
         self.slot(slot)?.update_number(delta)
     }
 
