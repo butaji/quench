@@ -30,6 +30,16 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
 }
 
 fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
+    let mut seen = HashSet::new();
+    retarget_nested_alias_seen(value, old, new, &mut seen);
+}
+
+fn retarget_nested_alias_seen(
+    value: &Value,
+    old: &Value,
+    new: &Value,
+    seen: &mut HashSet<usize>,
+) {
     match value {
         Value::ObjectAlias(alias) if alias_targets(alias, old) => {
             if let Value::Object(object) = new {
@@ -37,38 +47,70 @@ fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
             }
         }
         Value::Array(values) => {
+            if !seen.insert(Rc::as_ptr(values) as usize) {
+                return;
+            }
             for value in values.snapshot() {
-                retarget_nested_alias(&value, old, new);
+                retarget_nested_alias_seen(&value, old, new, seen);
             }
         }
         Value::Object(values) => {
+            if !seen.insert(Rc::as_ptr(values) as usize) {
+                return;
+            }
             for (_, value) in values.iter() {
-                retarget_nested_alias(value, old, new);
+                retarget_nested_alias_seen(value, old, new, seen);
             }
             retarget_private_aliases(&values.private_slots, old, new);
         }
-        Value::Function(function) => retarget_private_aliases(&function.private_slots, old, new),
+        Value::Function(function) => {
+            if !seen.insert(Rc::as_ptr(function) as usize) {
+                return;
+            }
+            retarget_private_aliases(&function.private_slots, old, new);
+        }
         _ => {}
     }
 }
 
 fn contains_nested(value: &Value, target: &Value) -> bool {
+    let mut seen = HashSet::new();
+    contains_nested_seen(value, target, &mut seen)
+}
+
+fn contains_nested_seen(value: &Value, target: &Value, seen: &mut HashSet<usize>) -> bool {
     match value {
-        Value::BindingCell(cell) => contains_nested(&cell.borrow(), target),
+        Value::BindingCell(cell) => {
+            if !seen.insert(Rc::as_ptr(cell) as usize) {
+                return false;
+            }
+            contains_nested_seen(&cell.borrow(), target, seen)
+        }
         Value::ObjectAlias(alias) => alias_targets(alias, target),
-        Value::Array(values) => values
-            .snapshot()
-            .iter()
-            .any(|value| same_identity(value, target) || contains_nested(value, target)),
+        Value::Array(values) => {
+            if !seen.insert(Rc::as_ptr(values) as usize) {
+                return false;
+            }
+            values.snapshot().iter().any(|value| {
+                same_identity(value, target) || contains_nested_seen(value, target, seen)
+            })
+        }
         Value::Object(values) => {
-            values
-                .iter()
-                .any(|(_, value)| same_identity(value, target) || contains_nested(value, target))
-                || private_slots_contain(&values.private_slots, target)
+            if !seen.insert(Rc::as_ptr(values) as usize) {
+                return false;
+            }
+            values.iter().any(|(_, value)| {
+                same_identity(value, target) || contains_nested_seen(value, target, seen)
+            }) || private_slots_contain(&values.private_slots, target)
         }
         Value::Function(function) => {
+            if !seen.insert(Rc::as_ptr(function) as usize) {
+                return false;
+            }
             function.properties.borrow().iter().any(|(_, value)| {
-                same_identity(value, target) || alias_targets_value(value, target)
+                same_identity(value, target)
+                    || alias_targets_value(value, target)
+                    || contains_nested_seen(value, target, seen)
             }) || private_slots_contain(&function.private_slots, target)
         }
         _ => false,
