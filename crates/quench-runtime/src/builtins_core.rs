@@ -298,7 +298,13 @@ pub(crate) fn array_join(
         if matches!(value, Value::Null | Value::Undefined) {
             continue;
         }
-        result.extend(crate::conversion::to_string(&value)?.encode_utf16());
+        if let Some(units) = crate::strings::units_of(&value) {
+            // Append UTF-16 units before materializing: adjacent array
+            // elements can form a surrogate pair across the element boundary.
+            result.extend(units);
+        } else {
+            result.extend(crate::conversion::to_string(&value)?.encode_utf16());
+        }
     }
     Ok(crate::strings::from_units(result))
 }

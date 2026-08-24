@@ -320,7 +320,21 @@ pub fn internal_binding(
             crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
         )]));
     }
+    if name == "timers" {
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "getLibuvNow".to_string(),
+            crate::host::capability(crate::registry::SPEC_TIMERS_GET_LIBUV_NOW),
+        )]));
+    }
     Ok(crate::host::namespace_object_from_pairs(Vec::new()))
+}
+
+pub fn timers_get_libuv_now(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(crate::modules::timers::monotonic_ms() as f64))
 }
 
 pub fn internal_buffer_fill(
