@@ -15,7 +15,15 @@ impl Op {
             LoadBinding { slot, dynamic: false, .. } => slots.push(*slot),
             Try { catch_slot: Some(slot), .. } => slots.push(*slot),
             Loop { per_iteration, .. } => slots.extend_from_slice(per_iteration),
-            Eval { .. } | ResolveName { .. } | ResolveNameOrUndefined { .. }
+            CallSuperConstructor { .. }
+            | CallSuperMethod { .. }
+            | GetSuperProperty { .. }
+            | GetSuperPropertyDynamic { .. }
+            | SetSuperProperty { .. }
+            | SetSuperPropertyDynamic { .. }
+            | Eval { .. }
+            | ResolveName { .. }
+            | ResolveNameOrUndefined { .. }
             | SetName { .. } | DeleteName { .. } | LoadBinding { dynamic: true, .. } => {
                 slots.push(u16::MAX)
             }
