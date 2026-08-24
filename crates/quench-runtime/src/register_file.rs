@@ -75,6 +75,7 @@ impl OwnedWord {
 
     #[inline(always)]
     pub(crate) fn load(&self) -> Value {
+        crate::execution_trace::event(crate::execution_trace::Event::OwnedWordRead);
         decode_owned(self.0).expect("owned execute word must decode")
     }
 
@@ -171,6 +172,7 @@ impl<const N: usize> FixedWordFile<N> {
 
     #[inline(always)]
     pub(crate) fn read(&self, index: usize) -> Option<Value> {
+        crate::execution_trace::event(crate::execution_trace::Event::FixedWordRead);
         decode_owned(*self.words.get(index)?)
     }
 
@@ -264,6 +266,7 @@ impl<const N: usize> LocalWordFile<N> {
     }
 
     pub(crate) fn read(&self, slot: u16) -> Option<Value> {
+        crate::execution_trace::event(crate::execution_trace::Event::LocalWordRead);
         let index = usize::from(slot);
         self.is_initialized(index)
             .then(|| decode_owned(unsafe { self.words[index].assume_init() }))?
@@ -345,6 +348,7 @@ impl RegisterFile {
 
     pub fn read(&self, index: usize) -> Option<Value> {
         crate::execution_trace::event(crate::execution_trace::Event::ValueDecode);
+        crate::execution_trace::event(crate::execution_trace::Event::RegisterFileRead);
         let word = *self.words.get(index)?;
         decode_owned(word)
     }
