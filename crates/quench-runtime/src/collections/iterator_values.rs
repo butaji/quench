@@ -234,6 +234,7 @@ pub(crate) fn make(values: Vec<Value>) -> Value {
         receiver: None,
         typed_receiver: None,
         typed_keys: false,
+        entries: false,
         index: 0,
         done: false,
     })))
@@ -245,6 +246,19 @@ pub(crate) fn make_array(data: Rc<crate::value::ArrayData>) -> Value {
         receiver: Some(data),
         typed_receiver: None,
         typed_keys: false,
+        entries: false,
+        index: 0,
+        done: false,
+    })))
+}
+
+pub(crate) fn make_array_entries(data: Rc<crate::value::ArrayData>) -> Value {
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Native {
+        values: Vec::new(),
+        receiver: Some(data),
+        typed_receiver: None,
+        typed_keys: false,
+        entries: true,
         index: 0,
         done: false,
     })))
@@ -256,6 +270,19 @@ pub(crate) fn make_typed(value: Value) -> Value {
         receiver: None,
         typed_receiver: Some(value),
         typed_keys: false,
+        entries: false,
+        index: 0,
+        done: false,
+    })))
+}
+
+pub(crate) fn make_typed_entries(value: Value) -> Value {
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Native {
+        values: Vec::new(),
+        receiver: None,
+        typed_receiver: Some(value),
+        typed_keys: false,
+        entries: true,
         index: 0,
         done: false,
     })))
@@ -267,6 +294,7 @@ pub(crate) fn make_typed_keys(value: Value) -> Value {
         receiver: None,
         typed_receiver: Some(value),
         typed_keys: true,
+        entries: false,
         index: 0,
         done: false,
     })))

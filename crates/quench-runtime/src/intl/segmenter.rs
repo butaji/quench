@@ -311,6 +311,7 @@ fn segments_iterator(receiver: Option<&Value>) -> Result<Value, VmError> {
             receiver: None,
             typed_receiver: None,
             typed_keys: false,
+            entries: false,
             index: 0,
             done: false,
         },

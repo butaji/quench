@@ -15,7 +15,8 @@ pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_step::step_value_await;
 pub(crate) use iterator_values::{
     builtin_for, from_map, from_map_keys, from_map_values, from_set, from_set_entries, make,
-    make_array, make_regexp_string, make_string, make_typed, make_typed_keys, next, next_map,
+    make_array, make_array_entries, make_regexp_string, make_string, make_typed,
+    make_typed_entries, make_typed_keys, next, next_map,
     next_set, property_for, prototype_of, result,
 };
 
@@ -411,6 +412,7 @@ pub(super) fn native_step(
     receiver: Option<&Rc<crate::value::ArrayData>>,
     typed_receiver: Option<&Value>,
     typed_keys: bool,
+    entries: bool,
     index: &mut usize,
     done: &mut bool,
 ) -> Result<Option<Value>, crate::execute::VmError> {
@@ -436,9 +438,16 @@ pub(super) fn native_step(
     } else {
         values.get(*index).cloned()
     };
+    let current_index = *index;
     *index = index.saturating_add(1);
     *done = value.is_none();
-    Ok(value)
+    Ok(value.map(|value| {
+        if entries {
+            Value::array(vec![Value::Number(current_index as f64), value])
+        } else {
+            value
+        }
+    }))
 }
 
 fn typed_receiver_is_detached(value: &Value) -> bool {
