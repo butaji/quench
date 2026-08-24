@@ -466,7 +466,7 @@ pub(crate) fn array_with(
         ));
     };
     let length = crate::builtins::map_length(receiver)?;
-    if length > 1 << 32 {
+    if length >= 1usize << 32 {
         return Err(crate::value::error::throw_range_error("Invalid array length"));
     }
     let number = arguments
