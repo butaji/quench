@@ -329,6 +329,15 @@ pub(crate) fn array_push(
             "Array length exceeds maximum safe integer",
         ));
     }
+    if let Value::Array(array) = &receiver {
+        if array.is_packed_ordinary() {
+            let (mut values, _, _) = array.hot_storage();
+            values.extend(arguments.iter().cloned());
+            let updated = Value::array(values);
+            crate::locals::replace_value(&receiver, &updated);
+            return Ok(Value::Number(final_length as f64));
+        }
+    }
     let mut updated = receiver.clone();
     for (offset, value) in arguments.iter().cloned().enumerate() {
         let key = (length + offset).to_string();

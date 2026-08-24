@@ -270,20 +270,36 @@ fn buffer_of(arguments: &[Value]) -> Result<Value, VmError> {
     ))
 }
 
-fn buffer_alloc_unsafe(arguments: &[Value]) -> Result<Value, VmError> {
+fn buffer_alloc_unsafe(arguments: &[Value], pooled: bool) -> Result<Value, VmError> {
     let Some(Value::Number(length)) = arguments.first() else {
         return Err(VmError::Thrown(fs_error(
             "ERR_INVALID_ARG_TYPE",
             "size must be a number",
         )));
     };
-    if !length.is_finite() || *length < 0.0 {
+    if !length.is_finite() || *length < 0.0 || *length > quench_node::modules::buffer::MAX_LENGTH {
         return Err(VmError::Thrown(fs_error(
             "ERR_OUT_OF_RANGE",
             "size out of range",
         )));
     }
-    Ok(node_buffer(&vec![0; *length as usize]))
+    quench_node::modules::buffer::validate_alignment(arguments.get(1))?;
+    if *length > (1u64 << 33) as f64 {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            "size out of range",
+        )));
+    }
+    let bytes = vec![0; *length as usize];
+    if pooled {
+        let alignment = match arguments.get(1) {
+            Some(Value::Number(value)) => *value as usize,
+            _ => 8,
+        };
+        Ok(quench_node::modules::buffer_proto::make_pooled_buffer_aligned(&bytes, alignment))
+    } else {
+        Ok(node_buffer(&bytes))
+    }
 }
 
 fn buffer_is_encoding(arguments: &[Value]) -> Result<Value, VmError> {

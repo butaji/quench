@@ -1,13 +1,24 @@
 //! Polyfill: `api-head`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.Buffer = new Proxy(NodeBuffer, {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeWarnLegacyBuffer = () => {
+  if (globalThis.__nodeLegacyBufferWarningEmitted) return;
+  Object.defineProperty(globalThis, "__nodeLegacyBufferWarningEmitted", {
+    configurable: true, enumerable: false, writable: true, value: true
+  });
+  process.emit("warning", Object.assign(new Error(
+    "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead."
+  ), { name: "DeprecationWarning", code: "DEP0005" }));
+};
+globalThis.Buffer = new Proxy(NodeBuffer, {
   apply(_target, _thisArg, args) {
+    __nodeWarnLegacyBuffer();
     if (typeof args[0] === "number") {
       return new NodeBuffer(NodeBuffer._validateSize(args[0]));
     }
     return NodeBuffer.from(...args);
   },
   construct(_target, args) {
+    __nodeWarnLegacyBuffer();
     if (typeof args[0] === "number") {
       if (typeof args[1] === "string") {
         const error = new TypeError(

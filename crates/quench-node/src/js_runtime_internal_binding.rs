@@ -24,6 +24,12 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
                 "fill".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::BufferFill)),
             ),
+            (
+                "arrayBufferAlignedOffset".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::BufferArrayBufferAlignedOffset,
+                )),
+            ),
         ]));
     }
     if [

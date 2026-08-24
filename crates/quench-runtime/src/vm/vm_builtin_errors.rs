@@ -65,6 +65,18 @@ fn error_cause_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.stack")?;
+    let error_constructor = crate::execute::get_property(
+        &crate::vm::current_global_object(),
+        "Error",
+    );
+    let prepare = crate::execute::get_property_result(&error_constructor, "prepareStackTrace")?;
+    if crate::conversion::is_callable(&prepare) {
+        return crate::execute::call(
+            &prepare,
+            &Value::Undefined,
+            &[value.clone(), Value::array(Vec::new())],
+        );
+    }
     if has_error_slot(value) {
         Ok(Value::String("Error".to_string()))
     } else {

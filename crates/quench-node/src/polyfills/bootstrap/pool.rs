@@ -29,22 +29,24 @@ ArrayBuffer.prototype.transfer = function (...args) {
   new Uint8Array(result).set(new Uint8Array(this));
   return result;
 };
-const __nodeBufferPoolFrom = (source) => {
-  if (source.length === 0 || source.length >= __nodeBufferPoolSize >>> 1) {
+const __nodeBufferPoolFrom = (source, alignment = 1) => {
+  if (
+    source.length === 0 ||
+    source.length >= __nodeBufferPoolSize >>> 1 ||
+    alignment > 64
+  ) {
     return undefined;
   }
-  if (__nodeBufferPoolOffset + source.length > __nodeBufferPool.byteLength) {
+  const alignedOffset =
+    (__nodeBufferPoolOffset + alignment - 1) & ~(alignment - 1);
+  if (alignedOffset + source.length > __nodeBufferPool.byteLength) {
     __nodeBufferPool = new ArrayBuffer(__nodeBufferPoolSize);
     __nodeUntransferableBuffers.add(__nodeBufferPool);
     __nodeBufferPoolOffset = 0;
   }
-  const result = new __NodeBufferBase01(
-    __nodeBufferPool,
-    __nodeBufferPoolOffset,
-    source.length
-  );
+  const result = new __NodeBufferBase01(__nodeBufferPool, alignedOffset, source.length);
   result.set(source);
-  __nodeBufferPoolOffset += source.length;
+  __nodeBufferPoolOffset = alignedOffset + source.length;
   return result;
 };
 "#);
