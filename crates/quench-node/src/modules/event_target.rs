@@ -250,13 +250,21 @@ pub fn dispatch_event(
                 &[Value::String(event_type.clone()), listener.callback.clone()],
             )?;
         }
-        if quench_runtime::is_callable(&listener.callback) {
-            execute::call(&listener.callback, receiver, std::slice::from_ref(event))?;
+        let result = if quench_runtime::is_callable(&listener.callback) {
+            execute::call(&listener.callback, receiver, std::slice::from_ref(event))
         } else if let Value::Object(_) = &listener.callback {
             let handler = execute::get_property(&listener.callback, "handleEvent");
             if quench_runtime::is_callable(&handler) {
-                execute::call(&handler, &listener.callback, std::slice::from_ref(event))?;
+                execute::call(&handler, &listener.callback, std::slice::from_ref(event))
+            } else {
+                Ok(Value::Undefined)
             }
+        } else {
+            Ok(Value::Undefined)
+        };
+        if let Err(error) = result {
+            crate::modules::pump::handle_uncaught(state, error)?;
+            crate::modules::pump::run_uncaught(state)?;
         }
         if execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
             || event
