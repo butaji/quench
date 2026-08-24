@@ -83,6 +83,7 @@ fn buffer_module() -> Value {
     prototype = quench_runtime::execute::set_property(prototype, "writeUintLE", write_uint_le);
     for (name, capability) in [
         ("copy", CapabilityName::BufferCopy),
+        ("fill", CapabilityName::BufferFill),
         ("swap16", CapabilityName::BufferSwap16),
         ("readBigInt64LE", CapabilityName::BufferReadBigInt64LE),
         ("writeBigInt64LE", CapabilityName::BufferWriteBigInt64LE),

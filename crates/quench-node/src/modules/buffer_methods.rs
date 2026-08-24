@@ -53,8 +53,9 @@ pub(crate) fn this_view(receiver: Option<&Value>) -> Result<Rc<Uint8ArrayData>, 
 }
 
 fn view_bytes(view: &Uint8ArrayData) -> std::cell::Ref<'_, [u8]> {
+    let length = view.logical_len();
     std::cell::Ref::map(view.buffer.bytes.borrow(), |b| {
-        &b[view.byte_offset..view.byte_offset + view.length]
+        &b[view.byte_offset..view.byte_offset + length]
     })
 }
 
@@ -115,9 +116,25 @@ pub fn to_string(
     let view = this_view(receiver)?;
     let encoding = encoding_arg(args.first())?;
     let bytes = view_bytes(&view);
-    let start = clamp_bounds(args, 1, bytes.len(), 0.0);
-    let end = clamp_bounds(args, 2, bytes.len(), bytes.len() as f64);
+    if bytes.len() as f64 > crate::modules::buffer::MAX_STRING_LENGTH {
+        return Err(enc::string_too_long());
+    }
+    let start = clamp_to_string_bounds(args.get(1), bytes.len(), 0.0);
+    let end = clamp_to_string_bounds(args.get(2), bytes.len(), bytes.len() as f64);
     Ok(enc::decode_str(&bytes[start..end.max(start)], &encoding))
+}
+
+fn clamp_to_string_bounds(value: Option<&Value>, len: usize, default: f64) -> usize {
+    let raw = if value.is_none() || matches!(value, Some(Value::Undefined)) {
+        default
+    } else {
+        to_offset(value)
+    };
+    if raw.is_sign_negative() {
+        0
+    } else {
+        (raw as usize).min(len)
+    }
 }
 
 fn encoding_arg(arg: Option<&Value>) -> Result<String, VmError> {
@@ -126,6 +143,32 @@ fn encoding_arg(arg: Option<&Value>) -> Result<String, VmError> {
         Some(Value::String(s)) => enc::canonical_encoding(s)
             .map(str::to_string)
             .ok_or_else(|| enc::unknown_encoding(s)),
+        Some(Value::Object(object)) => {
+            let method = quench_runtime::execute::get_property_result(
+                &Value::Object(object.clone()),
+                "toString",
+            )?;
+            if !quench_runtime::is_callable(&method) {
+                return Err(enc::invalid_arg_type(format!(
+                    "The \"encoding\" argument must be of type string.{}",
+                    crate::modules::util::invalid_arg_received(&Value::Object(object.clone()))
+                )));
+            }
+            let converted =
+                quench_runtime::execute::call(&method, &Value::Object(object.clone()), &[])?;
+            let Value::String(converted) = converted else {
+                return Err(enc::invalid_arg_type(
+                    "The \"encoding\" argument must be of type string.".into(),
+                ));
+            };
+            enc::canonical_encoding(&converted)
+                .map(str::to_string)
+                .ok_or_else(|| enc::unknown_encoding(&converted))
+        }
+        Some(Value::Null) => Err(enc::unknown_encoding("null")),
+        Some(Value::Number(value)) => Err(enc::unknown_encoding(&value.to_string())),
+        Some(Value::Boolean(value)) => Err(enc::unknown_encoding(&value.to_string())),
+        Some(Value::BigInt(value)) => Err(enc::unknown_encoding(value)),
         Some(other) => Err(enc::invalid_arg_type(format!(
             "The \"encoding\" argument must be of type string.{}",
             crate::modules::util::invalid_arg_received(other)
@@ -191,6 +234,21 @@ pub fn compare(
     };
     let source = view_bytes(&view);
     let target_bytes = view_bytes(target_view);
+    for (index, name) in [
+        (1, "targetStart"),
+        (2, "targetEnd"),
+        (3, "sourceStart"),
+        (4, "sourceEnd"),
+    ] {
+        let limit = if index == 1 {
+            usize::MAX
+        } else if index == 2 {
+            target_bytes.len()
+        } else {
+            source.len()
+        };
+        validate_compare_bound(args.get(index), name, limit)?;
+    }
     let t_start = clamp_bounds(args, 1, target_bytes.len(), 0.0);
     let t_end = clamp_bounds(args, 2, target_bytes.len(), target_bytes.len() as f64);
     let s_start = clamp_bounds(args, 3, source.len(), 0.0);
@@ -199,6 +257,29 @@ pub fn compare(
         &source[s_start..s_end.max(s_start)],
         &target_bytes[t_start..t_end.max(t_start)],
     )))
+}
+
+fn validate_compare_bound(value: Option<&Value>, name: &str, limit: usize) -> Result<(), VmError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if matches!(value, Value::Undefined) {
+        return Ok(());
+    }
+    let Value::Number(number) = value else {
+        return Err(enc::invalid_arg_type(format!(
+            "The \"{name}\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(value)
+        )));
+    };
+    if !number.is_finite() || *number < 0.0 || *number > limit as f64 {
+        return Err(enc::out_of_range(
+            name,
+            &format!(">= 0 && <= {limit}"),
+            &enc::fmt_num(*number),
+        ));
+    }
+    Ok(())
 }
 
 /// `Buffer.compare(a, b)`.
@@ -266,6 +347,9 @@ fn copy_transfer(
     source_start: usize,
     count: usize,
 ) -> Result<Value, VmError> {
+    if target.buffer.immutable {
+        return Ok(Value::Number(0.0));
+    }
     let mut source_bytes = view.buffer.bytes.borrow_mut();
     let same = Rc::ptr_eq(&view.buffer, &target.buffer);
     if same {
@@ -344,32 +428,12 @@ pub fn fill(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
-    if !matches!(receiver, Some(Value::Uint8Array(_)))
-        && matches!(args.first(), Some(Value::Uint8Array(_)))
-    {
-        let view = match args.first() {
-            Some(Value::Uint8Array(view)) => view,
-            _ => unreachable!(),
-        };
-        validate_fill_bound(args.get(1), view.length, "start")?;
-        validate_fill_bound(args.get(2), view.length, "end")?;
-        if let Some(Value::Number(value)) = args.get(3) {
-            if !value.is_finite() || *value < 0.0 || *value > 255.0 {
-                return Err(enc::out_of_range(
-                    "value",
-                    ">= 0 && <= 255",
-                    &enc::fmt_num(*value),
-                ));
-            }
-        }
-        let reordered = [
-            args.get(3).cloned().unwrap_or(Value::Undefined),
-            args.get(1).cloned().unwrap_or(Value::Undefined),
-            args.get(2).cloned().unwrap_or(Value::Undefined),
-            args.get(4).cloned().unwrap_or(Value::Undefined),
-        ];
-        return fill(state, args.first(), &reordered);
-    }
+    let _ = state;
+    fill_view(receiver, args)
+}
+
+/// Shared implementation for the public prototype method and internal binding.
+pub fn fill_view(receiver: Option<&Value>, args: &[Value]) -> HandlerResult {
     let view = this_view(receiver)?;
     if let Some(receiver) = receiver {
         if let Ok(Value::Number(length)) =
@@ -385,8 +449,8 @@ pub fn fill(
     let fill = args.first().cloned().unwrap_or(Value::Undefined);
     let (offset_arg, end_arg, encoding_arg) = fill_args(args);
     let encoding = match encoding_arg {
+        Some(Value::Undefined) | None => None,
         Some(value) => Some(encoding_arg_from(value, &fill)?),
-        None => None,
     };
     let pattern = fill_pattern(&fill, encoding.as_deref())?;
     validate_fill_bound(args.get(offset_arg), view.length, "offset")?;
@@ -400,6 +464,26 @@ pub fn fill(
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// `internalBinding('buffer').fill(buffer, value, start, end, encoding)`.
+pub fn internal_fill(args: &[Value]) -> HandlerResult {
+    let buffer = args.first().ok_or(VmError::NotCallable)?;
+    if !matches!(buffer, Value::Uint8Array(_)) {
+        return Err(enc::invalid_arg_type(
+            "The first argument must be a Buffer or Uint8Array".to_string(),
+        ));
+    }
+    let reordered = [
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+        args.get(2).cloned().unwrap_or(Value::Undefined),
+        args.get(3).cloned().unwrap_or(Value::Undefined),
+        match args.get(4) {
+            Some(Value::String(value)) => Value::String(value.clone()),
+            _ => Value::Undefined,
+        },
+    ];
+    fill_view(Some(buffer), &reordered)
 }
 
 fn validate_fill_bound(value: Option<&Value>, length: usize, name: &str) -> Result<(), VmError> {
