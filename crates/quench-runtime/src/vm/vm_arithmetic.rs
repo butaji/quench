@@ -226,7 +226,7 @@ mod immediate_integer_tests {
     }
 }
 #[inline]
-fn evaluate_binary(
+pub(crate) fn evaluate_binary(
     left: &Value,
     right: &Value,
     operator: crate::ops::BinaryOp,
