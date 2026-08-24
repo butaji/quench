@@ -8,6 +8,22 @@ pub fn delegate_next(
     let Value::Iterator(data) = record else {
         return Err(not_iterable());
     };
+    let builtin = matches!(
+        &*data.state.borrow(),
+        IteratorState::Set { .. }
+            | IteratorState::Map { .. }
+            | IteratorState::String { .. }
+            | IteratorState::RegExpString { .. }
+    );
+    if builtin {
+        return match crate::collections::iterator::step_value(record)? {
+            Some(value) => Ok(DelegationResult::Ongoing {
+                value,
+                passthrough: false,
+            }),
+            None => Ok(DelegationResult::Done(Value::Undefined)),
+        };
+    }
     let protocol = {
         let mut state = data.state.borrow_mut();
         match &mut *state {
@@ -31,9 +47,7 @@ pub fn delegate_next(
             IteratorState::Set { .. }
             | IteratorState::Map { .. }
             | IteratorState::String { .. }
-            | IteratorState::RegExpString { .. } => {
-                return Ok(DelegationResult::Done(Value::Undefined));
-            }
+            | IteratorState::RegExpString { .. } => unreachable!(),
             IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
             IteratorState::Protocol { .. } => None,
             IteratorState::Mapped { .. } => None,
@@ -153,4 +167,3 @@ fn delegation_result(
     mark_done(data);
     Ok(DelegationResult::Done(value))
 }
-
