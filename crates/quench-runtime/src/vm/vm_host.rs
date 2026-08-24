@@ -71,12 +71,8 @@ fn host_custom_call(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let host = CURRENT_CONTEXT.with(|context| {
-        context
-            .borrow()
-            .as_ref()
-            .and_then(|rc| rc.host_handle())
-    });
+    let host =
+        CURRENT_CONTEXT.with(|context| context.borrow().as_ref().and_then(|rc| rc.host_handle()));
     host.map(|host| host.call(descriptor, receiver, arguments))
         .unwrap_or(Err(VmError::NotCallable))
 }
@@ -132,6 +128,8 @@ fn realm_global_object(
         ("String", Builtin::String),
         ("Boolean", Builtin::Boolean),
         ("Symbol", Builtin::Symbol),
+        ("parseFloat", Builtin::ParseFloat),
+        ("parseInt", Builtin::ParseInt),
         ("TypeError", Builtin::TypeError),
     ] {
         properties.push((name.to_string(), realm::intrinsic(realm, builtin)?));
