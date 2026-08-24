@@ -296,6 +296,9 @@ pub(crate) fn descriptor(
         .unwrap_or_else(|| crate::locals::resolved_replacement(value.clone()));
     let value = unwrap_binding_cells(value);
     let key = crate::conversion::to_property_key(key)?;
+    if matches!(value, Value::Proxy(_)) {
+        return crate::proxy::proxy_get_own_property_descriptor(&value, &key);
+    }
     crate::module_bindings::exports(&value, &key)?;
     let descriptor = descriptor_for_value(&value, &key);
     Ok(descriptor.unwrap_or(Value::Undefined))
