@@ -2,9 +2,11 @@ pub(crate) fn array_copy_within(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Ok(Value::Undefined);
+    let object = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
+    let Value::Array(values) = &object else {
+        return Ok(object);
     };
+    let receiver = &object;
     let length = values.logical_len();
     let target = copy_index(arguments.first(), length)?;
     let start = copy_index(arguments.get(1), length)?;

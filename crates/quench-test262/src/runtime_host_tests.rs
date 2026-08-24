@@ -34,6 +34,34 @@ fn sequential_script_units_share_global_function_bindings() {
 }
 
 #[test]
+fn define_property_updates_sloppy_arguments_length() {
+    let mut host = super::RuntimeHost;
+    host.run_harnessed_script(
+        &[],
+        "var args = (function(a, b, c) { return arguments; })(1, 2, 3);\n\
+         Object.defineProperty(args, 'length', { value: 6 });\n\
+         if (args.length !== 6) throw new Error('direct length missing');\n\
+         if ([].concat(args).length !== 6) throw new Error('concat length missing');",
+        false,
+    )
+    .expect("arguments length defineProperty must remain observable");
+}
+
+#[test]
+fn string_wrapper_concat_preserves_utf16_code_units() {
+    let mut host = super::RuntimeHost;
+    host.run_harnessed_script(
+        &[],
+        "var value = new String('\\uD83D\\uDCA9');\n\
+         value[Symbol.isConcatSpreadable] = true;\n\
+         var result = [].concat(value);\n\
+         if (result.length !== 2 || result[0] !== '\\uD83D' || result[1] !== '\\uDCA9') throw new Error('UTF-16 code units were folded');",
+        false,
+    )
+    .expect("string wrapper concat must expose UTF-16 code units");
+}
+
+#[test]
 fn strict_non_extensible_write_throws() {
     let mut host = super::RuntimeHost;
     let result = host.run_harnessed_script(
