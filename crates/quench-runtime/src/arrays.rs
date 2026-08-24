@@ -470,46 +470,155 @@ fn sort(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Ok(Value::Undefined);
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.sort called on null or undefined",
+        ));
     };
-    let mut sorted = values.to_vec();
-    let compare = arguments.first();
-    if let Some(compare) = compare.filter(|value| !matches!(value, Value::Undefined)) {
+    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    if let Some(compare) = compare {
         if !crate::conversion::is_callable(compare) {
             return Err(crate::value::error::throw_type_error(
                 "Array.prototype.sort comparator is not callable",
             ));
         }
-        // Keep the comparator's observable calls in the VM while retaining a
-        // simple stable insertion order for this residual builtin.  The
-        // comparator can throw, so an explicit loop preserves that completion
-        // instead of hiding it inside `slice::sort_by`.
-        let mut index = 1;
-        while index < sorted.len() {
-            let value = sorted.remove(index);
-            let mut position = 0;
-            while position < index {
-                let result = crate::functions::execute_target(
-                    compare,
-                    &Value::Undefined,
-                    &[value.clone(), sorted[position].clone()],
-                )?;
-                let result = crate::conversion::to_number(&result)?;
-                if !result.is_nan() && result < 0.0 {
-                    break;
-                }
-                position += 1;
-            }
-            sorted.insert(position, value);
-            index += 1;
-        }
-    } else {
-        sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
     }
-    let result = Value::array(sorted);
-    crate::locals::replace_value(receiver, &result);
-    Ok(result)
+    let mut target = crate::construct::to_object(receiver)?;
+    let length = crate::builtins::map_length(&target)?;
+    let mut values = Vec::new();
+    let mut undefined_count = 0usize;
+    for index in 0..length {
+        target = crate::locals::resolved_replacement(target);
+        let key = index.to_string();
+        if !crate::with_scope::has_property(&target, &key)? {
+            continue;
+        }
+        let value = crate::execute::get_property_result(&target, &key)?;
+        if matches!(value, Value::Undefined) {
+            undefined_count += 1;
+        } else {
+            values.push(value);
+        }
+    }
+    let value_count = values.len();
+    if let Some(compare) = compare {
+        sort_with_comparator(&mut values, compare)?;
+    } else {
+        sort_by_string(&mut values)?;
+    }
+
+    target = crate::locals::resolved_replacement(target);
+    for (index, value) in values.into_iter().enumerate() {
+        target = sort_write(target, &index.to_string(), value)?;
+        crate::locals::replace_value(receiver, &target);
+    }
+    for index in value_count..value_count + undefined_count {
+        target = sort_write(target, &index.to_string(), Value::Undefined)?;
+        crate::locals::replace_value(receiver, &target);
+    }
+    let final_count = value_count + undefined_count;
+    for index in final_count..length {
+        let (updated, deleted) = crate::builtins::delete_property(target, &index.to_string());
+        if !deleted {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot delete property during sort",
+            ));
+        }
+        target = updated;
+        crate::locals::replace_value(receiver, &target);
+    }
+    crate::locals::replace_value(receiver, &target);
+    Ok(target)
+}
+
+fn sort_with_comparator(
+    values: &mut Vec<Value>,
+    compare: &Value,
+) -> Result<(), crate::execute::VmError> {
+    let mut index = 1;
+    while index < values.len() {
+        let value = values.remove(index);
+        let mut position = 0;
+        while position < index {
+            let result = crate::functions::execute_target(
+                compare,
+                &Value::Undefined,
+                &[value.clone(), values[position].clone()],
+            )?;
+            let result = crate::conversion::to_number(&result)?;
+            if !result.is_nan() && result < 0.0 {
+                break;
+            }
+            position += 1;
+        }
+        values.insert(position, value);
+        index += 1;
+    }
+    Ok(())
+}
+
+fn sort_by_string(values: &mut Vec<Value>) -> Result<(), crate::execute::VmError> {
+    let mut index = 1;
+    while index < values.len() {
+        let value = values.remove(index);
+        let value_key = crate::conversion::to_string(&value)?;
+        let mut position = 0;
+        while position < index {
+            let current_key = crate::conversion::to_string(&values[position])?;
+            if value_key < current_key {
+                break;
+            }
+            position += 1;
+        }
+        values.insert(position, value);
+        index += 1;
+    }
+    Ok(())
+}
+
+fn sort_write(
+    target: Value,
+    key: &str,
+    value: Value,
+) -> Result<Value, crate::execute::VmError> {
+    if let Some(setter) = sort_setter(&target, key)? {
+        let (_, updated) = crate::functions::execute_target_with_receiver(
+            &setter,
+            &target,
+            std::slice::from_ref(&value),
+        )?;
+        return Ok(crate::locals::resolved_replacement(updated));
+    }
+    if let Value::Array(_) = &target {
+        if crate::builtins::descriptor_flag(&target, key, "writable") == Some(false)
+            || !crate::properties::object_is_extensible(&target)
+                && !crate::with_scope::has_property(&target, key)?
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot assign property during sort",
+            ));
+        }
+        return Ok(crate::builtins::set_property(target, key, value));
+    }
+    crate::properties::assign_set_property(&target, key, value)
+}
+
+fn sort_setter(target: &Value, key: &str) -> Result<Option<Value>, crate::execute::VmError> {
+    if let Some(setter) = crate::property_define::accessor(target, key, "set") {
+        if !matches!(setter, Value::Undefined) {
+            return Ok(Some(setter));
+        }
+    }
+    if let Some(Value::Object(descriptor)) = crate::builtins::read_intrinsic_override(
+        crate::ops::Builtin::ObjectPrototype,
+        key,
+    ) {
+        let setter = crate::execute::get_property_result(&Value::Object(descriptor), "set")?;
+        if !matches!(setter, Value::Undefined) {
+            return Ok(Some(setter));
+        }
+    }
+    Ok(None)
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {
