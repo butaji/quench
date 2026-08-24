@@ -120,6 +120,7 @@ struct Counters {
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
     descriptor_objects: HashMap<&'static str, u64>,
+    named_property_results: HashMap<&'static str, u64>,
 }
 
 #[cfg(feature = "execution-trace")]
@@ -212,6 +213,37 @@ pub(crate) fn descriptor_object(origin: &'static str) {
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn descriptor_object(_: &'static str) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Value) {
+    if enabled() {
+        let kind = match (tier, value) {
+            ("prototype", crate::value::Value::Number(_)) => "prototype:number",
+            ("prototype", crate::value::Value::Object(_)) => "prototype:object",
+            ("prototype", crate::value::Value::Function(_)) => "prototype:function",
+            ("prototype", crate::value::Value::BindingCell(_)) => "prototype:binding_cell",
+            ("prototype", crate::value::Value::String(_)) => "prototype:string",
+            ("prototype", _) => "prototype:other",
+            ("own", crate::value::Value::Number(_)) => "own:number",
+            ("own", crate::value::Value::Object(_)) => "own:object",
+            ("own", crate::value::Value::Function(_)) => "own:function",
+            ("own", crate::value::Value::BindingCell(_)) => "own:binding_cell",
+            ("own", crate::value::Value::String(_)) => "own:string",
+            ("own", _) => "own:other",
+            _ => "unknown",
+        };
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .named_property_results
+                .entry(kind)
+                .or_default() += 1;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_property_result(_: &'static str, _: &crate::value::Value) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -536,6 +568,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "object_shapes": object_shapes,
                 "function_shapes": function_shapes,
                 "descriptor_objects": counters.descriptor_objects,
+                "named_property_results": counters.named_property_results,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
             })
         })
