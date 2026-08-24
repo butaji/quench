@@ -1121,6 +1121,7 @@ pub enum Value {
     DataView(Rc<DataViewData>),
     Builtin(Builtin),
     Function(Rc<FunctionValue>),
+    WeakFunction(WeakFunctionValue),
     BoundFunction(Rc<BoundFunctionValue>),
     Proxy(Rc<ProxyValue>),
     Promise(Rc<PromiseData>),
@@ -1975,11 +1976,40 @@ pub struct FunctionValue {
 impl Drop for FunctionValue {
     fn drop(&mut self) {
         crate::execution_trace::function_lifecycle(false);
+        crate::execution_trace::function_shape(self.captures.len(), self.code.len(), false);
     }
 }
 impl PartialEq for FunctionValue {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
+    }
+}
+
+/// Internal non-owning edge materialized as a normal function before JS observes it.
+#[derive(Clone, Debug)]
+pub struct WeakFunctionValue(pub std::rc::Weak<FunctionValue>);
+
+impl PartialEq for WeakFunctionValue {
+    fn eq(&self, other: &Self) -> bool {
+        std::rc::Weak::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl WeakFunctionValue {
+    pub(crate) fn value(&self) -> Value {
+        self.0
+            .upgrade()
+            .map(Value::Function)
+            .unwrap_or(Value::Undefined)
+    }
+}
+
+impl Value {
+    pub(crate) fn strong_function(self) -> Self {
+        match self {
+            Self::WeakFunction(function) => function.value(),
+            value => value,
+        }
     }
 }
 

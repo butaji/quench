@@ -635,19 +635,23 @@ pub struct FunctionCode {
     store: Rc<OnceLock<Rc<CodeStore>>>,
     pub range: CodeRange,
     source: Option<Rc<[Op]>>,
+    capture_slots: Rc<[u16]>,
 }
 
 impl FunctionCode {
     pub fn from_ops(body: Vec<Op>) -> Self {
+        let capture_slots = collect_capture_slots(&body);
         let (_, range, store) = freeze_tree(body);
         Self {
             store,
             range,
             source: None,
+            capture_slots,
         }
     }
 
     pub fn pending(body: Vec<Op>) -> Self {
+        let capture_slots = collect_capture_slots(&body);
         Self {
             store: Rc::new(OnceLock::new()),
             range: CodeRange {
@@ -656,6 +660,7 @@ impl FunctionCode {
                 end: body.len() as u32,
             },
             source: Some(body.into_boxed_slice().into()),
+            capture_slots,
         }
     }
 
@@ -665,6 +670,10 @@ impl FunctionCode {
 
     /// Materialize related nested bodies in one immutable store.
     pub fn from_ops_many(bodies: Vec<Vec<Op>>) -> Vec<Self> {
+        let capture_slots = bodies
+            .iter()
+            .map(|body| collect_capture_slots(body))
+            .collect::<Vec<_>>();
         let mut arena = CodeArena::new();
         let store = Rc::new(OnceLock::new());
         let ranges = bodies
@@ -674,10 +683,12 @@ impl FunctionCode {
         let _ = store.set(arena.freeze());
         ranges
             .into_iter()
-            .map(|range| Self {
+            .zip(capture_slots)
+            .map(|(range, capture_slots)| Self {
                 store: store.clone(),
                 range,
                 source: None,
+                capture_slots,
             })
             .collect()
     }
@@ -689,6 +700,7 @@ impl FunctionCode {
             store: linked,
             range,
             source: None,
+            capture_slots: Rc::from([u16::MAX]),
         }
     }
 
@@ -712,12 +724,26 @@ impl FunctionCode {
         self.store.get().cloned()
     }
 
+    pub(crate) fn capture_slots(&self) -> &[u16] {
+        &self.capture_slots
+    }
+
     pub(crate) fn rehome(&mut self, arena: &mut CodeArena, store: &Rc<OnceLock<Rc<CodeStore>>>) {
         let body = self.source.take().map(|body| body.to_vec());
         let Some(body) = body else { return };
         self.range = arena.append_tree(body, store);
         self.store = store.clone();
     }
+}
+
+fn collect_capture_slots(body: &[Op]) -> Rc<[u16]> {
+    let mut slots = Vec::new();
+    for op in body {
+        op.capture_slots(&mut slots);
+    }
+    slots.sort_unstable();
+    slots.dedup();
+    slots.into()
 }
 
 fn freeze_tree(body: Vec<Op>) -> (Rc<CodeStore>, CodeRange, Rc<OnceLock<Rc<CodeStore>>>) {
