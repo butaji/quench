@@ -398,7 +398,13 @@ fn execute_direct_eval(code: crate::machine::CodeView<'_>, strict: bool) -> Resu
     let environment = crate::environment::Environment::child(&crate::locals::current(), Vec::new());
     let _guard = crate::locals::EnvironmentGuard::install(environment);
     let _strict_eval = crate::locals::StrictEvalGuard::install(strict);
-    crate::vm::execute_code_in_place(code, &mut crate::register_file::RegisterFile::new())
+    let mut registers = crate::register_file::RegisterFile::new();
+    crate::vm::execute_code_in_environment(
+        code,
+        &mut registers,
+        &crate::vm::current_context_or_default(),
+        crate::locals::current(),
+    )
 }
 
 fn syntax_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
