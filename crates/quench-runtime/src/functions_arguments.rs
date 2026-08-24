@@ -61,13 +61,12 @@ pub(crate) fn build_registers(
     }
     let environment = crate::environment::Environment::in_place_child(&function.captures, parameters);
     let arguments_slot = function.captures.len() as u16 + function.params;
-    if matches!(function.kind, FunctionKind::Arrow) {
+    if function.code.uses_slot(arguments_slot) {
         let arguments = arguments_object(function, arguments.to_vec(), &environment);
         environment.set(arguments_slot, arguments);
-    } else {
-        let arguments = arguments_object(function, arguments.to_vec(), &environment);
-        environment.set(arguments_slot, arguments);
-        mark_arguments_immutable(function, &environment, arguments_slot);
+        if !matches!(function.kind, FunctionKind::Arrow) {
+            mark_arguments_immutable(function, &environment, arguments_slot);
+        }
     }
     let register_count = function.code.len().max(32);
     (
