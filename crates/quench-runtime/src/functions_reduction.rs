@@ -236,7 +236,14 @@ fn split_function_locals(
             .for_each(|slot| *slot = slot.saturating_add(1));
     }
     let mut body = parameters.clone();
-    crate::reduce_support::shadow_function_bindings(statements, &mut body, &formal);
+    let mut shadow = formal;
+    if !lexical_receiver {
+        // `arguments` is an implicit parameter binding for ordinary
+        // functions, but inherited outer names must remain hidden while
+        // parameter initializers are evaluated.
+        shadow.insert("arguments".to_string(), 0);
+    }
+    crate::reduce_support::shadow_function_bindings(statements, &mut body, &shadow);
     (parameters, body)
 }
 fn function_local_count(
