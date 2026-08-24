@@ -3,6 +3,7 @@ pub(crate) enum PromiseContinuation {
     AsyncGenerator {
         generator: Rc<GeneratorData>,
         result: Rc<PromiseData>,
+        async_function: bool,
     },
     AsyncGeneratorYield {
         generator: Rc<GeneratorData>,

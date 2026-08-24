@@ -1,8 +1,10 @@
 fn suspended_try_op(op: &crate::ops::Op, generator: &GeneratorData) -> bool {
     match op {
-        crate::ops::Op::Yield { .. } => true,
-        crate::ops::Op::YieldStar { iterator, .. } => crate::execute::read_register(&registers(generator), *iterator)
-            .is_ok_and(|value| !matches!(value, Value::Undefined)),
+        crate::ops::Op::Yield { .. } | crate::ops::Op::Await { .. } => true,
+        crate::ops::Op::YieldStar { iterator, .. } => {
+            crate::execute::read_register(&registers(generator), *iterator)
+                .is_ok_and(|value| !matches!(value, Value::Undefined))
+        }
         _ => false,
     }
 }
@@ -13,7 +15,10 @@ fn resume_suspended_try_op(
     suffix: crate::machine::CodeView<'_>,
     resume: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    if matches!(yield_op, crate::ops::Op::Yield { .. }) {
+    if matches!(
+        yield_op,
+        crate::ops::Op::Yield { .. } | crate::ops::Op::Await { .. }
+    ) {
         return match resume {
             crate::completion::Completion::Normal => {
                 crate::vm::execute_code_completion_in_current_frame(suffix, registers)

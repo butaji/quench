@@ -12,7 +12,24 @@ fn suspended_try<'a>(
                 _ => None,
             })
         }
-        _ => None,
+        _ => {
+            generator
+                .function
+                .code
+                .code()?
+                .cold_ops()
+                .find_map(|(_, candidate)| match candidate {
+                    candidate @ Op::Try { body, .. }
+                        if body.code().is_some_and(|body| {
+                            body.cold_ops()
+                                .any(|(_, op)| matches!(op, Op::Await { .. }))
+                        }) =>
+                    {
+                        try_yield_parts(generator, candidate, body)
+                    }
+                    _ => None,
+                })
+        }
     }
 }
 
@@ -33,6 +50,12 @@ fn resume_suspended_try(
     state: &mut GeneratorState,
     resume: crate::completion::Completion,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
+    let _private = crate::private_environment::Guard::install_environment(
+        generator.function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
+    let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
+    let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
     let Some((try_op, yield_op, suffix)) = suspended_try(generator, state) else {
         return Ok(None);
     };
