@@ -315,6 +315,7 @@ pub(crate) fn execute_crypto_integer_function(
     let values = [*i, *j, *c, f64::from(x & 0x3fff), f64::from(x >> 14), *n];
     let (_, _, carry, _, _, _) = multiply_integer_cells(&input, &output, values, iterations)?;
     crate::execution_trace::event(crate::execution_trace::Event::CryptoKernelHit);
+    crate::execution_trace::kernel("crypto_multiply_to", false);
     Some(Value::Number(carry))
 }
 
@@ -638,6 +639,7 @@ fn run_crypto_integer_kernel(
     crate::execution_trace::event(crate::execution_trace::Event::CryptoKernelHeader);
     execute_integer_multiply(fact, loop_fact)?;
     crate::execution_trace::event(crate::execution_trace::Event::CryptoKernelHit);
+    crate::execution_trace::kernel("crypto_integer_multiply", false);
     Some(crate::completion::Completion::Normal)
 }
 
