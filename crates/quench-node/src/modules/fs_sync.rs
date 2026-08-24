@@ -76,13 +76,16 @@ fn string_data(data: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError>
             s,
             encoding.unwrap_or("utf8"),
         )),
-        Value::Uint8Array(view) => Ok(view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length]
-            .to_vec()),
-        other => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-            "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView.{}",
-            crate::modules::util::invalid_arg_received(other)
-        ))),
+        other => crate::modules::buffer_methods::as_byte_view(other)
+            .map(|view| {
+                view.buffer.bytes.borrow()
+                    [view.byte_offset..view.byte_offset + view.length]
+                    .to_vec()
+            })
+            .ok_or_else(|| crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView.{}",
+                crate::modules::util::invalid_arg_received(other)
+            ))),
     }
 }
 
