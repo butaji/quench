@@ -132,7 +132,7 @@ struct Counters {
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
     function_call_shapes: HashMap<(u16, usize, usize), u64>,
-    function_opcode_shapes: HashMap<(u16, u8, [u8; 32]), u64>,
+    function_opcode_shapes: HashMap<(u64, u16, u8, [u8; 32]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
     crypto_direct_iterations: u64,
@@ -234,6 +234,7 @@ pub(crate) fn function_call_shape(
             let Some(code) = code.filter(|code| code.len() <= 32) else {
                 return;
             };
+            let fingerprint = function_fingerprint(params, captures, code);
             let mut opcodes = [0; 32];
             for (pc, opcode) in opcodes.iter_mut().enumerate().take(code.len()) {
                 *opcode = code
@@ -242,7 +243,7 @@ pub(crate) fn function_call_shape(
             }
             *counters
                 .function_opcode_shapes
-                .entry((params, code.len() as u8, opcodes))
+                .entry((fingerprint, params, code.len() as u8, opcodes))
                 .or_default() += 1;
         });
     }
@@ -250,27 +251,12 @@ pub(crate) fn function_call_shape(
 
 #[cfg(feature = "execution-trace")]
 fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeView<'_>) {
-    use std::hash::{Hash, Hasher};
     static ENABLED: OnceLock<bool> = OnceLock::new();
     static SEEN: OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> = OnceLock::new();
     if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_FUNCTION_SHAPES").is_some()) {
         return;
     }
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    params.hash(&mut hasher);
-    captures.hash(&mut hasher);
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc).expect("valid function instruction");
-        (instruction.opcode as u8).hash(&mut hasher);
-        instruction.flags.hash(&mut hasher);
-        instruction.a.hash(&mut hasher);
-        instruction.b.hash(&mut hasher);
-        instruction.c.hash(&mut hasher);
-        code.cold(instruction)
-            .map(crate::ops::Op::variant_name)
-            .hash(&mut hasher);
-    }
-    let fingerprint = hasher.finish();
+    let fingerprint = function_fingerprint(params, captures, code);
     if !SEEN
         .get_or_init(Default::default)
         .lock()
@@ -317,6 +303,26 @@ fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeV
             dump_function_fragment("alternate", alternate.code());
         }
     }
+}
+
+#[cfg(feature = "execution-trace")]
+fn function_fingerprint(params: u16, captures: usize, code: crate::machine::CodeView<'_>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    params.hash(&mut hasher);
+    captures.hash(&mut hasher);
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).expect("valid function instruction");
+        (instruction.opcode as u8).hash(&mut hasher);
+        instruction.flags.hash(&mut hasher);
+        instruction.a.hash(&mut hasher);
+        instruction.b.hash(&mut hasher);
+        instruction.c.hash(&mut hasher);
+        code.cold(instruction)
+            .map(crate::ops::Op::variant_name)
+            .hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 #[cfg(feature = "execution-trace")]
@@ -822,25 +828,30 @@ pub fn snapshot() -> Option<serde_json::Value> {
             let mut function_opcode_shapes: Vec<_> = counters.function_opcode_shapes.iter().collect();
             function_opcode_shapes.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
             let function_opcode_shapes = function_opcode_shapes.into_iter().take(64).map(
-                |(&(params, len, opcodes), &count)| {
+                |(&(fingerprint, params, len, opcodes), &count)| {
                     let opcodes = opcodes[..usize::from(len)].iter().filter_map(|opcode| {
                         crate::ir::Opcode::from_u8(*opcode).map(crate::ir::Opcode::name)
                     }).collect::<Vec<_>>();
-                    serde_json::json!({"params": params, "opcodes": opcodes, "count": count})
+                    serde_json::json!({
+                        "fingerprint": fingerprint.to_string(),
+                        "params": params,
+                        "opcodes": opcodes,
+                        "count": count,
+                    })
                 },
             ).collect::<Vec<_>>();
             let mut loop_shapes = counters.loop_shapes.iter().collect::<Vec<_>>();
             loop_shapes.sort_unstable_by_key(|(_, shape)| std::cmp::Reverse(shape.1));
             let loop_shapes = loop_shapes.into_iter().map(|(&fingerprint, shape)| {
                 serde_json::json!({
-                    "fingerprint": fingerprint,
+                    "fingerprint": fingerprint.to_string(),
                     "entries": shape.0,
                     "iterations": shape.1,
                     "ops": shape.2,
                 })
             }).collect::<Vec<_>>();
             serde_json::json!({
-                "schema": 2,
+                "schema": 3,
                 "compact_total": compact_total,
                 "slow_total": slow_total,
                 "guest_total": compact_total,
