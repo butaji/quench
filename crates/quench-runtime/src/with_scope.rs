@@ -212,7 +212,14 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
     {
         return Ok(());
     }
-    let global = crate::vm::current_global_object();
+    let captured_global = crate::locals::current().get(0);
+    let global = if matches!(captured_global, Value::Object(_) | Value::ObjectAlias(_))
+        && has_property(&captured_global, key)?
+    {
+        captured_global
+    } else {
+        crate::vm::current_global_object()
+    };
     if strict && !has_property(&global, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
             "{key} is not defined"
