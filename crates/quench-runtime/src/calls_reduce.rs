@@ -180,7 +180,7 @@ fn load_eval_binding(
             dst,
             slot,
             name: "eval".to_string(),
-            dynamic: facts.in_function && slot < facts.eval_var_scope_start,
+            dynamic: facts.binding_is_dynamic(slot),
         });
     } else {
         ops.push(Op::ResolveName {

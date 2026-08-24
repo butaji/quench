@@ -99,6 +99,7 @@ pub struct ProgramDb {
     pub(crate) eval_var_barrier: Vec<String>,
     pub(crate) eval_formals: Vec<String>,
     pub(crate) eval_var_scope_start: u16,
+    pub(crate) function_has_direct_eval: bool,
     pub(crate) eval_arrow_scope: bool,
     pub(crate) eval_deletable: Vec<(String, u16)>,
     pub(crate) epochs: Epochs,
@@ -170,6 +171,13 @@ impl Epochs {
 }
 
 impl ProgramDb {
+    pub(crate) fn binding_is_dynamic(&self, slot: u16) -> bool {
+        self.has_dynamic_scope()
+            || (self.in_function
+                && self.function_has_direct_eval
+                && slot < self.eval_var_scope_start)
+    }
+
     pub(crate) fn enter_dynamic_scope(&mut self) {
         self.dynamic_scope_depth = self.dynamic_scope_depth.saturating_add(1);
     }
