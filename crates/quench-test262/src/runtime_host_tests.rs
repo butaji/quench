@@ -171,6 +171,18 @@ fn cross_realm_class_evaluations_keep_private_static_brands_distinct() {
 }
 
 #[test]
+fn script_this_define_delete_preserves_global_owner() {
+    let mut host = super::RuntimeHost;
+    host.run_harnessed_script(
+        &[],
+        "Object.defineProperty(this, '__fixed', { value: 1, configurable: false });\n\
+         if (delete this['__fixed'] !== false) throw new Error('delete');",
+        false,
+    )
+    .expect("script this property deletion must honor the global owner");
+}
+
+#[test]
 fn symbols_are_unique_and_format_descriptions() {
     let mut host = super::RuntimeHost;
     host.run_script(
