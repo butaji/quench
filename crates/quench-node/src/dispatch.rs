@@ -231,6 +231,13 @@ const CAP_ABORT_SIGNAL: u16 = 0x1f03;
 const CAP_ABORT_SIGNAL_ABORT: u16 = 0x1f04;
 const CAP_ABORT_CONTROLLER_ABORT: u16 = 0x1f05;
 const CAP_ABORT_EVENT_STOP_IMMEDIATE: u16 = 0x1f06;
+const CAP_EVENT: u16 = 0x0118;
+const CAP_EVENT_PREVENT_DEFAULT: u16 = 0x011a;
+const CAP_EVENT_STOP_PROPAGATION: u16 = 0x011b;
+const CAP_EVENT_STOP_IMMEDIATE: u16 = 0x011c;
+const CAP_EVENT_COMPOSED_PATH: u16 = 0x011d;
+const CAP_EVENT_GET_CANCEL_BUBBLE: u16 = 0x011e;
+const CAP_EVENT_SET_CANCEL_BUBBLE: u16 = 0x011f;
 const CAP_TEST_RUN: u16 = 0x1b00;
 const CAP_TEST_SKIP: u16 = 0x1b01;
 
@@ -242,6 +249,12 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_EVENTS_NEW => handlers::events_call,
         CAP_ABORT_CONTROLLER_ABORT => handlers::abort_controller_abort,
         CAP_ABORT_EVENT_STOP_IMMEDIATE => handlers::abort_event_stop_immediate,
+        CAP_EVENT_PREVENT_DEFAULT => handlers::event_prevent_default,
+        CAP_EVENT_STOP_PROPAGATION => handlers::event_stop_propagation,
+        CAP_EVENT_STOP_IMMEDIATE => handlers::event_stop_immediate,
+        CAP_EVENT_COMPOSED_PATH => handlers::event_composed_path,
+        CAP_EVENT_GET_CANCEL_BUBBLE => handlers::event_get_cancel_bubble,
+        CAP_EVENT_SET_CANCEL_BUBBLE => handlers::event_set_cancel_bubble,
         CAP_ABORT_SIGNAL_ABORT => handlers::abort_signal_abort,
         2044 => handlers::buffer_of,
         0x1a00 => crate::modules::compat_extra::sea_is_sea,
@@ -548,6 +561,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_READLINE => readline_create_interface,
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
+        CAP_EVENT => handlers::event_new,
         _ => return None,
     })
 }
