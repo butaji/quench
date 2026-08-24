@@ -452,6 +452,7 @@
       writing: false,
       ended: false,
       finished: false,
+      errored: false,
       corked: 0,
       prefinished: false,
       final: options.final || null,
@@ -467,7 +468,7 @@
     if (st.destroyed) return;
     if (stream._passThrough && !stream._passThroughRead &&
         stream.listenerCount("data") === 0) return;
-    if (st.finished || !st.ended || st.buffered > 0 || st.writing || st.prefinishing) return;
+    if (st.finished || st.errored || !st.ended || st.buffered > 0 || st.writing || st.prefinishing) return;
     if (!st.prefinished) {
       st.prefinishing = true;
       const complete = (error) => {
@@ -499,6 +500,7 @@
       const complete = (error) => {
         st.buffered -= total;
         st.writing = false;
+        if (error) st.errored = true;
         for (const item of pending) if (item.callback) item.callback(error);
         if (error) stream._emitter.emit("error", error);
         if (!error && st.buffered <= st.highWaterMark) stream._emitter.emit("drain");
@@ -620,6 +622,7 @@
         st.buffered -= chunkLength;
         st.writing = false;
         if (error) {
+          st.errored = true;
           if (callback) callback(error);
           this._emitter.emit("error", error);
           return;
@@ -635,6 +638,7 @@
                 (batchError) => {
                   st.buffered -= total;
                   st.writing = false;
+                  if (batchError) st.errored = true;
                   for (const item of pending) if (item.callback) item.callback(batchError);
                   if (batchError) this._emitter.emit("error", batchError);
                   if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
@@ -644,6 +648,7 @@
             } catch (batchError) {
               st.buffered -= total;
               st.writing = false;
+              st.errored = true;
               for (const item of pending) if (item.callback) item.callback(batchError);
               this._emitter.emit("error", batchError);
             }
