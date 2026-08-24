@@ -172,7 +172,14 @@ TracingChannel.prototype.tracePromise = function (fn, context, thisArg) {
     if (self.end) self.end.publish(context);
     throw error;
   }
-  if (!result || typeof result.then !== 'function') return result;
+  if (!result || typeof result.then !== 'function') {
+    if (typeof process.emitWarning === 'function') {
+      process.emitWarning(
+        "tracePromise was called with the function '<anonymous>', which returned a non-thenable."
+      );
+    }
+    return result;
+  }
   return result.then(function (value) {
     context.result = value;
     if (self.asyncStart) self.asyncStart.publish(context);

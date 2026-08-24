@@ -1350,6 +1350,25 @@ pub fn process_once(
 ) -> Result<Value, VmError> {
     crate::modules::process::once(state, args)
 }
+pub fn process_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::emit(state, args)
+}
+pub fn process_emit_warning(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let message = args
+        .first()
+        .map(crate::modules::path::value_to_string)
+        .unwrap_or_default();
+    crate::modules::process::emit_warning(state, "Warning", &message, None, false);
+    Ok(Value::Undefined)
+}
 
 pub fn test_run(
     state: &Rc<RefCell<HostState>>,
