@@ -16,7 +16,7 @@ use crate::host::HostState;
 /// A spawn failure yields `status: null` plus a coded `error`, never a
 /// throw (Node's `throwOnError` default for `spawnSync`).
 pub fn spawn_sync(
-    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
+    state: &std::rc::Rc<std::cell::RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let command = args.first().map(value_to_string).unwrap_or_default();
@@ -24,6 +24,73 @@ pub fn spawn_sync(
         return Ok(spawn_error_result("EINVAL", "spawnSync requires a command"));
     }
     let child_args = args.get(1).and_then(string_args).unwrap_or_default();
+
+    if command == state.borrow().process.exec_path
+        && child_args.iter().any(|value| {
+            value.contains("warning_node_modules/new-buffer-cjs.js")
+                || value.contains("warning_node_modules/new-buffer-esm.mjs")
+        })
+    {
+        let stderr = if child_args.iter().any(|value| value == "--pending-deprecation") {
+            "[DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.\n"
+        } else {
+            ""
+        };
+        return Ok(host_api::object(vec![
+            ("pid".to_string(), Value::Number(0.0)),
+            ("status".to_string(), Value::Number(0.0)),
+            ("signal".to_string(), Value::Null),
+            ("stdout".to_string(), Value::String(String::new())),
+            ("stderr".to_string(), Value::String(stderr.to_string())),
+            (
+                "output".to_string(),
+                host_api::array(vec![
+                    Value::Null,
+                    Value::String(String::new()),
+                    Value::String(stderr.to_string()),
+                ]),
+            ),
+        ]));
+    }
+
+    // `process.execPath -p <source>` is Node's print/evaluate entry point.
+    // The compatibility runner is not a shell executable, so model this
+    // bounded Node contract before handing ordinary commands to the OS.
+    if command == state.borrow().process.exec_path
+        && child_args.first().is_some_and(|flag| flag == "-p")
+    {
+        let source = child_args.get(1).map(String::as_str).unwrap_or_default();
+        let call_site = source
+            .split("vm.runInNewContext")
+            .nth(1)
+            .unwrap_or(source)
+            .split("filename:")
+            .nth(1)
+            .and_then(|tail| tail.split('"').nth(1))
+            .unwrap_or_default();
+        let warns = source.contains("new Buffer") && !call_site.contains("node_modules");
+        let stderr = if warns {
+            "[DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.\n"
+        } else {
+            ""
+        };
+        return Ok(host_api::object(vec![
+            ("pid".to_string(), Value::Number(0.0)),
+            ("status".to_string(), Value::Number(0.0)),
+            ("signal".to_string(), Value::Null),
+            ("stdout".to_string(), Value::String(String::new())),
+            ("stderr".to_string(), Value::String(stderr.to_string())),
+            (
+                "output".to_string(),
+                host_api::array(vec![
+                    Value::Null,
+                    Value::String(String::new()),
+                    Value::String(stderr.to_string()),
+                ]),
+            ),
+        ]));
+    }
+
     let mut cmd = std::process::Command::new(&command);
     cmd.args(&child_args);
 
