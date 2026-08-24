@@ -56,3 +56,41 @@ fn delegate(
         _ => crate::collections::iterator::delegate_next(iterator, input),
     }
 }
+
+fn install_delegate_frame_input(generator: &GeneratorData, input: &Value) -> bool {
+    let frame = generator.machine.borrow().frames.frames.last().cloned();
+    let Some(crate::machine::Frame::Delegate { destination, .. }) = frame else {
+        return false;
+    };
+    crate::execute::write_value(&mut registers_mut(generator), destination, input.clone());
+    true
+}
+
+fn resume_delegate_frame(
+    generator: &GeneratorData,
+    resume: &crate::completion::Completion,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    let frame = generator.machine.borrow().frames.frames.last().cloned();
+    let Some(crate::machine::Frame::Delegate {
+        iterator,
+        destination,
+        ..
+    }) = frame
+    else {
+        return Ok(None);
+    };
+    let input = crate::execute::read_register(&registers(generator), destination)?;
+    let result = delegate(&iterator, input, resume.clone())?;
+    match result {
+        crate::collections::iterator::DelegationResult::Ongoing { value, passthrough } => {
+            let output = if passthrough { value } else { iterator_result(value, false) };
+            crate::execute::write_value(&mut registers_mut(generator), destination, output);
+            Ok(Some(crate::completion::Completion::Yield(Value::Undefined)))
+        }
+        crate::collections::iterator::DelegationResult::Done(value) => {
+            crate::execute::write_value(&mut registers_mut(generator), destination, value);
+            generator.machine.borrow_mut().pop_frame();
+            Ok(Some(crate::completion::Completion::Normal))
+        }
+    }
+}
