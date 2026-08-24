@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use super::{LinkedModule, LinkedModuleGraph};
-use crate::Test262Host;
 use crate::module_graph::ModuleGraph;
+use crate::Test262Host;
 use quench_runtime::value::Value;
 
 #[test]
@@ -15,14 +15,18 @@ fn stage_report_requires_complete_path_coverage() {
         failures: vec![(paths[1].clone(), "failure".to_string())],
     };
     assert!(complete.covers(&paths));
-    assert!(!crate::StageReport { total: 1, ..complete }.covers(&paths));
+    assert!(!crate::StageReport {
+        total: 1,
+        ..complete
+    }
+    .covers(&paths));
 }
 
 #[test]
 fn sequential_script_units_share_global_function_bindings() {
     let mut host = super::RuntimeHost;
     host.run_harnessed_script(
-        &["function Test262Error(message) { this.message = message; }"] ,
+        &["function Test262Error(message) { this.message = message; }"],
         "if (typeof Test262Error !== 'function') throw new Error('missing global function');",
         false,
     )
@@ -68,6 +72,66 @@ fn direct_eval_parameter_var_reaches_captured_function() {
          if (probe() !== 'inside') throw new Error('eval parameter binding');",
     )
     .expect("direct eval var bindings must follow captured cells");
+}
+
+#[test]
+fn numeric_class_methods_keep_callable_super_properties() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "class B { 1() { return 1; } }\n\
+         if (typeof B.prototype['1'] !== 'function') throw new Error('method');\n\
+         class C extends B { 1() { return super[1](); } }\n\
+         if (new C()['1']() !== 1) throw new Error('super');",
+    )
+    .expect("numeric class methods must remain callable through super");
+}
+
+#[test]
+fn derived_constructor_instances_follow_prototype_chain() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var calls = 0; class Base { constructor() { this.prop = 1; calls++; } }\n\
+         class Derived extends Base { constructor() { super(); return; } }\n\
+         var object = new Derived();\n\
+         if (object.prop !== 1 || calls !== 1) throw new Error('body');\n\
+         if (Object.getPrototypeOf(object) === Base.prototype) throw new Error('base proto');\n\
+         if (Object.getPrototypeOf(object) !== Derived.prototype) throw new Error('derived proto');\n\
+         if (!(object instanceof Base)) throw new Error('base instance');\n\
+         if (!(object instanceof Derived)) throw new Error('derived instance');",
+    )
+    .expect("derived constructor prototype");
+}
+
+#[test]
+fn function_subclass_instances_are_callable_and_branded() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "class Subclass extends Function {}\n\
+         var sub = new Subclass();\n\
+         if (typeof sub !== 'function') throw new Error('callable');\n\
+         if (Object.getPrototypeOf(sub) !== Subclass.prototype) throw new Error('prototype');\n\
+         if (!(sub instanceof Subclass)) throw new Error('subclass');\n\
+         if (!(sub instanceof Function)) throw new Error('function');",
+    )
+    .expect("Function subclasses must preserve callable instances");
+}
+
+#[test]
+fn typed_array_subclass_values_keep_the_typed_receiver() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "class MyUint8Array extends Uint8Array {}\n\
+         var rab = new ArrayBuffer(8, { maxByteLength: 16 });\n\
+         var value = new MyUint8Array(rab);\n\
+         if (!(value instanceof Uint8Array)) throw new Error('typed subclass');\n\
+         if (!ArrayBuffer.isView(value)) throw new Error('view');\n\
+         var direct = Uint8Array.prototype.values.call(value);\n\
+         if (direct.next().value !== 0) throw new Error('direct typed subclass iterator');\n\
+         if (typeof value.values !== 'function') throw new Error('values');\n\
+         var iterator = value.values();\n\
+         if (iterator.next().value !== 0) throw new Error('typed subclass iterator');",
+    )
+    .expect("typed array subclasses must preserve typed receivers");
 }
 
 #[test]
@@ -284,34 +348,64 @@ fn default_export_propagates_function_throw() {
 
 #[test]
 fn json_module_exports_recursive_runtime_values() {
-    let module = LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
+    let module =
+        LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
     let cell = module.export_cell("default").expect("default export cell");
     module.execute().expect("module executes");
-    let Value::Array(values) = cell.get() else { panic!("JSON default export is not an array") };
+    let Value::Array(values) = cell.get() else {
+        panic!("JSON default export is not an array")
+    };
     assert_eq!(values.logical_len(), 2);
     let array = Value::Array(values);
-    assert_eq!(quench_runtime::execute::get_property_result(&array, "0").unwrap(), Value::Boolean(true));
-    assert!(matches!(quench_runtime::execute::get_property_result(&array, "1"), Ok(Value::Object(_))));
+    assert_eq!(
+        quench_runtime::execute::get_property_result(&array, "0").unwrap(),
+        Value::Boolean(true)
+    );
+    assert!(matches!(
+        quench_runtime::execute::get_property_result(&array, "1"),
+        Ok(Value::Object(_))
+    ));
 }
 
 #[test]
 fn linked_import_reads_the_exporters_live_default_cell() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import value from './dep.js'; export default value;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import value from './dep.js'; export default value;".to_string(),
+    );
     graph.add_dependency(PathBuf::from("dep.js"), "export default true;".to_string());
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
 fn namespace_import_reads_live_export_cells() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import * as ns from './dep.js'; export default ns.value;".to_string());
-    graph.add_dependency(PathBuf::from("dep.js"), "export const value = true;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import * as ns from './dep.js'; export default ns.value;".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = true;".to_string(),
+    );
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
@@ -322,7 +416,8 @@ fn text_import_attribute_does_not_parse_fixture_as_javascript() {
         "import value from './note.js' with { type: 'text' };\nexport default value;\n".to_string(),
     );
     graph.add_text_dependency(PathBuf::from("note.js"), "invalid { javascript".to_string());
-    graph.link(entry, graph.resolve(entry, "./note.js").expect("resolved"))
+    graph
+        .link(entry, graph.resolve(entry, "./note.js").expect("resolved"))
         .expect("linked");
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
@@ -414,7 +509,10 @@ fn deferred_gopd_after_own_keys() {
         )
         .to_string(),
     );
-    graph.add_dependency(PathBuf::from("dep.js"), "export const foo = 1;\nexport const bar = 2;\n".to_string());
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const foo = 1;\nexport const bar = 2;\n".to_string(),
+    );
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
     assert_eq!(
@@ -434,20 +532,34 @@ fn function_var_is_per_activation() {
         "void 0;\n",
     );
     let program = quench_runtime::reduce::reduce_source(source).expect("reduce");
-    let _ = quench_runtime::vm::execute_code_with_context(program.code(), &quench_runtime::vm::VmContext::isolated())
-        .expect("execute");
+    let _ = quench_runtime::vm::execute_code_with_context(
+        program.code(),
+        &quench_runtime::vm::VmContext::isolated(),
+    )
+    .expect("execute");
     let again = quench_runtime::reduce::reduce_source(
         "function f(){ var x; if(x===undefined){x=0;}else{x=1;} return x; } return [f(), f()];",
     )
     .expect("reduce2");
-    let value = quench_runtime::vm::execute_code_with_context(again.code(), &quench_runtime::vm::VmContext::isolated())
-        .expect("execute2");
+    let value = quench_runtime::vm::execute_code_with_context(
+        again.code(),
+        &quench_runtime::vm::VmContext::isolated(),
+    )
+    .expect("execute2");
     let Value::Array(items) = value else {
         panic!("expected array, got {value:?}");
     };
     let items = Value::Array(items);
-    assert_eq!(quench_runtime::execute::get_property_result(&items, "0").unwrap(), Value::Number(0.0), "first call");
-    assert_eq!(quench_runtime::execute::get_property_result(&items, "1").unwrap(), Value::Number(0.0), "second call");
+    assert_eq!(
+        quench_runtime::execute::get_property_result(&items, "0").unwrap(),
+        Value::Number(0.0),
+        "first call"
+    );
+    assert_eq!(
+        quench_runtime::execute::get_property_result(&items, "1").unwrap(),
+        Value::Number(0.0),
+        "second call"
+    );
 }
 
 #[test]
@@ -562,10 +674,25 @@ fn deferred_module_throw_is_replayed_on_get() {
 #[test]
 fn export_star_forwards_live_cells() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import { value } from './barrel.js'; export default value;".to_string());
-    graph.add_dependency(PathBuf::from("barrel.js"), "export * from './dep.js';".to_string());
-    graph.add_dependency(PathBuf::from("dep.js"), "export const value = true;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import { value } from './barrel.js'; export default value;".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("barrel.js"),
+        "export * from './dep.js';".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = true;".to_string(),
+    );
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
 }

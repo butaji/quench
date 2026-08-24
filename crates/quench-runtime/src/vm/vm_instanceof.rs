@@ -7,7 +7,7 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if builtin_error_instance(&value, &constructor) {
         return Ok(true);
     }
-if !instanceof_callable(&constructor) {
+    if !instanceof_callable(&constructor) {
         let Some(handler) = has_instance_handler(&constructor)? else {
             return Err(type_error("Right-hand side of instanceof is not callable"));
         };
@@ -189,9 +189,10 @@ fn has_property(properties: &crate::value::ObjectData, key: &str) -> bool {
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
-    let (Some(Builtin::Error), Some(actual)) =
-        (intrinsic_builtin(constructor), error_constructor_builtin(value))
-    else {
+    let (Some(Builtin::Error), Some(actual)) = (
+        intrinsic_builtin(constructor),
+        error_constructor_builtin(value),
+    ) else {
         return false;
     };
     matches!(
@@ -396,21 +397,35 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
             .iter()
             .rev()
             .find(|(name, _)| name == "\0prototype" || name == "prototype")
-            .map(|(_, prototype)| prototype.clone()),
-        Value::Function(function) => function
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find(|(name, _)| name == "\0prototype")
-            .map(|(_, prototype)| prototype.clone()),
-        Value::BoundFunction(function) => function
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find(|(name, _)| name == "\0prototype" || name == "prototype")
-            .map(|(_, prototype)| prototype.clone()),
+            .map(|(_, prototype)| dereference_binding(prototype)),
+        Value::Function(function) => {
+            let properties = function.properties.borrow();
+            properties
+                .iter()
+                .rev()
+                .find(|(name, _)| name == "\0function_prototype")
+                .or_else(|| {
+                    properties
+                        .iter()
+                        .rev()
+                        .find(|(name, _)| name == "\0prototype")
+                })
+                .map(|(_, prototype)| dereference_binding(prototype))
+        }
+        Value::BoundFunction(function) => {
+            let properties = function.properties.borrow();
+            properties
+                .iter()
+                .rev()
+                .find(|(name, _)| name == "\0function_prototype")
+                .or_else(|| {
+                    properties
+                        .iter()
+                        .rev()
+                        .find(|(name, _)| name == "\0prototype" || name == "prototype")
+                })
+                .map(|(_, prototype)| dereference_binding(prototype))
+        }
         _ => None,
     }
 }

@@ -255,9 +255,26 @@ fn apply_new_target_prototype(
                 prototype,
             ));
         }
-        let value = crate::builtins::set_property(value, "\0prototype", prototype);
+        let value = set_internal_prototype(value, prototype)?;
         drop_shadowed_error_constructor(value)
     })
+}
+
+fn set_internal_prototype(
+    value: Value,
+    prototype: Value,
+) -> Result<Value, crate::execute::VmError> {
+    if matches!(
+        value,
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_)
+    ) {
+        return crate::builtins::object::set_prototype_of(&[value, prototype]);
+    }
+    Ok(crate::builtins::set_property(
+        value,
+        "\0prototype",
+        prototype,
+    ))
 }
 
 fn drop_shadowed_error_constructor(mut value: Value) -> Value {
