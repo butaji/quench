@@ -565,6 +565,7 @@
         normalized.set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
         chunk = normalized;
       }
+      if (!st.objectMode && isByteView && encoding === undefined) encoding = "buffer";
       const chunkLength = writableChunkLength(this, chunk);
       st.buffered += chunkLength;
       if (st.writing) {
@@ -606,7 +607,11 @@
                 }
               );
             } catch (batchError) {
-              done(batchError);
+              st.buffered -= total;
+              st.writing = false;
+              for (const item of pending) if (item.callback) item.callback(batchError);
+              this._emitter.emit("error", batchError);
+              finishWritable(this);
             }
             return;
           }
