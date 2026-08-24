@@ -940,23 +940,7 @@ fn resolve_absolute_authority_edge(from: &str, to: &str) -> Option<String> {
         {
             return Some(format!("{target_scheme}://{target_authority}{base_path}"));
         }
-        let base = from.split_once('#').map_or(from, |(value, _)| value);
-        return Some(if base_rest[base_end..].is_empty() {
-            format!("{base}/")
-        } else {
-            base.to_string()
-        });
-    }
-    if matches!(
-        target_rest[target_end..].as_bytes(),
-        [b'/', b'?' | b'#'] | [b'/']
-    ) && !target_host.eq_ignore_ascii_case(base_host)
-    {
-        return Some(
-            from.split_once('#')
-                .map_or(from, |(value, _)| value)
-                .to_string(),
-        );
+        return None;
     }
     None
 }
