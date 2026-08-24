@@ -222,16 +222,20 @@ pub(crate) fn make_buffer(bytes: &[u8]) -> Value {
 /// Small `Buffer.from(string)` allocations share Node's 8 KiB pool. The pool
 /// is an identity fact, while the views retain independent offsets and lengths.
 pub(crate) fn make_pooled_buffer(bytes: &[u8]) -> Value {
+    make_pooled_buffer_aligned(bytes, 8)
+}
+
+pub(crate) fn make_pooled_buffer_aligned(bytes: &[u8], alignment: usize) -> Value {
     const POOL_SIZE: usize = 8192;
     const POOL_THRESHOLD: usize = POOL_SIZE / 2;
-    if bytes.is_empty() || bytes.len() > POOL_THRESHOLD {
+    if bytes.is_empty() || bytes.len() > POOL_THRESHOLD || alignment > 64 {
         return make_buffer(bytes);
     }
     BUFFER_POOL.with(|pool| {
         let mut pool = pool.borrow_mut();
         let (buffer, offset) = match pool.as_mut() {
             Some((buffer, offset)) => {
-                let aligned = offset.saturating_add(7) & !7;
+                let aligned = offset.saturating_add(alignment - 1) & !(alignment - 1);
                 if aligned + bytes.len() <= POOL_SIZE {
                     (buffer.clone(), aligned)
                 } else {

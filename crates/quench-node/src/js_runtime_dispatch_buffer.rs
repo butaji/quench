@@ -24,6 +24,9 @@ impl QuenchNodeHost {
                     buffer_fill(receiver, arguments)
                 }
             }
+            HostCapabilityKind::Custom(CapabilityName::BufferArrayBufferAlignedOffset) => {
+                buffer_array_buffer_aligned_offset(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferIncludes) => {
                 buffer_includes(receiver, arguments)
             }
@@ -60,10 +63,10 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
             HostCapabilityKind::Custom(CapabilityName::BufferOf) => buffer_of(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => {
-                buffer_alloc_unsafe(arguments)
+                buffer_alloc_unsafe(arguments, false)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe) => {
-                buffer_alloc_unsafe(arguments)
+                buffer_alloc_unsafe(arguments, true)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding) => {
                 buffer_is_encoding(arguments)
@@ -110,4 +113,8 @@ impl QuenchNodeHost {
             result => Some(result),
         }
     }
+}
+
+fn buffer_array_buffer_aligned_offset(arguments: &[Value]) -> Result<Value, VmError> {
+    crate::modules::buffer::array_buffer_aligned_offset(arguments)
 }

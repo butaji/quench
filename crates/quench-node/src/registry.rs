@@ -122,6 +122,8 @@ pub const SPEC_INTERNAL_BINDING: NodeSpec = NodeSpec::new("internal:test-binding
 pub const SPEC_INTERNAL_BUFFER_FILL: NodeSpec = NodeSpec::new("internal:buffer-fill", 0x0711);
 pub const SPEC_INTERNAL_VIEW_HAS_BUFFER: NodeSpec =
     NodeSpec::new("internal:view-has-buffer", 0x0712);
+pub const SPEC_INTERNAL_BUFFER_ALIGNED_OFFSET: NodeSpec =
+    NodeSpec::new("internal:buffer-array-buffer-aligned-offset", 0x0713);
 
 pub const SPEC_BUFFER_FROM: NodeSpec = NodeSpec::new("buffer:from", 0x0800);
 pub const SPEC_BUFFER_ALLOC: NodeSpec = NodeSpec::new("buffer:alloc", 0x0801);
