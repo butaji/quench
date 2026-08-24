@@ -176,10 +176,32 @@ pub(crate) fn define_global_declaration_property(
         };
         let descriptor_key = crate::builtins::descriptor_key(name);
         let deleted_key = crate::builtins::deleted_key(name);
+        // A global function declaration may redefine an existing
+        // non-configurable property with a value-only descriptor.  The
+        // ordinary DefineProperty path preserves that property's flags;
+        // complete the staged descriptor before replacing its metadata.
+        let previous_descriptor = staged.properties.iter().rev().find_map(|(key, value)| {
+            (key == &descriptor_key).then_some(value)
+        });
+        let mut effective_descriptor = descriptor.to_vec();
+        if let Some(crate::value::Value::Object(previous)) = previous_descriptor {
+            for field in ["writable", "enumerable", "configurable", "get", "set"] {
+                if effective_descriptor.iter().any(|(key, _)| key == field) {
+                    continue;
+                }
+                if let Some(value) = previous
+                    .iter()
+                    .rev()
+                    .find_map(|(key, value)| (key == field).then_some(value.clone()))
+                {
+                    effective_descriptor.push((field.to_string(), value));
+                }
+            }
+        }
         staged.properties.retain(|(key, _)| {
             key != name && key != &descriptor_key && key != &deleted_key
         });
-        let value = descriptor
+        let value = effective_descriptor
             .iter()
             .rev()
             .find_map(|(key, value)| (key == "value").then(|| value.clone()))
@@ -188,7 +210,7 @@ pub(crate) fn define_global_declaration_property(
         staged.properties.push((
             descriptor_key.into(),
             crate::value::Value::Object(std::rc::Rc::new(
-                crate::value::ObjectData::new(descriptor.to_vec()),
+                crate::value::ObjectData::new(effective_descriptor),
             )),
         ));
         if !staged.created.iter().any(|key| key == name) {
