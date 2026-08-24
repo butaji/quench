@@ -88,7 +88,7 @@ struct LeafFact {
 #[derive(Clone, Copy)]
 enum LeafReject {
     Length,
-    Opcode,
+    Opcode(&'static str),
     Register,
     Call,
     Control(&'static str),
@@ -100,7 +100,7 @@ impl LeafReject {
         use crate::execution_trace::Event::*;
         match self {
             Self::Length => LeafRejectLength,
-            Self::Opcode => LeafRejectOpcode,
+            Self::Opcode(_) => LeafRejectOpcode,
             Self::Register => LeafRejectRegister,
             Self::Call => LeafRejectCall,
             Self::Control(_) => LeafRejectControl,
@@ -111,7 +111,7 @@ impl LeafReject {
     fn name(self) -> &'static str {
         match self {
             Self::Length => "Length",
-            Self::Opcode => "Opcode",
+            Self::Opcode(name) => name,
             Self::Register => "Register",
             Self::Call => "Call",
             Self::Control(name) => name,
@@ -217,7 +217,9 @@ fn validate_leaf_depth(
         .then_some(())
         .ok_or(LeafReject::Length)?;
     for pc in 0..code.len() {
-        let op = code.instruction(pc).ok_or(LeafReject::Opcode)?;
+        let op = code
+            .instruction(pc)
+            .ok_or(LeafReject::Opcode("MissingInstruction"))?;
         matches!(
             op.opcode,
             crate::ir::Opcode::LoadConst
@@ -234,13 +236,13 @@ fn validate_leaf_depth(
                 | crate::ir::Opcode::Slow
         )
         .then_some(())
-        .ok_or(LeafReject::Opcode)?;
+        .ok_or(LeafReject::Opcode(op.opcode.name()))?;
         if matches!(
             op.opcode,
             crate::ir::Opcode::StoreLocalChecked | crate::ir::Opcode::UpdateLocal
         ) && !allow_locals
         {
-            return Err(LeafReject::Opcode);
+            return Err(LeafReject::Opcode(op.opcode.name()));
         }
         leaf_registers(op)
             .into_iter()
