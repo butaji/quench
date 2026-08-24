@@ -50,6 +50,7 @@ struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
     slow: HashMap<&'static str, u64>,
     binary: HashMap<&'static str, u64>,
+    constant: HashMap<&'static str, u64>,
     events: [u64; EVENT_NAMES.len()],
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
@@ -143,6 +144,9 @@ pub(crate) fn slow(op: &crate::ops::Op) {
             if let crate::ops::Op::Binary { operator, .. } = op {
                 *counters.binary.entry(binary_name(*operator)).or_default() += 1;
             }
+            if let crate::ops::Op::Const { value, .. } = op {
+                *counters.constant.entry(constant_name(value)).or_default() += 1;
+            }
             counters.retire(name);
             let (a, b, c) = match op {
                 crate::ops::Op::LoadBinding {
@@ -187,6 +191,19 @@ fn binary_name(operator: crate::ops::BinaryOp) -> &'static str {
     }
 }
 
+#[cfg(feature = "execution-trace")]
+fn constant_name(value: &crate::ops::Constant) -> &'static str {
+    match value {
+        crate::ops::Constant::Number(_) => "Number",
+        crate::ops::Constant::Boolean(_) => "Boolean",
+        crate::ops::Constant::String(_) => "String",
+        crate::ops::Constant::StringUnits(_) => "StringUnits",
+        crate::ops::Constant::BigInt(_) => "BigInt",
+        crate::ops::Constant::Null => "Null",
+        crate::ops::Constant::Undefined => "Undefined",
+    }
+}
+
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn slow(_: &crate::ops::Op) {}
@@ -225,6 +242,11 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 .collect::<serde_json::Map<_, _>>();
             let binary = counters
                 .binary
+                .iter()
+                .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
+                .collect::<serde_json::Map<_, _>>();
+            let constant = counters
+                .constant
                 .iter()
                 .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
                 .collect::<serde_json::Map<_, _>>();
@@ -273,6 +295,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "compact": compact,
                 "slow": slow,
                 "binary": binary,
+                "constant": constant,
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
