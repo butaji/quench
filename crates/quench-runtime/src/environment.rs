@@ -346,12 +346,19 @@ pub struct Environment {
     caller: Option<Rc<Self>>,
 }
 
+impl Drop for Environment {
+    fn drop(&mut self) {
+        crate::execution_trace::environment_lifecycle(false);
+    }
+}
+
 fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
     source.as_ref().map(TdzCells::clone_values)
 }
 
 impl Environment {
     pub(crate) fn new() -> Rc<Self> {
+        crate::execution_trace::environment_lifecycle(true);
         Rc::new(Self::default())
     }
 
@@ -364,6 +371,7 @@ impl Environment {
             .filter_map(|index| environment.slot(index as u16))
             .collect::<Vec<_>>()
             .into();
+        crate::execution_trace::environment_lifecycle(true);
         Rc::new(Self {
             slots: RefCell::new(SlotRefs::from_prefix(refs)),
             names: RefCell::new(environment.names.borrow().clone()),
@@ -383,6 +391,7 @@ impl Environment {
         let suffix = (0..store.len())
             .map(|index| BindingRef::new(Rc::clone(&store), index))
             .collect();
+        crate::execution_trace::environment_lifecycle(true);
         let environment = Rc::new(Self {
             slots: RefCell::new(SlotRefs { prefix, suffix }),
             names: RefCell::new(None),
