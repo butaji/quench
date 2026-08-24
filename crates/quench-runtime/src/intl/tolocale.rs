@@ -87,6 +87,9 @@ pub(crate) mod value {
         }
         if let Some(description) = symbol.strip_prefix("Symbol.") {
             let description = description.strip_prefix('\u{1}').unwrap_or(description);
+            if symbol == "Symbol.unscopables" {
+                return "Symbol(Symbol.unscopables)".to_string();
+            }
             return format!("Symbol({description})");
         }
         value.to_string()

@@ -108,10 +108,14 @@ fn typed_array_length(value: &Value) -> Option<usize> {
 }
 
 fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
-    if let Some(keys) = typed_array_enumerable_keys(target) {
+    if let Some(keys) = script_global_view_keys(target) {
         return keys;
     }
-    match target {
+    let target = crate::locals::resolved_replacement(target.clone());
+    if let Some(keys) = typed_array_enumerable_keys(&target) {
+        return keys;
+    }
+    match &target {
         Value::Object(properties) => object_enumerable_keys(properties),
         Value::ObjectAlias(alias) => alias
             .0
@@ -136,6 +140,34 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
         }
         _ => Vec::new(),
     }
+}
+
+fn script_global_view_keys(target: &Value) -> Option<Vec<String>> {
+    let properties = match target {
+        Value::Object(object)
+            if object
+                .iter()
+                .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW) =>
+        {
+            std::rc::Rc::clone(object)
+        }
+        Value::ObjectAlias(alias) => alias.target().filter(|object| {
+            object
+                .iter()
+                .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)
+        })?,
+        _ => return None,
+    };
+    let mut keys = object_enumerable_keys(&properties);
+    let Value::Object(live) = crate::vm::current_global_object() else {
+        return Some(keys);
+    };
+    for key in object_enumerable_keys(&live) {
+        if !keys.iter().any(|current| current == &key) {
+            keys.push(key);
+        }
+    }
+    Some(keys)
 }
 
 fn object_enumerable_keys(data: &crate::value::ObjectData) -> Vec<String> {

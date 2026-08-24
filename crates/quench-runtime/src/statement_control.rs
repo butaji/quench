@@ -71,12 +71,17 @@ fn reduce_with(
         locals,
     );
     facts.exit_dynamic_scope();
-    result?;
+    let result = result?.or_else(|| {
+        Some(crate::reduce_support::emit_undefined(
+            &mut body,
+            next_register,
+        ))
+    });
     ops.push(Op::With {
         object,
         body: crate::machine::FunctionCode::pending(body),
     });
-    Ok(None)
+    Ok(result)
 }
 
 pub(crate) fn execute_label(

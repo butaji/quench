@@ -70,7 +70,23 @@ pub(crate) fn execute(
     };
     OBJECTS.with(|objects| objects.borrow_mut().push(object));
     let _guard = ScopeGuard;
-    crate::vm::execute_code_completion_in_current_frame(body, registers)
+    Ok(
+        match crate::vm::execute_code_completion_in_current_frame(body, registers)? {
+            crate::completion::Completion::Break { label, value: None } => {
+                crate::completion::Completion::Break {
+                    label,
+                    value: Some(Value::Undefined),
+                }
+            }
+            crate::completion::Completion::Continue { label, value: None } => {
+                crate::completion::Completion::Continue {
+                    label,
+                    value: Some(Value::Undefined),
+                }
+            }
+            completion => completion,
+        },
+    )
 }
 
 pub(crate) fn capture() -> Vec<Value> {
@@ -116,6 +132,7 @@ pub(crate) fn execute_name(
 ) -> Result<(), VmError> {
     match op {
         Op::ResolveName { dst, key } => resolve_name(registers, *dst, key),
+        Op::ResolveStrictName { dst, key } => resolve_strict_name(registers, *dst, key),
         Op::SetName { key, src, strict } => set_name(registers, key, *src, *strict),
         Op::CheckStrictName { key } => check_strict_name(key),
         _ => Err(VmError::MissingReturn),
@@ -140,10 +157,15 @@ pub(crate) fn set_resolved(
     if matches!(target, Value::Undefined) {
         return set_name_value(key, value, strict);
     }
-    if strict && !has_property(&target, key)? {
-        return Err(crate::value::error::throw_reference_error(&format!(
-            "{key} is not defined"
-        )));
+    if !has_property(&target, key)? {
+        if strict {
+            return Err(crate::value::error::throw_reference_error(&format!(
+                "{key} is not defined"
+            )));
+        }
+        if crate::globals::immutable_value(key).is_some() {
+            return Ok(());
+        }
     }
     if key == "length" && is_boxed_string_target(&target) {
         return Ok(());
@@ -253,7 +275,7 @@ fn delete_from_global(key: &str) -> Option<bool> {
     Some(deleted)
 }
 
-fn resolve_name(
+pub(crate) fn resolve_name(
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     key: &str,
@@ -303,6 +325,24 @@ fn resolve_name(
             "{key} is not defined"
         )));
     }
+    crate::execute::write_value(registers, dst, value);
+    Ok(())
+}
+
+pub(crate) fn resolve_strict_name(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    key: &str,
+) -> Result<(), VmError> {
+    let Some(target) = binding_target(key)? else {
+        return resolve_name(registers, dst, key);
+    };
+    if !has_property(&target, key)? {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{key} is not defined"
+        )));
+    }
+    let value = crate::execute::get_property_result(&target, key)?;
     crate::execute::write_value(registers, dst, value);
     Ok(())
 }
@@ -398,6 +438,9 @@ pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
     let Some(target) = binding_target(key)? else {
         return Ok(None);
     };
+    if matches!(target, Value::Proxy(_)) && !has_property(&target, key)? {
+        return Ok(None);
+    }
     crate::execute::get_property_result(&target, key).map(Some)
 }
 
@@ -414,6 +457,9 @@ pub(crate) fn resolve_active_binding(key: &str) -> Result<Option<Value>, VmError
     for object in objects.iter().skip(base).rev() {
         let object = live_object(object);
         if has_property(&object, key)? && !is_unscopable(&object, key)? {
+            if matches!(object, Value::Proxy(_)) && !has_property(&object, key)? {
+                return Ok(None);
+            }
             return crate::execute::get_property_result(&object, key).map(Some);
         }
     }
@@ -423,6 +469,22 @@ pub(crate) fn resolve_active_binding(key: &str) -> Result<Option<Value>, VmError
 pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for object in objects.iter().rev() {
+        let object = live_object(object);
+        if has_property(&object, key)? && !is_unscopable(&object, key)? {
+            return Ok(Some(object));
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn active_binding_target(key: &str) -> Result<Option<Value>, VmError> {
+    let (objects, base) = OBJECTS.with(|objects| {
+        (
+            objects.borrow().clone(),
+            CAPTURED_BASE.with(|base| base.get()),
+        )
+    });
+    for object in objects.iter().skip(base).rev() {
         let object = live_object(object);
         if has_property(&object, key)? && !is_unscopable(&object, key)? {
             return Ok(Some(object));
@@ -484,6 +546,9 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
 fn is_unscopable(object: &Value, key: &str) -> Result<bool, VmError> {
     let unscopables = crate::execute::get_property_result(object, "Symbol.unscopables")?;
     if matches!(unscopables, Value::Undefined | Value::Null) {
+        return Ok(false);
+    }
+    if !crate::value::is_object(&unscopables) {
         return Ok(false);
     }
     let blocked = crate::execute::get_property_result(&unscopables, key)?;

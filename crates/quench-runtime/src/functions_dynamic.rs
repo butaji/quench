@@ -281,7 +281,7 @@ fn dynamic_value(
     is_async: bool,
 ) -> Value {
     let captures = crate::environment::Environment::new();
-    captures.set(0, crate::vm::current_global_object());
+    captures.set(0, crate::locals::current().get(0));
     let value = crate::functions::make(
         crate::machine::FunctionCode::from_ops(ops),
         count,

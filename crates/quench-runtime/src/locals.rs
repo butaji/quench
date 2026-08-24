@@ -356,6 +356,16 @@ pub(crate) fn resolve_target(
     Ok(())
 }
 
+pub(crate) fn resolve_active_target(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let target = crate::with_scope::active_binding_target(name)?.unwrap_or(Value::Undefined);
+    crate::execute::write_value(registers, dst, target);
+    Ok(())
+}
+
 pub(crate) fn initialize_resolved(
     registers: &crate::register_file::RegisterFile,
     target: u16,
@@ -398,10 +408,15 @@ pub(crate) fn set_resolved_local(
         write(slot, value);
         return Ok(());
     }
-    if strict && !crate::with_scope::has_property(&target, name)? {
-        return Err(crate::value::error::throw_reference_error(&format!(
-            "{name} is not defined"
-        )));
+    if !crate::with_scope::has_property(&target, name)? {
+        if strict {
+            return Err(crate::value::error::throw_reference_error(&format!(
+                "{name} is not defined"
+            )));
+        }
+        if crate::globals::immutable_value(name).is_some() {
+            return Ok(());
+        }
     }
     crate::proxy::proxy_set(&target, name, &value, None)?;
     crate::with_scope::publish_active_replacement(&target);
@@ -430,6 +445,21 @@ pub(crate) fn load_resolved_local(
     } else {
         value
     };
+    crate::execute::write_value(registers, dst, value);
+    Ok(())
+}
+
+pub(crate) fn load_resolved_binding(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    target: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let target = crate::execute::read_register(registers, target)?;
+    if matches!(target, Value::Undefined) {
+        return crate::with_scope::resolve_name(registers, dst, name);
+    }
+    let value = crate::execute::get_property_result(&target, name)?;
     crate::execute::write_value(registers, dst, value);
     Ok(())
 }

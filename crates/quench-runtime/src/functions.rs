@@ -24,11 +24,17 @@ fn enter_function(
     facts: &mut ProgramDb,
     strictness: FunctionStrictness,
     tail_calls: bool,
-) -> (bool, bool, bool) {
-    let inherited = (facts.strict, facts.in_function, facts.tail_calls);
+) -> (bool, bool, bool, u16) {
+    let inherited = (
+        facts.strict,
+        facts.in_function,
+        facts.tail_calls,
+        facts.function_dynamic_scope_floor,
+    );
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
     facts.in_function = true;
     facts.tail_calls = tail_calls;
+    facts.function_dynamic_scope_floor = facts.dynamic_scope_depth;
     inherited
 }
 fn rest_slot(parameters: &HashMap<String, u16>) -> Option<u16> {

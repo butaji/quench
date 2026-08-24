@@ -26,6 +26,7 @@ pub(crate) fn reduce_delete(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    let expression = unwrap_parenthesized(expression);
     if let Some(result) = reduce_eval_delete(expression, ops, facts, next_register) {
         return Some(result);
     }
@@ -47,11 +48,18 @@ pub(crate) fn reduce_delete(
             )?,
         ),
         Expression::StaticMemberExpression(member) => {
-            reduce_static_delete_member(member, ops, facts, next_register, locals)?
+            reduce_static_delete_member(&member, ops, facts, next_register, locals)?
         }
         _ => return None,
     };
     push_delete_property(ops, facts, next_register, object, key)
+}
+
+fn unwrap_parenthesized<'a, 'b>(mut expression: &'a Expression<'b>) -> &'a Expression<'b> {
+    while let Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    expression
 }
 
 fn is_super_member(expression: &Expression<'_>) -> bool {
