@@ -38,7 +38,7 @@ pub(crate) fn includes(
 ) -> Result<Value, crate::execute::VmError> {
     let this = search_receiver(receiver)?;
     let search = arguments.first().unwrap_or(&Value::Undefined);
-    let length = slice_length(&this)?;
+    let length = search_length(&this)?;
     let this = crate::locals::resolved_replacement(this);
     if length == 0 {
         return Ok(Value::Boolean(false));
@@ -60,7 +60,7 @@ pub(crate) fn index_of(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let this = search_receiver(receiver)?;
-    let length = slice_length(&this)?;
+    let length = search_length(&this)?;
     if length == 0 {
         return Ok(Value::Number(-1.0));
     }
@@ -89,7 +89,7 @@ pub(crate) fn last_index_of(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let this = search_receiver(receiver)?;
-    let length = slice_length(&this)?;
+    let length = search_length(&this)?;
     if length == 0 {
         return Ok(Value::Number(-1.0));
     }
@@ -124,6 +124,13 @@ fn has_search_property(value: &Value, key: &str) -> Result<bool, crate::execute:
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?,
         Value::Undefined
     ))
+}
+
+fn search_length(this: &Value) -> Result<isize, crate::execute::VmError> {
+    if crate::typed_array_prototype::is_out_of_bounds(this) {
+        return Ok(0);
+    }
+    slice_length(this)
 }
 
 /// `ToIntegerOrInfinity` of an optional fromIndex, clamped for lastIndexOf.
