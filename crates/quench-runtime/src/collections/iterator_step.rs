@@ -11,7 +11,7 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     };
     match step_target(data)? {
         StepTarget::Value(value) => Ok(value),
-        StepTarget::Protocol(iterator, cached) => {
+        StepTarget::Protocol(iterator, cached, _) => {
             let next = resolve_next(data, &iterator, cached)?;
             let result = iterator_protocol::call_next(data, &next, &iterator)?;
             protocol_result(data, result)
@@ -25,11 +25,19 @@ pub(crate) fn step_value_await(value: &Value) -> Result<Option<Value>, crate::ex
     };
     match step_target(data)? {
         StepTarget::Value(value) => Ok(value),
-        StepTarget::Protocol(iterator, cached) => {
+        StepTarget::Protocol(iterator, cached, await_value) => {
             let next = resolve_next(data, &iterator, cached)?;
             let result = iterator_protocol::call_next(data, &next, &iterator)?;
             let result = await_iterator_result(result)?;
-            protocol_result(data, result)
+            let value = protocol_result(data, result)?;
+            if await_value {
+                match value {
+                    Some(value) => await_iterator_result(value).map(Some),
+                    None => Ok(None),
+                }
+            } else {
+                Ok(value)
+            }
         }
     }
 }
@@ -63,7 +71,7 @@ fn await_iterator_result(value: Value) -> Result<Value, crate::execute::VmError>
 
 enum StepTarget {
     Value(Option<Value>),
-    Protocol(Value, Value),
+    Protocol(Value, Value, bool),
 }
 
 fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
@@ -706,8 +714,13 @@ fn step_target_tail(state: &mut IteratorState) -> Result<StepTarget, crate::exec
         IteratorState::RegExpString { .. } | IteratorState::Protocol { done: true, .. } => {
             StepTarget::Value(None)
         }
-        IteratorState::Protocol { iterator, next, .. } => {
-            StepTarget::Protocol(iterator.clone(), next.clone())
+        IteratorState::Protocol {
+            iterator,
+            next,
+            await_value,
+            ..
+        } => {
+            StepTarget::Protocol(iterator.clone(), next.clone(), *await_value)
         }
         _ => StepTarget::Value(None),
     })
