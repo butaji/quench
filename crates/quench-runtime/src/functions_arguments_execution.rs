@@ -4,12 +4,21 @@ pub(crate) fn function_builtin(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match builtin {
+        crate::ops::Builtin::Function
+        | crate::ops::Builtin::AsyncFunction
+        | crate::ops::Builtin::GeneratorFunction
+        | crate::ops::Builtin::AsyncGeneratorFunction => {
+            crate::functions_dynamic::construct_builtin(builtin, arguments)
+                .unwrap_or_else(|| Err(crate::execute::VmError::NotCallable))
+        }
         crate::ops::Builtin::FunctionCall => execute_function_call(receiver, arguments),
         crate::ops::Builtin::FunctionApply => {
             crate::vm::execute_function_apply(receiver, arguments)
         }
         crate::ops::Builtin::FunctionBind => bind_function_target(receiver, arguments),
-        crate::ops::Builtin::ArrayJoin => Ok(crate::builtins::array_join(receiver, arguments)),
+        crate::ops::Builtin::ArrayJoin | crate::ops::Builtin::ArrayToString => {
+            Ok(crate::builtins::array_join(receiver, arguments))
+        }
         crate::ops::Builtin::ArrayPush => Ok(crate::builtins::array_push(receiver, arguments)),
         crate::ops::Builtin::ArrayShift => Ok(crate::builtins::array_shift(receiver)),
         crate::ops::Builtin::ArrayReverse => Ok(crate::builtins::array_reverse(receiver)),
@@ -25,9 +34,14 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayFindLastIndex => {
             crate::builtins::array_find_last_index(receiver, arguments)
         }
+        crate::ops::Builtin::ArrayFindIndex => crate::arrays::find_index(receiver, arguments),
         crate::ops::Builtin::ArrayToSorted => {
             Ok(crate::builtins::array_to_sorted(receiver, arguments))
         }
+        crate::ops::Builtin::ArrayToSpliced => {
+            crate::builtins::array_to_spliced(receiver, arguments)
+        }
+        crate::ops::Builtin::ArrayWith => crate::builtins::array_with(receiver, arguments),
         crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
             crate::builtins::object::object_property_is_enumerable(receiver, arguments),
         ),
@@ -60,7 +74,14 @@ pub(crate) fn execute(
         return crate::generator::create(function, &receiver, arguments);
     }
     if function.is_async {
-        let generator = match crate::generator::create(function, &receiver, arguments)? {
+        // Parameter evaluation belongs to the async call's completion. A
+        // direct-eval SyntaxError in a default parameter rejects the promise
+        // instead of escaping as a synchronous host error.
+        let generator = match crate::generator::create(function, &receiver, arguments) {
+            Ok(generator) => generator,
+            Err(error) => return Ok(crate::promise::from_async_completion(Err(error))),
+        };
+        let generator = match generator {
             crate::value::Value::Generator(generator) => generator,
             _ => unreachable!("generator creation must return a generator"),
         };
