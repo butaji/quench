@@ -36,7 +36,7 @@ pub(crate) fn function_builtin(
         }
         crate::ops::Builtin::ArrayFindIndex => crate::arrays::find_index(receiver, arguments),
         crate::ops::Builtin::ArrayToSorted => {
-            Ok(crate::builtins::array_to_sorted(receiver, arguments))
+            crate::builtins::array_to_sorted(receiver, arguments)
         }
         crate::ops::Builtin::ArrayToSpliced => {
             crate::builtins::array_to_spliced(receiver, arguments)
