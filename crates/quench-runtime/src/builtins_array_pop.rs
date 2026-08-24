@@ -1,15 +1,30 @@
-pub(crate) fn array_pop(receiver: Option<&Value>) -> Value {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::Undefined;
-    };
-    if values.is_packed_ordinary() {
-        let mut updated = values.to_vec();
-        let result = updated.pop().unwrap_or(Value::Undefined);
-        crate::locals::replace_value(receiver, &Value::array(updated));
-        return result;
+pub(crate) fn array_pop(
+    receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
+    let length = crate::builtins::map_length(&receiver)?;
+    if length == 0 {
+        let updated = crate::properties::assign_set_property(
+            &receiver,
+            "length",
+            Value::Number(0.0),
+        )?;
+        crate::locals::replace_value(&receiver, &updated);
+        return Ok(Value::Undefined);
     }
-    let mut updated = values.to_vec();
-    let result = updated.pop().unwrap_or(Value::Undefined);
-    crate::locals::replace_value(receiver, &Value::array(updated));
-    result
+    let index = length - 1;
+    let value = crate::execute::get_property_result(&receiver, &index.to_string())?;
+    let (updated, deleted) = crate::builtins::delete_property(receiver.clone(), &index.to_string());
+    if !deleted {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot delete property",
+        ));
+    }
+    let updated = crate::properties::assign_set_property(
+        &updated,
+        "length",
+        Value::Number(index as f64),
+    )?;
+    crate::locals::replace_value(&receiver, &updated);
+    Ok(value)
 }
