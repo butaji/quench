@@ -29,6 +29,7 @@ pub struct InstructionMeta {
     pub source: Option<u32>,
     pub name: Option<Rc<str>>,
     pub flags: u16,
+    pub named_cache: std::cell::Cell<u64>,
 }
 
 impl InstructionMeta {
@@ -37,8 +38,21 @@ impl InstructionMeta {
             source: None,
             name: None,
             flags: 0,
+            named_cache: std::cell::Cell::new(0),
         }
     }
+}
+
+#[inline]
+pub(crate) fn pack_named_cache(layout: u32, slot: u32) -> u64 {
+    (u64::from(layout) << 32) | u64::from(slot.saturating_add(1))
+}
+
+#[inline]
+pub(crate) fn unpack_named_cache(cache: u64) -> Option<(u32, u32)> {
+    let layout = (cache >> 32) as u32;
+    let slot = (cache as u32).checked_sub(1)?;
+    (layout != 0).then_some((layout, slot))
 }
 
 /// Per-code canonical constant table.
@@ -116,13 +130,16 @@ fn metadata_for(op: &Op) -> InstructionMeta {
         | Op::InitializeResolvedBinding { name, .. }
         | Op::SetResolvedLocalBinding { name, .. }
         | Op::LoadResolvedLocalBinding { name, .. }
-        | Op::LoadBinding { name, .. } => Some(Rc::<str>::from(name.as_str())),
+        | Op::LoadBinding { name, .. }
+        | Op::GetProperty { key: name, .. }
+        | Op::SetProperty { key: name, .. } => Some(Rc::<str>::from(name.as_str())),
         _ => None,
     };
     InstructionMeta {
         source: None,
         name,
         flags: u16::from(matches!(op, Op::CheckInitialized { .. })),
+        named_cache: std::cell::Cell::new(0),
     }
 }
 

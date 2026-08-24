@@ -78,6 +78,12 @@ impl RegisterFile {
         Self { words: Vec::new() }
     }
 
+    pub fn with_undefined(len: usize) -> Self {
+        Self {
+            words: vec![TaggedValue::undefined(); len],
+        }
+    }
+
     pub fn from_values(values: Vec<Value>) -> Self {
         let mut registers = Self::new();
         registers.reserve(values.len());
@@ -205,6 +211,51 @@ impl RegisterFile {
         ));
     }
 
+    #[inline(always)]
+    pub(crate) fn write_boolean(&mut self, index: usize, value: bool) {
+        self.resize_undefined(index + 1);
+        release(std::mem::replace(
+            &mut self.words[index],
+            TaggedValue::bool(value),
+        ));
+    }
+
+    /// Decide abstract equality directly when both words carry sufficient
+    /// semantic facts. Heap-backed coercions remain on the canonical slow path.
+    #[inline(always)]
+    pub(crate) fn abstract_equal_words(&self, lhs: usize, rhs: usize) -> Option<bool> {
+        use DecodedValue::*;
+        let left = self.words.get(lhs)?.decode();
+        let right = self.words.get(rhs)?.decode();
+        match (left, right) {
+            (Number(left), Number(right)) => Some(left == right),
+            (Number(left), I31(right)) | (I31(right), Number(left)) => {
+                Some(left == f64::from(right))
+            }
+            (I31(left), I31(right)) => Some(left == right),
+            (Bool(left), Bool(right)) => Some(left == right),
+            (Number(number), Bool(boolean)) | (Bool(boolean), Number(number)) => {
+                Some(number == f64::from(boolean))
+            }
+            (I31(number), Bool(boolean)) | (Bool(boolean), I31(number)) => {
+                Some(number == i32::from(boolean))
+            }
+            (Null, Null | Undefined) | (Undefined, Null | Undefined) => Some(true),
+            (Null | Undefined, Number(_) | I31(_) | Bool(_))
+            | (Number(_) | I31(_) | Bool(_), Null | Undefined) => Some(false),
+            (ObjectPtr(left), ObjectPtr(right))
+            | (ArrayPtr(left), ArrayPtr(right))
+            | (FunctionPtr(left), FunctionPtr(right)) => Some(left == right),
+            (
+                ObjectPtr(_) | ArrayPtr(_) | FunctionPtr(_),
+                ObjectPtr(_) | ArrayPtr(_) | FunctionPtr(_),
+            )
+            | (ObjectPtr(_) | ArrayPtr(_) | FunctionPtr(_), Null | Undefined)
+            | (Null | Undefined, ObjectPtr(_) | ArrayPtr(_) | FunctionPtr(_)) => Some(false),
+            _ => None,
+        }
+    }
+
     pub fn copy(&mut self, destination: usize, source: usize) -> bool {
         crate::execution_trace::event(crate::execution_trace::Event::RegisterWordCopy);
         let Some(word) = self.words.get(source).copied() else {
@@ -302,5 +353,25 @@ mod tests {
         registers.write(0, Value::Number(1.0));
         assert_eq!(registers.len(), 2);
         assert_eq!(registers.read(1), Some(Value::String("kept".into())));
+    }
+
+    #[test]
+    fn abstract_equality_uses_immediate_word_facts() {
+        let registers = RegisterFile::from_values(vec![
+            Value::Number(1.0),
+            Value::Boolean(true),
+            Value::Null,
+            Value::Undefined,
+        ]);
+        assert_eq!(registers.abstract_equal_words(0, 1), Some(true));
+        assert_eq!(registers.abstract_equal_words(2, 3), Some(true));
+        assert_eq!(registers.abstract_equal_words(0, 2), Some(false));
+    }
+
+    #[test]
+    fn abstract_equality_defers_heap_coercion() {
+        let registers =
+            RegisterFile::from_values(vec![Value::String("1".into()), Value::Number(1.0)]);
+        assert_eq!(registers.abstract_equal_words(0, 1), None);
     }
 }
