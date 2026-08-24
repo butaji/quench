@@ -6,6 +6,11 @@ use crate::value::Value;
 
 use super::{read_register_unchecked, write_value, VmError};
 
+#[inline(always)]
+pub(crate) fn numeric_to_int32(value: f64) -> i32 {
+    to_int32(value)
+}
+
 #[inline]
 pub(crate) fn execute_unary(
     registers: &mut crate::register_file::RegisterFile,
@@ -144,6 +149,18 @@ fn fast_number_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> 
         BinaryOp::LessEqual => Value::Boolean(left <= right),
         BinaryOp::GreaterThan => Value::Boolean(left > right),
         BinaryOp::GreaterEqual => Value::Boolean(left >= right),
+        BinaryOp::BitwiseOr
+        | BinaryOp::BitwiseXor
+        | BinaryOp::BitwiseAnd
+        | BinaryOp::ShiftLeft
+        | BinaryOp::ShiftRight => Value::Number(f64::from(number_bitwise(
+            to_int32(left),
+            to_int32(right),
+            operator,
+        ))),
+        BinaryOp::ShiftRightZeroFill => Value::Number(f64::from(
+            (to_int32(left) as u32) >> shift_count(to_int32(right)),
+        )),
         _ => return None,
     })
 }
