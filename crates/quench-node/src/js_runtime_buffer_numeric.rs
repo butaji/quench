@@ -331,7 +331,7 @@ fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
 }
 
 fn buffer_fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    crate::modules::buffer_methods::fill_view(receiver, arguments)
+    quench_node::modules::buffer_methods::fill_view(receiver, arguments)
 }
 
 fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {

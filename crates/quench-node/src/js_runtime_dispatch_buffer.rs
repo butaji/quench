@@ -18,7 +18,11 @@ impl QuenchNodeHost {
                 buffer_write(receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferFill) => {
-                buffer_fill(receiver, arguments)
+                if receiver.is_none() && matches!(arguments.first(), Some(Value::Uint8Array(_))) {
+                    quench_node::modules::buffer_methods::internal_fill(arguments)
+                } else {
+                    buffer_fill(receiver, arguments)
+                }
             }
             HostCapabilityKind::Custom(CapabilityName::BufferIncludes) => {
                 buffer_includes(receiver, arguments)
