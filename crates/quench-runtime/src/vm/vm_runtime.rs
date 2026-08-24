@@ -68,7 +68,7 @@ fn run_code_completion_step_from(
 ) -> Result<CompletionStep, VmError> {
     let mut pc = start;
     while let Some(instruction) = code.instruction(pc) {
-        let result = match run_instruction(code, instruction, registers, context) {
+        let result = match run_instruction(code, pc, instruction, registers, context) {
             Ok(result) => result,
             Err(error) => return completion_step_after_error(registers, error, pc + 1),
         };
@@ -83,6 +83,7 @@ fn run_code_completion_step_from(
 #[inline(always)]
 fn run_instruction(
     code: crate::machine::CodeView<'_>,
+    pc: usize,
     instruction: crate::ir::Instruction,
     registers: &mut crate::register_file::RegisterFile,
     context: &VmContext,
@@ -97,6 +98,14 @@ fn run_instruction(
         }
         Opcode::LoadLocal => {
             crate::locals::load(registers, instruction.a, instruction.b)?;
+            Ok(None)
+        }
+        Opcode::LoadLocalChecked => {
+            let name = code
+                .metadata_at(pc)
+                .and_then(|metadata| metadata.name.as_deref())
+                .unwrap_or("binding");
+            crate::locals::load_checked(registers, instruction.a, instruction.b, name)?;
             Ok(None)
         }
         Opcode::UpdateLocal => {
