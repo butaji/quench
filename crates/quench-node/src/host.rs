@@ -16,8 +16,12 @@ use quench_runtime::vm::{Host, OutputSink, VmContext};
 
 use crate::registry::{CapId, NodeSpec};
 
-pub struct NodeHost {
-    state: Rc<RefCell<HostState>>,
+pub fn scheduler_capability(kind: u16) -> Value {
+    let kind = if kind == 0x1200 { 1 } else { kind };
+    quench_runtime::host_api::capability_function(HostCapabilityRef {
+        realm: RealmId::ROOT,
+        kind: HostCapabilityKind::Custom(kind),
+    })
 }
 
 pub struct HostState {
@@ -30,14 +34,16 @@ pub struct HostState {
     pub emitters: crate::modules::emitter::EmitterRegistry,
     pub targets: crate::modules::event_target::TargetRegistry,
     pub output: Option<OutputSink>,
+    pub console_counts: std::collections::HashMap<String, u64>,
     pub realm: RealmId,
+    /// Console counters keyed by label.
     /// Directory stack for the CJS loader: top is the requiring module's dir.
     pub dir_stack: Vec<String>,
     /// CJS module cache keyed by canonical file path.
     pub module_cache: std::collections::HashMap<String, Value>,
-    /// Module record handed to `__quench_cjs_wrap__` for the file
-    /// currently being loaded by `require`.
-    pub pending_module: Option<PendingModule>,
+    /// Stack of module records handed to `__quench_cjs_wrap__`.  A stack is
+    /// required because module evaluation can re-enter the loader.
+    pub pending_modules: Vec<PendingModule>,
     /// Thrown value stashed by `pump::handle_uncaught`, dispatched by
     /// the `__quench_uncaught__` capability inside an active frame.
     pub pending_uncaught: Option<Value>,
@@ -47,6 +53,31 @@ pub struct HostState {
     /// `require('stream')` module value, evaluated once from the
     /// embedded JS prelude (`modules/stream_prelude.js`).
     pub stream_module: Option<Value>,
+    /// `require('async_hooks')` module value, evaluated once from the
+    /// embedded JS factory (`modules/async_hooks.js`).
+    pub async_hooks_module: Option<Value>,
+    pub node_test_module: Option<Value>,
+    /// `require('http-errors')` module value, evaluated once from the
+    /// embedded JS factory (`modules/http_errors.js`).
+    pub http_errors_module: Option<Value>,
+    /// `require('statuses')` module value, evaluated once from the
+    /// embedded JS factory (`modules/statuses.js`).
+    pub statuses_module: Option<Value>,
+    /// `require('punycode')` module value, evaluated once from the
+    /// embedded JS factory (`modules/punycode.js`).
+    pub punycode_module: Option<Value>,
+    pub perf_hooks_module: Option<Value>,
+    pub trace_events_module: Option<Value>,
+    /// `require('express')` module value (real Express-compatible
+    /// `createApplication` factory), evaluated once from the embedded JS
+    /// factory (`modules/express.js`).
+    pub express_module: Option<Value>,
+    /// `require('express/lib/request')` / `node:express/request`
+    /// module value (real Express request prototype factory),
+    /// evaluated once from the embedded JS factory
+    /// (`modules/express_request.js`).
+    pub express_request_module: Option<Value>,
+    pub mime_db_module: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -54,6 +85,10 @@ pub struct PendingModule {
     pub module: Value,
     pub filename: String,
     pub dirname: String,
+}
+
+pub struct NodeHost {
+    state: Rc<RefCell<HostState>>,
 }
 
 impl NodeHost {
@@ -68,13 +103,24 @@ impl NodeHost {
             emitters: crate::modules::emitter::EmitterRegistry::new(),
             targets: crate::modules::event_target::TargetRegistry::new(),
             output: None,
+            console_counts: std::collections::HashMap::new(),
             realm,
             dir_stack: Vec::new(),
             module_cache: std::collections::HashMap::new(),
-            pending_module: None,
+            pending_modules: Vec::new(),
             pending_uncaught: None,
             url_class: None,
             stream_module: None,
+            async_hooks_module: None,
+            node_test_module: None,
+            punycode_module: None,
+            http_errors_module: None,
+            statuses_module: None,
+            express_module: None,
+            perf_hooks_module: None,
+            trace_events_module: None,
+            express_request_module: None,
+            mime_db_module: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
@@ -108,7 +154,13 @@ impl Host for NodeHost {
         receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        // Legacy CJS require handles are Custom(1); execute the loader directly
+        // so the bound handle preserves its argument list and ambient state.
+        if capability.kind == HostCapabilityKind::Custom(1) {
+            return crate::modules::require::require(&self.state, arguments);
+        }
         let cap = match capability.kind {
+            HostCapabilityKind::Custom(1563) => 0x0808,
             HostCapabilityKind::Custom(c) => c,
             _ => return Err(VmError::NotCallable),
         };
@@ -147,13 +199,86 @@ fn dispatch(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(handler) = crate::dispatch::lookup(cap) {
-        return handler(state, receiver, args);
+    if matches!(cap, 2348 | 2349)
+        && !receiver.is_some_and(|value| {
+            quench_runtime::execute::get_property_result(value, "__quench_scheduler_identity")
+                .ok()
+                .is_some_and(|marker| marker == Value::Boolean(true))
+        })
+    {
+        return Err(VmError::Thrown(scheduler_error(
+            "ERR_INVALID_THIS",
+            "Value of \"this\" must be of type Scheduler",
+        )));
     }
-    Err(VmError::NotCallable)
+    match cap {
+        2351 => Ok(quench_runtime::host_api::object(vec![
+            (
+                "name".to_string(),
+                match args.first().unwrap_or(&Value::Undefined) {
+                    Value::String(value) => Value::String(value.clone()),
+                    value => Value::String(format!("{value:?}")),
+                },
+            ),
+            (
+                "run".to_string(),
+                quench_runtime::host_api::capability_function(HostCapabilityRef {
+                    realm: RealmId::ROOT,
+                    kind: HostCapabilityKind::Custom(2352),
+                }),
+            ),
+        ])),
+        2352 => {
+            let callback = args.first().cloned().ok_or(VmError::NotCallable)?;
+            quench_runtime::execute::call(&callback, &Value::Undefined, &args[1..])
+        }
+        2348 => dispatch(
+            2346,
+            state,
+            None,
+            &[
+                args.first().cloned().unwrap_or(Value::Number(0.0)),
+                Value::Undefined,
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            ],
+        ),
+        2349 => dispatch(
+            2347,
+            state,
+            None,
+            &[
+                Value::Undefined,
+                args.first().cloned().unwrap_or(Value::Undefined),
+            ],
+        ),
+        2350 => Err(VmError::Thrown(scheduler_error(
+            "ERR_ILLEGAL_CONSTRUCTOR",
+            "Illegal constructor",
+        ))),
+        _ => {
+            if let Some(handler) = crate::dispatch::lookup(cap) {
+                return handler(state, receiver, args);
+            }
+            Err(VmError::NotCallable)
+        }
+    }
+}
+
+fn scheduler_error(code: &str, message: &str) -> Value {
+    quench_runtime::host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("message".into(), Value::String(message.into())),
+        ("code".into(), Value::String(code.into())),
+    ])
 }
 
 fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if cap == 2350 {
+        return Err(VmError::Thrown(scheduler_error(
+            "ERR_ILLEGAL_CONSTRUCTOR",
+            "Illegal constructor",
+        )));
+    }
     if let Some(handler) = crate::dispatch::lookup_construct(cap) {
         return handler(state, args);
     }
@@ -177,7 +302,24 @@ pub fn install_script(
     let exec_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    install_with_argv(realm, sink, vec![exec_path, script.to_string()])
+    let (host, mut context) = install_with_argv(realm, sink, vec![exec_path, script.to_string()]);
+    let exports = host_api::object(vec![]);
+    let module = host_api::object(vec![("exports".to_string(), exports.clone())]);
+    let path = std::path::Path::new(script);
+    let filename = path.to_string_lossy().into_owned();
+    let dirname = path
+        .parent()
+        .map(|parent| parent.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/".to_string());
+    for (name, value) in [
+        ("exports", exports),
+        ("module", module),
+        ("__filename", Value::String(filename)),
+        ("__dirname", Value::String(dirname)),
+    ] {
+        context = context.with_host_value(name.to_string(), value);
+    }
+    (host, context)
 }
 
 /// Same as `install`, but provides a host-side output sink that
@@ -204,37 +346,80 @@ pub fn install_with_argv(
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
     }
+    context = context.with_host_value("crypto".to_string(), crate::modules::crypto::build());
     let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
     context = context.with_host_value("URL".to_string(), url_class);
+    let url_search_params = crate::host::capability(crate::registry::SPEC_URL_SEARCHPARAMS_NEW);
+    context = context.with_host_value("URLSearchParams".to_string(), url_search_params);
+    context = install_web_globals(context);
     let text_decoder = crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW);
-    context = context.with_host_value("TextDecoder".to_string(), text_decoder);
+    let context = context.with_host_value("TextDecoder".to_string(), text_decoder);
     let text_encoder = crate::host::capability(crate::registry::SPEC_TEXT_ENCODER_NEW);
-    context = context.with_host_value("TextEncoder".to_string(), text_encoder);
-    let console = namespace_object_from_pairs(vec![
-        (
-            "log".to_string(),
-            capability(crate::registry::SPEC_CONSOLE_LOG),
-        ),
-        (
-            "info".to_string(),
-            capability(crate::registry::SPEC_CONSOLE_INFO),
-        ),
-        (
-            "warn".to_string(),
-            capability(crate::registry::SPEC_CONSOLE_WARN),
-        ),
-        (
-            "error".to_string(),
-            capability(crate::registry::SPEC_CONSOLE_ERROR),
-        ),
-    ]);
-    context = context.with_host_value("console".to_string(), console);
-    (host, context)
+    (
+        host,
+        context.with_host_value("TextEncoder".to_string(), text_encoder),
+    )
+}
+
+fn install_web_globals(mut context: VmContext) -> VmContext {
+    if let Ok(web) = crate::modules::web_globals::build() {
+        for name in [
+            "Headers",
+            "FormData",
+            "Blob",
+            "Event",
+            "CustomEvent",
+            "DOMException",
+            "MessageChannel",
+            "MessagePort",
+            "BroadcastChannel",
+            "ReadableStream",
+            "WritableStream",
+            "TransformStream",
+            "TextDecoderStream",
+            "TextEncoderStream",
+            "CompressionStream",
+            "DecompressionStream",
+            "Request",
+            "Response",
+        ] {
+            let value = quench_runtime::execute::get_property(&web, name);
+            context = context.with_host_value(name.to_string(), value);
+        }
+    }
+    context
 }
 
 /// Build a capability call descriptor for the host.
 pub fn capability(spec: NodeSpec) -> Value {
-    host_api::custom_function(RealmId::ROOT, spec.cap)
+    let kind = capability_kind(spec);
+    host_api::capability_function(HostCapabilityRef {
+        realm: RealmId::ROOT,
+        kind,
+    })
+}
+
+/// Build a host capability whose receiver remains the JavaScript call-site
+/// receiver. Prototype methods must not bind themselves to the capability
+/// token used to authorize dispatch.
+pub fn method_capability(spec: NodeSpec) -> Value {
+    let kind = capability_kind(spec);
+    Value::HostCapability(Rc::new(quench_runtime::value::HostCapabilityValue::new(
+        HostCapabilityRef { realm: RealmId::ROOT, kind },
+    )))
+}
+
+fn capability_kind(spec: NodeSpec) -> HostCapabilityKind {
+    // Translate legacy registry ids once at the host boundary.
+    HostCapabilityKind::Custom(if spec.cap == crate::registry::SPEC_BUFFER_TOSTRING.cap {
+        1563
+    } else {
+        match spec.cap {
+            0x1200 => 1,
+            0x0F00..=0x0F0D => spec.cap,
+            other => other,
+        }
+    })
 }
 
 /// Build a properly-described namespace object. Each named
@@ -276,4 +461,32 @@ pub fn namespace_object_from_pairs(props: Vec<(String, Value)>) -> Value {
 /// The runtime's descriptor-prefix used by `builtins::descriptor_key`.
 fn descriptor_key(key: &str) -> String {
     format!("\0quench:descriptor:\0{key}")
+}
+
+/// Flip one property's descriptor to enumerable on a namespace object
+/// (the rest keep their non-enumerable default). Node exports like
+/// `fs.promises` are enumerable; record the descriptor slot in place.
+/// Flip one property's descriptor to enumerable on a namespace object,
+/// returning the mutated object. Consumes `object` so the `Rc` is
+/// uniquely owned and mutable in place.
+pub fn make_property_enumerable(mut object: Value, key: &str) -> Value {
+    let Value::Object(data) = &mut object else {
+        return object;
+    };
+    let Some(inner) = Rc::get_mut(data) else {
+        return object;
+    };
+    let dkey = descriptor_key(key);
+    if let Some((_, Value::Object(desc))) = inner.iter_mut().find(|(k, _)| k == &dkey) {
+        let Some(desc_inner) = Rc::get_mut(desc) else {
+            return object;
+        };
+        for (k, v) in desc_inner.iter_mut() {
+            if k == "enumerable" {
+                *v = Value::Boolean(true);
+                return object;
+            }
+        }
+    }
+    object
 }
