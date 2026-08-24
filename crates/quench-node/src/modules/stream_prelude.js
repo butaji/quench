@@ -716,7 +716,11 @@
         finishWritable(this);
       };
       try {
-        this._write(chunk, encoding, done);
+        if (this._writev && this._write === WritableClass.prototype._write) {
+          this._writev([{ chunk, encoding }], done);
+        } else {
+          this._write(chunk, encoding, done);
+        }
       } catch (error) {
         done(error);
       }
