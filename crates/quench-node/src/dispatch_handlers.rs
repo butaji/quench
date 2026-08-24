@@ -875,8 +875,12 @@ pub fn abort_controller_abort(
     let Some(controller) = receiver else {
         return Ok(Value::Undefined);
     };
-    let signal = quench_runtime::execute::get_property(controller, "signal");
-    let signal = quench_runtime::execute::set_property(signal, "aborted", Value::Boolean(true));
+    let original_signal = quench_runtime::execute::get_property(controller, "signal");
+    let signal = quench_runtime::execute::set_property(
+        original_signal.clone(),
+        "aborted",
+        Value::Boolean(true),
+    );
     let reason = args.first().cloned().unwrap_or_else(|| {
         quench_runtime::host_api::object(vec![
             ("name".into(), Value::String("AbortError".into())),
@@ -887,6 +891,7 @@ pub fn abort_controller_abort(
         ])
     });
     let signal = quench_runtime::execute::set_property(signal, "reason", reason);
+    quench_runtime::execute::replace_value(&original_signal, &signal);
     let _ = quench_runtime::execute::set_property(controller.clone(), "signal", signal.clone());
     let event = quench_runtime::host_api::object(vec![
         ("type".into(), Value::String("abort".into())),

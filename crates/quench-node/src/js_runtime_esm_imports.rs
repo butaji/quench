@@ -1,4 +1,4 @@
-pub(crate) fn transform_esm_imports(source: &str) -> String {
+pub fn transform_esm_imports(source: &str) -> String {
     let source = transform_import_meta(source);
     let mut out = String::with_capacity(source.len());
     let mut iter = source.chars().peekable();
