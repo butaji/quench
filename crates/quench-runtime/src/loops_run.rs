@@ -104,7 +104,7 @@ fn run_counted_for(
     let environment = crate::locals::current();
     loop {
         crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
-        let crate::value::Value::Number(index) = environment.get(fact.slot) else {
+        let Some(index) = environment.get_number(fact.slot) else {
             return Ok(None);
         };
         if !counted_comparison(fact.comparison, index, fact.bound) {
@@ -122,11 +122,10 @@ fn run_counted_for(
                 return update_empty_from(registers, dst, completion).map(Some);
             }
         }
-        let crate::value::Value::Number(index) = environment.get(fact.slot) else {
+        let Some((_, _)) = environment.update_number(fact.slot, fact.step) else {
             run_fragment(update, registers)?;
             return Ok(None);
         };
-        crate::locals::write(fact.slot, crate::value::Value::Number(index + fact.step));
     }
 }
 
@@ -180,6 +179,17 @@ impl CountedForFact {
 }
 
 fn recognize_counted_update(update: crate::machine::CodeView<'_>, slot: u16) -> Option<f64> {
+    if update.len() == 2 {
+        let instruction = update.instruction(0)?;
+        let returned = update.instruction(1)?;
+        if instruction.opcode == crate::ir::Opcode::UpdateLocal
+            && instruction.c == slot
+            && returned.opcode == crate::ir::Opcode::Return
+            && returned.a == instruction.b
+        {
+            return Some(if instruction.flags == 0 { 1.0 } else { -1.0 });
+        }
+    }
     let checked = match update.len() {
         5 => false,
         6 => matches!(update.cold_at(3), Some(Op::CheckInitialized { slot: checked, .. }) if *checked == slot),

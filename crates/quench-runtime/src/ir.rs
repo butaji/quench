@@ -61,6 +61,7 @@ instruction_set! {
     GetN = 20 / 3,
     SetN = 21 / 3,
     CallN = 22 / 3,
+    UpdateLocal = 23 / 3,
 }
 
 impl Opcode {
@@ -293,6 +294,20 @@ impl Instruction {
             a: dst,
             b: slot,
             c: 0,
+        }
+    }
+    pub const fn update_local(
+        old: Register,
+        updated: Register,
+        slot: u16,
+        decrement: bool,
+    ) -> Self {
+        Self {
+            opcode: Opcode::UpdateLocal,
+            flags: decrement as u8,
+            a: old,
+            b: updated,
+            c: slot,
         }
     }
     pub const fn binary(opcode: Opcode, dst: Register, lhs: Register, rhs: Register) -> Self {
@@ -802,7 +817,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::CallN as u8);
+        assert_eq!(Opcode::COUNT, Opcode::UpdateLocal as u8);
         assert!(Opcode::Slow.is_compact());
     }
 
