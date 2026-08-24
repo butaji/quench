@@ -60,11 +60,20 @@ fn rewrite_await_using_line_break(source: &str) -> String {
             b'`' => skip_template(bytes, cursor),
             b'/' if bytes.get(cursor + 1) == Some(&b'/') => skip_line_comment(bytes, cursor),
             b'/' if bytes.get(cursor + 1) == Some(&b'*') => skip_block_comment(bytes, cursor),
-            _ => cursor + 1,
+            _ => cursor + utf8_width(bytes[cursor]),
         };
         output.push_str(&source[start..cursor]);
     }
     output
+}
+
+fn utf8_width(first: u8) -> usize {
+    match first {
+        byte if byte < 0x80 => 1,
+        byte if byte < 0xE0 => 2,
+        byte if byte < 0xF0 => 3,
+        _ => 4,
+    }
 }
 
 fn await_using_split_end(bytes: &[u8], start: usize) -> Option<usize> {
