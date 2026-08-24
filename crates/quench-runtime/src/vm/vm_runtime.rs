@@ -160,6 +160,19 @@ fn run_instruction(
             write_value(registers, instruction.a, value);
             Ok(None)
         }
+        Opcode::SetN => {
+            let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
+            let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
+            crate::properties::execute_set_named_cached(
+                registers,
+                instruction.a,
+                key,
+                instruction.b,
+                instruction.flags != 0,
+                &metadata.named_cache,
+            )?;
+            Ok(None)
+        }
         Opcode::ASetI => {
             let index = registers.read_array_index(usize::from(instruction.b));
             let number = registers.read_number(usize::from(instruction.c));
