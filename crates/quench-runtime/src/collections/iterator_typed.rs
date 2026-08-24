@@ -34,7 +34,7 @@ macro_rules! bigint_values {
 }
 pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     if let Value::BindingCell(cell) = value {
-        return typed_values(cell.borrow().clone());
+        return typed_values(cell.load());
     }
     match value {
         Value::Float64Array(data) => number_values!(data),

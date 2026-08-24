@@ -228,7 +228,7 @@ pub(crate) fn execute_set_named_cached(
                 data.hot_properties().get(slot as usize)
             {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
-                *cell.borrow_mut() = crate::execute::read_register(registers, src)?;
+                cell.store(crate::execute::read_register(registers, src)?);
                 return Ok(());
             } else {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedSetSlotNotCell);
@@ -601,9 +601,9 @@ pub(crate) fn prevent_extensions(
         return Err(crate::value::error::throw_type_error("Object expected"));
     };
     if let crate::value::Value::BindingCell(cell) = target {
-        let current = cell.borrow().clone();
+        let current = cell.load();
         let updated = prevent_extensions(Some(&current))?;
-        *cell.borrow_mut() = updated;
+        cell.store(updated);
         return Ok(target.clone());
     }
     if matches!(target, crate::value::Value::Proxy(_)) {

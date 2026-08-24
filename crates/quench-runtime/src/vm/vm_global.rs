@@ -50,13 +50,13 @@ pub(crate) fn begin_global_declaration_batch() {
     if let Some(math) = realm::intrinsic(current_realm(), crate::ops::Builtin::Math) {
         if let Some((_, value)) = properties.iter_mut().rev().find(|(name, _)| name == "Math") {
             match value {
-                Value::BindingCell(cell) => *cell.borrow_mut() = math,
-                value => *value = Value::BindingCell(Rc::new(RefCell::new(math))),
+                Value::BindingCell(cell) => cell.store(math),
+                value => *value = Value::BindingCell(crate::value::BindingCell::new(math)),
             }
         } else {
             properties.push((
                 "Math".into(),
-                Value::BindingCell(Rc::new(RefCell::new(math))),
+                Value::BindingCell(crate::value::BindingCell::new(math)),
             ));
         }
     }

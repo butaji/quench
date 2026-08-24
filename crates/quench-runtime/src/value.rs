@@ -1065,6 +1065,116 @@ pub struct ProxyValue {
     pub(crate) private_slots: PrivateSlots,
 }
 
+/// Canonical identity-bearing mutable JavaScript slot.
+///
+/// All aliases share this declaration; its physical payload can therefore
+/// change without duplicating binding semantics across environments, object
+/// properties, modules, or mapped arguments.
+pub struct BindingCell(RefCell<crate::register_file::OwnedWord>);
+
+const _: () = assert!(std::mem::size_of::<BindingCell>() == 16);
+
+pub struct BindingBorrow<'a> {
+    _word: std::cell::Ref<'a, crate::register_file::OwnedWord>,
+    value: Value,
+}
+
+impl std::ops::Deref for BindingBorrow<'_> {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+pub struct BindingBorrowMut<'a> {
+    word: std::cell::RefMut<'a, crate::register_file::OwnedWord>,
+    value: Option<Value>,
+}
+
+impl std::ops::Deref for BindingBorrowMut<'_> {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        self.value.as_ref().expect("binding write guard owns value")
+    }
+}
+
+impl std::ops::DerefMut for BindingBorrowMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value.as_mut().expect("binding write guard owns value")
+    }
+}
+
+impl Drop for BindingBorrowMut<'_> {
+    fn drop(&mut self) {
+        self.word
+            .replace(self.value.take().expect("binding write guard owns value"));
+    }
+}
+
+impl std::fmt::Debug for BindingCell {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("BindingCell")
+            .field(&*self.borrow())
+            .finish()
+    }
+}
+
+impl PartialEq for BindingCell {
+    fn eq(&self, other: &Self) -> bool {
+        *self.borrow() == *other.borrow()
+    }
+}
+
+impl BindingCell {
+    pub fn new(value: Value) -> Rc<Self> {
+        Rc::new(Self(RefCell::new(crate::register_file::OwnedWord::new(
+            value,
+        ))))
+    }
+
+    #[inline]
+    pub fn borrow(&self) -> BindingBorrow<'_> {
+        let word = self.0.borrow();
+        let value = word.load();
+        BindingBorrow { _word: word, value }
+    }
+
+    #[inline]
+    pub fn borrow_mut(&self) -> BindingBorrowMut<'_> {
+        let word = self.0.borrow_mut();
+        let value = word.load();
+        BindingBorrowMut {
+            word,
+            value: Some(value),
+        }
+    }
+
+    pub fn replace(&self, value: Value) -> Value {
+        self.0.borrow_mut().replace(value)
+    }
+
+    #[inline(always)]
+    pub fn load(&self) -> Value {
+        self.0.borrow().load()
+    }
+
+    #[inline(always)]
+    pub fn store(&self, value: Value) {
+        self.0.borrow_mut().store(value);
+    }
+
+    #[inline(always)]
+    pub(crate) fn with_word<R>(
+        &self,
+        use_word: impl FnOnce(&crate::register_file::OwnedWord) -> R,
+    ) -> R {
+        use_word(&self.0.borrow())
+    }
+}
+
 /// Canonical JavaScript value representation.
 ///
 /// Ownership is explicit: immediate primitives (`Number`, `Boolean`, `Null`,
@@ -1086,7 +1196,7 @@ pub enum Value {
     Array(Rc<ArrayData>),
     Object(Rc<ObjectData>),
     ObjectAlias(ObjectAliasValue),
-    BindingCell(Rc<RefCell<Value>>),
+    BindingCell(Rc<BindingCell>),
     ArrayBuffer(Rc<ArrayBufferData>),
     Float64Array(Rc<Float64ArrayData>),
     Float32Array(Rc<Float32ArrayData>),

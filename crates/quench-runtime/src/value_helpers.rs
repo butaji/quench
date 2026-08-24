@@ -86,8 +86,7 @@ mod tiny_primitive_tests {
 
     #[test]
     fn binding_cell_classification_follows_canonical_value() {
-        let primitive =
-            Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(Value::Undefined)));
+        let primitive = Value::BindingCell(crate::value::BindingCell::new(Value::Undefined));
         assert!(!is_object(&primitive));
     }
 

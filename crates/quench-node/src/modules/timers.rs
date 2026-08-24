@@ -36,7 +36,7 @@ pub struct Timer {
     pub callback: Value,
     pub args: Vec<Value>,
     pub object: Value,
-    pub destroyed: Rc<RefCell<Value>>,
+    pub destroyed: Rc<quench_runtime::value::BindingCell>,
     pub referenced: bool,
     pub active: bool,
 }
@@ -98,7 +98,7 @@ fn schedule(
     };
     let id = state.borrow_mut().timers.allocate();
     let fire_at = monotonic_ms().saturating_add(delay);
-    let destroyed = Rc::new(RefCell::new(Value::Boolean(false)));
+    let destroyed = quench_runtime::value::BindingCell::new(Value::Boolean(false));
     let object = timer_object(id, &destroyed)?;
     state.borrow_mut().timers.timers.insert(
         id,
@@ -119,7 +119,10 @@ fn schedule(
 
 /// Build the JS Timeout/Immediate object: hidden id plus the
 /// `unref`/`ref`/`hasRef`/`refresh` capability methods.
-fn timer_object(id: u64, destroyed: &Rc<RefCell<Value>>) -> Result<Value, VmError> {
+fn timer_object(
+    id: u64,
+    destroyed: &Rc<quench_runtime::value::BindingCell>,
+) -> Result<Value, VmError> {
     let object = crate::host::namespace_object_from_pairs(vec![
         (TIMER_ID_PROP.to_string(), Value::Number(id as f64)),
         (
@@ -180,7 +183,7 @@ fn clear_matching(
 }
 
 pub(crate) fn mark_destroyed(timer: &Timer) {
-    *timer.destroyed.borrow_mut() = Value::Boolean(true);
+    timer.destroyed.store(Value::Boolean(true));
 }
 
 fn timer_id_of(receiver: Option<&Value>) -> Option<u64> {
@@ -228,7 +231,7 @@ pub fn method_refresh(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) 
         if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
             timer.fire_at = monotonic_ms().saturating_add(timer.period.max(1));
             timer.active = true;
-            *timer.destroyed.borrow_mut() = Value::Boolean(false);
+            timer.destroyed.store(Value::Boolean(false));
         }
     }
     receiver.cloned().unwrap_or(Value::Undefined)
