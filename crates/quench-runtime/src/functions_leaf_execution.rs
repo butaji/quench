@@ -8,7 +8,14 @@ struct LeafFact {
 }
 
 #[derive(Clone, Copy)]
-enum LeafReject { Length, Opcode, Register, Call, Control, Depth }
+enum LeafReject {
+    Length,
+    Opcode,
+    Register,
+    Call,
+    Control,
+    Depth,
+}
 
 impl LeafReject {
     fn event(self) -> crate::execution_trace::Event {
@@ -103,11 +110,13 @@ fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Result<
                 | crate::ir::Opcode::Return
                 | crate::ir::Opcode::Slow
         )
-        .then_some(()).ok_or(LeafReject::Opcode)?;
+        .then_some(())
+        .ok_or(LeafReject::Opcode)?;
         leaf_registers(op)
             .into_iter()
             .all(|register| usize::from(register) < LEAF_REGISTERS)
-            .then_some(()).ok_or(LeafReject::Register)?;
+            .then_some(())
+            .ok_or(LeafReject::Register)?;
         if op.opcode == crate::ir::Opcode::CallN {
             (op.flags <= 1).then_some(()).ok_or(LeafReject::Call)?;
         }
@@ -160,7 +169,8 @@ fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Result<(), LeafRejec
     registers
         .into_iter()
         .all(|register| usize::from(register) < LEAF_REGISTERS)
-        .then_some(()).ok_or(LeafReject::Register)
+        .then_some(())
+        .ok_or(LeafReject::Register)
 }
 
 fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
@@ -216,6 +226,7 @@ fn run_leaf_op(
     registers: &mut [crate::value::Value; LEAF_REGISTERS],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     use crate::ir::Opcode::*;
+    crate::execution_trace::leaf_compact(op.opcode);
     let value = match op.opcode {
         LoadConst => code.constant_at(pc).map(|(_, value)| value.into()),
         Move => Some(registers[usize::from(op.b)].clone()),
@@ -290,7 +301,8 @@ fn leaf_control(
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     match code.cold(op) {
         Some(crate::ops::Op::Conditional { .. }) => {
-            let (dst, value) = leaf_conditional(function, receiver, arguments, code, op, registers)?;
+            let (dst, value) =
+                leaf_conditional(function, receiver, arguments, code, op, registers)?;
             registers[usize::from(dst)] = value;
             Ok(None)
         }
@@ -308,7 +320,9 @@ fn leaf_control(
                 function,
                 receiver,
                 arguments,
-                selected.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                selected
+                    .code()
+                    .ok_or(crate::execute::VmError::MissingReturn)?,
                 registers,
             )
         }
@@ -354,7 +368,9 @@ fn leaf_control(
                     function,
                     receiver,
                     arguments,
-                    update.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                    update
+                        .code()
+                        .ok_or(crate::execute::VmError::MissingReturn)?,
                     registers,
                 )? {
                     return Ok(Some(value));
@@ -432,7 +448,9 @@ fn leaf_set_named(
     let value = registers[usize::from(op.b)].clone();
     if let crate::value::Value::Object(object) = &target {
         if !object.has_replacement() {
-            if let Some((layout, slot)) = crate::machine::unpack_named_cache(metadata.named_cache.get()) {
+            if let Some((layout, slot)) =
+                crate::machine::unpack_named_cache(metadata.named_cache.get())
+            {
                 if object.semantic_layout_id() == layout {
                     if let Some((_, crate::value::Value::BindingCell(cell))) =
                         object.hot_properties().get(slot as usize)
