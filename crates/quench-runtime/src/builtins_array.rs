@@ -509,11 +509,6 @@ pub(crate) fn array_to_spliced(
         ));
     };
     let length = crate::builtins::map_length(receiver)?;
-    if length > 1 << 32 {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid array length",
-        ));
-    }
     let start_number = arguments
         .first()
         .map(crate::conversion::to_number)
@@ -545,7 +540,22 @@ pub(crate) fn array_to_spliced(
             .trunc() as usize
     }
     .min(length - start);
-    let mut result = Vec::with_capacity(length - delete_count + arguments.len().saturating_sub(2));
+    let insert_count = arguments.len().saturating_sub(2);
+    let new_length = length
+        .saturating_sub(delete_count)
+        .checked_add(insert_count)
+        .ok_or_else(|| crate::value::error::throw_type_error("Array length exceeds limit"))?;
+    if new_length > 9_007_199_254_740_991 {
+        return Err(crate::value::error::throw_type_error(
+            "Array length exceeds limit",
+        ));
+    }
+    if new_length > u32::MAX as usize {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
+    let mut result = Vec::with_capacity(new_length);
     for index in 0..start {
         result.push(crate::execute::get_property_result(
             receiver,
