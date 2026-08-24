@@ -309,6 +309,10 @@ pub(crate) fn prototype_override_getter(key: &str) -> Option<Value> {
         .find_map(|(name, value)| (name == "get").then(|| value.clone()))
 }
 
+pub(crate) fn prototype_override_present(key: &str) -> bool {
+    crate::builtins::read_intrinsic_override(crate::ops::Builtin::ArrayPrototype, key).is_some()
+}
+
 pub(crate) fn array_index(key: &str) -> Option<u32> {
     if key.is_empty() || (key.len() > 1 && key.as_bytes()[0] == b'0') {
         return None;
