@@ -42,6 +42,14 @@ pub fn does_not_throw(
 ) -> Result<Value, VmError> {
     let function = arg(args, 0);
     if let Err(thrown) = invoke(&function)? {
+        if let Some(expected) = args.get(1) {
+            if is_callable(expected)
+                && is_error_constructor(expected)
+                && name_of(expected) != name_of(&thrown)
+            {
+                return Err(VmError::Thrown(thrown));
+            }
+        }
         let custom = custom_message(args, 2);
         let generated = custom.is_none();
         let message =
