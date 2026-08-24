@@ -267,8 +267,13 @@ fn define_global(
     name: &str,
     descriptor: Vec<(String, Value)>,
 ) -> Result<(), VmError> {
-    let global = crate::vm::current_global_object();
     crate::vm::begin_global_declaration_batch();
+    if crate::vm::is_global_declaration_batch_active()
+        && crate::vm::define_global_declaration_property(name, &descriptor)
+    {
+        return Ok(());
+    }
+    let global = crate::vm::current_global_object();
     let updated = crate::builtins::define_own_property(&global, name, &descriptor)?;
     if crate::vm::is_global_declaration_batch_active() {
         crate::vm::update_global_declaration_batch(&updated);
