@@ -191,7 +191,7 @@ fn is_regexp_legacy_accessor(key: &str) -> bool {
         )
 }
 
-fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
+pub(crate) fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
     let getter = match (builtin, key) {
         (Builtin::RegExpPrototype, "source") => Builtin::RegExpSourceGetter,
         (Builtin::RegExpPrototype, "flags") => Builtin::RegExpFlagsGetter,
