@@ -328,22 +328,50 @@ NodeBuffer.prototype.toString = function toString(
   );
 };
 NodeBuffer.concat = (list, totalLength) => {
+  const maxLength = 9007199254740991;
   if (!Array.isArray(list)) {
-    throw new TypeError("The list argument must be an Array");
+    const error = new TypeError(
+      `The "list" argument must be an instance of Array.${__nodeBufferConcatReceived(list)}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
   }
   if (
     totalLength !== undefined &&
-    (!Number.isInteger(totalLength) || totalLength < 0)
+    (!Number.isInteger(totalLength) || totalLength < 0 || totalLength > maxLength)
   ) {
-    throw new RangeError("The value of length is out of range");
+    const integer = Number.isInteger(totalLength);
+    const error = new RangeError(
+      integer
+        ? `The value of "length" is out of range. It must be >= 0 && <= ${maxLength}. Received ${totalLength}`
+        : `The value of "length" is out of range. It must be an integer. Received ${totalLength}`
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
   }
-  const length =
-    totalLength ?? list.reduce((sum, item) => sum + item.byteLength, 0);
+  let length = totalLength;
+  if (length === undefined) {
+    length = 0;
+    for (const item of list) {
+      if (!ArrayBuffer.isView(item) || !(item instanceof Uint8Array)) {
+        const error = new TypeError(
+          `The "list[${list.indexOf(item)}]" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(item)}`
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      length += item.byteLength;
+    }
+  }
   const output = new NodeBuffer(length);
   let offset = 0;
   for (const item of list) {
-    if (!ArrayBuffer.isView(item)) {
-      throw new TypeError("list items must be buffers");
+    if (!ArrayBuffer.isView(item) || !(item instanceof Uint8Array)) {
+      const error = new TypeError(
+        `The "list[${list.indexOf(item)}]" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(item)}`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
     }
     const count = Math.min(item.byteLength, length - offset);
     output.set(new Uint8Array(item.buffer, item.byteOffset, count), offset);
