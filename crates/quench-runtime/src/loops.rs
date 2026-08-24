@@ -489,7 +489,10 @@ fn iterate_loop_values(
         } {
             Ok(value) => value,
             Err(crate::execute::VmError::Thrown(reason)) => {
-                return Ok(crate::completion::Completion::Throw(reason));
+                return crate::collections::iterator::close(
+                    iterator.clone(),
+                    crate::completion::Completion::Throw(reason),
+                );
             }
             Err(error) => return Err(error),
         };
