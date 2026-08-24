@@ -124,9 +124,25 @@ pub fn util_inspect(
         || args.get(1).is_some_and(|options| {
             matches!(execute::get_property(options, "showHidden"), Value::Boolean(true))
         });
+    let max_array_length = args
+        .iter()
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .and_then(|options| match execute::get_property(options, "maxArrayLength") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => {
+                Some(value.floor() as usize)
+            }
+            _ => None,
+        });
     Ok(Value::String(match depth {
-        Some(depth) => crate::modules::util::inspect_with_options(&arg, depth, show_hidden),
-        None if show_hidden => crate::modules::util::inspect_with_options(&arg, 3, true),
+        Some(depth) => crate::modules::util::inspect_with_options(
+            &arg,
+            depth,
+            show_hidden,
+            max_array_length,
+        ),
+        None if show_hidden => {
+            crate::modules::util::inspect_with_options(&arg, 3, true, max_array_length)
+        }
         None => crate::modules::util::inspect(&arg),
     }))
 }
