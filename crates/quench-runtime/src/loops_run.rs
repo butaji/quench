@@ -133,7 +133,6 @@ fn trace_counted_recognition(
         crate::execution_trace::event(crate::execution_trace::Event::CountedForPerIteration);
     }
 }
-
 fn run_counted_for(
     fact: CountedForFact,
     body: crate::machine::CodeView<'_>,
@@ -142,30 +141,25 @@ fn run_counted_for(
     registers: &mut crate::register_file::RegisterFile,
     loop_shape: u64,
 ) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
-    crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
     let environment = crate::locals::current();
     loop {
         crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
         crate::execution_trace::loop_shape_iteration(loop_shape);
         let Some(mut index) = environment.get_number(fact.slot) else {
-            crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
             return Ok(None);
         };
         if fact.timing == CountedStepTiming::BeforeTest {
             let Some((_, updated)) = environment.update_number(fact.slot, fact.step) else {
-                crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
                 return Ok(None);
             };
             index = updated;
         }
         let Some(bound) = fact.bound.number(&environment) else {
-            crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
             return Ok(None);
         };
         if !counted_comparison(fact.comparison, index, bound) {
             return Ok(Some(crate::completion::Completion::Normal));
         }
-        crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
         match execute_loop_body(registers, &None, body)? {
             crate::completion::LoopTransition::Continue(value) => {
                 store_loop_value(registers, dst, value)?;
@@ -180,7 +174,6 @@ fn run_counted_for(
         }
         if fact.timing == CountedStepTiming::AfterBody {
             let Some((_, _)) = environment.update_number(fact.slot, fact.step) else {
-                crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
                 run_fragment(update, registers)?;
                 return Ok(None);
             };
