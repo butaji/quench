@@ -39,8 +39,33 @@ pub fn build() -> Vec<(String, Value)> {
 }
 
 pub fn build_value() -> Value {
-    quench_runtime::host_api::object(build())
+    let mut module = quench_runtime::host_api::object(build());
+    if let Ok(console) = eval_function(CONSOLE_CLASS) {
+        module = quench_runtime::execute::set_property(module, "Console", console);
+    }
+    module
 }
+
+const CONSOLE_CLASS: &str = r#"(class Console {
+  constructor(stdout, stderr) {
+    const options = stdout && typeof stdout === "object" &&
+      (stdout.stdout || stdout.stderr) ? stdout : null;
+    this._stdout = options ? options.stdout : stdout;
+    this._stderr = options ? options.stderr : stderr;
+    if (!this._stdout) this._stdout = globalThis.process && globalThis.process.stdout;
+    if (!this._stderr) this._stderr = globalThis.process && globalThis.process.stderr;
+  }
+  log(...args) {
+    const output = this._stdout;
+    if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
+  }
+  info(...args) { this.log(...args); }
+  warn(...args) {
+    const output = this._stderr;
+    if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
+  }
+  error(...args) { this.warn(...args); }
+})"#;
 
 pub fn log(
     state: &Rc<RefCell<HostState>>,
@@ -111,4 +136,12 @@ fn format_args(args: &[Value]) -> String {
         }
         out
     }
+}
+
+fn eval_function(source: &str) -> Result<Value, quench_runtime::execute::VmError> {
+    let program = quench_runtime::reduce::reduce_global_script_source(source)
+        .map_err(|errors| quench_runtime::execute::VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
 }
