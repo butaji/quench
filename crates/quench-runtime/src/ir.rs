@@ -63,6 +63,45 @@ instruction_set! {
     CallN = 22 / 3,
     UpdateLocal = 23 / 3,
     LoadLocalChecked = 24 / 2,
+    Binary = 25 / 3,
+}
+
+macro_rules! compact_binary_operators {
+    ($($operator:ident = $id:literal),+ $(,)?) => {
+        pub const fn compact_binary_id(operator: crate::ops::BinaryOp) -> u8 {
+            match operator { $(crate::ops::BinaryOp::$operator => $id),+ }
+        }
+
+        pub const fn compact_binary_operator(id: u8) -> Option<crate::ops::BinaryOp> {
+            match id { $($id => Some(crate::ops::BinaryOp::$operator),)+ _ => None }
+        }
+    };
+}
+
+compact_binary_operators! {
+    Add = 0,
+    Subtract = 1,
+    Multiply = 2,
+    Divide = 3,
+    Remainder = 4,
+    Exponentiate = 5,
+    NumericAdd = 6,
+    NumericSubtract = 7,
+    Equal = 8,
+    NotEqual = 9,
+    StrictEqual = 10,
+    StrictNotEqual = 11,
+    LessThan = 12,
+    LessEqual = 13,
+    GreaterThan = 14,
+    GreaterEqual = 15,
+    BitwiseOr = 16,
+    BitwiseXor = 17,
+    BitwiseAnd = 18,
+    ShiftLeft = 19,
+    ShiftRight = 20,
+    ShiftRightZeroFill = 21,
+    Instanceof = 22,
 }
 
 impl Opcode {
@@ -221,6 +260,20 @@ impl Instruction {
             a: dst,
             b: src,
             c: 0,
+        }
+    }
+    pub const fn binary_operator(
+        dst: Register,
+        operator: crate::ops::BinaryOp,
+        lhs: Register,
+        rhs: Register,
+    ) -> Self {
+        Self {
+            opcode: Opcode::Binary,
+            flags: compact_binary_id(operator),
+            a: dst,
+            b: lhs,
+            c: rhs,
         }
     }
     pub const fn load_local_checked(dst: Register, slot: u16) -> Self {
@@ -474,6 +527,12 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
             lhs,
             rhs,
         } => Some(Instruction::binary(Opcode::Div, *dst, *lhs, *rhs)),
+        Op::Binary {
+            dst,
+            operator,
+            lhs,
+            rhs,
+        } => Some(Instruction::binary_operator(*dst, *operator, *lhs, *rhs)),
         Op::GetPropertyDynamic { dst, object, key } => {
             Some(Instruction::binary(Opcode::AGetI, *dst, *object, *key))
         }
@@ -858,7 +917,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::LoadLocalChecked as u8);
+        assert_eq!(Opcode::COUNT, Opcode::Binary as u8);
         assert!(Opcode::Slow.is_compact());
     }
 
@@ -871,6 +930,41 @@ mod tests {
         }
         assert_eq!(Opcode::from_u8(0), None);
         assert_eq!(Opcode::from_u8(Opcode::COUNT + 1), None);
+    }
+
+    #[test]
+    fn compact_binary_fact_table_round_trips_every_operator() {
+        use crate::ops::BinaryOp::*;
+        let operators = [
+            Add,
+            Subtract,
+            Multiply,
+            Divide,
+            Remainder,
+            Exponentiate,
+            NumericAdd,
+            NumericSubtract,
+            Equal,
+            NotEqual,
+            StrictEqual,
+            StrictNotEqual,
+            LessThan,
+            LessEqual,
+            GreaterThan,
+            GreaterEqual,
+            BitwiseOr,
+            BitwiseXor,
+            BitwiseAnd,
+            ShiftLeft,
+            ShiftRight,
+            ShiftRightZeroFill,
+            Instanceof,
+        ];
+        for operator in operators {
+            let id = compact_binary_id(operator);
+            assert_eq!(compact_binary_operator(id), Some(operator));
+        }
+        assert_eq!(compact_binary_operator(operators.len() as u8), None);
     }
     #[test]
     fn lowers_common_ops_to_fixed_width_instructions() {
