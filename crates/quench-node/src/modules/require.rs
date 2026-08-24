@@ -214,34 +214,60 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             )]),
         )])),
         // `internal/event_target` — only the public-test-facing symbol.
-        "internal/event_target" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "Event".to_string(),
-                crate::host::capability(crate::registry::SPEC_EVENT),
-            ),
-            (
-                "defineEventHandler".to_string(),
-                crate::host::capability(crate::registry::SPEC_DEFINE_EVENT_HANDLER),
-            ),
-            (
-                "EventTarget".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "events:EventTarget",
-                    0x0116,
-                )),
-            ),
-            (
-                "NodeEventTarget".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "events:EventTarget",
-                    0x0116,
-                )),
-            ),
-            (
-                "kWeakHandler".to_string(),
-                Value::String("kWeakHandler\0quench".to_string()),
-            ),
-        ])),
+        "internal/event_target" => {
+            let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
+            let _ = quench_runtime::execute::set_callable_property(
+                &custom_event,
+                "prototype",
+                crate::host::namespace_object_from_pairs(Vec::new()),
+            );
+            for (name, value) in [
+                ("NONE", 0.0),
+                ("CAPTURING_PHASE", 1.0),
+                ("AT_TARGET", 2.0),
+                ("BUBBLING_PHASE", 3.0),
+            ] {
+                let _ = quench_runtime::execute::set_callable_property(
+                    &custom_event,
+                    name,
+                    Value::Number(value),
+                );
+            }
+            let _ = quench_runtime::execute::set_callable_property(
+                &custom_event,
+                "length",
+                Value::Number(1.0),
+            );
+            Some(crate::host::namespace_object_from_pairs(vec![
+                (
+                    "Event".to_string(),
+                    crate::host::capability(crate::registry::SPEC_EVENT),
+                ),
+                ("CustomEvent".to_string(), custom_event),
+                (
+                    "defineEventHandler".to_string(),
+                    crate::host::capability(crate::registry::SPEC_DEFINE_EVENT_HANDLER),
+                ),
+                (
+                    "EventTarget".to_string(),
+                    crate::host::capability(crate::registry::NodeSpec::new(
+                        "events:EventTarget",
+                        0x0116,
+                    )),
+                ),
+                (
+                    "NodeEventTarget".to_string(),
+                    crate::host::capability(crate::registry::NodeSpec::new(
+                        "events:EventTarget",
+                        0x0116,
+                    )),
+                ),
+                (
+                    "kWeakHandler".to_string(),
+                    Value::String("kWeakHandler\0quench".to_string()),
+                ),
+            ]))
+        }
         "path" => Some(crate::modules::path::build()),
         "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),

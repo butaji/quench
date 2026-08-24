@@ -85,11 +85,23 @@ impl NodeRunner {
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
-        // The main script runs as a CJS module: `__filename`,
-        // `__dirname`, `require`, `module`/`exports` are in scope.
-        let source =
-            quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture.source);
-        let program = match reduce_script(&source) {
+        let is_module = fixture
+            .path
+            .extension()
+            .is_some_and(|extension| extension == "mjs");
+        // CJS fixtures receive Node's wrapper; ESM fixtures retain module
+        // syntax so the runtime's module reducer owns import facts.
+        let source = if is_module {
+            quench_node::esm_imports::transform_esm_imports(&fixture.source)
+        } else {
+            quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture.source)
+        };
+        let source = if fixture.source.contains("--experimental-eventsource") {
+            format!("globalThis.EventSource = globalThis.__quench_event_source;\n{source}")
+        } else {
+            source
+        };
+        let program = match reduce_fixture(&source, is_module) {
             Ok(program) => program,
             Err(error) => {
                 return NodeOutcome::Fail {
@@ -157,15 +169,17 @@ impl NodeRunner {
         &self,
         source: &str,
     ) -> Result<quench_runtime::value::Value, quench_runtime::vm::VmError> {
-        let program = reduce_script(source).map_err(quench_runtime::vm::VmError::EvalError)?;
+        let program =
+            reduce_fixture(source, false).map_err(quench_runtime::vm::VmError::EvalError)?;
         quench_runtime::vm::execute_code_with_context(program.code(), &self.context)
     }
 }
 
-fn reduce_script(
+fn reduce_fixture(
     source: &str,
+    _is_module: bool,
 ) -> Result<quench_runtime::reduce::reduce_statements::ResidualProgram, String> {
-    use quench_runtime::reduce::reduce_source;
-    let program = reduce_source(source).map_err(|errors| errors.join("; "))?;
+    let result = quench_runtime::reduce::reduce_source(source);
+    let program = result.map_err(|errors| errors.join("; "))?;
     Ok(program)
 }

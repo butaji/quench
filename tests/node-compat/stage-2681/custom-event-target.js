@@ -1,0 +1,45 @@
+const assert = require('assert');
+const { CustomEvent, EventTarget } = require('internal/event_target');
+const target = new EventTarget();
+const event = new CustomEvent('value', { detail: { x: 1 } });
+let calls = 0;
+target.addEventListener('value', (received) => {
+  calls++;
+  assert.strictEqual(received, event);
+  assert.deepStrictEqual(received.detail, { x: 1 });
+  assert.strictEqual(received.target, target);
+});
+assert.strictEqual(target.dispatchEvent(event), true);
+assert.strictEqual(calls, 1);
+const multi = new EventTarget();
+let first = 0; let handled = 0;
+const fn = () => { first++; };
+const obj = { handleEvent: function(received) {
+  handled++;
+  assert.strictEqual(this, obj);
+  assert.strictEqual(received.type, 'foo');
+} };
+multi.addEventListener('foo', fn);
+multi.addEventListener('foo', obj, { once: true });
+multi.dispatchEvent(new CustomEvent('foo'));
+multi.dispatchEvent(new CustomEvent('foo'));
+assert.strictEqual(first, 2);
+assert.strictEqual(handled, 1);
+const shared = new CustomEvent('shared');
+const firstTarget = new EventTarget(); const secondTarget = new EventTarget();
+let sharedCalls = 0;
+firstTarget.addEventListener('shared', () => { sharedCalls++; assert.strictEqual(shared.target, firstTarget); });
+secondTarget.addEventListener('shared', () => { sharedCalls++; assert.strictEqual(shared.target, secondTarget); });
+firstTarget.dispatchEvent(shared);
+secondTarget.dispatchEvent(shared);
+assert.strictEqual(sharedCalls, 2);
+const SubEvent = class extends CustomEvent {};
+const subEvent = new SubEvent('sub', { detail: 56 });
+const subTarget = new EventTarget(); let subCalls = 0;
+subTarget.addEventListener('sub', (received) => {
+  subCalls++;
+  assert.strictEqual(received, subEvent);
+  assert.strictEqual(received.detail, 56);
+}, { once: true });
+subTarget.dispatchEvent(subEvent);
+assert.strictEqual(subCalls, 1);

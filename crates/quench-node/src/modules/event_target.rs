@@ -160,6 +160,14 @@ fn once_option(args: &[Value]) -> bool {
     )
 }
 
+fn weak_option(args: &[Value], receiver: &Value) -> bool {
+    let Some(options) = args.get(2) else {
+        return false;
+    };
+    let handler = execute::get_property(options, "kWeakHandler\0quench");
+    matches!(handler, Value::Object(_)) && !execute::same_value(&handler, receiver)
+}
+
 pub fn add_event_listener(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -182,6 +190,7 @@ pub fn add_event_listener(
         guard.entry(&event).push(Listener {
             callback,
             once: once_option(args),
+            weak: weak_option(args, receiver.expect("validated receiver")),
         });
     }
     Ok(Value::Undefined)
@@ -236,13 +245,38 @@ pub fn dispatch_event(
         return Ok(Value::Boolean(false));
     };
     let snapshot: Vec<Listener> = target.borrow().listeners_of(&event_type).to_vec();
+    let has_protected_listener = snapshot.iter().any(|listener| {
+        execute::is_truthy(&execute::get_property(
+            &listener.callback,
+            "\0quench:abort-listener",
+        ))
+    });
     let active = execute::set_property(
-        execute::set_property(event.clone(), "target", receiver.clone()),
-        "eventPhase",
-        Value::Number(2.0),
+        execute::set_property(
+            execute::set_property(event.clone(), "target", receiver.clone()),
+            "currentTarget",
+            receiver.clone(),
+        ),
+        "srcElement",
+        receiver.clone(),
     );
+    let active = execute::set_property(active, "eventPhase", Value::Number(2.0));
     execute::replace_value(event, &active);
     for listener in &snapshot {
+        if listener.weak {
+            continue;
+        }
+        let protected = execute::is_truthy(&execute::get_property(
+            &listener.callback,
+            "\0quench:abort-listener",
+        ));
+        let stopped = execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
+            || event
+                .object_identity()
+                .is_some_and(|identity| state.borrow().stopped_events.contains(&identity));
+        if stopped && has_protected_listener && !protected {
+            continue;
+        }
         if listener.once {
             remove_event_listener(
                 state,
@@ -250,13 +284,29 @@ pub fn dispatch_event(
                 &[Value::String(event_type.clone()), listener.callback.clone()],
             )?;
         }
-        if quench_runtime::is_callable(&listener.callback) {
-            execute::call(&listener.callback, receiver, std::slice::from_ref(event))?;
+        let result = if quench_runtime::is_callable(&listener.callback) {
+            execute::call(&listener.callback, receiver, std::slice::from_ref(event))
         } else if let Value::Object(_) = &listener.callback {
             let handler = execute::get_property(&listener.callback, "handleEvent");
             if quench_runtime::is_callable(&handler) {
-                execute::call(&handler, &listener.callback, std::slice::from_ref(event))?;
+                execute::call(&handler, &listener.callback, std::slice::from_ref(event))
+            } else {
+                Ok(Value::Undefined)
             }
+        } else {
+            Ok(Value::Undefined)
+        };
+        if let Err(error) = result {
+            crate::modules::pump::handle_uncaught(state, error)?;
+            crate::modules::pump::run_uncaught(state)?;
+        }
+        if !has_protected_listener
+            && (execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
+                || event
+                    .object_identity()
+                    .is_some_and(|identity| state.borrow().stopped_events.contains(&identity)))
+        {
+            break;
         }
     }
     let prevented = event
@@ -264,6 +314,9 @@ pub fn dispatch_event(
         .is_some_and(|identity| state.borrow().prevented_events.contains(&identity))
         || execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
     let reset = execute::set_property(event.clone(), "eventPhase", Value::Number(0.0));
+    let reset = execute::set_property(reset, "currentTarget", Value::Null);
+    let reset = execute::set_property(reset, "srcElement", Value::Null);
+    let reset = execute::set_property(reset, "target", receiver.clone());
     execute::replace_value(event, &reset);
     Ok(Value::Boolean(!prevented))
 }
