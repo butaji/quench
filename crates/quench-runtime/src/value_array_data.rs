@@ -517,6 +517,23 @@ impl ArrayData {
         Some(std::cell::Ref::map(values.borrow(), Vec::as_slice))
     }
 
+    /// Snapshot an own-data numeric range after proving that no indexed
+    /// descriptor, argument mapping, hole, or sparse tail can intercept it.
+    pub(crate) fn numeric_kernel_range(&self, start: usize, end: usize) -> Option<Vec<f64>> {
+        (start <= end
+            && end <= self.logical_len()
+            && self.descriptors.is_empty()
+            && !self.arguments
+            && self.argument_live.is_none())
+        .then_some(())?;
+        (start..end)
+            .map(|index| match self.get_index(index)? {
+                Value::Number(value) => Some(value),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Store an unboxed numeric slot while retaining canonical `Value`
     /// semantics at the storage boundary.
     #[inline]
@@ -943,6 +960,21 @@ mod array_data_tests {
         data.set_index(0, Value::Boolean(true));
         assert_eq!(data.dense_number_at(0), None);
         assert_eq!(data.get_index(0), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn numeric_kernel_range_reads_dense_and_sparse_own_data() {
+        let dense = ArrayData::new(vec![Value::Number(1.0), Value::Number(2.0)]);
+        assert_eq!(dense.numeric_kernel_range(0, 2), Some(vec![1.0, 2.0]));
+
+        let mut sparse = ArrayData::new(Vec::new());
+        sparse.set_index(10_000, Value::Number(3.0));
+        sparse.set_index(10_001, Value::Number(4.0));
+        assert_eq!(
+            sparse.numeric_kernel_range(10_000, 10_002),
+            Some(vec![3.0, 4.0])
+        );
+        assert_eq!(sparse.numeric_kernel_range(9_999, 10_001), None);
     }
 
     #[test]

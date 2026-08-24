@@ -62,6 +62,9 @@ fn run_loop(
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
             dump_counted_shape(body);
+            if let Some(completion) = run_crypto_integer_kernel(fact, body) {
+                return Ok(completion);
+            }
             if let Some(completion) = run_linear_solve_kernel(fact, body) {
                 return Ok(completion);
             }
@@ -151,9 +154,15 @@ fn run_counted_for(
     let environment = crate::locals::current();
     loop {
         crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
-        let Some(index) = environment.get_number(fact.slot) else {
+        let Some(mut index) = environment.get_number(fact.slot) else {
             return Ok(None);
         };
+        if fact.timing == CountedStepTiming::BeforeTest {
+            let Some((_, updated)) = environment.update_number(fact.slot, fact.step) else {
+                return Ok(None);
+            };
+            index = updated;
+        }
         let Some(bound) = fact.bound.number(&environment) else {
             return Ok(None);
         };
@@ -172,10 +181,12 @@ fn run_counted_for(
                 return update_empty_from(registers, dst, completion).map(Some);
             }
         }
-        let Some((_, _)) = environment.update_number(fact.slot, fact.step) else {
-            run_fragment(update, registers)?;
-            return Ok(None);
-        };
+        if fact.timing == CountedStepTiming::AfterBody {
+            let Some((_, _)) = environment.update_number(fact.slot, fact.step) else {
+                run_fragment(update, registers)?;
+                return Ok(None);
+            };
+        }
     }
 }
 
@@ -203,6 +214,13 @@ struct CountedForFact {
     bound: CountedBound,
     comparison: crate::ops::BinaryOp,
     step: f64,
+    timing: CountedStepTiming,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CountedStepTiming {
+    BeforeTest,
+    AfterBody,
 }
 
 #[derive(Clone, Copy)]
@@ -225,21 +243,49 @@ impl CountedForFact {
         test: crate::machine::CodeView<'_>,
         update: crate::machine::CodeView<'_>,
     ) -> Option<Self> {
+        Self::recognize_after_body(test, update).or_else(|| Self::recognize_before_test(test, update))
+    }
+
+    fn recognize_after_body(
+        test: crate::machine::CodeView<'_>,
+        update: crate::machine::CodeView<'_>,
+    ) -> Option<Self> {
         if test.len() != 4 {
             return None;
         }
         let (index, slot) = recognized_static_load(test, 0)?;
         let (bound_register, bound) = recognized_counted_bound(test, 1)?;
-        let Op::Binary { dst: condition, operator: comparison, lhs, rhs } = test.cold_at(2)? else { return None };
+        let (condition, comparison, lhs, rhs) = test.binary_at(2)?;
         let returned = test.instruction(3)?;
-        if returned.opcode != crate::ir::Opcode::Return || returned.a != *condition {
+        if returned.opcode != crate::ir::Opcode::Return || returned.a != condition {
             return None;
         }
-        if *lhs != index || *rhs != bound_register {
+        if lhs != index || rhs != bound_register {
             return None;
         }
         let step = recognize_counted_update(update, slot)?;
-        Some(Self { slot, bound, comparison: *comparison, step })
+        Some(Self { slot, bound, comparison, step, timing: CountedStepTiming::AfterBody })
+    }
+
+    fn recognize_before_test(
+        test: crate::machine::CodeView<'_>,
+        update: crate::machine::CodeView<'_>,
+    ) -> Option<Self> {
+        (test.len() == 4 && update.is_empty()).then_some(())?;
+        let decrement = test.instruction(0)?;
+        (decrement.opcode == crate::ir::Opcode::UpdateLocal && decrement.flags != 0).then_some(())?;
+        let (bound_register, bound) = recognized_counted_bound(test, 1)?;
+        let (condition, comparison, lhs, rhs) = test.binary_at(2)?;
+        let returned = test.instruction(3)?;
+        (lhs == decrement.b && rhs == bound_register).then_some(())?;
+        (returned.opcode == crate::ir::Opcode::Return && returned.a == condition).then_some(())?;
+        Some(Self {
+            slot: decrement.c,
+            bound,
+            comparison,
+            step: -1.0,
+            timing: CountedStepTiming::BeforeTest,
+        })
     }
 }
 
@@ -307,12 +353,12 @@ fn recognize_counted_update(update: crate::machine::CodeView<'_>, slot: u16) -> 
         return None;
     }
     let (step_register, crate::ops::Constant::Number(step)) = update.constant_at(1)? else { return None };
-    let Op::Binary { dst: next, operator: crate::ops::BinaryOp::NumericAdd, lhs, rhs } = update.cold_at(2)? else { return None };
+    let (next, crate::ops::BinaryOp::NumericAdd, lhs, rhs) = update.binary_at(2)? else { return None };
     let store_pc = if checked { 4 } else { 3 };
     let Op::StoreLocal { slot: stored_slot, src: stored } = update.cold_at(store_pc)? else { return None };
     let returned = update.instruction(store_pc + 1)?;
-    (*stored_slot == slot && load.a == *lhs && step_register == *rhs
-        && *next == *stored && returned.opcode == crate::ir::Opcode::Return && returned.a == *next)
+    (*stored_slot == slot && load.a == lhs && step_register == rhs
+        && next == *stored && returned.opcode == crate::ir::Opcode::Return && returned.a == next)
         .then_some(*step)
 }
 
