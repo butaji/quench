@@ -731,11 +731,20 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
         }
         replacement.value = new.clone();
     });
-    // Replacement maps cover stale registers, while captured lexical slots
-    // are the owning semantic bindings. Retarget those slots at the same
-    // boundary so a closure observes the live object after copy-on-write.
-    current().replace_value(old, new);
+    // Replacement maps cover ordinary arrays cheaply. Only arrays carrying
+    // indexed accessors need captured-slot retargeting; packed arrays stay
+    // on the allocation-free fast path.
+    if current().has_caller()
+        && (array_has_observable_owner(old) || array_has_observable_owner(new))
+    {
+        current().replace_value(old, new);
+    }
     REPLACEMENTS_ACTIVE.with(|active| active.set(true));
+}
+
+fn array_has_observable_owner(value: &Value) -> bool {
+    let Value::Array(values) = value else { return false };
+    values.has_indexed_accessor()
 }
 
 fn replace_object(old: &Value, new: &Value) -> bool {
