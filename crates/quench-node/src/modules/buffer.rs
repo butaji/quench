@@ -269,10 +269,9 @@ pub fn concat(
 pub fn concat_values(args: &[Value]) -> Result<Value, VmError> {
     let list = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(list, Value::Array(_)) {
-        // Node reports a Buffer passed where an Array is required through its
-        // ordinary object classification, even though Buffer is a byte view.
+        // Buffer is a byte view, but Node names it explicitly in this error.
         let received = if matches!(list, Value::Uint8Array(_)) {
-            " Received an instance of Object".to_string()
+            " Received an instance of Buffer".to_string()
         } else {
             crate::modules::util::invalid_arg_received(&list)
         };
