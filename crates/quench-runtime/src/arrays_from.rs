@@ -64,7 +64,7 @@ fn from_live_array(
         values.push(value);
         index += 1;
     }
-    create_result(receiver, values, false)
+    create_result(receiver, values, true)
 }
 
 fn from_iterable(
@@ -81,7 +81,7 @@ fn from_iterable(
         values.push(map_item(mapper, &this_arg, item, index)?);
         Ok(())
     })?;
-    create_result(receiver, values, false)
+    create_result(receiver, values, true)
 }
 
 fn collect_array_iterator(
