@@ -62,6 +62,20 @@ pub(crate) fn execute_binary(
     lhs: u16,
     rhs: u16,
 ) -> Result<(), VmError> {
+    if matches!(
+        operator,
+        crate::ops::BinaryOp::Equal | crate::ops::BinaryOp::NotEqual
+    ) {
+        if let Some(equal) = registers.abstract_equal_words(usize::from(lhs), usize::from(rhs)) {
+            crate::execution_trace::event(crate::execution_trace::Event::EqualityWordHit);
+            registers.write_boolean(
+                usize::from(dst),
+                equal == matches!(operator, crate::ops::BinaryOp::Equal),
+            );
+            return Ok(());
+        }
+        crate::execution_trace::event(crate::execution_trace::Event::EqualityWordMiss);
+    }
     if let Some((left, right)) = registers
         .read_number(usize::from(lhs))
         .zip(registers.read_number(usize::from(rhs)))
