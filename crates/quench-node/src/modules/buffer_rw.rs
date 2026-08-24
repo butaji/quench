@@ -171,7 +171,11 @@ fn write_entry(receiver: Option<&Value>, args: &[Value], spec: NumSpec) -> Resul
     };
     let bits = value_bits(args.first().unwrap_or(&Value::Undefined), spec.kind, size)?;
     let mut bytes = view.buffer.bytes.borrow_mut();
-    let offset = offset_arg(args.get(1), view.length, size)?;
+    let offset = if spec.dynamic_size {
+        offset_arg_opt(args.get(1), view.length, size, false)?
+    } else {
+        offset_arg(args.get(1), view.length, size)?
+    };
     let raw = if spec.little_endian {
         bits.to_le_bytes()
     } else {
