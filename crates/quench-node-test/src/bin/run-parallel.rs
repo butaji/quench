@@ -19,6 +19,10 @@ const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_help();
+        return ExitCode::SUCCESS;
+    }
     if let Some(path) = args
         .iter()
         .position(|a| a == "--triage-one")
@@ -56,6 +60,20 @@ fn main() -> ExitCode {
         return run_all(filter, timeout, results);
     }
     run_manifest()
+}
+
+fn print_help() {
+    println!("run-parallel: execute Node parallel fixtures through quench-node");
+    println!();
+    println!("usage:");
+    println!("  run-parallel                         run the checked-in stage manifest");
+    println!("  run-parallel --all [options]         run the recursive fixture inventory");
+    println!("  run-parallel --triage [--filter NAME]  print passing triage fixtures");
+    println!();
+    println!("options for --all:");
+    println!("  --filter NAME       restrict fixtures by filename");
+    println!("  --timeout-secs N    isolate each fixture with an N-second timeout (default 30)");
+    println!("  --results PATH      write machine-readable results and inventory hash");
 }
 
 fn manifest_names() -> Vec<String> {
