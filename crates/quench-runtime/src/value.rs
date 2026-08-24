@@ -517,6 +517,7 @@ pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 #[derive(Debug)]
 pub struct ObjectData {
     identity: u64,
+    layout_id: std::cell::Cell<u32>,
     replacement: RefCell<Option<Rc<ObjectData>>>,
     // Hot semantic storage. Keep the vector as the sole property storage.
     // An inline first-slot representation would not remove the per-object
@@ -535,6 +536,7 @@ impl Clone for ObjectData {
     fn clone(&self) -> Self {
         Self {
             identity: self.identity,
+            layout_id: std::cell::Cell::new(self.layout_id.get()),
             replacement: RefCell::new(None),
             properties: self.properties.clone(),
             private_slots: Rc::clone(&self.private_slots),
@@ -559,6 +561,21 @@ impl ObjectData {
     #[inline]
     pub(crate) fn properties_source(&self) -> *const ObjectProperties {
         &self.properties as *const ObjectProperties
+    }
+
+    #[inline]
+    pub(crate) fn semantic_layout_id(&self) -> u32 {
+        let cached = self.layout_id.get();
+        if cached != 0 {
+            return cached;
+        }
+        let id = intern_object_layout(&self.properties);
+        self.layout_id.set(id);
+        id
+    }
+
+    pub(crate) fn invalidate_layout(&self) {
+        self.layout_id.set(0);
     }
 
     pub(crate) fn new(properties: Vec<(String, Value)>) -> Self {
@@ -606,6 +623,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             identity: next_object_identity(),
+            layout_id: std::cell::Cell::new(0),
             replacement: RefCell::new(None),
             properties,
             private_slots,
@@ -622,6 +640,11 @@ impl ObjectData {
     #[inline]
     pub(crate) fn replacement(&self) -> Option<Rc<ObjectData>> {
         self.replacement.borrow().clone()
+    }
+
+    #[inline]
+    pub(crate) fn has_replacement(&self) -> bool {
+        self.replacement.borrow().is_some()
     }
 
     #[inline]
@@ -646,8 +669,29 @@ impl std::ops::Deref for ObjectData {
 
 impl std::ops::DerefMut for ObjectData {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        self.layout_id.set(0);
         &mut self.properties
     }
+}
+
+fn intern_object_layout(properties: &ObjectProperties) -> u32 {
+    thread_local! {
+        static LAYOUTS: RefCell<Vec<Vec<PropertyName>>> = const { RefCell::new(Vec::new()) };
+    }
+    LAYOUTS.with(|layouts| {
+        let mut layouts = layouts.borrow_mut();
+        if let Some(index) = layouts.iter().position(|layout| {
+            layout.len() == properties.len()
+                && layout
+                    .iter()
+                    .zip(properties)
+                    .all(|(left, (right, _))| left == right)
+        }) {
+            return u32::try_from(index + 1).unwrap_or(u32::MAX);
+        }
+        layouts.push(properties.iter().map(|(name, _)| name.clone()).collect());
+        u32::try_from(layouts.len()).unwrap_or(u32::MAX)
+    })
 }
 
 fn creation_order(properties: &[(PropertyName, Value)]) -> Vec<PropertyName> {
@@ -672,7 +716,7 @@ impl PartialEq for ObjectData {
 
 #[cfg(test)]
 mod object_identity_tests {
-    use super::{ObjectData, PropertyName};
+    use super::{ObjectData, PropertyName, Value};
     use std::rc::Rc;
 
     #[test]
@@ -686,6 +730,21 @@ mod object_identity_tests {
     fn cloning_preserves_object_identity() {
         let object = ObjectData::new(Vec::new());
         assert_eq!(object.identity(), object.clone().identity());
+    }
+
+    #[test]
+    fn equal_property_sequences_share_one_layout_fact() {
+        let first = ObjectData::new(vec![("x".into(), Value::Number(1.0))]);
+        let second = ObjectData::new(vec![("x".into(), Value::Number(2.0))]);
+        assert_eq!(first.semantic_layout_id(), second.semantic_layout_id());
+    }
+
+    #[test]
+    fn property_sequence_mutation_invalidates_the_layout_fact() {
+        let mut object = ObjectData::new(vec![("x".into(), Value::Number(1.0))]);
+        let before = object.semantic_layout_id();
+        object.push((PropertyName::from("y"), Value::Undefined));
+        assert_ne!(before, object.semantic_layout_id());
     }
 
     #[test]
