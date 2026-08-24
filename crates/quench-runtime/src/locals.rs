@@ -459,6 +459,11 @@ pub(crate) fn load_resolved_binding(
     if matches!(target, Value::Undefined) {
         return crate::with_scope::resolve_name(registers, dst, name);
     }
+    if !crate::with_scope::has_property(&target, name)? {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{name} is not defined"
+        )));
+    }
     let value = crate::execute::get_property_result(&target, name)?;
     crate::execute::write_value(registers, dst, value);
     Ok(())
