@@ -407,6 +407,9 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
+    if !crate::conversion::is_callable(&Value::Builtin(builtin)) {
+        return None;
+    }
     if crate::builtin_meta::is_prototype(builtin)
         && !matches!(
             builtin,

@@ -427,7 +427,6 @@ pub(crate) fn flat(
     let mut target = crate::builtins::array_species_create(&receiver, 0)?;
     let mut next = 0usize;
     flatten_into(&receiver, length, depth, &mut target, &mut next)?;
-    target = crate::builtins::set_property(target, "length", Value::Number(next as f64));
     Ok(target)
 }
 
@@ -483,29 +482,41 @@ pub(crate) fn flat_map(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::array(Vec::new()));
-    };
+    let receiver = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
+    let length = crate::builtins::map_length(&receiver)?;
     let Some(callback) = arguments.first() else {
-        return Ok(Value::Array(values.clone()));
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.flatMap callback is not callable",
+        ));
     };
-    // Each source element contributes at least one output slot in the common case.
-    // Reserve that lower bound once; nested results can still grow the vector.
-    let mut mapped = Vec::with_capacity(values.len());
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.flatMap callback is not callable",
+        ));
+    }
+    let mut target = crate::builtins::array_species_create(&receiver, 0)?;
+    let mut next = 0usize;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    for (index, value) in values.snapshot().into_iter().enumerate() {
-        let args = [
-            value,
-            Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
-        ];
-        let result = crate::functions::execute_target(callback, this_arg, &args)?;
-        match result {
-            Value::Array(nested) => mapped.extend(nested.snapshot()),
-            value => mapped.push(value),
+    for index in 0..length {
+        let Some(value) = crate::builtins::map_value(&receiver, index)? else {
+            continue;
+        };
+        let args = [value, Value::Number(index as f64), receiver.clone()];
+        let mapped = crate::functions::execute_target(callback, this_arg, &args)?;
+        if matches!(
+            crate::builtins::is_array(Some(&mapped))?,
+            Value::Boolean(true)
+        ) {
+            let nested = crate::construct::to_object(&mapped)?;
+            let nested_length = crate::builtins::map_length(&nested)?;
+            flatten_into(&nested, nested_length, 0, &mut target, &mut next)?;
+        } else {
+            target =
+                crate::builtins::create_data_property_or_throw(target, &next.to_string(), mapped)?;
+            next = next.saturating_add(1);
         }
     }
-    Ok(Value::array(mapped))
+    Ok(target)
 }
 pub(crate) fn at(
     receiver: Option<&Value>,
