@@ -44,6 +44,8 @@ fn array_method_tail(key: &str) -> Option<Builtin> {
         "fill" => Some(ArrayFill),
         "copyWithin" => Some(ArrayCopyWithin),
         "toSorted" => Some(ArrayToSorted),
+        "toSpliced" => Some(ArrayToSpliced),
+        "with" => Some(ArrayWith),
         "splice" => Some(ArraySplice),
         _ => None,
     }

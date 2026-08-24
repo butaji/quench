@@ -39,9 +39,10 @@ fn is_function_builtin(builtin: Builtin) -> bool {
             | Builtin::GeneratorFunction
             | Builtin::AsyncGeneratorFunction
             | Builtin::FunctionCall
-            | Builtin::FunctionApply
-            | Builtin::FunctionBind
+        | Builtin::FunctionApply
+        | Builtin::FunctionBind
         | Builtin::ArrayJoin
+        | Builtin::ArrayToString
         | Builtin::ArrayPush
         | Builtin::ArrayShift
         | Builtin::ArrayReverse
@@ -51,7 +52,10 @@ fn is_function_builtin(builtin: Builtin) -> bool {
         | Builtin::ArrayCopyWithin
         | Builtin::ArrayFindLast
         | Builtin::ArrayFindLastIndex
+        | Builtin::ArrayFindIndex
         | Builtin::ArrayToSorted
+        | Builtin::ArrayToSpliced
+        | Builtin::ArrayWith
         | Builtin::ArrayIterator
         | Builtin::ArrayKeys
         | Builtin::ArrayEntries
