@@ -114,17 +114,33 @@
     }
     return iterator;
   }
+  function Scheduler() {
+    const error = new TypeError("Illegal constructor");
+    error.code = "ERR_ILLEGAL_CONSTRUCTOR";
+    throw error;
+  }
+  const scheduler = {};
+  scheduler.constructor = Scheduler;
+  scheduler.wait = function (delay, options) {
+    if (this !== scheduler) {
+      const error = new TypeError("Cannot read properties of an invalid Scheduler");
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    return setTimeoutPromise(delay, undefined, options);
+  };
+  scheduler.yield = function () {
+    if (this !== scheduler) {
+      const error = new TypeError("Cannot read properties of an invalid Scheduler");
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    return setImmediatePromise(undefined);
+  };
   return {
     setTimeout: setTimeoutPromise,
     setImmediate: setImmediatePromise,
     setInterval: setIntervalPromise,
-    scheduler: {
-      wait: function (delay, options) {
-        return setTimeoutPromise(delay, undefined, options);
-      },
-      yield: function () {
-        return setImmediatePromise(undefined);
-      }
-    }
+    scheduler
   };
 })
