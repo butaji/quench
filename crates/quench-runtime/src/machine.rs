@@ -43,6 +43,18 @@ impl InstructionMeta {
     }
 }
 
+#[inline]
+pub(crate) fn pack_named_cache(layout: u32, slot: u32) -> u64 {
+    (u64::from(layout) << 32) | u64::from(slot.saturating_add(1))
+}
+
+#[inline]
+pub(crate) fn unpack_named_cache(cache: u64) -> Option<(u32, u32)> {
+    let layout = (cache >> 32) as u32;
+    let slot = (cache as u32).checked_sub(1)?;
+    (layout != 0).then_some((layout, slot))
+}
+
 /// Per-code canonical constant table.
 ///
 /// `values` owns one entry per [`ConstantKey`], and `ids` is the complete
@@ -119,7 +131,8 @@ fn metadata_for(op: &Op) -> InstructionMeta {
         | Op::SetResolvedLocalBinding { name, .. }
         | Op::LoadResolvedLocalBinding { name, .. }
         | Op::LoadBinding { name, .. }
-        | Op::GetProperty { key: name, .. } => Some(Rc::<str>::from(name.as_str())),
+        | Op::GetProperty { key: name, .. }
+        | Op::SetProperty { key: name, .. } => Some(Rc::<str>::from(name.as_str())),
         _ => None,
     };
     InstructionMeta {
