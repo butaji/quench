@@ -21,10 +21,24 @@ struct NestedArrayLengthPlan {
 }
 
 #[derive(Clone, Copy)]
+struct NestedArrayIndexPlan {
+    first_pc: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ForwardZeroPlan {
+    receiver_pc: usize,
+    call_pc: usize,
+}
+
+#[derive(Clone, Copy)]
 enum ShapeKernelPlan {
     StatePredicate(StatePredicatePlan),
     StateBitwise(StateBitwisePlan),
     NestedArrayLength(NestedArrayLengthPlan),
+    NestedArrayIndex(NestedArrayIndexPlan),
+    PropertySelect(PropertySelectPlan),
+    ForwardZero(ForwardZeroPlan),
 }
 
 #[derive(Clone)]
@@ -41,6 +55,7 @@ thread_local! {
 pub(crate) fn execute_shape_kernel(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
 ) -> Option<crate::value::Value> {
     let plan = shape_kernel_fact(function)?;
     match plan {
@@ -49,16 +64,52 @@ pub(crate) fn execute_shape_kernel(
         ShapeKernelPlan::NestedArrayLength(plan) => {
             execute_nested_array_length(function, receiver, plan)
         }
+        ShapeKernelPlan::NestedArrayIndex(plan) => {
+            execute_nested_array_index(function, receiver, arguments, plan)
+        }
+        ShapeKernelPlan::PropertySelect(plan) => execute_property_select(function, receiver, plan),
+        ShapeKernelPlan::ForwardZero(plan) => execute_forward_zero(function, receiver, plan),
     }
 }
 
-pub(crate) fn is_nested_array_length_shape(function: &crate::value::FunctionValue) -> bool {
+pub(crate) fn is_shape_kernel_candidate(function: &crate::value::FunctionValue) -> bool {
     function.code.code().is_some_and(|code| {
-        code.len() == 6
-            && code.instruction(1).is_some_and(|op| op.opcode == crate::ir::Opcode::GetN)
-            && code.instruction(2).is_some_and(|op| op.opcode == crate::ir::Opcode::GetN)
-            && code.metadata_at(2).and_then(|meta| meta.name.as_deref()) == Some("length")
+        matches!(code.len(), 6 | 7 | 9)
+            && code
+                .instruction(1)
+                .is_some_and(|op| op.opcode == crate::ir::Opcode::GetN)
     })
+}
+
+fn execute_nested_array_index(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+    plan: NestedArrayIndexPlan,
+) -> Option<crate::value::Value> {
+    let crate::value::Value::Object(receiver) = receiver else { return None };
+    let first = function.code.code()?.metadata_at(plan.first_pc)?;
+    let nested = crate::locals::resolved_replacement(
+        crate::vm::get_named_cached_object(receiver, &first.named_cache)?,
+    );
+    let crate::value::Value::Array(array) = nested else { return None };
+    let index = arguments.first()?.as_number()?;
+    if !array.is_packed_ordinary()
+        || !index.is_finite()
+        || index.fract() != 0.0
+        || index < 0.0
+        || index > usize::MAX as f64
+    {
+        return None;
+    }
+    let index = index as usize;
+    let value = array
+        .dense_number_at(index)
+        .map(crate::value::Value::Number)
+        .or_else(|| array.dense_value_at(index))?;
+    crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
+    crate::execution_trace::kernel("shape_nested_array_index", false);
+    Some(value)
 }
 
 fn execute_nested_array_length(
@@ -151,7 +202,12 @@ fn shape_kernel_fact(
         .or_else(|| match_state_bitwise(function).map(ShapeKernelPlan::StateBitwise))
         .or_else(|| {
             match_nested_array_length(function).map(ShapeKernelPlan::NestedArrayLength)
-        });
+        })
+        .or_else(|| {
+            match_nested_array_index(function).map(ShapeKernelPlan::NestedArrayIndex)
+        })
+        .or_else(|| match_property_select(function).map(ShapeKernelPlan::PropertySelect))
+        .or_else(|| match_forward_zero(function).map(ShapeKernelPlan::ForwardZero));
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -163,6 +219,31 @@ fn shape_kernel_fact(
         });
     });
     plan
+}
+
+fn match_nested_array_index(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+) -> Option<NestedArrayIndexPlan> {
+    let code = function.code.code()?;
+    if code.len() != 7 || function.params != 1 {
+        return None;
+    }
+    let [receiver, first, index, get, returned, fallback, fallback_return] =
+        std::array::from_fn(|pc| code.instruction(pc).unwrap());
+    use crate::ir::Opcode::*;
+    (receiver.opcode == LoadLocalChecked
+        && first.opcode == GetN
+        && first.b == receiver.a
+        && index.opcode == LoadLocalChecked
+        && get.opcode == AGetI
+        && get.b == first.a
+        && get.c == index.a
+        && returned.opcode == Return
+        && returned.a == get.a
+        && fallback.opcode == LoadConst
+        && fallback_return.opcode == Return
+        && fallback_return.a == fallback.a)
+        .then_some(NestedArrayIndexPlan { first_pc: 1 })
 }
 
 fn match_nested_array_length(
@@ -334,3 +415,6 @@ fn fragment_returns(code: Option<crate::machine::CodeView<'_>>, register: u16) -
         })
     })
 }
+
+include!("functions_shape_property_select.rs");
+include!("functions_shape_forward.rs");
