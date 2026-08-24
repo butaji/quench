@@ -440,7 +440,6 @@
     this.readableAborted = this.readable !== false && !this.readableEnded;
     this.readable = false;
     if (error) {
-      this.readableErrored = error;
       this._readableState.errored = error;
     }
     const stream = this;
@@ -923,8 +922,18 @@
       (stream._readableState?.dataEmitted ?? stream.readableDidRead ?? stream.readableAborted)
     );
   }
+  function destroy(stream, error) {
+    if (error === undefined) {
+      error = {
+        name: "AbortError",
+        message: "The operation was aborted",
+        code: "ABORT_ERR"
+      };
+    }
+    return stream.destroy(error);
+  }
   Readable.isDisturbed = isDisturbed;
-  Writable.destroy = function (stream, error) { return stream.destroy(error); };
+  Writable.destroy = destroy;
 
   return {
     Readable,
@@ -933,6 +942,7 @@
     Transform,
     PassThrough,
     Stream: Readable,
+    destroy,
     finished,
     pipeline,
     isReadable,
