@@ -63,6 +63,39 @@ fn release(word: TaggedValue) {
     }
 }
 
+#[inline(always)]
+fn decode_owned(word: TaggedValue) -> Option<Value> {
+    match word.decode() {
+        DecodedValue::ObjectPtr(pointer) => {
+            retain(word);
+            Some(Value::Object(unsafe {
+                Rc::from_raw(pointer as *const crate::value::ObjectData)
+            }))
+        }
+        DecodedValue::ArrayPtr(pointer) => {
+            retain(word);
+            Some(Value::Array(unsafe {
+                Rc::from_raw(pointer as *const crate::value::ArrayData)
+            }))
+        }
+        DecodedValue::FunctionPtr(pointer) => {
+            retain(word);
+            Some(Value::Function(unsafe {
+                Rc::from_raw(pointer as *const crate::value::FunctionValue)
+            }))
+        }
+        DecodedValue::HeapPtr(pointer) => {
+            Some(unsafe { &*(pointer as *const AlignedValue) }.0.clone())
+        }
+        DecodedValue::Number(value) => Some(Value::Number(value)),
+        DecodedValue::I31(value) => Some(Value::Number(f64::from(value))),
+        DecodedValue::Bool(value) => Some(Value::Boolean(value)),
+        DecodedValue::Null => Some(Value::Null),
+        DecodedValue::Undefined => Some(Value::Undefined),
+        DecodedValue::HeapRef(_) => None,
+    }
+}
+
 /// Canonical active-frame register storage.
 ///
 /// Registers are one copyable word. Heap pointers fit losslessly in the word's
@@ -71,6 +104,60 @@ fn release(word: TaggedValue) {
 #[derive(Debug)]
 pub struct RegisterFile {
     words: Vec<TaggedValue>,
+}
+
+/// Sparse stack-owned words for proven per-call locals.
+///
+/// The bitset is the initialization fact: untouched slots own no heap
+/// reference and therefore need neither construction nor destruction.
+pub(crate) struct LocalWordFile<const N: usize> {
+    words: [std::mem::MaybeUninit<TaggedValue>; N],
+    initialized: [u64; 2],
+}
+
+impl<const N: usize> LocalWordFile<N> {
+    pub(crate) fn new() -> Self {
+        assert!(N <= 128);
+        Self {
+            words: [const { std::mem::MaybeUninit::uninit() }; N],
+            initialized: [0; 2],
+        }
+    }
+
+    pub(crate) fn read(&self, slot: u16) -> Option<Value> {
+        let index = usize::from(slot);
+        self.is_initialized(index)
+            .then(|| decode_owned(unsafe { self.words[index].assume_init() }))?
+    }
+
+    pub(crate) fn write(&mut self, slot: u16, value: Value) -> Option<()> {
+        let index = usize::from(slot);
+        (index < N).then_some(())?;
+        let word = encode(value);
+        if self.is_initialized(index) {
+            let previous =
+                std::mem::replace(&mut self.words[index], std::mem::MaybeUninit::new(word));
+            release(unsafe { previous.assume_init() });
+        } else {
+            self.words[index].write(word);
+            self.initialized[index / 64] |= 1 << (index % 64);
+        }
+        Some(())
+    }
+
+    fn is_initialized(&self, index: usize) -> bool {
+        index < N && self.initialized[index / 64] & (1 << (index % 64)) != 0
+    }
+}
+
+impl<const N: usize> Drop for LocalWordFile<N> {
+    fn drop(&mut self) {
+        for index in 0..N {
+            if self.is_initialized(index) {
+                release(unsafe { self.words[index].assume_init() });
+            }
+        }
+    }
 }
 
 impl RegisterFile {
@@ -120,37 +207,7 @@ impl RegisterFile {
     pub fn read(&self, index: usize) -> Option<Value> {
         crate::execution_trace::event(crate::execution_trace::Event::ValueDecode);
         let word = *self.words.get(index)?;
-        match word.decode() {
-            DecodedValue::ObjectPtr(pointer) => {
-                retain(word);
-                Some(Value::Object(unsafe {
-                    Rc::from_raw(pointer as *const crate::value::ObjectData)
-                }))
-            }
-            DecodedValue::ArrayPtr(pointer) => {
-                retain(word);
-                Some(Value::Array(unsafe {
-                    Rc::from_raw(pointer as *const crate::value::ArrayData)
-                }))
-            }
-            DecodedValue::FunctionPtr(pointer) => {
-                retain(word);
-                Some(Value::Function(unsafe {
-                    Rc::from_raw(pointer as *const crate::value::FunctionValue)
-                }))
-            }
-            DecodedValue::HeapPtr(pointer) => {
-                // SAFETY: the register word owns a strong reference, and the
-                // borrow ends before any caller can mutate the register file.
-                Some(unsafe { &*(pointer as *const AlignedValue) }.0.clone())
-            }
-            DecodedValue::Number(value) => Some(Value::Number(value)),
-            DecodedValue::I31(value) => Some(Value::Number(f64::from(value))),
-            DecodedValue::Bool(value) => Some(Value::Boolean(value)),
-            DecodedValue::Null => Some(Value::Null),
-            DecodedValue::Undefined => Some(Value::Undefined),
-            DecodedValue::HeapRef(_) => None,
-        }
+        decode_owned(word)
     }
 
     /// Borrow an array directly from its execute word. The borrow is tied to
