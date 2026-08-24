@@ -445,6 +445,9 @@ fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 pub(crate) fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool {
+    if builtin == Builtin::ArrayPrototype && key == "length" {
+        return true;
+    }
     if matches!(
         builtin,
         Builtin::ErrorPrototype
@@ -468,6 +471,9 @@ pub(crate) fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool 
 }
 
 fn builtin_property_is_configurable(builtin: Builtin, key: &str, property: &Value) -> bool {
+    if builtin == Builtin::ArrayPrototype && key == "length" {
+        return false;
+    }
     if builtin == Builtin::GeneratorFunctionPrototype && key == "Symbol.toStringTag" {
         return true;
     }
