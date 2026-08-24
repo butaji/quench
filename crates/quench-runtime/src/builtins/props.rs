@@ -320,6 +320,12 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "every").then_some(Builtin::ArrayEvery)
         })
+        .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "map").then_some(Builtin::ArrayMap)
+        })
+        .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "filter").then_some(Builtin::ArrayFilter)
+        })
         .or_else(|| uint8_array_base64_method(builtin, key))
 }
 fn uint8_array_base64_method(builtin: Builtin, key: &str) -> Option<Builtin> {
