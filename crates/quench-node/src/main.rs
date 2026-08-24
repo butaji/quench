@@ -14,7 +14,9 @@ use js_runtime::{FilesystemNodeHost, JsRuntime, NodeHost, QuenchRuntime};
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    run_cli()
+    let result = run_cli();
+    quench_runtime::execution_trace::emit();
+    result
 }
 
 fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
