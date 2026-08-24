@@ -94,7 +94,7 @@ const __quenchApplyFinalSurface = (normalized, result) => {
   if (normalized === "url") result = __quenchAddUrlFormatting(result);
   if (normalized === "http") __quenchAddHttpEvents(result);
   if (normalized === "zlib") return __quenchAddZlibValidation(result);
-  if (normalized === "worker_threads") {
+  if (normalized === "worker_threads" && typeof result.Worker !== "function") {
     result = {
       ...result,
       MessageChannel: globalThis.MessageChannel,
