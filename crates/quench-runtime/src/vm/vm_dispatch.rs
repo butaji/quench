@@ -6,8 +6,6 @@ enum DispatchClass {
 }
 const _: () = assert!(std::mem::size_of::<DispatchClass>() <= 1);
 
-
-
 /// Keep the inline entry point limited to classification and handoff.
 /// Semantic decoding stays in the independently measurable handlers below.
 #[inline(always)]
@@ -120,7 +118,10 @@ fn dispatch_function_call(
 
 include!("run_simple_op.rs");
 
-fn run_global_declaration_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<bool, VmError> {
+fn run_global_declaration_op(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<bool, VmError> {
     if !is_global_declaration_op(op) {
         return Ok(false);
     }
@@ -175,7 +176,10 @@ fn run_eval_completion(
     Ok(tail.map(crate::completion::Completion::TailCall))
 }
 
-fn run_property_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<bool, VmError> {
+fn run_property_op(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<bool, VmError> {
     use Op::*;
     if !matches!(
         op,
@@ -213,7 +217,10 @@ fn run_property_op(registers: &mut crate::register_file::RegisterFile, op: &Op) 
     Ok(true)
 }
 
-fn run_class_heritage(registers: &crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
+fn run_class_heritage(
+    registers: &crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     let Op::ValidateClassHeritage { src } = op else {
         return Ok(());
     };
@@ -263,18 +270,14 @@ fn run_control_op(
             .map(Completion::Throw)
             .map(Some),
         Break { label, value } => {
-            let carried = value
-                .map(|src| read_register(registers, src))
-                .transpose()?;
+            let carried = value.map(|src| read_register(registers, src)).transpose()?;
             Ok(Some(Completion::Break {
                 label: label.clone(),
                 value: carried,
             }))
         }
         Continue { label, value } => {
-            let carried = value
-                .map(|src| read_register(registers, src))
-                .transpose()?;
+            let carried = value.map(|src| read_register(registers, src)).transpose()?;
             Ok(Some(Completion::Continue {
                 label: label.clone(),
                 value: carried,
@@ -289,7 +292,10 @@ fn run_control_op(
     }
 }
 
-fn run_dispatch_op(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<Option<Value>, VmError> {
+fn run_dispatch_op(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<Option<Value>, VmError> {
     use Op::*;
     match op {
         CallMethod { .. }
@@ -301,7 +307,10 @@ fn run_dispatch_op(registers: &mut crate::register_file::RegisterFile, op: &Op) 
     Ok(None)
 }
 
-fn run_make_array(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
+fn run_make_array(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     match op {
         Op::MakeArray { dst, elements } => execute_array(registers, *dst, elements)?,
         Op::BuildArray { dst, elements } => execute_array_plan(registers, *dst, elements)?,
@@ -310,25 +319,37 @@ fn run_make_array(registers: &mut crate::register_file::RegisterFile, op: &Op) -
     Ok(())
 }
 
-fn run_make_object(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
+fn run_make_object(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     if let Op::MakeObject { dst, properties } | Op::MakeGlobalObjectView { dst, properties } = op {
         execute_object(registers, *dst, properties)?;
         if matches!(op, Op::MakeGlobalObjectView { .. }) {
             let view = crate::execute::read_register(registers, *dst)?.clone();
             if let Value::Object(view) = view {
-                let owner = crate::vm::current_global_object();
-                if let Value::Object(owner) = owner {
-                    let value = Value::Object(std::rc::Rc::new(
-                        crate::value::ObjectData::with_shared_properties_for_owner(
-                            &owner,
-                            view.properties.clone(),
-                            std::rc::Rc::new(std::cell::RefCell::new(
-                                view.private_slots.borrow().clone(),
-                            )),
-                        ),
-                    ));
-                    crate::execute::write_value(registers, *dst, value);
-                }
+                let owner = match crate::vm::current_global_object() {
+                    Value::Object(owner) => owner,
+                    _ => {
+                        realm::initialize_current_global(view.clone());
+                        view.clone()
+                    }
+                };
+                let mut properties = view.properties.clone();
+                properties.push((
+                    crate::vm::SCRIPT_GLOBAL_VIEW.to_string().into(),
+                    Value::Boolean(true),
+                ));
+                let value = Value::Object(std::rc::Rc::new(
+                    crate::value::ObjectData::with_shared_properties_for_owner(
+                        &owner,
+                        properties,
+                        std::rc::Rc::new(std::cell::RefCell::new(
+                            view.private_slots.borrow().clone(),
+                        )),
+                    ),
+                ));
+                crate::execute::write_value(registers, *dst, value);
             }
         }
         if let Value::Object(object) = read_register(registers, *dst)? {
@@ -354,7 +375,10 @@ fn run_call(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Resu
     Ok(())
 }
 
-fn run_tail_call(registers: &crate::register_file::RegisterFile, op: &Op) -> Result<crate::completion::Completion, VmError> {
+fn run_tail_call(
+    registers: &crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<crate::completion::Completion, VmError> {
     let Op::TailCall {
         callee,
         args,
@@ -397,7 +421,10 @@ fn run_binary(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Re
     Ok(())
 }
 
-fn run_get_set_property(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
+fn run_get_set_property(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     use Op::*;
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
@@ -448,22 +475,35 @@ fn run_get_set_property(registers: &mut crate::register_file::RegisterFile, op: 
     Ok(())
 }
 
-fn run_name_property(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
+fn run_name_property(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     crate::with_scope::execute_name(registers, op)
 }
 
-fn run_delete_property(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
+fn run_delete_property(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     crate::properties::execute_delete_property(registers, op)
 }
 
-fn to_property_key(registers: &mut crate::register_file::RegisterFile, dst: u16, src: u16) -> Result<(), VmError> {
+fn to_property_key(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    src: u16,
+) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, src)?;
     let key = crate::conversion::to_property_key(&value)?;
     crate::execute::write_value(registers, dst, crate::value::Value::String(key));
     Ok(())
 }
 
-fn run_method_or_construct(registers: &mut crate::register_file::RegisterFile, op: &Op) -> Result<(), VmError> {
+fn run_method_or_construct(
+    registers: &mut crate::register_file::RegisterFile,
+    op: &Op,
+) -> Result<(), VmError> {
     use Op::*;
     match op {
         CallMethod { .. } => crate::methods::execute(registers, op)?,
@@ -519,7 +559,11 @@ fn property_string(
         .map(|(_, value)| to_string(Some(value)))
 }
 
-fn execute_array(registers: &mut crate::register_file::RegisterFile, dst: u16, elements: &[u16]) -> Result<(), VmError> {
+fn execute_array(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    elements: &[u16],
+) -> Result<(), VmError> {
     let values = elements
         .iter()
         .map(|index| read_register(registers, *index))
@@ -672,15 +716,19 @@ mod dispatcher_tests {
         );
         assert!(std::mem::size_of::<DispatchClass>() <= 1);
     }
-    
+
     #[test]
     fn borrowed_function_record_rejects_inconsistent_argument_span() {
         let arguments = [1_u16, 2];
         let spreads = [false];
         let context = crate::vm::VmContext::default();
         let record = super::FunctionCallRecord {
-            dst: 0, callee: 1, receiver: None,
-            arguments: &arguments, spreads: &spreads, context: &context,
+            dst: 0,
+            callee: 1,
+            receiver: None,
+            arguments: &arguments,
+            spreads: &spreads,
+            context: &context,
         };
         assert!(!record.is_well_formed());
     }
