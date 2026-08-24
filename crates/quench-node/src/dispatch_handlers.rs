@@ -4,6 +4,7 @@
 //! capability id resolves to a Rust function.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
@@ -322,10 +323,22 @@ pub fn internal_binding(
     }
     if name == "timers" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
-            ("getLibuvNow".to_string(), crate::host::capability(crate::registry::SPEC_TIMERS_GET_LIBUV_NOW)),
-            ("scheduleTimer".to_string(), crate::host::capability(crate::registry::SPEC_TIMERS_SCHEDULE)),
-            ("toggleTimerRef".to_string(), crate::host::capability(crate::registry::SPEC_TIMERS_TOGGLE_REF)),
-            ("toggleImmediateRef".to_string(), crate::host::capability(crate::registry::SPEC_TIMERS_TOGGLE_IMMEDIATE_REF)),
+            (
+                "getLibuvNow".to_string(),
+                crate::host::capability(crate::registry::SPEC_TIMERS_GET_LIBUV_NOW),
+            ),
+            (
+                "scheduleTimer".to_string(),
+                crate::host::capability(crate::registry::SPEC_TIMERS_SCHEDULE),
+            ),
+            (
+                "toggleTimerRef".to_string(),
+                crate::host::capability(crate::registry::SPEC_TIMERS_TOGGLE_REF),
+            ),
+            (
+                "toggleImmediateRef".to_string(),
+                crate::host::capability(crate::registry::SPEC_TIMERS_TOGGLE_IMMEDIATE_REF),
+            ),
         ]));
     }
     Ok(crate::host::namespace_object_from_pairs(Vec::new()))
@@ -339,9 +352,150 @@ pub fn timers_get_libuv_now(
     Ok(Value::Number(crate::modules::timers::monotonic_ms() as f64))
 }
 
-pub fn timers_schedule(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
-pub fn timers_toggle_ref(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
-pub fn timers_toggle_immediate_ref(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
+thread_local! { static LINKED_LISTS: RefCell<HashMap<u64, (Value, Value)>> = RefCell::new(HashMap::new()); }
+
+pub fn linked_list_init(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let item = args.first().ok_or(VmError::NotCallable)?.clone();
+    if let Some(id) = item.object_identity() {
+        LINKED_LISTS.with(|lists| {
+            lists.borrow_mut().insert(id, (item.clone(), item));
+        });
+    }
+    Ok(Value::Undefined)
+}
+pub fn linked_list_remove(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let item = args.first().ok_or(VmError::NotCallable)?.clone();
+    let Some(id) = item.object_identity() else {
+        return Ok(Value::Undefined);
+    };
+    LINKED_LISTS.with(|lists| {
+        let mut lists = lists.borrow_mut();
+        if let Some((after, before)) = lists.get(&id).cloned() {
+            if let Some(before_id) = before.object_identity() {
+                if let Some(entry) = lists.get_mut(&before_id) {
+                    entry.0 = after.clone();
+                }
+            }
+            if let Some(after_id) = after.object_identity() {
+                if let Some(entry) = lists.get_mut(&after_id) {
+                    entry.1 = before.clone();
+                }
+            }
+            lists.insert(id, (item.clone(), item));
+        }
+    });
+    Ok(Value::Undefined)
+}
+pub fn linked_list_append(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let list = args.first().ok_or(VmError::NotCallable)?.clone();
+    let item = args.get(1).ok_or(VmError::NotCallable)?.clone();
+    if !LINKED_LISTS.with(|lists| {
+        list.object_identity()
+            .is_some_and(|id| lists.borrow().contains_key(&id))
+    }) {
+        linked_list_init(state, receiver, std::slice::from_ref(&list))?;
+    }
+    if !LINKED_LISTS.with(|lists| {
+        item.object_identity()
+            .is_some_and(|id| lists.borrow().contains_key(&id))
+    }) {
+        linked_list_init(state, receiver, std::slice::from_ref(&item))?;
+    }
+    linked_list_remove(state, receiver, std::slice::from_ref(&item))?;
+    let Some(list_id) = list.object_identity() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(item_id) = item.object_identity() else {
+        return Ok(Value::Undefined);
+    };
+    LINKED_LISTS.with(|lists| {
+        let mut lists = lists.borrow_mut();
+        let tail = lists
+            .get(&list_id)
+            .map(|entry| entry.1.clone())
+            .unwrap_or_else(|| list.clone());
+        let tail_id = tail.object_identity().unwrap_or(list_id);
+        if let Some(entry) = lists.get_mut(&tail_id) {
+            entry.0 = item.clone();
+        }
+        lists.insert(item_id, (list.clone(), tail));
+        if let Some(entry) = lists.get_mut(&list_id) {
+            entry.1 = item;
+        }
+    });
+    Ok(Value::Undefined)
+}
+pub fn linked_list_is_empty(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let list = args.first().ok_or(VmError::NotCallable)?;
+    let id = list.object_identity();
+    Ok(Value::Boolean(LINKED_LISTS.with(|lists| {
+        id.and_then(|id| {
+            lists
+                .borrow()
+                .get(&id)
+                .map(|entry| entry.0.object_identity() == Some(id))
+        })
+        .unwrap_or(true)
+    })))
+}
+pub fn linked_list_peek(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let list = args.first().ok_or(VmError::NotCallable)?;
+    let id = list.object_identity();
+    Ok(LINKED_LISTS.with(|lists| {
+        id.and_then(|id| {
+            lists.borrow().get(&id).map(|entry| {
+                if entry.0.object_identity() == Some(id) {
+                    Value::Null
+                } else {
+                    entry.0.clone()
+                }
+            })
+        })
+        .unwrap_or(Value::Null)
+    }))
+}
+
+pub fn timers_schedule(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+pub fn timers_toggle_ref(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+pub fn timers_toggle_immediate_ref(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
 
 pub fn internal_buffer_fill(
     _state: &Rc<RefCell<HostState>>,
@@ -358,7 +512,6 @@ pub fn internal_buffer_aligned_offset(
 ) -> Result<Value, VmError> {
     crate::modules::buffer::array_buffer_aligned_offset(args)
 }
-
 
 pub fn internal_view_has_buffer(
     _state: &Rc<RefCell<HostState>>,
@@ -390,10 +543,7 @@ fn number_display(value: &Value) -> String {
     }
 }
 
-fn buffer_new_impl(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+fn buffer_new_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::process::emit_warning(
         state,
         "DeprecationWarning",
@@ -1449,9 +1599,9 @@ pub fn util_strip_vt(
         Value::String(text) => text,
         Value::StringUnits(units) => {
             return Ok(Value::String(
-                crate::modules::util_strip::strip_vt_control_characters(
-                    &String::from_utf16_lossy(units),
-                ),
+                crate::modules::util_strip::strip_vt_control_characters(&String::from_utf16_lossy(
+                    units,
+                )),
             ));
         }
         _ => {
