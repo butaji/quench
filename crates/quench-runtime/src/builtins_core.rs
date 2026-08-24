@@ -23,11 +23,8 @@ pub(crate) fn array_map(
             "Array.prototype.map called on null or undefined",
         ));
     };
-    if matches!(receiver, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.map called on null or undefined",
-        ));
-    }
+    let receiver = crate::construct::to_object(receiver)?;
+    let length = map_length(&receiver)?;
     let Some(callback) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.map callback is not callable",
@@ -38,43 +35,63 @@ pub(crate) fn array_map(
             "Array.prototype.map callback is not callable",
         ));
     }
-    let length = map_length(receiver)?;
     if length > u32::MAX as usize {
         return Err(crate::value::error::throw_range_error(
             "Invalid array length",
         ));
     }
-    let mut mapped = Value::array(Vec::new());
-    if let Value::Array(values) = &mut mapped {
-        Rc::make_mut(values).set_length(length);
-    }
+    let mut mapped = array_species_create(&receiver, length)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    if let Value::Array(source) = receiver {
+    if let Value::Array(source) = &receiver {
         let mut index = 0;
         while let Some(current) = source.next_index(index, length) {
             index = current.saturating_add(1);
-            let Some(value) = map_value(receiver, current)? else {
+            let Some(value) = map_value(&receiver, current)? else {
                 continue;
             };
             let args = [value, Value::Number(current as f64), receiver.clone()];
             let result = crate::functions::execute_target(callback, this_arg, &args)?;
-            if let Value::Array(values) = &mut mapped {
-                Rc::make_mut(values).set_index(current, result);
-            }
+            mapped = crate::builtins::set_property(mapped, &current.to_string(), result);
         }
     } else {
         for index in 0..length {
-            let Some(value) = map_value(receiver, index)? else {
+            let Some(value) = map_value(&receiver, index)? else {
                 continue;
             };
             let args = [value, Value::Number(index as f64), receiver.clone()];
             let result = crate::functions::execute_target(callback, this_arg, &args)?;
-            if let Value::Array(values) = &mut mapped {
-                Rc::make_mut(values).set_index(index, result);
-            }
+            mapped = crate::builtins::set_property(mapped, &index.to_string(), result);
         }
     }
-    Ok(mapped)
+    Ok(crate::builtins::set_property(
+        mapped,
+        "length",
+        Value::Number(length as f64),
+    ))
+}
+
+fn array_species_create(
+    receiver: &Value,
+    length: usize,
+) -> Result<Value, crate::execute::VmError> {
+    let is_array = matches!(crate::builtins::is_array(Some(receiver))?, Value::Boolean(true));
+    if !is_array {
+        return Ok(Value::array(Vec::new()));
+    }
+    let constructor = crate::execute::get_property_result(receiver, "constructor")?;
+    if matches!(constructor, Value::Undefined | Value::Null | Value::Builtin(crate::ops::Builtin::Array)) {
+        return Ok(Value::array(Vec::new()));
+    }
+    if !crate::value::is_object(&constructor) {
+        return Err(crate::value::error::throw_type_error(
+            "Species constructor is not a constructor",
+        ));
+    }
+    let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
+    if matches!(species, Value::Undefined | Value::Null) {
+        return Ok(Value::array(Vec::new()));
+    }
+    crate::construct::construct_value(&species, &[Value::Number(length as f64)])
 }
 pub(crate) fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
     if let Value::Array(values) = &receiver {
@@ -106,7 +123,13 @@ pub(crate) fn map_value(
     }
     let key = index.to_string();
     if !crate::with_scope::has_property(&receiver, &key)? {
-        return Ok(None);
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&receiver),
+            Some(&Value::String(key.clone())),
+        )?;
+        if matches!(descriptor, Value::Undefined) {
+            return Ok(None);
+        }
     }
     crate::execute::get_property_result(&receiver, &key).map(Some)
 }
@@ -163,11 +186,8 @@ pub(crate) fn array_filter(
             "Array.prototype.filter called on null or undefined",
         ));
     };
-    if matches!(receiver, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.filter called on null or undefined",
-        ));
-    }
+    let receiver = crate::construct::to_object(receiver)?;
+    let length = map_length(&receiver)?;
     let Some(callback) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.filter callback is not callable",
@@ -178,20 +198,25 @@ pub(crate) fn array_filter(
             "Array.prototype.filter callback is not callable",
         ));
     }
-    let length = map_length(receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    let mut filtered = Vec::new();
+    let mut filtered = array_species_create(&receiver, 0)?;
+    let mut output = 0usize;
     for index in 0..length {
-        let Some(value) = map_value(receiver, index)? else {
+        let Some(value) = map_value(&receiver, index)? else {
             continue;
         };
         let args = [value.clone(), Value::Number(index as f64), receiver.clone()];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
         if crate::execute::is_truthy(&result) {
-            filtered.push(value);
+            filtered = crate::builtins::set_property(filtered, &output.to_string(), value);
+            output = output.saturating_add(1);
         }
     }
-    Ok(Value::array(filtered))
+    Ok(crate::builtins::set_property(
+        filtered,
+        "length",
+        Value::Number(output as f64),
+    ))
 }
 
 pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
