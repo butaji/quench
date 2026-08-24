@@ -98,6 +98,16 @@ fn run_instruction(
             crate::locals::load(registers, instruction.a, instruction.b)?;
             Ok(None)
         }
+        Opcode::UpdateLocal => {
+            crate::locals::update(
+                registers,
+                instruction.a,
+                instruction.b,
+                instruction.c,
+                instruction.flags != 0,
+            )?;
+            Ok(None)
+        }
         Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Div => {
             let operator = match instruction.opcode {
                 Opcode::Add => crate::ops::BinaryOp::Add,
