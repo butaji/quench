@@ -64,7 +64,7 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
     )))
 }
 
-fn util_types_module() -> Value {
+pub(crate) fn util_types_module() -> Value {
     NODE_UTIL_TYPES.with(|module| {
         module
             .borrow_mut()
