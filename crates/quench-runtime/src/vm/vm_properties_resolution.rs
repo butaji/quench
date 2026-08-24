@@ -23,7 +23,7 @@ pub(crate) fn get_named_property_result(
     if let Value::Object(object) = value {
         if !object.has_replacement() {
             let layout = object.semantic_layout_id();
-            if let Some((cached_layout, slot)) = unpack_named_cache(cache.get()) {
+            if let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
                 if layout == cached_layout {
                     if let Some((_, value)) = object.hot_properties().get(slot as usize) {
                         crate::execution_trace::event(
@@ -40,7 +40,10 @@ pub(crate) fn get_named_property_result(
     let result = get_property_result(&resolved, key)?;
     if let Value::Object(object) = &resolved {
         if let Some(slot) = cacheable_own_slot(&resolved, key) {
-            cache.set(pack_named_cache(object.semantic_layout_id(), slot));
+            cache.set(crate::machine::pack_named_cache(
+                object.semantic_layout_id(),
+                slot,
+            ));
         }
     }
     Ok(result)
@@ -62,18 +65,6 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
     if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) { return None; }
     if metadata.is_some_and(accessor_descriptor) { return None; }
     u32::try_from(slot).ok()
-}
-
-#[inline]
-fn pack_named_cache(layout: u32, slot: u32) -> u64 {
-    (u64::from(layout) << 32) | u64::from(slot.saturating_add(1))
-}
-
-#[inline]
-fn unpack_named_cache(cache: u64) -> Option<(u32, u32)> {
-    let layout = (cache >> 32) as u32;
-    let slot = (cache as u32).checked_sub(1)?;
-    (layout != 0).then_some((layout, slot))
 }
 
 pub(crate) fn get_property_with_receiver(
