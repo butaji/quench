@@ -578,69 +578,59 @@ pub(crate) fn reduce_values(
             "Array.prototype.reduce called on null or undefined",
         ));
     };
-    if matches!(receiver, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.reduce called on null or undefined",
-        ));
+    let receiver = crate::construct::to_object(receiver)?;
+    let length = crate::builtins::map_length(&receiver)?;
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
     }
-    let values: Vec<Value> = if let Value::Array(values) = receiver {
-        values.snapshot()
+    let mut index = if reverse { length } else { 0 };
+    let mut accumulator = if let Some(initial) = arguments.get(1) {
+        initial.clone()
     } else {
-        let length = crate::execute::get_property_result(receiver, "length")
-            .ok()
-            .and_then(|v| {
-                if let Value::Number(n) = v {
-                    let clamped = if n.is_nan() || n < 0.0 {
-                        0.0
-                    } else if n > 1_048_576.0 {
-                        1_048_576.0
-                    } else {
-                        n
-                    };
-                    Some(clamped.trunc() as usize)
+        let mut found = None;
+        while if reverse { index > 0 } else { index < length } {
+            if reverse {
+                index -= 1;
+            }
+            let key = index.to_string();
+            if crate::with_scope::has_property(&receiver, &key)? {
+                found = Some(crate::execute::get_property_result(&receiver, &key)?);
+                if reverse {
+                    index += 1;
                 } else {
-                    None
+                    index += 1;
                 }
-            })
-            .unwrap_or(0);
-        (0..length)
-            .map(|i| {
-                crate::execute::get_property_result(receiver, &i.to_string())
-                    .unwrap_or(Value::Undefined)
-            })
-            .collect()
-    };
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::Undefined);
-    };
-    let (mut accumulator, start) = match arguments.get(1) {
-        Some(initial) => (initial.clone(), 0),
-        None if values.is_empty() => return Ok(Value::Undefined),
-        None => {
-            let index = if reverse { values.len() - 1 } else { 0 };
-            (values[index].clone(), 1)
+                break;
+            }
+            if !reverse {
+                index += 1;
+            }
         }
+        found.ok_or_else(|| {
+            crate::value::error::throw_type_error(
+                "Reduce of empty array with no initial value",
+            )
+        })?
     };
-    let mut apply =
-        |index: usize, accumulator: &mut Value| -> Result<(), crate::execute::VmError> {
+    while if reverse { index > 0 } else { index < length } {
+        if reverse {
+            index -= 1;
+        }
+        let current = index;
+        let key = current.to_string();
+        if crate::with_scope::has_property(&receiver, &key)? {
+            let value = crate::execute::get_property_result(&receiver, &key)?;
             let args = [
                 accumulator.clone(),
-                values[index].clone(),
-                Value::Number(index as f64),
+                value,
+                Value::Number(current as f64),
                 receiver.clone(),
             ];
-            *accumulator = crate::functions::execute_target(callback, receiver, &args)?;
-            Ok(())
-        };
-    if reverse {
-        let end = values.len().saturating_sub(start);
-        for index in (0..end).rev() {
-            apply(index, &mut accumulator)?;
+            accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
         }
-    } else {
-        let begin = if arguments.get(1).is_some() { 0 } else { 1 };
-        for index in begin..values.len() {
-            apply(index, &mut accumulator)?;
+        if !reverse {
+            index += 1;
         }
     }
     Ok(accumulator)
