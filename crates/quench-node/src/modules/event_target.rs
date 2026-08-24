@@ -143,6 +143,7 @@ fn type_arg(args: &[Value]) -> Result<String, VmError> {
 
 fn callback_arg(args: &[Value]) -> Result<Value, VmError> {
     match args.get(1) {
+        Some(Value::Null | Value::Undefined) => Ok(args[1].clone()),
         Some(value) if quench_runtime::is_callable(value) || matches!(value, Value::Object(_)) => {
             Ok(value.clone())
         }
@@ -152,12 +153,41 @@ fn callback_arg(args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
+fn same_listener(left: &Value, right: &Value) -> bool {
+    let left_object = matches!(left, Value::Object(_));
+    let right_object = matches!(right, Value::Object(_));
+    left_object == right_object
+        && quench_runtime::is_callable(left) == quench_runtime::is_callable(right)
+        && execute::same_value(left, right)
+}
+
 /// `{ once: true }` from the options bag; anything else is ignored.
 fn once_option(args: &[Value]) -> bool {
     matches!(
-        args.get(2).map(|v| execute::get_property(v, "once")),
+        args.get(2).and_then(|v| execute::get_property_result(v, "once").ok()),
         Some(Value::Boolean(true))
     )
+}
+
+fn passive_option(args: &[Value]) -> bool {
+    args.get(2)
+        .and_then(|v| execute::get_property_result(v, "passive").ok())
+        .is_some_and(|value| execute::is_truthy(&value))
+}
+
+fn signal_option(args: &[Value]) -> Result<Option<Value>, VmError> {
+    let Some(options) = args.get(2) else { return Ok(None) };
+    if matches!(options, Value::Null | Value::Undefined) {
+        return Ok(None);
+    }
+    let signal = execute::get_property_result(options, "signal")?;
+    if matches!(signal, Value::Undefined) {
+        return Ok(None);
+    }
+    if !matches!(signal, Value::Object(_)) || !is_abort_signal(&signal) {
+        return Err(execute::type_error("The \"signal\" option must be an AbortSignal"));
+    }
+    Ok(Some(signal))
 }
 
 fn weak_option(args: &[Value], receiver: &Value) -> bool {
@@ -175,6 +205,13 @@ pub fn add_event_listener(
 ) -> Result<Value, VmError> {
     let event = type_arg(args)?;
     let callback = callback_arg(args)?;
+    let signal = signal_option(args)?;
+    if signal
+        .as_ref()
+        .is_some_and(|value| execute::is_truthy(&execute::get_property(value, "aborted")))
+    {
+        return Ok(Value::Undefined);
+    }
     let Some(target) = receiver
         .and_then(target_id)
         .and_then(|id| state.borrow().targets.get(id))
@@ -185,12 +222,14 @@ pub fn add_event_listener(
     let existing = guard.listeners_of(&event);
     if !existing
         .iter()
-        .any(|listener| execute::same_value(&listener.callback, &callback))
+        .any(|listener| same_listener(&listener.callback, &callback))
     {
         guard.entry(&event).push(Listener {
             callback,
             once: once_option(args),
             weak: weak_option(args, receiver.expect("validated receiver")),
+            passive: passive_option(args),
+            signal,
         });
     }
     Ok(Value::Undefined)
@@ -244,6 +283,19 @@ pub fn dispatch_event(
     let Value::String(event_type) = execute::get_property(event, "type") else {
         return Ok(Value::Boolean(false));
     };
+    if event_type == "abort" && is_abort_signal(receiver) {
+        let mut host = state.borrow_mut();
+        for target in host.targets.targets.values() {
+            for (_, listeners) in &mut target.borrow_mut().events {
+                listeners.retain(|listener| {
+                    listener
+                        .signal
+                        .as_ref()
+                        .is_none_or(|signal| target_id(signal) != target_id(receiver))
+                });
+            }
+        }
+    }
     let snapshot: Vec<Listener> = target.borrow().listeners_of(&event_type).to_vec();
     let has_protected_listener = snapshot.iter().any(|listener| {
         execute::is_truthy(&execute::get_property(
@@ -266,6 +318,13 @@ pub fn dispatch_event(
         if listener.weak {
             continue;
         }
+        if listener
+            .signal
+            .as_ref()
+            .is_some_and(|signal| execute::is_truthy(&execute::get_property(signal, "aborted")))
+        {
+            continue;
+        }
         let protected = execute::is_truthy(&execute::get_property(
             &listener.callback,
             "\0quench:abort-listener",
@@ -283,6 +342,14 @@ pub fn dispatch_event(
                 Some(receiver),
                 &[Value::String(event_type.clone()), listener.callback.clone()],
             )?;
+        }
+        if listener.passive {
+            let passive = execute::set_property(
+                event.clone(),
+                "\0event:passive",
+                Value::Boolean(true),
+            );
+            execute::replace_value(event, &passive);
         }
         let result = if quench_runtime::is_callable(&listener.callback) {
             execute::call(&listener.callback, receiver, std::slice::from_ref(event))

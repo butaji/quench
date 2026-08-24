@@ -23,6 +23,8 @@ pub struct Listener {
     pub callback: Value,
     pub once: bool,
     pub weak: bool,
+    pub passive: bool,
+    pub signal: Option<Value>,
 }
 
 pub struct EventEmitter {
@@ -69,6 +71,8 @@ impl EventEmitter {
                     callback,
                     once,
                     weak: false,
+                    passive: false,
+                    signal: None,
                 },
             );
         } else {
@@ -76,6 +80,8 @@ impl EventEmitter {
                 callback,
                 once,
                 weak: false,
+                passive: false,
+                signal: None,
             });
         }
         list.len()
