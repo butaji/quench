@@ -130,16 +130,12 @@ pub(crate) fn utf16_code_unit(s: &str, index: usize) -> Option<u16> {
     s.encode_utf16().nth(index)
 }
 
-/// The character (code point) at UTF-16 code-unit `index`, as a string.
-pub(crate) fn char_at_utf16(s: &str, index: usize) -> Option<String> {
+/// The character (code point) at UTF-16 code-unit `index`, preserving lone
+/// surrogate code units in the runtime's exact UTF-16 representation.
+pub(crate) fn char_at_utf16(s: &str, index: usize) -> Option<crate::value::Value> {
     let units: Vec<u16> = s.encode_utf16().collect();
     let unit = *units.get(index)?;
-    let code = code_point(&units, index);
-    if is_surrogate(code) {
-        Some(String::from_utf16_lossy(&[unit]))
-    } else {
-        Some(char::from_u32(code).unwrap().to_string())
-    }
+    Some(crate::strings::from_units(vec![unit]))
 }
 
 /// Converts a byte offset into `s` to a UTF-16 code-unit offset.

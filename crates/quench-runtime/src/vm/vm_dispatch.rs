@@ -647,7 +647,6 @@ fn string_property(value: &str, key: &str) -> Value {
     key.parse::<usize>()
         .ok()
         .and_then(|index| crate::strings::char_at_utf16(value, index))
-        .map(Value::String)
         .unwrap_or(Value::Undefined)
 }
 
