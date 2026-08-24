@@ -380,6 +380,7 @@ fn step_target_state(
             receiver,
             typed_receiver,
             typed_keys,
+            entries,
             index,
             done,
         } => StepTarget::Value(native_step(
@@ -387,6 +388,7 @@ fn step_target_state(
             receiver.as_ref(),
             typed_receiver.as_ref(),
             *typed_keys,
+            *entries,
             index,
             done,
         )?),
