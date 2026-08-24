@@ -7,6 +7,7 @@
 //! `actual`, `expected`), which is catchable via `try`/`catch`.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
@@ -117,6 +118,7 @@ pub fn constructor_new(
         ("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
         ("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         ("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        ("partialDeepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         ("throws", SPEC_ASSERT_THROWS),
         ("doesNotThrow", SPEC_ASSERT_DOES_NOT_THROW),
         ("ifError", SPEC_ASSERT_IF_ERROR),
@@ -216,8 +218,13 @@ fn assertion_error_type() -> Value {
         quench_runtime::ops::Builtin::Error,
         Value::Undefined,
     );
-    let constructor = execute::set_property(constructor, "name", Value::String("AssertionError".into()));
-    execute::set_property(constructor, "prototype", prototype)
+    let _ = execute::set_callable_property(
+        &constructor,
+        "name",
+        Value::String("AssertionError".into()),
+    );
+    let _ = execute::set_callable_property(&constructor, "prototype", prototype);
+    constructor
 }
 
 fn assertion_error_prototype() -> Value {
@@ -274,6 +281,18 @@ pub fn assertion_error(
         quench_runtime::execute::set_prototype_of(&error, &assertion_error_prototype())
             .unwrap_or(error),
     )
+}
+
+fn missing_args() -> VmError {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String("The \"actual\" and \"expected\" arguments must be specified".into())],
+    );
+    VmError::Thrown(quench_runtime::execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_MISSING_ARGS".into()),
+    ))
 }
 
 /// Optional trailing message argument; `None` when absent/undefined.
@@ -458,9 +477,53 @@ pub fn deep_strict_equal(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    binary_assert(args, "deepStrictEqual", true, |a, b| {
-        crate::modules::deep_equal::deep_equal(a, b, true)
-    })
+    if args.len() < 2 {
+        return Err(missing_args());
+    }
+    let actual = arg(args, 0);
+    let expected = arg(args, 1);
+    if crate::modules::deep_equal::deep_equal(&actual, &expected, true)? {
+        return Ok(Value::Undefined);
+    }
+    let custom = custom_message(args, 2);
+    let generated = custom.is_none();
+    let message = custom.map_or_else(
+        || format!(
+            "Expected values to be strictly deep-equal:\n\n{}\n",
+            deep_diff(&actual, &expected)
+        ),
+        |message| format!(
+            "{message}\n+ actual - expected\n\n{}\n",
+            deep_diff(&actual, &expected)
+        ),
+    );
+    Err(assertion_error(message, "deepStrictEqual", actual, expected, generated))
+}
+
+fn deep_diff(actual: &Value, expected: &Value) -> String {
+    let (Value::Object(left), Value::Object(right)) = (actual, expected) else {
+        return format!("+ {}\n- {}", rendered(actual), rendered(expected));
+    };
+    let left_object = Value::Object(left.clone());
+    let right_object = Value::Object(right.clone());
+    let keys = execute::own_enumerable_keys(&left_object)
+        .into_iter()
+        .chain(execute::own_enumerable_keys(&right_object))
+        .filter(|key| !key.starts_with('\0'))
+        .collect::<BTreeSet<_>>();
+    let mut lines = vec!["  {".to_string()];
+    for key in keys {
+        let left_value = execute::get_property(&left_object, &key);
+        let right_value = execute::get_property(&right_object, &key);
+        if execute::same_value(&left_value, &right_value) {
+            lines.push(format!("    {key}: {}", rendered(&left_value)));
+        } else {
+            lines.push(format!("+   {key}: {}", rendered(&left_value)));
+            lines.push(format!("-   {key}: {}", rendered(&right_value)));
+        }
+    }
+    lines.push("  }".to_string());
+    lines.join("\n")
 }
 
 pub fn not_deep_strict_equal(
@@ -468,6 +531,9 @@ pub fn not_deep_strict_equal(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if args.len() < 2 {
+        return Err(missing_args());
+    }
     binary_assert(args, "notDeepStrictEqual", false, |a, b| {
         crate::modules::deep_equal::deep_equal(a, b, true)
     })
