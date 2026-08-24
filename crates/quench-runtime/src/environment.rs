@@ -1182,6 +1182,6 @@ mod tests {
             assert!(!environment.is_uninitialized(0));
             environment.get_number(0).unwrap()
         }));
-        eprintln!("slot_probe iterations={ITERATIONS} raw={raw:?} slot={slot:?} checked={checked:?} current={current:?}");
+        std::hint::black_box((raw, slot, checked, current));
     }
 }
