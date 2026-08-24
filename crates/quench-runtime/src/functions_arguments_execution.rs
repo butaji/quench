@@ -43,7 +43,7 @@ pub(crate) fn execute(
     crate::execution_trace::function_call_shape(
         function.params,
         function.code.capture_slots().len(),
-        function.code.len(),
+        function.code.code(),
     );
     if is_class_constructor(function) {
         return Err(crate::value::error::throw_type_error(
@@ -51,11 +51,9 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
-    if let Some(result) = crate::loops::execute_crypto_integer_function(
-        function,
-        &receiver,
-        arguments,
-    ) {
+    if let Some(result) =
+        crate::loops::execute_crypto_integer_function(function, &receiver, arguments)
+    {
         return Ok(result);
     }
     if matches!(function.kind, FunctionKind::Generator) {
@@ -71,24 +69,28 @@ pub(crate) fn execute(
             crate::generator::Resume::Next(crate::value::Value::Undefined),
         );
         return Ok(crate::promise::from_async_generator_completion(
-            completion,
-            generator,
+            completion, generator,
         ));
+    }
+    if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
+        return result;
     }
 
     // Ordinary calls enter the same explicit machine loop used by top-level
     // execution.  Keeping function entry here (rather than routing through the
     // old frame trampoline) means every nested JS call is represented
     // by a VM continuation and never by Rust recursion.
-    let (mut registers, environment) =
-        build_registers(function, &receiver, arguments);
+    let (mut registers, environment) = build_registers(function, &receiver, arguments);
     let _private_environment = crate::private_environment::Guard::install_environment(
         function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(function, &receiver);
     let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
     crate::vm::execute_code_in_environment(
-        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
+        function
+            .code
+            .code()
+            .ok_or(crate::execute::VmError::MissingReturn)?,
         &mut registers,
         crate::vm::current_context().as_ref(),
         environment,
