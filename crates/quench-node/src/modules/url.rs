@@ -220,11 +220,22 @@ pub fn resolve_object(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let base = receiver
+    let method_base = receiver
         .and_then(|value| execute::get_property_result(value, "href").ok())
-        .map(|value| value_to_string(&value))
-        .unwrap_or_default();
-    let relative = args.first().map(value_to_string).unwrap_or_default();
+        .and_then(|value| match value {
+            Value::String(value) if !value.is_empty() => Some(value),
+            _ => None,
+        });
+    let (base, relative) = match method_base {
+        Some(base) => (base, args.first().map(value_to_string).unwrap_or_default()),
+        None => (
+            args.first().map(value_to_string).unwrap_or_default(),
+            args.get(1).map(value_to_string).unwrap_or_default(),
+        ),
+    };
+    if base.is_empty() {
+        return Ok(Value::String(relative));
+    }
     let resolved = legacy_resolve(&base, &relative);
     parse(state, &[Value::String(resolved)])
 }
@@ -684,17 +695,101 @@ fn split_host_port(host: &str, out: &mut BTreeMap<String, String>) {
 }
 
 fn legacy_resolve(from: &str, to: &str) -> String {
+    if from.is_empty() {
+        return to.to_string();
+    }
     if to.is_empty() {
-        return from.to_string();
+        return from
+            .split_once('#')
+            .map_or_else(|| from.to_string(), |(value, _)| value.to_string());
     }
     if to.contains("://") {
-        return to.to_string();
+        if let Some(value) = resolve_absolute_authority_edge(from, to) {
+            return value;
+        }
+        return if to
+            .split_once("://")
+            .is_some_and(|(_, value)| !value.contains(['/', '?', '#']))
+        {
+            format!("{to}/")
+        } else {
+            to.to_string()
+        };
+    }
+    if to.starts_with("//") {
+        if let Some((protocol, _)) = from.split_once("://") {
+            if to.starts_with("///") {
+                return format!("{protocol}:///{}", to.trim_start_matches('/'));
+            }
+            let authority = to.trim_start_matches('/');
+            return if protocol_is_known_authority(&format!("{protocol}://")) {
+                if authority.contains('/') {
+                    format!("{protocol}://{authority}")
+                } else {
+                    format!("{protocol}://{authority}/")
+                }
+            } else {
+                format!("{protocol}://{authority}")
+            };
+        }
     }
     if to.to_ascii_lowercase().starts_with("javascript:") {
         return to.to_string();
     }
+    if to.find(':').is_some_and(|index| {
+        !to[..index].contains('/') && !to[index + 1..].starts_with(['/', '?', '#'])
+    }) {
+        let index = to.find(':').unwrap_or_default();
+        let scheme = &to[..index];
+        let rest = &to[index + 1..];
+        let same_scheme = from
+            .split_once("://")
+            .is_some_and(|(value, _)| value.eq_ignore_ascii_case(scheme));
+        return if same_scheme {
+            legacy_resolve(from, rest)
+        } else if matches!(rest, "." | "./") {
+            format!("{scheme}:")
+        } else {
+            to.to_string()
+        };
+    }
+    if let Some((scheme, rest)) = to.split_once(':') {
+        let same_scheme = from
+            .split_once("://")
+            .is_some_and(|(value, _)| value.eq_ignore_ascii_case(scheme));
+        if same_scheme && rest.starts_with('#') {
+            return format!(
+                "{}{}",
+                from.split_once('#').map_or(from, |(value, _)| value),
+                rest
+            );
+        }
+        if same_scheme && rest.starts_with('?') {
+            let base = from
+                .split_once('?')
+                .map_or(from, |(value, _)| value)
+                .split_once('#')
+                .map_or(from, |(value, _)| value);
+            return format!("{base}{rest}");
+        }
+        if !scheme.is_empty() && (rest.starts_with('#') || rest.starts_with('?')) {
+            return format!("{scheme}:///{rest}");
+        }
+        if !scheme.is_empty() && rest.starts_with('/') {
+            let base_scheme = from.split_once("://").map(|(value, _)| value);
+            if !base_scheme.is_some_and(|value| value.eq_ignore_ascii_case(scheme)) {
+                return format!("{scheme}://{}", rest.trim_start_matches('/'));
+            }
+            if let Some((_, authority_path)) = from.split_once("://") {
+                let authority = authority_path.split('/').next().unwrap_or_default();
+                return format!("{scheme}://{authority}{rest}");
+            }
+        }
+    }
     if to.starts_with('?') || to.starts_with('#') {
-        let base = if let Some(i) = from.find('?') {
+        let base = if to.starts_with('#') {
+            from.split_once('#').map_or(from, |(value, _)| value)
+        } else if let Some(i) = from.find('?') {
             &from[..i]
         } else if let Some(i) = from.find('#') {
             &from[..i]
@@ -703,30 +798,160 @@ fn legacy_resolve(from: &str, to: &str) -> String {
         };
         return format!("{base}{to}");
     }
+    if let Some(index) = to.find(['?', '#']) {
+        let path = &to[..index];
+        if !path.is_empty() {
+            let resolved = legacy_resolve(from, path);
+            return format!("{resolved}{}", &to[index..]);
+        }
+    }
     let (protocol, host_part) = split_protocol(from);
-    let (host, base_path) = match host_part.find('/') {
-        Some(i) => (host_part[..i].to_string(), host_part[i..].to_string()),
-        None => (host_part.to_string(), "/".to_string()),
+    if !protocol.is_empty() && !protocol.ends_with("//") {
+        if to.starts_with(".//") {
+            return format!("{protocol}//{}", &to[3..]);
+        }
+        let mut segments = host_part
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if !host_part.ends_with('/') {
+            segments.pop();
+        }
+        if to.starts_with('/') {
+            segments.clear();
+        }
+        for segment in to.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    segments.pop();
+                }
+                value => segments.push(value.into()),
+            }
+        }
+        let path = segments.join("/");
+        let path = if to.ends_with('/') && !path.ends_with('/') {
+            format!("{path}/")
+        } else {
+            path
+        };
+        return if to.starts_with('/') || host_part.starts_with('/') {
+            format!("{protocol}/{path}")
+        } else {
+            format!("{protocol}{path}")
+        };
+    }
+    let (host, base_path) = if protocol.is_empty() && !from.starts_with("//") {
+        (String::new(), from.to_string())
+    } else {
+        match host_part.find('/') {
+            Some(i) => (host_part[..i].to_string(), host_part[i..].to_string()),
+            None => (
+                host_part
+                    .split_once(['?', '#'])
+                    .map_or(host_part, |(value, _)| value)
+                    .to_string(),
+                "/".to_string(),
+            ),
+        }
     };
+    let base_path = base_path
+        .split_once(['?', '#'])
+        .map_or(base_path.clone(), |(value, _)| value.to_string());
     let base_dir = if base_path.ends_with('/') {
         base_path
     } else {
         let last = base_path.rfind('/').unwrap_or(0);
         base_path[..last + 1].to_string()
     };
-    let combined = if to.starts_with('/') {
-        format!("{}{to}", host)
+    if protocol.is_empty() && !from.starts_with('/') {
+        let mut segments = base_dir
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        for segment in to.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." if segments.last().is_some_and(|value| value != "..") => {
+                    segments.pop();
+                }
+                ".." => segments.push("..".into()),
+                value => segments.push(value.into()),
+            }
+        }
+        return segments.join("/");
+    }
+    let path = if to.starts_with('/') {
+        to.to_string()
     } else {
         format!("{base_dir}{to}")
     };
-    let normalized = normalize_path(&combined);
-    format!("{protocol}//{normalized}")
+    let normalized_path = if protocol_is_known_authority(&protocol) && !host.is_empty() {
+        normalize_path(&path)
+    } else {
+        normalize_path_preserving_empty(&path)
+    };
+    let normalized = format!("{}{}", host, normalized_path);
+    let preserve_trailing = to.ends_with('/')
+        || matches!(to.split('/').next_back(), Some("." | ".."))
+        || matches!(to, "." | ".." | "/." | "/./" | "/.." | "/../");
+    let normalized = if preserve_trailing && !normalized.ends_with('/') {
+        format!("{normalized}/")
+    } else {
+        normalized
+    };
+    if protocol.is_empty() {
+        return normalized;
+    }
+    format!("{protocol}{normalized}")
+}
+
+fn resolve_absolute_authority_edge(from: &str, to: &str) -> Option<String> {
+    let (target_scheme, target_rest) = to.split_once("://")?;
+    let target_end = target_rest
+        .find(['/', '?', '#'])
+        .unwrap_or(target_rest.len());
+    let target_authority = &target_rest[..target_end];
+    let target_host = target_authority
+        .rsplit_once('@')
+        .map_or(target_authority, |(_, value)| value)
+        .split(':')
+        .next()
+        .unwrap_or_default();
+    let (base_scheme, base_rest) = from.split_once("://")?;
+    if !base_scheme.eq_ignore_ascii_case(target_scheme) {
+        return None;
+    }
+    let base_end = base_rest.find(['/', '?', '#']).unwrap_or(base_rest.len());
+    let base_authority = &base_rest[..base_end];
+    let base_host = base_authority
+        .rsplit_once('@')
+        .map_or(base_authority, |(_, value)| value)
+        .split(':')
+        .next()
+        .unwrap_or_default();
+    let base_path = base_rest[base_end..]
+        .split_once(['?', '#'])
+        .map_or(&base_rest[base_end..], |(value, _)| value);
+    if target_end == target_rest.len() {
+        if target_host.eq_ignore_ascii_case(base_host) && !base_path.is_empty() && base_path != "/"
+        {
+            return Some(format!("{target_scheme}://{target_authority}{base_path}"));
+        }
+        return None;
+    }
+    None
 }
 
 fn split_protocol(url: &str) -> (String, &str) {
     match url.find("://") {
         Some(i) => (url[..i + 3].to_string(), &url[i + 3..]),
-        None => (String::new(), url),
+        None => match url.find(':') {
+            Some(i) if !url[..i].contains('/') => (url[..i + 1].to_string(), &url[i + 1..]),
+            _ => (String::new(), url),
+        },
     }
 }
 
@@ -751,6 +976,43 @@ fn normalize_path(path: &str) -> String {
     out
 }
 
+fn normalize_path_preserving_empty(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let body = path.trim_start_matches('/');
+    let mut parts = Vec::new();
+    for part in body.split('/') {
+        match part {
+            "." => {}
+            ".." => {
+                if parts.last().is_some_and(String::is_empty) {
+                    parts.pop();
+                } else if let Some(index) =
+                    parts.iter().rposition(|value: &String| !value.is_empty())
+                {
+                    parts.remove(index);
+                }
+            }
+            value => parts.push(value.to_string()),
+        }
+    }
+    let joined = parts.join("/");
+    if absolute {
+        format!("/{joined}")
+    } else {
+        joined
+    }
+}
+
+fn protocol_is_known_authority(protocol: &str) -> bool {
+    matches!(
+        protocol
+            .trim_end_matches("://")
+            .to_ascii_lowercase()
+            .as_str(),
+        "http" | "https" | "ftp" | "file" | "ws" | "wss"
+    )
+}
+
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
@@ -768,6 +1030,7 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
         spec_fn("parse", "require:url:parse", 0x0500),
         spec_fn("format", "require:url:format", 0x0501),
         spec_fn("resolve", "require:url:resolve", 0x0502),
+        spec_fn("resolveObject", "require:url:resolveObject", 0x0520),
         (
             "Url",
             crate::host::capability(crate::registry::SPEC_URL_LEGACY_NEW),
