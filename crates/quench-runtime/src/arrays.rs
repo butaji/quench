@@ -58,7 +58,7 @@ fn execute_builtin_match(
         ArrayAt => return Some(at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
-        ArraySplice => return Some(Ok(splice(receiver, arguments))),
+        ArraySplice => return Some(splice(receiver, arguments)),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
@@ -128,26 +128,116 @@ include!("arrays_mutation.rs");
 include!("arrays_typed_static.rs");
 include!("arrays_from.rs");
 
-fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
+fn splice(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.splice called on null or undefined",
+        ));
     };
-    let length = values.len();
+    let mut target = crate::construct::to_object(receiver)?;
+    let length = crate::builtins::map_length(&target)?;
     let start = relative_index(arguments.first(), length as isize) as usize;
-    let delete_count = arguments.get(1).map_or(length - start, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
+    let start = start.min(length);
+    let item_count = arguments.len().saturating_sub(2);
+    let delete_count = if arguments.len() < 2 {
+        length - start
+    } else {
+        crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?
             .max(0.0)
             .min((length - start) as f64) as usize
-    });
-    let mut updated = values.to_vec();
-    let removed = updated
-        .splice(
-            start..start + delete_count,
-            arguments.iter().skip(2).cloned(),
-        )
-        .collect();
-    crate::locals::replace_value(receiver, &Value::array(updated));
-    Value::array(removed)
+    };
+    let removed_target = crate::builtins::array_species_create(&target, delete_count)?;
+    let mut removed = removed_target;
+    for offset in 0..delete_count {
+        let key = (start + offset).to_string();
+        if crate::with_scope::has_property(&target, &key)? {
+            let value = crate::execute::get_property_result(&target, &key)?;
+            removed = crate::builtins::create_data_property_or_throw(
+                removed,
+                &offset.to_string(),
+                value,
+            )?;
+        }
+    }
+    if let Value::Array(values) = &target {
+        if values.is_packed_ordinary() {
+            let mut updated = values.to_vec();
+            let removed_start = start;
+            let removed_end = start + delete_count;
+            updated.splice(
+                removed_start..removed_end,
+                arguments.iter().skip(2).cloned(),
+            );
+            let updated = Value::array(updated);
+            crate::locals::replace_value(receiver, &updated);
+            return Ok(removed);
+        }
+    }
+    if item_count < delete_count {
+        for index in start..(length - delete_count) {
+            let from = (index + delete_count).to_string();
+            let to = (index + item_count).to_string();
+            if crate::with_scope::has_property(&target, &from)? {
+                let value = crate::execute::get_property_result(&target, &from)?;
+                target = crate::properties::assign_set_property(&target, &to, value)?;
+            } else {
+                let (updated, deleted) = crate::builtins::delete_property(target, &to);
+                if !deleted {
+                    return Err(crate::value::error::throw_type_error(
+                        "Cannot delete property during splice",
+                    ));
+                }
+                target = updated;
+            }
+            target = crate::locals::resolved_replacement(target);
+        }
+        for index in ((length - delete_count + item_count)..length).rev() {
+            let (updated, deleted) = crate::builtins::delete_property(target, &index.to_string());
+            if !deleted {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot delete property during splice",
+                ));
+            }
+            target = crate::locals::resolved_replacement(updated);
+        }
+    } else if item_count > delete_count {
+        for index in (start + 1..=length - delete_count).rev() {
+            let from = (index + delete_count - 1).to_string();
+            let to = (index + item_count - 1).to_string();
+            if crate::with_scope::has_property(&target, &from)? {
+                let value = crate::execute::get_property_result(&target, &from)?;
+                target = crate::properties::assign_set_property(&target, &to, value)?;
+            } else {
+                let (updated, deleted) = crate::builtins::delete_property(target, &to);
+                if !deleted {
+                    return Err(crate::value::error::throw_type_error(
+                        "Cannot delete property during splice",
+                    ));
+                }
+                target = updated;
+            }
+            target = crate::locals::resolved_replacement(target);
+        }
+    }
+    for (offset, value) in arguments.iter().skip(2).cloned().enumerate() {
+        target = crate::properties::assign_set_property(
+            &target,
+            &(start + offset).to_string(),
+            value,
+        )?;
+        target = crate::locals::resolved_replacement(target);
+    }
+    let new_length = length - delete_count + item_count;
+    target = crate::properties::assign_set_property(
+        &crate::locals::resolved_replacement(target),
+        "length",
+        Value::Number(new_length as f64),
+    )?;
+    crate::locals::replace_value(receiver, &target);
+    Ok(removed)
 }
 
 pub(crate) fn reduce(
