@@ -46,13 +46,190 @@ pub fn parse(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let url = args.first().map(value_to_string).unwrap_or_default();
-    let parsed = legacy_parse_url(&url);
+    let raw_url = args
+        .first()
+        .map(value_to_string)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let url = if let Some((head, fragment)) = raw_url.split_once('#') {
+        format!("{}#{}", normalize_legacy_input(head), fragment)
+    } else {
+        normalize_legacy_input(&raw_url)
+    };
+    if url.starts_with('<') {
+        let pathname = encode_path_component(&url);
+        return Ok(legacy_object(vec![
+            ("href".into(), Value::String(pathname.clone())),
+            ("pathname".into(), Value::String(pathname.clone())),
+            ("path".into(), Value::String(pathname)),
+        ]));
+    }
+    if url.starts_with('[') && url.ends_with(']') {
+        return Ok(legacy_object(vec![
+            ("pathname".into(), Value::String(url.clone())),
+            ("path".into(), Value::String(url.clone())),
+            ("href".into(), Value::String(url)),
+        ]));
+    }
+    if let Some(rest) = url.strip_prefix("//") {
+        if !rest.contains('@') && !rest.contains(':') && !rest.contains('/') {
+            return Ok(legacy_object(vec![
+                ("href".into(), Value::String(url.clone())),
+                ("pathname".into(), Value::String(url.clone())),
+                ("path".into(), Value::String(url)),
+            ]));
+        }
+    }
+    if !url.contains(':') && !url.contains('?') && !url.contains('#') && !url.starts_with("//") {
+        return Ok(legacy_object(vec![
+            ("pathname".into(), Value::String(url.clone())),
+            ("path".into(), Value::String(url.clone())),
+            ("href".into(), Value::String(url)),
+        ]));
+    }
+    let mut parsed = legacy_parse_url(&url);
+    for key in ["search", "query"] {
+        if let Some(value) = parsed.get_mut(key) {
+            *value = encode_query_component(value);
+        }
+    }
+    if let Some(protocol) = parsed.get_mut("protocol") {
+        *protocol = protocol.to_ascii_lowercase();
+    }
+    if matches!(
+        parsed.get("protocol").map(String::as_str),
+        Some("http:" | "https:" | "ftp:" | "coap:")
+    ) {
+        for key in ["host", "hostname"] {
+            if let Some(value) = parsed.get_mut(key) {
+                *value = value.to_ascii_lowercase();
+            }
+        }
+        if let Some(hostname) = parsed.get_mut("hostname") {
+            *hostname = idna::domain_to_ascii(hostname).unwrap_or_else(|_| hostname.clone());
+        }
+        let hostname_value = parsed.get("hostname").cloned();
+        if let (Some(host), Some(hostname)) = (parsed.get_mut("host"), hostname_value) {
+            if !host.starts_with('[') {
+                if let Some(port) = host.rsplit_once(':').map(|(_, port)| port.to_string()) {
+                    *host = format!("{hostname}:{port}");
+                } else {
+                    *host = hostname;
+                }
+            }
+        }
+    }
+    if let Some(auth) = parsed.get_mut("auth") {
+        *auth = auth.replace("%3A", ":").replace("%40", "@");
+    }
+    if let Some(hash) = parsed.get_mut("hash") {
+        *hash = hash
+            .replace('\\', "%5C")
+            .replace(' ', "%20")
+            .replace('<', "%3C")
+            .replace('>', "%3E");
+    }
+    if matches!(
+        parsed.get("protocol").map(String::as_str),
+        Some("http:" | "https:" | "ftp:" | "coap:")
+    ) && parsed.get("host").is_some()
+    {
+        parsed.insert("slashes".into(), "true".into());
+        if parsed
+            .get("pathname")
+            .is_none_or(|pathname| pathname.is_empty())
+        {
+            parsed.insert("pathname".into(), "/".into());
+        }
+    }
+    if url.contains("://") && parsed.get("protocol").is_some() {
+        parsed.insert("slashes".into(), "true".into());
+        if parsed.get("host").is_none() {
+            parsed.insert("host".into(), String::new());
+            parsed.insert("hostname".into(), String::new());
+        }
+    }
+    if url.starts_with("//") && parsed.get("host").is_some() {
+        parsed.insert("slashes".into(), "true".into());
+    }
+    if !parsed.contains_key("href") {
+        let protocol = parsed.get("protocol").cloned().unwrap_or_default();
+        let auth = parsed.get("auth").cloned().unwrap_or_default();
+        let host = parsed.get("host").cloned().unwrap_or_default();
+        let pathname = parsed.get("pathname").cloned().unwrap_or_default();
+        let search = parsed.get("search").cloned().unwrap_or_default();
+        let hash = parsed.get("hash").cloned().unwrap_or_default();
+        parsed.insert(
+            "href".into(),
+            assemble_url(
+                &protocol,
+                &auth,
+                &host,
+                &pathname,
+                &search,
+                &hash,
+                url.contains("://") || url.starts_with("//"),
+            ),
+        );
+    }
+    if !parsed.contains_key("path")
+        && (parsed.contains_key("pathname") || parsed.contains_key("search"))
+    {
+        let pathname = parsed.get("pathname").cloned().unwrap_or_default();
+        let search = parsed.get("search").cloned().unwrap_or_default();
+        parsed.insert("path".into(), format!("{pathname}{search}"));
+    }
     let mut out = Vec::new();
     for (k, v) in parsed {
-        out.push((k, Value::String(v)));
+        let value = if k == "slashes" && v == "true" {
+            Value::Boolean(true)
+        } else {
+            Value::String(v)
+        };
+        out.push((k, value));
     }
-    Ok(host_api::object(out))
+    Ok(legacy_object(out))
+}
+
+fn legacy_object(entries: Vec<(String, Value)>) -> Value {
+    let mut object = host_api::object(
+        [
+            "protocol", "slashes", "auth", "host", "port", "hostname", "hash", "search", "query",
+            "pathname", "path", "href",
+        ]
+        .into_iter()
+        .map(|key| (key.to_string(), Value::Null))
+        .collect(),
+    );
+    for (key, value) in entries {
+        object = execute::set_property(object, &key, value);
+    }
+    object
+}
+
+fn normalize_legacy_input(value: &str) -> String {
+    let Some((head, query)) = value.split_once('?') else {
+        return value.replace("http:\\\\\\\\", "http://").replace('\\', "/");
+    };
+    format!(
+        "{}?{}",
+        head.replace("http:\\\\\\\\", "http://").replace('\\', "/"),
+        query
+    )
+}
+
+fn encode_query_component(value: &str) -> String {
+    value
+        .replace('"', "%22")
+        .replace('\\', "%5C")
+        .replace(' ', "%20")
+        .replace('\'', "%27")
+        .replace('^', "%5E")
+        .replace('`', "%60")
+        .replace('{', "%7B")
+        .replace('}', "%7D")
+        .replace('|', "%7C")
 }
 
 /// `url.format(urlObject[, options])` — port of Node's `urlFormat`:
@@ -89,7 +266,8 @@ pub fn format(
     }
     let (protocol, auth, host, pathname, query, hash) = read_url_parts(_state, args);
     let slashes = execute::is_truthy(&execute::get_property(&obj, "slashes"))
-        || protocol_uses_authority_slashes(&protocol);
+        || ((!host.is_empty() || protocol.trim_end_matches(':').eq_ignore_ascii_case("file"))
+            && protocol_uses_authority_slashes(&protocol));
     Ok(Value::String(assemble_url(
         &protocol, &auth, &host, &pathname, &query, &hash, slashes,
     )))
@@ -180,7 +358,7 @@ fn read_url_parts(
     for key in URL_KEYS {
         let raw = quench_runtime::vm::get_property(&obj, key);
         let value = value_to_string(&raw);
-        if matches!(raw, Value::Undefined) {
+        if matches!(raw, Value::Undefined | Value::Null) {
             continue;
         }
         match *key {
@@ -189,10 +367,17 @@ fn read_url_parts(
             "host" => host = value,
             "hostname" => hostname = value,
             "port" => port = value,
-            "pathname" => pathname = encode_path_component(&value),
+            "pathname" => {
+                pathname = if protocol == "javascript:" {
+                    value
+                } else {
+                    encode_path_component(&value)
+                }
+            }
             "search" => query = value,
             "query"
-                if !value.is_empty()
+                if query.is_empty()
+                    && !value.is_empty()
                     && !matches!(
                         raw,
                         Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
@@ -261,6 +446,7 @@ fn assemble_url(
     }
     out.push_str(pathname);
     if pathname.is_empty()
+        && slashes
         && (!host.is_empty() || !auth.is_empty())
         && (!query.is_empty() || !hash.is_empty())
     {
@@ -347,7 +533,9 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
         out.insert("query".into(), rest[i + 1..].to_string());
         rest = &rest[..i];
     }
-    let after_protocol = if let Some(i) = rest.find("://") {
+    let after_protocol = if rest.starts_with("//") {
+        rest
+    } else if let Some(i) = rest.find("://") {
         out.insert("protocol".into(), rest[..i + 1].to_string());
         &rest[i + 3..]
     } else if let Some(i) = rest.find(':') {
@@ -356,11 +544,18 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
     } else {
         rest
     };
+    let after_protocol = after_protocol.strip_prefix("//").unwrap_or(after_protocol);
+    if matches!(out.get("protocol").map(String::as_str), Some("javascript:")) {
+        if !after_protocol.is_empty() {
+            out.insert("pathname".into(), after_protocol.to_string());
+        }
+        return out;
+    }
     let split = after_protocol
         .char_indices()
-        .find(|(_, character)| matches!(character, '/' | ' ' | '"'));
+        .find(|(_, character)| matches!(character, '/' | ';' | ' ' | '"'));
     let (auth_host, pathname) = match split {
-        Some((index, character)) if character == '/' => (
+        Some((index, character)) if matches!(character, '/' | ';') => (
             &after_protocol[..index],
             after_protocol[index..].to_string(),
         ),
@@ -370,19 +565,20 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
         ),
         None => (after_protocol, String::new()),
     };
-    if let Some(at) = auth_host.find('@') {
-        let (a, host) = auth_host.split_at(at);
+    let authority = auth_host.strip_prefix("//").unwrap_or(auth_host);
+    if let Some(at) = authority.rfind('@') {
+        let (a, host) = authority.split_at(at);
         out.insert("auth".into(), a.to_string());
         let host = &host[1..];
         split_host_port(host, &mut out);
     } else {
-        split_host_port(auth_host, &mut out);
+        split_host_port(authority, &mut out);
     }
     if !pathname.is_empty() {
         out.insert("pathname".into(), encode_path_component(&pathname));
     }
     if let Some(s) = out.get("search") {
-        out.insert("query".into(), s.trim_start_matches('?').to_string());
+        out.insert("query".into(), s.strip_prefix('?').unwrap_or(s).to_string());
     }
     out
 }
@@ -390,6 +586,9 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
 fn encode_path_component(path: &str) -> String {
     path.chars()
         .map(|character| match character {
+            '\t' => "%09".to_string(),
+            '\n' => "%0A".to_string(),
+            '\r' => "%0D".to_string(),
             ' ' => "%20".to_string(),
             '"' => "%22".to_string(),
             '<' => "%3C".to_string(),
@@ -397,13 +596,47 @@ fn encode_path_component(path: &str) -> String {
             '`' => "%60".to_string(),
             '#' => "%23".to_string(),
             '?' => "%3F".to_string(),
+            '\'' => "%27".to_string(),
+            '{' => "%7B".to_string(),
+            '}' => "%7D".to_string(),
+            '|' => "%7C".to_string(),
+            '\\' => "%5C".to_string(),
+            '^' => "%5E".to_string(),
             _ => character.to_string(),
         })
         .collect()
 }
 
 fn split_host_port(host: &str, out: &mut BTreeMap<String, String>) {
+    if let Some(end) = host.find(']') {
+        if host.starts_with('[') {
+            out.insert("hostname".into(), host[1..end].to_ascii_lowercase());
+            if host.as_bytes().get(end + 1) == Some(&b':') {
+                let port = &host[end + 2..];
+                if !port.is_empty() {
+                    out.insert("port".into(), port.to_string());
+                }
+                let bracketed = host[..=end].to_ascii_lowercase();
+                out.insert(
+                    "host".into(),
+                    if port.is_empty() {
+                        bracketed
+                    } else {
+                        format!("{bracketed}:{port}")
+                    },
+                );
+            } else {
+                out.insert("host".into(), host.to_ascii_lowercase());
+            }
+            return;
+        }
+    }
     if let Some((hostname, port)) = host.rsplit_once(':') {
+        if port.is_empty() {
+            out.insert("hostname".into(), hostname.to_string());
+            out.insert("host".into(), hostname.to_string());
+            return;
+        }
         out.insert("hostname".into(), hostname.to_string());
         out.insert("port".into(), port.to_string());
         out.insert("host".into(), host.to_string());
@@ -495,6 +728,10 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
         spec_fn("parse", "require:url:parse", 0x0500),
         spec_fn("format", "require:url:format", 0x0501),
         spec_fn("resolve", "require:url:resolve", 0x0502),
+        (
+            "Url",
+            crate::host::capability(crate::registry::SPEC_URL_LEGACY_NEW),
+        ),
         ("URL", url_class),
         spec_fn("URLSearchParams", "require:url:URLSearchParams", 0x0504),
         (
