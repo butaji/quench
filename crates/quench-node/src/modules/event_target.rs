@@ -245,6 +245,12 @@ pub fn dispatch_event(
         return Ok(Value::Boolean(false));
     };
     let snapshot: Vec<Listener> = target.borrow().listeners_of(&event_type).to_vec();
+    let has_protected_listener = snapshot.iter().any(|listener| {
+        execute::is_truthy(&execute::get_property(
+            &listener.callback,
+            "\0quench:abort-listener",
+        ))
+    });
     let active = execute::set_property(
         execute::set_property(event.clone(), "target", receiver.clone()),
         "eventPhase",
@@ -253,6 +259,17 @@ pub fn dispatch_event(
     execute::replace_value(event, &active);
     for listener in &snapshot {
         if listener.weak {
+            continue;
+        }
+        let protected = execute::is_truthy(&execute::get_property(
+            &listener.callback,
+            "\0quench:abort-listener",
+        ));
+        let stopped = execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
+            || event
+                .object_identity()
+                .is_some_and(|identity| state.borrow().stopped_events.contains(&identity));
+        if stopped && has_protected_listener && !protected {
             continue;
         }
         if listener.once {
@@ -278,10 +295,11 @@ pub fn dispatch_event(
             crate::modules::pump::handle_uncaught(state, error)?;
             crate::modules::pump::run_uncaught(state)?;
         }
-        if execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
-            || event
-                .object_identity()
-                .is_some_and(|identity| state.borrow().stopped_events.contains(&identity))
+        if !has_protected_listener
+            && (execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
+                || event
+                    .object_identity()
+                    .is_some_and(|identity| state.borrow().stopped_events.contains(&identity)))
         {
             break;
         }

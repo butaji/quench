@@ -22,3 +22,10 @@ const targetController = new AbortController();
   assert.strictEqual(error.name, 'AbortError');
 });
 process.nextTick(() => targetController.abort());
+const protectedController = new AbortController();
+protectedController.signal.addEventListener('abort', (event) => event.stopImmediatePropagation());
+require('events').addAbortListener(protectedController.signal, (event) => {
+  assert.strictEqual(event.type, 'abort');
+  assert.strictEqual(event.target, protectedController.signal);
+});
+protectedController.abort();
