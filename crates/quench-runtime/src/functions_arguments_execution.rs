@@ -80,23 +80,43 @@ pub(crate) fn execute(
     }
 
     // Ordinary calls enter the same explicit machine loop used by top-level
-    // execution.  Keeping function entry here (rather than routing through the
-    // old frame trampoline) means every nested JS call is represented
-    // by a VM continuation and never by Rust recursion.
-    let (mut registers, environment) =
-        build_registers(function, &receiver, arguments);
-    let _private_environment = crate::private_environment::Guard::install_environment(
-        function.private_environment.clone(),
-    );
-    let _home = crate::super_scope::Guard::install(function, &receiver);
-    let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
-    let mut registers = crate::register_file::RegisterFile::from_values(registers);
-    crate::vm::execute_code_in_environment(
-        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
-        &mut registers,
-        crate::vm::current_context().as_ref(),
-        environment,
-    )
+    // execution. A promoted tail call replaces this activation's function
+    // inputs and re-enters the loop, so recursive tail chains consume one Rust
+    // frame regardless of their JavaScript depth.
+    let mut function = std::rc::Rc::clone(function);
+    let mut receiver = receiver;
+    let mut arguments = arguments.to_vec();
+    loop {
+        let (registers, environment) = build_registers(&function, &receiver, &arguments);
+        let _private_environment = crate::private_environment::Guard::install_environment(
+            function.private_environment.clone(),
+        );
+        let _home = crate::super_scope::Guard::install(&function, &receiver);
+        let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
+        let mut registers = crate::register_file::RegisterFile::from_values(registers);
+        let completion = crate::vm::execute_code_frame_completion(
+            function
+                .code
+                .code()
+                .ok_or(crate::execute::VmError::MissingReturn)?,
+            &mut registers,
+            &crate::vm::current_context(),
+            environment,
+        )?;
+        let crate::completion::Completion::TailCall(request) = completion else {
+            return crate::vm::completion_result(completion);
+        };
+        let crate::value::Value::Function(next) = request.callee else {
+            return crate::functions::execute_target(
+                &request.callee,
+                &request.receiver,
+                &request.arguments,
+            );
+        };
+        function = next;
+        receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
+        arguments = request.arguments;
+    }
 }
 
 // Shared call-entry data for receiver-update paths.  Execution itself is
