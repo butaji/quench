@@ -247,30 +247,39 @@ fn hex_digit(byte: u8) -> Option<u8> {
 }
 
 /// `buffer.isUtf8` — strict UTF-8 validation of the input.
-pub fn is_utf8(value: &Value) -> bool {
+pub fn is_utf8(value: &Value) -> Result<bool, VmError> {
     match value {
-        Value::String(_) => true,
-        Value::StringUnits(_) => false,
+        Value::String(_) | Value::StringUnits(_) => Err(invalid_arg_type(
+            "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
+        )),
         Value::Uint8Array(view) => {
             let bytes = view.buffer.bytes.borrow();
-            std::str::from_utf8(&bytes[view.byte_offset..view.byte_offset + view.length]).is_ok()
+            Ok(
+                std::str::from_utf8(&bytes[view.byte_offset..view.byte_offset + view.length])
+                    .is_ok(),
+            )
         }
-        Value::ArrayBuffer(buf) => std::str::from_utf8(&buf.bytes.borrow()).is_ok(),
-        _ => false,
+        Value::ArrayBuffer(buf) => Ok(std::str::from_utf8(&buf.bytes.borrow()).is_ok()),
+        _ => Err(invalid_arg_type(
+            "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
+        )),
     }
 }
 
 /// `buffer.isAscii` — every byte (or code unit) below 0x80.
-pub fn is_ascii(value: &Value) -> bool {
+pub fn is_ascii(value: &Value) -> Result<bool, VmError> {
     match value {
-        Value::String(s) => s.is_ascii(),
-        Value::StringUnits(units) => units.iter().all(|u| *u < 0x80),
+        Value::String(_) | Value::StringUnits(_) => Err(invalid_arg_type(
+            "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
+        )),
         Value::Uint8Array(view) => {
             let bytes = view.buffer.bytes.borrow();
-            bytes[view.byte_offset..view.byte_offset + view.length].is_ascii()
+            Ok(bytes[view.byte_offset..view.byte_offset + view.length].is_ascii())
         }
-        Value::ArrayBuffer(buf) => buf.bytes.borrow().is_ascii(),
-        _ => false,
+        Value::ArrayBuffer(buf) => Ok(buf.bytes.borrow().is_ascii()),
+        _ => Err(invalid_arg_type(
+            "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
+        )),
     }
 }
 
