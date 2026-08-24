@@ -570,6 +570,7 @@
       if (st.ended) {
         const error = new Error("write after end");
         error.code = "ERR_STREAM_WRITE_AFTER_END";
+        st.errored = true;
         if (callback) nextTick(() => callback(error));
         nextTick(() => this._emitter.emit("error", error));
         return false;
