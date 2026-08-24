@@ -49,6 +49,8 @@ pub(crate) fn hash_value(value: &Value) -> Option<u64> {
 /// byte size exceeds this limit; the operation returns a RangeError before
 /// appending the offending argument.
 pub(crate) const MAX_STRING_BYTES: usize = 256 * 1024 * 1024;
+/// V8 exposes this UTF-16-unit limit through `buffer.constants`.
+const MAX_STRING_UNITS: usize = 536_870_888;
 
 #[inline]
 fn string_byte_len_fits_limit(bytes: usize) -> bool {
@@ -537,12 +539,19 @@ pub(crate) fn repeat(
         .and_then(units_of)
         .unwrap_or_else(|| value.encode_utf16().collect());
     let total_units = source.len().checked_mul(count).ok_or_else(|| {
-        crate::value::error::throw_range_error("String.prototype.repeat: result is too large")
+        crate::value::error::throw_range_error("Invalid string length")
     })?;
+    if total_units > MAX_STRING_UNITS {
+        return Err(crate::value::error::throw_range_error("Invalid string length"));
+    }
+    // Keep ordinary one-unit strings in their compact UTF-8 representation;
+    // this avoids a transient UTF-16 allocation for Node's documented maximum
+    // string-length boundary while preserving the same observable value.
+    if source.len() == value.encode_utf16().count() {
+        return Ok(Value::String(value.repeat(count)));
+    }
     if !units_fit_limit(total_units) {
-        return Err(crate::value::error::throw_range_error(
-            "String.prototype.repeat: result is too large",
-        ));
+        return Err(crate::value::error::throw_range_error("Invalid string length"));
     }
     let mut result = Vec::with_capacity(total_units);
 
