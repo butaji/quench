@@ -32,6 +32,12 @@ struct ForwardZeroPlan {
 }
 
 #[derive(Clone, Copy)]
+struct ForwardOnePlan {
+    receiver_pc: usize,
+    callee_pc: usize,
+}
+
+#[derive(Clone, Copy)]
 enum ShapeKernelPlan {
     StatePredicate(StatePredicatePlan),
     StateBitwise(StateBitwisePlan),
@@ -39,6 +45,7 @@ enum ShapeKernelPlan {
     NestedArrayIndex(NestedArrayIndexPlan),
     PropertySelect(PropertySelectPlan),
     ForwardZero(ForwardZeroPlan),
+    ForwardOne(ForwardOnePlan),
 }
 
 #[derive(Clone)]
@@ -69,12 +76,15 @@ pub(crate) fn execute_shape_kernel(
         }
         ShapeKernelPlan::PropertySelect(plan) => execute_property_select(function, receiver, plan),
         ShapeKernelPlan::ForwardZero(plan) => execute_forward_zero(function, receiver, plan),
+        ShapeKernelPlan::ForwardOne(plan) => {
+            execute_forward_one(function, receiver, arguments, plan)
+        }
     }
 }
 
 pub(crate) fn is_shape_kernel_candidate(function: &crate::value::FunctionValue) -> bool {
     function.code.code().is_some_and(|code| {
-        matches!(code.len(), 6 | 7 | 9)
+        matches!(code.len(), 6..=9)
             && code
                 .instruction(1)
                 .is_some_and(|op| op.opcode == crate::ir::Opcode::GetN)
@@ -207,7 +217,8 @@ fn shape_kernel_fact(
             match_nested_array_index(function).map(ShapeKernelPlan::NestedArrayIndex)
         })
         .or_else(|| match_property_select(function).map(ShapeKernelPlan::PropertySelect))
-        .or_else(|| match_forward_zero(function).map(ShapeKernelPlan::ForwardZero));
+        .or_else(|| match_forward_zero(function).map(ShapeKernelPlan::ForwardZero))
+        .or_else(|| match_forward_one(function).map(ShapeKernelPlan::ForwardOne));
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
