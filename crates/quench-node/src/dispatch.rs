@@ -122,6 +122,7 @@ const CAP_RUN_LOOP: u16 = 0x070C;
 const CAP_RUN_EXIT: u16 = 0x070D;
 const CAP_INTERNAL_UTIL_SLEEP: u16 = 0x070E;
 const CAP_TIMERS_CLOSE: u16 = 0x070F;
+const CAP_TIMERS_GET_LIBUV_NOW: u16 = 0x0714;
 const CAP_BUFFER_NEW: u16 = 0x0805;
 const CAP_TTY_ISATTY: u16 = 0x0900;
 const CAP_PROCESS_EXIT: u16 = 0x0A01;
@@ -419,6 +420,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_RUN_UNCAUGHT => uncaught_dispatch,
         CAP_INTERNAL_UTIL_SLEEP => internal_util_sleep,
         CAP_TIMERS_CLOSE => timers_method_close,
+        CAP_TIMERS_GET_LIBUV_NOW => timers_get_libuv_now,
         0x0710 => internal_binding,
         0x0711 => internal_buffer_fill,
         0x0712 => internal_view_has_buffer,
