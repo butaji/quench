@@ -43,6 +43,8 @@ function emitter(target) {
   target.removeListener = function (name, fn) {
     var a = listeners[name] || [], i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); return target;
   };
+  target.addListener = target.on;
+  target.off = target.removeListener;
   target.emit = function (name) {
     var a = (listeners[name] || []).slice(), args = Array.prototype.slice.call(arguments, 1);
     if (pending && a.length === 0) pending.push([name, args]);
@@ -109,7 +111,52 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
   port.postMessage = function (value) {
     var cloned = cloneMessage(value);
     var transfer = arguments[1];
-    if (transfer && transfer.transfer) transfer = transfer.transfer;
+    var options = transfer && typeof transfer === 'object' && !Array.isArray(transfer) &&
+      Object.prototype.hasOwnProperty.call(transfer, 'transfer');
+    if (options) {
+      transfer = transfer.transfer;
+    }
+    if (!options && transfer && typeof transfer === 'object' &&
+        !Array.isArray(transfer) && typeof transfer[Symbol.iterator] !== 'function') {
+      transfer = [];
+    }
+    if (options && transfer !== undefined && transfer !== null &&
+        typeof transfer !== 'object' && typeof transfer[Symbol.iterator] !== 'function') {
+      throw Object.assign(new TypeError('Optional options.transfer argument must be an iterable'), {
+        code: 'ERR_INVALID_ARG_TYPE'
+      });
+    }
+    if (options && transfer === null) {
+      throw Object.assign(new TypeError('Optional options.transfer argument must be an iterable'), {
+        code: 'ERR_INVALID_ARG_TYPE'
+      });
+    }
+    if (transfer === null || transfer === undefined) transfer = [];
+    if (typeof transfer !== 'object') {
+      throw Object.assign(new TypeError('Optional transferList argument must be an iterable'), {
+        code: 'ERR_INVALID_ARG_TYPE'
+      });
+    }
+    if (!Array.isArray(transfer)) {
+      if (typeof transfer[Symbol.iterator] !== 'function') {
+        throw Object.assign(new TypeError('Optional transferList argument must be an iterable'), {
+          code: 'ERR_INVALID_ARG_TYPE'
+        });
+      }
+      var iterator = transfer[Symbol.iterator]();
+      if (!iterator || typeof iterator.next !== 'function') {
+        throw Object.assign(new TypeError('Optional transferList argument must be an iterable'), {
+          code: 'ERR_INVALID_ARG_TYPE'
+        });
+      }
+      var iterable = [];
+      var step = iterator.next();
+      while (!step.done) {
+        iterable.push(step.value);
+        step = iterator.next();
+      }
+      transfer = iterable;
+    }
     if (transfer && typeof transfer.length === 'number') {
       for (var t = 0; t < transfer.length; t++) {
         var item = transfer[t];
