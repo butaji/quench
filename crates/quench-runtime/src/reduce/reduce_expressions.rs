@@ -395,14 +395,19 @@ fn reduce_import_expression(
     // Dynamic imports have no module graph in this runtime, so eagerly
     // evaluate the specifier/options for side effects and return a Promise.
     let specifier = reduce_expression(&import.source, ops, facts, next_register, locals)?;
-    for argument in &import.arguments {
-        reduce_expression(argument, ops, facts, next_register, locals)?;
+    let mut options = None;
+    for (index, argument) in import.arguments.iter().enumerate() {
+        let value = reduce_expression(argument, ops, facts, next_register, locals)?;
+        if index == 0 {
+            options = Some(value);
+        }
     }
     let deferred = import.phase == Some(oxc::ast::ast::ImportPhase::Defer);
     let namespace = take_register(next_register);
     ops.push(Op::DynamicImport {
         dst: namespace,
         specifier,
+        options,
         deferred,
     });
     let promise = take_register(next_register);
