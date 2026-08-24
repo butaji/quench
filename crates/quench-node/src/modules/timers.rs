@@ -36,6 +36,7 @@ pub struct Timer {
     pub callback: Value,
     pub args: Vec<Value>,
     pub object: Value,
+    pub async_resource: Value,
     pub destroyed: Rc<RefCell<Value>>,
     pub referenced: bool,
     pub active: bool,
@@ -100,6 +101,7 @@ fn schedule(
     let fire_at = monotonic_ms().saturating_add(delay);
     let destroyed = Rc::new(RefCell::new(Value::Boolean(false)));
     let object = timer_object(id, &destroyed)?;
+    let async_resource = async_resource(state, &kind)?;
     state.borrow_mut().timers.timers.insert(
         id,
         Timer {
@@ -109,12 +111,42 @@ fn schedule(
             callback: cb,
             args: rest,
             object: object.clone(),
+            async_resource,
             destroyed,
             referenced: true,
             active: true,
         },
     );
     Ok(object)
+}
+
+fn async_resource(
+    _state: &Rc<RefCell<HostState>>,
+    kind: &TimerKind,
+) -> Result<Value, VmError> {
+    let resource = crate::host::namespace_object_from_pairs(Vec::new());
+    let global = quench_runtime::vm::current_global_object();
+    let helper = quench_runtime::execute::get_property(&global, "__quenchAsyncInit");
+    if quench_runtime::is_callable(&helper) {
+        let name = match kind {
+            TimerKind::Immediate => "Immediate",
+            TimerKind::Timeout | TimerKind::Interval => "Timeout",
+        };
+        return quench_runtime::execute::call(
+            &helper,
+            &Value::Undefined,
+            &[Value::String(name.to_string()), resource],
+        );
+    }
+    Ok(resource)
+}
+
+pub(crate) fn async_destroy(resource: &Value) {
+    let global = quench_runtime::vm::current_global_object();
+    let helper = quench_runtime::execute::get_property(&global, "__quenchAsyncDestroy");
+    if quench_runtime::is_callable(&helper) {
+        let _ = quench_runtime::execute::call(&helper, &Value::Undefined, std::slice::from_ref(resource));
+    }
 }
 
 /// Build the JS Timeout/Immediate object: hidden id plus the
