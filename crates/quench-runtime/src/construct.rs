@@ -153,6 +153,12 @@ fn construct_builtin_target(
         validate_data_view(&value)?;
         return Ok(value);
     }
+    if builtin == crate::ops::Builtin::ArrayBuffer && needs_new_target {
+        validate_array_buffer_limits(arguments)?;
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
+        return apply_new_target_prototype(value, target, new_target, prototype);
+    }
     let prototype = needs_new_target
         .then(|| crate::execute::get_property_result(new_target, "prototype"))
         .transpose()?;
@@ -164,6 +170,32 @@ fn construct_builtin_target(
     };
     validate_data_view(&value)?;
     Ok(value)
+}
+
+fn validate_array_buffer_limits(arguments: &[Value]) -> Result<(), crate::execute::VmError> {
+    let length = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let length = to_index(length)?;
+    let Some(options) = arguments
+        .get(1)
+        .filter(|value| crate::value::is_object(value))
+    else {
+        return Ok(());
+    };
+    let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
+    if matches!(maximum, Value::Undefined) {
+        return Ok(());
+    }
+    let maximum = to_index(crate::conversion::to_number(&maximum)?)?;
+    if maximum < length {
+        return Err(crate::value::error::throw_range_error(
+            "maxByteLength is smaller than byteLength",
+        ));
+    }
+    Ok(())
 }
 
 fn construct_shared_array_buffer_with_target(
