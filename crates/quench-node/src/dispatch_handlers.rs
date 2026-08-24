@@ -395,18 +395,16 @@ pub fn buffer_is_utf8(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Boolean(crate::modules::buffer_enc::is_utf8(
-        args.first().unwrap_or(&Value::Undefined),
-    )))
+    crate::modules::buffer_enc::is_utf8(args.first().unwrap_or(&Value::Undefined))
+        .map(Value::Boolean)
 }
 pub fn buffer_is_ascii(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Boolean(crate::modules::buffer_enc::is_ascii(
-        args.first().unwrap_or(&Value::Undefined),
-    )))
+    crate::modules::buffer_enc::is_ascii(args.first().unwrap_or(&Value::Undefined))
+        .map(Value::Boolean)
 }
 pub fn buffer_new_construct(
     state: &Rc<RefCell<HostState>>,
@@ -799,8 +797,9 @@ pub fn structured_clone(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(crate::modules::clone::deep_clone(
+    Ok(crate::modules::clone::structured_clone(
         args.first().cloned().unwrap_or(Value::Undefined),
+        args.get(1),
     ))
 }
 

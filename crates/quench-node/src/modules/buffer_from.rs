@@ -37,7 +37,7 @@ pub fn from(
                 Some(Value::String(_)) => encoding_name(args.get(1))?,
                 _ => "utf8".to_string(),
             };
-            Ok(crate::modules::buffer_proto::make_buffer(
+            Ok(crate::modules::buffer_proto::make_pooled_buffer(
                 &enc::encode_value(&first, &encoding)?,
             ))
         }
