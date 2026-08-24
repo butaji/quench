@@ -36,6 +36,16 @@ fn execute_proven_leaf(
 ) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
     crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
     let code = function.code.code()?;
+    let arguments_slot = u16::try_from(function.captures.len())
+        .ok()?
+        .saturating_add(function.params);
+    if function.code.uses_slot(arguments_slot)
+        || code_uses_arguments(code)
+        || code_uses_function_call(code)
+    {
+        crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
+        return None;
+    }
     if let Err(rejection) = proven_leaf(function, code) {
         crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
         crate::execution_trace::event(rejection.event());
@@ -51,6 +61,38 @@ fn execute_proven_leaf(
         code,
         &mut registers,
     ))
+}
+
+fn code_uses_arguments(code: crate::machine::CodeView<'_>) -> bool {
+    (0..code.len()).any(|pc| {
+        let Some(instruction) = code.instruction(pc) else {
+            return false;
+        };
+        if instruction.opcode == crate::ir::Opcode::LoadLocalChecked
+            && code
+                .metadata_at(pc)
+                .and_then(|metadata| metadata.name.as_deref())
+                == Some("arguments")
+        {
+            return true;
+        }
+        instruction.opcode == crate::ir::Opcode::Slow
+            && code.cold(instruction).is_some_and(|cold| match cold {
+                crate::ops::Op::Conditional { consequent, alternate, .. } => {
+                    consequent.code().is_some_and(code_uses_arguments)
+                        || alternate.code().is_some_and(code_uses_arguments)
+                }
+                _ => false,
+            })
+    })
+}
+
+fn code_uses_function_call(code: crate::machine::CodeView<'_>) -> bool {
+    (0..code.len()).any(|pc| {
+        code.metadata_at(pc)
+            .and_then(|metadata| metadata.name.as_deref())
+            .is_some_and(|name| matches!(name, "call" | "apply" | "bind"))
+    })
 }
 
 fn proven_leaf(

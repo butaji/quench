@@ -1,14 +1,18 @@
 //! Polyfill: `events-head`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchProcessOn = globalThis.process.on;
+const __quenchProcessAddListener = globalThis.process.addListener;
 const __quenchProcessOnce = globalThis.process.once;
+const __quenchProcessEmit = globalThis.process.emit;
 for (const method of "on addListener once emit removeListener off removeAllListeners listeners listenerCount".split(
   " "
 )) {
   globalThis.process[method] = NodeEventEmitter.prototype[method];
 }
 globalThis.process.on = __quenchProcessOn;
+globalThis.process.addListener = __quenchProcessAddListener;
 globalThis.process.once = __quenchProcessOnce;
+globalThis.process.emit = __quenchProcessEmit;
 const __nodeWritableWriteError = (stream, callback, error) => {
   if (!callback && stream.__writeErrorEmitted) return false;
   if (!callback) stream.__writeErrorEmitted = true;
