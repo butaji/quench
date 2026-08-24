@@ -1031,6 +1031,89 @@ pub fn event_set_cancel_bubble(
     Ok(Value::Undefined)
 }
 
+pub fn define_event_handler(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let original = args.first().cloned();
+    let target = original
+        .clone()
+        .ok_or_else(|| execute::type_error("eventTarget is required"))?;
+    let name = match args.get(1) {
+        Some(Value::String(name)) => name.clone(),
+        _ => return Err(execute::type_error("eventName is required")),
+    };
+    let event = match args.get(2) {
+        Some(Value::String(event)) => event.clone(),
+        _ => name.clone(),
+    };
+    let target = execute::set_property(target, "\0event:handler:event", Value::String(event));
+    let target = execute::set_property(target, "\0event:handler:listener", Value::Null);
+    let descriptor = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(crate::registry::SPEC_EVENT_HANDLER_GET),
+        ),
+        (
+            "set".into(),
+            crate::host::capability(crate::registry::SPEC_EVENT_HANDLER_SET),
+        ),
+        ("enumerable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    let target = execute::define_property(target, format!("on{name}").as_str(), descriptor)?;
+    if let Some(original) = original.as_ref() {
+        execute::replace_value(original, &target);
+    }
+    let _ = state;
+    Ok(target)
+}
+
+pub fn event_handler_get(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver
+        .map(|value| execute::get_property(value, "\0event:handler:listener"))
+        .unwrap_or(Value::Null))
+}
+
+pub fn event_handler_set(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let event = execute::get_property(receiver, "\0event:handler:event");
+    let old = execute::get_property(receiver, "\0event:handler:listener");
+    if quench_runtime::is_callable(&old) {
+        let _ = crate::modules::event_target::remove_event_listener(
+            state,
+            Some(receiver),
+            &[event.clone(), old],
+        );
+    }
+    let listener = args.first().cloned().unwrap_or(Value::Null);
+    let updated = execute::set_property(
+        receiver.clone(),
+        "\0event:handler:listener",
+        listener.clone(),
+    );
+    execute::replace_value(receiver, &updated);
+    if quench_runtime::is_callable(&listener) {
+        let _ = crate::modules::event_target::add_event_listener(
+            state,
+            Some(receiver),
+            &[event, listener],
+        );
+    }
+    Ok(Value::Undefined)
+}
+
 pub fn event_prevent_default(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
