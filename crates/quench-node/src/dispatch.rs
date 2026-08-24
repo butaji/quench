@@ -109,6 +109,7 @@ const CAP_TIMERS_CLEARINTERVAL: u16 = 0x0703;
 const CAP_TIMERS_SETIMMEDIATE: u16 = 0x0704;
 const CAP_TIMERS_CLEARIMMEDIATE: u16 = 0x0705;
 const CAP_TIMERS_TICK: u16 = 0x0706;
+const CAP_QUEUE_MICROTASK: u16 = 0x0707;
 const CAP_TIMERS_UNREF: u16 = 0x0708;
 const CAP_TIMERS_REF: u16 = 0x0709;
 const CAP_TIMERS_HASREF: u16 = 0x070A;
@@ -361,6 +362,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TIMERS_SETIMMEDIATE => timers_set_immediate,
         CAP_TIMERS_CLEARIMMEDIATE => timers_clear_immediate,
         CAP_TIMERS_TICK => timers_tick,
+        CAP_QUEUE_MICROTASK => queue_microtask,
         CAP_TIMERS_UNREF => timers_method_unref,
         CAP_TIMERS_REF => timers_method_ref,
         CAP_TIMERS_HASREF => timers_method_has_ref,
@@ -391,6 +393,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_EXIT => process_exit,
         CAP_PROCESS_CWD => process_cwd,
         CAP_PROCESS_CHDIR => process_chdir,
+        CAP_PROCESS_NEXT_TICK => process_next_tick,
         CAP_PROCESS_HRTIME => process_hrtime,
         CAP_PROCESS_HRTIME_BIGINT => process_hrtime_bigint,
         CAP_PROCESS_UMASK => process_umask,
