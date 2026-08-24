@@ -18,6 +18,7 @@ const option = (name, fallback) => {
 const fixture = fixtureArg.endsWith(".js") ? fixtureArg : `${fixtureArg}.js`;
 const quench = path.resolve(root, option("--quench", "target/bench-throughput/quench-node"));
 const traceQuench = path.resolve(root, option("--trace-quench", "target-exec-trace/bench-throughput/quench-node"));
+const sampleQuench = path.resolve(root, option("--sample-quench", quench));
 const timeoutMs = Number(option("--timeout-ms", "180000"));
 const output = option("--out", null);
 const baselinePath = option("--baseline", null);
@@ -36,7 +37,7 @@ BenchmarkSuite.RunSuites({
 `;
 
 function usage(message) {
-  console.error(`${message}\nusage: analyze-quench-bench.cjs FIXTURE [--quench PATH] [--trace-quench PATH] [--timeout-ms N] [--sample-seconds N] [--baseline JSON] [--out JSON] [--assert-profile JSON]`);
+  console.error(`${message}\nusage: analyze-quench-bench.cjs FIXTURE [--quench PATH] [--trace-quench PATH] [--sample-quench PATH] [--timeout-ms N] [--sample-seconds N] [--baseline JSON] [--out JSON] [--assert-profile JSON]`);
   process.exit(2);
 }
 
@@ -117,12 +118,27 @@ function execute(binary, script, trace) {
 
 async function sample(script) {
   if (!(sampleSeconds > 0)) return null;
-  const probe = cp.spawn(quench, [script], { stdio: "ignore" });
+  const probe = cp.spawn(sampleQuench, [script], { stdio: "ignore" });
   await new Promise((resolve) => setTimeout(resolve, 1000));
   const destination = `/tmp/quench-analysis-${fixture}.sample`;
   const result = cp.spawnSync("sample", [String(probe.pid), String(sampleSeconds), "-file", destination], { encoding: "utf8" });
   probe.kill("SIGKILL");
-  return { available: result.status === 0, path: result.status === 0 ? destination : null };
+  if (result.status !== 0) return { available: false, binary: sampleQuench, path: null };
+  const text = fs.readFileSync(destination, "utf8");
+  const self = text.match(/Sort by top of stack, same collapsed[^\n]*\n([\s\S]*?)\nBinary Images:/)?.[1] || "";
+  const rows = [...self.matchAll(/^\s+(.+?)\s+\(in quench-node\)\s+(\d+)$/gm)]
+    .map((match) => ({ symbol: match[1], samples: Number(match[2]) }))
+    .sort((left, right) => right.samples - left.samples);
+  const total = rows.reduce((sum, row) => sum + row.samples, 0);
+  return {
+    available: true,
+    binary: sampleQuench,
+    path: destination,
+    top_self: rows.slice(0, 32).map((row) => ({
+      ...row,
+      share_ppm: total ? Math.round(row.samples * 1_000_000 / total) : 0,
+    })),
+  };
 }
 
 async function main() {
