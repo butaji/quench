@@ -207,6 +207,19 @@ impl SlotStore {
         }
     }
 
+    fn load_into_fixed<const N: usize>(
+        &self,
+        registers: &mut crate::register_file::FixedWordFile<N>,
+        dst: usize,
+        index: usize,
+    ) -> bool {
+        self.ensure(index);
+        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
+            return cell.with_word(|word| registers.write_owned(dst, word).is_some());
+        }
+        registers.copy_from(dst, self.values(), index).is_some()
+    }
+
     fn store(&self, index: usize, value: Value) {
         self.ensure(index);
         if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
@@ -605,6 +618,18 @@ impl Environment {
         } else {
             crate::execute::write_value(registers, dst, Value::Undefined);
         }
+    }
+
+    pub(crate) fn load_into_fixed<const N: usize>(
+        &self,
+        registers: &mut crate::register_file::FixedWordFile<N>,
+        dst: usize,
+        slot: u16,
+    ) -> bool {
+        let slots = self.slots.borrow();
+        slots
+            .get(usize::from(slot))
+            .is_some_and(|binding| binding.store.load_into_fixed(registers, dst, binding.index))
     }
 
     pub(crate) fn set(&self, slot: u16, value: Value) {

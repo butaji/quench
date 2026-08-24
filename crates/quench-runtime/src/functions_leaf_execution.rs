@@ -11,6 +11,12 @@ trait LeafRegisterFile {
     fn number(&self, index: usize) -> Option<f64>;
     fn object(&self, index: usize) -> Option<&crate::value::ObjectData>;
     fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()>;
+    fn load_environment(
+        &mut self,
+        environment: &crate::environment::Environment,
+        destination: usize,
+        slot: u16,
+    ) -> bool;
 }
 
 impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N> {
@@ -34,6 +40,14 @@ impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N>
     }
     fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()> {
         cell.with_word(|word| self.write_owned(index, word))
+    }
+    fn load_environment(
+        &mut self,
+        environment: &crate::environment::Environment,
+        destination: usize,
+        slot: u16,
+    ) -> bool {
+        environment.load_into_fixed(self, destination, slot)
     }
 }
 
@@ -422,6 +436,9 @@ fn run_leaf_op(
                 .ok_or(crate::execute::VmError::MissingReturn)?;
             return Ok(None);
         }
+        LoadLocalChecked if leaf_load_capture(function, code, pc, op, registers)? => {
+            return Ok(None);
+        }
         LoadLocalChecked => Some(leaf_local(
             function, receiver, arguments, code, pc, op.b, locals,
         )?),
@@ -468,6 +485,31 @@ fn run_leaf_op(
         )
         .ok_or(crate::execute::VmError::MissingReturn)?;
     Ok(None)
+}
+
+fn leaf_load_capture(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    op: crate::ir::Instruction,
+    registers: &mut impl LeafRegisterFile,
+) -> Result<bool, crate::execute::VmError> {
+    if usize::from(op.b) >= function.captures.len() {
+        return Ok(false);
+    }
+    if function.captures.is_uninitialized(op.b) {
+        let name = code
+            .metadata_at(pc)
+            .and_then(|meta| meta.name.as_deref())
+            .unwrap_or("binding");
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access '{name}' before initialization"
+        )));
+    }
+    registers
+        .load_environment(&function.captures, usize::from(op.a), op.b)
+        .then_some(true)
+        .ok_or(crate::execute::VmError::MissingReturn)
 }
 
 #[inline(always)]
