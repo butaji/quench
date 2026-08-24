@@ -119,6 +119,7 @@ impl CapabilityName {
     const FsGlobSync: u16 = 2351;
     const UtilGetCallSites: u16 = 2124;
     const VmCompileFunction: u16 = 2119;
+    const VmSourceTextModule: u16 = 0x0F11;
     const VmCompiledFunction: u16 = 2120;
     const VmCompiledToString: u16 = 2121;
     const CommonInvalidArgTypeHelper: u16 = 2122;

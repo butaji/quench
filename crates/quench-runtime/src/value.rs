@@ -1278,6 +1278,22 @@ const _: () = assert!(VALUE_ALIGNMENT_TAG_BITS == 0);
 const _: () = assert!(SMALL_INTEGER_TAG_BITS == 0);
 const _: () = assert!(SMALL_INTEGER_MIN < SMALL_INTEGER_MAX);
 impl Value {
+    /// Whether this Array value is the engine's canonical arguments object.
+    pub fn is_arguments_object(&self) -> bool {
+        matches!(self, Self::Array(values) if values.is_arguments())
+    }
+
+    pub fn mark_float16_array(&self) {
+        if let Self::Uint16Array(view) = self {
+            view.meta
+                .set_property("\0float16_array", Value::Boolean(true));
+        }
+    }
+
+    pub fn is_float16_array(&self) -> bool {
+        matches!(self, Self::Uint16Array(view) if matches!(view.meta.property("\0float16_array"), Some(Value::Boolean(true))))
+    }
+
     /// Stable identity for ordinary objects, used by host-side event state.
     pub fn object_identity(&self) -> Option<u64> {
         match self {

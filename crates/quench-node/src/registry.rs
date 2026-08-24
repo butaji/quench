@@ -57,6 +57,7 @@ pub const SPEC_UTIL_IS_NATIVE_ERROR: NodeSpec = NodeSpec::new("util.types:isNati
 pub const SPEC_UTIL_PARSE_ENV: NodeSpec = NodeSpec::new("util:parseEnv", 0x030B);
 pub const SPEC_UTIL_TYPE_PREDICATE: NodeSpec = NodeSpec::new("util.types:predicate", 0x030C);
 pub const SPEC_INTERNAL_JS_STREAM: NodeSpec = NodeSpec::new("internal:js_stream", 0x0F10);
+pub const SPEC_VM_SOURCE_TEXT_MODULE: NodeSpec = NodeSpec::new("vm:SourceTextModule", 0x0F11);
 pub const SPEC_TEXT_DECODER_NEW: NodeSpec = NodeSpec::new("TextDecoder:new", 0x0809);
 pub const SPEC_TEXT_DECODER_DECODE: NodeSpec = NodeSpec::new("TextDecoder:decode", 0x080A);
 pub const SPEC_TEXT_ENCODER_NEW: NodeSpec = NodeSpec::new("TextEncoder:new", 0x084C);
@@ -516,10 +517,22 @@ pub fn namespace_bindings(
     // Node facade still needs the two-byte view in common buffer-source paths;
     // use the engine's canonical Uint16 constructor until native Float16
     // element conversion is available.
-    out.push((
-        "Float16Array".to_string(),
-        quench_runtime::value::Value::Builtin(quench_runtime::ops::Builtin::Uint16Array),
-    ));
+    let float16_receiver = quench_runtime::host_api::object(vec![
+        ("\0float16_constructor".into(), quench_runtime::value::Value::Boolean(true)),
+        ("\0prototype".into(), quench_runtime::value::Value::Builtin(
+            quench_runtime::ops::Builtin::Uint16ArrayPrototype,
+        )),
+    ]);
+    let float16_constructor = quench_runtime::host_api::bound_builtin(
+            quench_runtime::ops::Builtin::Uint16Array,
+            float16_receiver,
+        );
+    let float16_constructor = quench_runtime::execute::set_property(
+        float16_constructor,
+        "prototype",
+        quench_runtime::value::Value::Builtin(quench_runtime::ops::Builtin::Uint16ArrayPrototype),
+    );
+    out.push(("Float16Array".to_string(), float16_constructor));
     out.push((
         "require".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("require", 0x1200)),
