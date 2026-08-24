@@ -110,7 +110,12 @@ impl NodeRunner {
             }
         };
         let result = quench_runtime::vm::execute_code_with_context(program.code(), &self.context)
-            .and_then(|_| self.drive("__quench_run_loop__();"));
+            .and_then(|_| self.drive("__quench_run_loop__();"))
+            .and_then(|_| {
+                self.drive(
+                    "if (typeof globalThis.__quench_verify_calls__ === 'function') globalThis.__quench_verify_calls__();",
+                )
+            });
         let result = self.route_uncaught(result);
         // `process.exit` unwinds with an error; `exit` handlers still run.
         let result = match result {
