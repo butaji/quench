@@ -126,6 +126,9 @@ pub fn url_resolve(
 pub fn url_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::url_whatwg::new_url(state, args)
 }
+pub fn url_legacy_new(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::object(Vec::new()))
+}
 pub fn url_search_params(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::url::new_search_params(state, args)
 }
