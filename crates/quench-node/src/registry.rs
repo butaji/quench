@@ -92,6 +92,7 @@ pub const SPEC_URL_FORMAT: NodeSpec = NodeSpec::new("url:format", 0x0501);
 pub const SPEC_URL_RESOLVE: NodeSpec = NodeSpec::new("url:resolve", 0x0502);
 pub const SPEC_URL_NEW: NodeSpec = NodeSpec::new("url:URL", 0x0503);
 pub const SPEC_URL_LEGACY_NEW: NodeSpec = NodeSpec::new("url:Url", 40);
+pub const SPEC_URL_RESOLVE_OBJECT: NodeSpec = NodeSpec::new("url:resolveObject", 0x0520);
 pub const SPEC_URL_SEARCHPARAMS_NEW: NodeSpec = NodeSpec::new("url:URLSearchParams", 0x0504);
 
 pub const SPEC_QS_PARSE: NodeSpec = NodeSpec::new("querystring:parse", 0x0600);
