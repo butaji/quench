@@ -284,7 +284,11 @@ pub(crate) fn load_binding(
             "Cannot access '{name}' before initialization"
         )));
     }
-    crate::execute::write_value(registers, dst, environment.get(slot));
+    crate::execute::write_value(
+        registers,
+        dst,
+        resolved_replacement(environment.get(slot)),
+    );
     Ok(())
 }
 
@@ -379,7 +383,7 @@ pub(crate) fn load(
     dst: u16,
     slot: u16,
 ) -> Result<(), VmError> {
-    crate::execute::write_value(registers, dst, current().get(slot));
+    crate::execute::write_value(registers, dst, resolved_replacement(current().get(slot)));
     Ok(())
 }
 
@@ -412,7 +416,7 @@ pub(crate) fn load_parameter(
     dst: u16,
     slot: u16,
 ) -> Result<(), VmError> {
-    crate::execute::write_value(registers, dst, current().get(slot));
+    crate::execute::write_value(registers, dst, resolved_replacement(current().get(slot)));
     Ok(())
 }
 
