@@ -258,17 +258,26 @@ pub(crate) fn synchronize_global_object(
     old: &Value,
     new: &Value,
 ) {
-    let (Value::Object(old_object), Value::Object(new_object)) = (old, new) else {
+    let old_object = match old {
+        Value::Object(object) => std::rc::Rc::clone(object),
+        Value::ObjectAlias(alias) => match alias.target() {
+            Some(object) => object,
+            None => return,
+        },
+        _ => return,
+    };
+    let Value::Object(new_object) = new else {
         return;
     };
     if let Some(Value::Object(owner)) = resolve_global_owner(old) {
-        if !std::rc::Rc::ptr_eq(&owner, old_object) {
+        if !std::rc::Rc::ptr_eq(&owner, &old_object) {
             if is_global_declaration_batch_active() {
                 update_global_declaration_batch(new);
             } else {
                 replace_global_object(&Value::Object(owner.clone()), new);
             }
             crate::locals::replace_value(old, new);
+            retarget_global_alias(old, new_object);
             replace_register_aliases(registers, &owner, new_object);
             return;
         }
@@ -277,14 +286,15 @@ pub(crate) fn synchronize_global_object(
     // instantiation is active.  A copy-on-write property write must update
     // that batch; waiting for the final flush would otherwise discard the
     // replacement and leave the real global view stale.
-    if batched_global_object().is_some_and(|staged| Rc::ptr_eq(&staged, old_object)) {
+    if batched_global_object().is_some_and(|staged| Rc::ptr_eq(&staged, &old_object)) {
         update_global_declaration_batch(new);
         crate::locals::replace_value(old, new);
-        replace_register_aliases(registers, old_object, new_object);
+        retarget_global_alias(old, new_object);
+        replace_register_aliases(registers, &old_object, new_object);
         return;
     }
-    let realm = realm::id_for_global(old_object);
-    let singleton = singleton_matches(old_object);
+    let realm = realm::id_for_global(&old_object);
+    let singleton = singleton_matches(&old_object);
     if realm.is_none() && !singleton {
         return;
     }
@@ -295,7 +305,14 @@ pub(crate) fn synchronize_global_object(
         GLOBAL_OBJECT.with(|global| global.replace(Some(new_object.clone())));
     }
     crate::locals::replace_value(old, new);
-    replace_register_aliases(registers, old_object, new_object);
+    retarget_global_alias(old, new_object);
+    replace_register_aliases(registers, &old_object, new_object);
+}
+
+fn retarget_global_alias(old: &Value, new: &ObjectProperties) {
+    if let Value::ObjectAlias(alias) = old {
+        alias.retarget(std::rc::Rc::downgrade(new));
+    }
 }
 
 pub(crate) fn replace_global_object(old: &Value, new: &Value) {
