@@ -404,7 +404,101 @@ fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         push_private_frame(generator, state)?;
         return Ok(true);
     }
+    if push_dispose_frame(generator, state)? {
+        return Ok(true);
+    }
     Ok(false)
+}
+
+fn push_dispose_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
+    let index = machine_pc(generator)
+        .checked_sub(1)
+        .ok_or(VmError::MissingReturn)?;
+    let Some(Op::WithDispose {
+        body,
+        stack,
+        await_using,
+    }) = generator
+        .function
+        .code
+        .code()
+        .and_then(|code| code.cold_at(index))
+    else {
+        return Ok(false);
+    };
+    let Some(body_code) = body.code() else {
+        return Err(VmError::MissingReturn);
+    };
+    let Some((yield_index, Op::Yield { src })) =
+        body_code.find_cold(|op| matches!(op, Op::Yield { .. }))
+    else {
+        return Ok(false);
+    };
+    let body_resume = crate::machine::CodeRange {
+        code: body.range.code,
+        start: body.range.start.saturating_add(yield_index as u32 + 1),
+        end: body.range.end,
+    };
+    let resume = parent_resume_range(generator, state);
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Dispose {
+            body_resume,
+            resume,
+            stack: *stack,
+            await_using: *await_using,
+            yield_dst: *src,
+        },
+    )?;
+    Ok(true)
+}
+
+fn resume_dispose_frame(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    input: crate::completion::Completion,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    let frame = generator.machine.borrow().frames.frames.last().cloned();
+    let Some(crate::machine::Frame::Dispose {
+        body_resume,
+        resume,
+        stack,
+        await_using,
+        ..
+    }) = frame
+    else {
+        return Ok(None);
+    };
+    let _private = crate::private_environment::Guard::install_environment(
+        generator.function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
+    let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
+    let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
+    let (completion, next) = if matches!(input, crate::completion::Completion::Normal) {
+        let step = execute_frame_step(generator, body_resume)?;
+        (step.completion, Some(step.next))
+    } else {
+        (input, None)
+    };
+    if completion.is_suspension() {
+        advance_frame_after_yield(generator, body_resume, next.ok_or(VmError::MissingReturn)?)?;
+        return Ok(Some(completion));
+    }
+    let completion = execute_with_generator_registers(generator, |registers| {
+        crate::disposable_stack::dispose_completion(registers, stack, completion, await_using)
+    })?;
+    generator.machine.borrow_mut().pop_frame();
+    resume_generator_range(generator, state, resume, completion).map(Some)
+}
+
+fn install_dispose_frame_input(generator: &GeneratorData, input: &Value) -> bool {
+    let frame = generator.machine.borrow().frames.frames.last().cloned();
+    let Some(crate::machine::Frame::Dispose { yield_dst, .. }) = frame else {
+        return false;
+    };
+    crate::execute::write_value(&mut registers_mut(generator), yield_dst, input.clone());
+    true
 }
 
 fn resume_suspended_contexts(
@@ -418,6 +512,12 @@ fn resume_suspended_contexts(
             return resume_machine_frame(generator, state, resumed).map(Some);
         }
         completion = resumed;
+    }
+    if let Some(completion) = resume_dispose_frame(generator, state, completion.clone())? {
+        if completion.is_suspension() {
+            return resume_machine_frame(generator, state, completion).map(Some);
+        }
+        return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);

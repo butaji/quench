@@ -219,6 +219,9 @@ pub(crate) fn dispose_completion(
     completion: crate::completion::Completion,
     _await_using: bool,
 ) -> Result<crate::completion::Completion, VmError> {
+    if completion.is_suspension() {
+        return Ok(completion);
+    }
     let stack = crate::locals::current().get(stack_slot);
     let pending = match &completion {
         crate::completion::Completion::Throw(value) => Some(VmError::Thrown(value.clone())),
