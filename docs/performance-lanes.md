@@ -64,3 +64,19 @@ For native admission debugging, enable `QUENCH_DUMP_LOOP_SHAPES=1`. Counted
 loop dumps include `per_iteration`, while `l1.counted_recognized`,
 `counted_per_iteration_rejects`, `counted_attempts`, `counted_hits`, and
 `counted_deopts` identify the exact boundary where a proven loop leaves L1.
+
+## Lane micro contracts
+
+Focused drills live in `tests/lanes/<id>.js` with one adjacent
+`<id>.want.json`. The want file declares normalized measurements and minimum
+traffic, so an unstressed or missing path fails rather than producing a false
+zero. Run all drills or a named subset against the separate trace binary:
+
+```sh
+node tools/assert-lane-micro.cjs
+node tools/assert-lane-micro.cjs u64-move getn-number call-fp
+```
+
+Each output line contains the measured numerator, denominator, and ratio. A
+failed assertion names exactly one `<micro>.<metric>` key. Full V8-v7 Score on
+the untraced binary remains the acceptance exam after a drill turns green.
