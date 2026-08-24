@@ -28,7 +28,7 @@ pub struct ArrayData {
     descriptors: Vec<(String, Value)>,
     arguments: bool,
     strict_arguments: bool,
-    mapped: Vec<Option<Rc<RefCell<Value>>>>,
+    mapped: Vec<Option<Rc<crate::value::BindingCell>>>,
     deleted: Vec<bool>,
     prototype: std::cell::RefCell<Option<Value>>,
     argument_live: Option<Rc<RefCell<ArgumentLive>>>,
@@ -202,7 +202,7 @@ impl DenseElements {
 pub struct ArgumentLive {
     pub values: Vec<Value>,
     pub length: usize,
-    pub mapped: Vec<Option<Rc<RefCell<Value>>>>,
+    pub mapped: Vec<Option<Rc<crate::value::BindingCell>>>,
     pub deleted: Vec<bool>,
     /// Optional override for `arguments.length`. Per spec 10.6 the property
     /// is writable: a plain value-property assignment stores the value
@@ -433,7 +433,7 @@ impl ArrayData {
             set_live_index(&mut live, index, value.clone());
         }
         if let Some(Some(binding)) = self.mapped.get(index) {
-            *binding.borrow_mut() = value.clone();
+            binding.store(value.clone());
         }
         let appended_number = index == self.values.len()
             && matches!(&value, Value::Number(number) if self.values.append_number(*number));
@@ -775,7 +775,7 @@ impl ArrayData {
         self.snapshot()
     }
 
-    pub(crate) fn map_index(&mut self, index: usize, binding: Rc<RefCell<Value>>) {
+    pub(crate) fn map_index(&mut self, index: usize, binding: Rc<crate::value::BindingCell>) {
         if let Some(live) = &self.argument_live {
             let mut live = live.borrow_mut();
             live.mapped.resize(index.saturating_add(1), None);
@@ -946,7 +946,7 @@ fn keep_index(key: &str, length: usize) -> bool {
 
 fn set_live_index(live: &mut ArgumentLive, index: usize, value: Value) {
     if let Some(Some(binding)) = live.mapped.get(index) {
-        *binding.borrow_mut() = value.clone();
+        binding.store(value.clone());
     }
     if live.values.len() <= index {
         live.values

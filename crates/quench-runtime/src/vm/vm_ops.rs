@@ -49,7 +49,7 @@ fn peel_binding_cell(mut value: Value) -> Value {
         if !seen.insert(std::rc::Rc::as_ptr(&cell)) {
             return Value::BindingCell(cell);
         }
-        value = cell.borrow().clone();
+        value = cell.load();
     }
 }
 

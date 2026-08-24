@@ -23,21 +23,25 @@ fn string_decoder_object(encoding: &str) -> Value {
         ("encoding".into(), Value::String(encoding.into())),
         (
             "_pending".into(),
-            Value::BindingCell(Rc::new(RefCell::new(quench_runtime::host_api::array(
+            Value::BindingCell(quench_runtime::value::BindingCell::new(
+                quench_runtime::host_api::array(
                 Vec::new(),
-            )))),
+                ),
+            )),
         ),
         (
             "lastNeed".into(),
-            Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0)))),
+            Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Number(0.0))),
         ),
         (
             "lastTotal".into(),
-            Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0)))),
+            Value::BindingCell(quench_runtime::value::BindingCell::new(Value::Number(0.0))),
         ),
         (
             "lastChar".into(),
-            Value::BindingCell(Rc::new(RefCell::new(node_buffer(&[0, 0, 0, 0])))),
+            Value::BindingCell(quench_runtime::value::BindingCell::new(node_buffer(&[
+                0, 0, 0, 0,
+            ]))),
         ),
         (
             "write".into(),

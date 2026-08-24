@@ -1,6 +1,6 @@
 //! Explicit resource-management stack intrinsics.
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     execute::VmError,
@@ -87,7 +87,7 @@ fn stack_with(prototype: Value, async_: bool, records: Value) -> Value {
 }
 
 fn cell(value: Value) -> Value {
-    Value::BindingCell(Rc::new(RefCell::new(value)))
+    Value::BindingCell(crate::value::BindingCell::new(value))
 }
 
 fn use_resource(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -177,7 +177,7 @@ fn async_move(receiver: Option<&Value>) -> Result<Value, VmError> {
     let records = active_records(Some(receiver))?;
     set_disposed(receiver, true)?;
     let moved = records.borrow().clone();
-    *records.borrow_mut() = Value::Array(Rc::new(ArrayData::new(Vec::new())));
+    records.store(Value::Array(Rc::new(ArrayData::new(Vec::new()))));
     Ok(stack_with(
         Value::Builtin(Builtin::AsyncDisposableStackPrototype),
         true,
@@ -209,7 +209,7 @@ fn move_stack(receiver: Option<&Value>) -> Result<Value, VmError> {
     let records = active_records(Some(receiver))?;
     set_disposed(receiver, true)?;
     let moved = records.borrow().clone();
-    *records.borrow_mut() = Value::Array(Rc::new(ArrayData::new(Vec::new())));
+    records.store(Value::Array(Rc::new(ArrayData::new(Vec::new()))));
     Ok(stack(moved))
 }
 
@@ -298,7 +298,7 @@ fn disposed(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::Boolean(is_disposed(&state(receiver)?.borrow())))
 }
 
-fn active_records(receiver: Option<&Value>) -> Result<Rc<RefCell<Value>>, VmError> {
+fn active_records(receiver: Option<&Value>) -> Result<Rc<crate::value::BindingCell>, VmError> {
     let receiver = receiver.ok_or_else(incompatible_receiver)?;
     if is_disposed(&state(receiver)?.borrow()) {
         return Err(crate::value::error::throw_reference_error(
@@ -330,15 +330,15 @@ fn sync_receiver(receiver: Option<&Value>) -> Result<&Value, VmError> {
         .ok_or_else(incompatible_receiver)
 }
 
-fn state(value: &Value) -> Result<Rc<RefCell<Value>>, VmError> {
+fn state(value: &Value) -> Result<Rc<crate::value::BindingCell>, VmError> {
     slot(value, STATE).ok_or_else(incompatible_receiver)
 }
 
-fn records(value: &Value) -> Result<Rc<RefCell<Value>>, VmError> {
+fn records(value: &Value) -> Result<Rc<crate::value::BindingCell>, VmError> {
     slot(value, RECORDS).ok_or_else(incompatible_receiver)
 }
 
-fn slot(value: &Value, name: &str) -> Option<Rc<RefCell<Value>>> {
+fn slot(value: &Value, name: &str) -> Option<Rc<crate::value::BindingCell>> {
     let Value::Object(object) = value else {
         return None;
     };
@@ -364,7 +364,7 @@ fn slot_value(value: &Value, name: &str) -> Option<Value> {
 }
 
 fn set_disposed(value: &Value, disposed: bool) -> Result<(), VmError> {
-    *state(value)?.borrow_mut() = Value::Boolean(disposed);
+    state(value)?.store(Value::Boolean(disposed));
     Ok(())
 }
 
@@ -372,7 +372,7 @@ fn is_disposed(value: &Value) -> bool {
     matches!(value, Value::Boolean(true))
 }
 
-fn push_record(records: &Rc<RefCell<Value>>, kind: &str, value: Value, method: Value) {
+fn push_record(records: &Rc<crate::value::BindingCell>, kind: &str, value: Value, method: Value) {
     let Value::Array(values) = &mut *records.borrow_mut() else {
         return;
     };
@@ -389,7 +389,7 @@ fn record(kind: &str, value: Value, method: Value) -> Value {
     ])))
 }
 
-fn take_records(records: &Rc<RefCell<Value>>) -> Result<Vec<Value>, VmError> {
+fn take_records(records: &Rc<crate::value::BindingCell>) -> Result<Vec<Value>, VmError> {
     let mut value = records.borrow_mut();
     let Value::Array(values) = &*value else {
         return Err(incompatible_receiver());

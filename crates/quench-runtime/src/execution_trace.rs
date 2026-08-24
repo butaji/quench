@@ -411,17 +411,17 @@ pub(crate) fn descriptor_object(_: &'static str) {}
 #[cfg(feature = "execution-trace")]
 pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Value) {
     if enabled() {
-        let binding_kind =
-            |cell: &std::rc::Rc<std::cell::RefCell<crate::value::Value>>| match &*cell.borrow() {
-                crate::value::Value::Number(_) => "number",
-                crate::value::Value::Object(_) => "object",
-                crate::value::Value::Function(_) => "function",
-                crate::value::Value::Array(_) => "array",
-                crate::value::Value::Boolean(_) => "boolean",
-                crate::value::Value::String(_) => "string",
-                _ => "other",
-            };
+        let binding_kind = |cell: &std::rc::Rc<crate::value::BindingCell>| match &*cell.borrow() {
+            crate::value::Value::Number(_) => "number",
+            crate::value::Value::Object(_) => "object",
+            crate::value::Value::Function(_) => "function",
+            crate::value::Value::Array(_) => "array",
+            crate::value::Value::Boolean(_) => "boolean",
+            crate::value::Value::String(_) => "string",
+            _ => "other",
+        };
         let kind = match (tier, value) {
+            ("word", crate::value::Value::BindingCell(_)) => "word:binding_cell",
             ("prototype", crate::value::Value::Number(_)) => "prototype:number",
             ("prototype", crate::value::Value::Object(_)) => "prototype:object",
             ("prototype", crate::value::Value::Function(_)) => "prototype:function",

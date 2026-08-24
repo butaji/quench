@@ -436,9 +436,17 @@ fn value_or_object_prototype(value: Value, key: &str) -> Value {
 
 fn property_value(value: &Value) -> Value {
     match value {
-        Value::BindingCell(cell) => property_value(&cell.borrow()),
+        Value::BindingCell(cell) => property_value_owned(cell.load()),
         Value::WeakFunction(function) => function.value(),
         value => value.clone(),
+    }
+}
+
+fn property_value_owned(value: Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => property_value_owned(cell.load()),
+        Value::WeakFunction(function) => function.value(),
+        value => value,
     }
 }
 
