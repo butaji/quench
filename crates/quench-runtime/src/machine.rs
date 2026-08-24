@@ -29,6 +29,7 @@ pub struct InstructionMeta {
     pub source: Option<u32>,
     pub name: Option<Rc<str>>,
     pub flags: u16,
+    pub named_cache: std::cell::Cell<u64>,
 }
 
 impl InstructionMeta {
@@ -37,6 +38,7 @@ impl InstructionMeta {
             source: None,
             name: None,
             flags: 0,
+            named_cache: std::cell::Cell::new(0),
         }
     }
 }
@@ -116,13 +118,15 @@ fn metadata_for(op: &Op) -> InstructionMeta {
         | Op::InitializeResolvedBinding { name, .. }
         | Op::SetResolvedLocalBinding { name, .. }
         | Op::LoadResolvedLocalBinding { name, .. }
-        | Op::LoadBinding { name, .. } => Some(Rc::<str>::from(name.as_str())),
+        | Op::LoadBinding { name, .. }
+        | Op::GetProperty { key: name, .. } => Some(Rc::<str>::from(name.as_str())),
         _ => None,
     };
     InstructionMeta {
         source: None,
         name,
         flags: u16::from(matches!(op, Op::CheckInitialized { .. })),
+        named_cache: std::cell::Cell::new(0),
     }
 }
 
