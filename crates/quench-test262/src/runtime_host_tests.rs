@@ -132,6 +132,18 @@ fn direct_eval_parameter_var_reaches_captured_function() {
 }
 
 #[test]
+fn sort_returns_boxed_primitive_receiver() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var result = [].sort.call(false);\n\
+         if (typeof result !== 'object') throw new Error('type');\n\
+         if (Object.getPrototypeOf(result) !== Boolean.prototype) throw new Error('prototype');\n\
+         if (!(result instanceof Boolean)) throw new Error('instanceof');",
+    )
+    .expect("sort must return ToObject receiver");
+}
+
+#[test]
 fn numeric_class_methods_keep_callable_super_properties() {
     let mut host = super::RuntimeHost;
     host.run_script(
