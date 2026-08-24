@@ -125,6 +125,7 @@ struct Counters {
     binary: HashMap<&'static str, u64>,
     constant: HashMap<&'static str, u64>,
     environment_children: HashMap<(usize, usize), u64>,
+    leaf_rejections: HashMap<&'static str, u64>,
     call_shapes: HashMap<(usize, bool, bool), u64>,
     call_targets: HashMap<&'static str, u64>,
     events: Vec<u64>,
@@ -695,6 +696,24 @@ pub(crate) fn environment_child(_: usize, _: usize) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
+pub(crate) fn leaf_rejection(reason: &'static str) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .leaf_rejections
+                .entry(reason)
+                .or_default() += 1;
+        });
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn leaf_rejection(_: &'static str) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
 pub(crate) fn call_method(
     args: usize,
     spread: bool,
@@ -790,6 +809,11 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 .map(|(&(captures, locals), count)| {
                     (format!("{captures}:{locals}"), serde_json::json!(count))
                 })
+                .collect::<serde_json::Map<_, _>>();
+            let leaf_rejections = counters
+                .leaf_rejections
+                .iter()
+                .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
                 .collect::<serde_json::Map<_, _>>();
             let call_shapes = counters
                 .call_shapes
@@ -909,6 +933,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "binary": binary,
                 "constant": constant,
                 "environment_children": environment_children,
+                "leaf_rejections": leaf_rejections,
                 "call_shapes": call_shapes,
                 "call_targets": call_targets,
                 "events": events,
