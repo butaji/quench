@@ -89,6 +89,7 @@ pub enum IteratorState {
         iterator: Value,
         next: Value,
         done: bool,
+        await_value: bool,
     },
     RegExpString {
         regexp: Value,

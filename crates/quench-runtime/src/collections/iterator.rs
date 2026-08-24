@@ -92,13 +92,20 @@ pub(crate) fn close_iterators(
     Ok(completion)
 }
 fn make_protocol(iterator: Value) -> Value {
-    make_protocol_with_next(iterator, Value::Undefined)
+    make_protocol_with_next_mode(iterator, Value::Undefined, false)
 }
 fn make_protocol_with_next(iterator: Value, next: Value) -> Value {
+    make_protocol_with_next_mode(iterator, next, false)
+}
+fn make_protocol_async(iterator: Value) -> Value {
+    make_protocol_with_next_mode(iterator, Value::Undefined, true)
+}
+fn make_protocol_with_next_mode(iterator: Value, next: Value, await_value: bool) -> Value {
     Value::Iterator(Rc::new(IteratorData::new(IteratorState::Protocol {
         iterator,
         next,
         done: false,
+        await_value,
     })))
 }
 pub(crate) fn execute(
@@ -276,9 +283,6 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
 }
 
 pub(crate) fn open_async(value: Value) -> Result<Value, crate::execute::VmError> {
-    if matches!(value, Value::Iterator(_)) {
-        return Ok(value);
-    }
     let method = crate::execute::get_property_result(&value, "Symbol.asyncIterator")?;
     if !matches!(method, Value::Undefined) {
         let iterator = call(&method, &value)?;
@@ -291,7 +295,7 @@ pub(crate) fn open_async(value: Value) -> Result<Value, crate::execute::VmError>
             make_protocol(iterator)
         });
     }
-    open(value)
+    Ok(make_protocol_async(open(value)?))
 }
 pub(crate) fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError> {
     Ok(make_protocol(iterator))
