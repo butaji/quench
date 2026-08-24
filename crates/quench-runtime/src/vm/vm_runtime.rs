@@ -294,16 +294,30 @@ pub(crate) fn bare_call_receiver(
                     .flatten()
             })
             .or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)));
-        let global = realm
+        let realm_global = realm
             .and_then(|realm| crate::vm::with_realm(realm, || Some(crate::vm::current_global_object())))
             .flatten()
             .unwrap_or_else(crate::vm::current_global_object);
+        let captured = function.captures.get(0);
+        let global = if matches!(&captured, Value::Object(_)) {
+            captured
+        } else {
+            realm_global
+        };
         return to_object_value_in_realm(this_value, &global);
     }
     this_value.clone()
 }
 
 fn to_object_value_in_realm(this_value: &Value, global: &Value) -> Value {
+    // A sloppy call's null/undefined receiver resolves to the function's
+    // realm global.  Preserve the captured script view (and its owner
+    // identity) when that global is a view rather than the physical object.
+    if matches!(this_value, Value::Null | Value::Undefined)
+        && matches!(global, Value::Object(_) | Value::ObjectAlias(_))
+    {
+        return global.clone();
+    }
     let Some(realm) = crate::vm::realm_id_for_global_value(global) else {
         return to_object_value(this_value);
     };
