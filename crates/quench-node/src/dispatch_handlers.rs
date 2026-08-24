@@ -1825,3 +1825,18 @@ pub fn util_is_native_error(
     );
     Ok(Value::Boolean(native))
 }
+
+pub fn util_type_predicate(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let predicate = args.iter().find_map(|value| match value {
+        Value::String(name) => Some(name.as_str()),
+        _ => None,
+    }).unwrap_or("");
+    Ok(Value::Boolean(crate::modules::util::type_predicate(
+        predicate,
+        args.iter().find(|value| !matches!(value, Value::String(_))).unwrap_or(&Value::Undefined),
+    )))
+}
