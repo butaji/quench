@@ -18,6 +18,7 @@ use crate::registry::*;
 
 thread_local! {
     static ASSERTION_ERROR_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static ASSERT_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 /// Namespace pairs following the module convention; `build_value`
@@ -42,7 +43,90 @@ pub fn build() -> Vec<(String, Value)> {
         pair("match", SPEC_ASSERT_MATCH),
         pair("doesNotMatch", SPEC_ASSERT_DOES_NOT_MATCH),
         ("AssertionError".to_string(), assertion_error_type()),
+        ("Assert".to_string(), assert_constructor()),
     ]
+}
+
+fn assert_constructor() -> Value {
+    let constructor = crate::host::capability(crate::registry::SPEC_ASSERT_CONSTRUCTOR);
+    let prototype = assert_prototype();
+    let _ = quench_runtime::execute::set_callable_property(
+        &constructor,
+        "name",
+        Value::String("Assert".into()),
+    );
+    let _ = quench_runtime::execute::set_callable_property(&constructor, "prototype", prototype);
+    constructor
+}
+
+fn assert_prototype() -> Value {
+    ASSERT_PROTOTYPE.with(|slot| {
+        if let Some(prototype) = slot.borrow().as_ref() {
+            return prototype.clone();
+        }
+        let prototype = host_api::object(vec![]);
+        *slot.borrow_mut() = Some(prototype.clone());
+        prototype
+    })
+}
+
+pub fn constructor_call(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        (
+            "message".into(),
+            Value::String("Class constructor Assert cannot be invoked without 'new'".into()),
+        ),
+        ("code".into(), Value::String("ERR_CONSTRUCT_CALL_REQUIRED".into())),
+    ])))
+}
+
+pub fn constructor_new(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let options = args.first().unwrap_or(&Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"options\" argument must be of type object.{}",
+            crate::modules::util::invalid_arg_received(options)
+        )));
+    }
+    let strict = !matches!(
+        quench_runtime::execute::get_property(options, "strict"),
+        Value::Boolean(false)
+    );
+    let instance = host_api::object(vec![
+        ("strict".into(), Value::Boolean(strict)),
+        ("skipPrototype".into(), Value::Boolean(false)),
+        ("diff".into(), Value::String("simple".into())),
+        ("AssertionError".into(), assertion_error_type()),
+    ]);
+    let methods = [
+        ("ok", SPEC_ASSERT_OK),
+        ("fail", SPEC_ASSERT_FAIL),
+        ("equal", SPEC_ASSERT_EQUAL),
+        ("notEqual", SPEC_ASSERT_NOT_EQUAL),
+        ("strictEqual", SPEC_ASSERT_STRICT_EQUAL),
+        ("notStrictEqual", SPEC_ASSERT_NOT_STRICT_EQUAL),
+        ("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        ("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        ("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        ("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        ("throws", SPEC_ASSERT_THROWS),
+        ("doesNotThrow", SPEC_ASSERT_DOES_NOT_THROW),
+        ("ifError", SPEC_ASSERT_IF_ERROR),
+        ("match", SPEC_ASSERT_MATCH),
+        ("doesNotMatch", SPEC_ASSERT_DOES_NOT_MATCH),
+    ];
+    let instance = methods.into_iter().fold(instance, |instance, (name, spec)| {
+        quench_runtime::execute::set_property(instance, name, crate::host::capability(spec))
+    });
+    quench_runtime::execute::set_prototype_of(&instance, &assert_prototype())
 }
 
 /// The callable `assert` export: `assert(value)` is `assert.ok`.
