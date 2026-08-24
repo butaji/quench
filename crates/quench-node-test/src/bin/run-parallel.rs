@@ -49,7 +49,11 @@ fn main() -> ExitCode {
             .and_then(|i| args.get(i + 1))
             .and_then(|value| value.parse().ok())
             .unwrap_or(30);
-        return run_all(filter, timeout);
+        let results = args
+            .iter()
+            .position(|a| a == "--results")
+            .and_then(|i| args.get(i + 1));
+        return run_all(filter, timeout, results);
     }
     run_manifest()
 }
@@ -154,6 +158,17 @@ enum RunResult {
     Crash,
 }
 
+impl RunResult {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::Timeout => "timeout",
+            Self::Crash => "crash",
+        }
+    }
+}
+
 fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
     use std::process::{Command, Stdio};
     let Ok(mut child) = Command::new(exe)
@@ -185,7 +200,7 @@ fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
     RunResult::Timeout
 }
 
-fn run_all(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
+fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&String>) -> ExitCode {
     let root = PathBuf::from(PARALLEL_DIR);
     let mut entries = quench_node_test::stages::discover_fixtures(&root);
     entries.retain(|path| {
@@ -200,9 +215,11 @@ fn run_all(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
     });
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut counts = [0usize; 4];
+    let mut results = Vec::with_capacity(entries.len());
     for path in &entries {
         let result = triage_one(&exe, path, timeout_secs);
         counts[result as usize] += 1;
+        results.push((path, result));
         println!("{:?} {}", result, path.display());
     }
     let inventory_hash = entries.iter().fold(0xcbf29ce484222325u64, |hash, path| {
@@ -215,9 +232,44 @@ fn run_all(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
         "all: pass={passed} fail={failed} timeout={timeout} crash={crash} total={} inventory_hash={inventory_hash:016x}",
         entries.len()
     );
+    if let Some(path) = results_path {
+        if let Err(error) = write_results(path, &results, inventory_hash, timeout_secs) {
+            eprintln!("error: cannot write {path}: {error}");
+            return ExitCode::from(2);
+        }
+    }
     if failed == 0 && timeout == 0 && crash == 0 {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
     }
+}
+
+fn write_results(
+    path: &str,
+    results: &[(&PathBuf, RunResult)],
+    inventory_hash: u64,
+    timeout_secs: u64,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(path)?;
+    writeln!(file, "{{\"inventory_hash\":\"{inventory_hash:016x}\",\"timeout_secs\":{timeout_secs},\"results\":[")?;
+    for (index, (fixture, result)) in results.iter().enumerate() {
+        let comma = if index + 1 == results.len() { "" } else { "," };
+        writeln!(
+            file,
+            "  {{\"fixture\":\"{}\",\"status\":\"{}\"}}{comma}",
+            json_escape(&fixture.to_string_lossy()),
+            result.label()
+        )?;
+    }
+    writeln!(file, "]}}")
+}
+
+fn json_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
