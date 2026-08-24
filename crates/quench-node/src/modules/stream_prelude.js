@@ -195,6 +195,14 @@
     return chunk;
   }
 
+  function readableChunkError(stream) {
+    const error = new TypeError("The chunk argument must be of type string or an instance of Buffer");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    stream._readableState.errored = error;
+    nextTick(() => stream._emitter.emit("error", error));
+    return false;
+  }
+
   class Readable {
     constructor(options) {
       initReadable(this, options || {});
@@ -259,6 +267,11 @@
       if (chunk === null) {
         st.ended = true;
       } else {
+        if (!st.objectMode && typeof chunk !== "string" &&
+            !(chunk && typeof chunk.byteLength === "number" &&
+              typeof chunk.byteOffset === "number")) {
+          return readableChunkError(this);
+        }
         if (!st.objectMode && typeof chunk === "string" && typeof Buffer !== "undefined") {
           chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
         }
@@ -271,6 +284,11 @@
     unshift(chunk) {
       const st = this._readableState;
       if (chunk === null) return false;
+      if (!st.objectMode && typeof chunk !== "string" &&
+          !(chunk && typeof chunk.byteLength === "number" &&
+            typeof chunk.byteOffset === "number")) {
+        return readableChunkError(this);
+      }
       if (chunk !== undefined && chunk !== null &&
           typeof chunk.byteLength === "number" && chunk.byteLength === 0) return true;
       if (typeof chunk === "string" && chunk.length === 0) return true;
