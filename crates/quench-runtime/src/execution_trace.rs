@@ -70,6 +70,8 @@ execution_events! {
     LeafRejectCall => "leaf_reject_call",
     LeafRejectControl => "leaf_reject_control",
     LeafRejectDepth => "leaf_reject_depth",
+    RegExpCacheHit => "regexp_cache_hit",
+    RegExpCacheMiss => "regexp_cache_miss",
     BindingLoad => "binding_load",
     DynamicBindingLoad => "dynamic_binding_load",
     ValueDecode => "value_decode",
