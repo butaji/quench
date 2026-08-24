@@ -7,6 +7,7 @@ pub(super) fn build() -> Value {
     use crate::registry::*;
     let mut props: Vec<(&str, Value)> = vec![
         ("readFile", crate::host::capability(SPEC_FS_READFILE)),
+        ("writeFile", crate::host::capability(SPEC_FS_WRITEFILE)),
         ("stat", crate::host::capability(SPEC_FS_STAT)),
         ("lstat", crate::host::capability(SPEC_FS_LSTAT)),
         ("readdir", crate::host::capability(SPEC_FS_READDIR)),
