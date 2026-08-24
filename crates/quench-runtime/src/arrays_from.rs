@@ -51,10 +51,7 @@ fn from_live_array(
     let mut values = Vec::new();
     let mut index = 0;
     loop {
-        let mut current = source.clone();
-        while let Some(updated) = crate::locals::replacement(&current) {
-            current = updated;
-        }
+        let current = crate::locals::resolved_replacement(source.clone());
         let Value::Array(array) = current else { break };
         if index >= array.logical_len() {
             break;
