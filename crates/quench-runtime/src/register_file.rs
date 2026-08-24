@@ -184,6 +184,23 @@ impl RegisterFile {
         }
     }
 
+    /// Decide ToBoolean directly when the execute word contains the complete
+    /// semantic fact. Heap-backed primitives retain the canonical slow path.
+    #[inline(always)]
+    pub(crate) fn word_truthiness(&self, index: usize) -> Option<bool> {
+        let result = match self.words.get(index)?.decode() {
+            DecodedValue::Number(value) => Some(value != 0.0 && !value.is_nan()),
+            DecodedValue::I31(value) => Some(value != 0),
+            DecodedValue::Bool(value) => Some(value),
+            DecodedValue::Null | DecodedValue::Undefined => Some(false),
+            DecodedValue::ObjectPtr(_)
+            | DecodedValue::ArrayPtr(_)
+            | DecodedValue::FunctionPtr(_) => Some(true),
+            DecodedValue::HeapPtr(_) | DecodedValue::HeapRef(_) => None,
+        };
+        result
+    }
+
     pub fn get(&self, index: usize) -> Option<Value> {
         self.read(index)
     }
@@ -304,6 +321,32 @@ impl RegisterFile {
     #[cfg(test)]
     fn word(&self, index: usize) -> Option<TaggedValue> {
         self.words.get(index).copied()
+    }
+}
+
+#[cfg(test)]
+mod truthiness_tests {
+    use super::RegisterFile;
+    use crate::value::{ObjectData, Value};
+    use std::rc::Rc;
+
+    #[test]
+    fn execute_words_decide_javascript_truthiness_without_value_decode() {
+        let registers = RegisterFile::from_values(vec![
+            Value::Number(0.0),
+            Value::Number(-0.0),
+            Value::Number(f64::NAN),
+            Value::Number(1.0),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Null,
+            Value::Undefined,
+            Value::Object(Rc::new(ObjectData::new(Vec::new()))),
+        ]);
+        let expected = [false, false, false, true, false, true, false, false, true];
+        for (index, expected) in expected.into_iter().enumerate() {
+            assert_eq!(registers.word_truthiness(index), Some(expected));
+        }
     }
 }
 
