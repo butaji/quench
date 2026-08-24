@@ -325,9 +325,9 @@ pub(crate) fn initialize_resolved(
 ) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, source)?;
     let target = crate::execute::read_register(registers, target)?;
-    current().set(slot, value.clone());
-    current().initialize(slot);
     if matches!(target, Value::Undefined) {
+        current().set(slot, value.clone());
+        current().initialize(slot);
         return Ok(());
     } else {
         crate::proxy::proxy_set(&target, name, &value, None)?;
@@ -364,6 +364,7 @@ pub(crate) fn set_resolved_local(
         )));
     }
     crate::proxy::proxy_set(&target, name, &value, None)?;
+    crate::with_scope::publish_active_replacement(&target);
     Ok(())
 }
 
@@ -453,6 +454,11 @@ pub(crate) fn update(
     }
     if environment.is_uninitialized(slot) {
         return ensure_initialized(slot, &format!("local_{slot}"));
+    }
+    if environment.is_immutable_slot(slot) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to immutable binding",
+        ));
     }
     crate::execute::write_value(registers, old_dst, environment.get(slot));
     registers.write_number(usize::from(updated_dst), 1.0);
@@ -717,6 +723,16 @@ pub(crate) fn reset_replacements() {
 
 #[inline]
 pub(crate) fn resolved_replacement(value: Value) -> Value {
+    // Preserve the script-level `this` view as an owner-bearing alias.  Its
+    // marker is what lets property reads/deletes retarget to the live realm
+    // global after copy-on-write replacement; collapsing it to the physical
+    // replacement here would erase that semantic owner fact.
+    if matches!(&value, Value::Object(object) if object
+        .iter()
+        .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+    {
+        return value;
+    }
     if let Some(resolved) = resolved_object_replacement(&value) {
         return resolved;
     }

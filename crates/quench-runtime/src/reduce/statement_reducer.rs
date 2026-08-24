@@ -37,11 +37,7 @@ impl StatementReducer {
         Self::new_with_modes(source_type, false, true)
     }
 
-    fn new_with_modes(
-        source_type: SourceType,
-        global: bool,
-        script_this_global: bool,
-    ) -> Self {
+    fn new_with_modes(source_type: SourceType, global: bool, script_this_global: bool) -> Self {
         let locals = initialize_statement_locals(source_type);
         let (mut ops, next_register) = initialize_statement_ops(global, script_this_global);
         ops.push(Op::StoreLocal {
@@ -108,7 +104,41 @@ impl StatementReducer {
         }
         if global_script {
             instantiate_global_script_functions(statements, facts, self)?;
+            // Global `var` declarations are instantiated before any script
+            // statement, even when their source declaration appears later.
+            // Emit their object-binding mechanics in the prefix rather than
+            // at the source position so early `delete`/reads see the binding.
+            for statement in statements {
+                if matches!(
+                    statement,
+                    Statement::VariableDeclaration(declaration)
+                        if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var
+                ) {
+                    crate::reduce_support::mirror_script_bindings(
+                        statement,
+                        &self.locals,
+                        &mut self.ops,
+                        &mut self.next_register,
+                    );
+                }
+            }
         } else if !self.script {
+            if program_scope {
+                for statement in statements {
+                    if matches!(
+                        statement,
+                        Statement::VariableDeclaration(declaration)
+                            if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var
+                    ) {
+                        crate::reduce_support::mirror_script_bindings(
+                            statement,
+                            &self.locals,
+                            &mut self.ops,
+                            &mut self.next_register,
+                        );
+                    }
+                }
+            }
             instantiate_module_functions(statements, facts, self)?;
         }
         self.next_register = self
@@ -142,14 +172,12 @@ fn wrap_program_using(
         return Ok(());
     };
     let body = state.ops.split_off(body_start);
-    state
-        .ops
-        .extend(crate::using_scope::wrap(
-            body,
-            stack,
-            await_using,
-            &mut state.next_register,
-        )?);
+    state.ops.extend(crate::using_scope::wrap(
+        body,
+        stack,
+        await_using,
+        &mut state.next_register,
+    )?);
     Ok(())
 }
 
@@ -304,14 +332,16 @@ fn emit_module_lexical_tdz(
         for name in crate::reduce_support::lexical_bound_names(statement) {
             if let Some(&slot) = locals.get(&name) {
                 ops.push(Op::MarkUninitialized { slot, shared: true });
-                if crate::reduce_support::lexical_declaration(statement).is_some_and(|declaration| {
-                    matches!(
-                        declaration.kind,
-                        oxc::ast::ast::VariableDeclarationKind::Const
-                            | oxc::ast::ast::VariableDeclarationKind::Using
-                            | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
-                    )
-                }) {
+                if crate::reduce_support::lexical_declaration(statement).is_some_and(
+                    |declaration| {
+                        matches!(
+                            declaration.kind,
+                            oxc::ast::ast::VariableDeclarationKind::Const
+                                | oxc::ast::ast::VariableDeclarationKind::Using
+                                | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
+                        )
+                    },
+                ) {
                     ops.push(Op::MarkImmutable { slot });
                 }
             }
