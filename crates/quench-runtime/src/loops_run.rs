@@ -62,7 +62,7 @@ fn run_loop(
     run_fragment(init, registers)?;
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
-            dump_counted_shape(body, fact);
+            dump_counted_shape(body);
             if let Some(completion) = run_crypto_integer_kernel(fact, body) {
                 return Ok(completion);
             }
@@ -116,7 +116,7 @@ fn run_loop(
 }
 
 #[cfg(feature = "execution-trace")]
-fn dump_counted_shape(body: crate::machine::CodeView<'_>, fact: CountedForFact) {
+fn dump_counted_shape(body: crate::machine::CodeView<'_>) {
     use std::hash::{Hash, Hasher};
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
@@ -140,7 +140,7 @@ fn dump_counted_shape(body: crate::machine::CodeView<'_>, fact: CountedForFact) 
 }
 
 #[cfg(not(feature = "execution-trace"))]
-fn dump_counted_shape(_: crate::machine::CodeView<'_>, _: CountedForFact) {}
+fn dump_counted_shape(_: crate::machine::CodeView<'_>) {}
 
 fn run_counted_for(
     fact: CountedForFact,
@@ -208,7 +208,7 @@ counted_comparisons! {
     GreaterEqual => >=,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct CountedForFact {
     slot: u16,
     bound: CountedBound,
@@ -217,13 +217,13 @@ struct CountedForFact {
     timing: CountedStepTiming,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum CountedStepTiming {
     BeforeTest,
     AfterBody,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 enum CountedBound {
     Constant(f64),
     Slot(u16),

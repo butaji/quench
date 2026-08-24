@@ -1041,15 +1041,16 @@ impl Environment {
         previous.cell()
     }
 
+    pub(crate) fn has_caller(&self) -> bool {
+        self.caller.is_some()
+    }
+
     pub(crate) fn restore_slot(&self, slot: u16, value: Rc<RefCell<Value>>) {
         let binding = BindingRef::new(SlotStore::from_cell(value), 0);
         self.slots.borrow_mut().replace(usize::from(slot), binding);
     }
 
     pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
-        if let Some(caller) = &self.caller {
-            caller.replace_value(old, new);
-        }
         for index in 0..self.slots.borrow().len() {
             let Some(slot) = self.slot(index as u16) else {
                 continue;
