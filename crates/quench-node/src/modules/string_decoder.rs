@@ -66,18 +66,20 @@ pub fn end(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if args.is_empty() {
-        return Ok(Value::String(String::new()));
-    }
-    write(state, receiver, args)
+    if !args.is_empty() { return write(state, receiver, args); }
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let key = receiver.object_identity().ok_or(VmError::NotCallable)?;
+    let bytes = state.borrow_mut().string_decoder_pending.remove(&key).unwrap_or_default();
+    Ok(Value::String(String::from_utf8_lossy(&bytes).into_owned()))
 }
 
 pub fn call(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let target = args.first().ok_or(VmError::NotCallable)?.clone();
     let object = new_decoder(state, &args[1..])?;
+    quench_runtime::execute::replace_value(&target, &object);
     for key in ["encoding", "write", "end"] {
         if let Ok(value) = quench_runtime::execute::get_property_result(&object, key) {
-            quench_runtime::execute::set_property(target.clone(), key, value)?;
+            let _ = quench_runtime::execute::set_property(target.clone(), key, value);
         }
     }
     Ok(target)
@@ -101,11 +103,7 @@ impl StringDecoder {
 
 pub fn build() -> Vec<(String, Value)> {
     let constructor = crate::host::capability(crate::registry::SPEC_STRING_DECODER);
-    let call = crate::host::capability(crate::registry::NodeSpec::new(
-        "string_decoder:call",
-        0x0D03,
-    ));
-    let constructor = quench_runtime::execute::set_property(constructor, "call", call)
-        .unwrap_or(Value::Undefined);
+    let call = crate::host::capability(crate::registry::NodeSpec::new("string_decoder:call", 0x0D03));
+    let _ = quench_runtime::execute::set_host_capability_property(&constructor, "call", call);
     vec![("StringDecoder".to_string(), constructor)]
 }

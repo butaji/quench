@@ -269,6 +269,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_EVENT_SOURCE => handlers::event_source,
         CAP_ABORT_SIGNAL_ABORT => handlers::abort_signal_abort,
         2044 => handlers::buffer_of,
+        CAP_STRING_DECODER => string_decoder_invoke,
         0x1a00 => crate::modules::compat_extra::sea_is_sea,
         CAP_EVENTS_FROM => events_from,
         CAP_EVENTS_ON => events_method_on,
