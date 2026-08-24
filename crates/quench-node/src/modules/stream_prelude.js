@@ -126,9 +126,10 @@
       pipeCount: 0,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
-    stream.readable = true;
+    stream.readable = options.readable !== false;
     stream.destroyed = false;
     stream.closed = false;
+    stream.readableAborted = false;
     if (options.read) stream._read = options.read;
     if (options.destroy) stream._destroy = options.destroy;
   }
@@ -436,6 +437,7 @@
   Readable.prototype.destroy = function (error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    this.readableAborted = this.readable !== false && !this.readableEnded;
     this.readable = false;
     if (error) {
       this.readableErrored = error;
@@ -486,7 +488,8 @@
       final: options.final || null,
       destroyed: false
     };
-    stream.writable = true;
+    stream.writable = options.writable !== false;
+    stream.writableAborted = false;
     if (options.write) stream._write = options.write;
     if (options.writev) stream._writev = options.writev;
   }
@@ -728,6 +731,7 @@
   Writable.prototype.destroy = function (error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    this.writableAborted = this.writable !== false && !this.writableFinished;
     if (this._writableState) this._writableState.destroyed = true;
     this.writable = false;
     if (error) this.writableErrored = error;
