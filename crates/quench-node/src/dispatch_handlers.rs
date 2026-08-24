@@ -99,6 +99,15 @@ pub fn util_inspect(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let arg = args.first().cloned().unwrap_or(Value::Undefined);
+    if let (Value::Object(_), Some(options)) = (&arg, args.get(1)) {
+        let depth = execute::get_property(options, "depth");
+        let tag = execute::get_property(&arg, "Symbol.toStringTag");
+        if matches!(depth, Value::Number(value) if value < 0.0)
+            && matches!(tag, Value::String(ref value) if value == "Event" || value == "CustomEvent")
+        {
+            return Ok(tag);
+        }
+    }
     Ok(Value::String(crate::modules::util::inspect(&arg)))
 }
 
@@ -1220,6 +1229,12 @@ pub fn event_composed_path(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    let active = receiver
+        .map(|value| matches!(execute::get_property(value, "eventPhase"), Value::Number(phase) if phase != 0.0))
+        .unwrap_or(false);
+    if !active {
+        return Ok(host_api::array(Vec::new()));
+    }
     match receiver.map(|value| execute::get_property(value, "target")) {
         Some(target) if !matches!(target, Value::Undefined | Value::Null) => {
             Ok(host_api::array(vec![target]))
