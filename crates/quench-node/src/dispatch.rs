@@ -44,6 +44,7 @@ const CAP_UTIL_INSPECT: u16 = 0x0301;
 const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
 const CAP_UTIL_IS_NATIVE_ERROR: u16 = 0x030A;
 const CAP_UTIL_PARSE_ENV: u16 = 0x030B;
+const CAP_UTIL_TYPE_PREDICATE: u16 = 0x030C;
 const CAP_PATH_JOIN: u16 = 0x0400;
 const CAP_PATH_RESOLVE: u16 = 0x0401;
 const CAP_PATH_NORMALIZE: u16 = 0x0402;
@@ -412,6 +413,7 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_UTIL_IS_DEEP_STRICT_EQUAL => util_is_deep_strict_equal,
         CAP_UTIL_TO_USV_STRING => util_to_usv_string,
         CAP_UTIL_IS_NATIVE_ERROR => util_is_native_error,
+        CAP_UTIL_TYPE_PREDICATE => util_type_predicate,
         CAP_TEXT_DECODER_DECODE => crate::modules::text_decoder::decode,
         _ => return timers_dispatch(cap),
     })
