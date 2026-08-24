@@ -287,55 +287,8 @@ fn util_module() -> Value {
     ])
 }
 
-fn util_parse_env(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(source)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error(
-            "ERR_INVALID_ARG_TYPE",
-            "str must be a string",
-        )));
-    };
-    let mut values = Vec::new();
-    let mut pending: Option<(String, String)> = None;
-    for line in source.lines() {
-        let line = line.trim();
-        if let Some((key, value)) = pending.as_mut() {
-            value.push('\n');
-            value.push_str(line);
-            if line.ends_with('"') {
-                values.push((
-                    key.clone(),
-                    Value::String(value.trim_matches('"').replace("\\n", "\n").into()),
-                ));
-                pending = None;
-            }
-            continue;
-        }
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, mut value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim().to_owned();
-        value = value.trim();
-        if value.starts_with('"') && value.matches('"').count() % 2 == 1 {
-            pending = Some((key, value.to_owned()));
-            continue;
-        }
-        if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-            value = &value[1..value.len() - 1];
-        } else if let Some((uncommented, _)) = value.split_once('#') {
-            value = uncommented.trim_end();
-        }
-        values.push((key, Value::String(value.replace("\\n", "\n").into())));
-    }
-    let mut unique = HashMap::new();
-    for (key, value) in values {
-        unique.insert(key, value);
-    }
-    let mut properties = vec![("\0prototype".into(), Value::Null)];
-    properties.extend(unique);
-    Ok(Value::object(properties))
+pub(crate) fn util_parse_env(arguments: &[Value]) -> Result<Value, VmError> {
+    quench_node::modules::util::parse_env(arguments)
 }
 
 fn util_system_error_name(arguments: &[Value]) -> Result<Value, VmError> {
