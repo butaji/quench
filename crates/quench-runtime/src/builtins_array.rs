@@ -50,7 +50,7 @@ fn delete_object_property_value(
     if global_constant(&properties, key) || boxed_string_non_configurable(&properties, key) {
         return (Value::Object(properties), false);
     }
-    if properties.iter().any(|(name, _)| name == "\0realm")
+    if crate::vm::is_global_object(&Value::Object(properties.clone()))
         && !matches!(key, "undefined" | "Infinity" | "NaN")
     {
         return (delete_object_property(properties, key), true);

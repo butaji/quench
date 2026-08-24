@@ -338,7 +338,6 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
 
 fn is_child_realm_global(value: &Value) -> bool {
     crate::vm::is_child_global_object(value)
-        || matches!(value, Value::Object(properties) if properties.iter().any(|(key, _)| key == "\0realm"))
 }
 
 include!("object_descriptor_core.rs");
