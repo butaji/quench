@@ -489,6 +489,36 @@
     stream._emitter.emit("finish");
   }
 
+  function flushCorked(stream) {
+    const st = stream._writableState;
+    if (st.corked || st.writing || st.pending.length === 0) return;
+    if (st.pending.length > 1 && stream._writev) {
+      const pending = st.pending.splice(0);
+      const total = pending.reduce((sum, item) => sum + item.chunkLength, 0);
+      st.writing = true;
+      const complete = (error) => {
+        st.buffered -= total;
+        st.writing = false;
+        for (const item of pending) if (item.callback) item.callback(error);
+        if (error) stream._emitter.emit("error", error);
+        if (!error && st.buffered <= st.highWaterMark) stream._emitter.emit("drain");
+        if (!error) finishWritable(stream);
+      };
+      try {
+        stream._writev(
+          pending.map((item) => ({ chunk: item.chunk, encoding: item.encoding })),
+          complete
+        );
+      } catch (error) {
+        complete(error);
+      }
+      return;
+    }
+    const item = st.pending.shift();
+    st.buffered -= item.chunkLength;
+    stream.write(item.chunk, item.encoding, item.callback);
+  }
+
   class WritableClass {
     constructor(options) {
       initWritable(this, options || {});
@@ -525,6 +555,7 @@
 
     uncork() {
       if (this._writableState.corked > 0) this._writableState.corked -= 1;
+      flushCorked(this);
       return this;
     }
 
@@ -568,6 +599,10 @@
       if (!st.objectMode && isByteView && encoding === undefined) encoding = "buffer";
       const chunkLength = writableChunkLength(this, chunk);
       st.buffered += chunkLength;
+      if (st.corked) {
+        st.pending.push({ chunk, encoding, callback, chunkLength });
+        return st.buffered < st.highWaterMark;
+      }
       if (st.writing) {
         st.pending.push({ chunk, encoding, callback, chunkLength });
         return st.buffered < st.highWaterMark;
@@ -603,7 +638,7 @@
                   for (const item of pending) if (item.callback) item.callback(batchError);
                   if (batchError) this._emitter.emit("error", batchError);
                   if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
-                  finishWritable(this);
+                  if (!batchError) finishWritable(this);
                 }
               );
             } catch (batchError) {
@@ -611,7 +646,6 @@
               st.writing = false;
               for (const item of pending) if (item.callback) item.callback(batchError);
               this._emitter.emit("error", batchError);
-              finishWritable(this);
             }
             return;
           }
@@ -642,6 +676,8 @@
       }
       if (callback) this._emitter.once("finish", callback);
       if (chunk != null) this.write(chunk, encoding);
+      this._writableState.corked = 0;
+      flushCorked(this);
       this._writableState.ended = true;
       const stream = this;
       finishWritable(stream);
