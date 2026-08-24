@@ -69,6 +69,7 @@ const CAP_URL_PARSE: u16 = 0x0500;
 const CAP_URL_FORMAT: u16 = 0x0501;
 const CAP_URL_RESOLVE: u16 = 0x0502;
 const CAP_URL_NEW: u16 = 0x0503;
+const CAP_URL_LEGACY_NEW: u16 = 40;
 const CAP_URL_SEARCH: u16 = 0x0504;
 const CAP_QS_PARSE: u16 = 0x0600;
 const CAP_QS_STRINGIFY: u16 = 0x0601;
@@ -528,6 +529,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_STREAM_TRANSFORM => stream_transform,
         CAP_STRING_DECODER => string_decoder_new,
         CAP_URL_NEW => url_new,
+        CAP_URL_LEGACY_NEW => url_legacy_new,
         CAP_TEXT_DECODER_NEW => crate::modules::text_decoder::new_text_decoder,
         CAP_TEXT_ENCODER_NEW => crate::modules::text_encoder::new_text_encoder,
         CAP_URL_SEARCH => url_search_params,
