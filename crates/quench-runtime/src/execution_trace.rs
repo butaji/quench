@@ -61,6 +61,9 @@ execution_events! {
     LoopEntry => "loop_entry",
     LoopIteration => "loop_iteration",
     FragmentEntry => "fragment_entry",
+    LeafAttempt => "leaf_attempt",
+    LeafHit => "leaf_hit",
+    LeafReject => "leaf_reject",
     BindingLoad => "binding_load",
     DynamicBindingLoad => "dynamic_binding_load",
     ValueDecode => "value_decode",
@@ -111,7 +114,7 @@ struct Counters {
     environment_children: HashMap<(usize, usize), u64>,
     call_shapes: HashMap<(usize, bool, bool), u64>,
     call_targets: HashMap<&'static str, u64>,
-    events: [u64; EVENT_NAMES.len()],
+    events: Vec<u64>,
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
     operand_transitions: HashMap<(OperandKey, OperandKey), u64>,
@@ -628,7 +631,13 @@ pub(crate) fn call_method(_: usize, _: bool, _: bool, _: &'static str) {}
 #[cfg(feature = "execution-trace")]
 pub(crate) fn event(event: Event) {
     if enabled() {
-        COUNTERS.with(|counters| counters.borrow_mut().events[event as usize] += 1);
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            if counters.events.is_empty() {
+                counters.events.resize(EVENT_NAMES.len(), 0);
+            }
+            counters.events[event as usize] += 1;
+        });
     }
 }
 
