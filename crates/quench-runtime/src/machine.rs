@@ -319,15 +319,26 @@ impl CodeArena {
         self.ranges.reserve(nested.saturating_add(1));
         let code = CodeId(self.ranges.len() as u32);
         let start = self.instructions.len() as u32;
-        for op in body {
+        let mut metadata = Vec::with_capacity(body.len());
+        let mut cursor = 0;
+        while cursor < body.len() {
+            if let Some(instruction) = lower_local_update(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor + 3]));
+                cursor += 5;
+                continue;
+            }
+            let op = &body[cursor];
             let instruction = crate::ir::lower_compact(op).unwrap_or_else(|| {
                 let index = self.cold.len() as u32;
                 self.cold.push(op.clone());
                 crate::ir::Instruction::slow_at(index)
             });
             self.instructions.push(instruction);
+            metadata.push(metadata_for(op));
+            cursor += 1;
         }
-        self.metadata.push(body.iter().map(metadata_for).collect());
+        self.metadata.push(metadata);
         let end = self.instructions.len() as u32;
         self.ranges.push((start, end));
         CodeRange { code, start, end }
@@ -375,6 +386,34 @@ impl CodeArena {
             metadata: self.metadata.into_boxed_slice().into(),
         })
     }
+}
+
+fn lower_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::LoadLocal { dst: old, slot }, Op::Const {
+        dst: one,
+        value: Constant::Number(value),
+    }, Op::Binary {
+        dst: updated,
+        operator,
+        lhs,
+        rhs,
+    }, Op::CheckInitialized { slot: checked, .. }, Op::StoreLocal { slot: stored, src }, ..] = ops
+    else {
+        return None;
+    };
+    let decrement = match operator {
+        crate::ops::BinaryOp::NumericAdd => false,
+        crate::ops::BinaryOp::NumericSubtract => true,
+        _ => return None,
+    };
+    (*value == 1.0
+        && old != updated
+        && lhs == old
+        && rhs == one
+        && slot == checked
+        && slot == stored
+        && updated == src)
+        .then(|| crate::ir::Instruction::update_local(*old, *updated, *slot, decrement))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1068,6 +1107,36 @@ mod tests {
         assert_eq!(
             code.instruction(0),
             Some(crate::ir::Instruction::move_(1, 2))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn local_numeric_update_lowers_as_one_physical_instruction() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::LoadLocal { dst: 2, slot: 7 },
+            super::Op::Const {
+                dst: 3,
+                value: super::Constant::Number(1.0),
+            },
+            super::Op::Binary {
+                dst: 4,
+                operator: crate::ops::BinaryOp::NumericAdd,
+                lhs: 2,
+                rhs: 3,
+            },
+            super::Op::CheckInitialized {
+                slot: 7,
+                name: "local_7".into(),
+            },
+            super::Op::StoreLocal { slot: 7, src: 4 },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::update_local(2, 4, 7, false))
         );
         assert!(code.cold_at(0).is_none());
     }
