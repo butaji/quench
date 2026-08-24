@@ -40,7 +40,8 @@ fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError>
     }
 }
 fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
-    let receiver = crate::locals::resolved_replacement(receiver.clone());
+    let receiver = crate::vm::resolve_global_owner(receiver)
+        .unwrap_or_else(|| crate::locals::resolved_replacement(receiver.clone()));
     Ok(match &receiver {
         Value::Object(properties) => {
             object_data_owns(properties, key) || boxed_string_owns(properties, key)
