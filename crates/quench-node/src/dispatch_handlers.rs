@@ -1364,9 +1364,25 @@ pub fn util_strip_vt(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let text = quench_runtime::execute::to_js_string(args.first().unwrap_or(&Value::Undefined))?;
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let text = match value {
+        Value::String(text) => text,
+        Value::StringUnits(units) => {
+            return Ok(Value::String(
+                crate::modules::util_strip::strip_vt_control_characters(
+                    &String::from_utf16_lossy(units),
+                ),
+            ));
+        }
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"str\" argument must be of type string.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )));
+        }
+    };
     Ok(Value::String(
-        crate::modules::util_strip::strip_vt_control_characters(&text),
+        crate::modules::util_strip::strip_vt_control_characters(text),
     ))
 }
 
@@ -1414,4 +1430,54 @@ pub fn util_is_deep_strict_equal(
         true,
         skip_prototype,
     )?))
+}
+
+pub fn util_to_usv_string(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let units = match value {
+        Value::String(value) => value.encode_utf16().collect::<Vec<_>>(),
+        Value::StringUnits(value) => value.iter().copied().collect::<Vec<_>>(),
+        Value::Undefined => "undefined".encode_utf16().collect(),
+        Value::Null => "null".encode_utf16().collect(),
+        _ => return Ok(Value::String(format!("{value:?}"))),
+    };
+    let mut output = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        if (0xD800..=0xDBFF).contains(&unit) {
+            if units
+                .get(index + 1)
+                .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
+            {
+                output.extend([unit, units[index + 1]]);
+                index += 2;
+                continue;
+            }
+            output.push(0xFFFD);
+        } else if (0xDC00..=0xDFFF).contains(&unit) {
+            output.push(0xFFFD);
+        } else {
+            output.push(unit);
+        }
+        index += 1;
+    }
+    Ok(quench_runtime::execute::string_from_units(output))
+}
+
+pub fn util_is_native_error(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let native = matches!(
+        quench_runtime::execute::get_property_result(value, "\0error_slot"),
+        Ok(Value::Boolean(true))
+    );
+    Ok(Value::Boolean(native))
 }

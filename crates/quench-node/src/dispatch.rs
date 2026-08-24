@@ -41,6 +41,8 @@ const CAP_CONSOLE_DEBUG: u16 = 0x0204;
 const CAP_CONSOLE_TRACE: u16 = 0x0205;
 const CAP_UTIL_FORMAT: u16 = 0x0300;
 const CAP_UTIL_INSPECT: u16 = 0x0301;
+const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
+const CAP_UTIL_IS_NATIVE_ERROR: u16 = 0x030A;
 const CAP_PATH_JOIN: u16 = 0x0400;
 const CAP_PATH_RESOLVE: u16 = 0x0401;
 const CAP_PATH_NORMALIZE: u16 = 0x0402;
@@ -387,6 +389,8 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_UTIL_FORMAT_WITH_OPTIONS => util_format_with_options,
         CAP_UTIL_STYLE_TEXT => crate::modules::util_style_text::style_text,
         CAP_UTIL_IS_DEEP_STRICT_EQUAL => util_is_deep_strict_equal,
+        CAP_UTIL_TO_USV_STRING => util_to_usv_string,
+        CAP_UTIL_IS_NATIVE_ERROR => util_is_native_error,
         CAP_TEXT_DECODER_DECODE => crate::modules::text_decoder::decode,
         _ => return timers_dispatch(cap),
     })

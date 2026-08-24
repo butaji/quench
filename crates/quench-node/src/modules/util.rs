@@ -27,7 +27,24 @@ pub fn format_with_options(args: &[Value], numeric_separator: bool) -> String {
 /// Module wiring: returns the `(name, value)` pairs the host
 /// installs into the `util` namespace.
 pub fn build() -> Vec<(String, Value)> {
+    let global = quench_runtime::vm::current_global_object();
+    let object_assign = quench_runtime::execute::get_property_result(&global, "Object")
+        .ok()
+        .and_then(|object| quench_runtime::execute::get_property_result(&object, "assign").ok())
+        .unwrap_or(Value::Undefined);
+    let to_usv_string = crate::host::capability(crate::registry::SPEC_UTIL_TO_USV_STRING);
+    let types = quench_runtime::host_api::object(vec![(
+        "isNativeError".to_string(),
+        crate::host::capability(crate::registry::SPEC_UTIL_IS_NATIVE_ERROR),
+    )]);
     vec![
+        (
+            "isArray".to_string(),
+            Value::Builtin(quench_runtime::ops::Builtin::ArrayIsArray),
+        ),
+        ("_extend".to_string(), object_assign),
+        ("toUSVString".to_string(), to_usv_string),
+        ("types".to_string(), types),
         (
             "format".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
