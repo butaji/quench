@@ -70,7 +70,7 @@ fn run_loop(
     }
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
-            trace_counted_recognition(body, fact, per_iteration);
+            dump_counted_shape(body);
             if let Some(completion) = run_crypto_integer_kernel(fact, body) {
                 return Ok(completion);
             }
@@ -123,16 +123,33 @@ fn run_loop(
     Ok(crate::completion::Completion::Normal)
 }
 
-fn trace_counted_recognition(
-    _body: crate::machine::CodeView<'_>,
-    _fact: CountedForFact,
-    per_iteration: &[u16],
-) {
-    crate::execution_trace::event(crate::execution_trace::Event::CountedForRecognized);
-    if !per_iteration.is_empty() {
-        crate::execution_trace::event(crate::execution_trace::Event::CountedForPerIteration);
+#[cfg(feature = "execution-trace")]
+fn dump_counted_shape(body: crate::machine::CodeView<'_>) {
+    use std::hash::{Hash, Hasher};
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+        std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_LOOP_SHAPES").is_some()) {
+        return;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for pc in 0..body.len() {
+        let instruction = body.instruction(pc).unwrap();
+        (instruction.opcode as u8).hash(&mut hasher);
+        instruction.flags.hash(&mut hasher);
+        instruction.a.hash(&mut hasher);
+        instruction.b.hash(&mut hasher);
+        instruction.c.hash(&mut hasher);
+    }
+    let fingerprint = hasher.finish();
+    if !SEEN.get_or_init(Default::default).lock().unwrap().insert(fingerprint) {
+        return;
     }
 }
+
+#[cfg(not(feature = "execution-trace"))]
+fn dump_counted_shape(_: crate::machine::CodeView<'_>) {}
+
 fn run_counted_for(
     fact: CountedForFact,
     body: crate::machine::CodeView<'_>,

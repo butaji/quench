@@ -20,6 +20,9 @@ macro_rules! heap_lifecycles {
             #[inline]
             pub(crate) fn $kind(allocated: bool) {
                 let _ = allocated;
+                if allocated {
+                    allocation(if $wire == "environment" { "environment" } else { "other" });
+                }
                 #[cfg(feature = "execution-trace")]
                 if enabled() {
                     let counter = if allocated {
@@ -148,6 +151,48 @@ struct Counters {
     named_property_results: HashMap<&'static str, u64>,
     crypto_direct_iterations: u64,
     loop_shapes: HashMap<u64, (u64, u64, Vec<&'static str>)>,
+    value_decode_by_site: HashMap<&'static str, u64>,
+    value_decode_other_by_op: HashMap<&'static str, u64>,
+    packed_miss_by: HashMap<&'static str, u64>,
+    allocations: HashMap<&'static str, u64>,
+    last_index: HashMap<&'static str, u64>,
+    kernels: HashMap<&'static str, (u64, u64)>,
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+pub(crate) enum DecodeSite {
+    GetN,
+    SetN,
+    Load,
+    LoadChecked,
+    Move,
+    LeafGetN,
+    LeafLoad,
+    LeafLoadChecked,
+    LeafOther,
+    BindingBorrow,
+    EnvLoad,
+    Other,
+}
+
+impl DecodeSite {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::GetN => "getn",
+            Self::SetN => "setn",
+            Self::Load => "load",
+            Self::LoadChecked => "load_checked",
+            Self::Move => "move",
+            Self::LeafGetN => "leaf_getn",
+            Self::LeafLoad => "leaf_load",
+            Self::LeafLoadChecked => "leaf_load_checked",
+            Self::LeafOther => "leaf_other",
+            Self::BindingBorrow => "binding_borrow",
+            Self::EnvLoad => "env_load",
+            Self::Other => "other",
+        }
+    }
 }
 
 #[cfg(feature = "execution-trace")]
@@ -169,44 +214,167 @@ impl Counters {
 
 #[cfg(feature = "execution-trace")]
 fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> serde_json::Value {
-    let event = |event: Event| counters.events[event as usize];
     let leaf_total = counters.leaf_compact.iter().sum::<u64>();
     let compact_slow = counters.compact[crate::ir::Opcode::Slow as usize];
     let leaf_slow = counters.leaf_compact[crate::ir::Opcode::Slow as usize];
     let l2 = compact_total.saturating_sub(compact_slow) + leaf_total.saturating_sub(leaf_slow);
     let l3 = slow_total + leaf_slow;
     let vm_total = l2 + l3;
-    let host_calls = counters
-        .call_targets
-        .iter()
-        .filter(|(target, _)| **target != "Function")
-        .map(|(_, count)| *count)
-        .sum::<u64>();
     serde_json::json!({
-        "l0": {
-            "word_reads": event(Event::FixedWordRead) + event(Event::LocalWordRead)
-                + event(Event::RegisterFileRead) + event(Event::OwnedWordRead),
+        "l0": l0_profile(counters), "l1": l1_profile(counters),
+        "l2": {"handlers": l2, "vm_share_ppm": ratio_ppm(l2, vm_total),
+            "slow_gateways": {"main": compact_slow, "leaf": leaf_slow},
+            "top_compact": top_opcodes(&counters.compact, false),
+            "top_leaf_compact": top_opcodes(&counters.leaf_compact, false)},
+        "l3": {"handlers": l3, "vm_share_ppm": ratio_ppm(l3, vm_total),
+            "top_slow": top_map(&counters.slow, 8),
+            "descriptor_objects": counters.descriptor_objects,
+            "alloc": named_buckets(&counters.allocations,
+                &["match_result", "descriptor_view", "environment", "other"]),
+            "last_index": named_buckets(&counters.last_index,
+                &["header", "getn", "binding_cell"])},
+        "l4": host_profile(counters),
+    })
+}
+
+#[cfg(feature = "execution-trace")]
+fn l0_profile(counters: &Counters) -> serde_json::Value {
+    let event = |event: Event| counters.events[event as usize];
+    serde_json::json!({
+            "word_reads": {
+                "fixed": event(Event::FixedWordRead),
+                "local": event(Event::LocalWordRead),
+                "register": event(Event::RegisterFileRead),
+                "owned": event(Event::OwnedWordRead),
+            },
             "word_copies": event(Event::RegisterWordCopy),
             "value_decode": event(Event::ValueDecode),
+            "value_decode_by_site": named_buckets(&counters.value_decode_by_site,
+                &["getn", "setn", "load", "load_checked", "move", "leaf_getn",
+                  "leaf_load", "leaf_load_checked", "leaf_other",
+                  "binding_borrow", "env_load", "other"]),
+            "value_decode_other_by_op": top_map(&counters.value_decode_other_by_op, 16),
             "property_hit": event(Event::NamedPropertyHit),
             "property_miss": event(Event::NamedPropertyMiss),
+            "property_payload": property_payload(&counters.named_property_results),
             "packed_get": event(Event::PackedArrayGet),
             "packed_set": event(Event::PackedArraySet),
             "packed_miss": event(Event::PackedArrayMiss),
-        },
-        "l1": {
-            "shape_hits": event(Event::ShapeKernelHit),
-            "crypto_hits": event(Event::CryptoKernelHit),
-            "counted_attempts": event(Event::CountedForAttempt),
-            "counted_hits": event(Event::CountedForHit),
-            "counted_deopts": event(Event::CountedForDeopt),
-            "counted_recognized": event(Event::CountedForRecognized),
-            "counted_per_iteration_rejects": event(Event::CountedForPerIteration),
-        },
-        "l2": {"handlers": l2, "vm_share_ppm": ratio_ppm(l2, vm_total)},
-        "l3": {"handlers": l3, "vm_share_ppm": ratio_ppm(l3, vm_total)},
-        "l4": {"host_calls": host_calls},
+            "packed_miss_by": named_buckets(&counters.packed_miss_by,
+                &["kind", "hole", "oob", "other"]),
     })
+}
+
+#[cfg(feature = "execution-trace")]
+fn l1_profile(counters: &Counters) -> serde_json::Value {
+    let event = |event: Event| counters.events[event as usize];
+    let mut kernels = counters.kernels.iter().collect::<Vec<_>>();
+    kernels.sort_unstable_by_key(|(_, counts)| std::cmp::Reverse(counts.0));
+    let kernels = kernels
+        .into_iter()
+        .take(32)
+        .map(|(id, counts)| serde_json::json!({"id": id, "hits": counts.0, "deopts": counts.1}))
+        .collect::<Vec<_>>();
+    serde_json::json!({
+            "shape_hits": event(Event::ShapeKernelHit),
+            "crypto": {"hits": event(Event::CryptoKernelHit),
+                "direct_iterations": counters.crypto_direct_iterations},
+            "counted": {"attempts": event(Event::CountedForAttempt),
+                "hits": event(Event::CountedForHit), "deopts": event(Event::CountedForDeopt),
+                "recognized": event(Event::CountedForRecognized),
+                "per_iteration_rejects": event(Event::CountedForPerIteration)},
+            "leaf": leaf_profile(event),
+            "kernels": kernels,
+    })
+}
+
+#[cfg(feature = "execution-trace")]
+fn host_profile(counters: &Counters) -> serde_json::Value {
+    let targets = counters
+        .call_targets
+        .iter()
+        .filter(|(name, _)| **name != "Function");
+    let host_calls = targets.clone().map(|(_, count)| *count).sum::<u64>();
+    let by_target = targets
+        .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
+        .collect::<serde_json::Map<_, _>>();
+    serde_json::json!({"host_calls": host_calls, "by_target": by_target})
+}
+
+#[cfg(feature = "execution-trace")]
+fn top_opcodes(counts: &[u64], include_slow: bool) -> Vec<serde_json::Value> {
+    let mut rows = (1..=crate::ir::Opcode::COUNT)
+        .filter_map(|id| {
+            let opcode = crate::ir::Opcode::from_u8(id)?;
+            (counts[id as usize] != 0 && (include_slow || !opcode.is_slow()))
+                .then_some((opcode.name(), counts[id as usize]))
+        })
+        .collect::<Vec<_>>();
+    rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.1));
+    rows.into_iter()
+        .take(8)
+        .map(|(opcode, count)| serde_json::json!({"opcode": opcode, "count": count}))
+        .collect()
+}
+
+#[cfg(feature = "execution-trace")]
+fn top_map(map: &HashMap<&'static str, u64>, limit: usize) -> Vec<serde_json::Value> {
+    let mut rows = map.iter().collect::<Vec<_>>();
+    rows.sort_unstable_by_key(|row| std::cmp::Reverse(*row.1));
+    rows.into_iter()
+        .take(limit)
+        .map(|(name, count)| serde_json::json!({"op": name, "count": count}))
+        .collect()
+}
+
+#[cfg(feature = "execution-trace")]
+fn named_buckets(map: &HashMap<&'static str, u64>, names: &[&str]) -> serde_json::Value {
+    serde_json::Value::Object(
+        names
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_owned(),
+                    serde_json::json!(map.get(name).copied().unwrap_or(0)),
+                )
+            })
+            .collect(),
+    )
+}
+
+#[cfg(feature = "execution-trace")]
+fn property_payload(results: &HashMap<&'static str, u64>) -> serde_json::Value {
+    let mut out = HashMap::<&str, u64>::new();
+    for (name, count) in results {
+        let kind = if name.contains("binding_cell") {
+            "binding_cell"
+        } else if name.ends_with(":number") {
+            "number"
+        } else if name.ends_with(":object") {
+            "object"
+        } else if name.ends_with(":function") {
+            "function"
+        } else {
+            "other"
+        };
+        *out.entry(kind).or_default() += count;
+    }
+    serde_json::json!({
+        "number": out.get("number").copied().unwrap_or(0),
+        "object": out.get("object").copied().unwrap_or(0),
+        "function": out.get("function").copied().unwrap_or(0),
+        "binding_cell": out.get("binding_cell").copied().unwrap_or(0),
+        "other": out.get("other").copied().unwrap_or(0),
+    })
+}
+
+#[cfg(feature = "execution-trace")]
+fn leaf_profile(event: impl Fn(Event) -> u64) -> serde_json::Value {
+    serde_json::json!({"attempt": event(Event::LeafAttempt), "hit": event(Event::LeafHit),
+        "reject_length": event(Event::LeafRejectLength),
+        "reject_opcode": event(Event::LeafRejectOpcode) + event(Event::LeafRejectRegister),
+        "reject_call": event(Event::LeafRejectCall),
+        "reject_control": event(Event::LeafRejectControl) + event(Event::LeafRejectDepth)})
 }
 
 #[cfg(feature = "execution-trace")]
@@ -455,6 +623,9 @@ pub(crate) fn function_call_shape(_: u16, _: usize, _: Option<crate::machine::Co
 #[cfg(feature = "execution-trace")]
 pub(crate) fn descriptor_object(origin: &'static str) {
     if enabled() {
+        if origin == "view" {
+            allocation("descriptor_view");
+        }
         COUNTERS.with(|state| {
             *state
                 .borrow_mut()
@@ -591,6 +762,37 @@ static ENABLED: OnceLock<bool> = OnceLock::new();
 #[cfg(feature = "execution-trace")]
 thread_local! {
     static COUNTERS: RefCell<Counters> = RefCell::new(Counters::default());
+    static DECODE_SITE: std::cell::Cell<DecodeSite> = const { std::cell::Cell::new(DecodeSite::Other) };
+    static CURRENT_OP: std::cell::Cell<&'static str> = const { std::cell::Cell::new("outside_vm") };
+}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) struct DecodeGuard(DecodeSite, &'static str);
+
+#[cfg(feature = "execution-trace")]
+impl Drop for DecodeGuard {
+    fn drop(&mut self) {
+        DECODE_SITE.with(|site| site.set(self.0));
+        CURRENT_OP.with(|name| name.set(self.1));
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) struct DecodeGuard;
+
+#[inline(always)]
+fn enter_decode(site: DecodeSite, name: &'static str) -> DecodeGuard {
+    #[cfg(feature = "execution-trace")]
+    {
+        let previous_site = DECODE_SITE.with(|current| current.replace(site));
+        let previous_name = CURRENT_OP.with(|current| current.replace(name));
+        DecodeGuard(previous_site, previous_name)
+    }
+    #[cfg(not(feature = "execution-trace"))]
+    {
+        let _ = (site, name);
+        DecodeGuard
+    }
 }
 
 #[inline(always)]
@@ -607,7 +809,8 @@ pub(crate) const fn enabled() -> bool {
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
-pub(crate) fn compact(opcode: crate::ir::Opcode) {
+pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    let guard = enter_decode(decode_site_for_opcode(opcode, false), opcode.name());
     if enabled() {
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
@@ -619,23 +822,30 @@ pub(crate) fn compact(opcode: crate::ir::Opcode) {
             }
         });
     }
+    guard
 }
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn compact(_: crate::ir::Opcode) {}
+pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    enter_decode(DecodeSite::Other, opcode.name())
+}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
-pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) {
+pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    let guard = enter_decode(decode_site_for_opcode(opcode, true), opcode.name());
     if enabled() {
         COUNTERS.with(|counters| counters.borrow_mut().leaf_compact[opcode as usize] += 1);
     }
+    guard
 }
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn leaf_compact(_: crate::ir::Opcode) {}
+pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    enter_decode(DecodeSite::Other, opcode.name())
+}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
@@ -658,7 +868,8 @@ pub(crate) fn operands(_: crate::ir::Instruction) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
-pub(crate) fn slow(op: &crate::ops::Op) {
+pub(crate) fn slow(op: &crate::ops::Op) -> DecodeGuard {
+    let guard = enter_decode(decode_site_for_slow(op.variant_name()), op.variant_name());
     if enabled() {
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
@@ -682,6 +893,7 @@ pub(crate) fn slow(op: &crate::ops::Op) {
             counters.retire_operands(OperandKey { name, a, b, c });
         });
     }
+    guard
 }
 
 #[cfg(feature = "execution-trace")]
@@ -729,7 +941,9 @@ fn constant_name(value: &crate::ops::Constant) -> &'static str {
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn slow(_: &crate::ops::Op) {}
+pub(crate) fn slow(op: &crate::ops::Op) -> DecodeGuard {
+    enter_decode(DecodeSite::Other, op.variant_name())
+}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
@@ -808,6 +1022,120 @@ pub(crate) fn event(event: Event) {
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn event(_: Event) {}
+
+#[cfg(feature = "execution-trace")]
+fn record_value_decode(counters: &mut Counters, site: DecodeSite, op: &'static str) {
+    if counters.events.is_empty() {
+        counters.events.resize(EVENT_NAMES.len(), 0);
+    }
+    counters.events[Event::ValueDecode as usize] += 1;
+    *counters
+        .value_decode_by_site
+        .entry(site.name())
+        .or_default() += 1;
+    if matches!(site, DecodeSite::Other | DecodeSite::LeafOther) {
+        count_named(&mut counters.value_decode_other_by_op, op);
+    }
+}
+
+#[inline(always)]
+pub(crate) fn value_decode_current() {
+    #[cfg(feature = "execution-trace")]
+    {
+        let site = DECODE_SITE.with(std::cell::Cell::get);
+        if enabled() {
+            let op = CURRENT_OP.with(std::cell::Cell::get);
+            COUNTERS.with(|counters| record_value_decode(&mut counters.borrow_mut(), site, op));
+        }
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn decode_site_for_opcode(opcode: crate::ir::Opcode, leaf: bool) -> DecodeSite {
+    if leaf {
+        return match opcode {
+            crate::ir::Opcode::GetN => DecodeSite::LeafGetN,
+            crate::ir::Opcode::LoadLocal => DecodeSite::LeafLoad,
+            crate::ir::Opcode::LoadLocalChecked => DecodeSite::LeafLoadChecked,
+            _ => DecodeSite::LeafOther,
+        };
+    }
+    match opcode {
+        crate::ir::Opcode::GetN => DecodeSite::GetN,
+        crate::ir::Opcode::SetN => DecodeSite::SetN,
+        crate::ir::Opcode::Move => DecodeSite::Move,
+        crate::ir::Opcode::LoadLocal => DecodeSite::Load,
+        crate::ir::Opcode::LoadLocalChecked => DecodeSite::LoadChecked,
+        _ => DecodeSite::Other,
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn decode_site_for_slow(name: &str) -> DecodeSite {
+    match name {
+        "LoadBinding" | "ResolveBinding" | "ResolveBindingTarget" => DecodeSite::EnvLoad,
+        "LoadLocal" => DecodeSite::Load,
+        "LoadLocalChecked" | "CheckInitialized" => DecodeSite::LoadChecked,
+        "Move" => DecodeSite::Move,
+        "GetProperty" | "GetPropertyDynamic" => DecodeSite::GetN,
+        "SetProperty" | "SetPropertyDynamic" => DecodeSite::SetN,
+        _ => DecodeSite::Other,
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn count_named(map: &mut HashMap<&'static str, u64>, name: &'static str) {
+    if map.len() < 64 || map.contains_key(name) {
+        *map.entry(name).or_default() += 1;
+    } else {
+        *map.entry("other").or_default() += 1;
+    }
+}
+
+#[inline(always)]
+pub(crate) fn packed_miss(reason: &'static str) {
+    event(Event::PackedArrayMiss);
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        COUNTERS.with(|counters| count_named(&mut counters.borrow_mut().packed_miss_by, reason));
+    }
+    let _ = reason;
+}
+
+#[inline(always)]
+pub(crate) fn allocation(kind: &'static str) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        COUNTERS.with(|counters| count_named(&mut counters.borrow_mut().allocations, kind));
+    }
+    let _ = kind;
+}
+
+#[inline(always)]
+pub(crate) fn last_index(kind: &'static str) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        COUNTERS.with(|counters| count_named(&mut counters.borrow_mut().last_index, kind));
+    }
+    let _ = kind;
+}
+
+#[inline(always)]
+pub(crate) fn kernel(id: &'static str, deopt: bool) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() {
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            let counts = counters.kernels.entry(id).or_default();
+            if deopt {
+                counts.1 += 1
+            } else {
+                counts.0 += 1
+            }
+        });
+    }
+    let _ = (id, deopt);
+}
 
 #[cfg(feature = "execution-trace")]
 pub fn snapshot() -> Option<serde_json::Value> {
@@ -978,7 +1306,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
             }).collect::<Vec<_>>();
             let lanes = lane_profile(&counters, compact_total, slow_total);
             serde_json::json!({
-                "schema": 4,
+                "schema": 5,
                 "compact_total": compact_total,
                 "slow_total": slow_total,
                 "guest_total": compact_total,
@@ -1036,11 +1364,36 @@ mod lane_profile_tests {
         counters.events[Event::CountedForHit as usize] = 4;
         counters.events[Event::CountedForDeopt as usize] = 1;
         let profile = lane_profile(&counters, 10, 2);
-        assert_eq!(profile["l1"]["counted_hits"], 4);
-        assert_eq!(profile["l1"]["counted_deopts"], 1);
+        assert_eq!(profile["l1"]["counted"]["hits"], 4);
+        assert_eq!(profile["l1"]["counted"]["deopts"], 1);
         assert_eq!(profile["l2"]["handlers"], 8);
         assert_eq!(profile["l3"]["handlers"], 2);
         assert_eq!(profile["l2"]["vm_share_ppm"], 800_000);
+    }
+
+    #[test]
+    fn attributes_getn_decode_to_its_site() {
+        let mut counters = Counters::default();
+        record_value_decode(
+            &mut counters,
+            decode_site_for_opcode(crate::ir::Opcode::GetN, false),
+            "GetN",
+        );
+        assert_eq!(counters.events[Event::ValueDecode as usize], 1);
+        assert_eq!(counters.value_decode_by_site.get("getn"), Some(&1));
+    }
+
+    #[test]
+    fn keeps_descriptor_events_independent_from_view_allocations() {
+        let mut counters = Counters {
+            events: vec![0; EVENT_NAMES.len()],
+            ..Counters::default()
+        };
+        counters.descriptor_objects.insert("view", 3);
+        counters.allocations.insert("descriptor_view", 2);
+        let profile = lane_profile(&counters, 0, 0);
+        assert_eq!(profile["l3"]["descriptor_objects"]["view"], 3);
+        assert_eq!(profile["l3"]["alloc"]["descriptor_view"], 2);
     }
 }
 

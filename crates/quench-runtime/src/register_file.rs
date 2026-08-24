@@ -356,7 +356,7 @@ impl RegisterFile {
     }
 
     pub fn read(&self, index: usize) -> Option<Value> {
-        crate::execution_trace::event(crate::execution_trace::Event::ValueDecode);
+        crate::execution_trace::value_decode_current();
         crate::execution_trace::event(crate::execution_trace::Event::RegisterFileRead);
         let word = *self.words.get(index)?;
         decode_owned(word)

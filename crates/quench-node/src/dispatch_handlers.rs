@@ -112,6 +112,105 @@ pub fn util_inspect(
     Ok(Value::String(crate::modules::util::inspect(&arg)))
 }
 
+pub fn util_promisify(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(original) = args.first().cloned() else {
+        return Err(VmError::NotCallable);
+    };
+    if !quench_runtime::is_callable(&original) {
+        return Err(VmError::NotCallable);
+    }
+    if let Some(name) = timer_promise_alias(&original) {
+        let timers = crate::modules::require::require(
+            state,
+            &[Value::String("timers/promises".to_string())],
+        );
+        if let Ok(timers) = timers {
+            return Ok(execute::get_property(&timers, name));
+        }
+    }
+    Ok(bound_custom(crate::registry::SPEC_UTIL_PROMISIFIED_CALL.cap, vec![original]))
+}
+
+fn timer_promise_alias(value: &Value) -> Option<&'static str> {
+    let Value::BoundFunction(bound) = value else {
+        return None;
+    };
+    let Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+        quench_runtime::ops::HostCapabilityKind::Custom(cap),
+    )) = bound.target
+    else {
+        return None;
+    };
+    match cap {
+        0x0700 => Some("setTimeout"),
+        0x0702 => Some("setInterval"),
+        0x0704 => Some("setImmediate"),
+        _ => None,
+    }
+}
+
+pub fn util_promisified_call(
+    _: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(original) = args.first() else {
+        return Err(VmError::NotCallable);
+    };
+    let promise = Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Pending,
+    ));
+    let callback = bound_custom(
+        crate::registry::SPEC_UTIL_PROMISIFIED_CALLBACK.cap,
+        vec![Value::Promise(Rc::clone(&promise))],
+    );
+    let mut call_args = args.get(1..).unwrap_or_default().to_vec();
+    call_args.push(callback);
+    match quench_runtime::vm::call_value(original, &Value::Undefined, &call_args) {
+        Ok(_) => {}
+        Err(VmError::Thrown(error)) => quench_runtime::reject_promise(&promise, error),
+        Err(_) => quench_runtime::reject_promise(&promise, Value::Undefined),
+    }
+    Ok(Value::Promise(promise))
+}
+
+pub fn util_promisified_callback(
+    _: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Value::Promise(promise) = args.first().cloned().unwrap_or(Value::Undefined) else {
+        return Err(VmError::NotCallable);
+    };
+    let error = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(error, Value::Undefined | Value::Null) {
+        quench_runtime::reject_promise(&promise, error);
+    } else {
+        let values = args.get(2..).unwrap_or_default();
+        let value = match values {
+            [] => Value::Undefined,
+            [value] => value.clone(),
+            values => host_api::array(values.to_vec()),
+        };
+        quench_runtime::resolve_promise(&promise, value);
+    }
+    Ok(Value::Undefined)
+}
+
+fn bound_custom(cap: u16, arguments: Vec<Value>) -> Value {
+    host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(cap),
+        },
+        arguments,
+    )
+}
+
 // ---- url ----
 pub fn url_parse(
     state: &Rc<RefCell<HostState>>,
@@ -231,6 +330,13 @@ pub fn timers_method_refresh(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     Ok(crate::modules::timers::method_refresh(state, receiver))
+}
+pub fn timers_method_to_primitive(
+    _: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::timers::method_to_primitive(receiver))
 }
 pub fn timers_run_loop(
     state: &Rc<RefCell<HostState>>,
