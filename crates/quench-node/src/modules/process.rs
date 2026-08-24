@@ -151,6 +151,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_ON),
         ),
         (
+            "addListener",
+            crate::host::capability(crate::registry::SPEC_PROCESS_ON),
+        ),
+        (
             "once",
             crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
         ),
