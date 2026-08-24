@@ -142,13 +142,21 @@ fn splice(
     let start = relative_index(arguments.first(), length as isize) as usize;
     let start = start.min(length);
     let item_count = arguments.len().saturating_sub(2);
-    let delete_count = if arguments.len() < 2 {
-        length - start
-    } else {
-        crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?
+    let delete_count = match arguments.len() {
+        0 => 0,
+        1 => length - start,
+        _ => crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?
             .max(0.0)
-            .min((length - start) as f64) as usize
+            .min((length - start) as f64) as usize,
     };
+    const MAX_SAFE_LENGTH: usize = 9_007_199_254_740_991;
+    let resulting_length = length
+        .saturating_sub(delete_count)
+        .checked_add(item_count)
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid array length"))?;
+    if resulting_length > MAX_SAFE_LENGTH {
+        return Err(crate::value::error::throw_type_error("Invalid array length"));
+    }
     let removed_target = crate::builtins::array_species_create(&target, delete_count)?;
     let mut removed = removed_target;
     for offset in 0..delete_count {
@@ -162,6 +170,11 @@ fn splice(
             )?;
         }
     }
+    removed = crate::properties::assign_set_property(
+        &removed,
+        "length",
+        Value::Number(delete_count as f64),
+    )?;
     if let Value::Array(values) = &target {
         if values.is_packed_ordinary() {
             let mut updated = values.to_vec();
@@ -230,7 +243,7 @@ fn splice(
         )?;
         target = crate::locals::resolved_replacement(target);
     }
-    let new_length = length - delete_count + item_count;
+    let new_length = resulting_length;
     target = crate::properties::assign_set_property(
         &crate::locals::resolved_replacement(target),
         "length",
