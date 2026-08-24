@@ -678,6 +678,23 @@ pub fn inspect(value: &Value) -> String {
 }
 
 fn inspect_string(value: &str) -> String {
+    if value.len() > 60 && value.contains('\n') {
+        let lines = value.split('\n').collect::<Vec<_>>();
+        let mut result = inspect_string_segment(lines[0]);
+        for line in lines.iter().skip(1) {
+            if let Some(quote) = result.pop() {
+                result.push_str("\\n");
+                result.push(quote);
+            }
+            result.push_str(" +\n  ");
+            result.push_str(&inspect_string_segment(line));
+        }
+        return result;
+    }
+    inspect_string_segment(value)
+}
+
+fn inspect_string_segment(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     let quote = if value.contains('\'') && !value.contains('"') {
         '"'
@@ -904,10 +921,14 @@ fn inspect_object(value: &Value, depth: usize) -> String {
     });
     let keys = quench_runtime::execute::own_enumerable_keys(value);
     if keys.is_empty() {
-        return if let Some(name) = constructor_name {
-            format!("[{name}: null prototype] {{}}")
-        } else if null_prototype {
-            "[Object: null prototype] {}".into()
+        return if null_prototype {
+            if let Some(name) = constructor_name {
+                format!("[{name}: null prototype] {{}}")
+            } else {
+                "[Object: null prototype] {}".into()
+            }
+        } else if let Some(name) = constructor_name {
+            format!("{name} {{}}")
         } else {
             "{}".into()
         };
