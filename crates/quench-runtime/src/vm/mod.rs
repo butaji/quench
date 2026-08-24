@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 mod realm;
 mod scope;
-mod vm_arithmetic;
+pub(crate) mod vm_arithmetic;
 pub(crate) mod vm_ops;
 mod vm_typed_bigint;
 pub use crate::intl::tolocale::value::is_truthy;
