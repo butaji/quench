@@ -47,6 +47,9 @@ pub fn wasi(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
 pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("worker_threads.js"))
 }
+pub fn async_hooks(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("async_hooks.js"))
+}
 
 pub fn sea_is_sea(
     _state: &Rc<RefCell<HostState>>,
