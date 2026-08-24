@@ -262,15 +262,14 @@ pub fn concat(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    concat_values(args)
+}
+
+/// Shared Buffer.concat semantics for the generated host path and legacy adapter.
+pub fn concat_values(args: &[Value]) -> Result<Value, VmError> {
     let list = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(list, Value::Array(_)) {
-        // Node reports a Buffer passed where an Array is required through its
-        // ordinary object classification, even though Buffer is a byte view.
-        let received = if matches!(list, Value::Uint8Array(_)) {
-            " Received an instance of Object".to_string()
-        } else {
-            crate::modules::util::invalid_arg_received(&list)
-        };
+        let received = crate::modules::util::invalid_arg_received(&list);
         return Err(enc::invalid_arg_type(format!(
             "The \"list\" argument must be an instance of Array.{}",
             received

@@ -170,59 +170,7 @@ fn type_name(value: &Value) -> &'static str {
 }
 
 fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
-    let list = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let Value::Array(_) = list else {
-        let received = match &list {
-            Value::Undefined => "undefined".into(),
-            Value::Null => "null".into(),
-            Value::Uint8Array(_) => "an instance of Buffer".into(),
-            _ => format!("type {}", type_name(&list)),
-        };
-        return Err(VmError::Thrown(fs_error(
-            "ERR_INVALID_ARG_TYPE",
-            &format!("The \"list\" argument must be an instance of Array. Received {received}"),
-        )));
-    };
-    let values = array_values(&list)?;
-    if let Some(value) = arguments.get(1) {
-        match value {
-            Value::Number(value) if !value.is_finite() || value.fract() != 0.0 => {
-                return Err(VmError::Thrown(fs_error(
-                    "ERR_OUT_OF_RANGE",
-                    "The \"length\" argument must be an integer",
-                )));
-            }
-            Value::Number(value) if *value < 0.0 => {
-                return Err(VmError::Thrown(fs_error(
-                    "ERR_OUT_OF_RANGE",
-                    "The \"length\" argument must be >= 0",
-                )));
-            }
-            _ => {}
-        }
-    }
-    let mut bytes = Vec::new();
-    for (index, value) in values.iter().enumerate() {
-        if !matches!(value, Value::Uint8Array(_)) {
-            let received = match value {
-                Value::String(value) => format!("type string ('{}')", value),
-                Value::Number(value) => format!("type number ({value})"),
-                _ => format!("type {}", type_name(value)),
-            };
-            return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The \"list[{index}]\" argument must be an instance of Buffer or Uint8Array. Received {received}"))));
-        }
-        bytes.extend(string_or_bytes(Some(value))?);
-    }
-    let length = arguments.get(1).and_then(|value| match value {
-        Value::Number(value) => Some(*value as usize),
-        _ => None,
-    });
-    if let Some(length) = length {
-        let mut output = vec![0; length];
-        output[..bytes.len().min(length)].copy_from_slice(&bytes[..bytes.len().min(length)]);
-        return Ok(node_buffer(&output));
-    }
-    Ok(node_buffer(&bytes))
+    quench_node::modules::buffer::concat_values(arguments)
 }
 
 fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
