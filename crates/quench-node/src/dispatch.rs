@@ -70,6 +70,7 @@ const CAP_URL_FORMAT: u16 = 0x0501;
 const CAP_URL_RESOLVE: u16 = 0x0502;
 const CAP_URL_NEW: u16 = 0x0503;
 const CAP_URL_LEGACY_NEW: u16 = 40;
+const CAP_URL_RESOLVE_OBJECT: u16 = 0x0520;
 const CAP_URL_SEARCH: u16 = 0x0504;
 const CAP_QS_PARSE: u16 = 0x0600;
 const CAP_QS_STRINGIFY: u16 = 0x0601;
@@ -319,6 +320,7 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_URL_PARSE => url_parse,
         CAP_URL_FORMAT => url_format,
         CAP_URL_RESOLVE => url_resolve,
+        CAP_URL_RESOLVE_OBJECT => url_resolve_object,
         CAP_QS_PARSE => crate::modules::querystring_parse::parse,
         CAP_QS_STRINGIFY => crate::modules::querystring_stringify::stringify,
         CAP_QS_ESCAPE => crate::modules::querystring::escape,

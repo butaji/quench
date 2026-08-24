@@ -50,7 +50,7 @@ pub fn parse(
         .first()
         .map(value_to_string)
         .unwrap_or_default()
-        .trim()
+        .trim_matches(|character: char| character <= '\u{20}')
         .to_string();
     let url = if let Some((head, fragment)) = raw_url.split_once('#') {
         format!("{}#{}", normalize_legacy_input(head), fragment)
@@ -99,7 +99,7 @@ pub fn parse(
     }
     if matches!(
         parsed.get("protocol").map(String::as_str),
-        Some("http:" | "https:" | "ftp:" | "coap:")
+        Some("http:" | "https:" | "ftp:" | "coap:" | "ws:" | "wss:")
     ) {
         for key in ["host", "hostname"] {
             if let Some(value) = parsed.get_mut(key) {
@@ -132,7 +132,7 @@ pub fn parse(
     }
     if matches!(
         parsed.get("protocol").map(String::as_str),
-        Some("http:" | "https:" | "ftp:" | "coap:")
+        Some("http:" | "https:" | "ftp:" | "coap:" | "ws:" | "wss:")
     ) && parsed.get("host").is_some()
     {
         parsed.insert("slashes".into(), "true".into());
@@ -205,7 +205,28 @@ fn legacy_object(entries: Vec<(String, Value)>) -> Value {
     for (key, value) in entries {
         object = execute::set_property(object, &key, value);
     }
-    object
+    let method = crate::host::capability(crate::registry::SPEC_URL_RESOLVE_OBJECT);
+    let descriptor = host_api::object(vec![
+        ("value".into(), method),
+        ("writable".into(), Value::Boolean(true)),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    execute::define_property(object, "resolveObject", descriptor).unwrap_or(Value::Undefined)
+}
+
+pub fn resolve_object(
+    state: &Rc<RefCell<crate::host::HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let base = receiver
+        .and_then(|value| execute::get_property_result(value, "href").ok())
+        .map(|value| value_to_string(&value))
+        .unwrap_or_default();
+    let relative = args.first().map(value_to_string).unwrap_or_default();
+    let resolved = legacy_resolve(&base, &relative);
+    parse(state, &[Value::String(resolved)])
 }
 
 fn normalize_legacy_input(value: &str) -> String {
@@ -470,7 +491,9 @@ fn assemble_url(
 fn encode_auth(auth: &str) -> String {
     let mut out = String::new();
     for byte in auth.as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b':' | b'%') {
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'-' | b'.' | b'_' | b'~' | b':' | b'%' | b'\'')
+        {
             out.push(*byte as char);
         } else {
             out.push_str(&format!("%{byte:02X}"));
@@ -545,15 +568,24 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
         rest
     };
     let after_protocol = after_protocol.strip_prefix("//").unwrap_or(after_protocol);
-    if matches!(out.get("protocol").map(String::as_str), Some("javascript:")) {
+    if out
+        .get("protocol")
+        .is_some_and(|protocol| protocol.eq_ignore_ascii_case("javascript:"))
+    {
         if !after_protocol.is_empty() {
             out.insert("pathname".into(), after_protocol.to_string());
         }
         return out;
     }
-    let split = after_protocol
-        .char_indices()
-        .find(|(_, character)| matches!(character, '/' | ';' | ' ' | '"'));
+    let split = if after_protocol.contains('@') {
+        after_protocol
+            .char_indices()
+            .find(|(_, character)| *character == '/')
+    } else {
+        after_protocol
+            .char_indices()
+            .find(|(_, character)| matches!(character, '/' | ';' | ' ' | '"'))
+    };
     let (auth_host, pathname) = match split {
         Some((index, character)) if matches!(character, '/' | ';') => (
             &after_protocol[..index],
@@ -565,14 +597,19 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
         ),
         None => (after_protocol, String::new()),
     };
-    let authority = auth_host.strip_prefix("//").unwrap_or(auth_host);
+    let authority: String = auth_host
+        .strip_prefix("//")
+        .unwrap_or(auth_host)
+        .chars()
+        .filter(|character| !matches!(character, '\r' | '\n' | '\t'))
+        .collect();
     if let Some(at) = authority.rfind('@') {
         let (a, host) = authority.split_at(at);
         out.insert("auth".into(), a.to_string());
         let host = &host[1..];
         split_host_port(host, &mut out);
     } else {
-        split_host_port(authority, &mut out);
+        split_host_port(&authority, &mut out);
     }
     if !pathname.is_empty() {
         out.insert("pathname".into(), encode_path_component(&pathname));
@@ -651,6 +688,9 @@ fn legacy_resolve(from: &str, to: &str) -> String {
         return from.to_string();
     }
     if to.contains("://") {
+        return to.to_string();
+    }
+    if to.to_ascii_lowercase().starts_with("javascript:") {
         return to.to_string();
     }
     if to.starts_with('?') || to.starts_with('#') {
