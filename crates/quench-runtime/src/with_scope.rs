@@ -4,12 +4,14 @@ use crate::{completion::Completion, execute::VmError, ops::Op, value::Value};
 
 thread_local! {
     static OBJECTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    static CAPTURED_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct ScopeGuard;
 
 pub(crate) struct FunctionGuard {
     previous: Vec<Value>,
+    previous_base: usize,
 }
 
 // Closures created under `with` still need a dedicated dynamic-environment
@@ -17,19 +19,22 @@ pub(crate) struct FunctionGuard {
 impl FunctionGuard {
     pub(crate) fn isolate() -> Self {
         let previous = OBJECTS.with(|objects| objects.replace(Vec::new()));
-        Self { previous }
+        let previous_base = CAPTURED_BASE.with(|base| base.replace(0));
+        Self { previous, previous_base }
     }
 
     pub(crate) fn install(captured: &[Value]) -> Self {
         let live = captured.iter().map(live_object).collect();
         let previous = OBJECTS.with(|objects| objects.replace(live));
-        Self { previous }
+        let previous_base = CAPTURED_BASE.with(|base| base.replace(captured.len()));
+        Self { previous, previous_base }
     }
 }
 
 impl Drop for FunctionGuard {
     fn drop(&mut self) {
         OBJECTS.with(|objects| objects.replace(std::mem::take(&mut self.previous)));
+        CAPTURED_BASE.with(|base| base.set(self.previous_base));
     }
 }
 
@@ -384,6 +389,22 @@ pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
         return Ok(None);
     };
     crate::execute::get_property_result(&target, key).map(Some)
+}
+
+/// Resolve only objects introduced by a `with` in the current activation.
+/// Captured `with` objects remain an outer environment and therefore do not
+/// shadow the function's own var bindings.
+pub(crate) fn resolve_active_binding(key: &str) -> Result<Option<Value>, VmError> {
+    let (objects, base) = OBJECTS.with(|objects| {
+        (objects.borrow().clone(), CAPTURED_BASE.with(|base| base.get()))
+    });
+    for object in objects.iter().skip(base).rev() {
+        let object = live_object(object);
+        if has_property(&object, key)? && !is_unscopable(&object, key)? {
+            return crate::execute::get_property_result(&object, key).map(Some);
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
