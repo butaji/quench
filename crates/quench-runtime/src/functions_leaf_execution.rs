@@ -18,6 +18,15 @@ fn execute_proven_leaf(
     arguments: &[crate::value::Value],
 ) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
     let code = function.code.code()?;
+    let arguments_slot = u16::try_from(function.captures.len())
+        .ok()?
+        .saturating_add(function.params);
+    if function.code.uses_slot(arguments_slot)
+        || code_uses_arguments(code)
+        || code_uses_function_call(code)
+    {
+        return None;
+    }
     proven_leaf(function, code)?;
     let mut registers: [crate::value::Value; LEAF_REGISTERS] =
         std::array::from_fn(|_| crate::value::Value::Undefined);
@@ -28,6 +37,27 @@ fn execute_proven_leaf(
         code,
         &mut registers,
     ))
+}
+
+fn code_uses_arguments(code: crate::machine::CodeView<'_>) -> bool {
+    (0..code.len()).any(|pc| {
+        let Some(instruction) = code.instruction(pc) else {
+            return false;
+        };
+        instruction.opcode == crate::ir::Opcode::LoadLocalChecked
+            && code
+                .metadata_at(pc)
+                .and_then(|metadata| metadata.name.as_deref())
+                == Some("arguments")
+    })
+}
+
+fn code_uses_function_call(code: crate::machine::CodeView<'_>) -> bool {
+    (0..code.len()).any(|pc| {
+        code.metadata_at(pc)
+            .and_then(|metadata| metadata.name.as_deref())
+            .is_some_and(|name| matches!(name, "call" | "apply" | "bind"))
+    })
 }
 
 fn proven_leaf(
