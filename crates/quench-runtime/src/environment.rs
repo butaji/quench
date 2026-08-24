@@ -224,6 +224,31 @@ impl SlotStore {
         self.invariant();
     }
 
+    fn copy_from_register(
+        &self,
+        index: usize,
+        registers: &crate::register_file::RegisterFile,
+        source: u16,
+    ) -> bool {
+        self.ensure(index);
+        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
+            let Some(value) = registers.read(usize::from(source)) else {
+                return false;
+            };
+            *cell.borrow_mut() = value;
+            return true;
+        }
+        self.values_mut()
+            .copy_from(index, registers, usize::from(source))
+    }
+
+    fn existing_cell(&self, index: usize) -> Option<Rc<RefCell<Value>>> {
+        self.bridges()
+            .and_then(|bridges| bridges.get(index))
+            .and_then(Option::as_ref)
+            .map(Rc::clone)
+    }
+
     fn update_number(&self, index: usize, delta: f64) -> Option<(f64, f64)> {
         self.ensure(index);
         if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
@@ -392,6 +417,18 @@ impl BindingRef {
 
     fn store(&self, value: Value) {
         self.store.store(self.index, value);
+    }
+
+    fn copy_from_register(
+        &self,
+        registers: &crate::register_file::RegisterFile,
+        source: u16,
+    ) -> bool {
+        self.store.copy_from_register(self.index, registers, source)
+    }
+
+    fn existing_cell(&self) -> Option<Rc<RefCell<Value>>> {
+        self.store.existing_cell(self.index)
     }
 
     fn update_number(&self, delta: f64) -> Option<(f64, f64)> {
@@ -609,6 +646,19 @@ impl Environment {
             binding.store(value);
         }
         self.initialize(slot);
+    }
+
+    pub(crate) fn copy_from_register(
+        &self,
+        slot: u16,
+        registers: &crate::register_file::RegisterFile,
+        source: u16,
+    ) -> bool {
+        let copied = self.ensure_slot(slot).copy_from_register(registers, source);
+        if copied {
+            self.initialize(slot);
+        }
+        copied
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
@@ -858,6 +908,13 @@ impl Environment {
             .caller
             .as_ref()
             .is_some_and(|caller| caller.is_deleted(cell))
+    }
+
+    pub(crate) fn is_deleted_slot(&self, slot: u16) -> bool {
+        let Some(cell) = self.slot(slot).and_then(|binding| binding.existing_cell()) else {
+            return false;
+        };
+        self.is_deleted(&cell)
     }
 
     fn mark_deleted_cell(&self, cell: Rc<RefCell<Value>>) {
