@@ -157,12 +157,22 @@ fn run_instruction(
         Opcode::Return => read_register(registers, instruction.a)
             .map(crate::completion::Completion::Return)
             .map(Some),
-        Opcode::Slow => run_op(
-            registers,
-            code.cold(instruction)
-                .ok_or_else(|| VmError::EvalError("missing cold instruction".into()))?,
-            context,
-        ),
+        Opcode::Slow => {
+            let op = code
+                .cold(instruction)
+                .ok_or_else(|| VmError::EvalError("missing cold instruction".into()))?;
+            if matches!(op, crate::ops::Op::YieldStar { .. }) {
+                return match crate::generator::execute_yield_star(
+                    registers,
+                    op,
+                    crate::completion::Completion::Normal,
+                )? {
+                    Some(completion) => Ok(Some(completion)),
+                    None => Ok(None),
+                };
+            }
+            run_op(registers, op, context)
+        }
         _ => Err(VmError::EvalError("unsupported compact instruction".into())),
     }
 }
