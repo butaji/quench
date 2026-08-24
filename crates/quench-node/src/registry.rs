@@ -120,6 +120,10 @@ pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:slee
 pub const SPEC_TIMERS_CLOSE: NodeSpec = NodeSpec::new("timers:close", 0x070F);
 pub const SPEC_TIMERS_TO_PRIMITIVE: NodeSpec = NodeSpec::new("timers:toPrimitive", 0x071D);
 pub const SPEC_TIMERS_GET_LIBUV_NOW: NodeSpec = NodeSpec::new("timers:getLibuvNow", 0x0714);
+pub const SPEC_UTIL_PROMISIFY: NodeSpec = NodeSpec::new("util:promisify", 0x071E);
+pub const SPEC_UTIL_PROMISIFIED_CALL: NodeSpec = NodeSpec::new("util:promisifiedCall", 0x071F);
+pub const SPEC_UTIL_PROMISIFIED_CALLBACK: NodeSpec =
+    NodeSpec::new("util:promisifiedCallback", 0x0720);
 pub const SPEC_LINKED_LIST_INIT: NodeSpec = NodeSpec::new("internal/linkedlist:init", 0x0718);
 pub const SPEC_LINKED_LIST_REMOVE: NodeSpec = NodeSpec::new("internal/linkedlist:remove", 0x0719);
 pub const SPEC_LINKED_LIST_APPEND: NodeSpec = NodeSpec::new("internal/linkedlist:append", 0x071A);
