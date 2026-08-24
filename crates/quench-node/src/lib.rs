@@ -19,6 +19,7 @@ pub mod dispatch_buffer;
 pub mod dispatch_fs;
 pub mod dispatch_handlers;
 pub mod envelope;
+pub mod esm_imports;
 pub mod host;
 pub mod modules;
 pub mod registry;

@@ -875,8 +875,12 @@ pub fn abort_controller_abort(
     let Some(controller) = receiver else {
         return Ok(Value::Undefined);
     };
-    let signal = quench_runtime::execute::get_property(controller, "signal");
-    let signal = quench_runtime::execute::set_property(signal, "aborted", Value::Boolean(true));
+    let original_signal = quench_runtime::execute::get_property(controller, "signal");
+    let signal = quench_runtime::execute::set_property(
+        original_signal.clone(),
+        "aborted",
+        Value::Boolean(true),
+    );
     let reason = args.first().cloned().unwrap_or_else(|| {
         quench_runtime::host_api::object(vec![
             ("name".into(), Value::String("AbortError".into())),
@@ -887,6 +891,7 @@ pub fn abort_controller_abort(
         ])
     });
     let signal = quench_runtime::execute::set_property(signal, "reason", reason);
+    quench_runtime::execute::replace_value(&original_signal, &signal);
     let _ = quench_runtime::execute::set_property(controller.clone(), "signal", signal.clone());
     let event = quench_runtime::host_api::object(vec![
         ("type".into(), Value::String("abort".into())),
@@ -917,6 +922,7 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         Value::String(value) => value.clone(),
         Value::Number(value) => value.to_string(),
         Value::Boolean(value) => value.to_string(),
+        Value::Object(_) => "[object Object]".to_string(),
         _ => return Err(execute::type_error("Event type is invalid")),
     };
     let options = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -968,8 +974,12 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         ("\0event:cancelBubble".into(), Value::Boolean(false)),
         ("composed".into(), Value::Boolean(false)),
         ("isTrusted".into(), Value::Boolean(false)),
+        ("target".into(), Value::Null),
+        ("currentTarget".into(), Value::Null),
+        ("srcElement".into(), Value::Null),
         ("eventPhase".into(), Value::Number(0.0)),
         ("timeStamp".into(), Value::Number(0.0)),
+        ("Symbol.toStringTag".into(), Value::String("Event".into())),
         (
             "preventDefault".into(),
             crate::host::capability(crate::registry::SPEC_EVENT_PREVENT_DEFAULT),
@@ -1003,6 +1013,44 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
             ("configurable".into(), Value::Boolean(true)),
         ]),
     )
+}
+
+pub fn custom_event_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let event = event_new(state, args)?;
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let detail = if matches!(options, Value::Undefined) {
+        Value::Null
+    } else {
+        execute::get_property(&options, "detail")
+    };
+    let event = execute::set_property(
+        event,
+        "Symbol.toStringTag",
+        Value::String("CustomEvent".into()),
+    );
+    let event = execute::set_property(
+        event,
+        "constructor",
+        host_api::object(vec![("name".into(), Value::String("CustomEvent".into()))]),
+    );
+    execute::define_property(
+        event,
+        "detail",
+        host_api::object(vec![
+            ("value".into(), detail),
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(false)),
+        ]),
+    )
+}
+
+pub fn event_source(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
 }
 
 pub fn event_get_cancel_bubble(
@@ -1149,11 +1197,14 @@ pub fn event_stop_propagation(
 }
 
 pub fn event_stop_immediate(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
+        if let Some(identity) = receiver.object_identity() {
+            state.borrow_mut().stopped_events.insert(identity);
+        }
         let updated = execute::set_property(
             receiver.clone(),
             "\0event:cancelBubble",
@@ -1170,7 +1221,9 @@ pub fn event_composed_path(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     match receiver.map(|value| execute::get_property(value, "target")) {
-        Some(target) if !matches!(target, Value::Undefined) => Ok(host_api::array(vec![target])),
+        Some(target) if !matches!(target, Value::Undefined | Value::Null) => {
+            Ok(host_api::array(vec![target]))
+        }
         _ => Ok(host_api::array(Vec::new())),
     }
 }

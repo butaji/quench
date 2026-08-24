@@ -38,6 +38,19 @@ fn main() -> ExitCode {
             .and_then(|i| args.get(i + 1));
         return triage(filter);
     }
+    if args.iter().any(|a| a == "--all") {
+        let filter = args
+            .iter()
+            .position(|a| a == "--filter")
+            .and_then(|i| args.get(i + 1));
+        let timeout = args
+            .iter()
+            .position(|a| a == "--timeout-secs")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30);
+        return run_all(filter, timeout);
+    }
     run_manifest()
 }
 
@@ -122,7 +135,7 @@ fn triage(filter: Option<&String>) -> ExitCode {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;
     for path in &entries {
-        if triage_one(&exe, path) {
+        if triage_one(&exe, path, 30) {
             println!("{}", path.file_name().unwrap().to_string_lossy());
             passed += 1;
         }
@@ -133,7 +146,7 @@ fn triage(filter: Option<&String>) -> ExitCode {
 
 /// Run one fixture in a child process (crash isolation) with a
 /// 30-second timeout; report pass only on a clean zero exit.
-fn triage_one(exe: &PathBuf, path: &PathBuf) -> bool {
+fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> bool {
     use std::process::{Command, Stdio};
     let Ok(mut child) = Command::new(exe)
         .arg("--triage-one")
@@ -144,7 +157,7 @@ fn triage_one(exe: &PathBuf, path: &PathBuf) -> bool {
     else {
         return false;
     };
-    for _ in 0..600 {
+    for _ in 0..timeout_secs.saturating_mul(20) {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
@@ -154,4 +167,39 @@ fn triage_one(exe: &PathBuf, path: &PathBuf) -> bool {
     let _ = child.kill();
     let _ = child.wait();
     false
+}
+
+fn run_all(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
+    let root = PathBuf::from(PARALLEL_DIR);
+    let mut entries = quench_node_test::stages::discover_fixtures(&root);
+    entries.retain(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("test-"))
+            && filter.is_none_or(|needle| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(needle))
+            })
+    });
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
+    let mut passed = 0;
+    for path in &entries {
+        if triage_one(&exe, path, timeout_secs) {
+            passed += 1;
+            println!("PASS {}", path.display());
+        } else {
+            println!("FAIL {}", path.display());
+        }
+    }
+    println!(
+        "all: {passed} passed, {} failed, {} total",
+        entries.len() - passed,
+        entries.len()
+    );
+    if passed == entries.len() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
 }

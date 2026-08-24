@@ -38,6 +38,7 @@ pub struct HostState {
     pub emitters: crate::modules::emitter::EmitterRegistry,
     pub targets: crate::modules::event_target::TargetRegistry,
     pub prevented_events: HashSet<u64>,
+    pub stopped_events: HashSet<u64>,
     pub output: Option<OutputSink>,
     pub realm: RealmId,
     /// Directory stack for the CJS loader: top is the requiring module's dir.
@@ -77,6 +78,7 @@ impl NodeHost {
             emitters: crate::modules::emitter::EmitterRegistry::new(),
             targets: crate::modules::event_target::TargetRegistry::new(),
             prevented_events: HashSet::new(),
+            stopped_events: HashSet::new(),
             output: None,
             realm,
             dir_stack: Vec::new(),

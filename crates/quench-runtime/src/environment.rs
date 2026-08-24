@@ -44,17 +44,6 @@ impl TdzCells {
         Rc::new(Self(UnsafeCell::new(copy)))
     }
 
-    fn clone_prefix(source: &Rc<Self>, count: usize) -> Rc<Self> {
-        let copy = unsafe {
-            (&*source.0.get())
-                .iter()
-                .copied()
-                .filter(|slot| usize::from(*slot) < count)
-                .collect()
-        };
-        Rc::new(Self(UnsafeCell::new(copy)))
-    }
-
     fn insert(&self, slot: u16) {
         unsafe {
             (&mut *self.0.get()).insert(slot);
@@ -257,7 +246,7 @@ impl SlotStore {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct BindingRef {
+struct BindingRef {
     store: Rc<SlotStore>,
     index: usize,
 }
@@ -420,14 +409,19 @@ pub struct Environment {
     caller: Option<Rc<Self>>,
 }
 
-fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
-    source
-        .as_ref()
-        .map(|cells| TdzCells::clone_prefix(cells, count))
+impl Drop for Environment {
+    fn drop(&mut self) {
+        crate::execution_trace::environment_lifecycle(false);
+    }
+}
+
+fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
+    source.as_ref().map(TdzCells::clone_values)
 }
 
 impl Environment {
     pub(crate) fn new() -> Rc<Self> {
+        crate::execution_trace::environment_lifecycle(true);
         Rc::new(Self::default())
     }
 
@@ -445,26 +439,13 @@ impl Environment {
             })
             .collect::<Vec<_>>()
             .into();
-        // A captured environment may contain bindings belonging to its
-        // caller.  Do not carry immutable-slot markers for those discarded
-        // slots into the new function-local frame: slot numbers are reused
-        // by the callee after the captured prefix.
-        let immutable_slots = environment.immutable_slots.borrow().as_ref().map(|slots| {
-            slots
-                .iter()
-                .copied()
-                .filter(|slot| usize::from(*slot) < count)
-                .collect()
-        });
+        crate::execution_trace::environment_lifecycle(true);
         Rc::new(Self {
             slots: RefCell::new(SlotRefs::from_prefix(count, refs)),
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(immutable_slots),
-            // Captured bindings retain the live TDZ state of their parent;
-            // cloning here would freeze a declaration at its creation-time
-            // state and make later initialization invisible to closures.
+            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
@@ -535,11 +516,9 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        let captured_len = captures.slots.borrow().shared_prefix().len();
-        environment.uninitialized.replace(clone_tdz_prefix(
-            &captures.uninitialized.borrow(),
-            captured_len,
-        ));
+        environment
+            .uninitialized
+            .replace(clone_tdz(&captures.uninitialized.borrow()));
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
@@ -554,10 +533,6 @@ impl Environment {
     }
     pub(crate) fn len(&self) -> usize {
         self.slots.borrow().len()
-    }
-
-    pub(crate) fn captured_len(&self) -> usize {
-        self.slots.borrow().prefix.len()
     }
 
     pub(crate) fn get(&self, slot: u16) -> Value {
@@ -591,9 +566,6 @@ impl Environment {
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
-        if self.is_immutable_slot(slot) && !self.is_uninitialized(slot) {
-            return None;
-        }
         self.slot(slot)?.update_number(delta)
     }
 
@@ -724,38 +696,6 @@ impl Environment {
         self.eval_name_binding(name).map(|binding| binding.load())
     }
 
-    /// Direct eval temporarily publishes non-strict var/function names into
-    /// its caller's variable environment.  Keep the caller's prior aliases
-    /// so the publication can be scoped to the eval activation.
-    pub(crate) fn snapshot_eval_names(&self) -> Option<HashMap<String, BindingRef>> {
-        self.eval_names.borrow().clone()
-    }
-
-    pub(crate) fn restore_eval_names(&self, names: Option<HashMap<String, BindingRef>>) {
-        self.eval_names.replace(names);
-    }
-
-    pub(crate) fn snapshot_eval_name_chain(&self) -> Vec<Option<HashMap<String, BindingRef>>> {
-        let mut snapshots = vec![self.snapshot_eval_names()];
-        if let Some(caller) = &self.caller {
-            snapshots.extend(caller.snapshot_eval_name_chain());
-        }
-        snapshots
-    }
-
-    pub(crate) fn restore_eval_name_chain(
-        &self,
-        snapshots: &[Option<HashMap<String, BindingRef>>],
-    ) {
-        let Some((current, rest)) = snapshots.split_first() else {
-            return;
-        };
-        self.restore_eval_names(current.clone());
-        if let Some(caller) = &self.caller {
-            caller.restore_eval_name_chain(rest);
-        }
-    }
-
     pub(crate) fn eval_name_aliases_slot(&self, name: &str, slot: u16) -> bool {
         if self
             .eval_names
@@ -765,18 +705,12 @@ impl Environment {
         {
             return true;
         }
-        let Some(caller) = &self.caller else {
+        if self.slot(slot).is_some() {
             return false;
-        };
-        // A call frame keeps captured bindings as the same cells while
-        // appending its own slots.  Only continue through the caller chain
-        // for a captured slot; a newly allocated local with the same index
-        // must continue to shadow an eval binding in the caller.
-        let captured = self
-            .slot(slot)
-            .zip(caller.slot(slot))
-            .is_some_and(|(current, parent)| current.same(&parent));
-        captured && caller.eval_name_aliases_slot(name, slot)
+        }
+        self.caller
+            .as_ref()
+            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
@@ -1089,6 +1023,6 @@ mod tests {
             assert!(!environment.is_uninitialized(0));
             environment.get_number(0).unwrap()
         }));
-        let _ = (raw, slot, checked, current);
+        eprintln!("slot_probe iterations={ITERATIONS} raw={raw:?} slot={slot:?} checked={checked:?} current={current:?}");
     }
 }

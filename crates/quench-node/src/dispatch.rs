@@ -241,6 +241,8 @@ const CAP_EVENT_SET_CANCEL_BUBBLE: u16 = 0x011f;
 const CAP_DEFINE_EVENT_HANDLER: u16 = 0x0120;
 const CAP_EVENT_HANDLER_GET: u16 = 0x0121;
 const CAP_EVENT_HANDLER_SET: u16 = 0x0122;
+const CAP_CUSTOM_EVENT: u16 = 0x0123;
+const CAP_EVENT_SOURCE: u16 = 0x0124;
 const CAP_TEST_RUN: u16 = 0x1b00;
 const CAP_TEST_SKIP: u16 = 0x1b01;
 
@@ -261,6 +263,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_DEFINE_EVENT_HANDLER => handlers::define_event_handler,
         CAP_EVENT_HANDLER_GET => handlers::event_handler_get,
         CAP_EVENT_HANDLER_SET => handlers::event_handler_set,
+        CAP_EVENT_SOURCE => handlers::event_source,
         CAP_ABORT_SIGNAL_ABORT => handlers::abort_signal_abort,
         2044 => handlers::buffer_of,
         0x1a00 => crate::modules::compat_extra::sea_is_sea,
@@ -568,6 +571,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
         CAP_EVENT => handlers::event_new,
+        CAP_CUSTOM_EVENT => handlers::custom_event_new,
         _ => return None,
     })
 }
