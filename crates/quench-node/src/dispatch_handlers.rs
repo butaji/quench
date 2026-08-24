@@ -321,10 +321,12 @@ pub fn internal_binding(
         )]));
     }
     if name == "timers" {
-        return Ok(crate::host::namespace_object_from_pairs(vec![(
-            "getLibuvNow".to_string(),
-            crate::host::capability(crate::registry::SPEC_TIMERS_GET_LIBUV_NOW),
-        )]));
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            ("getLibuvNow".to_string(), crate::host::capability(crate::registry::SPEC_TIMERS_GET_LIBUV_NOW)),
+            ("scheduleTimer".to_string(), crate::host::capability(crate::registry::SPEC_TIMERS_SCHEDULE)),
+            ("toggleTimerRef".to_string(), crate::host::capability(crate::registry::SPEC_TIMERS_TOGGLE_REF)),
+            ("toggleImmediateRef".to_string(), crate::host::capability(crate::registry::SPEC_TIMERS_TOGGLE_IMMEDIATE_REF)),
+        ]));
     }
     Ok(crate::host::namespace_object_from_pairs(Vec::new()))
 }
@@ -336,6 +338,10 @@ pub fn timers_get_libuv_now(
 ) -> Result<Value, VmError> {
     Ok(Value::Number(crate::modules::timers::monotonic_ms() as f64))
 }
+
+pub fn timers_schedule(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
+pub fn timers_toggle_ref(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
+pub fn timers_toggle_immediate_ref(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
 
 pub fn internal_buffer_fill(
     _state: &Rc<RefCell<HostState>>,
