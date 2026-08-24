@@ -248,21 +248,26 @@ fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Va
     let (re, flags) = compiled_regex(receiver)?;
     let global = flags.contains('g');
     let mut out = String::new();
-    let mut rest = s.to_string();
+    let mut copied = 0;
+    let mut search = 0;
     loop {
-        let matched = find_match(&re, &rest, false)?;
-        let Some(m) = matched else { out.push_str(&rest); break };
+        let Some(m) = find_match_from(&re, s, search)? else { break };
         let start = m.start();
         let end = m.end();
-        out.push_str(&rest[..start]);
-        out.push_str(&expand_template(template, s, &rest, &m));
-        drop(m);
-        rest = rest[end..].to_string();
+        out.push_str(&s[copied..start]);
+        out.push_str(&expand_template(template, s, s, &m));
+        copied = end;
         if !global {
-            out.push_str(&rest);
             break;
         }
+        if start == end {
+            if end == s.len() { break; }
+            search = next_char(s, end);
+        } else {
+            search = end;
+        }
     }
+    out.push_str(&s[copied..]);
     Ok(Value::String(out))
 }
 
@@ -270,23 +275,28 @@ fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Resu
     let (re, flags) = compiled_regex(receiver)?;
     let global = flags.contains('g');
     let mut out = String::new();
-    let mut rest = s.to_string();
+    let mut copied = 0;
+    let mut search = 0;
     loop {
-        let matched = find_match(&re, &rest, false)?;
-        let Some(m) = matched else { out.push_str(&rest); break };
+        let Some(m) = find_match_from(&re, s, search)? else { break };
         let start = m.start();
         let end = m.end();
-        let args = replacer_args(s, &rest, &m, end);
-        drop(m);
-        out.push_str(&rest[..start]);
+        let args = replacer_args(s, s, &m, end);
+        out.push_str(&s[copied..start]);
         let replaced = crate::functions::execute_target(replacement, &Value::Undefined, &args)?;
         out.push_str(&value_to_string(&replaced));
-        rest = rest[end..].to_string();
+        copied = end;
         if !global {
-            out.push_str(&rest);
             break;
         }
+        if start == end {
+            if end == s.len() { break; }
+            search = next_char(s, end);
+        } else {
+            search = end;
+        }
     }
+    out.push_str(&s[copied..]);
     Ok(Value::String(out))
 }
 
