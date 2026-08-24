@@ -120,6 +120,7 @@ struct Counters {
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
     function_call_shapes: HashMap<(u16, usize, usize), u64>,
+    function_opcode_shapes: HashMap<(u16, u8, [u8; 16]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
 }
@@ -200,20 +201,38 @@ pub(crate) fn function_shape(captures: usize, code_len: usize, allocated: bool) 
 pub(crate) fn function_shape(_: usize, _: usize, _: bool) {}
 
 #[cfg(feature = "execution-trace")]
-pub(crate) fn function_call_shape(params: u16, captures: usize, code_len: usize) {
+pub(crate) fn function_call_shape(
+    params: u16,
+    captures: usize,
+    code: Option<crate::machine::CodeView<'_>>,
+) {
     if enabled() {
         COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            let code_len = code.map_or(0, crate::machine::CodeView::len);
             *counters
-                .borrow_mut()
                 .function_call_shapes
                 .entry((params, captures, code_len))
+                .or_default() += 1;
+            let Some(code) = code.filter(|code| code.len() <= 16) else {
+                return;
+            };
+            let mut opcodes = [0; 16];
+            for (pc, opcode) in opcodes.iter_mut().enumerate().take(code.len()) {
+                *opcode = code
+                    .instruction(pc)
+                    .map_or(0, |instruction| instruction.opcode as u8);
+            }
+            *counters
+                .function_opcode_shapes
+                .entry((params, code.len() as u8, opcodes))
                 .or_default() += 1;
         });
     }
 }
 
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn function_call_shape(_: u16, _: usize, _: usize) {}
+pub(crate) fn function_call_shape(_: u16, _: usize, _: Option<crate::machine::CodeView<'_>>) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn descriptor_object(origin: &'static str) {
@@ -577,6 +596,16 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     })
                 },
             ).collect::<Vec<_>>();
+            let mut function_opcode_shapes: Vec<_> = counters.function_opcode_shapes.iter().collect();
+            function_opcode_shapes.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
+            let function_opcode_shapes = function_opcode_shapes.into_iter().take(64).map(
+                |(&(params, len, opcodes), &count)| {
+                    let opcodes = opcodes[..usize::from(len)].iter().filter_map(|opcode| {
+                        crate::ir::Opcode::from_u8(*opcode).map(crate::ir::Opcode::name)
+                    }).collect::<Vec<_>>();
+                    serde_json::json!({"params": params, "opcodes": opcodes, "count": count})
+                },
+            ).collect::<Vec<_>>();
             serde_json::json!({
                 "schema": 2,
                 "compact_total": compact_total,
@@ -597,6 +626,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "object_shapes": object_shapes,
                 "function_shapes": function_shapes,
                 "function_call_shapes": function_call_shapes,
+                "function_opcode_shapes": function_opcode_shapes,
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
