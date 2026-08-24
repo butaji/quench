@@ -75,6 +75,7 @@ struct Counters {
     previous: Option<&'static str>,
     operand_transitions: HashMap<(OperandKey, OperandKey), u64>,
     previous_operand: Option<OperandKey>,
+    regexp: HashMap<String, (u64, u128, u128)>,
 }
 
 #[cfg(feature = "execution-trace")]
@@ -93,6 +94,22 @@ impl Counters {
         }
     }
 }
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn regexp(source: &str, compile_ns: u128, match_ns: u128) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            let sample = counters.regexp.entry(source.to_string()).or_default();
+            sample.0 += 1;
+            sample.1 += compile_ns;
+            sample.2 += match_ns;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn regexp(_: &str, _: u128, _: u128) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -369,6 +386,20 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     })
                 })
                 .collect::<Vec<_>>();
+            let mut regexp: Vec<_> = counters.regexp.iter().collect();
+            regexp.sort_unstable_by(|left, right| right.1 .2.cmp(&left.1 .2));
+            let regexp = regexp
+                .into_iter()
+                .take(64)
+                .map(|(source, &(calls, compile_ns, match_ns))| {
+                    serde_json::json!({
+                        "source": source,
+                        "calls": calls,
+                        "compile_ns": compile_ns,
+                        "match_ns": match_ns,
+                    })
+                })
+                .collect::<Vec<_>>();
             serde_json::json!({
                 "schema": 2,
                 "compact_total": compact_total,
@@ -385,6 +416,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
+                "regexp": regexp,
             })
         })
     })
