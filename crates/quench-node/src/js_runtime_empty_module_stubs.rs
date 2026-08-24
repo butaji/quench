@@ -65,9 +65,6 @@ pub(crate) fn empty_module_stub(name: &str) -> Option<Value> {
             ("readFile".into(), Value::Undefined),
             ("writeFile".into(), Value::Undefined),
         ])),
-        "node:diagnostics_channel" => Some(quench_runtime::host_api::object(vec![
-            ("channel".into(), Value::Undefined),
-        ])),
         "node:readline" => Some(quench_runtime::host_api::object(vec![
             ("createInterface".into(), Value::Undefined),
         ])),
