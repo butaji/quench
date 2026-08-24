@@ -327,6 +327,7 @@ fn to_object_value_in_realm(this_value: &Value, global: &Value) -> Value {
 
 fn to_object_value(this_value: &Value) -> Value {
     match this_value {
+        Value::WeakFunction(function) => to_object_value(&function.value()),
         Value::Object(_)
         | Value::Array(_)
         | Value::Function(_)
