@@ -253,13 +253,21 @@ pub fn is_utf8(value: &Value) -> Result<bool, VmError> {
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
         Value::Uint8Array(view) => {
+            if *view.buffer.detached.borrow() {
+                return Ok(true);
+            }
             let bytes = view.buffer.bytes.borrow();
             Ok(
                 std::str::from_utf8(&bytes[view.byte_offset..view.byte_offset + view.length])
                     .is_ok(),
             )
         }
-        Value::ArrayBuffer(buf) => Ok(std::str::from_utf8(&buf.bytes.borrow()).is_ok()),
+        Value::ArrayBuffer(buf) => {
+            if *buf.detached.borrow() {
+                return Ok(true);
+            }
+            Ok(std::str::from_utf8(&buf.bytes.borrow()).is_ok())
+        }
         _ => Err(invalid_arg_type(
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
@@ -273,10 +281,18 @@ pub fn is_ascii(value: &Value) -> Result<bool, VmError> {
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
         Value::Uint8Array(view) => {
+            if *view.buffer.detached.borrow() {
+                return Ok(true);
+            }
             let bytes = view.buffer.bytes.borrow();
             Ok(bytes[view.byte_offset..view.byte_offset + view.length].is_ascii())
         }
-        Value::ArrayBuffer(buf) => Ok(buf.bytes.borrow().is_ascii()),
+        Value::ArrayBuffer(buf) => {
+            if *buf.detached.borrow() {
+                return Ok(true);
+            }
+            Ok(buf.bytes.borrow().is_ascii())
+        }
         _ => Err(invalid_arg_type(
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),

@@ -57,6 +57,14 @@ pub fn build() -> Vec<(String, Value)> {
             "getCallSites".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES),
         ),
+        (
+            "TextEncoder".to_string(),
+            crate::host::capability(crate::registry::SPEC_TEXT_ENCODER_NEW),
+        ),
+        (
+            "TextDecoder".to_string(),
+            crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW),
+        ),
     ]
 }
 
