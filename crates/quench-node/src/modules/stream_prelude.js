@@ -98,7 +98,9 @@
     const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
       "binary", "ascii", "base64", "base64url", "hex", "buffer"];
     if (!valid.includes(name)) {
-      const error = new TypeError("Unknown encoding: " + encoding);
+      const shown = encoding && typeof encoding === "object" && !Array.isArray(encoding)
+        ? "{}" : encoding;
+      const error = new TypeError("Unknown encoding: " + shown);
       error.code = "ERR_UNKNOWN_ENCODING";
       throw error;
     }
@@ -476,6 +478,7 @@
     stream._writableState = {
       objectMode: !!options.objectMode,
       decodeStrings: options.decodeStrings !== false,
+      defaultEncoding: validateEncoding(options.defaultEncoding || "utf8"),
       highWaterMark: defaultHwm(options),
       buffered: 0,
       needDrain: false,
@@ -585,7 +588,9 @@
     }
 
     _write(chunk, encoding, callback) {
-      callback(new Error("The _write() method is not implemented"));
+      throw Object.assign(new Error("The _write() method is not implemented"), {
+        code: "ERR_METHOD_NOT_IMPLEMENTED"
+      });
     }
 
     get writableEnded() {
@@ -608,6 +613,11 @@
       return this._writableState.corked;
     }
 
+    setDefaultEncoding(encoding) {
+      this._writableState.defaultEncoding = validateEncoding(encoding);
+      return this;
+    }
+
     cork() {
       this._writableState.corked += 1;
       return this;
@@ -624,6 +634,7 @@
         callback = encoding;
         encoding = undefined;
       }
+      const encodingProvided = encoding !== undefined;
       const st = this._writableState;
       if (st.ended) {
         const error = new Error("write after end");
@@ -645,7 +656,9 @@
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
-      if (typeof encoding === "string") validateEncoding(encoding);
+      encoding = encodingProvided
+        ? validateEncoding(encoding)
+        : st.defaultEncoding;
       if (!st.objectMode && st.decodeStrings && typeof chunk === "string") {
         chunk = Buffer.from(chunk, encoding || "utf8");
         encoding = "buffer";
@@ -661,7 +674,7 @@
         normalized.set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
         chunk = normalized;
       }
-      if (!st.objectMode && isByteView && encoding === undefined) encoding = "buffer";
+      if (!st.objectMode && isByteView && !encodingProvided) encoding = "buffer";
       const chunkLength = writableChunkLength(this, chunk);
       st.buffered += chunkLength;
       updateNeedDrain(st);
@@ -745,6 +758,7 @@
           this._write(chunk, encoding, done);
         }
       } catch (error) {
+        if (this._write === WritableClass.prototype._write) throw error;
         done(error);
       }
       return !failed && st.buffered < st.highWaterMark;
