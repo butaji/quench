@@ -269,12 +269,7 @@ pub fn concat(
 pub fn concat_values(args: &[Value]) -> Result<Value, VmError> {
     let list = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(list, Value::Array(_)) {
-        // Buffer is a byte view, but Node names it explicitly in this error.
-        let received = if matches!(list, Value::Uint8Array(_)) {
-            " Received an instance of Buffer".to_string()
-        } else {
-            crate::modules::util::invalid_arg_received(&list)
-        };
+        let received = crate::modules::util::invalid_arg_received(&list);
         return Err(enc::invalid_arg_type(format!(
             "The \"list\" argument must be an instance of Array.{}",
             received
