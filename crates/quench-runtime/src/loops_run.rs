@@ -70,13 +70,7 @@ fn run_loop(
     }
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
-            crate::execution_trace::event(crate::execution_trace::Event::CountedForRecognized);
-            if !per_iteration.is_empty() {
-                crate::execution_trace::event(
-                    crate::execution_trace::Event::CountedForPerIteration,
-                );
-            }
-            dump_counted_shape(body, fact, per_iteration);
+            trace_counted_recognition(body, fact, per_iteration);
             if let Some(completion) = run_crypto_integer_kernel(fact, body) {
                 return Ok(completion);
             }
@@ -89,6 +83,8 @@ fn run_loop(
             if let Some(completion) = run_packed_loop_kernel(fact, body) {
                 return Ok(completion);
             }
+        } else {
+            dump_counted_rejection(loop_shape, test, update);
         }
     }
     if label.is_none() && !post_test && per_iteration.is_empty() {
@@ -128,6 +124,53 @@ fn run_loop(
     }
     Ok(crate::completion::Completion::Normal)
 }
+
+fn trace_counted_recognition(
+    body: crate::machine::CodeView<'_>,
+    fact: CountedForFact,
+    per_iteration: &[u16],
+) {
+    crate::execution_trace::event(crate::execution_trace::Event::CountedForRecognized);
+    if !per_iteration.is_empty() {
+        crate::execution_trace::event(crate::execution_trace::Event::CountedForPerIteration);
+    }
+    dump_counted_shape(body, fact, per_iteration);
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_counted_rejection(
+    fingerprint: u64,
+    test: crate::machine::CodeView<'_>,
+    update: crate::machine::CodeView<'_>,
+) {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+        std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_LOOP_SHAPES").is_some())
+        || !SEEN
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert(fingerprint)
+    {
+        return;
+    }
+    eprintln!("LOOP_REJECT hash={fingerprint} test_len={} update_len={}", test.len(), update.len());
+    dump_loop_fragment("test", test);
+    dump_loop_fragment("update", update);
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_loop_fragment(name: &str, code: crate::machine::CodeView<'_>) {
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).unwrap();
+        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
+        eprintln!("  {name}[{pc}]: {instruction:?} cold={cold:?}");
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+fn dump_counted_rejection(_: u64, _: crate::machine::CodeView<'_>, _: crate::machine::CodeView<'_>) {}
 
 #[cfg(feature = "execution-trace")]
 fn dump_counted_shape(
