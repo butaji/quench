@@ -202,6 +202,7 @@ pub struct ArgumentLive {
 
 impl ArrayData {
     pub fn new(values: Vec<Value>) -> Self {
+        crate::execution_trace::array_lifecycle(true);
         let length = values.len();
         let kind = classify_kind(&values);
         Self {
@@ -798,6 +799,12 @@ impl ArrayData {
                 live.deleted[index] = true;
             }
         }
+    }
+}
+
+impl Drop for ArrayData {
+    fn drop(&mut self) {
+        crate::execution_trace::array_lifecycle(false);
     }
 }
 

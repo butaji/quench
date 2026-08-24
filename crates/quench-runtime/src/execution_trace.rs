@@ -7,6 +7,47 @@
 #[cfg(feature = "execution-trace")]
 use std::{cell::RefCell, collections::HashMap, sync::OnceLock};
 
+macro_rules! heap_lifecycles {
+    ($($kind:ident => ($allocated:ident, $dropped:ident, $wire:literal)),+ $(,)?) => {
+        #[cfg(feature = "execution-trace")]
+        mod heap_lifecycle {
+            $(pub(super) static $allocated: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            pub(super) static $dropped: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);)+
+        }
+        $(
+            #[inline]
+            pub(crate) fn $kind(allocated: bool) {
+                let _ = allocated;
+                #[cfg(feature = "execution-trace")]
+                if enabled() {
+                    let counter = if allocated {
+                        &heap_lifecycle::$allocated
+                    } else {
+                        &heap_lifecycle::$dropped
+                    };
+                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        )+
+        #[cfg(feature = "execution-trace")]
+        fn heap_lifecycle_snapshot() -> serde_json::Value {
+            serde_json::json!({$($wire: {
+                "allocated": heap_lifecycle::$allocated.load(std::sync::atomic::Ordering::Relaxed),
+                "dropped": heap_lifecycle::$dropped.load(std::sync::atomic::Ordering::Relaxed),
+            }),+})
+        }
+    };
+}
+
+heap_lifecycles! {
+    environment_lifecycle => (ENV_ALLOCATED, ENV_DROPPED, "environment"),
+    function_lifecycle => (FUNCTION_ALLOCATED, FUNCTION_DROPPED, "function"),
+    object_lifecycle => (OBJECT_ALLOCATED, OBJECT_DROPPED, "object"),
+    array_lifecycle => (ARRAY_ALLOCATED, ARRAY_DROPPED, "array"),
+}
+
 macro_rules! execution_events {
     ($($name:ident => $wire:literal),+ $(,)?) => {
         #[derive(Clone, Copy)]
@@ -76,6 +117,7 @@ struct Counters {
     operand_transitions: HashMap<(OperandKey, OperandKey), u64>,
     previous_operand: Option<OperandKey>,
     regexp: HashMap<String, (u64, u128, u128)>,
+    object_shapes: HashMap<String, u64>,
 }
 
 #[cfg(feature = "execution-trace")]
@@ -110,6 +152,27 @@ pub(crate) fn regexp(source: &str, compile_ns: u128, match_ns: u128) {
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn regexp(_: &str, _: u128, _: u128) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn object_shape(properties: &crate::value::ObjectProperties) {
+    if enabled() {
+        let shape = properties
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .object_shapes
+                .entry(shape)
+                .or_default() += 1;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn object_shape(_: &crate::value::ObjectProperties) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -400,6 +463,13 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     })
                 })
                 .collect::<Vec<_>>();
+            let mut object_shapes: Vec<_> = counters.object_shapes.iter().collect();
+            object_shapes.sort_unstable_by(|left, right| right.1.cmp(left.1));
+            let object_shapes = object_shapes
+                .into_iter()
+                .take(64)
+                .map(|(shape, count)| serde_json::json!({"shape": shape, "count": count}))
+                .collect::<Vec<_>>();
             serde_json::json!({
                 "schema": 2,
                 "compact_total": compact_total,
@@ -417,6 +487,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
                 "regexp": regexp,
+                "object_shapes": object_shapes,
+                "heap_lifecycle": heap_lifecycle_snapshot(),
             })
         })
     })
