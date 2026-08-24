@@ -195,6 +195,7 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
         (ArrayPrototype, "constructor") => Some(Value::Builtin(Array)),
+        (ArrayPrototype, "length") => Some(Value::Number(0.0)),
         (ArrayPrototype, "Symbol.unscopables") => Some(array_unscopables()),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
         (Map, "groupBy") => Some(Value::Builtin(MapGroupBy)),
