@@ -275,7 +275,7 @@ mod arrays_from_tests {
 fn construct_result(
     receiver: Option<&Value>,
     length: usize,
-    _iterable: bool,
+    iterable: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let Some(constructor) = receiver else {
         return Ok(Value::array(Vec::new()));
@@ -285,10 +285,12 @@ fn construct_result(
             "TypedArray.from receiver is not a constructor",
         ));
     }
-    // The collected iterable length is known before construction. Typed-array
-    // constructors are fixed-length, so constructing with no argument would
-    // create a zero-byte view and make subsequent indexed writes disappear.
-    let arguments = vec![Value::Number(length as f64)];
+    // Iterable sources construct with no arguments; array-like sources pass
+    // the collected length. This distinction is observable by custom
+    // constructors and is part of Array.from's calling convention.
+    let arguments = iterable
+        .then(Vec::new)
+        .unwrap_or_else(|| vec![Value::Number(length as f64)]);
     crate::construct::construct_value(constructor, &arguments)
 }
 
