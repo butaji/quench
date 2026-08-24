@@ -18,6 +18,14 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         NODE_OS_BINDING.with(|stored| stored.replace(Some(binding.clone())));
         return Ok(binding);
     }
+    if name == "buffer" {
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "fill".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::BufferFill)),
+            ),
+        ]));
+    }
     if [
         "buffer",
         "cares_wrap",
