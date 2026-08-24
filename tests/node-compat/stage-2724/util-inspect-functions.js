@@ -24,5 +24,24 @@ assert.strictEqual(
   util.inspect(new DataView(buffer, 1, 2)),
   'DataView {\n  [byteLength]: 2,\n  [byteOffset]: 1,\n  [buffer]: ArrayBuffer { [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }\n}'
 );
+assert.strictEqual(
+  util.inspect(new ArrayBuffer(3), { showHidden: true, maxArrayLength: 2 }),
+  'ArrayBuffer { [Uint8Contents]: <00 00 ... 1 more byte>, [byteLength]: 3 }'
+);
+const typed = new Float32Array(new ArrayBuffer(8));
+typed[0] = 65;
+typed[1] = 97;
+assert.strictEqual(
+  util.inspect(typed, { showHidden: true }),
+  'Float32Array(2) [\n' +
+    '  65,\n' +
+    '  97,\n' +
+    '  [BYTES_PER_ELEMENT]: 4,\n' +
+    '  [length]: 2,\n' +
+    '  [byteLength]: 8,\n' +
+    '  [byteOffset]: 0,\n' +
+    '  [buffer]: ArrayBuffer { [byteLength]: 8 }\n' +
+    ']'
+);
 
 console.log('util.inspect function values: ok');
