@@ -220,11 +220,22 @@ pub fn resolve_object(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let base = receiver
+    let method_base = receiver
         .and_then(|value| execute::get_property_result(value, "href").ok())
-        .map(|value| value_to_string(&value))
-        .unwrap_or_default();
-    let relative = args.first().map(value_to_string).unwrap_or_default();
+        .and_then(|value| match value {
+            Value::String(value) if !value.is_empty() => Some(value),
+            _ => None,
+        });
+    let (base, relative) = match method_base {
+        Some(base) => (base, args.first().map(value_to_string).unwrap_or_default()),
+        None => (
+            args.first().map(value_to_string).unwrap_or_default(),
+            args.get(1).map(value_to_string).unwrap_or_default(),
+        ),
+    };
+    if base.is_empty() {
+        return Ok(Value::String(relative));
+    }
     let resolved = legacy_resolve(&base, &relative);
     parse(state, &[Value::String(resolved)])
 }
@@ -684,6 +695,9 @@ fn split_host_port(host: &str, out: &mut BTreeMap<String, String>) {
 }
 
 fn legacy_resolve(from: &str, to: &str) -> String {
+    if from.is_empty() {
+        return to.to_string();
+    }
     if to.is_empty() {
         return from.to_string();
     }
@@ -714,12 +728,39 @@ fn legacy_resolve(from: &str, to: &str) -> String {
         let last = base_path.rfind('/').unwrap_or(0);
         base_path[..last + 1].to_string()
     };
+    if protocol.is_empty() && !from.starts_with('/') {
+        let mut segments = base_dir
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        for segment in to.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." if segments.last().is_some_and(|value| value != "..") => {
+                    segments.pop();
+                }
+                ".." => segments.push("..".into()),
+                value => segments.push(value.into()),
+            }
+        }
+        return segments.join("/");
+    }
     let combined = if to.starts_with('/') {
         format!("{}{to}", host)
     } else {
         format!("{base_dir}{to}")
     };
     let normalized = normalize_path(&combined);
+    let preserve_trailing = base_dir.ends_with('/') && matches!(to, "." | "./" | ".." | "../");
+    let normalized = if preserve_trailing && !normalized.ends_with('/') {
+        format!("{normalized}/")
+    } else {
+        normalized
+    };
+    if protocol.is_empty() {
+        return normalized;
+    }
     format!("{protocol}//{normalized}")
 }
 
@@ -768,6 +809,7 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
         spec_fn("parse", "require:url:parse", 0x0500),
         spec_fn("format", "require:url:format", 0x0501),
         spec_fn("resolve", "require:url:resolve", 0x0502),
+        spec_fn("resolveObject", "require:url:resolveObject", 0x0520),
         (
             "Url",
             crate::host::capability(crate::registry::SPEC_URL_LEGACY_NEW),
