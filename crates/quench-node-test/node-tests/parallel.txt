@@ -29,7 +29,19 @@ test-fs-unlink-type-check.js
 test-fs-write-file-buffer.js
 test-regression-object-prototype.js
 test-stream-end-paused.js
+test-stream-err-multiple-callback-construction.js
+test-stream-error-once.js
+test-stream-event-names.js
 test-stream-ispaused.js
+test-stream-unshift-empty-chunk.js
+test-stream-uint8array.js
+test-stream-writable-error-callbacks.js
+test-stream-writable-destroy-option.js
+test-stream-writable-ended-state.js
+test-stream-writable-write-after-end.js
+test-async-local-storage-context.js
+test-timers-promises.js
+test-timers-interval-promises.js
 test-timers-api-refs.js
 test-timers-args.js
 test-timers-clear-null-does-not-throw-error.js
@@ -109,6 +121,7 @@ test-buffer-from.js
 test-buffer-isencoding.js
 test-buffer-iterator.js
 test-buffer-no-negative-allocation.js
+test-buffer-new.js
 test-buffer-over-max-length.js
 test-buffer-parent-property.js
 test-buffer-read.js
