@@ -297,7 +297,11 @@ pub(crate) fn execute_for_of(
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, slot, body, per_iteration, await_values, iterable, dst) =
         unpack_for_of(registers, op)?;
-    let iterator = crate::collections::iterator::open(iterable)?;
+    let iterator = if await_values {
+        crate::collections::iterator::open_async(iterable)?
+    } else {
+        crate::collections::iterator::open(iterable)?
+    };
     iterate_loop_values(
         registers,
         label,
