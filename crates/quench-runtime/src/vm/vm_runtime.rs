@@ -113,6 +113,15 @@ fn run_instruction(
             crate::locals::load_checked(registers, instruction.a, instruction.b, name)?;
             Ok(None)
         }
+        Opcode::StoreLocalChecked => {
+            let name = code
+                .metadata_at(pc)
+                .and_then(|metadata| metadata.name.as_deref())
+                .unwrap_or("binding");
+            crate::locals::check_initialized(instruction.a, name)?;
+            crate::locals::store(registers, instruction.a, instruction.b)?;
+            Ok(None)
+        }
         Opcode::UpdateLocal => {
             crate::locals::update(
                 registers,

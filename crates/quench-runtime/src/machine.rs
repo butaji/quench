@@ -363,6 +363,12 @@ impl CodeArena {
                 cursor += 2;
                 continue;
             }
+            if let Some(instruction) = lower_checked_local_store(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor]));
+                cursor += 2;
+                continue;
+            }
             if let Some(instruction) = lower_local_update(&body[cursor..]) {
                 self.instructions.push(instruction);
                 metadata.push(metadata_for(&body[cursor + 3]));
@@ -434,6 +440,13 @@ fn lower_checked_local_load(ops: &[Op]) -> Option<crate::ir::Instruction> {
         return None;
     };
     (checked == slot).then(|| crate::ir::Instruction::load_local_checked(*dst, *slot))
+}
+
+fn lower_checked_local_store(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::CheckInitialized { slot: checked, .. }, Op::StoreLocal { slot, src }, ..] = ops else {
+        return None;
+    };
+    (checked == slot).then(|| crate::ir::Instruction::store_local_checked(*slot, *src))
 }
 
 fn lower_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
@@ -1294,6 +1307,25 @@ mod tests {
             code.metadata_at(0)
                 .and_then(|metadata| metadata.name.as_deref()),
             Some("value")
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn checked_local_store_lowers_as_one_physical_instruction() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::CheckInitialized {
+                slot: 7,
+                name: "value".into(),
+            },
+            super::Op::StoreLocal { slot: 7, src: 2 },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::store_local_checked(7, 2))
         );
         assert!(code.cold_at(0).is_none());
     }
