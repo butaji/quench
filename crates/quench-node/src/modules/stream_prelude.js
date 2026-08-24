@@ -268,6 +268,9 @@
     unshift(chunk) {
       const st = this._readableState;
       if (chunk === null) return false;
+      if (chunk !== undefined && chunk !== null &&
+          typeof chunk.byteLength === "number" && chunk.byteLength === 0) return true;
+      if (typeof chunk === "string" && chunk.length === 0) return true;
       if (st.ended) st.ended = false;
       st.buffer.unshift(normalizeReadableChunk(this, chunk));
       st.reading = false;
