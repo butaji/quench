@@ -72,7 +72,7 @@ pub(crate) fn index_of(
         let key = index.to_string();
         // A getter may have replaced the receiver (copy-on-write) mid-search.
         let current = crate::locals::resolved_replacement(this.clone());
-        if crate::with_scope::has_property(&current, &key)?
+        if has_search_property(&current, &key)?
             && strict_equal(
                 &crate::execute::get_property_result(&current, &key)?,
                 search,
@@ -101,7 +101,7 @@ pub(crate) fn last_index_of(
         let key = index.to_string();
         // A getter may have replaced the receiver (copy-on-write) mid-search.
         let current = crate::locals::resolved_replacement(this.clone());
-        if crate::with_scope::has_property(&current, &key)?
+        if has_search_property(&current, &key)?
             && strict_equal(
                 &crate::execute::get_property_result(&current, &key)?,
                 search,
@@ -111,6 +111,19 @@ pub(crate) fn last_index_of(
         }
     }
     Ok(Value::Number(-1.0))
+}
+
+fn has_search_property(value: &Value, key: &str) -> Result<bool, crate::execute::VmError> {
+    if matches!(value, Value::Builtin(builtin) if crate::builtins::object::builtin_owns_property(*builtin, key)) {
+        return Ok(true);
+    }
+    if crate::with_scope::has_property(value, key)? {
+        return Ok(true);
+    }
+    Ok(!matches!(
+        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?,
+        Value::Undefined
+    ))
 }
 
 /// `ToIntegerOrInfinity` of an optional fromIndex, clamped for lastIndexOf.
