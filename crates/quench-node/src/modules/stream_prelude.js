@@ -795,6 +795,7 @@
           this.writable = false;
           this.writableErrored = error;
           if (callback) callback(error);
+          completeEndCallbacks(st, error);
           nextTick(() => this._emitter.emit("error", error));
           return;
         }
