@@ -351,7 +351,9 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            immutable_slots: RefCell::new(environment.immutable_slots.borrow().as_ref().map(|slots| {
+                slots.iter().copied().filter(|slot| usize::from(*slot) < count).collect()
+            })),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
