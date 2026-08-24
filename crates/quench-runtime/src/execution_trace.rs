@@ -132,7 +132,7 @@ struct Counters {
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
     function_call_shapes: HashMap<(u16, usize, usize), u64>,
-    function_opcode_shapes: HashMap<(u16, u8, [u8; 16]), u64>,
+    function_opcode_shapes: HashMap<(u16, u8, [u8; 32]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
     crypto_direct_iterations: u64,
@@ -231,10 +231,10 @@ pub(crate) fn function_call_shape(
                 .function_call_shapes
                 .entry((params, captures, code_len))
                 .or_default() += 1;
-            let Some(code) = code.filter(|code| code.len() <= 16) else {
+            let Some(code) = code.filter(|code| code.len() <= 32) else {
                 return;
             };
-            let mut opcodes = [0; 16];
+            let mut opcodes = [0; 32];
             for (pc, opcode) in opcodes.iter_mut().enumerate().take(code.len()) {
                 *opcode = code
                     .instruction(pc)
@@ -299,6 +299,22 @@ fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeV
             dump_function_fragment("test", test.code());
             dump_function_fragment("body", body.code());
             dump_function_fragment("update", update.code());
+        }
+        if let Some(crate::ops::Op::Branch {
+            then_ops, else_ops, ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("then", then_ops.code());
+            dump_function_fragment("else", else_ops.code());
+        }
+        if let Some(crate::ops::Op::Conditional {
+            consequent,
+            alternate,
+            ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("consequent", consequent.code());
+            dump_function_fragment("alternate", alternate.code());
         }
     }
 }
