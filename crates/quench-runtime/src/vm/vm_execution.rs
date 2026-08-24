@@ -402,11 +402,22 @@ pub(crate) fn execute_indirect_eval(code: crate::machine::CodeView<'_>) -> Resul
     let context = CURRENT_CONTEXT
         .with(|current| current.borrow().clone())
         .unwrap_or_else(|| Rc::new(VmContext::default()));
+    let caller = crate::locals::current();
+    let caller_global = caller.get(0);
+    if matches!(&caller_global, Value::Object(object) if object.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)) {
+        let environment = crate::environment::Environment::new();
+        environment.set(0, caller_global.clone());
+        let mut registers = crate::register_file::RegisterFile::new();
+        let _with_scope = crate::with_scope::FunctionGuard::isolate();
+        return execute_code_in_environment(code, &mut registers, &context, environment);
+    }
     if realm::context(context.realm()).is_some() {
         return execute_indirect_eval_in_realm(context.realm(), code);
     }
-    let global = current_global_object();
-    let caller = crate::locals::current();
+    let global = match caller_global {
+        Value::Undefined => current_global_object(),
+        value => value,
+    };
     let environment = crate::environment::Environment::new();
     environment.set(0, global.clone());
     let mut registers = crate::register_file::RegisterFile::new();

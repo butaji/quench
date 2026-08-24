@@ -205,6 +205,7 @@ fn run_property_op(
             | DefineProperty { .. }
             | CopyDataProperties { .. }
             | ResolveName { .. }
+            | ResolveStrictName { .. }
             | ResolveNameOrUndefined { .. }
             | SetName { .. }
             | CheckStrictName { .. }
@@ -444,6 +445,7 @@ fn run_get_set_property(
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
         HasPrivate { .. } => crate::with_scope::execute_has_private(registers, op)?,
         ResolveName { .. }
+        | ResolveStrictName { .. }
         | SetName { .. }
         | SetResolvedBinding { .. }
         | CheckStrictName { .. } => run_name_property(registers, op)?,
