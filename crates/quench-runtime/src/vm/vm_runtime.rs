@@ -89,6 +89,7 @@ fn run_instruction(
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::ir::Opcode;
     crate::execution_trace::compact(instruction.opcode);
+    crate::execution_trace::operands(instruction);
     match instruction.opcode {
         Opcode::Move => {
             copy_register(registers, instruction.a, instruction.b)?;
