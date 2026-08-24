@@ -46,6 +46,9 @@ fn reduce_local(
         dst: register,
         slot,
         name,
+        // Dynamic object environments shadow captured/outer bindings, but
+        // function parameters and body-local `var` slots belong to the
+        // activation and must win over a `with` property of the same name.
         dynamic: facts.has_dynamic_scope()
             || (facts.in_function && slot < facts.eval_var_scope_start),
     });
