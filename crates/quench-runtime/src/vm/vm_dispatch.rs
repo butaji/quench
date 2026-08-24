@@ -28,7 +28,7 @@ fn run_op(
     op: &Op,
     context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
-    crate::execution_trace::slow(op);
+    let _decode_guard = crate::execution_trace::slow(op);
     match classify_dispatch(op) {
         DispatchClass::Call => return run_call_completion(registers, op, context).map(Some),
         DispatchClass::Global => crate::vm::begin_global_declaration_batch(),
