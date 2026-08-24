@@ -349,7 +349,7 @@ pub fn fill(
 }
 
 /// Shared implementation for the public prototype method and internal binding.
-pub(crate) fn fill_view(receiver: Option<&Value>, args: &[Value]) -> HandlerResult {
+pub fn fill_view(receiver: Option<&Value>, args: &[Value]) -> HandlerResult {
     let view = this_view(receiver)?;
     if let Some(receiver) = receiver {
         if let Ok(Value::Number(length)) =
@@ -380,6 +380,23 @@ pub(crate) fn fill_view(receiver: Option<&Value>, args: &[Value]) -> HandlerResu
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// `internalBinding('buffer').fill(buffer, value, start, end, encoding)`.
+pub fn internal_fill(args: &[Value]) -> HandlerResult {
+    let buffer = args.first().ok_or(VmError::NotCallable)?;
+    if !matches!(buffer, Value::Uint8Array(_)) {
+        return Err(enc::invalid_arg_type(
+            "The first argument must be a Buffer or Uint8Array".to_string(),
+        ));
+    }
+    let reordered = [
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+        args.get(2).cloned().unwrap_or(Value::Undefined),
+        args.get(3).cloned().unwrap_or(Value::Undefined),
+        args.get(4).cloned().unwrap_or(Value::Undefined),
+    ];
+    fill_view(Some(buffer), &reordered)
 }
 
 fn validate_fill_bound(value: Option<&Value>, length: usize, name: &str) -> Result<(), VmError> {
