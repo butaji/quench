@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use crate::{execute::VmError, ops::Op, value::Value};
 
@@ -183,16 +183,16 @@ fn create_function(
     define_global(registers, name, descriptor)
 }
 
-fn binding_cell(name: &str, slot: u16, value: Option<&Value>) -> Rc<RefCell<Value>> {
+fn binding_cell(name: &str, slot: u16, value: Option<&Value>) -> Rc<crate::value::BindingCell> {
     let cell = raw_binding_cell(name).unwrap_or_else(|| crate::locals::slot_cell(slot));
     if let Some(value) = value {
-        *cell.borrow_mut() = value.clone();
+        cell.store(value.clone());
     }
     crate::locals::install_slot_cell(slot, Rc::clone(&cell));
     cell
 }
 
-fn raw_binding_cell(name: &str) -> Option<Rc<RefCell<Value>>> {
+fn raw_binding_cell(name: &str) -> Option<Rc<crate::value::BindingCell>> {
     let Value::Object(properties) = crate::vm::current_global_object() else {
         return None;
     };
@@ -235,11 +235,14 @@ fn immutable_descriptor(name: &str) -> Option<Descriptor> {
     })
 }
 
-fn value_descriptor(cell: Rc<RefCell<Value>>) -> Vec<(String, Value)> {
+fn value_descriptor(cell: Rc<crate::value::BindingCell>) -> Vec<(String, Value)> {
     vec![("value".to_string(), Value::BindingCell(cell))]
 }
 
-fn descriptor_with_flags(cell: Rc<RefCell<Value>>, current: &Descriptor) -> Vec<(String, Value)> {
+fn descriptor_with_flags(
+    cell: Rc<crate::value::BindingCell>,
+    current: &Descriptor,
+) -> Vec<(String, Value)> {
     data_descriptor(
         cell,
         current.writable,
@@ -249,7 +252,7 @@ fn descriptor_with_flags(cell: Rc<RefCell<Value>>, current: &Descriptor) -> Vec<
 }
 
 fn data_descriptor(
-    cell: Rc<RefCell<Value>>,
+    cell: Rc<crate::value::BindingCell>,
     writable: bool,
     enumerable: bool,
     configurable: bool,

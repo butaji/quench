@@ -1,6 +1,6 @@
 //! FinalizationRegistry intrinsics.
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     execute::VmError,
@@ -29,9 +29,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         (CALLBACK.into(), callback),
         (
             CELLS.into(),
-            Value::BindingCell(Rc::new(RefCell::new(Value::Array(Rc::new(
+            Value::BindingCell(crate::value::BindingCell::new(Value::Array(Rc::new(
                 ArrayData::new(Vec::new()),
-            ))))),
+            )))),
         ),
     ]))))
 }

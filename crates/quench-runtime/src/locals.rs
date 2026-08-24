@@ -124,7 +124,7 @@ impl Drop for GlobalLexicalGuard {
 pub(crate) struct IterationBinding {
     environment: Rc<Environment>,
     slot: u16,
-    previous: Option<Rc<RefCell<Value>>>,
+    previous: Option<Rc<crate::value::BindingCell>>,
 }
 
 impl IterationBinding {
@@ -589,11 +589,11 @@ pub(crate) fn load_parameter(
     Ok(())
 }
 
-pub(crate) fn slot_cell(slot: u16) -> Rc<RefCell<Value>> {
+pub(crate) fn slot_cell(slot: u16) -> Rc<crate::value::BindingCell> {
     current().slot_cell(slot)
 }
 
-pub(crate) fn install_slot_cell(slot: u16, cell: Rc<RefCell<Value>>) {
+pub(crate) fn install_slot_cell(slot: u16, cell: Rc<crate::value::BindingCell>) {
     current().install_slot_cell(slot, cell);
 }
 
