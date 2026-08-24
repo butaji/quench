@@ -48,6 +48,22 @@ pub(crate) fn get_named_cached_object(
     object: &crate::value::ObjectData,
     cache: &std::cell::Cell<u64>,
 ) -> Option<Value> {
+    match get_named_cached_payload(object, cache)? {
+        NamedCachedPayload::Cell(cell) => Some(unsafe { &*cell }.load()),
+        NamedCachedPayload::Value(value) => Some(value),
+    }
+}
+
+pub(crate) enum NamedCachedPayload {
+    Cell(*const crate::value::BindingCell),
+    Value(Value),
+}
+
+#[inline(always)]
+pub(crate) fn get_named_cached_payload(
+    object: &crate::value::ObjectData,
+    cache: &std::cell::Cell<u64>,
+) -> Option<NamedCachedPayload> {
     if object.has_replacement() {
         return None;
     }
@@ -56,7 +72,7 @@ pub(crate) fn get_named_cached_object(
     if let Some(value) = prototype_cache_hit(object, layout, cached) {
         crate::execution_trace::named_property_result("prototype", value);
         crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-        return Some(property_value(value));
+        return Some(named_cached_payload(value));
     }
     let (cached_layout, slot) = (cached & PROTOTYPE_CACHE_TAG == 0)
         .then(|| crate::machine::unpack_named_cache(cached))??;
@@ -64,7 +80,15 @@ pub(crate) fn get_named_cached_object(
         .then(|| object.hot_properties().get(slot as usize))??;
     crate::execution_trace::named_property_result("own", value);
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-    Some(property_value(value))
+    Some(named_cached_payload(value))
+}
+
+#[inline(always)]
+fn named_cached_payload(value: &Value) -> NamedCachedPayload {
+    match value {
+        Value::BindingCell(cell) => NamedCachedPayload::Cell(std::rc::Rc::as_ptr(cell)),
+        value => NamedCachedPayload::Value(property_value(value)),
+    }
 }
 
 /// Return a raw pointer to the canonical word cell on a guarded named hit.
@@ -75,25 +99,10 @@ pub(crate) fn get_named_cached_cell(
     object: &crate::value::ObjectData,
     cache: &std::cell::Cell<u64>,
 ) -> Option<*const crate::value::BindingCell> {
-    if object.has_replacement() {
-        return None;
+    match get_named_cached_payload(object, cache)? {
+        NamedCachedPayload::Cell(cell) => Some(cell),
+        NamedCachedPayload::Value(_) => None,
     }
-    let layout = object.semantic_layout_id();
-    let cached = cache.get();
-    let value = if cached & PROTOTYPE_CACHE_TAG != 0 {
-        prototype_cache_hit(object, layout, cached)?
-    } else {
-        let (expected, slot) = crate::machine::unpack_named_cache(cached)?;
-        let (_, value) = (layout == expected)
-            .then(|| object.hot_properties().get(slot as usize))??;
-        value
-    };
-    let Value::BindingCell(cell) = value else {
-        return None;
-    };
-    crate::execution_trace::named_property_result("word", value);
-    crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-    Some(std::rc::Rc::as_ptr(cell))
 }
 
 const PROTOTYPE_CACHE_TAG: u64 = 1 << 63;
