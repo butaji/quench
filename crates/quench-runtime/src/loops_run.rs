@@ -60,6 +60,11 @@ fn run_loop(
     let loop_shape = crate::execution_trace::loop_shape(body);
     let (post_test, dst, per_iteration) = config;
     run_fragment(init, registers)?;
+    if label.is_none() && !post_test && per_iteration.is_empty() {
+        if let Some(completion) = run_montgomery_reduce_kernel(test, body, update) {
+            return Ok(completion);
+        }
+    }
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
             dump_counted_shape(body, fact);

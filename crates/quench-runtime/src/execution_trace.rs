@@ -402,17 +402,19 @@ pub(crate) fn loop_shape(body: crate::machine::CodeView<'_>) -> u64 {
         let instruction = body.instruction(pc).expect("valid compact loop body");
         (instruction.opcode as u8).hash(&mut hasher);
         instruction.flags.hash(&mut hasher);
-        let name = body.cold(instruction).map_or_else(
-            || instruction.opcode.name(),
-            crate::ops::Op::variant_name,
-        );
+        let name = body
+            .cold(instruction)
+            .map_or_else(|| instruction.opcode.name(), crate::ops::Op::variant_name);
         name.hash(&mut hasher);
         names.push(name);
     }
     let fingerprint = hasher.finish();
     COUNTERS.with(|counters| {
         let mut counters = counters.borrow_mut();
-        let shape = counters.loop_shapes.entry(fingerprint).or_insert((0, 0, names));
+        let shape = counters
+            .loop_shapes
+            .entry(fingerprint)
+            .or_insert((0, 0, names));
         shape.0 += 1;
     });
     fingerprint
