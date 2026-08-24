@@ -18,8 +18,9 @@ impl ArrayKind {
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ArrayData {
+    identity: u64,
     values: DenseElements,
     length: usize,
     kind: std::cell::Cell<ArrayKind>,
@@ -31,6 +32,22 @@ pub struct ArrayData {
     deleted: Vec<bool>,
     prototype: std::cell::RefCell<Option<Value>>,
     argument_live: Option<Rc<RefCell<ArgumentLive>>>,
+}
+
+impl PartialEq for ArrayData {
+    fn eq(&self, other: &Self) -> bool {
+        self.values == other.values
+            && self.length == other.length
+            && self.kind == other.kind
+            && self.properties == other.properties
+            && self.descriptors == other.descriptors
+            && self.arguments == other.arguments
+            && self.strict_arguments == other.strict_arguments
+            && self.mapped == other.mapped
+            && self.deleted == other.deleted
+            && self.prototype == other.prototype
+            && self.argument_live == other.argument_live
+    }
 }
 
 /// The one authoritative dense element store. Numeric arrays carry only IEEE
@@ -188,6 +205,7 @@ impl ArrayData {
         let length = values.len();
         let kind = classify_kind(&values);
         Self {
+            identity: next_array_identity(),
             kind: std::cell::Cell::new(kind),
             values: DenseElements::from_values(values),
             length,
@@ -200,6 +218,10 @@ impl ArrayData {
             prototype: std::cell::RefCell::new(None),
             argument_live: None,
         }
+    }
+
+    pub(crate) fn identity(&self) -> u64 {
+        self.identity
     }
 
     pub(crate) fn new_arguments(values: Vec<Value>, strict: bool) -> Self {
@@ -788,6 +810,12 @@ impl ArrayData {
             }
         }
     }
+}
+
+fn next_array_identity() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 fn classify_kind(values: &[Value]) -> ArrayKind {
     classify_kind_with_holes(values, &[], values.len())
