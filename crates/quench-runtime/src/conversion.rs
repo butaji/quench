@@ -351,7 +351,11 @@ pub fn is_callable(value: &Value) -> bool {
         return is_callable(&cell.borrow());
     }
     match value {
-        Value::Builtin(crate::ops::Builtin::Math | crate::ops::Builtin::Reflect) => false,
+        Value::Builtin(
+            crate::ops::Builtin::Math
+            | crate::ops::Builtin::Json
+            | crate::ops::Builtin::Reflect,
+        ) => false,
         Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => false,
         Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
             false
