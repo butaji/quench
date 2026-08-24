@@ -477,6 +477,7 @@
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
       buffered: 0,
+      needDrain: false,
       pending: [],
       writing: false,
       ended: false,
@@ -491,6 +492,10 @@
     stream.writableAborted = false;
     if (options.write) stream._write = options.write;
     if (options.writev) stream._writev = options.writev;
+  }
+
+  function updateNeedDrain(state) {
+    state.needDrain = state.buffered >= state.highWaterMark;
   }
 
   function finishWritable(stream) {
@@ -529,6 +534,7 @@
       st.writing = true;
       const complete = (error) => {
         st.buffered -= total;
+        updateNeedDrain(st);
         st.writing = false;
         if (error) st.errored = true;
         for (const item of pending) if (item.callback) item.callback(error);
@@ -548,6 +554,7 @@
     }
     const item = st.pending.shift();
     st.buffered -= item.chunkLength;
+    updateNeedDrain(st);
     stream.write(item.chunk, item.encoding, item.callback);
   }
 
@@ -632,6 +639,7 @@
       if (!st.objectMode && isByteView && encoding === undefined) encoding = "buffer";
       const chunkLength = writableChunkLength(this, chunk);
       st.buffered += chunkLength;
+      updateNeedDrain(st);
       if (st.corked) {
         st.pending.push({ chunk, encoding, callback, chunkLength });
         return st.buffered < st.highWaterMark;
@@ -651,11 +659,14 @@
         }
         called = true;
         st.buffered -= chunkLength;
+        updateNeedDrain(st);
         st.writing = false;
         if (error) {
           st.errored = true;
+          this.writable = false;
+          this.writableErrored = error;
           if (callback) callback(error);
-          this._emitter.emit("error", error);
+          nextTick(() => this._emitter.emit("error", error));
           return;
         }
         if (callback) callback();
@@ -668,6 +679,7 @@
                 pending.map((item) => ({ chunk: item.chunk, encoding: item.encoding })),
                 (batchError) => {
                   st.buffered -= total;
+                  updateNeedDrain(st);
                   st.writing = false;
                   if (batchError) st.errored = true;
                   for (const item of pending) if (item.callback) item.callback(batchError);
@@ -678,6 +690,7 @@
               );
             } catch (batchError) {
               st.buffered -= total;
+              updateNeedDrain(st);
               st.writing = false;
               st.errored = true;
               for (const item of pending) if (item.callback) item.callback(batchError);
