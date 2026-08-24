@@ -124,6 +124,7 @@ struct Counters {
     descriptor_objects: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
     crypto_direct_iterations: u64,
+    loop_shapes: HashMap<u64, (u64, u64, Vec<&'static str>)>,
 }
 
 #[cfg(feature = "execution-trace")]
@@ -208,6 +209,9 @@ pub(crate) fn function_call_shape(
     code: Option<crate::machine::CodeView<'_>>,
 ) {
     if enabled() {
+        if let Some(code) = code {
+            dump_function_shape(params, captures, code);
+        }
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
             let code_len = code.map_or(0, crate::machine::CodeView::len);
@@ -229,6 +233,48 @@ pub(crate) fn function_call_shape(
                 .entry((params, code.len() as u8, opcodes))
                 .or_default() += 1;
         });
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeView<'_>) {
+    use std::hash::{Hash, Hasher};
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    static SEEN: OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> = OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_FUNCTION_SHAPES").is_some()) {
+        return;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    params.hash(&mut hasher);
+    captures.hash(&mut hasher);
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).expect("valid function instruction");
+        (instruction.opcode as u8).hash(&mut hasher);
+        instruction.flags.hash(&mut hasher);
+        instruction.a.hash(&mut hasher);
+        instruction.b.hash(&mut hasher);
+        instruction.c.hash(&mut hasher);
+        code.cold(instruction)
+            .map(crate::ops::Op::variant_name)
+            .hash(&mut hasher);
+    }
+    let fingerprint = hasher.finish();
+    if !SEEN
+        .get_or_init(Default::default)
+        .lock()
+        .expect("function shape trace lock")
+        .insert(fingerprint)
+    {
+        return;
+    }
+    eprintln!(
+        "FUNCTION_SHAPE params={params} captures={captures} len={} hash={fingerprint}",
+        code.len()
+    );
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).expect("valid function instruction");
+        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
+        eprintln!("  {pc}: {instruction:?} cold={cold:?}");
     }
 }
 
@@ -319,6 +365,53 @@ pub(crate) fn crypto_direct_iterations(count: usize) {
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn crypto_direct_iterations(_: usize) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn loop_shape(body: crate::machine::CodeView<'_>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    if !enabled() {
+        return 0;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut names = Vec::with_capacity(body.len());
+    for pc in 0..body.len() {
+        let instruction = body.instruction(pc).expect("valid compact loop body");
+        (instruction.opcode as u8).hash(&mut hasher);
+        instruction.flags.hash(&mut hasher);
+        let name = body.cold(instruction).map_or_else(
+            || instruction.opcode.name(),
+            crate::ops::Op::variant_name,
+        );
+        name.hash(&mut hasher);
+        names.push(name);
+    }
+    let fingerprint = hasher.finish();
+    COUNTERS.with(|counters| {
+        let mut counters = counters.borrow_mut();
+        let shape = counters.loop_shapes.entry(fingerprint).or_insert((0, 0, names));
+        shape.0 += 1;
+    });
+    fingerprint
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn loop_shape(_: crate::machine::CodeView<'_>) -> u64 {
+    0
+}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn loop_shape_iteration(fingerprint: u64) {
+    if fingerprint != 0 {
+        COUNTERS.with(|counters| {
+            if let Some(shape) = counters.borrow_mut().loop_shapes.get_mut(&fingerprint) {
+                shape.1 += 1;
+            }
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn loop_shape_iteration(_: u64) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -645,6 +738,16 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     serde_json::json!({"params": params, "opcodes": opcodes, "count": count})
                 },
             ).collect::<Vec<_>>();
+            let mut loop_shapes = counters.loop_shapes.iter().collect::<Vec<_>>();
+            loop_shapes.sort_unstable_by_key(|(_, shape)| std::cmp::Reverse(shape.1));
+            let loop_shapes = loop_shapes.into_iter().map(|(&fingerprint, shape)| {
+                serde_json::json!({
+                    "fingerprint": fingerprint,
+                    "entries": shape.0,
+                    "iterations": shape.1,
+                    "ops": shape.2,
+                })
+            }).collect::<Vec<_>>();
             serde_json::json!({
                 "schema": 2,
                 "compact_total": compact_total,
@@ -669,6 +772,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
                 "crypto_direct_iterations": counters.crypto_direct_iterations,
+                "loop_shapes": loop_shapes,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
             })
         })
