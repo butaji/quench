@@ -251,10 +251,11 @@ fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> 
     if !flags.contains('m') {
         return false;
     }
-    input
-        .as_bytes()
-        .get(last_index.saturating_sub(1))
-        .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
+    let bytes = input.as_bytes();
+    [last_index.saturating_sub(1), last_index]
+        .into_iter()
+        .filter_map(|index| bytes.get(index))
+        .any(|byte| *byte == b'\n' || *byte == b'\r')
 }
 
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
