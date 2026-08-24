@@ -79,6 +79,7 @@ execution_events! {
     LocalWordRead => "local_word_read",
     RegisterFileRead => "register_file_read",
     OwnedWordRead => "owned_word_read",
+    ShapeKernelHit => "shape_kernel_hit",
     RegisterWordCopy => "register_word_copy",
     PackedArrayGet => "packed_array_get",
     PackedArraySet => "packed_array_set",
