@@ -60,6 +60,22 @@ Use untraced benchmark scores and OS hardware counters for wall time, cycles,
 instructions, cache misses, and peak RSS; join them with this report by suite,
 binary commit, profile, and run number.
 
+On macOS, build a separate symbolized binary without execution tracing and
+join sampled self-time into the same report:
+
+```sh
+CARGO_TARGET_DIR=target-sample RUSTFLAGS='-C debuginfo=1' cargo build \
+  --profile bench-throughput -p quench-node
+node tools/analyze-quench-bench.cjs deltablue --sample-seconds 3 \
+  --sample-quench target-sample/bench-throughput/quench-node
+```
+
+`sample.top_self` contains the top 32 Quench symbols with sample counts and
+normalized `share_ppm`. The sample binary is untraced but remains separate
+from the stripped Score binary, so symbols do not perturb Score/RSS evidence.
+If macOS `sample` is unavailable, `sample.available` is false and the other
+measurements remain valid.
+
 For native admission debugging, enable `QUENCH_DUMP_LOOP_SHAPES=1`. Counted
 loop dumps include `per_iteration`, while `l1.counted_recognized`,
 `counted_per_iteration_rejects`, `counted_attempts`, `counted_hits`, and
