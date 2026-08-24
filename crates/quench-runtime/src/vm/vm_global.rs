@@ -65,17 +65,27 @@ pub(crate) fn resolve_global_owner(value: &Value) -> Option<Value> {
             return Some(Value::Object(staged));
         }
     }
+    // A deferred module namespace is an ordinary object for ownership
+    // purposes, but probing its `globalThis` marker would invoke its evaluator
+    // and violate the namespace's symbol-like-key deferral rules.
+    if crate::module_bindings::is_namespace(value) {
+        return None;
+    }
     // Global aliases expose a self-referential `globalThis` property.  That
     // owner marker survives copy-on-write storage replacement even when the
     // alias itself still points at the previous object allocation.
-    let global_this = RESOLVING_GLOBAL_OWNER.with(|active| {
-        if active.replace(true) {
-            return None;
-        }
-        let result = crate::execute::get_property_result(value, "globalThis");
-        active.set(false);
-        result.ok()
-    });
+    let global_this = if matches!(value, Value::ObjectAlias(_)) {
+        RESOLVING_GLOBAL_OWNER.with(|active| {
+            if active.replace(true) {
+                return None;
+            }
+            let result = crate::execute::get_property_result(value, "globalThis");
+            active.set(false);
+            result.ok()
+        })
+    } else {
+        None
+    };
     if global_this
         .and_then(|global_this| global_object_target(&global_this))
         .is_some_and(|global_this| global_this.identity() == object.identity())
