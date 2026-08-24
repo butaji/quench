@@ -243,6 +243,7 @@ fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(Strin
     let ordinary_dense_index = crate::arrays::array_index(key).is_some()
         && !accessor
         && writable == Some(&Value::Boolean(true))
+        && values.descriptor(key).is_none()
         && descriptor.iter().rev().find_map(|(name, value)| (name == "enumerable").then_some(value)) == Some(&Value::Boolean(true))
         && descriptor.iter().rev().find_map(|(name, value)| (name == "configurable").then_some(value)) == Some(&Value::Boolean(true));
     // A default indexed data descriptor is the dense element itself. Keeping

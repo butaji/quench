@@ -121,19 +121,14 @@ fn apply_slice(
         }
         return Ok(Value::Array(std::rc::Rc::new(data)));
     };
-    let mut target = target;
+    let mut target = crate::locals::resolved_replacement(target);
     let length = elements.len();
     for (index, value) in elements.into_iter().enumerate() {
         if !holes.contains(&index) {
-            target = crate::builtins::define_own_property(
-                &target,
+            target = crate::builtins::create_data_property_or_throw(
+                target,
                 &index.to_string(),
-                &[
-                    ("value".to_string(), value),
-                    ("writable".to_string(), Value::Boolean(true)),
-                    ("enumerable".to_string(), Value::Boolean(true)),
-                    ("configurable".to_string(), Value::Boolean(true)),
-                ],
+                value,
             )?;
         }
     }
