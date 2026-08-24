@@ -129,10 +129,10 @@ pub fn buffer_prototype() -> Value {
                 // `toString` (identity is observable).
                 let value = if spec.cap == r::SPEC_BUFFER_TOSTRING.cap {
                     to_string_fn
-                        .get_or_insert_with(|| crate::host::method_capability(*spec))
+                        .get_or_insert_with(|| crate::host::capability(*spec))
                         .clone()
                 } else {
-                    crate::host::method_capability(*spec)
+                    crate::host::capability(*spec)
                 };
                 (*name, value)
             })
