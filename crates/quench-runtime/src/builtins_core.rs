@@ -186,6 +186,9 @@ pub(crate) fn array_filter(
             output = output.saturating_add(1);
         }
     }
+    if matches!(&filtered, Value::Array(values) if values.logical_len() == output) {
+        return Ok(filtered);
+    }
     Ok(crate::builtins::set_property(
         filtered,
         "length",
@@ -244,7 +247,9 @@ fn create_data_property_or_throw(
                 ("configurable".to_string(), Value::Boolean(true)),
             ]))),
         );
-        return Ok(Value::Array(updated));
+        let replacement = Value::Array(updated.clone());
+        crate::locals::replace_value(&target, &replacement);
+        return Ok(replacement);
     }
     let target = if crate::builtins::descriptor_flag(&target, key, "configurable") == Some(true) {
         let (target, deleted) = crate::execute::delete_property(target, key);
