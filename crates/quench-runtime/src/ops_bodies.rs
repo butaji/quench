@@ -14,6 +14,7 @@ impl Op {
             | Self::MakeFunctionWithKind { body, .. }
             | Self::Label { body, .. }
             | Self::With { body, .. }
+            | Self::WithDispose { body, .. }
             | Self::PrivateScope { body, .. }
             | Self::StaticBlock { body, .. }
             | Self::IteratorBinding { body, .. }
@@ -52,6 +53,7 @@ impl Op {
             | Self::MakeFunctionWithKind { body, .. }
             | Self::Label { body, .. }
             | Self::With { body, .. }
+            | Self::WithDispose { body, .. }
             | Self::PrivateScope { body, .. }
             | Self::StaticBlock { body, .. }
             | Self::IteratorBinding { body, .. }

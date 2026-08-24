@@ -46,6 +46,7 @@ fn install_frame_resume_input(
         return true;
     }
     install_delegate_frame_input(generator, input)
+        || install_dispose_frame_input(generator, input)
         || install_try_frame_input(generator, input)
         || install_iterator_frame_input(generator, input)
         || install_private_frame_input(generator, input)

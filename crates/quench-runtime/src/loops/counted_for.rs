@@ -111,6 +111,23 @@ fn reduce_dynamic_for(
         .iter()
         .map(|name| (name, locals.get(name).copied()))
         .collect::<Vec<_>>();
+    let saved_predeclared = lexical_names
+        .iter()
+        .map(|name| {
+            (
+                name,
+                locals
+                    .get(&format!("\0lexical-predeclared:{name}"))
+                    .copied(),
+            )
+        })
+        .collect::<Vec<_>>();
+    for name in &lexical_names {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(name.clone(), slot);
+        locals.insert(format!("\0lexical-predeclared:{name}"), slot);
+    }
     let init = reduce_for_init(statement, facts, next_register, next_slot, locals)?;
     let test = super::reduce_fragment(statement.test.as_ref(), ops, facts, next_register, locals)?;
     let var_names = body_var_names(&statement.body);
@@ -152,6 +169,17 @@ fn reduce_dynamic_for(
             }
             None => {
                 locals.remove(name.as_str());
+            }
+        }
+    }
+    for (name, slot) in saved_predeclared {
+        let marker = format!("\0lexical-predeclared:{name}");
+        match slot {
+            Some(slot) => {
+                locals.insert(marker, slot);
+            }
+            None => {
+                locals.remove(&marker);
             }
         }
     }
