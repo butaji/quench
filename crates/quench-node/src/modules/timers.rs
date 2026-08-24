@@ -22,6 +22,7 @@ use crate::host::HostState;
 const TIMER_ID_PROP: &str = "\0quench:timer:id";
 /// Node's `TIMEOUT_MAX` (2^31 - 1); larger delays clamp to 1ms.
 const TIMEOUT_MAX: f64 = 2_147_483_647.0;
+const PROMISES_PRELUDE: &str = include_str!("timers_promises.js");
 
 pub enum TimerKind {
     Timeout,
@@ -394,4 +395,18 @@ pub fn build() -> Vec<(String, Value)> {
             crate::host::capability(crate::registry::SPEC_TIMERS_CLEARIMMEDIATE),
         ),
     ]
+}
+
+/// Build the Promise-returning timer namespace from the same timer
+/// capabilities as the callback API.
+pub fn build_promises() -> Result<Value, VmError> {
+    let program = quench_runtime::reduce::reduce_global_script_source(PROMISES_PRELUDE)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    let factory = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
+    })?;
+    let timers = crate::host::namespace_object_from_pairs(build());
+    quench_runtime::vm::call_value(&factory, &Value::Undefined, &[timers])
 }
