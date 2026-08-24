@@ -156,13 +156,9 @@ pub(super) fn with_realm<T>(id: RealmId, callback: impl FnOnce() -> T) -> Option
 
 pub(super) fn id_for_global(global: &ObjectProperties) -> Option<RealmId> {
     REALMS.with(|realms| {
-        realms
-            .borrow()
-            .iter()
-            .flatten()
-            .find_map(|state| {
-                (state.global.borrow().identity() == global.identity()).then_some(state.id)
-            })
+        realms.borrow().iter().flatten().find_map(|state| {
+            (state.global.borrow().identity() == global.identity()).then_some(state.id)
+        })
     })
 }
 

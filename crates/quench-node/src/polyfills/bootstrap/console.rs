@@ -10,17 +10,23 @@ class __quenchConsole {
     this._stderr = stderr;
   }
   log(...args) {
-    this._stdout?.write?.(
-      `${globalThis.__nodeUtil?.format?.(...args) ?? args.join(" ")}\n`,
-    );
+    const output = this._stdout;
+    if (output && typeof output.write === "function") {
+      const format = globalThis.__nodeUtil && globalThis.__nodeUtil.format;
+      const text = typeof format === "function" ? format(...args) : args.join(" ");
+      output.write(`${text}\n`);
+    }
   }
   info(...args) {
     this.log(...args);
   }
   warn(...args) {
-    this._stderr?.write?.(
-      `${globalThis.__nodeUtil?.format?.(...args) ?? args.join(" ")}\n`,
-    );
+    const output = this._stderr;
+    if (output && typeof output.write === "function") {
+      const format = globalThis.__nodeUtil && globalThis.__nodeUtil.format;
+      const text = typeof format === "function" ? format(...args) : args.join(" ");
+      output.write(`${text}\n`);
+    }
   }
   error(...args) {
     this.warn(...args);
