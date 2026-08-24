@@ -39,6 +39,20 @@ pub fn events_method_emit(
 ) -> Result<Value, VmError> {
     crate::modules::events::method_emit(state, receiver, args)
 }
+pub fn events_capture_get(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::events::capture_rejections_get(state, args)
+}
+pub fn events_capture_set(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::events::capture_rejections_set(state, args)
+}
 pub fn events_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::events::new_emitter(state, args)
 }
@@ -122,22 +136,28 @@ pub fn util_inspect(
         });
     let show_hidden = matches!(args.get(1), Some(Value::Boolean(true)))
         || args.get(1).is_some_and(|options| {
-            matches!(execute::get_property(options, "showHidden"), Value::Boolean(true))
+            matches!(
+                execute::get_property(options, "showHidden"),
+                Value::Boolean(true)
+            )
         });
     let max_array_length = args
         .iter()
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
-        .and_then(|options| match execute::get_property(options, "maxArrayLength") {
-            Value::Number(value) if value.is_finite() && value >= 0.0 => {
-                Some(value.floor() as usize)
-            }
-            _ => None,
-        });
+        .and_then(
+            |options| match execute::get_property(options, "maxArrayLength") {
+                Value::Number(value) if value.is_finite() && value >= 0.0 => {
+                    Some(value.floor() as usize)
+                }
+                _ => None,
+            },
+        );
     let getters = args.iter().any(|value| {
-        matches!(
-            value,
-            Value::Object(_) | Value::ObjectAlias(_)
-        ) && matches!(execute::get_property(value, "getters"), Value::Boolean(true))
+        matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+            && matches!(
+                execute::get_property(value, "getters"),
+                Value::Boolean(true)
+            )
     });
     Ok(Value::String(match depth {
         Some(depth) => crate::modules::util::inspect_with_options(
@@ -188,7 +208,10 @@ pub fn util_promisify(
             return Ok(execute::get_property(&timers, name));
         }
     }
-    Ok(bound_custom(crate::registry::SPEC_UTIL_PROMISIFIED_CALL.cap, vec![original]))
+    Ok(bound_custom(
+        crate::registry::SPEC_UTIL_PROMISIFIED_CALL.cap,
+        vec![original],
+    ))
 }
 
 fn timer_promise_alias(value: &Value) -> Option<&'static str> {
@@ -484,9 +507,10 @@ pub fn internal_binding(
         )]));
     }
     if name == "js_stream" {
-        return Ok(crate::host::namespace_object_from_pairs(vec![
-            ("JSStream".to_string(), crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM)),
-        ]));
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "JSStream".to_string(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM),
+        )]));
     }
     if name == "timers" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
@@ -515,12 +539,14 @@ pub fn internal_js_stream_construct(
     _state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let external = crate::host::namespace_object_from_pairs(vec![
-        ("__quench_external".into(), Value::Boolean(true)),
-    ]);
-    Ok(crate::host::namespace_object_from_pairs(vec![
-        ("_externalStream".into(), external),
-    ]))
+    let external = crate::host::namespace_object_from_pairs(vec![(
+        "__quench_external".into(),
+        Value::Boolean(true),
+    )]);
+    Ok(crate::host::namespace_object_from_pairs(vec![(
+        "_externalStream".into(),
+        external,
+    )]))
 }
 
 pub fn vm_source_text_module_construct(
@@ -533,8 +559,14 @@ pub fn vm_source_text_module_construct(
     )]);
     Ok(crate::host::namespace_object_from_pairs(vec![
         ("namespace".into(), namespace),
-        ("link".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-        ("evaluate".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        (
+            "link".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
+        (
+            "evaluate".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Object),
+        ),
     ]))
 }
 
@@ -1911,12 +1943,17 @@ pub fn util_type_predicate(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let predicate = args.iter().find_map(|value| match value {
-        Value::String(name) => Some(name.as_str()),
-        _ => None,
-    }).unwrap_or("");
+    let predicate = args
+        .iter()
+        .find_map(|value| match value {
+            Value::String(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .unwrap_or("");
     Ok(Value::Boolean(crate::modules::util::type_predicate(
         predicate,
-        args.iter().find(|value| !matches!(value, Value::String(_))).unwrap_or(&Value::Undefined),
+        args.iter()
+            .find(|value| !matches!(value, Value::String(_)))
+            .unwrap_or(&Value::Undefined),
     )))
 }
