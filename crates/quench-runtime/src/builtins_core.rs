@@ -70,7 +70,7 @@ pub(crate) fn array_map(
     Ok(mapped)
 }
 pub(crate) fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
-    if let Value::Array(values) = receiver {
+    if let Value::Array(values) = &receiver {
         return Ok(values.logical_len());
     }
     let length = crate::execute::get_property_result(receiver, "length")?;
@@ -84,11 +84,12 @@ pub(crate) fn map_value(
     receiver: &Value,
     index: usize,
 ) -> Result<Option<Value>, crate::execute::VmError> {
-    if let Value::Array(values) = receiver {
+    let receiver = crate::locals::resolved_replacement(receiver.clone());
+    if let Value::Array(values) = &receiver {
         let key = index.to_string();
         if values.descriptor(&key).is_some() {
-            return Ok(crate::with_scope::has_property(receiver, &key)?
-                .then(|| crate::execute::get_property_result(receiver, &key))
+            return Ok(crate::with_scope::has_property(&receiver, &key)?
+                .then(|| crate::execute::get_property_result(&receiver, &key))
                 .transpose()?);
         }
         return Ok(values
@@ -97,10 +98,10 @@ pub(crate) fn map_value(
             .flatten());
     }
     let key = index.to_string();
-    if !crate::with_scope::has_property(receiver, &key)? {
+    if !crate::with_scope::has_property(&receiver, &key)? {
         return Ok(None);
     }
-    crate::execute::get_property_result(receiver, &key).map(Some)
+    crate::execute::get_property_result(&receiver, &key).map(Some)
 }
 pub(crate) fn array_for_each(
     receiver: Option<&Value>,
