@@ -279,20 +279,22 @@ fn expected_property_matches(expected: &Value, actual: &Value) -> Result<bool, V
 }
 
 fn match_assert(args: &[Value], should_match: bool) -> Result<Value, VmError> {
-    let input = match arg(args, 0) {
-        Value::String(text) => text,
-        _ => {
-            return Err(execute::type_error(
-                "The \"string\" argument must be of type string",
-            ))
-        }
-    };
     let pattern = arg(args, 1);
     if !is_regexp(&pattern) {
-        return Err(execute::type_error(
-            "The \"regexp\" argument must be an instance of RegExp",
-        ));
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"regexp\" argument must be an instance of RegExp.{}",
+            crate::modules::util::invalid_arg_received(&pattern)
+        )));
     }
+    let input = match arg(args, 0) {
+        Value::String(text) => text,
+        value => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"string\" argument must be of type string.{}",
+                crate::modules::util::invalid_arg_received(&value)
+            )))
+        }
+    };
     let operator = if should_match {
         "match"
     } else {
