@@ -432,6 +432,11 @@ pub(crate) fn update(
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     let delta = if decrement { -1.0 } else { 1.0 };
     let environment = current();
+    if environment.is_immutable_slot(slot) && !environment.is_uninitialized(slot) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to immutable binding",
+        ));
+    }
     if !environment.is_uninitialized(slot) {
         if let Some((old, updated)) = environment.update_number(slot, delta) {
             registers.write_number(usize::from(old_dst), old);
