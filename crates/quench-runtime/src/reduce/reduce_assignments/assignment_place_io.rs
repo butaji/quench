@@ -9,6 +9,15 @@ pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u1
         Place::DynamicLocal {
             name, slot, target, ..
         } => emit_dynamic_local_get(ops, dst, name, *slot, *target),
+        Place::Name {
+            name,
+            target: Some(target),
+            ..
+        } => ops.push(Op::LoadResolvedBinding {
+            dst,
+            target: *target,
+            name: name.clone(),
+        }),
         Place::Name { name, .. } => ops.push(Op::ResolveName {
             dst,
             key: name.clone(),

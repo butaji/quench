@@ -129,6 +129,10 @@ pub enum Op {
         dst: u16,
         name: String,
     },
+    ResolveActiveBindingTarget {
+        dst: u16,
+        name: String,
+    },
     InitializeResolvedBinding {
         target: u16,
         slot: u16,
@@ -153,6 +157,11 @@ pub enum Op {
         slot: u16,
         name: String,
         dynamic: bool,
+    },
+    LoadResolvedBinding {
+        dst: u16,
+        target: u16,
+        name: String,
     },
     LoadLocal {
         dst: u16,
@@ -243,6 +252,10 @@ pub enum Op {
         key: String,
     },
     ResolveName {
+        dst: u16,
+        key: String,
+    },
+    ResolveStrictName {
         dst: u16,
         key: String,
     },

@@ -73,7 +73,12 @@ pub(crate) fn reduce_named_declaration(
         None,
         self_name,
     );
-    (facts.strict, facts.in_function, facts.tail_calls) = inherited;
+    (
+        facts.strict,
+        facts.in_function,
+        facts.tail_calls,
+        facts.function_dynamic_scope_floor,
+    ) = inherited;
     reduced.ok_or_else(|| vec!["Unsupported function declaration body".to_string()])
 }
 
@@ -406,7 +411,12 @@ pub(crate) fn reduce_expression_kind(
         None,
         function.id.as_ref().map(|id| (id.name.as_str(), true)),
     );
-    (facts.strict, facts.in_function, facts.tail_calls) = inherited;
+    (
+        facts.strict,
+        facts.in_function,
+        facts.tail_calls,
+        facts.function_dynamic_scope_floor,
+    ) = inherited;
     let (body_ops, captures) = reduced?;
     Some(emit_function_expression(
         ops,
@@ -478,7 +488,12 @@ fn reduce_arrow_body(
         locals,
         Some(function.expression),
     );
-    (facts.strict, facts.in_function, facts.tail_calls) = inherited;
+    (
+        facts.strict,
+        facts.in_function,
+        facts.tail_calls,
+        facts.function_dynamic_scope_floor,
+    ) = inherited;
     let (body_ops, captures) = reduced?;
     Some((body_ops, captures, strictness))
 }

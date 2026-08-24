@@ -49,7 +49,7 @@ fn reduce_local(
         // Dynamic object environments shadow captured/outer bindings, but
         // function parameters and body-local `var` slots belong to the
         // activation and must win over a `with` property of the same name.
-        dynamic: facts.has_dynamic_scope()
+        dynamic: facts.has_active_dynamic_scope()
             || (facts.in_function && slot < facts.eval_var_scope_start),
     });
     Some(register)
@@ -63,7 +63,11 @@ fn resolve_name(
 ) -> Option<u16> {
     let dst = allocate_register(next_register);
     let key = interned_name(facts, identifier.name.as_str());
-    ops.push(Op::ResolveName { dst, key });
+    if facts.strict {
+        ops.push(Op::ResolveStrictName { dst, key });
+    } else {
+        ops.push(Op::ResolveName { dst, key });
+    }
     Some(dst)
 }
 
