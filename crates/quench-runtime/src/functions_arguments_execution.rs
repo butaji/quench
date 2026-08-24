@@ -51,6 +51,13 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
+    if let Some(result) = crate::loops::execute_crypto_integer_function(
+        function,
+        &receiver,
+        arguments,
+    ) {
+        return Ok(result);
+    }
     if matches!(function.kind, FunctionKind::Generator) {
         return crate::generator::create(function, &receiver, arguments);
     }
