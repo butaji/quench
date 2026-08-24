@@ -486,24 +486,26 @@ pub(crate) fn at(
             "Array.prototype.at called on null or undefined",
         ));
     };
-    let Value::Array(values) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.at called on non-array",
-        ));
-    };
+    let length = array_like_length(receiver)?;
     let number = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
     if number.is_nan() {
-        return Ok(values.first().unwrap_or(Value::Undefined));
+        return crate::execute::get_property_result(receiver, "0");
     }
     let index = number.trunc();
-    let length = values.len() as f64;
+    let length = length as f64;
     let position = if index < 0.0 { length + index } else { index };
     if position < 0.0 || position >= length {
         return Ok(Value::Undefined);
     }
-    Ok(values
-        .get_index(position as usize)
-        .unwrap_or(Value::Undefined))
+    let position = position as usize;
+    if receiver.is_typed_array() {
+        if crate::typed_array_prototype::is_out_of_bounds(receiver)
+            || !crate::typed_array_prototype::index_exists(receiver, position)
+        {
+            return Ok(Value::Undefined);
+        }
+    }
+    crate::execute::get_property_result(receiver, &position.to_string())
 }
 pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let this = receiver.cloned().unwrap_or(Value::Undefined);
