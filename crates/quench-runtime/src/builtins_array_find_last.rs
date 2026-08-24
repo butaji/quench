@@ -20,6 +20,7 @@ fn find_last(
     let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
         return Err(crate::value::error::throw_type_error("Array method called on incompatible receiver"));
     };
+    let length = crate::builtins::map_length(receiver)?;
     let Some(callback) = arguments.first() else {
         return Err(crate::value::error::throw_type_error("predicate must be callable"));
     };
@@ -27,7 +28,6 @@ fn find_last(
         return Err(crate::value::error::throw_type_error("predicate must be callable"));
     }
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    let length = crate::builtins::map_length(receiver)?;
     for index in (0..length).rev() {
         let value = crate::execute::get_property_result(receiver, &index.to_string())?;
         let args = [
