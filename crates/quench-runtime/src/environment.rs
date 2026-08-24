@@ -107,9 +107,13 @@ impl SlotStore {
     }
 
     fn from_values(values: Vec<Value>) -> Rc<Self> {
+        Self::from_registers(crate::register_file::RegisterFile::from_values(values))
+    }
+
+    fn from_registers(values: crate::register_file::RegisterFile) -> Rc<Self> {
         let store = Rc::new(Self {
             bridges: UnsafeCell::new(None),
-            values: UnsafeCell::new(crate::register_file::RegisterFile::from_values(values)),
+            values: UnsafeCell::new(values),
         });
         store.invariant();
         store
@@ -571,8 +575,18 @@ impl Environment {
     }
 
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
+        Self::child_registers(
+            captures,
+            crate::register_file::RegisterFile::from_values(values),
+        )
+    }
+
+    pub(crate) fn child_registers(
+        captures: &Rc<Self>,
+        values: crate::register_file::RegisterFile,
+    ) -> Rc<Self> {
         crate::execution_trace::environment_child(captures.len(), values.len());
-        let store = SlotStore::from_values(values);
+        let store = SlotStore::from_registers(values);
         let prefix = captures.slots.borrow().shared_prefix();
         let prefix_len = captures.len();
         let suffix_len = store.len();
