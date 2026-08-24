@@ -312,6 +312,7 @@ pub fn invalid_arg_received(value: &Value) -> String {
                 _ => " Received function".into(),
             }
         }
+        Value::Array(_) => " Received an instance of Array".into(),
         Value::Boolean(_) => format!(" Received type boolean ({})", inspect(value)),
         Value::Number(_) | Value::BigInt(_) => format!(
             " Received type {} ({})",
