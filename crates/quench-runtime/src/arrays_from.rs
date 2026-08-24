@@ -172,7 +172,7 @@ fn create_result(
 ) -> Result<Value, crate::execute::VmError> {
     let length = values.len();
     let plain_array = match receiver {
-        None => true,
+        None | Some(Value::Null | Value::Undefined) => true,
         Some(value) => matches!(value, Value::Builtin(crate::ops::Builtin::Array)),
     };
     if plain_array {
