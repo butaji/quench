@@ -153,6 +153,9 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
                 .to_string(),
             _ => String::new(),
         };
+        if matches!(&primitive, Value::String(value) if value.starts_with("Symbol.unscopables\0")) {
+            return Ok("Symbol(Symbol.unscopables)".to_string());
+        }
         return Ok(format!("Symbol({description})"));
     }
     if let Value::BigInt(value) = primitive {
