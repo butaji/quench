@@ -449,9 +449,6 @@ pub(crate) fn function_call_shape(
     code: Option<crate::machine::CodeView<'_>>,
 ) {
     if enabled() {
-        if let Some(code) = code {
-            dump_function_shape(params, captures, code);
-        }
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
             let code_len = code.map_or(0, crate::machine::CodeView::len);
@@ -474,62 +471,6 @@ pub(crate) fn function_call_shape(
                 .entry((fingerprint, params, code.len() as u8, opcodes))
                 .or_default() += 1;
         });
-    }
-}
-
-#[cfg(feature = "execution-trace")]
-fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeView<'_>) {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    static SEEN: OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> = OnceLock::new();
-    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_FUNCTION_SHAPES").is_some()) {
-        return;
-    }
-    let fingerprint = function_fingerprint(params, captures, code);
-    if !SEEN
-        .get_or_init(Default::default)
-        .lock()
-        .expect("function shape trace lock")
-        .insert(fingerprint)
-    {
-        return;
-    }
-    eprintln!(
-        "FUNCTION_SHAPE params={params} captures={captures} len={} hash={fingerprint}",
-        code.len()
-    );
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc).expect("valid function instruction");
-        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
-        eprintln!("  {pc}: {instruction:?} cold={cold:?}");
-        if let Some(crate::ops::Op::Loop {
-            init,
-            test,
-            body,
-            update,
-            ..
-        }) = code.cold_at(pc)
-        {
-            dump_function_fragment("init", init.code());
-            dump_function_fragment("test", test.code());
-            dump_function_fragment("body", body.code());
-            dump_function_fragment("update", update.code());
-        }
-        if let Some(crate::ops::Op::Branch {
-            then_ops, else_ops, ..
-        }) = code.cold_at(pc)
-        {
-            dump_function_fragment("then", then_ops.code());
-            dump_function_fragment("else", else_ops.code());
-        }
-        if let Some(crate::ops::Op::Conditional {
-            consequent,
-            alternate,
-            ..
-        }) = code.cold_at(pc)
-        {
-            dump_function_fragment("consequent", consequent.code());
-            dump_function_fragment("alternate", alternate.code());
-        }
     }
 }
 
@@ -593,27 +534,6 @@ fn hash_nested_code(op: Option<&crate::ops::Op>, hasher: &mut impl std::hash::Ha
             .filter_map(|fragment| fragment.code())
             .for_each(|code| hash_code_facts(code, hasher)),
         _ => {}
-    }
-}
-
-#[cfg(feature = "execution-trace")]
-fn dump_function_fragment(label: &str, code: Option<crate::machine::CodeView<'_>>) {
-    let Some(code) = code else { return };
-    eprintln!("    {label} len={}", code.len());
-    for pc in 0..code.len() {
-        let instruction = code.instruction(pc).expect("valid function fragment");
-        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
-        let name = code
-            .metadata_at(pc)
-            .and_then(|metadata| metadata.name.as_deref());
-        eprintln!("      {pc}: {instruction:?} cold={cold:?} name={name:?}");
-        if let Some(crate::ops::Op::Branch {
-            then_ops, else_ops, ..
-        }) = code.cold(instruction)
-        {
-            dump_function_fragment("then", then_ops.code());
-            dump_function_fragment("else", else_ops.code());
-        }
     }
 }
 
