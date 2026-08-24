@@ -2,7 +2,7 @@ impl Op {
     pub(crate) fn capture_slots(&self, slots: &mut Vec<u16>) {
         use Op::*;
         match self {
-            StoreLocal { slot, .. } | MakeRest { slot, .. } | AliasLocal { slot, .. }
+            StoreLocal { slot, .. } | AliasLocal { slot, .. }
             | StoreFunctionName { slot, .. } | MarkUninitialized { slot, .. }
             | MarkImmutable { slot } | CheckInitialized { slot, .. }
             | InitializeLocal { slot } | LoadParameter { slot, .. }
@@ -12,6 +12,10 @@ impl Op {
             | SetResolvedLocalBinding { slot, .. } | LoadResolvedLocalBinding { slot, .. }
             | LoadLocal { slot, .. } | ForIn { slot, .. }
             | ForOf { slot, .. } => slots.push(*slot),
+            MakeRest { slot, arguments, .. } => {
+                slots.push(*slot);
+                slots.push(*arguments);
+            }
             LoadBinding { slot, dynamic: false, .. } => slots.push(*slot),
             Try { catch_slot: Some(slot), .. } => slots.push(*slot),
             Loop { per_iteration, .. } => slots.extend_from_slice(per_iteration),
