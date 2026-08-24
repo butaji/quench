@@ -53,8 +53,9 @@ pub(crate) fn this_view(receiver: Option<&Value>) -> Result<Rc<Uint8ArrayData>, 
 }
 
 fn view_bytes(view: &Uint8ArrayData) -> std::cell::Ref<'_, [u8]> {
+    let length = view.logical_len();
     std::cell::Ref::map(view.buffer.bytes.borrow(), |b| {
-        &b[view.byte_offset..view.byte_offset + view.length]
+        &b[view.byte_offset..view.byte_offset + length]
     })
 }
 
