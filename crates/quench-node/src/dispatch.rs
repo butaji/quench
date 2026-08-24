@@ -215,6 +215,8 @@ const CAP_CP_SPAWN: u16 = 0x1e03;
 const CAP_PROCESS_UMASK: u16 = 0x0A06;
 const CAP_PROCESS_ON: u16 = 0x0A07;
 const CAP_PROCESS_ONCE: u16 = 0x0A08;
+const CAP_PROCESS_EMIT: u16 = 0x0A0C;
+const CAP_PROCESS_EMIT_WARNING: u16 = 0x0A0D;
 const CAP_STDOUT_WRITE: u16 = 0x0A09;
 const CAP_STDERR_WRITE: u16 = 0x0A0A;
 const CAP_NET_GET_ASF_TIMEOUT: u16 = 0x1005;
@@ -444,6 +446,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_UMASK => process_umask,
         CAP_PROCESS_ON => process_on,
         CAP_PROCESS_ONCE => process_once,
+        CAP_PROCESS_EMIT => process_emit,
+        CAP_PROCESS_EMIT_WARNING => process_emit_warning,
         CAP_STDOUT_WRITE | CAP_STDERR_WRITE => {
             |state, _receiver, args| crate::modules::process::stream_write(state, args)
         }
