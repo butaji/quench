@@ -415,24 +415,19 @@ pub(crate) mod symbol {
 /// `Array.prototype.toLocaleString`.
 pub(crate) fn array_to_locale_string(
     receiver: Option<&Value>,
-    arguments: &[Value],
+    _arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let values = match receiver {
-        Some(Value::Array(values)) => values.snapshot(),
-        Some(value) => array_values::typed_values(value).ok_or_else(|| {
-            crate::value::error::throw_type_error(
-                "Array.prototype.toLocaleString called on non-array",
-            )
-        })?,
-        None => {
-            return Err(crate::value::error::throw_type_error(
-                "called on null or undefined",
-            ))
-        }
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "called on null or undefined",
+        ));
     };
-    let mut parts = Vec::new();
-    for value in values.iter() {
-        parts.push(element_to_locale_string(value, arguments)?);
+    let object = crate::construct::to_object(receiver)?;
+    let length = crate::builtins::map_length(&object)?;
+    let mut parts = Vec::with_capacity(length);
+    for index in 0..length {
+        let value = crate::execute::get_property_result(&object, &index.to_string())?;
+        parts.push(element_to_locale_string(&value)?);
     }
     Ok(Value::String(parts.join(",")))
 }
@@ -491,20 +486,20 @@ fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     Ok(Value::Number(result))
 }
 
-fn element_to_locale_string(value: &Value, arguments: &[Value]) -> Result<String, VmError> {
+fn element_to_locale_string(value: &Value) -> Result<String, VmError> {
     match value {
-        Value::Number(_) => locale_element_call(value, arguments),
+        Value::Number(_) => locale_element_call(value),
         Value::Null | Value::Undefined => Ok(String::new()),
-        _ => locale_element_call(value, arguments),
+        _ => locale_element_call(value),
     }
 }
-fn locale_element_call(value: &Value, arguments: &[Value]) -> Result<String, VmError> {
-    let method = crate::execute::get_property_result(value, "toLocaleString")?;
+fn locale_element_call(value: &Value) -> Result<String, VmError> {
+    let mut method = crate::execute::get_property_result(value, "toLocaleString")?;
+    if matches!(method, Value::Builtin(Builtin::ObjectPrototypeToString)) {
+        method = crate::execute::get_property_result(value, "toString")?;
+    }
     if !matches!(method, Value::Undefined | Value::Null) {
-        let invoke_arguments = vec![
-            arguments.first().cloned().unwrap_or(Value::Undefined),
-            arguments.get(1).cloned().unwrap_or(Value::Undefined),
-        ];
+        let invoke_arguments = Vec::new();
         let result =
             crate::functions::execute_target_with_receiver(&method, value, &invoke_arguments)?;
         return crate::conversion::to_string(&result.0);
