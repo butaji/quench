@@ -435,6 +435,11 @@ pub fn internal_binding(
             crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
         )]));
     }
+    if name == "js_stream" {
+        return Ok(crate::host::namespace_object_from_pairs(vec![
+            ("JSStream".to_string(), crate::host::capability(crate::registry::SPEC_INTERNAL_JS_STREAM)),
+        ]));
+    }
     if name == "timers" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
             (
@@ -456,6 +461,18 @@ pub fn internal_binding(
         ]));
     }
     Ok(crate::host::namespace_object_from_pairs(Vec::new()))
+}
+
+pub fn internal_js_stream_construct(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let external = crate::host::namespace_object_from_pairs(vec![
+        ("__quench_external".into(), Value::Boolean(true)),
+    ]);
+    Ok(crate::host::namespace_object_from_pairs(vec![
+        ("_externalStream".into(), external),
+    ]))
 }
 
 pub fn timers_get_libuv_now(
