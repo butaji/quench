@@ -378,9 +378,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
-        "timers/promises" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::timers::build(),
-        )),
+        "timers/promises" => Some(
+            crate::modules::timers::build_promises()
+                .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new())),
+        ),
         "child_process" => Some(crate::host::namespace_object_from_pairs(vec![
             (
                 "spawnSync".to_string(),
