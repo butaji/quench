@@ -29,11 +29,11 @@ pub(crate) fn array_reverse(
             .transpose()?;
         match (upper_present, upper_value, lower_present, lower_value) {
             (true, Some(value), true, Some(lower_value)) => {
-                target = crate::properties::assign_set_property(&target, &lower_key, value)?;
-                target = crate::properties::assign_set_property(&target, &upper_key, lower_value)?;
+                target = assign_reverse_property(target, &lower_key, value)?;
+                target = assign_reverse_property(target, &upper_key, lower_value)?;
             }
             (true, Some(value), false, None) => {
-                target = crate::properties::assign_set_property(&target, &lower_key, value)?;
+                target = assign_reverse_property(target, &lower_key, value)?;
                 let (updated, _) = delete_reverse_property(target, &upper_key)?;
                 target = updated;
             }
@@ -44,7 +44,7 @@ pub(crate) fn array_reverse(
                         "Cannot delete property during reverse",
                     ));
                 }
-                target = crate::properties::assign_set_property(&updated, &upper_key, value)?;
+                target = assign_reverse_property(updated, &upper_key, value)?;
             }
             _ => {}
         }
@@ -55,6 +55,16 @@ pub(crate) fn array_reverse(
     Ok(target)
 }
 
+fn assign_reverse_property(
+    target: Value,
+    key: &str,
+    value: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let updated = crate::properties::assign_set_property(&target, key, value)?;
+    crate::locals::replace_value(&target, &updated);
+    Ok(updated)
+}
+
 fn delete_reverse_property(
     target: Value,
     key: &str,
@@ -63,5 +73,7 @@ fn delete_reverse_property(
         let result = crate::proxy::proxy_delete(&target, key)?;
         return Ok((target, crate::execute::is_truthy(&result)));
     }
-    Ok(crate::builtins::delete_property(target, key))
+    let result = crate::builtins::delete_property(target.clone(), key);
+    crate::locals::replace_value(&target, &result.0);
+    Ok(result)
 }
