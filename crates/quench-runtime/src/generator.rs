@@ -74,7 +74,6 @@ fn initialize_parameters(
     };
     let (mut registers, environment) =
         crate::functions::build_registers(function, receiver, arguments);
-    let mut registers = crate::register_file::RegisterFile::from_values(registers);
     let _private_environment = crate::private_environment::Guard::install_environment(
         function.private_environment.clone(),
     );
@@ -521,8 +520,7 @@ fn initialize_state(generator: &GeneratorData) {
         &generator.receiver,
         &generator.arguments,
     );
-    generator.machine.borrow_mut().registers.values =
-        crate::register_file::RegisterFile::from_values(registers);
+    generator.machine.borrow_mut().registers.values = registers;
     generator.machine.borrow_mut().pc = 0;
     generator
         .machine
