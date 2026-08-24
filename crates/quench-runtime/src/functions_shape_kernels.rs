@@ -26,12 +26,19 @@ struct NestedArrayIndexPlan {
 }
 
 #[derive(Clone, Copy)]
+struct ForwardZeroPlan {
+    receiver_pc: usize,
+    call_pc: usize,
+}
+
+#[derive(Clone, Copy)]
 enum ShapeKernelPlan {
     StatePredicate(StatePredicatePlan),
     StateBitwise(StateBitwisePlan),
     NestedArrayLength(NestedArrayLengthPlan),
     NestedArrayIndex(NestedArrayIndexPlan),
     PropertySelect(PropertySelectPlan),
+    ForwardZero(ForwardZeroPlan),
 }
 
 #[derive(Clone)]
@@ -61,6 +68,7 @@ pub(crate) fn execute_shape_kernel(
             execute_nested_array_index(function, receiver, arguments, plan)
         }
         ShapeKernelPlan::PropertySelect(plan) => execute_property_select(function, receiver, plan),
+        ShapeKernelPlan::ForwardZero(plan) => execute_forward_zero(function, receiver, plan),
     }
 }
 
@@ -198,7 +206,8 @@ fn shape_kernel_fact(
         .or_else(|| {
             match_nested_array_index(function).map(ShapeKernelPlan::NestedArrayIndex)
         })
-        .or_else(|| match_property_select(function).map(ShapeKernelPlan::PropertySelect));
+        .or_else(|| match_property_select(function).map(ShapeKernelPlan::PropertySelect))
+        .or_else(|| match_forward_zero(function).map(ShapeKernelPlan::ForwardZero));
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -408,3 +417,4 @@ fn fragment_returns(code: Option<crate::machine::CodeView<'_>>, register: u16) -
 }
 
 include!("functions_shape_property_select.rs");
+include!("functions_shape_forward.rs");
