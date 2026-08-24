@@ -674,7 +674,7 @@ pub use crate::modules::buffer_enc::invalid_arg_received;
 
 /// `util.inspect` — string-only, sufficient for fixtures.
 pub fn inspect(value: &Value) -> String {
-    inspect_depth(value, 2)
+    inspect_depth(value, 3)
 }
 
 fn inspect_string(value: &str) -> String {
@@ -901,8 +901,8 @@ fn inspect_at(value: &Value, depth: usize) -> String {
         return inspect_shallow(value);
     }
     match value {
-        Value::Object(_) | Value::ObjectAlias(_) if depth > 0 => inspect_object(value, depth),
-        Value::Array(_) if depth > 0 => inspect_array(value, depth),
+        Value::Object(_) | Value::ObjectAlias(_) => inspect_object(value, depth),
+        Value::Array(_) => inspect_array(value, depth),
         _ => inspect_shallow(value),
     }
 }
@@ -939,7 +939,10 @@ fn inspect_object(value: &Value, depth: usize) -> String {
             format!(
                 "{}: {}",
                 if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() },
-                inspect_at(&quench_runtime::execute::get_property(value, key), depth)
+                inspect_at(
+                    &quench_runtime::execute::get_property(value, key),
+                    depth - 1,
+                )
             )
         })
         .collect::<Vec<_>>()
