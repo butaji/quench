@@ -191,6 +191,21 @@ pub fn compare(
     };
     let source = view_bytes(&view);
     let target_bytes = view_bytes(target_view);
+    for (index, name) in [
+        (1, "targetStart"),
+        (2, "targetEnd"),
+        (3, "sourceStart"),
+        (4, "sourceEnd"),
+    ] {
+        let limit = if index == 1 {
+            usize::MAX
+        } else if index == 2 {
+            target_bytes.len()
+        } else {
+            source.len()
+        };
+        validate_compare_bound(args.get(index), name, limit)?;
+    }
     let t_start = clamp_bounds(args, 1, target_bytes.len(), 0.0);
     let t_end = clamp_bounds(args, 2, target_bytes.len(), target_bytes.len() as f64);
     let s_start = clamp_bounds(args, 3, source.len(), 0.0);
@@ -199,6 +214,29 @@ pub fn compare(
         &source[s_start..s_end.max(s_start)],
         &target_bytes[t_start..t_end.max(t_start)],
     )))
+}
+
+fn validate_compare_bound(value: Option<&Value>, name: &str, limit: usize) -> Result<(), VmError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if matches!(value, Value::Undefined) {
+        return Ok(());
+    }
+    let Value::Number(number) = value else {
+        return Err(enc::invalid_arg_type(format!(
+            "The \"{name}\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(value)
+        )));
+    };
+    if !number.is_finite() || *number < 0.0 || *number > limit as f64 {
+        return Err(enc::out_of_range(
+            name,
+            &format!(">= 0 && <= {limit}"),
+            &enc::fmt_num(*number),
+        ));
+    }
+    Ok(())
 }
 
 /// `Buffer.compare(a, b)`.
