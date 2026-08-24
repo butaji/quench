@@ -253,17 +253,43 @@ pub(crate) fn descriptor_object(_: &'static str) {}
 #[cfg(feature = "execution-trace")]
 pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Value) {
     if enabled() {
+        let binding_kind =
+            |cell: &std::rc::Rc<std::cell::RefCell<crate::value::Value>>| match &*cell.borrow() {
+                crate::value::Value::Number(_) => "number",
+                crate::value::Value::Object(_) => "object",
+                crate::value::Value::Function(_) => "function",
+                crate::value::Value::Array(_) => "array",
+                crate::value::Value::Boolean(_) => "boolean",
+                crate::value::Value::String(_) => "string",
+                _ => "other",
+            };
         let kind = match (tier, value) {
             ("prototype", crate::value::Value::Number(_)) => "prototype:number",
             ("prototype", crate::value::Value::Object(_)) => "prototype:object",
             ("prototype", crate::value::Value::Function(_)) => "prototype:function",
-            ("prototype", crate::value::Value::BindingCell(_)) => "prototype:binding_cell",
+            ("prototype", crate::value::Value::BindingCell(cell)) => match binding_kind(cell) {
+                "number" => "prototype:binding_cell:number",
+                "object" => "prototype:binding_cell:object",
+                "function" => "prototype:binding_cell:function",
+                "array" => "prototype:binding_cell:array",
+                "boolean" => "prototype:binding_cell:boolean",
+                "string" => "prototype:binding_cell:string",
+                _ => "prototype:binding_cell:other",
+            },
             ("prototype", crate::value::Value::String(_)) => "prototype:string",
             ("prototype", _) => "prototype:other",
             ("own", crate::value::Value::Number(_)) => "own:number",
             ("own", crate::value::Value::Object(_)) => "own:object",
             ("own", crate::value::Value::Function(_)) => "own:function",
-            ("own", crate::value::Value::BindingCell(_)) => "own:binding_cell",
+            ("own", crate::value::Value::BindingCell(cell)) => match binding_kind(cell) {
+                "number" => "own:binding_cell:number",
+                "object" => "own:binding_cell:object",
+                "function" => "own:binding_cell:function",
+                "array" => "own:binding_cell:array",
+                "boolean" => "own:binding_cell:boolean",
+                "string" => "own:binding_cell:string",
+                _ => "own:binding_cell:other",
+            },
             ("own", crate::value::Value::String(_)) => "own:string",
             ("own", _) => "own:other",
             _ => "unknown",
