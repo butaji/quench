@@ -513,6 +513,16 @@ impl ArrayData {
             .flatten()
     }
 
+    #[inline]
+    pub(crate) fn numeric_cells(
+        &self,
+    ) -> Option<std::cell::Ref<'_, [std::cell::Cell<f64>]>> {
+        let DenseElements::Numbers(values) = &self.values else {
+            return None;
+        };
+        Some(std::cell::Ref::map(values.borrow(), Vec::as_slice))
+    }
+
     /// Store an unboxed numeric slot while retaining canonical `Value`
     /// semantics at the storage boundary.
     #[inline]

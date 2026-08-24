@@ -222,11 +222,7 @@ pub(crate) fn store(
             "Cannot access deleted binding '{slot}'"
         )));
     }
-    let initializing_binding = current().get(slot) == Value::Undefined;
-    if current().is_immutable_slot(slot)
-        && !current().is_uninitialized(slot)
-        && !initializing_binding
-    {
+    if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {
         if ACTIVE_EVAL.with(|active| *active.borrow())
             && !STRICT_EVAL.with(|strict| *strict.borrow())
         {
@@ -265,12 +261,16 @@ pub(crate) fn load_binding(
     name: &str,
     dynamic: bool,
 ) -> Result<(), VmError> {
-    if let Some(value) = crate::with_scope::resolve_binding(name)? {
-        crate::execute::write_value(registers, dst, value);
-        return Ok(());
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    if dynamic {
+        crate::execution_trace::event(crate::execution_trace::Event::DynamicBindingLoad);
     }
     let environment = current();
     if dynamic {
+        if let Some(value) = crate::with_scope::resolve_binding(name)? {
+            crate::execute::write_value(registers, dst, value);
+            return Ok(());
+        }
         if environment.is_deleted(&environment.slot_cell(slot)) {
             return Err(crate::value::error::throw_reference_error(&format!(
                 "Cannot access deleted binding '{name}'"
@@ -288,7 +288,11 @@ pub(crate) fn load_binding(
             "Cannot access '{name}' before initialization"
         )));
     }
-    crate::execute::write_value(registers, dst, resolved_replacement(environment.get(slot)));
+    if let Some(number) = environment.get_number(slot) {
+        registers.write_number(usize::from(dst), number);
+        return Ok(());
+    }
+    crate::execute::write_value(registers, dst, environment.get(slot));
     Ok(())
 }
 
@@ -336,9 +340,7 @@ pub(crate) fn set_resolved_local(
     }
     if matches!(target, Value::Undefined) {
         ensure_initialized(slot, name)?;
-        let initializing_function_binding =
-            current().get(slot) == Value::Undefined && crate::conversion::is_callable(&value);
-        if current().is_immutable_slot(slot) && !initializing_function_binding {
+        if current().is_immutable_slot(slot) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot assign to immutable binding",
             ));
@@ -385,7 +387,76 @@ pub(crate) fn load(
     dst: u16,
     slot: u16,
 ) -> Result<(), VmError> {
-    crate::execute::write_value(registers, dst, resolved_replacement(current().get(slot)));
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    let environment = current();
+    if let Some(number) = environment.get_number(slot) {
+        registers.write_number(usize::from(dst), number);
+    } else {
+        crate::execute::write_value(registers, dst, resolved_replacement(environment.get(slot)));
+    }
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn load_checked(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let environment = current();
+    if environment.is_uninitialized(slot) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access '{name}' before initialization"
+        )));
+    }
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    if let Some(number) = environment.get_number(slot) {
+        registers.write_number(usize::from(dst), number);
+    } else {
+        crate::execute::write_value(registers, dst, resolved_replacement(environment.get(slot)));
+    }
+    Ok(())
+}
+
+pub(crate) fn update(
+    registers: &mut crate::register_file::RegisterFile,
+    old_dst: u16,
+    updated_dst: u16,
+    slot: u16,
+    decrement: bool,
+) -> Result<(), VmError> {
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    let delta = if decrement { -1.0 } else { 1.0 };
+    let environment = current();
+    if !environment.is_uninitialized(slot) {
+        if let Some((old, updated)) = environment.update_number(slot, delta) {
+            registers.write_number(usize::from(old_dst), old);
+            registers.write_number(usize::from(updated_dst), updated);
+            return Ok(());
+        }
+    }
+    if environment.is_uninitialized(slot) {
+        return ensure_initialized(slot, &format!("local_{slot}"));
+    }
+    crate::execute::write_value(registers, old_dst, resolved_replacement(environment.get(slot)));
+    registers.write_number(usize::from(updated_dst), 1.0);
+    let operator = if decrement {
+        crate::ops::BinaryOp::NumericSubtract
+    } else {
+        crate::ops::BinaryOp::NumericAdd
+    };
+    crate::vm::vm_arithmetic::execute_binary(
+        registers,
+        updated_dst,
+        operator,
+        old_dst,
+        updated_dst,
+    )?;
+    environment.set(
+        slot,
+        crate::vm::read_register_unchecked(registers, updated_dst),
+    );
     Ok(())
 }
 
@@ -419,56 +490,6 @@ pub(crate) fn load_parameter(
     slot: u16,
 ) -> Result<(), VmError> {
     crate::execute::write_value(registers, dst, resolved_replacement(current().get(slot)));
-    Ok(())
-}
-
-pub(crate) fn update(
-    registers: &mut crate::register_file::RegisterFile,
-    old_dst: u16,
-    updated_dst: u16,
-    slot: u16,
-    decrement: bool,
-) -> Result<(), VmError> {
-    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
-    let delta = if decrement { -1.0 } else { 1.0 };
-    let environment = current();
-    if environment.is_immutable_slot(slot) && !environment.is_uninitialized(slot) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot assign to immutable binding",
-        ));
-    }
-    if !environment.is_uninitialized(slot) {
-        if let Some((old, updated)) = environment.update_number(slot, delta) {
-            registers.write_number(usize::from(old_dst), old);
-            registers.write_number(usize::from(updated_dst), updated);
-            return Ok(());
-        }
-    }
-    if environment.is_uninitialized(slot) {
-        return ensure_initialized(slot, &format!("local_{slot}"));
-    }
-    crate::execute::write_value(
-        registers,
-        old_dst,
-        resolved_replacement(environment.get(slot)),
-    );
-    registers.write_number(usize::from(updated_dst), 1.0);
-    let operator = if decrement {
-        crate::ops::BinaryOp::NumericSubtract
-    } else {
-        crate::ops::BinaryOp::NumericAdd
-    };
-    crate::vm::vm_arithmetic::execute_binary(
-        registers,
-        updated_dst,
-        operator,
-        old_dst,
-        updated_dst,
-    )?;
-    environment.set(
-        slot,
-        crate::vm::read_register_unchecked(registers, updated_dst),
-    );
     Ok(())
 }
 

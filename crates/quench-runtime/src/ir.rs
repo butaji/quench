@@ -62,6 +62,7 @@ instruction_set! {
     SetN = 21 / 3,
     CallN = 22 / 3,
     UpdateLocal = 23 / 3,
+    LoadLocalChecked = 24 / 2,
 }
 
 impl Opcode {
@@ -219,6 +220,15 @@ impl Instruction {
             flags: 0,
             a: dst,
             b: src,
+            c: 0,
+        }
+    }
+    pub const fn load_local_checked(dst: Register, slot: u16) -> Self {
+        Self {
+            opcode: Opcode::LoadLocalChecked,
+            flags: 0,
+            a: dst,
+            b: slot,
             c: 0,
         }
     }
@@ -416,6 +426,12 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
     match op {
         Op::Move { dst, src } => Some(Instruction::move_(*dst, *src)),
         Op::LoadLocal { dst, slot } => Some(Instruction::load_local(*dst, *slot)),
+        Op::LoadBinding {
+            dst,
+            slot,
+            dynamic: false,
+            ..
+        } => Some(Instruction::load_local_checked(*dst, *slot)),
         Op::Binary {
             dst,
             operator: BinaryOp::Add,
@@ -817,7 +833,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::UpdateLocal as u8);
+        assert_eq!(Opcode::COUNT, Opcode::LoadLocalChecked as u8);
         assert!(Opcode::Slow.is_compact());
     }
 
