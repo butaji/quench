@@ -250,14 +250,10 @@ fn recognized_counted_bound(
     if let Some((register, slot)) = recognized_static_load(code, pc) {
         return Some((register, CountedBound::Slot(slot)));
     }
-    let Op::Const {
-        dst,
-        value: crate::ops::Constant::Number(value),
-    } = code.cold_at(pc)?
-    else {
+    let (dst, crate::ops::Constant::Number(value)) = code.constant_at(pc)? else {
         return None;
     };
-    Some((*dst, CountedBound::Constant(*value)))
+    Some((dst, CountedBound::Constant(*value)))
 }
 
 fn recognized_static_load(code: crate::machine::CodeView<'_>, pc: usize) -> Option<(u16, u16)> {
@@ -310,12 +306,12 @@ fn recognize_counted_update(update: crate::machine::CodeView<'_>, slot: u16) -> 
     if load.opcode != crate::ir::Opcode::LoadLocal || load.b != slot {
         return None;
     }
-    let Op::Const { dst: step_register, value: crate::ops::Constant::Number(step) } = update.cold_at(1)? else { return None };
+    let (step_register, crate::ops::Constant::Number(step)) = update.constant_at(1)? else { return None };
     let Op::Binary { dst: next, operator: crate::ops::BinaryOp::NumericAdd, lhs, rhs } = update.cold_at(2)? else { return None };
     let store_pc = if checked { 4 } else { 3 };
     let Op::StoreLocal { slot: stored_slot, src: stored } = update.cold_at(store_pc)? else { return None };
     let returned = update.instruction(store_pc + 1)?;
-    (*stored_slot == slot && load.a == *lhs && *step_register == *rhs
+    (*stored_slot == slot && load.a == *lhs && step_register == *rhs
         && *next == *stored && returned.opcode == crate::ir::Opcode::Return && returned.a == *next)
         .then_some(*step)
 }

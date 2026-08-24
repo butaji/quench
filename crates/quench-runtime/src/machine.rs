@@ -15,7 +15,7 @@ use crate::{
     ops::{Constant, Op},
     value::Value,
 };
-use std::{collections::HashMap, rc::Rc, sync::OnceLock};
+use std::{rc::Rc, sync::OnceLock};
 
 // Code stores are isolate-local and never shared across runtime threads. The
 // OnceLock is retained only for the construction cycle: nested FunctionCode
@@ -57,30 +57,28 @@ pub(crate) fn unpack_named_cache(cache: u64) -> Option<(u32, u32)> {
 
 /// Per-code canonical constant table.
 ///
-/// `values` owns one entry per [`ConstantKey`], and `ids` is the complete
-/// inverse index. IDs are assigned in first-use order and are never truncated:
+/// `values` is the sole runtime fact and owns one entry per constant. IDs are
+/// assigned in first-use order and are never truncated:
 /// construction fails if the table cannot be represented by `u16` IDs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstantPool {
     values: Rc<[Constant]>,
-    ids: HashMap<ConstantKey, u16>,
 }
 impl ConstantPool {
     pub fn try_new(values: Vec<Constant>) -> Result<Self, &'static str> {
         let mut canonical = Vec::with_capacity(values.len());
-        let mut ids = HashMap::with_capacity(values.len());
+        let mut keys = Vec::with_capacity(values.len());
         for value in values {
             let key = ConstantKey::from(&value);
-            if ids.contains_key(&key) {
+            if keys.contains(&key) {
                 continue;
             }
-            let id = u16::try_from(canonical.len()).map_err(|_| "constant pool exceeds u16 IDs")?;
+            u16::try_from(canonical.len()).map_err(|_| "constant pool exceeds u16 IDs")?;
+            keys.push(key);
             canonical.push(value);
-            ids.insert(key, id);
         }
         Ok(Self {
             values: canonical.into(),
-            ids,
         })
     }
 
@@ -93,7 +91,11 @@ impl ConstantPool {
     }
 
     pub fn id(&self, value: &Constant) -> Option<u16> {
-        self.ids.get(&ConstantKey::from(value)).copied()
+        let key = ConstantKey::from(value);
+        self.values
+            .iter()
+            .position(|candidate| ConstantKey::from(candidate) == key)
+            .and_then(|id| u16::try_from(id).ok())
     }
 
     pub fn get(&self, id: u16) -> Option<&Constant> {
@@ -114,6 +116,7 @@ pub struct CodeArena {
     cold: Vec<Op>,
     ranges: Vec<(u32, u32)>,
     parameter_ends: Vec<Option<u32>>,
+    constants: Vec<ConstantPool>,
     metadata: Vec<Vec<InstructionMeta>>,
 }
 
@@ -337,6 +340,14 @@ impl CodeArena {
         self.ranges.reserve(nested.saturating_add(1));
         let code = CodeId(self.ranges.len() as u32);
         let start = self.instructions.len() as u32;
+        let constants = ConstantPool::new(
+            body.iter()
+                .filter_map(|op| match op {
+                    Op::Const { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
+                .collect(),
+        );
         let mut parameter_end = None;
         let mut metadata = Vec::with_capacity(body.len());
         let mut cursor = 0;
@@ -359,11 +370,17 @@ impl CodeArena {
                 continue;
             }
             let op = &body[cursor];
-            let instruction = crate::ir::lower_compact(op).unwrap_or_else(|| {
-                let index = self.cold.len() as u32;
-                self.cold.push(op.clone());
-                crate::ir::Instruction::slow_at(index)
-            });
+            let instruction = match op {
+                Op::Const { dst, value } => crate::ir::Instruction::load_const(
+                    *dst,
+                    constants.id(value).expect("constant was collected"),
+                ),
+                _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
+                    let index = self.cold.len() as u32;
+                    self.cold.push(op.clone());
+                    crate::ir::Instruction::slow_at(index)
+                }),
+            };
             self.instructions.push(instruction);
             metadata.push(metadata_for(op));
             cursor += 1;
@@ -372,6 +389,7 @@ impl CodeArena {
         let end = self.instructions.len() as u32;
         self.ranges.push((start, end));
         self.parameter_ends.push(parameter_end);
+        self.constants.push(constants);
         CodeRange { code, start, end }
     }
 
@@ -384,21 +402,11 @@ impl CodeArena {
         Some(self.append_slice(body))
     }
 
-    fn code(&self, range: CodeRange) -> Option<CodeArenaView<'_>> {
-        let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
-        (range.start >= start && range.end <= end).then_some(CodeArenaView { arena: self, range })
-    }
     pub fn constant_pool(&self, range: CodeRange) -> ConstantPool {
-        ConstantPool::new(
-            self.code(range)
-                .into_iter()
-                .flat_map(CodeArenaView::cold_ops)
-                .filter_map(|op| match op {
-                    Op::Const { value, .. } => Some(value.clone()),
-                    _ => None,
-                })
-                .collect(),
-        )
+        self.constants
+            .get(range.code.0 as usize)
+            .cloned()
+            .unwrap_or_else(ConstantPool::empty)
     }
 
     pub fn len(&self) -> usize {
@@ -415,6 +423,7 @@ impl CodeArena {
             cold: self.cold.into_boxed_slice().into(),
             ranges: self.ranges.into_boxed_slice().into(),
             parameter_ends: self.parameter_ends.into_boxed_slice().into(),
+            constants: self.constants.into_boxed_slice().into(),
             metadata: self.metadata.into_boxed_slice().into(),
         })
     }
@@ -461,6 +470,7 @@ pub struct CodeStore {
     cold: Rc<[Op]>,
     ranges: Rc<[(u32, u32)]>,
     parameter_ends: Rc<[Option<u32>]>,
+    constants: Rc<[ConstantPool]>,
     metadata: Rc<[Vec<InstructionMeta>]>,
 }
 
@@ -473,40 +483,17 @@ impl CodeStore {
     pub fn metadata(&self, range: CodeRange) -> Option<&[InstructionMeta]> {
         self.metadata.get(range.code.0 as usize).map(Vec::as_slice)
     }
-    /// Build the compact pool used by lowering and diagnostics.
+    /// Return the immutable pool used by execution and diagnostics.
     pub fn constant_pool(&self, range: CodeRange) -> ConstantPool {
-        let mut values = Vec::new();
-        if let Some(code) = self.code(range) {
-            for (_, op) in code.cold_ops() {
-                let Op::Const { value, .. } = op else {
-                    continue;
-                };
-                if !values.iter().any(|item| item == value) {
-                    values.push(value.clone());
-                }
-            }
-        }
-        ConstantPool::new(values)
+        self.constants
+            .get(range.code.0 as usize)
+            .cloned()
+            .unwrap_or_else(ConstantPool::empty)
     }
 
     pub fn range_len(&self, code: CodeId) -> Option<u32> {
         let (start, end) = self.ranges.get(code.0 as usize).copied()?;
         Some(end.saturating_sub(start))
-    }
-}
-
-struct CodeArenaView<'a> {
-    arena: &'a CodeArena,
-    range: CodeRange,
-}
-
-impl<'a> CodeArenaView<'a> {
-    fn cold_ops(self) -> impl Iterator<Item = &'a Op> {
-        (self.range.start as usize..self.range.end as usize).filter_map(move |pc| {
-            let instruction = self.arena.instructions[pc];
-            let index = instruction.cold_index()? as usize;
-            self.arena.cold.get(index)
-        })
     }
 }
 
@@ -552,6 +539,19 @@ impl<'a> CodeView<'a> {
     pub fn cold_at(self, pc: usize) -> Option<&'a Op> {
         self.instruction(pc)
             .and_then(|instruction| self.cold(instruction))
+    }
+
+    #[inline]
+    pub fn constant_at(self, pc: usize) -> Option<(u16, &'a Constant)> {
+        let instruction = self.instruction(pc)?;
+        if instruction.opcode != crate::ir::Opcode::LoadConst {
+            return None;
+        }
+        self.store
+            .constants
+            .get(self.range.code.0 as usize)?
+            .get(instruction.b)
+            .map(|value| (instruction.a, value))
     }
 
     #[inline]
@@ -1187,6 +1187,34 @@ mod tests {
             Some(crate::ir::Instruction::move_(1, 2))
         );
         assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn constant_instruction_uses_canonical_pool_without_cold_operation() {
+        let mut arena = super::CodeArena::new();
+        let value = super::Constant::String("constant".into());
+        let range = arena.append_slice(&[
+            super::Op::Const {
+                dst: 3,
+                value: value.clone(),
+            },
+            super::Op::Const {
+                dst: 4,
+                value: value.clone(),
+            },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::load_const(3, 0))
+        );
+        assert_eq!(
+            code.instruction(1),
+            Some(crate::ir::Instruction::load_const(4, 0))
+        );
+        assert_eq!(code.constant_at(0), Some((3, &value)));
+        assert!(code.cold_at(0).is_none());
+        assert_eq!(store.constant_pool(range).len(), 1);
     }
     #[test]
     fn local_numeric_update_lowers_as_one_physical_instruction() {

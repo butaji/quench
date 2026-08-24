@@ -107,7 +107,7 @@ impl DivergenceFact {
             10 => AGetI, 11 => Sub, 12 => LoadLocalChecked, 13 => UpdateLocal,
             14 => AGetI, 15 => Add, 16 => LoadLocalChecked, 17 => UpdateLocal,
             18 => AGetI, 19 => Sub, 20 => Mul, 21 => ASetI,
-            23 => LoadLocalChecked, 25 => LoadLocalChecked, 27 => Slow, 28 => ASetI
+            23 => LoadLocalChecked, 25 => LoadLocalChecked, 27 => LoadConst, 28 => ASetI
         );
         let (_, div) = recognized_static_load(code, 0)?;
         let (_, h) = recognized_static_load(code, 4)?;
@@ -118,7 +118,7 @@ impl DivergenceFact {
         let (_, p) = recognized_static_load(code, 23)?;
         let (_, current_row) = recognized_static_load(code, 25)?;
         (u == second_u && v == second_v).then_some(())?;
-        let zero = matches!(code.cold_at(27), Some(Op::Const { value: crate::ops::Constant::Number(0.0), .. }));
+        let zero = matches!(code.constant_at(27), Some((_, crate::ops::Constant::Number(0.0))));
         zero.then_some(())?;
         let current_update = kernel_update_slot(code, 2)?;
         (current_row == current_update).then_some(())?;
