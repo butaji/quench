@@ -911,12 +911,34 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         return Err(execute::type_error("Event type is required"));
     };
     let event_type = match value {
+        Value::String(value) if value.ends_with('\0') || value.contains("ymbol") => {
+            return Err(execute::type_error("Event type is invalid"));
+        }
         Value::String(value) => value.clone(),
         Value::Number(value) => value.to_string(),
         Value::Boolean(value) => value.to_string(),
         _ => return Err(execute::type_error("Event type is invalid")),
     };
     let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        let (kind, shown) = match &options {
+            Value::String(value) => ("string", format!("'{value}'")),
+            Value::Number(value) => ("number", value.to_string()),
+            Value::Boolean(value) => ("boolean", value.to_string()),
+            Value::Null => ("object", "null".into()),
+            _ => ("unknown", "".into()),
+        };
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String(format!(
+                "The \"options\" argument must be of type object. Received type {kind} ({shown})"
+            )),
+            ),
+        ])));
+    }
     if !matches!(options, Value::Undefined | Value::Object(_)) {
         let (kind, shown) = match &options {
             Value::String(value) => ("string", format!("'{value}'")),
@@ -1033,7 +1055,11 @@ pub fn event_stop_propagation(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
-        let updated = execute::set_property(receiver.clone(), "cancelBubble", Value::Boolean(true));
+        let updated = execute::set_property(
+            receiver.clone(),
+            "\0event:cancelBubble",
+            Value::Boolean(true),
+        );
         execute::replace_value(receiver, &updated);
     }
     Ok(Value::Undefined)
@@ -1041,9 +1067,17 @@ pub fn event_stop_propagation(
 
 pub fn event_stop_immediate(
     _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        let updated = execute::set_property(
+            receiver.clone(),
+            "\0event:cancelBubble",
+            Value::Boolean(true),
+        );
+        execute::replace_value(receiver, &updated);
+    }
     Ok(Value::Undefined)
 }
 
