@@ -252,10 +252,15 @@ pub fn dispatch_event(
         ))
     });
     let active = execute::set_property(
-        execute::set_property(event.clone(), "target", receiver.clone()),
-        "eventPhase",
-        Value::Number(2.0),
+        execute::set_property(
+            execute::set_property(event.clone(), "target", receiver.clone()),
+            "currentTarget",
+            receiver.clone(),
+        ),
+        "srcElement",
+        receiver.clone(),
     );
+    let active = execute::set_property(active, "eventPhase", Value::Number(2.0));
     execute::replace_value(event, &active);
     for listener in &snapshot {
         if listener.weak {
@@ -309,6 +314,8 @@ pub fn dispatch_event(
         .is_some_and(|identity| state.borrow().prevented_events.contains(&identity))
         || execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
     let reset = execute::set_property(event.clone(), "eventPhase", Value::Number(0.0));
+    let reset = execute::set_property(reset, "currentTarget", Value::Null);
+    let reset = execute::set_property(reset, "srcElement", Value::Null);
     let reset = execute::set_property(reset, "target", receiver.clone());
     execute::replace_value(event, &reset);
     Ok(Value::Boolean(!prevented))
