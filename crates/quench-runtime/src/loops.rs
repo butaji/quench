@@ -518,6 +518,7 @@ fn execute_loop_body(
 }
 
 include!("loops_run.rs");
+include!("loops_numeric_kernel.rs");
 include!("loops_body.rs");
 include!("loops_while.rs");
 
