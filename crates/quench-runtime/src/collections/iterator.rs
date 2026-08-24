@@ -444,11 +444,14 @@ fn array_receiver_step(
     data: &Rc<crate::value::ArrayData>,
     index: usize,
 ) -> Result<Option<Value>, crate::execute::VmError> {
+    let receiver = crate::locals::resolved_replacement(Value::Array(Rc::clone(data)));
+    let Value::Array(data) = receiver else {
+        return Ok(None);
+    };
     if index >= data.logical_len() {
         return Ok(None);
     }
-    let array = Value::Array(Rc::clone(data));
-    crate::execute::get_property_result(&array, &index.to_string()).map(Some)
+    crate::execute::get_property_result(&Value::Array(data), &index.to_string()).map(Some)
 }
 pub(super) fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
