@@ -118,6 +118,15 @@ fn resume_iterator_frame(
     let Some(frame) = iterator_frame_resume(generator) else {
         return Ok(None);
     };
+    let _private = crate::private_environment::Guard::install_environment(
+        generator.function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
+    let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
+    let _locals = crate::locals::EnvironmentGuard::install(machine_environment(generator)?);
+    if frame.repeat && suspended_for_of_conditional(generator, state).is_some() {
+        return resume_for_of_conditional_frame(generator, state, resume, &frame).map(Some);
+    }
     if suspended_iterator_conditional(generator, state).is_some() {
         return resume_iterator_conditional_frame(generator, state, resume, &frame).map(Some);
     }
@@ -144,6 +153,96 @@ fn resume_iterator_frame(
     }
     set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
     finish_iterator_frame(generator, state, &frame, completion).map(Some)
+}
+
+struct ForOfConditional<'a> {
+    conditional: &'a Op,
+    body: crate::machine::CodeView<'a>,
+    body_index: usize,
+    branch: crate::machine::CodeView<'a>,
+    yield_index: usize,
+}
+
+fn suspended_for_of_conditional<'a>(
+    generator: &'a GeneratorData,
+    _state: &GeneratorState,
+) -> Option<ForOfConditional<'a>> {
+    let Op::ForOf { body, .. } = generator
+        .function
+        .code
+        .code()?
+        .cold_at(machine_pc(generator).checked_sub(1)?)?
+    else {
+        return None;
+    };
+    let body = body.code()?;
+    let (
+        body_index,
+        conditional @ Op::Conditional {
+            condition,
+            consequent,
+            alternate,
+            ..
+        },
+    ) = body.find_cold(conditional_contains_yield)?
+    else {
+        return None;
+    };
+    let test = crate::execute::read_register(&registers(generator), *condition).ok()?;
+    let branch = if crate::execute::is_truthy(&test) {
+        consequent
+    } else {
+        alternate
+    }
+    .code()?;
+    let yield_index = branch.position_cold(|op| matches!(op, Op::Yield { .. }))?;
+    Some(ForOfConditional {
+        conditional,
+        body,
+        body_index,
+        branch,
+        yield_index,
+    })
+}
+
+fn resume_for_of_conditional_frame(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    resume: crate::completion::Completion,
+    frame: &IteratorFrameResume,
+) -> Result<crate::completion::Completion, VmError> {
+    let Some(suspension) = suspended_for_of_conditional(generator, state) else {
+        return Ok(resume);
+    };
+    if !matches!(resume, crate::completion::Completion::Normal) {
+        set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
+        return finish_iterator_frame(generator, state, frame, resume);
+    }
+    let completion = execute_with_generator_registers(generator, |registers| {
+        crate::vm::execute_code_completion_in_current_frame(
+            suspension
+                .branch
+                .slice(suspension.yield_index + 1, suspension.branch.len())
+                .ok_or(VmError::MissingReturn)?,
+            registers,
+        )
+    })?;
+    let crate::completion::Completion::Return(value) = completion else {
+        set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
+        return finish_iterator_frame(generator, state, frame, completion);
+    };
+    write_conditional_result(suspension.conditional, &mut registers_mut(generator), value)?;
+    let completion = execute_with_generator_registers(generator, |registers| {
+        crate::vm::execute_code_completion_in_current_frame(
+            suspension
+                .body
+                .slice(suspension.body_index + 1, suspension.body.len())
+                .ok_or(VmError::MissingReturn)?,
+            registers,
+        )
+    })?;
+    set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
+    finish_iterator_frame(generator, state, frame, completion)
 }
 
 fn resume_iterator_conditional_frame(
@@ -405,6 +504,12 @@ fn install_iterator_binding_input(
 ) -> bool {
     if install_iterator_frame_input(generator, input) {
         return true;
+    }
+    if let Some(suspension) = suspended_for_of_conditional(generator, state) {
+        if let Some(Op::Yield { src }) = suspension.branch.cold_at(suspension.yield_index) {
+            crate::execute::write_value(&mut registers_mut(generator), *src, input.clone());
+            return true;
+        }
     }
     let Some((_, body, index)) = suspended_iterator_binding(generator, state) else {
         return false;
