@@ -33,6 +33,17 @@ execution_events! {
     EqualityWordMiss => "equality_word_miss",
     NamedPropertySetHit => "named_property_set_hit",
     NamedPropertySetMiss => "named_property_set_miss",
+    CryptoKernelShape => "crypto_kernel_shape",
+    CryptoKernelPrefix => "crypto_kernel_prefix",
+    CryptoKernelProduct => "crypto_kernel_product",
+    CryptoKernelStores => "crypto_kernel_stores",
+    CryptoKernelHeader => "crypto_kernel_header",
+    CryptoKernelInputs => "crypto_kernel_inputs",
+    CryptoKernelInputStorage => "crypto_kernel_input_storage",
+    CryptoKernelOutputStorage => "crypto_kernel_output_storage",
+    CryptoKernelStorage => "crypto_kernel_storage",
+    CryptoKernelBounds => "crypto_kernel_bounds",
+    CryptoKernelHit => "crypto_kernel_hit",
 }
 
 #[cfg(feature = "execution-trace")]
