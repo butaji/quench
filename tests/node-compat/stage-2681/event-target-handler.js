@@ -1,0 +1,10 @@
+const { defineEventHandler } = require('internal/event_target');
+const target = new EventTarget();
+defineEventHandler(target, 'tick');
+let count = 0;
+target.ontick = () => count++;
+target.dispatchEvent(new Event('tick'));
+if (count !== 1 || typeof target.ontick !== 'function') process.exit(1);
+target.ontick = null;
+target.dispatchEvent(new Event('tick'));
+if (count !== 1 || target.ontick !== null) process.exit(1);
