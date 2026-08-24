@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::reader::NodeFixture;
 
-const STAGE_SPEC: &str = "";
+const STAGE_SPEC: &str = include_str!("../../../STAGES.md");
 
 /// One canonical stage entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,16 +26,18 @@ pub fn list_stages() -> Vec<NodeStage> {
     let mut stages = Vec::new();
     for line in STAGE_SPEC.lines() {
         let trimmed = line.trim();
-        let Some(rest) = trimmed.strip_prefix("1. **") else {
+        let Some(rest) = trimmed.strip_prefix("### ") else {
             continue;
         };
-        let Some((name, _)) = rest.split_once(".**") else {
+        let Some((number, name)) = rest.split_once(". ") else {
             continue;
         };
-        let id = stages.len() as u32 + 1;
+        let Ok(id) = number.parse::<u32>() else {
+            continue;
+        };
         stages.push(NodeStage {
             id,
-            path: name.to_string(),
+            path: name.trim().to_string(),
         });
     }
     stages
@@ -44,19 +46,19 @@ pub fn list_stages() -> Vec<NodeStage> {
 /// Convert all declared stages into concrete filesystem paths.
 pub fn resolve_stages(node_tests_root: &Path) -> Result<Vec<ResolvedStage>, String> {
     let mut stages = Vec::new();
-    for (i, stage) in list_stages().into_iter().enumerate() {
+    for stage in list_stages() {
         let root = node_tests_root.join(&stage.path);
         if !root.exists() {
             // Stage is optional; an empty stage is a non-fatal skip.
             stages.push(ResolvedStage {
-                id: i as u32 + 1,
+                id: stage.id,
                 path: stage.path,
                 root,
             });
             continue;
         }
         stages.push(ResolvedStage {
-            id: i as u32 + 1,
+            id: stage.id,
             path: stage.path,
             root,
         });
@@ -102,15 +104,13 @@ pub fn adapter(fixture: &NodeFixture) -> &Path {
 
 #[cfg(test)]
 mod tests {
-    use super::discover_fixtures;
+    use super::{discover_fixtures, list_stages};
     use std::fs;
 
     #[test]
     fn discovers_nested_node_fixture_extensions() {
-        let root = std::env::temp_dir().join(format!(
-            "quench-node-test-discovery-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("quench-node-test-discovery-{}", std::process::id()));
         let nested = root.join("nested");
         fs::create_dir_all(&nested).unwrap();
         fs::write(root.join("test-a.js"), "").unwrap();
@@ -123,5 +123,14 @@ mod tests {
         assert!(fixtures.iter().any(|path| path.ends_with("test-b.mjs")));
         assert!(fixtures.iter().any(|path| path.ends_with("test-c.cjs")));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_numbered_stage_headings() {
+        let stages = list_stages();
+        assert!(stages.len() >= 12);
+        assert_eq!(stages[0].id, 0);
+        assert_eq!(stages[0].path, "Measurement and runner truth");
+        assert_eq!(stages[11].id, 11);
     }
 }
