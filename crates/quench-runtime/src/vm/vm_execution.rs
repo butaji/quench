@@ -285,6 +285,32 @@ pub(crate) fn execute_in_environment(
                 )?;
                 pc = next;
             }
+            crate::completion::Completion::TailCall(request) => {
+                // A top-level code slice has no caller continuation to
+                // consume a promoted call.  Re-enter the packed call-frame
+                // driver with a synthetic result register; it handles the
+                // callee iteratively (including nested tail calls) and keeps
+                // ordinary calls on the upstream fast path.
+                let mut caller_registers = machine.take_registers();
+                let continuation = crate::completion::CallContinuation {
+                    callee: request.callee,
+                    receiver: request.receiver,
+                    arguments: request.arguments,
+                    caller_code: crate::identity::CodeId(0),
+                    caller_pc: 0,
+                    caller_registers: std::mem::take(&mut caller_registers),
+                    caller_environment: crate::identity::EnvironmentRef(0),
+                    destination: 0,
+                    guards: crate::completion::ContinuationGuards::default(),
+                };
+                crate::vm::vm_ops::execute_call_continuation(
+                    &mut caller_registers,
+                    continuation,
+                )?;
+                let value = crate::vm::read_register(&caller_registers, 0)?;
+                *registers = caller_registers;
+                return Ok(value);
+            }
             completion => {
                 *registers = machine.take_registers();
                 return completion_result(completion);
@@ -309,6 +335,27 @@ pub(crate) fn execute_code_in_environment(
         match step.completion {
             crate::completion::Completion::Call(continuation) => {
                 crate::vm::vm_ops::execute_call_continuation(registers, continuation)?;
+            }
+            crate::completion::Completion::TailCall(request) => {
+                let mut caller_registers = std::mem::take(registers);
+                let continuation = crate::completion::CallContinuation {
+                    callee: request.callee,
+                    receiver: request.receiver,
+                    arguments: request.arguments,
+                    caller_code: crate::identity::CodeId(0),
+                    caller_pc: 0,
+                    caller_registers: std::mem::take(&mut caller_registers),
+                    caller_environment: crate::identity::EnvironmentRef(0),
+                    destination: 0,
+                    guards: crate::completion::ContinuationGuards::default(),
+                };
+                crate::vm::vm_ops::execute_call_continuation(
+                    &mut caller_registers,
+                    continuation,
+                )?;
+                let value = crate::vm::read_register(&caller_registers, 0)?;
+                *registers = caller_registers;
+                return Ok(value);
             }
             completion => return completion_result(completion),
         }
