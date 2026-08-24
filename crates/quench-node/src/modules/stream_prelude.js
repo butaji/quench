@@ -493,7 +493,7 @@
       corked: 0,
       prefinished: false,
       final: options.final || null,
-      endCallback: null,
+      endCallbacks: [],
       autoDestroy: options.autoDestroy !== false,
       destroyed: false
     };
@@ -514,6 +514,11 @@
     state.bufferedRequestCount = state.pending.length;
   }
 
+  function completeEndCallbacks(state, error) {
+    const callbacks = state.endCallbacks.splice(0);
+    for (const callback of callbacks) callback(error);
+  }
+
   function finishWritable(stream) {
     const st = stream._writableState;
     if (st.destroyed) return;
@@ -527,11 +532,7 @@
         if (error) {
           st.errored = true;
           stream.writable = false;
-          if (st.endCallback) {
-            const callback = st.endCallback;
-            st.endCallback = null;
-            callback(error);
-          }
+          completeEndCallbacks(st, error);
           nextTick(() => stream._emitter.emit("error", error));
           return;
         }
@@ -547,6 +548,7 @@
       return;
     }
     st.finished = true;
+    completeEndCallbacks(st);
     stream._emitter.emit("finish");
     if (st.autoDestroy) nextTick(() => stream.destroy());
   }
@@ -779,8 +781,23 @@
         callback = encoding;
         encoding = undefined;
       }
-      this._writableState.endCallback = callback || null;
-      if (callback) this._emitter.once("finish", callback);
+      const state = this._writableState;
+      if (state.ended && chunk != null) {
+        const error = new Error("write after end");
+        error.code = "ERR_STREAM_WRITE_AFTER_END";
+        if (callback) nextTick(() => callback(error));
+        nextTick(() => this._emitter.emit("error", error));
+        return this;
+      }
+      if (this._writableState.finished) {
+        if (callback) {
+          const error = new Error("write after finish");
+          error.code = "ERR_STREAM_ALREADY_FINISHED";
+          nextTick(() => callback(error));
+        }
+        return this;
+      }
+      if (callback) state.endCallbacks.push(callback);
       if (chunk != null) this.write(chunk, encoding);
       this._writableState.corked = 0;
       flushCorked(this);
