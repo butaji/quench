@@ -123,7 +123,7 @@
       emittedReadable: false,
       errored: null,
       closeEmitted: false,
-      encoding: null,
+      encoding: options.encoding ? validateEncoding(options.encoding) : null,
       awaitDrainWriters: null,
       pipeCount: 0,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
@@ -220,6 +220,11 @@
 
     get readableObjectMode() {
       return this._readableState.objectMode;
+    }
+
+    get readableLength() {
+      return this._readableState.buffer.reduce((total, chunk) =>
+        total + (typeof chunk === "string" ? chunk.length : chunk?.byteLength ?? 1), 0);
     }
 
     get readableFlowing() {
