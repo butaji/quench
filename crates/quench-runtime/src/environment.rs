@@ -69,7 +69,7 @@ struct SlotStore {
     // `values[index]` owns the slot value; after bridging, the Rc cell is the
     // authoritative source and `values[index]` is only the snapshot used to
     // create it.
-    values: UnsafeCell<Vec<Value>>,
+    values: UnsafeCell<crate::register_file::RegisterFile>,
     bridges: UnsafeCell<Vec<Option<Rc<RefCell<Value>>>>>,
 }
 
@@ -82,7 +82,7 @@ impl PartialEq for SlotStore {
 impl Default for SlotStore {
     fn default() -> Self {
         Self {
-            values: UnsafeCell::new(Vec::new()),
+            values: UnsafeCell::new(crate::register_file::RegisterFile::new()),
             bridges: UnsafeCell::new(Vec::new()),
         }
     }
@@ -100,7 +100,7 @@ impl SlotStore {
     fn from_values(values: Vec<Value>) -> Rc<Self> {
         let store = Rc::new(Self {
             bridges: UnsafeCell::new((0..values.len()).map(|_| None).collect()),
-            values: UnsafeCell::new(values),
+            values: UnsafeCell::new(crate::register_file::RegisterFile::from_values(values)),
         });
         store.invariant();
         store
@@ -109,21 +109,21 @@ impl SlotStore {
     fn from_cell(cell: Rc<RefCell<Value>>) -> Rc<Self> {
         let value = cell.borrow().clone();
         let store = Rc::new(Self {
-            values: UnsafeCell::new(vec![value]),
+            values: UnsafeCell::new(crate::register_file::RegisterFile::from_values(vec![value])),
             bridges: UnsafeCell::new(vec![Some(cell)]),
         });
         store.invariant();
         store
     }
 
-    fn values(&self) -> &Vec<Value> {
+    fn values(&self) -> &crate::register_file::RegisterFile {
         // SAFETY: VM execution is single-threaded; callers uphold the
         // SlotStore invariant and never retain this reference across mutation.
         unsafe { &*self.values.get() }
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn values_mut(&self) -> &mut Vec<Value> {
+    fn values_mut(&self) -> &mut crate::register_file::RegisterFile {
         // SAFETY: see `values`; mutation is confined to SlotStore methods.
         unsafe { &mut *self.values.get() }
     }
@@ -141,8 +141,10 @@ impl SlotStore {
 
     fn ensure(&self, index: usize) {
         self.invariant();
-        while self.values().len() <= index {
-            self.values_mut().push(Value::Undefined);
+        if self.values().len() <= index {
+            self.values_mut().resize_undefined(index + 1);
+        }
+        while self.bridges().len() <= index {
             self.bridges_mut().push(None);
         }
         self.invariant();
@@ -159,7 +161,7 @@ impl SlotStore {
             .get(index)
             .and_then(Option::as_ref)
             .map_or_else(
-                || self.values()[index].clone(),
+                || self.values().read(index).unwrap_or(Value::Undefined),
                 |cell| cell.borrow().clone(),
             )
     }
@@ -173,10 +175,7 @@ impl SlotStore {
                 _ => None,
             };
         }
-        match &self.values()[index] {
-            Value::Number(number) => Some(*number),
-            _ => None,
-        }
+        self.values().read_number(index)
     }
 
     fn load_into(
@@ -191,11 +190,11 @@ impl SlotStore {
             .get(index)
             .and_then(Option::as_ref)
             .map(|cell| cell.borrow());
-        let value = value.as_deref().unwrap_or(&self.values()[index]);
-        if let Value::Number(number) = value {
-            registers.write_number(usize::from(dst), *number);
-        } else {
+        if let Some(value) = value.as_deref() {
             crate::execute::write_value(registers, dst, value.clone());
+        } else {
+            let copied = registers.copy_from(usize::from(dst), self.values(), index);
+            debug_assert!(copied, "ensured lexical slot must own an execute word");
         }
     }
 
@@ -204,14 +203,14 @@ impl SlotStore {
         if let Some(Some(cell)) = self.bridges().get(index) {
             *cell.borrow_mut() = value;
         } else {
-            self.values_mut()[index] = value;
+            self.values_mut().write(index, value);
         }
         self.invariant();
     }
 
     fn update_number(&self, index: usize, delta: f64) -> Option<(f64, f64)> {
         self.ensure(index);
-        let value = if let Some(Some(cell)) = self.bridges().get(index) {
+        if let Some(Some(cell)) = self.bridges().get(index) {
             let mut value = cell.borrow_mut();
             let Value::Number(old) = &mut *value else {
                 return None;
@@ -220,14 +219,11 @@ impl SlotStore {
             *old += delta;
             return Some((before, *old));
         } else {
-            &mut self.values_mut()[index]
-        };
-        let Value::Number(old) = value else {
-            return None;
-        };
-        let before = *old;
-        *old += delta;
-        Some((before, *old))
+            let before = self.values().read_number(index)?;
+            let after = before + delta;
+            self.values_mut().write_number(index, after);
+            Some((before, after))
+        }
     }
 
     fn bridge(&self, index: usize) -> Rc<RefCell<Value>> {
@@ -235,7 +231,9 @@ impl SlotStore {
         if let Some(Some(cell)) = self.bridges().get(index) {
             return Rc::clone(cell);
         }
-        let cell = Rc::new(RefCell::new(self.values()[index].clone()));
+        let cell = Rc::new(RefCell::new(
+            self.values().read(index).unwrap_or(Value::Undefined),
+        ));
         self.bridges_mut()[index] = Some(Rc::clone(&cell));
         self.invariant();
         cell
