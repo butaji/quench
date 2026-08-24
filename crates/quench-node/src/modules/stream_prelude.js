@@ -700,6 +700,7 @@
       const encodingProvided = encoding !== undefined;
       const st = this._writableState;
       if (st.ended) {
+        if (st.errored) return false;
         const error = new Error("write after end");
         error.code = "ERR_STREAM_WRITE_AFTER_END";
         st.errored = true;
