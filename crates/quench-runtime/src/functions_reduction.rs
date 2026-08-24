@@ -501,7 +501,7 @@ fn make_function_value(
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
     crate::execution_trace::function_lifecycle(true);
-    crate::execution_trace::function_shape(captures.len(), code.len(), true);
+    crate::execution_trace::function_shape(code.capture_slots().len(), code.len(), true);
     crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         code,
         params,
