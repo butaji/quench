@@ -119,6 +119,7 @@ struct Counters {
     regexp: HashMap<String, (u64, u128, u128)>,
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
+    descriptor_objects: HashMap<&'static str, u64>,
 }
 
 #[cfg(feature = "execution-trace")]
@@ -195,6 +196,22 @@ pub(crate) fn function_shape(captures: usize, code_len: usize, allocated: bool) 
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn function_shape(_: usize, _: usize, _: bool) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn descriptor_object(origin: &'static str) {
+    if enabled() {
+        COUNTERS.with(|state| {
+            *state
+                .borrow_mut()
+                .descriptor_objects
+                .entry(origin)
+                .or_default() += 1;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn descriptor_object(_: &'static str) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -518,6 +535,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "regexp": regexp,
                 "object_shapes": object_shapes,
                 "function_shapes": function_shapes,
+                "descriptor_objects": counters.descriptor_objects,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
             })
         })
