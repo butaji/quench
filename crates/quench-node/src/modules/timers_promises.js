@@ -71,6 +71,7 @@
       failure = error;
       closed = true;
       if (timer) timers.clearInterval(timer);
+      removeAbortListener();
       while (waiters.length > 0) waiters.shift().reject(error);
     };
     const signal = options.signal;
@@ -79,6 +80,9 @@
       throw new TypeError("The signal option must be an AbortSignal");
     }
     const onAbort = () => reject(abortError());
+    const removeAbortListener = () => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+    };
     const iterator = {
       next() {
         if (values.length > 0) {
@@ -93,7 +97,7 @@
         if (!closed) {
           closed = true;
           if (timer) timers.clearInterval(timer);
-          if (signal) signal.removeEventListener("abort", onAbort);
+          removeAbortListener();
           while (waiters.length > 0) waiters.shift().resolve(done);
         }
         return Promise.resolve(done);
