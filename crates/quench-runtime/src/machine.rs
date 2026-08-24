@@ -555,6 +555,20 @@ impl<'a> CodeView<'a> {
     }
 
     #[inline]
+    pub fn binary_at(self, pc: usize) -> Option<(u16, crate::ops::BinaryOp, u16, u16)> {
+        let instruction = self.instruction(pc)?;
+        let operator = match instruction.opcode {
+            crate::ir::Opcode::Add => crate::ops::BinaryOp::Add,
+            crate::ir::Opcode::Sub => crate::ops::BinaryOp::Subtract,
+            crate::ir::Opcode::Mul => crate::ops::BinaryOp::Multiply,
+            crate::ir::Opcode::Div => crate::ops::BinaryOp::Divide,
+            crate::ir::Opcode::Binary => crate::ir::compact_binary_operator(instruction.flags)?,
+            _ => return None,
+        };
+        Some((instruction.a, operator, instruction.b, instruction.c))
+    }
+
+    #[inline]
     pub fn metadata_at(self, pc: usize) -> Option<&'a InstructionMeta> {
         let offset = (self.range.start as usize).checked_add(pc)?;
         let range_start = self.store.ranges.get(self.range.code.0 as usize)?.0 as usize;

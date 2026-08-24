@@ -134,6 +134,18 @@ fn run_instruction(
             vm_arithmetic::execute_binary(registers, instruction.a, operator, instruction.b, instruction.c)?;
             Ok(None)
         }
+        Opcode::Binary => {
+            let operator = crate::ir::compact_binary_operator(instruction.flags)
+                .ok_or_else(|| VmError::EvalError("invalid compact binary operator".into()))?;
+            vm_arithmetic::execute_binary(
+                registers,
+                instruction.a,
+                operator,
+                instruction.b,
+                instruction.c,
+            )?;
+            Ok(None)
+        }
         Opcode::GetProperty | Opcode::AGetI => {
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
