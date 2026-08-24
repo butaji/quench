@@ -1,6 +1,6 @@
 
 
-pub(crate) fn current_global_object() -> Value {
+pub fn current_global_object() -> Value {
     if let Some(global) = batched_global_object() {
         return Value::Object(global);
     }
