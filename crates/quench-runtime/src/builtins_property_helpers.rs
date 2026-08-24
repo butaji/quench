@@ -234,8 +234,14 @@ fn validate_descriptor_kind(descriptor: &[(String, Value)]) -> Result<(), crate:
     Ok(())
 }
 fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(String, Value)]) {
-    let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
     let descriptor_key = descriptor_key(key);
+    if let Value::Object(properties) = result {
+        if default_ordinary_descriptor(descriptor) {
+            Rc::make_mut(properties).retain(|(name, _)| name != &descriptor_key);
+            return;
+        }
+    }
+    let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
     match result {
         Value::Object(properties) => {
             let properties = Rc::make_mut(properties);
@@ -262,6 +268,22 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
         }
         _ => {}
     }
+}
+
+fn default_ordinary_descriptor(descriptor: &[(String, Value)]) -> bool {
+    if descriptor.len() != 4 {
+        return false;
+    }
+    ["writable", "enumerable", "configurable"]
+        .into_iter()
+        .all(|field| {
+            descriptor
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == field).then_some(value))
+                .is_some_and(|value| matches!(value, Value::Boolean(true)))
+        })
+        && descriptor.iter().any(|(name, _)| name == "value")
 }
 fn define_accessor_placeholder(target: Value, key: &str) -> Value {
     if matches!(
