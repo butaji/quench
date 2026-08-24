@@ -117,6 +117,14 @@
   return {
     setTimeout: setTimeoutPromise,
     setImmediate: setImmediatePromise,
-    setInterval: setIntervalPromise
+    setInterval: setIntervalPromise,
+    scheduler: {
+      wait: function (delay, options) {
+        return setTimeoutPromise(delay, undefined, options);
+      },
+      yield: function () {
+        return setImmediatePromise(undefined);
+      }
+    }
   };
 })
