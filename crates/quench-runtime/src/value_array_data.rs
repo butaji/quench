@@ -875,12 +875,16 @@ impl ArrayData {
                 return;
             }
             self.disconnect_index(index);
-            self.deleted.resize(index.saturating_add(1), false);
+            if self.deleted.len() <= index {
+                self.deleted.resize(index.saturating_add(1), false);
+            }
             self.deleted[index] = true;
             self.kind.set(ArrayKind::Holey);
             if let Some(live) = &self.argument_live {
                 let mut live = live.borrow_mut();
-                live.deleted.resize(index.saturating_add(1), false);
+                if live.deleted.len() <= index {
+                    live.deleted.resize(index.saturating_add(1), false);
+                }
                 live.deleted[index] = true;
             }
         }

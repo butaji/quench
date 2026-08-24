@@ -528,6 +528,28 @@ mod tests {
             Value::String("bad input".to_string())
         );
     }
+
+    #[test]
+    fn copy_dense_property_deletes_a_hole_destination() {
+        let mut data = crate::value::ArrayData::new(vec![
+            Value::Number(0.0),
+            Value::Number(1.0),
+            Value::Undefined,
+            Value::Undefined,
+            Value::Number(1.0),
+        ]);
+        data.delete_property("2");
+        data.delete_property("3");
+        assert!(!data.has_index(2));
+        assert!(!data.has_index(3));
+        super::copy_dense_property(&mut data, 1, 0);
+        super::copy_dense_property(&mut data, 2, 1);
+        assert!(!data.has_index(1));
+        assert!(!data.has_index(3));
+        super::copy_dense_property(&mut data, 3, 2);
+        assert!(!data.has_index(1));
+        assert!(!data.has_index(2));
+    }
 }
 include!("builtins_prototype.rs");
 include!("builtins_value_string.rs");
