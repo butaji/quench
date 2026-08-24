@@ -377,6 +377,9 @@ fn os_buffer_dispatch(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
         CAP_TTY_ISATTY => tty_isatty,
+        0x1902 => crate::modules::worker_threads::post_message,
+        0x1903 => crate::modules::worker_threads::close,
+        0x1904 => crate::modules::worker_threads::start,
         _ => return crate::dispatch_buffer::buffer_dispatch(cap).or_else(|| process_dispatch(cap)),
     })
 }
@@ -525,6 +528,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_READLINE => readline_create_interface,
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
+        0x1901 => crate::modules::worker_threads::message_channel,
         _ => return None,
     })
 }

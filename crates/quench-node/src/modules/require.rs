@@ -267,6 +267,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     0x1900,
                 )),
             ),
+            (
+                "MessageChannel".to_string(),
+                crate::host::capability(crate::registry::SPEC_WORKER_MESSAGE_CHANNEL),
+            ),
         ])),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
             "isSea".to_string(),
