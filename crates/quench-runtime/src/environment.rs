@@ -426,8 +426,24 @@ impl Drop for Environment {
     }
 }
 
+fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
+    source.as_ref().map(TdzCells::clone_values)
+}
+
 fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
-    source.as_ref().map(|cells| TdzCells::clone_prefix(cells, count))
+    source
+        .as_ref()
+        .map(|cells| TdzCells::clone_prefix(cells, count))
+}
+
+fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
+    source.borrow().as_ref().map(|slots| {
+        slots
+            .iter()
+            .copied()
+            .filter(|slot| usize::from(*slot) < limit)
+            .collect()
+    })
 }
 
 impl Environment {
@@ -456,9 +472,7 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().as_ref().map(|slots| {
-                slots.iter().copied().filter(|slot| usize::from(*slot) < count).collect()
-            })),
+            immutable_slots: RefCell::new(immutable_prefix(&environment.immutable_slots, count)),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
@@ -499,7 +513,20 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            immutable_slots: RefCell::new(Some(
+                environment
+                    .immutable_slots
+                    .borrow()
+                    .as_ref()
+                    .map(|slots| {
+                        slots
+                            .iter()
+                            .copied()
+                            .filter(|slot| selected.contains(slot))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            )),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: None,
@@ -539,7 +566,7 @@ impl Environment {
             .replace(captures.deleted_cells.borrow().clone());
         environment
             .immutable_slots
-            .replace(captures.immutable_slots.borrow().clone());
+            .replace(immutable_prefix(&captures.immutable_slots, prefix_len));
         environment
     }
 
@@ -551,7 +578,7 @@ impl Environment {
     }
 
     pub(crate) fn captured_len(&self) -> usize {
-        self.slots.borrow().prefix.len()
+        self.slots.borrow().prefix_len
     }
 
     pub(crate) fn get(&self, slot: u16) -> Value {
@@ -1068,6 +1095,6 @@ mod tests {
             assert!(!environment.is_uninitialized(0));
             environment.get_number(0).unwrap()
         }));
-        let _ = (raw, slot, checked, current);
+        eprintln!("slot_probe iterations={ITERATIONS} raw={raw:?} slot={slot:?} checked={checked:?} current={current:?}");
     }
 }
