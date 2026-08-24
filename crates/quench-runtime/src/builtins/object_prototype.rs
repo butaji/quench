@@ -27,6 +27,16 @@ fn prototype_for_value(value: &Value) -> Value {
             return prototype.clone();
         }
     }
+    if let Value::HostCapability(capability) = value {
+        if let Some((_, prototype)) = capability
+            .properties
+            .borrow()
+            .iter()
+            .find(|(key, _)| key == "\0function_prototype")
+        {
+            return prototype.clone();
+        }
+    }
     if let Value::Builtin(builtin) = value {
         if let Some(prototype) = crate::builtins::read_intrinsic_prototype_override(*builtin) {
             return prototype;
