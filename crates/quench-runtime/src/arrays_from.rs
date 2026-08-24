@@ -193,7 +193,7 @@ fn map_item(
 fn create_result(
     receiver: Option<&Value>,
     values: Vec<Value>,
-    _iterable: bool,
+    iterable: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let length = values.len();
     let plain_array = match receiver {
@@ -207,7 +207,7 @@ fn create_result(
     // empty iterable construction cannot grow a typed-array view; assigning
     // its `length` afterward only changes metadata and leaves a zero-byte
     // backing buffer.
-    let mut result = construct_result(receiver, length, false)?;
+    let mut result = construct_result(receiver, length, iterable)?;
     for (index, value) in values.into_iter().enumerate() {
         result = write_result_element(result, index, value)?;
     }
