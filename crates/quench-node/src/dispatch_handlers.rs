@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
+use quench_runtime::{execute, host_api};
 
 use crate::host::HostState;
 
@@ -903,6 +904,275 @@ pub fn abort_event_stop_immediate(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     Ok(Value::Undefined)
+}
+
+pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let Some(value) = args.first() else {
+        return Err(execute::type_error("Event type is required"));
+    };
+    let event_type = match value {
+        Value::String(value) if value.ends_with('\0') || value.contains("ymbol") => {
+            return Err(execute::type_error("Event type is invalid"));
+        }
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Boolean(value) => value.to_string(),
+        _ => return Err(execute::type_error("Event type is invalid")),
+    };
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        let (kind, shown) = match &options {
+            Value::String(value) => ("string", format!("'{value}'")),
+            Value::Number(value) => ("number", value.to_string()),
+            Value::Boolean(value) => ("boolean", value.to_string()),
+            Value::Null => ("object", "null".into()),
+            _ => ("unknown", "".into()),
+        };
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String(format!(
+                "The \"options\" argument must be of type object. Received type {kind} ({shown})"
+            )),
+            ),
+        ])));
+    }
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        let (kind, shown) = match &options {
+            Value::String(value) => ("string", format!("'{value}'")),
+            Value::Number(value) => ("number", value.to_string()),
+            Value::Boolean(value) => ("boolean", value.to_string()),
+            Value::Null => ("object", "null".into()),
+            _ => ("unknown", "".into()),
+        };
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String(format!(
+                "The \"options\" argument must be of type object. Received type {kind} ({shown})"
+            )),
+            ),
+        ])));
+    }
+    let cancelable = execute::is_truthy(&execute::get_property(&options, "cancelable"));
+    let event = host_api::object(vec![
+        ("type".into(), Value::String(event_type)),
+        ("bubbles".into(), Value::Boolean(false)),
+        ("cancelable".into(), Value::Boolean(cancelable)),
+        ("defaultPrevented".into(), Value::Boolean(false)),
+        ("returnValue".into(), Value::Boolean(true)),
+        ("\0event:cancelBubble".into(), Value::Boolean(false)),
+        ("composed".into(), Value::Boolean(false)),
+        ("isTrusted".into(), Value::Boolean(false)),
+        ("eventPhase".into(), Value::Number(0.0)),
+        ("timeStamp".into(), Value::Number(0.0)),
+        (
+            "preventDefault".into(),
+            crate::host::capability(crate::registry::SPEC_EVENT_PREVENT_DEFAULT),
+        ),
+        (
+            "stopPropagation".into(),
+            crate::host::capability(crate::registry::SPEC_EVENT_STOP_PROPAGATION),
+        ),
+        (
+            "stopImmediatePropagation".into(),
+            crate::host::capability(crate::registry::SPEC_EVENT_STOP_IMMEDIATE),
+        ),
+        (
+            "composedPath".into(),
+            crate::host::capability(crate::registry::SPEC_EVENT_COMPOSED_PATH),
+        ),
+    ]);
+    execute::define_property(
+        event,
+        "cancelBubble",
+        host_api::object(vec![
+            (
+                "get".into(),
+                crate::host::capability(crate::registry::SPEC_EVENT_GET_CANCEL_BUBBLE),
+            ),
+            (
+                "set".into(),
+                crate::host::capability(crate::registry::SPEC_EVENT_SET_CANCEL_BUBBLE),
+            ),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )
+}
+
+pub fn event_get_cancel_bubble(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver
+        .map(|value| execute::get_property(value, "\0event:cancelBubble"))
+        .unwrap_or(Value::Boolean(false)))
+}
+
+pub fn event_set_cancel_bubble(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        let updated = execute::set_property(
+            receiver.clone(),
+            "\0event:cancelBubble",
+            Value::Boolean(args.first().is_some_and(execute::is_truthy)),
+        );
+        execute::replace_value(receiver, &updated);
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn define_event_handler(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let original = args.first().cloned();
+    let target = original
+        .clone()
+        .ok_or_else(|| execute::type_error("eventTarget is required"))?;
+    let name = match args.get(1) {
+        Some(Value::String(name)) => name.clone(),
+        _ => return Err(execute::type_error("eventName is required")),
+    };
+    let event = match args.get(2) {
+        Some(Value::String(event)) => event.clone(),
+        _ => name.clone(),
+    };
+    let target = execute::set_property(target, "\0event:handler:event", Value::String(event));
+    let target = execute::set_property(target, "\0event:handler:listener", Value::Null);
+    let descriptor = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(crate::registry::SPEC_EVENT_HANDLER_GET),
+        ),
+        (
+            "set".into(),
+            crate::host::capability(crate::registry::SPEC_EVENT_HANDLER_SET),
+        ),
+        ("enumerable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    let target = execute::define_property(target, format!("on{name}").as_str(), descriptor)?;
+    if let Some(original) = original.as_ref() {
+        execute::replace_value(original, &target);
+    }
+    let _ = state;
+    Ok(target)
+}
+
+pub fn event_handler_get(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver
+        .map(|value| execute::get_property(value, "\0event:handler:listener"))
+        .unwrap_or(Value::Null))
+}
+
+pub fn event_handler_set(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let event = execute::get_property(receiver, "\0event:handler:event");
+    let old = execute::get_property(receiver, "\0event:handler:listener");
+    if quench_runtime::is_callable(&old) {
+        let _ = crate::modules::event_target::remove_event_listener(
+            state,
+            Some(receiver),
+            &[event.clone(), old],
+        );
+    }
+    let listener = args.first().cloned().unwrap_or(Value::Null);
+    let updated = execute::set_property(
+        receiver.clone(),
+        "\0event:handler:listener",
+        listener.clone(),
+    );
+    execute::replace_value(receiver, &updated);
+    if quench_runtime::is_callable(&listener) {
+        let _ = crate::modules::event_target::add_event_listener(
+            state,
+            Some(receiver),
+            &[event, listener],
+        );
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn event_prevent_default(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        if let Some(identity) = receiver.object_identity() {
+            state.borrow_mut().prevented_events.insert(identity);
+        }
+        if execute::is_truthy(&execute::get_property(receiver, "cancelable")) {
+            let updated =
+                execute::set_property(receiver.clone(), "defaultPrevented", Value::Boolean(true));
+            execute::replace_value(receiver, &updated);
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn event_stop_propagation(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        let updated = execute::set_property(
+            receiver.clone(),
+            "\0event:cancelBubble",
+            Value::Boolean(true),
+        );
+        execute::replace_value(receiver, &updated);
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn event_stop_immediate(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(receiver) = receiver {
+        let updated = execute::set_property(
+            receiver.clone(),
+            "\0event:cancelBubble",
+            Value::Boolean(true),
+        );
+        execute::replace_value(receiver, &updated);
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn event_composed_path(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    match receiver.map(|value| execute::get_property(value, "target")) {
+        Some(target) if !matches!(target, Value::Undefined) => Ok(host_api::array(vec![target])),
+        _ => Ok(host_api::array(Vec::new())),
+    }
 }
 
 pub fn abort_signal_new(
