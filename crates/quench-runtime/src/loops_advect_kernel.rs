@@ -112,12 +112,10 @@ fn run_advect_kernel(
     let Value::Array(d0) = environment.get(fact.d0) else { return None };
     let Value::Array(u) = environment.get(fact.u) else { return None };
     let Value::Array(v) = environment.get(fact.v) else { return None };
-    let arrays = [&d, &d0, &u, &v];
-    for left in 0..arrays.len() {
-        for right in left + 1..arrays.len() {
-            (!std::rc::Rc::ptr_eq(arrays[left], arrays[right])).then_some(())?;
-        }
-    }
+    (!std::rc::Rc::ptr_eq(&d, &d0)
+        && !std::rc::Rc::ptr_eq(&d, &u)
+        && !std::rc::Rc::ptr_eq(&d, &v))
+        .then_some(())?;
     validate_advect_arrays(&d, &d0, &u, &v, pos, iterations, scalars)?;
     let d_words = d.numeric_cells()?;
     let d0_words = d0.numeric_cells()?;
