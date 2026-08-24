@@ -479,6 +479,36 @@ fn array_property_result(
     crate::arrays::prototype_override_getter(key).map(|getter| match getter {
         Value::Undefined => Ok(Value::Undefined),
         getter => invoke_accessor(&getter, receiver),
+    }).or_else(|| {
+        if let Some(Value::Object(properties)) =
+            crate::builtins::read_intrinsic_override(crate::ops::Builtin::ObjectPrototype, key)
+        {
+            if let Some(getter) = properties
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "get").then_some(value.clone()))
+            {
+                return Some(match getter {
+                    Value::Undefined => Ok(Value::Undefined),
+                    getter => invoke_accessor(&getter, receiver),
+                });
+            }
+            if let Some(value) = properties
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "value").then_some(value.clone()))
+            {
+                return Some(Ok(value));
+            }
+        }
+        let prototype = crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype);
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&prototype),
+            Some(&Value::String(key.to_string())),
+        )
+        .ok()?;
+        (!matches!(descriptor, Value::Undefined))
+            .then(|| get_property_with_receiver(&prototype, key, receiver))
     })
 }
 
