@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "metrics": {
+    "checked_load_per_handler": {
+      "numerator": { "top": { "path": "lanes.l2.top_compact", "key": "opcode", "value": "LoadLocalChecked" } },
+      "denominator": { "sum": ["lanes.l2.handlers", "lanes.l3.handlers"] },
+      "max": 0.02
+    },
+    "checked_decode_per_handler": {
+      "numerator": "lanes.l0.value_decode_by_site.load_checked",
+      "denominator": { "sum": ["lanes.l2.handlers", "lanes.l3.handlers"] },
+      "max": 0.02
+    },
+    "counted_hit_per_iteration": {
+      "numerator": "lanes.l1.counted.hits",
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "min": 0.99
+    }
+  }
+}
