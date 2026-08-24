@@ -382,6 +382,9 @@ fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut 
             collect_for_left_declared_names(&statement.left, names);
             collect_declared_names(&statement.body, names);
         }
+        oxc::ast::ast::Statement::WithStatement(statement) => {
+            collect_declared_names(&statement.body, names);
+        }
         _ => {}
     }
 }

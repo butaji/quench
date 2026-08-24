@@ -30,6 +30,10 @@ fn attach_prototype(value: &crate::value::Value) {
                                 crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype),
                             ),
                             ("constructor".to_string(), value.clone()),
+                            (
+                                crate::builtins::descriptor_key("constructor"),
+                                constructor_descriptor(value.clone()),
+                            ),
                         ]),
                     )))
                 })
@@ -43,11 +47,30 @@ fn attach_prototype(value: &crate::value::Value) {
                             crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype),
                         ),
                         ("constructor".to_string(), value.clone()),
+                        (
+                            crate::builtins::descriptor_key("constructor"),
+                            constructor_descriptor(value.clone()),
+                        ),
                     ],
                 )))
             });
         function.properties.borrow_mut().push(("prototype".to_string(), prototype));
     }
+}
+
+fn constructor_descriptor(value: crate::value::Value) -> crate::value::Value {
+    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "enumerable".to_string(),
+            crate::value::Value::Boolean(false),
+        ),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
+    ])))
 }
 
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
