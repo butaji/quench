@@ -64,6 +64,7 @@ fn walk_statement(statement: &Statement<'_>, errors: &mut Vec<String>) {
             walk_statement(&statement.body, errors);
         }
         Statement::ForOfStatement(statement) => {
+            reject_for_of_bound_name_collisions(statement, errors);
             reject_lone_using(&statement.body, errors);
             walk_statement(&statement.body, errors);
         }
@@ -159,6 +160,30 @@ fn reject_for_left_using(left: &oxc::ast::ast::ForStatementLeft<'_>, errors: &mu
         return;
     };
     if is_using_kind(declaration.kind) {
+        errors.push(USING_SYNTAX.to_string());
+    }
+}
+
+fn reject_for_of_bound_name_collisions(
+    statement: &oxc::ast::ast::ForOfStatement<'_>,
+    errors: &mut Vec<String>,
+) {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &statement.left else {
+        return;
+    };
+    if !is_using_kind(declaration.kind) {
+        return;
+    }
+    let bound = declaration
+        .declarations
+        .iter()
+        .flat_map(|declarator| crate::binding_patterns::names(&declarator.id));
+    let declared =
+        crate::semantic_early::var_declared_names_in(std::slice::from_ref(&statement.body));
+    if bound
+        .into_iter()
+        .any(|name| declared.iter().any(|other| name == *other))
+    {
         errors.push(USING_SYNTAX.to_string());
     }
 }
