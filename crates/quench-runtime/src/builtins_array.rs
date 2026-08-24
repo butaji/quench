@@ -314,6 +314,16 @@ fn prepare_array_length_definition(
         ));
     }
     let new_length = new_length as usize;
+    // The current descriptor is read only after both coercions.  A coercion
+    // may have changed it, so validate against that post-coercion descriptor
+    // before mutating the array or committing the new length.
+    let current =
+        ordinary_own_descriptor(target, key, &Value::String(key.to_string()))?;
+    validate_redefinition(&current, descriptor)?;
+    let mut completed = complete_descriptor(descriptor, &current);
+    if let Some((_, value)) = completed.iter_mut().find(|(name, _)| name == "value") {
+        *value = Value::Number(new_length as f64);
+    }
     // Bound deletion by physically stored elements, not the logical length.
     let old_length = values.physical_len();
     if new_length >= old_length {
@@ -321,20 +331,12 @@ fn prepare_array_length_definition(
         // non-writable by verifyWritable.  The descriptor being applied is
         // authoritative here; consulting the current (temporary) metadata
         // would leave the logical length unchanged.
-        if array_descriptor_value(descriptor, "writable") != Some(Value::Boolean(false)) {
-            let mut values = Rc::clone(values);
-            Rc::make_mut(&mut values).set_length(new_length);
-            let mut partial = Value::Array(values);
-            store_descriptor_metadata(&mut partial, key, descriptor);
-            define_array_descriptor(&mut partial, key, descriptor.to_vec());
-            crate::locals::replace_value(target, &partial);
-        }
-        return Ok(None);
-    }
-    if array_descriptor_flag(values, key, "writable") == Some(false) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot assign to read only array length",
-        ));
+        let mut values = Rc::clone(values);
+        Rc::make_mut(&mut values).set_length(new_length);
+        let mut result = Value::Array(values);
+        store_descriptor_metadata(&mut result, key, &completed);
+        define_array_descriptor(&mut result, key, completed);
+        return Ok(Some(result));
     }
     let mut values = Rc::clone(values);
     let data = Rc::make_mut(&mut values);
@@ -356,8 +358,8 @@ fn prepare_array_length_definition(
     }
     data.set_length(new_length);
     let mut result = Value::Array(values);
-    store_descriptor_metadata(&mut result, key, descriptor);
-    define_array_descriptor(&mut result, key, descriptor.to_vec());
+    store_descriptor_metadata(&mut result, key, &completed);
+    define_array_descriptor(&mut result, key, completed);
     Ok(Some(result))
 }
 
