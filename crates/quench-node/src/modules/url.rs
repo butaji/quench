@@ -345,6 +345,9 @@ pub fn format(
     let (protocol, auth, host, pathname, query, hash) = read_url_parts(_state, args);
     let slashes = execute::is_truthy(&execute::get_property(&obj, "slashes"))
         || (!host.is_empty() && protocol_uses_authority_slashes(&protocol));
+    let slashes = slashes
+        || (protocol.trim_end_matches(':').eq_ignore_ascii_case("file")
+            && pathname.starts_with('/'));
     Ok(Value::String(assemble_url(
         &protocol, &auth, &host, &pathname, &query, &hash, slashes,
     )))
