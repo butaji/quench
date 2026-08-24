@@ -34,6 +34,20 @@ fn sequential_script_units_share_global_function_bindings() {
 }
 
 #[test]
+fn define_property_updates_sloppy_arguments_length() {
+    let mut host = super::RuntimeHost;
+    host.run_harnessed_script(
+        &[],
+        "var args = (function(a, b, c) { return arguments; })(1, 2, 3);\n\
+         Object.defineProperty(args, 'length', { value: 6 });\n\
+         if (args.length !== 6) throw new Error('direct length missing');\n\
+         if ([].concat(args).length !== 6) throw new Error('concat length missing');",
+        false,
+    )
+    .expect("arguments length defineProperty must remain observable");
+}
+
+#[test]
 fn strict_non_extensible_write_throws() {
     let mut host = super::RuntimeHost;
     let result = host.run_harnessed_script(
