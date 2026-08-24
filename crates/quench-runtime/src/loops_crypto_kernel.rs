@@ -23,9 +23,11 @@ pub(crate) fn execute_crypto_integer_function(
     arguments: &[Value],
 ) -> Option<Value> {
     recognized_integer_function(function)?;
+    crate::execution_trace::event(crate::execution_trace::Event::CryptoKernelHeader);
     let [Value::Number(i), Value::Number(x), w, Value::Number(j), Value::Number(c), Value::Number(n), ..] = arguments else {
         return None;
     };
+    crate::execution_trace::event(crate::execution_trace::Event::CryptoKernelInputs);
     let input_value = crate::vm::proven_own_data(receiver, "array")
         .map(crate::locals::resolved_replacement);
     let output_value = crate::vm::proven_own_data(w, "array")
@@ -33,12 +35,16 @@ pub(crate) fn execute_crypto_integer_function(
     let (Some(Value::Array(input)), Some(Value::Array(output))) = (input_value, output_value) else {
         return None;
     };
+    crate::execution_trace::event(crate::execution_trace::Event::CryptoKernelInputStorage);
     let input = packed_numeric_array(input)?;
     let output = packed_numeric_array(output)?;
+    crate::execution_trace::event(crate::execution_trace::Event::CryptoKernelOutputStorage);
     let iterations = kernel_index(*n)?;
+    crate::execution_trace::crypto_direct_iterations(iterations);
     let x = crate::vm::vm_arithmetic::numeric_to_int32(*x);
     let values = [*i, *j, *c, f64::from(x & 0x3fff), f64::from(x >> 14), *n];
     let (_, _, carry, _, _, _) = multiply_integer_cells(&input, &output, values, iterations)?;
+    crate::execution_trace::event(crate::execution_trace::Event::CryptoKernelHit);
     Some(Value::Number(carry))
 }
 
@@ -56,8 +62,8 @@ fn packed_numeric_array(array: std::rc::Rc<crate::value::ArrayData>) -> Option<s
 
 fn recognized_integer_function(function: &std::rc::Rc<crate::value::FunctionValue>) -> Option<()> {
     if INTEGER_FUNCTION.with(|cached| {
-        cached.borrow().as_ref().and_then(std::rc::Weak::upgrade)
-            .is_some_and(|cached| std::rc::Rc::ptr_eq(&cached, function))
+        cached.borrow().as_ref()
+            .is_some_and(|cached| cached.as_ptr() == std::rc::Rc::as_ptr(function))
     }) {
         return Some(());
     }
