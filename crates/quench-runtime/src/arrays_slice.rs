@@ -23,11 +23,6 @@ pub(crate) fn slice(
 
 /// `LengthOfArrayLike`: `ToLength` of the receiver's `length` property.
 fn slice_length(this: &Value) -> Result<isize, crate::execute::VmError> {
-    if crate::typed_array_prototype::is_out_of_bounds(this) {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray is out of bounds",
-        ));
-    }
     let length = crate::execute::get_property_result(this, "length")?;
     let number = crate::conversion::to_number(&length)?;
     if number.is_nan() || number <= 0.0 {
