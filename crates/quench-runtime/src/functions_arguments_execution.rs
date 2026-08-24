@@ -34,9 +34,14 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayFindLastIndex => {
             crate::builtins::array_find_last_index(receiver, arguments)
         }
+        crate::ops::Builtin::ArrayFindIndex => crate::arrays::find_index(receiver, arguments),
         crate::ops::Builtin::ArrayToSorted => {
             Ok(crate::builtins::array_to_sorted(receiver, arguments))
         }
+        crate::ops::Builtin::ArrayToSpliced => {
+            crate::builtins::array_to_spliced(receiver, arguments)
+        }
+        crate::ops::Builtin::ArrayWith => crate::builtins::array_with(receiver, arguments),
         crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
             crate::builtins::object::object_property_is_enumerable(receiver, arguments),
         ),

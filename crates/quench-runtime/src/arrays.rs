@@ -254,6 +254,8 @@ fn array_method_core(key: &str) -> Option<crate::ops::Builtin> {
         "fill" => crate::ops::Builtin::ArrayFill,
         "copyWithin" => crate::ops::Builtin::ArrayCopyWithin,
         "toSorted" => crate::ops::Builtin::ArrayToSorted,
+        "toSpliced" => crate::ops::Builtin::ArrayToSpliced,
+        "with" => crate::ops::Builtin::ArrayWith,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         _ => return array_method_tail(key),
