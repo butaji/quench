@@ -7,19 +7,19 @@ fn collect_for_of_frames(
     let Op::ForOf { slot, body, .. } = op else {
         return Ok(false);
     };
-    let Some(iterator) = crate::loops::live_for_of() else {
+    let Some(loop_iterator) = crate::loops::live_for_of() else {
         return Ok(false);
     };
     let Some(ops) = body.code() else {
         return Err(VmError::MissingReturn);
     };
-    collect_loop_body_frames(ops, body.range, iterator, *slot, resume, registers, frames)
+    collect_loop_body_frames(ops, body.range, loop_iterator, *slot, resume, registers, frames)
 }
 
 fn collect_loop_body_frames(
     ops: crate::machine::CodeView<'_>,
     body: crate::machine::CodeRange,
-    iterator: Value,
+    loop_iterator: Value,
     slot: u16,
     resume: crate::machine::CodeRange,
     registers: &crate::register_file::RegisterFile,
@@ -28,7 +28,7 @@ fn collect_loop_body_frames(
     for (index, op) in ops.cold_ops() {
         if let Op::Yield { src } = op {
             frames.push(for_of_repeat_frame(
-                iterator.clone(),
+                loop_iterator.clone(),
                 body,
                 range_after_iterator_op(body, index),
                 resume,
@@ -37,9 +37,37 @@ fn collect_loop_body_frames(
             ));
             return Ok(true);
         }
+        if let Op::YieldStar {
+            dst,
+            source,
+            iterator,
+        } = op
+        {
+            frames.push(for_of_repeat_frame(
+                loop_iterator.clone(),
+                body,
+                range_after_iterator_op(body, index),
+                resume,
+                0,
+                slot,
+            ));
+            let iterator_value = crate::execute::read_register(registers, *iterator)?;
+            let iterator = if matches!(iterator_value, Value::Undefined) {
+                let source = crate::execute::read_register(registers, *source)?;
+                crate::collections::iterator::delegate_start(source)?
+            } else {
+                iterator_value
+            };
+            frames.push(crate::machine::Frame::Delegate {
+                phase: 0,
+                iterator,
+                destination: *dst,
+            });
+            return Ok(true);
+        }
         if matches!(op, Op::IteratorBinding { .. }) {
             frames.push(for_of_repeat_frame(
-                iterator.clone(),
+                loop_iterator.clone(),
                 body,
                 range_after_iterator_op(body, index),
                 resume,
@@ -55,7 +83,7 @@ fn collect_loop_body_frames(
         }
         if conditional_contains_yield(op) {
             frames.push(for_of_repeat_frame(
-                iterator.clone(),
+                loop_iterator.clone(),
                 body,
                 range_after_iterator_op(body, index),
                 resume,
@@ -66,14 +94,22 @@ fn collect_loop_body_frames(
         }
         if try_contains_yield(op) {
             frames.push(for_of_repeat_frame(
-                iterator.clone(),
+                loop_iterator.clone(),
                 body,
                 range_after_iterator_op(body, index),
                 resume,
                 0,
                 slot,
             ));
-            return Ok(true);
+            if collect_try_frames(
+                op,
+                range_after_iterator_op(body, index),
+                registers,
+                frames,
+            )? {
+                return Ok(true);
+            }
+            frames.pop();
         }
     }
     Ok(false)
@@ -113,6 +149,79 @@ fn try_contains_yield(op: &Op) -> bool {
             .is_some_and(ops_contain_yield)
 }
 
+fn collect_try_frames(
+    op: &Op,
+    resume: crate::machine::CodeRange,
+    registers: &crate::register_file::RegisterFile,
+    frames: &mut Vec<crate::machine::Frame>,
+) -> Result<bool, VmError> {
+    let Op::Try {
+        body,
+        handler,
+        finalizer,
+        catch_slot,
+        ..
+    } = op
+    else {
+        return Ok(false);
+    };
+
+    let branches = [
+        (crate::machine::TryPhase::Body, Some(body)),
+        (crate::machine::TryPhase::Catch, handler.as_ref()),
+        (crate::machine::TryPhase::Finally, finalizer.as_ref()),
+    ];
+    // The enclosing iterator frame owns the suffix after the try operation.
+    // Resume the try into an empty range so that suffix is executed exactly
+    // once by the iterator frame's own body continuation.
+    let try_resume = crate::machine::CodeRange {
+        code: resume.code,
+        start: resume.start,
+        end: resume.start,
+    };
+    for (phase, branch) in branches {
+        let Some(branch) = branch else { continue };
+        let Some(code) = branch.code() else {
+            return Err(VmError::MissingReturn);
+        };
+        for (index, nested) in code.cold_ops() {
+            if let Op::Yield { src } = nested {
+                frames.push(crate::machine::Frame::Try {
+                    phase,
+                    body: body.range,
+                    handler: handler.as_ref().map(|body| body.range),
+                    finalizer: finalizer.as_ref().map(|body| body.range),
+                    body_resume: range_after_iterator_op(branch.range, index),
+                    resume: try_resume,
+                    yield_dst: *src,
+                    catch_slot: *catch_slot,
+                });
+                return Ok(true);
+            }
+            if let Op::YieldStar { dst, iterator, .. } = nested {
+                frames.push(crate::machine::Frame::Try {
+                    phase,
+                    body: body.range,
+                    handler: handler.as_ref().map(|body| body.range),
+                    finalizer: finalizer.as_ref().map(|body| body.range),
+                    body_resume: range_after_iterator_op(branch.range, index),
+                    resume: try_resume,
+                    yield_dst: *dst,
+                    catch_slot: *catch_slot,
+                });
+                let iterator = crate::execute::read_register(registers, *iterator)?;
+                frames.push(crate::machine::Frame::Delegate {
+                    phase: 0,
+                    iterator,
+                    destination: *dst,
+                });
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn for_of_repeat_frame(
     iterator: Value,
     body: crate::machine::CodeRange,
@@ -132,7 +241,7 @@ fn for_of_repeat_frame(
 }
 
 fn ops_contain_yield(ops: crate::machine::CodeView<'_>) -> bool {
-    ops.cold_ops().any(|(_, op)| matches!(op, Op::Yield { .. }))
+    ops.cold_ops().any(|(_, op)| op_contains_yield(op))
 }
 
 fn collect_iterator_frames(
