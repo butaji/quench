@@ -412,6 +412,13 @@ fn resume_suspended_contexts(
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
+    let mut completion = completion.clone();
+    if let Some(resumed) = resume_delegate_frame(generator, &completion)? {
+        if resumed.is_suspension() {
+            return resume_machine_frame(generator, state, resumed).map(Some);
+        }
+        completion = resumed;
+    }
     if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
