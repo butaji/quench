@@ -1,19 +1,56 @@
 (function (timers) {
   "use strict";
-  function setTimeoutPromise(delay, value) {
-    return new Promise(function (resolve) {
-      timers.setTimeout(resolve, delay, value);
-    });
-  }
-  function setImmediatePromise(value) {
-    return new Promise(function (resolve) {
-      timers.setImmediate(resolve, value);
-    });
-  }
   function abortError() {
     return Object.assign(new Error("The operation was aborted"), {
       name: "AbortError", code: "ABORT_ERR"
     });
+  }
+  function promiseTimer(schedule, cancel, value, options) {
+    options = options === undefined ? {} : options;
+    if (!options || typeof options !== "object") {
+      throw new TypeError("The options argument must be an object");
+    }
+    const signal = options.signal;
+    if (signal !== undefined &&
+        (!signal || typeof signal.addEventListener !== "function")) {
+      throw new TypeError("The signal option must be an AbortSignal");
+    }
+    return new Promise(function (resolve, reject) {
+      let settled = false;
+      let timer;
+      const cleanup = () => {
+        if (signal) signal.removeEventListener("abort", onAbort);
+      };
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cancel(timer);
+        cleanup();
+        reject(abortError());
+      };
+      timer = schedule(finish);
+      if (options.ref === false && timer && typeof timer.unref === "function") timer.unref();
+      if (signal) {
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort);
+      }
+    });
+  }
+  function setTimeoutPromise(delay, value, options) {
+    return promiseTimer(
+      (finish) => timers.setTimeout(finish, delay),
+      (timer) => timers.clearTimeout(timer), value, options);
+  }
+  function setImmediatePromise(value, options) {
+    return promiseTimer(
+      (finish) => timers.setImmediate(finish),
+      (timer) => timers.clearImmediate(timer), value, options);
   }
   function setIntervalPromise(delay, value, options) {
     options = options === undefined ? {} : options;
