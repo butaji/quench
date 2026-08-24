@@ -373,6 +373,14 @@ impl ArrayData {
             && self.argument_live.is_none()
     }
 
+    pub(crate) fn has_indexed_accessor(&self) -> bool {
+        self.descriptors.iter().any(|(key, value)| {
+            crate::arrays::array_index(key).is_some_and(|_| {
+                matches!(value, Value::Object(fields) if fields.iter().any(|(name, _)| name == "get" || name == "set"))
+            })
+        })
+    }
+
     /// Borrow the live argument data without consuming `self`.
     /// `argument_live` field is shared between the original and any
     /// `Rc::make_mut` clones of this data, so overrides stored via
