@@ -749,6 +749,13 @@ pub enum Frame {
         iterator: Value,
         destination: u16,
     },
+    Dispose {
+        body_resume: CodeRange,
+        resume: CodeRange,
+        stack: u16,
+        await_using: bool,
+        yield_dst: u16,
+    },
     Branch {
         phase: BranchPhase,
         branch_resume: CodeRange,
