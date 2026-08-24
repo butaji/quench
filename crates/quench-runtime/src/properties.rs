@@ -167,6 +167,12 @@ pub(crate) fn execute_set_property(
 ) -> Result<(), crate::execute::VmError> {
     let (object, key, src, strict) = set_property_parts(registers, op)?;
     let mut target = crate::execute::read_register(registers, object)?.clone();
+    if !crate::module_bindings::is_namespace(&target) {
+        if let Some(owner) = crate::vm::resolve_global_owner(&target) {
+            target = owner;
+            crate::execute::write_value(registers, object, target.clone());
+        }
+    }
     if matches!(
         target,
         crate::value::Value::Null | crate::value::Value::Undefined
