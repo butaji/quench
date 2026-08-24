@@ -94,16 +94,56 @@ fn reduce_function_body(
         .values()
         .copied()
         .collect::<std::collections::HashSet<_>>();
-    let inherited = (facts.eval_var_scope_start, facts.eval_arrow_scope);
+    let inherited = (
+        facts.eval_var_scope_start,
+        facts.eval_arrow_scope,
+        facts.function_has_direct_eval,
+    );
     facts.eval_var_scope_start = layout.1;
     facts.eval_arrow_scope = arrow_expression.is_some();
+    facts.function_has_direct_eval = function_has_direct_eval(syntax.0);
     let previous_name_slot = facts.function_name_slot;
     facts.function_name_slot = self_name_slot
         .or_else(|| previous_name_slot.filter(|slot| captured_name_slot.contains(slot)));
     let result = reduce_function_body_inner(syntax, facts, locals, layout, arrow_expression, rest);
-    (facts.eval_var_scope_start, facts.eval_arrow_scope) = inherited;
+    (
+        facts.eval_var_scope_start,
+        facts.eval_arrow_scope,
+        facts.function_has_direct_eval,
+    ) = inherited;
     facts.function_name_slot = previous_name_slot;
     result
+}
+
+fn function_has_direct_eval(statements: &[oxc::ast::ast::Statement<'_>]) -> bool {
+    struct Finder(bool);
+    impl<'a> oxc::ast::visit::Visit<'a> for Finder {
+        fn visit_call_expression(&mut self, call: &oxc::ast::ast::CallExpression<'a>) {
+            if matches!(&call.callee, oxc::ast::ast::Expression::Identifier(id) if id.name == "eval") {
+                self.0 = true;
+            } else {
+                oxc::ast::visit::walk::walk_call_expression(self, call);
+            }
+        }
+
+        fn visit_function(
+            &mut self,
+            _: &oxc::ast::ast::Function<'a>,
+            _: oxc::syntax::scope::ScopeFlags,
+        ) {
+        }
+
+        fn visit_arrow_function_expression(
+            &mut self,
+            _: &oxc::ast::ast::ArrowFunctionExpression<'a>,
+        ) {
+        }
+    }
+    let mut finder = Finder(false);
+    for statement in statements {
+        oxc::ast::visit::walk::walk_statement(&mut finder, statement);
+    }
+    finder.0
 }
 
 fn reduce_function_body_inner(
