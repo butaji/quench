@@ -284,6 +284,10 @@ fn reflect_method(key: &str) -> Option<Builtin> {
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_constructor_property(builtin, key)
         .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "toString")
+                .then_some(Builtin::ArrayToString)
+        })
+        .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "values")
                 .then_some(Builtin::TypedArrayIterator)
         })
