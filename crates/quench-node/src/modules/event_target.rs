@@ -160,6 +160,14 @@ fn once_option(args: &[Value]) -> bool {
     )
 }
 
+fn weak_option(args: &[Value], receiver: &Value) -> bool {
+    let Some(options) = args.get(2) else {
+        return false;
+    };
+    let handler = execute::get_property(options, "kWeakHandler\0quench");
+    matches!(handler, Value::Object(_)) && !execute::same_value(&handler, receiver)
+}
+
 pub fn add_event_listener(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -182,6 +190,7 @@ pub fn add_event_listener(
         guard.entry(&event).push(Listener {
             callback,
             once: once_option(args),
+            weak: weak_option(args, receiver.expect("validated receiver")),
         });
     }
     Ok(Value::Undefined)
@@ -243,6 +252,9 @@ pub fn dispatch_event(
     );
     execute::replace_value(event, &active);
     for listener in &snapshot {
+        if listener.weak {
+            continue;
+        }
         if listener.once {
             remove_event_listener(
                 state,
