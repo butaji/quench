@@ -475,6 +475,21 @@ pub fn internal_js_stream_construct(
     ]))
 }
 
+pub fn vm_source_text_module_construct(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let namespace = crate::host::namespace_object_from_pairs(vec![(
+        "\0module_namespace".into(),
+        Value::Boolean(true),
+    )]);
+    Ok(crate::host::namespace_object_from_pairs(vec![
+        ("namespace".into(), namespace),
+        ("link".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+        ("evaluate".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+    ]))
+}
+
 pub fn timers_get_libuv_now(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
