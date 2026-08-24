@@ -11,6 +11,26 @@ for (var wa = 0; wa < workerArgs.length; wa++) {
 }
 var workerData = workerEnv ? JSON.parse(workerArgData || (proc.env && proc.env.QUENCH_WORKER_DATA) || 'null') : null;
 var workerMessage = (workerEnv && proc.env && proc.env.QUENCH_WORKER_MESSAGE) || globalThis.__quench_worker_message;
+var processWorkerListeners = [];
+var processOn = proc && proc.on;
+var processEmit = proc && proc.emit;
+if (proc) {
+  proc.on = function (event, listener) {
+    if (event === 'worker' && typeof listener === 'function') {
+      processWorkerListeners.push(listener);
+      return proc;
+    }
+    return typeof processOn === 'function' ? processOn.call(proc, event, listener) : proc;
+  };
+  proc.emit = function (event) {
+    if (event === 'worker') {
+      var args = Array.prototype.slice.call(arguments, 1);
+      processWorkerListeners.slice().forEach(function (listener) { listener.apply(proc, args); });
+      return processWorkerListeners.length > 0;
+    }
+    return typeof processEmit === 'function' ? processEmit.apply(proc, arguments) : false;
+  };
+}
 function workerPortProxy(token) {
   var port = {
     __quench_port: token,
@@ -252,6 +272,7 @@ var api = {
         throw new TypeError('The "filename" argument must be a string');
       }
       var self = emitter({ threadId: 1, exited: false, _queueEvents: true });
+      if (proc && typeof proc.emit === 'function') proc.emit('worker', { threadId: self.threadId });
       options = options || {};
       var cp = require('child_process');
       var env = {};
