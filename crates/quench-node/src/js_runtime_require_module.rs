@@ -359,12 +359,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(util_module());
         }
         if name == "util/types" || name == "node:util/types" {
-            return Ok(NODE_UTIL_TYPES.with(|module| {
-                module
-                    .borrow_mut()
-                    .get_or_insert_with(|| quench_runtime::host_api::object(vec![]))
-                    .clone()
-            }));
+            return Ok(crate::js_runtime_internal_binding::util_types_module());
         }
         if name == "vm" || name == "node:vm" {
             return Ok(quench_runtime::host_api::object(vec![
