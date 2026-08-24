@@ -43,5 +43,12 @@ assert.strictEqual(
     '  [buffer]: ArrayBuffer { [byteLength]: 8 }\n' +
     ']'
 );
+const accessors = {};
+Object.defineProperty(accessors, 'readonly', { get() { return 1; } });
+Object.defineProperty(accessors, 'writeonly', { set() {} });
+assert.strictEqual(util.inspect(accessors), '{ readonly: [Getter], writeonly: [Setter] }');
+const circular = {};
+circular.a = circular;
+assert.strictEqual(util.inspect(circular), '<ref *1> { a: [Circular *1] }');
 
 console.log('util.inspect function values: ok');
