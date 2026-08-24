@@ -143,7 +143,9 @@ fn type_arg(args: &[Value]) -> Result<String, VmError> {
 
 fn callback_arg(args: &[Value]) -> Result<Value, VmError> {
     match args.get(1) {
-        Some(value) if quench_runtime::is_callable(value) => Ok(value.clone()),
+        Some(value) if quench_runtime::is_callable(value) || matches!(value, Value::Object(_)) => {
+            Ok(value.clone())
+        }
         _ => Err(execute::type_error(
             "The \"callback\" argument must be of type function",
         )),
@@ -216,8 +218,17 @@ pub fn dispatch_event(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let (Some(receiver), Some(event)) = (receiver, args.first()) else {
-        return Ok(Value::Boolean(false));
+        return Err(execute::type_error(
+            "The \"event\" argument must be an instance of Event",
+        ));
     };
+    if !matches!(event, Value::Object(_))
+        || matches!(execute::get_property(event, "type"), Value::Undefined)
+    {
+        return Err(execute::type_error(
+            "The \"event\" argument must be an instance of Event",
+        ));
+    }
     let Some(target) = target_id(receiver).and_then(|id| state.borrow().targets.get(id)) else {
         return Ok(Value::Boolean(false));
     };
@@ -239,7 +250,14 @@ pub fn dispatch_event(
                 &[Value::String(event_type.clone()), listener.callback.clone()],
             )?;
         }
-        execute::call(&listener.callback, receiver, std::slice::from_ref(event))?;
+        if quench_runtime::is_callable(&listener.callback) {
+            execute::call(&listener.callback, receiver, std::slice::from_ref(event))?;
+        } else if let Value::Object(_) = &listener.callback {
+            let handler = execute::get_property(&listener.callback, "handleEvent");
+            if quench_runtime::is_callable(&handler) {
+                execute::call(&handler, &listener.callback, std::slice::from_ref(event))?;
+            }
+        }
     }
     let prevented = event
         .object_identity()

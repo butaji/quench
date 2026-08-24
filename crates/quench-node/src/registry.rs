@@ -541,10 +541,13 @@ pub fn namespace_bindings(
         "EventTarget".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("events:EventTarget", 0x0116)),
     ));
-    out.push((
-        "Event".to_string(),
-        crate::host::capability(crate::registry::SPEC_EVENT),
-    ));
+    let event = crate::host::capability(crate::registry::SPEC_EVENT);
+    let _ = quench_runtime::execute::set_callable_property(
+        &event,
+        "prototype",
+        crate::host::namespace_object_from_pairs(Vec::new()),
+    );
+    out.push(("Event".to_string(), event));
     out.push((
         "atob".to_string(),
         crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
