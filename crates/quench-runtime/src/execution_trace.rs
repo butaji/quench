@@ -167,7 +167,10 @@ pub(crate) enum DecodeSite {
     Load,
     LoadChecked,
     Move,
-    Leaf,
+    LeafGetN,
+    LeafLoad,
+    LeafLoadChecked,
+    LeafOther,
     BindingBorrow,
     EnvLoad,
     Other,
@@ -181,7 +184,10 @@ impl DecodeSite {
             Self::Load => "load",
             Self::LoadChecked => "load_checked",
             Self::Move => "move",
-            Self::Leaf => "leaf",
+            Self::LeafGetN => "leaf_getn",
+            Self::LeafLoad => "leaf_load",
+            Self::LeafLoadChecked => "leaf_load_checked",
+            Self::LeafOther => "leaf_other",
             Self::BindingBorrow => "binding_borrow",
             Self::EnvLoad => "env_load",
             Self::Other => "other",
@@ -244,7 +250,8 @@ fn l0_profile(counters: &Counters) -> serde_json::Value {
             "word_copies": event(Event::RegisterWordCopy),
             "value_decode": event(Event::ValueDecode),
             "value_decode_by_site": named_buckets(&counters.value_decode_by_site,
-                &["getn", "setn", "load", "load_checked", "move", "leaf",
+                &["getn", "setn", "load", "load_checked", "move", "leaf_getn",
+                  "leaf_load", "leaf_load_checked", "leaf_other",
                   "binding_borrow", "env_load", "other"]),
             "value_decode_other_by_op": top_map(&counters.value_decode_other_by_op, 16),
             "property_hit": event(Event::NamedPropertyHit),
@@ -759,6 +766,35 @@ thread_local! {
     static CURRENT_OP: std::cell::Cell<&'static str> = const { std::cell::Cell::new("outside_vm") };
 }
 
+#[cfg(feature = "execution-trace")]
+pub(crate) struct DecodeGuard(DecodeSite, &'static str);
+
+#[cfg(feature = "execution-trace")]
+impl Drop for DecodeGuard {
+    fn drop(&mut self) {
+        DECODE_SITE.with(|site| site.set(self.0));
+        CURRENT_OP.with(|name| name.set(self.1));
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) struct DecodeGuard;
+
+#[inline(always)]
+fn enter_decode(site: DecodeSite, name: &'static str) -> DecodeGuard {
+    #[cfg(feature = "execution-trace")]
+    {
+        let previous_site = DECODE_SITE.with(|current| current.replace(site));
+        let previous_name = CURRENT_OP.with(|current| current.replace(name));
+        DecodeGuard(previous_site, previous_name)
+    }
+    #[cfg(not(feature = "execution-trace"))]
+    {
+        let _ = (site, name);
+        DecodeGuard
+    }
+}
+
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
 pub(crate) fn enabled() -> bool {
@@ -773,10 +809,9 @@ pub(crate) const fn enabled() -> bool {
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
-pub(crate) fn compact(opcode: crate::ir::Opcode) {
+pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    let guard = enter_decode(decode_site_for_opcode(opcode, false), opcode.name());
     if enabled() {
-        DECODE_SITE.with(|site| site.set(decode_site_for_opcode(opcode, false)));
-        CURRENT_OP.with(|name| name.set(opcode.name()));
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
             counters.compact[opcode as usize] += 1;
@@ -787,25 +822,30 @@ pub(crate) fn compact(opcode: crate::ir::Opcode) {
             }
         });
     }
+    guard
 }
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn compact(_: crate::ir::Opcode) {}
+pub(crate) fn compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    enter_decode(DecodeSite::Other, opcode.name())
+}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
-pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) {
+pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    let guard = enter_decode(decode_site_for_opcode(opcode, true), opcode.name());
     if enabled() {
-        DECODE_SITE.with(|site| site.set(decode_site_for_opcode(opcode, true)));
-        CURRENT_OP.with(|name| name.set(opcode.name()));
         COUNTERS.with(|counters| counters.borrow_mut().leaf_compact[opcode as usize] += 1);
     }
+    guard
 }
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn leaf_compact(_: crate::ir::Opcode) {}
+pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) -> DecodeGuard {
+    enter_decode(DecodeSite::Other, opcode.name())
+}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
@@ -828,10 +868,9 @@ pub(crate) fn operands(_: crate::ir::Instruction) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
-pub(crate) fn slow(op: &crate::ops::Op) {
+pub(crate) fn slow(op: &crate::ops::Op) -> DecodeGuard {
+    let guard = enter_decode(decode_site_for_slow(op.variant_name()), op.variant_name());
     if enabled() {
-        DECODE_SITE.with(|site| site.set(decode_site_for_slow(op.variant_name())));
-        CURRENT_OP.with(|name| name.set(op.variant_name()));
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
             let name = op.variant_name();
@@ -854,6 +893,7 @@ pub(crate) fn slow(op: &crate::ops::Op) {
             counters.retire_operands(OperandKey { name, a, b, c });
         });
     }
+    guard
 }
 
 #[cfg(feature = "execution-trace")]
@@ -901,7 +941,9 @@ fn constant_name(value: &crate::ops::Constant) -> &'static str {
 
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
-pub(crate) fn slow(_: &crate::ops::Op) {}
+pub(crate) fn slow(op: &crate::ops::Op) -> DecodeGuard {
+    enter_decode(DecodeSite::Other, op.variant_name())
+}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
@@ -981,18 +1023,18 @@ pub(crate) fn event(event: Event) {
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn event(_: Event) {}
 
-#[inline(always)]
 #[cfg(feature = "execution-trace")]
-pub(crate) fn value_decode(site: DecodeSite) {
-    event(Event::ValueDecode);
-    if enabled() {
-        COUNTERS.with(|counters| {
-            *counters
-                .borrow_mut()
-                .value_decode_by_site
-                .entry(site.name())
-                .or_default() += 1;
-        });
+fn record_value_decode(counters: &mut Counters, site: DecodeSite, op: &'static str) {
+    if counters.events.is_empty() {
+        counters.events.resize(EVENT_NAMES.len(), 0);
+    }
+    counters.events[Event::ValueDecode as usize] += 1;
+    *counters
+        .value_decode_by_site
+        .entry(site.name())
+        .or_default() += 1;
+    if matches!(site, DecodeSite::Other | DecodeSite::LeafOther) {
+        count_named(&mut counters.value_decode_other_by_op, op);
     }
 }
 
@@ -1001,12 +1043,9 @@ pub(crate) fn value_decode_current() {
     #[cfg(feature = "execution-trace")]
     {
         let site = DECODE_SITE.with(std::cell::Cell::get);
-        value_decode(site);
-        if matches!(site, DecodeSite::Other) && enabled() {
+        if enabled() {
             let op = CURRENT_OP.with(std::cell::Cell::get);
-            COUNTERS.with(|counters| {
-                count_named(&mut counters.borrow_mut().value_decode_other_by_op, op)
-            });
+            COUNTERS.with(|counters| record_value_decode(&mut counters.borrow_mut(), site, op));
         }
     }
 }
@@ -1014,7 +1053,12 @@ pub(crate) fn value_decode_current() {
 #[cfg(feature = "execution-trace")]
 fn decode_site_for_opcode(opcode: crate::ir::Opcode, leaf: bool) -> DecodeSite {
     if leaf {
-        return DecodeSite::Leaf;
+        return match opcode {
+            crate::ir::Opcode::GetN => DecodeSite::LeafGetN,
+            crate::ir::Opcode::LoadLocal => DecodeSite::LeafLoad,
+            crate::ir::Opcode::LoadLocalChecked => DecodeSite::LeafLoadChecked,
+            _ => DecodeSite::LeafOther,
+        };
     }
     match opcode {
         crate::ir::Opcode::GetN => DecodeSite::GetN,
@@ -1038,10 +1082,6 @@ fn decode_site_for_slow(name: &str) -> DecodeSite {
         _ => DecodeSite::Other,
     }
 }
-
-#[inline(always)]
-#[cfg(not(feature = "execution-trace"))]
-pub(crate) fn value_decode(_: DecodeSite) {}
 
 #[cfg(feature = "execution-trace")]
 fn count_named(map: &mut HashMap<&'static str, u64>, name: &'static str) {
@@ -1335,14 +1375,14 @@ mod lane_profile_tests {
 
     #[test]
     fn attributes_getn_decode_to_its_site() {
-        let mut counters = Counters {
-            events: vec![0; EVENT_NAMES.len()],
-            ..Counters::default()
-        };
-        counters.events[Event::ValueDecode as usize] = 1;
-        counters.value_decode_by_site.insert("getn", 1);
-        let profile = lane_profile(&counters, 0, 0);
-        assert_eq!(profile["l0"]["value_decode_by_site"]["getn"], 1);
+        let mut counters = Counters::default();
+        record_value_decode(
+            &mut counters,
+            decode_site_for_opcode(crate::ir::Opcode::GetN, false),
+            "GetN",
+        );
+        assert_eq!(counters.events[Event::ValueDecode as usize], 1);
+        assert_eq!(counters.value_decode_by_site.get("getn"), Some(&1));
     }
 
     #[test]

@@ -8,7 +8,8 @@ CARGO_TARGET_DIR=target-exec-trace cargo build \
   --profile bench-throughput -p quench-node --features execution-trace
 QUENCH_EXEC_TRACE=1 target-exec-trace/bench-throughput/quench-node program.js \
   2>trace.json
-sed 's/^QUENCH_EXEC_TRACE //' trace.json | jq '.lanes, .heap_lifecycle'
+sed 's/^QUENCH_EXEC_TRACE //' trace.json | jq \
+  '.lanes, .heap_lifecycle, .function_call_shapes[:8], .loop_shapes[:8]'
 ```
 
 Schema 5 `lanes` contains:
