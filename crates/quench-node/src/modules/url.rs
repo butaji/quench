@@ -307,8 +307,7 @@ pub fn format(
     }
     let (protocol, auth, host, pathname, query, hash) = read_url_parts(_state, args);
     let slashes = execute::is_truthy(&execute::get_property(&obj, "slashes"))
-        || ((!host.is_empty() || protocol.trim_end_matches(':').eq_ignore_ascii_case("file"))
-            && protocol_uses_authority_slashes(&protocol));
+        || (!host.is_empty() && protocol_uses_authority_slashes(&protocol));
     Ok(Value::String(assemble_url(
         &protocol, &auth, &host, &pathname, &query, &hash, slashes,
     )))
@@ -594,6 +593,16 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
     {
         if !after_protocol.is_empty() {
             out.insert("pathname".into(), after_protocol.to_string());
+        }
+        return out;
+    }
+    // The legacy parser treats known authority schemes without `//` as
+    // opaque paths (`http:this`), not as a host named `this`.
+    if out.get("protocol").is_some_and(|protocol| {
+        protocol_uses_authority_slashes(protocol) && !url.contains("://") && !url.starts_with("//")
+    }) {
+        if !after_protocol.is_empty() {
+            out.insert("pathname".into(), encode_path_component(after_protocol));
         }
         return out;
     }
