@@ -88,7 +88,7 @@ fn try_named_write_transition(
     let target = crate::execute::read_register(registers, object_register)?;
     let Some(object) = guarded_transition_object(&target, key, &entry) else { return Ok(false) };
     let value = crate::execute::read_register(registers, source_register)?;
-    let cell = crate::value::Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(value)));
+    let cell = crate::value::Value::BindingCell(crate::value::BindingCell::new(value));
     let updated = crate::builtins::object_alias::set(object, key, cell);
     crate::locals::replace_value(&target, &updated);
     crate::execute::write_value(registers, object_register, updated);

@@ -186,6 +186,21 @@ fn run_instruction(
         Opcode::GetN => {
             let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
             let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
+            if instruction.a != instruction.b {
+                let cell = registers
+                    .read_object(usize::from(instruction.b))
+                    .and_then(|object| {
+                        get_named_cached_cell(object, &metadata.named_cache)
+                    });
+                if let Some(cell) = cell {
+                    // SAFETY: the source register keeps the containing object
+                    // alive and is distinct from the destination register.
+                    unsafe { &*cell }.with_word(|word| {
+                        registers.write_owned(usize::from(instruction.a), word)
+                    });
+                    return Ok(None);
+                }
+            }
             let object = read_register(registers, instruction.b)?;
             let value = get_named_property_result(&object, key, &metadata.named_cache)?;
             write_value(registers, instruction.a, value);
