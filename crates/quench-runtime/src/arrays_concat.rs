@@ -26,14 +26,24 @@ pub(crate) fn concat(
     let length = elements.len();
     for (index, value) in elements.into_iter().enumerate() {
         if !hole(index) {
-            target = crate::builtins::set_property(target, &index.to_string(), value);
+            let previous = target.clone();
+            target = crate::builtins::define_own_property(
+                &target,
+                &index.to_string(),
+                &[
+                    ("value".to_string(), value),
+                    ("writable".to_string(), Value::Boolean(true)),
+                    ("enumerable".to_string(), Value::Boolean(true)),
+                    ("configurable".to_string(), Value::Boolean(true)),
+                ],
+            )?;
+            crate::locals::replace_value(&previous, &target);
         }
     }
-    Ok(crate::builtins::set_property(
-        target,
-        "length",
-        Value::Number(length as f64),
-    ))
+    let updated =
+        crate::properties::assign_set_property(&target, "length", Value::Number(length as f64))?;
+    crate::locals::replace_value(&target, &updated);
+    Ok(updated)
 }
 
 fn sparse_array_items(items: &[Value]) -> Result<bool, crate::execute::VmError> {
