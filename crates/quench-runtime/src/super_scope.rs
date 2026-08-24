@@ -296,7 +296,7 @@ fn get_with_receiver(target: &Value, key: &str, receiver: &Value) -> Result<Valu
             return Ok(value);
         }
         let prototype = crate::builtins::object::get_prototype_of(Some(&current))?;
-        let prototype = crate::locals::resolved_replacement(prototype);
+        let prototype = crate::locals::resolved_replacement(unwrap_binding_cell(&prototype));
         if matches!(prototype, Value::Null | Value::Undefined)
             || crate::equality::strict_equal(&prototype, &current)
         {
@@ -346,7 +346,14 @@ fn super_own_value(holder: &Value, key: &str, receiver: &Value) -> Result<Option
         .iter()
         .rev()
         .find(|(name, _)| name == key)
-        .map(|(_, value)| value.clone()))
+        .map(|(_, value)| unwrap_binding_cell(value)))
+}
+
+fn unwrap_binding_cell(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => unwrap_binding_cell(&cell.borrow()),
+        value => value.clone(),
+    }
 }
 
 fn put_with_receiver(
@@ -402,7 +409,7 @@ fn require_super_base(home: &Value) -> Result<Value, VmError> {
     };
     let prototype = crate::locals::resolved_replacement(prototype);
     let prototype = crate::builtins::object::get_prototype_of(Some(&prototype))?;
-    let prototype = crate::locals::resolved_replacement(prototype);
+    let prototype = crate::locals::resolved_replacement(unwrap_binding_cell(&prototype));
     match prototype {
         Value::Null | Value::Undefined => Err(crate::value::error::throw_type_error(
             "Super has no prototype",
