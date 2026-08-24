@@ -21,16 +21,16 @@ pub fn inspect(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> HandlerResult {
-    const MAX: usize = 50;
+    let max = crate::modules::buffer::inspect_max_bytes();
     let view = this_view(receiver)?;
     let bytes = view_bytes(&view);
-    let shown: Vec<String> = bytes.iter().take(MAX).map(|b| format!("{b:02x}")).collect();
+    let shown: Vec<String> = bytes.iter().take(max).map(|b| format!("{b:02x}")).collect();
     let label = receiver
         .filter(|value| crate::modules::buffer::is_buffer(std::slice::from_ref(value)))
         .map_or("Uint8Array", |_| "Buffer");
     let mut out = format!("<{label} {}", shown.join(" "));
-    if bytes.len() > MAX {
-        let rest = bytes.len() - MAX;
+    if bytes.len() > max {
+        let rest = bytes.len() - max;
         let plural = if rest == 1 { "" } else { "s" };
         out.push_str(&format!(" ... {rest} more byte{plural}"));
     }
