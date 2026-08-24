@@ -83,7 +83,8 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let Some(target) = arguments.first() else {
         return Ok(Value::Undefined);
     };
-    let target = crate::locals::resolved_replacement(target.clone());
+    let target = crate::vm::resolve_global_owner(target)
+        .unwrap_or_else(|| crate::locals::resolved_replacement(target.clone()));
     if !crate::value::is_object(&target) {
         return Err(crate::value::error::throw_type_error(
             "Object.defineProperty target must be an object",
