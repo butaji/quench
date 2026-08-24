@@ -29,8 +29,15 @@ pub(crate) fn array_map(
         ));
     }
     let Some(callback) = arguments.first() else {
-        return Ok(Value::array(Vec::new()));
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.map callback is not callable",
+        ));
     };
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.map callback is not callable",
+        ));
+    }
     let length = map_length(receiver)?;
     if length > u32::MAX as usize {
         return Err(crate::value::error::throw_range_error(
@@ -166,6 +173,11 @@ pub(crate) fn array_filter(
             "Array.prototype.filter callback is not callable",
         ));
     };
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.filter callback is not callable",
+        ));
+    }
     let length = map_length(receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     let mut filtered = Vec::new();
