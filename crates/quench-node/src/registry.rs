@@ -393,6 +393,7 @@ pub const SPEC_DEFINE_EVENT_HANDLER: NodeSpec =
 pub const SPEC_EVENT_HANDLER_GET: NodeSpec = NodeSpec::new("EventHandler.get", 0x0121);
 pub const SPEC_EVENT_HANDLER_SET: NodeSpec = NodeSpec::new("EventHandler.set", 0x0122);
 pub const SPEC_CUSTOM_EVENT: NodeSpec = NodeSpec::new("CustomEvent", 0x0123);
+pub const SPEC_EVENT_SOURCE: NodeSpec = NodeSpec::new("EventSource", 0x0124);
 
 pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1400);
 pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1401);
@@ -577,6 +578,10 @@ pub fn namespace_bindings(
         quench_runtime::value::Value::Number(1.0),
     );
     out.push(("CustomEvent".to_string(), custom_event));
+    out.push((
+        "__quench_event_source".to_string(),
+        crate::host::capability(crate::registry::SPEC_EVENT_SOURCE),
+    ));
     out.push((
         "atob".to_string(),
         crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),

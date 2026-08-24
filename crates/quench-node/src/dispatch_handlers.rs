@@ -1043,6 +1043,14 @@ pub fn custom_event_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
     )
 }
 
+pub fn event_source(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
 pub fn event_get_cancel_bubble(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
