@@ -101,17 +101,33 @@ pub fn constructor_new(
         quench_runtime::execute::get_property(options, "strict"),
         Value::Boolean(false)
     );
+    let equal_spec = if strict { SPEC_ASSERT_STRICT_EQUAL } else { SPEC_ASSERT_EQUAL };
+    let not_equal_spec = if strict {
+        SPEC_ASSERT_NOT_STRICT_EQUAL
+    } else {
+        SPEC_ASSERT_NOT_EQUAL
+    };
+    let diff = match quench_runtime::execute::get_property(options, "diff") {
+        Value::Undefined | Value::Null => "simple".to_string(),
+        Value::String(value) if value == "simple" || value == "full" => value,
+        value => {
+            return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+                "The property 'options.diff' must be one of: 'simple', 'full'. Received '{}'",
+                crate::modules::util::inspect(&value)
+            )))
+        }
+    };
     let instance = host_api::object(vec![
         ("strict".into(), Value::Boolean(strict)),
         ("skipPrototype".into(), Value::Boolean(false)),
-        ("diff".into(), Value::String("simple".into())),
+        ("diff".into(), Value::String(diff)),
         ("AssertionError".into(), assertion_error_type()),
     ]);
     let methods = [
         ("ok", SPEC_ASSERT_OK),
         ("fail", SPEC_ASSERT_FAIL),
-        ("equal", SPEC_ASSERT_EQUAL),
-        ("notEqual", SPEC_ASSERT_NOT_EQUAL),
+        ("equal", equal_spec),
+        ("notEqual", not_equal_spec),
         ("strictEqual", SPEC_ASSERT_STRICT_EQUAL),
         ("notStrictEqual", SPEC_ASSERT_NOT_STRICT_EQUAL),
         ("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
@@ -128,6 +144,14 @@ pub fn constructor_new(
     let instance = methods.into_iter().fold(instance, |instance, (name, spec)| {
         quench_runtime::execute::set_property(instance, name, crate::host::capability(spec))
     });
+    let instance = if strict {
+        let equal = quench_runtime::execute::get_property(&instance, "strictEqual");
+        let not_equal = quench_runtime::execute::get_property(&instance, "notStrictEqual");
+        let instance = quench_runtime::execute::set_property(instance, "equal", equal);
+        quench_runtime::execute::set_property(instance, "notEqual", not_equal)
+    } else {
+        instance
+    };
     quench_runtime::execute::set_prototype_of(&instance, &assert_prototype())
 }
 
@@ -276,6 +300,7 @@ pub fn assertion_error(
             "stack".to_string(),
             Value::String(format!("AssertionError: {message}")),
         ),
+        ("diff".to_string(), Value::String("simple".into())),
     ]);
     VmError::Thrown(
         quench_runtime::execute::set_prototype_of(&error, &assertion_error_prototype())
@@ -407,6 +432,7 @@ fn describe(value: &Value) -> String {
 }
 
 fn binary_assert(
+    receiver: Option<&Value>,
     args: &[Value],
     operator: &str,
     expect_equal: bool,
@@ -430,9 +456,27 @@ fn binary_assert(
             rendered(&expected)
         )
     });
-    Err(assertion_error(
+    Err(with_instance_diff(
+        assertion_error(
         message, operator, actual, expected, generated,
+        ),
+        receiver,
     ))
+}
+
+fn with_instance_diff(error: VmError, receiver: Option<&Value>) -> VmError {
+    let Some(receiver) = receiver else { return error };
+    let Value::String(diff) = execute::get_property(receiver, "diff") else {
+        return error;
+    };
+    match error {
+        VmError::Thrown(value) => VmError::Thrown(execute::set_property(
+            value,
+            "diff",
+            Value::String(diff),
+        )),
+        error => error,
+    }
 }
 
 pub fn strict_equal(
@@ -441,7 +485,7 @@ pub fn strict_equal(
     args: &[Value],
 ) -> Result<Value, VmError> {
     // Node's `strictEqual` is `Object.is`, not `===` (NaN equals NaN).
-    binary_assert(args, "strictEqual", true, |a, b| {
+    binary_assert(_r, args, "strictEqual", true, |a, b| {
         Ok(execute::same_value(a, b))
     })
 }
@@ -451,7 +495,7 @@ pub fn not_strict_equal(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    binary_assert(args, "notStrictEqual", false, |a, b| {
+    binary_assert(_r, args, "notStrictEqual", false, |a, b| {
         Ok(execute::same_value(a, b))
     })
 }
@@ -461,7 +505,7 @@ pub fn equal(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    binary_assert(args, "equal", true, execute::abstract_equal)
+    binary_assert(_r, args, "equal", true, execute::abstract_equal)
 }
 
 pub fn not_equal(
@@ -469,7 +513,7 @@ pub fn not_equal(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    binary_assert(args, "notEqual", false, execute::abstract_equal)
+    binary_assert(_r, args, "notEqual", false, execute::abstract_equal)
 }
 
 pub fn deep_strict_equal(
@@ -497,7 +541,10 @@ pub fn deep_strict_equal(
             deep_diff(&actual, &expected)
         ),
     );
-    Err(assertion_error(message, "deepStrictEqual", actual, expected, generated))
+    Err(with_instance_diff(
+        assertion_error(message, "deepStrictEqual", actual, expected, generated),
+        _r,
+    ))
 }
 
 fn deep_diff(actual: &Value, expected: &Value) -> String {
@@ -534,7 +581,7 @@ pub fn not_deep_strict_equal(
     if args.len() < 2 {
         return Err(missing_args());
     }
-    binary_assert(args, "notDeepStrictEqual", false, |a, b| {
+    binary_assert(_r, args, "notDeepStrictEqual", false, |a, b| {
         crate::modules::deep_equal::deep_equal(a, b, true)
     })
 }
