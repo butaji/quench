@@ -241,7 +241,7 @@ fn transfer(
             Some(value),
         )?)?,
     };
-    if buffer.shared || buffer.immutable || *buffer.detached.borrow() {
+    if buffer.shared || buffer.immutable || buffer.untransferable || *buffer.detached.borrow() {
         return Err(crate::value::error::throw_type_error(
             "ArrayBuffer is not transferable",
         ));
