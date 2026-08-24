@@ -81,7 +81,7 @@ fn array_species_create(
     crate::construct::construct_value(&species, &[Value::Number(length as f64)])
 }
 pub(crate) fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
-    if let Value::Array(_) = &receiver {
+    if let Value::Array(values) = receiver {
         return Ok(values.logical_len());
     }
     let length = crate::execute::get_property_result(receiver, "length")?;
