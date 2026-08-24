@@ -494,6 +494,30 @@ fn import_defer_does_not_evaluate_dependency() {
 }
 
 #[test]
+fn deferred_namespace_then_probe_does_not_evaluate_dependency() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import './setup.js';\nimport defer * as ns from './dep.js';\n'then' in Object.create(ns);\nexport default globalThis.evaluations.length;\n"
+            .to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("setup.js"),
+        "globalThis.evaluations = [];\n".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "globalThis.evaluations.push('dep');\nexport const value = 2;\n".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked.export_cell(entry, "default").expect("default").get(),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn deferred_export_cell_is_live_after_namespace_get() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
