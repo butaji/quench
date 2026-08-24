@@ -632,6 +632,13 @@ impl ObjectData {
         self.original_prototype.borrow().clone()
     }
 
+    pub(crate) fn capture_original_prototype(&self, prototype: Value) {
+        let mut original = self.original_prototype.borrow_mut();
+        if original.is_none() {
+            *original = Some(prototype);
+        }
+    }
+
     pub(crate) fn with_creation_order(
         properties: ObjectProperties,
         private_slots: PrivateSlots,
