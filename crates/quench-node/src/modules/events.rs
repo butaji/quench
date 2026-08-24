@@ -396,8 +396,18 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
     let capture = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
-        .and_then(|options| execute::get_property_result(options, "captureRejections").ok())
-        .is_some_and(|value| matches!(value, Value::Boolean(true)));
+        .and_then(|options| {
+            let value = execute::get_property_result(options, "captureRejections").ok()?;
+            if !matches!(value, Value::Undefined | Value::Boolean(_)) {
+                return Some(Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                    "The \"options.captureRejections\" property must be of type boolean.{}",
+                    crate::modules::util::invalid_arg_received(&value)
+                ))));
+            }
+            Some(Ok(matches!(value, Value::Boolean(true))))
+        })
+        .transpose()?
+        .unwrap_or(false);
     if capture {
         object = execute::set_property(object, "Symbol.kCapture\0quench", Value::Boolean(true));
     }
@@ -421,6 +431,13 @@ fn install_emitter_props(mut object: Value) -> Result<Value, VmError> {
         object = execute::define_property(object, key, descriptor)?;
     }
     Ok(object)
+}
+
+/// Canonical prototype surface shared by the module export and bootstrap
+/// global constructor. Keeping one declaration prevents host/JS realms from
+/// drifting on deletion and override semantics.
+pub fn emitter_prototype() -> Result<Value, VmError> {
+    install_emitter_props(host_api::object(Vec::new()))
 }
 
 fn emitter_props() -> Vec<(&'static str, Value)> {
@@ -475,7 +492,7 @@ pub fn build() -> Value {
     let value = crate::host::capability(crate::registry::SPEC_EVENTS_NEW);
     // Host-backed constructors still expose the ordinary prototype contract;
     // consumers may delete or override methods just like native Node does.
-    if let Ok(prototype) = install_emitter_props(host_api::object(Vec::new())) {
+    if let Ok(prototype) = emitter_prototype() {
         let _ = execute::set_callable_property(&value, "prototype", prototype);
     }
     let once = eval_function(
