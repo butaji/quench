@@ -58,6 +58,7 @@ fn execute_state_predicate(
     let held = exact_i32(function.captures.get_number(plan.held_slot)?)?;
     let suspended = function.captures.get_number(plan.suspended_slot)?;
     crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
+    crate::execution_trace::kernel("shape_state_predicate", false);
     Some(crate::value::Value::Boolean(
         (state_i32 & held) != 0 || state == suspended,
     ))
@@ -82,6 +83,7 @@ fn execute_state_bitwise(
     };
     cell.store(crate::value::Value::Number(f64::from(state)));
     crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
+    crate::execution_trace::kernel("shape_state_bitwise", false);
     Some(crate::value::Value::Undefined)
 }
 

@@ -497,6 +497,7 @@ fn match_values(text: &str, m: &regress::Match, offset: usize) -> Vec<Value> {
 }
 
 fn match_result(values: Vec<Value>, index: Value, input: &str, groups: Option<Value>) -> Value {
+    crate::execution_trace::allocation("match_result");
     let result = crate::builtins::set_property(Value::array(values), "index", index);
     let result = crate::builtins::set_property(result, "input", Value::String(input.to_string()));
     crate::builtins::set_property(result, "groups", groups.unwrap_or(Value::Undefined))
@@ -544,6 +545,7 @@ fn fast_regex_parts(receiver: &Value) -> Option<(String, String, usize)> {
     else {
         return None;
     };
+    crate::execution_trace::last_index("binding_cell");
     let index = crate::conversion::to_number(&last_index.borrow()).ok()?;
     Some((source.clone(), flags.clone(), to_length(index)))
 }
@@ -588,6 +590,7 @@ fn extract_flags(receiver: &Value) -> String {
 }
 
 fn extract_last_index(receiver: &Value) -> Result<usize, VmError> {
+    crate::execution_trace::last_index("getn");
     let value = crate::execute::get_property_result(receiver, "lastIndex")?;
     let number = crate::conversion::to_number(&value)?;
     Ok(to_length(number))

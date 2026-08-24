@@ -49,6 +49,10 @@ pub fn build() -> Vec<(String, Value)> {
             "format".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
         ),
+        (
+            "promisify".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_PROMISIFY),
+        ),
         ("inspect".to_string(), inspect_capability()),
         (
             "isDeepStrictEqual".to_string(),

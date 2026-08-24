@@ -170,6 +170,7 @@ fn timer_object(
         ("refresh", crate::registry::SPEC_TIMERS_REFRESH),
         ("close", crate::registry::SPEC_TIMERS_CLOSE),
         ("Symbol.dispose", crate::registry::SPEC_TIMERS_CLOSE),
+        ("Symbol.toPrimitive", crate::registry::SPEC_TIMERS_TO_PRIMITIVE),
     ];
     let mut object = object;
     for (key, spec) in methods {
@@ -269,6 +270,10 @@ pub fn method_refresh(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) 
         }
     }
     receiver.cloned().unwrap_or(Value::Undefined)
+}
+
+pub fn method_to_primitive(receiver: Option<&Value>) -> Value {
+    Value::Number(timer_id_of(receiver).unwrap_or(0) as f64)
 }
 
 /// Handler lists whose `once` entries must be consumed on fire.

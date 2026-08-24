@@ -462,7 +462,7 @@ fn run_leaf_op(
     locals: &mut impl LeafLocalFile,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     use crate::ir::Opcode::*;
-    crate::execution_trace::leaf_compact(op.opcode);
+    let _decode_guard = crate::execution_trace::leaf_compact(op.opcode);
     let value = match op.opcode {
         LoadConst => code.constant_at(pc).map(|(_, value)| value.into()),
         Move => {
