@@ -169,6 +169,7 @@ fn timer_object(
         ("hasRef", crate::registry::SPEC_TIMERS_HASREF),
         ("refresh", crate::registry::SPEC_TIMERS_REFRESH),
         ("close", crate::registry::SPEC_TIMERS_CLOSE),
+        ("Symbol.dispose", crate::registry::SPEC_TIMERS_CLOSE),
     ];
     let mut object = object;
     for (key, spec) in methods {
