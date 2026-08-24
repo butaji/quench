@@ -40,7 +40,18 @@ impl ExecutionScope {
         registers: &mut crate::register_file::RegisterFile,
         context: &VmContext,
     ) -> Result<(crate::completion::Completion, usize), crate::execute::VmError> {
-        super::execute_code_from(code, start, registers, context, Rc::clone(&self.0))
+        let mut pc = start;
+        loop {
+            let (completion, next) =
+                super::execute_code_from(code, pc, registers, context, Rc::clone(&self.0))?;
+            match completion {
+                crate::completion::Completion::Call(continuation) => {
+                    super::vm_ops::execute_call_continuation(registers, continuation)?;
+                    pc = next;
+                }
+                completion => return Ok((completion, next)),
+            }
+        }
     }
 
     /// Install a live module binding before executing a residual unit.
