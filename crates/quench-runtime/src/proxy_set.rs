@@ -58,7 +58,8 @@ pub(crate) fn proxy_set(
             }
             return Ok(Value::Boolean(success));
         }
-        return proxy_set(&proxy.target, prop, value, Some(&proxy.target));
+        let receiver = receiver.unwrap_or(target);
+        return proxy_set(&proxy.target, prop, value, Some(receiver));
     }
     let receiver = receiver.unwrap_or(target);
     crate::properties::set_with_receiver(target, prop, value, receiver).map(Value::Boolean)
