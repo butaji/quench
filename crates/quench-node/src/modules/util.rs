@@ -706,6 +706,42 @@ pub fn inspect_with_options(value: &Value, depth: usize, show_hidden: bool) -> S
                 return format!("{body}, [length]: {} ]", array.len());
             }
         }
+        if matches!(
+            value,
+            Value::Uint8Array(_)
+                | Value::Uint8ClampedArray(_)
+                | Value::Uint16Array(_)
+                | Value::Uint32Array(_)
+                | Value::Int8Array(_)
+                | Value::Int16Array(_)
+                | Value::Int32Array(_)
+                | Value::Float32Array(_)
+                | Value::Float64Array(_)
+                | Value::BigInt64Array(_)
+                | Value::BigUint64Array(_)
+        ) {
+            return format!("{rendered} [buffer]");
+        }
+        if let Ok(Value::Builtin(quench_runtime::ops::Builtin::StringPrototype)) =
+            quench_runtime::execute::get_prototype_of(value)
+        {
+            if let Value::String(string) = quench_runtime::execute::get_property(value, "_value") {
+                let symbols = quench_runtime::execute::own_keys(value)
+                    .into_iter()
+                    .filter_map(|key| {
+                        if !quench_runtime::execute::is_symbol(&key) {
+                            return None;
+                        }
+                        let name = symbol_string(&key);
+                        let raw = match key { Value::String(raw) => raw, _ => return None };
+                        let value = quench_runtime::execute::get_property(value, &raw);
+                        Some(format!("{name}: {}", inspect_shallow(&value)))
+                    })
+                    .collect::<Vec<_>>();
+                let suffix = if symbols.is_empty() { String::new() } else { format!(", {}", symbols.join(", ")) };
+                return format!("[String: {}] {{ [length]: {}{} }}", inspect_string(&string), string.chars().count(), suffix);
+            }
+        }
     }
     rendered
 }
