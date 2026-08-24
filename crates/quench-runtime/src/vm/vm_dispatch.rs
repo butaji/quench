@@ -681,7 +681,11 @@ fn number_property(_value: f64, key: &str) -> Value {
 
 fn boolean_property(_value: bool, key: &str) -> Value {
     match key {
-        "toString" => Value::Builtin(Builtin::BooleanToString),
+        "toString" => crate::builtins::read_descriptor_value(
+            Builtin::BooleanPrototype,
+            key,
+        )
+        .unwrap_or(Value::Builtin(Builtin::BooleanToString)),
         "valueOf" => Value::Builtin(Builtin::BooleanValueOf),
         _ => Value::Undefined,
     }
