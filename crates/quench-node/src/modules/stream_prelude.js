@@ -11,7 +11,10 @@
   const emitterMethods = {
     on(name, fn) {
       this._emitter.on(name, fn);
-      if (name === "data" && this._readableState) this.resume();
+      if (name === "data" && this._readableState &&
+                 this.listenerCount("readable") === 0) {
+        this.resume();
+      }
       // A stream may finish synchronously while a pipe/end callback is being
       // installed. Preserve Node's observable completion guarantee for those
       // late listeners by delivering the already-emitted terminal event.
@@ -84,6 +87,18 @@
     return options.objectMode ? 16 : 16384;
   }
 
+  function validateEncoding(encoding) {
+    const name = String(encoding).toLowerCase();
+    const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
+      "binary", "ascii", "base64", "base64url", "hex"];
+    if (!valid.includes(name)) {
+      const error = new TypeError("Unknown encoding: " + encoding);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
+    return name;
+  }
+
   // ---- Readable ----
 
   function initReadable(stream, options) {
@@ -99,7 +114,10 @@
       endEmitted: false,
       errored: null,
       closeEmitted: false,
-      encoding: null
+      encoding: null,
+      awaitDrainWriters: null,
+      pipeCount: 0,
+      defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
     stream.readable = true;
     stream.destroyed = false;
@@ -117,6 +135,13 @@
     if (st.flowing) {
       while (st.flowing && st.buffer.length > 0) {
         stream._emitter.emit("data", st.buffer.shift());
+        if (st.awaitDrainWriters &&
+            (st.awaitDrainWriters instanceof Set
+              ? st.awaitDrainWriters.size > 0
+              : true)) {
+          st.flowing = false;
+          break;
+        }
       }
     }
     if (st.flowing && st.buffer.length === 0 && !st.ended && !st.reading) {
@@ -176,6 +201,10 @@
       return this._readableState.objectMode;
     }
 
+    get readableFlowing() {
+      return this._readableState.flowing;
+    }
+
     get readableErrored() {
       return this._readableState.errored || null;
     }
@@ -202,7 +231,7 @@
       return this;
     }
 
-    push(chunk) {
+    push(chunk, encoding) {
       const st = this._readableState;
       st.reading = false;
       if (st.ended || st.errored) {
@@ -217,10 +246,12 @@
       if (chunk === null) {
         st.ended = true;
       } else {
+        if (!st.objectMode && typeof chunk === "string" && typeof Buffer !== "undefined") {
+          chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
+        }
         st.buffer.push(normalizeReadableChunk(this, chunk));
       }
       scheduleFlow(this);
-      if (chunk === null && st.flowing) nextTick(() => flowReadable(this));
       return !st.ended;
     }
 
@@ -236,14 +267,20 @@
 
     read() {
       const st = this._readableState;
+      if (this._passThrough) this._passThroughRead = true;
       const finishIfEnded = () => {
         if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
-          st.endEmitted = true;
-          this._emitter.emit("end");
+          nextTick(() => {
+            if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
+              st.endEmitted = true;
+              this._emitter.emit("end");
+            }
+          });
         }
       };
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
+        st.reading = false;
         if (st.encoding) {
           chunk = chunk.toString(st.encoding);
           while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
@@ -257,6 +294,7 @@
       }
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
+        st.reading = false;
         if (st.encoding) {
           chunk = chunk.toString(st.encoding);
           while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
@@ -265,20 +303,42 @@
         return chunk;
       }
       finishIfEnded();
+      if (this._passThrough) finishWritable(this);
       return null;
     }
 
     setEncoding(encoding) {
-      this._readableState.encoding = encoding || "utf8";
+      this._readableState.encoding = validateEncoding(encoding || "utf8");
       return this;
     }
 
     pipe(dest, options) {
       const source = this;
+      const sourceState = source._readableState;
+      sourceState.pipeCount += 1;
+      if (sourceState.pipeCount > 1 && !sourceState.awaitDrainWriters) {
+        sourceState.awaitDrainWriters = new Set();
+      }
       source.on("data", (chunk) => {
         if (dest.write(chunk) === false) {
-          source.pause();
-          dest.once("drain", () => source.resume());
+          const state = source._readableState;
+          if (!state.awaitDrainWriters) state.awaitDrainWriters = dest;
+          else if (state.awaitDrainWriters instanceof Set) state.awaitDrainWriters.add(dest);
+          else if (state.awaitDrainWriters !== dest) {
+            state.awaitDrainWriters = new Set([state.awaitDrainWriters, dest]);
+          }
+          dest.once("drain", () => {
+            const writers = state.awaitDrainWriters;
+            if (!writers) return;
+            if (writers instanceof Set) writers.delete(dest);
+            else if (writers === dest) state.awaitDrainWriters = null;
+            const drained = !state.awaitDrainWriters ||
+              (state.awaitDrainWriters instanceof Set && state.awaitDrainWriters.size === 0);
+            if (drained) {
+              state.awaitDrainWriters = null;
+              source.resume();
+            }
+          });
         }
       });
       if (!options || options.end !== false) {
@@ -391,7 +451,11 @@
       pending: [],
       writing: false,
       ended: false,
-      finished: false
+      finished: false,
+      corked: 0,
+      prefinished: false,
+      final: options.final || null,
+      destroyed: false
     };
     stream.writable = true;
     if (options.write) stream._write = options.write;
@@ -400,10 +464,59 @@
 
   function finishWritable(stream) {
     const st = stream._writableState;
-    if (st.finished || !st.ended || st.buffered > 0 || st.writing) return;
+    if (st.destroyed) return;
+    if (stream._passThrough && !stream._passThroughRead &&
+        stream.listenerCount("data") === 0) return;
+    if (st.finished || !st.ended || st.buffered > 0 || st.writing || st.prefinishing) return;
+    if (!st.prefinished) {
+      st.prefinishing = true;
+      const complete = (error) => {
+        if (error) {
+          stream._emitter.emit("error", error);
+          return;
+        }
+        st.prefinishing = false;
+        st.prefinished = true;
+        stream._emitter.emit("prefinish");
+        nextTick(() => finishWritable(stream));
+      };
+      if (st.final) {
+        try { st.final.call(stream, complete); } catch (error) { complete(error); }
+      } else complete();
+      return;
+    }
     st.finished = true;
-    stream._emitter.emit("prefinish");
     stream._emitter.emit("finish");
+  }
+
+  function flushCorked(stream) {
+    const st = stream._writableState;
+    if (st.corked || st.writing || st.pending.length === 0) return;
+    if (st.pending.length > 1 && stream._writev) {
+      const pending = st.pending.splice(0);
+      const total = pending.reduce((sum, item) => sum + item.chunkLength, 0);
+      st.writing = true;
+      const complete = (error) => {
+        st.buffered -= total;
+        st.writing = false;
+        for (const item of pending) if (item.callback) item.callback(error);
+        if (error) stream._emitter.emit("error", error);
+        if (!error && st.buffered <= st.highWaterMark) stream._emitter.emit("drain");
+        if (!error) finishWritable(stream);
+      };
+      try {
+        stream._writev(
+          pending.map((item) => ({ chunk: item.chunk, encoding: item.encoding })),
+          complete
+        );
+      } catch (error) {
+        complete(error);
+      }
+      return;
+    }
+    const item = st.pending.shift();
+    st.buffered -= item.chunkLength;
+    stream.write(item.chunk, item.encoding, item.callback);
   }
 
   class WritableClass {
@@ -431,6 +544,21 @@
       return this._writableState.objectMode;
     }
 
+    get writableCorked() {
+      return this._writableState.corked;
+    }
+
+    cork() {
+      this._writableState.corked += 1;
+      return this;
+    }
+
+    uncork() {
+      if (this._writableState.corked > 0) this._writableState.corked -= 1;
+      flushCorked(this);
+      return this;
+    }
+
     write(chunk, encoding, callback) {
       if (typeof encoding === "function") {
         callback = encoding;
@@ -439,10 +567,24 @@
       const st = this._writableState;
       if (st.ended) {
         const error = new Error("write after end");
-        nextTick(() => this._emitter.emit("error", error));
+        error.code = "ERR_STREAM_WRITE_AFTER_END";
         if (callback) nextTick(() => callback(error));
+        nextTick(() => this._emitter.emit("error", error));
         return false;
       }
+      if (chunk == null && !st.objectMode) {
+        const error = new TypeError("May not write null values to stream");
+        error.code = "ERR_STREAM_NULL_VALUES";
+        throw error;
+      }
+      if (!st.objectMode && typeof chunk !== "string" &&
+          !(chunk && typeof chunk.byteLength === "number" &&
+            typeof chunk.byteOffset === "number")) {
+        const error = new TypeError("The \"chunk\" argument must be of type string or an instance of Buffer");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (typeof encoding === "string") validateEncoding(encoding);
       // Node normalizes binary views to Buffer for byte-mode Writable
       // callbacks; object-mode streams preserve the original view identity.
       const isByteView = chunk && typeof chunk.byteLength === "number" &&
@@ -457,6 +599,10 @@
       if (!st.objectMode && isByteView && encoding === undefined) encoding = "buffer";
       const chunkLength = writableChunkLength(this, chunk);
       st.buffered += chunkLength;
+      if (st.corked) {
+        st.pending.push({ chunk, encoding, callback, chunkLength });
+        return st.buffered < st.highWaterMark;
+      }
       if (st.writing) {
         st.pending.push({ chunk, encoding, callback, chunkLength });
         return st.buffered < st.highWaterMark;
@@ -492,7 +638,7 @@
                   for (const item of pending) if (item.callback) item.callback(batchError);
                   if (batchError) this._emitter.emit("error", batchError);
                   if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
-                  finishWritable(this);
+                  if (!batchError) finishWritable(this);
                 }
               );
             } catch (batchError) {
@@ -500,7 +646,6 @@
               st.writing = false;
               for (const item of pending) if (item.callback) item.callback(batchError);
               this._emitter.emit("error", batchError);
-              finishWritable(this);
             }
             return;
           }
@@ -531,9 +676,11 @@
       }
       if (callback) this._emitter.once("finish", callback);
       if (chunk != null) this.write(chunk, encoding);
+      this._writableState.corked = 0;
+      flushCorked(this);
       this._writableState.ended = true;
       const stream = this;
-      nextTick(() => finishWritable(stream));
+      finishWritable(stream);
       return this;
     }
   }
@@ -547,6 +694,7 @@
   Writable.prototype.destroy = function (error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    if (this._writableState) this._writableState.destroyed = true;
     this.writable = false;
     if (error) this.writableErrored = error;
     const stream = this;
@@ -618,6 +766,8 @@
   class PassThrough extends Transform {
     constructor(options) {
       super(options || {});
+      this._passThrough = true;
+      this._passThroughRead = false;
       this._transform = (chunk, encoding, callback) => {
         this.push(chunk);
         callback();
