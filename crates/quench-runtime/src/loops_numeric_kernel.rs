@@ -14,7 +14,7 @@ struct LinearSolveFact {
 
 impl LinearSolveFact {
     fn recognize(code: crate::machine::CodeView<'_>, _counter: u16) -> Option<Self> {
-        (code.len() == 29).then_some(())?;
+        (code.len() == 28).then_some(())?;
         let (x_reg, x) = recognized_static_load(code, 0)?;
         let x_copy = kernel_move(code, 1, x_reg)?;
         let (current_reg, current) = recognized_static_load(code, 2)?;
@@ -48,8 +48,8 @@ impl LinearSolveFact {
         let (inv_c_reg, inv_c) = recognized_static_load(code, 23)?;
         let result = kernel_alu(code, 24, crate::ir::Opcode::Mul, added, inv_c_reg)?;
         kernel_store(code, 25, x_object, current_key, result)?;
-        kernel_checked_store(code, 26, 27, last_x, result)?;
-        kernel_move(code, 28, result)?;
+        kernel_checked_store(code, 26, last_x, result)?;
+        kernel_move(code, 27, result)?;
         Some(Self {
             x, x0, current, last, next, last_x, a, inv_c,
         })
@@ -81,9 +81,17 @@ fn kernel_store(code: crate::machine::CodeView<'_>, pc: usize, array: u16, key: 
     (op.opcode == crate::ir::Opcode::ASetI && op.a == array && op.b == key && op.c == value).then_some(())
 }
 
-fn kernel_checked_store(code: crate::machine::CodeView<'_>, check: usize, store: usize, slot: u16, value: u16) -> Option<()> {
-    matches!(code.cold_at(check), Some(Op::CheckInitialized { slot: checked, .. }) if *checked == slot).then_some(())?;
-    matches!(code.cold_at(store), Some(Op::StoreLocal { slot: stored, src }) if *stored == slot && *src == value).then_some(())
+fn kernel_checked_store(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    slot: u16,
+    value: u16,
+) -> Option<()> {
+    let instruction = code.instruction(pc)?;
+    (instruction.opcode == crate::ir::Opcode::StoreLocalChecked
+        && instruction.a == slot
+        && instruction.b == value)
+        .then_some(())
 }
 
 fn run_linear_solve_kernel(loop_fact: CountedForFact, body: crate::machine::CodeView<'_>) -> Option<crate::completion::Completion> {
