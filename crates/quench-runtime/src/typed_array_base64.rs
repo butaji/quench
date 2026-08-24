@@ -189,19 +189,57 @@ fn relative_index(value: Option<&Value>, length: usize) -> Result<usize, VmError
 }
 
 fn subarray(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let view = uint8_receiver(receiver)?;
-    let length = view.logical_len();
+    let view = receiver.ok_or_else(|| VmError::NotCallable)?;
+    let length = typed_array_length(view).ok_or_else(|| VmError::NotCallable)?;
     let begin = match arguments.first() {
         None | Some(Value::Undefined) => 0,
         Some(_) => relative_index(arguments.first(), length)?,
     };
     let end = relative_index(arguments.get(1), length)?;
-    let view = crate::value::Uint8ArrayData::new(
-        view.buffer.clone(),
-        view.byte_offset + begin,
-        end.saturating_sub(begin),
-    );
-    Ok(Value::Uint8Array(Rc::new(view)))
+    Ok(typed_array_subview(view, begin, end.saturating_sub(begin)))
+}
+
+fn typed_array_length(value: &Value) -> Option<usize> {
+    Some(match value {
+        Value::Float64Array(view) => view.length,
+        Value::Float32Array(view) => view.length,
+        Value::Int8Array(view) => view.length,
+        Value::Int16Array(view) => view.length,
+        Value::Int32Array(view) => view.length,
+        Value::BigInt64Array(view) => view.length,
+        Value::BigUint64Array(view) => view.length,
+        Value::Uint32Array(view) => view.length,
+        Value::Uint8Array(view) => view.length,
+        Value::Uint8ClampedArray(view) => view.length,
+        Value::Uint16Array(view) => view.length,
+        _ => return None,
+    })
+}
+
+fn typed_array_subview(value: &Value, begin: usize, length: usize) -> Value {
+    macro_rules! subview {
+        ($variant:ident, $data:ty, $size:expr, $view:expr) => {
+            Value::$variant(Rc::new(<$data>::new(
+                $view.buffer.clone(),
+                $view.byte_offset + begin * $size,
+                length,
+            )))
+        };
+    }
+    match value {
+        Value::Float64Array(view) => subview!(Float64Array, crate::value::Float64ArrayData, 8, view),
+        Value::Float32Array(view) => subview!(Float32Array, crate::value::Float32ArrayData, 4, view),
+        Value::Int8Array(view) => subview!(Int8Array, crate::value::Int8ArrayData, 1, view),
+        Value::Int16Array(view) => subview!(Int16Array, crate::value::Int16ArrayData, 2, view),
+        Value::Int32Array(view) => subview!(Int32Array, crate::value::Int32ArrayData, 4, view),
+        Value::BigInt64Array(view) => subview!(BigInt64Array, crate::value::BigInt64ArrayData, 8, view),
+        Value::BigUint64Array(view) => subview!(BigUint64Array, crate::value::BigUint64ArrayData, 8, view),
+        Value::Uint32Array(view) => subview!(Uint32Array, crate::value::Uint32ArrayData, 4, view),
+        Value::Uint8Array(view) => subview!(Uint8Array, crate::value::Uint8ArrayData, 1, view),
+        Value::Uint8ClampedArray(view) => subview!(Uint8ClampedArray, crate::value::Uint8ClampedArrayData, 1, view),
+        Value::Uint16Array(view) => subview!(Uint16Array, crate::value::Uint16ArrayData, 2, view),
+        _ => Value::Undefined,
+    }
 }
 
 fn read_written_object(read: usize, written: usize) -> Value {
