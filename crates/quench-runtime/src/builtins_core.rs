@@ -337,7 +337,6 @@ pub(crate) fn array_push(
             &key,
             value.clone(),
         )?;
-        updated = crate::locals::resolved_replacement(updated);
         if key == u32::MAX.to_string() {
             if let Value::Array(values) = &updated {
                 let mut values = std::rc::Rc::clone(values);
