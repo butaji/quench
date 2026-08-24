@@ -3,6 +3,7 @@ use oxc::ast::ast::Expression;
 use std::collections::HashMap;
 const NON_EXTENSIBLE: &str = "\0quench:non_extensible";
 include!("properties_optional.rs");
+include!("properties_named_transition.rs");
 pub(crate) fn reduce(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -207,22 +208,33 @@ pub(crate) fn execute_set_named_cached(
     strict: bool,
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), crate::execute::VmError> {
+    if transition_index(cache.get()).is_some()
+        && try_named_write_transition(registers, object, src, key, cache)?
+    {
+        crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
+        return Ok(());
+    }
     let target = crate::execute::read_register(registers, object)?;
+    let transition = named_write_source(&target, key);
     if let crate::value::Value::Object(data) = &target {
-        if !data.has_replacement() {
-            if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
-                if data.semantic_layout_id() == layout {
-                    if let Some((_, crate::value::Value::BindingCell(cell))) =
-                        data.hot_properties().get(slot as usize)
-                    {
-                        crate::execution_trace::event(
-                            crate::execution_trace::Event::NamedPropertySetHit,
-                        );
-                        *cell.borrow_mut() = crate::execute::read_register(registers, src)?;
-                        return Ok(());
-                    }
-                }
+        if data.has_replacement() {
+            crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
+        } else if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
+            if data.semantic_layout_id() != layout {
+                crate::execution_trace::event(
+                    crate::execution_trace::Event::NamedSetLayoutMismatch,
+                );
+            } else if let Some((_, crate::value::Value::BindingCell(cell))) =
+                data.hot_properties().get(slot as usize)
+            {
+                crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
+                *cell.borrow_mut() = crate::execute::read_register(registers, src)?;
+                return Ok(());
+            } else {
+                crate::execution_trace::event(crate::execution_trace::Event::NamedSetSlotNotCell);
             }
+        } else {
+            crate::execution_trace::event(crate::execution_trace::Event::NamedSetCacheEmpty);
         }
     }
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetMiss);
@@ -236,6 +248,9 @@ pub(crate) fn execute_set_named_cached(
         },
     )?;
     let updated = crate::execute::read_register(registers, object)?;
+    if install_named_write_transition(cache, transition, &updated, key) {
+        return Ok(());
+    }
     if let crate::value::Value::Object(data) = &updated {
         if let Some(slot) = cacheable_named_write_slot(data, key) {
             cache.set(crate::machine::pack_named_cache(
