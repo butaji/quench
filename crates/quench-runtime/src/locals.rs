@@ -204,7 +204,14 @@ impl Drop for EnvironmentGuard {
         if let (Some(environment), Some(names)) =
             (self.eval_environment.take(), self.eval_names.take())
         {
-            environment.restore_eval_name_chain(&names);
+            // A closure may retain this activation through the environment
+            // caller chain.  In that case dynamically-created eval bindings
+            // are part of the captured activation and must remain visible to
+            // the closure after the call returns.  With no captured child,
+            // the aliases belong only to this activation and are restored.
+            if Rc::strong_count(&environment) <= 2 {
+                environment.restore_eval_name_chain(&names);
+            }
         }
         CURRENT_ENVIRONMENT.with(|current| current.replace(self.previous.take()));
         GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(self.previous_global.take()));
