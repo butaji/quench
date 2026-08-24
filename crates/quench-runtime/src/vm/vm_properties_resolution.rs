@@ -541,6 +541,9 @@ fn descriptor_property_result(
         return (!matches!(property, Value::Undefined)).then_some(Ok(property));
     }
     if let Value::Array(values) = value {
+        if values.is_arguments() && key == "length" {
+            return Some(Ok(values.arguments_length_value()));
+        }
         if key == "length" {
             return Some(Ok(Value::Number(values.logical_len() as f64)));
         }
