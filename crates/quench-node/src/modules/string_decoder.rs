@@ -12,7 +12,6 @@ use crate::host::HostState;
 pub fn new_decoder(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let mut props = Vec::new();
     props.push(("encoding".to_string(), Value::String("utf8".into())));
-    props.push(("pending".to_string(), Value::BindingCell(Rc::new(RefCell::new(Value::String(String::new()))))));
     props.push((
         "write".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new(
@@ -34,7 +33,13 @@ pub fn write(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let input = args.first().ok_or(VmError::NotCallable)?;
-    let mut bytes = pending_bytes(receiver);
+    let key = receiver.object_identity().ok_or(VmError::NotCallable)?;
+    let mut bytes = state
+        .borrow()
+        .string_decoder_pending
+        .get(&key)
+        .cloned()
+        .unwrap_or_default();
     bytes.extend(input_bytes(input)?);
     let (text, pending) = match String::from_utf8(bytes.clone()) {
         Ok(text) => (text, Vec::new()),
@@ -42,24 +47,10 @@ pub fn write(
             let valid = error.utf8_error().valid_up_to();
             (String::from_utf8_lossy(&bytes[..valid]).into_owned(), bytes[valid..].to_vec())
         }
-        Err(error) => (String::from_utf8_lossy(&bytes).into_owned(), Vec::new()),
+        Err(_error) => (String::from_utf8_lossy(&bytes).into_owned(), Vec::new()),
     };
-    set_pending(receiver, pending);
+    state.borrow_mut().string_decoder_pending.insert(key, pending);
     Ok(Value::String(text))
-}
-
-fn pending_bytes(receiver: &Value) -> Vec<u8> {
-    quench_runtime::execute::get_property_result(receiver, "pending")
-        .ok()
-        .and_then(|value| match value { Value::String(value) => Some(value.bytes().collect()), Value::BindingCell(cell) => match &*cell.borrow() { Value::String(value) => Some(value.bytes().collect()), _ => None }, _ => None })
-        .unwrap_or_default()
-}
-
-fn set_pending(receiver: &Value, bytes: Vec<u8>) {
-    let value = bytes.into_iter().map(char::from).collect::<String>();
-    if let Ok(Value::BindingCell(cell)) = quench_runtime::execute::get_property_result(receiver, "pending") {
-        *cell.borrow_mut() = Value::String(value);
-    }
 }
 
 fn input_bytes(value: &Value) -> Result<Vec<u8>, VmError> {
