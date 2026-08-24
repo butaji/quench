@@ -1,14 +1,112 @@
-const LEAF_REGISTERS: usize = 48;
+const LEAF_REGISTERS: usize = 96;
+const SMALL_LEAF_REGISTERS: usize = 48;
+const LEAF_LOCAL_SLOTS: usize = 128;
 const LEAF_FACT_SLOTS: usize = 256;
+
+struct LeafRegisters {
+    values: [std::mem::MaybeUninit<crate::value::Value>; LEAF_REGISTERS],
+    initialized: [u64; 2],
+}
+
+impl LeafRegisters {
+    fn new() -> Self {
+        Self {
+            values: [const { std::mem::MaybeUninit::uninit() }; LEAF_REGISTERS],
+            initialized: [0; 2],
+        }
+    }
+
+    fn contains(&self, index: usize) -> bool {
+        self.initialized[index / 64] & (1 << (index % 64)) != 0
+    }
+}
+
+impl std::ops::Index<usize> for LeafRegisters {
+    type Output = crate::value::Value;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        if self.contains(index) {
+            return unsafe { self.values[index].assume_init_ref() };
+        }
+        &crate::value::Value::Undefined
+    }
+}
+
+impl std::ops::IndexMut<usize> for LeafRegisters {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        if !self.contains(index) {
+            self.values[index].write(crate::value::Value::Undefined);
+            self.initialized[index / 64] |= 1 << (index % 64);
+        }
+        unsafe { self.values[index].assume_init_mut() }
+    }
+}
+
+impl Drop for LeafRegisters {
+    fn drop(&mut self) {
+        for index in 0..LEAF_REGISTERS {
+            if self.contains(index) {
+                unsafe { self.values[index].assume_init_drop() };
+            }
+        }
+    }
+}
+
+trait LeafRegisterFile:
+    std::ops::Index<usize, Output = crate::value::Value>
+    + std::ops::IndexMut<usize, Output = crate::value::Value>
+{
+}
+
+impl<T> LeafRegisterFile for T where
+    T: std::ops::Index<usize, Output = crate::value::Value>
+        + std::ops::IndexMut<usize, Output = crate::value::Value>
+{
+}
+
+trait LeafLocalFile {
+    fn read(&self, slot: u16) -> Option<crate::value::Value>;
+    fn write(&mut self, slot: u16, value: crate::value::Value) -> Option<()>;
+}
+
+impl LeafLocalFile for crate::register_file::LocalWordFile<LEAF_LOCAL_SLOTS> {
+    fn read(&self, slot: u16) -> Option<crate::value::Value> {
+        self.read(slot)
+    }
+
+    fn write(&mut self, slot: u16, value: crate::value::Value) -> Option<()> {
+        self.write(slot, value)
+    }
+}
+
+struct NoLeafLocals;
+
+impl LeafLocalFile for NoLeafLocals {
+    fn read(&self, _: u16) -> Option<crate::value::Value> {
+        None
+    }
+
+    fn write(&mut self, _: u16, _: crate::value::Value) -> Option<()> {
+        None
+    }
+}
 
 #[derive(Clone)]
 struct LeafFact {
     function: std::rc::Weak<crate::value::FunctionValue>,
     rejection: Option<LeafReject>,
+    extended: bool,
 }
 
 #[derive(Clone, Copy)]
-enum LeafReject { Length, Opcode, Register, Call, Control, Depth }
+enum LeafReject {
+    Length,
+    Opcode,
+    Register,
+    Call,
+    Control,
+    Depth,
+}
 
 impl LeafReject {
     fn event(self) -> crate::execution_trace::Event {
@@ -36,69 +134,44 @@ fn execute_proven_leaf(
 ) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
     crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
     let code = function.code.code()?;
-    let arguments_slot = u16::try_from(function.captures.len())
-        .ok()?
-        .saturating_add(function.params);
-    if function.code.uses_slot(arguments_slot)
-        || code_uses_arguments(code)
-        || code_uses_function_call(code)
-    {
-        crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
-        return None;
-    }
-    if let Err(rejection) = proven_leaf(function, code) {
-        crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
-        crate::execution_trace::event(rejection.event());
-        return None;
-    }
+    let extended = match proven_leaf(function, code) {
+        Ok(extended) => extended,
+        Err(rejection) => {
+            crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
+            crate::execution_trace::event(rejection.event());
+            return None;
+        }
+    };
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    let mut registers: [crate::value::Value; LEAF_REGISTERS] =
+    if extended {
+        let mut registers = LeafRegisters::new();
+        let mut locals = crate::register_file::LocalWordFile::<LEAF_LOCAL_SLOTS>::new();
+        return Some(run_leaf(
+            function,
+            receiver,
+            arguments,
+            code,
+            &mut registers,
+            &mut locals,
+        ));
+    }
+    let mut registers: [crate::value::Value; SMALL_LEAF_REGISTERS] =
         std::array::from_fn(|_| crate::value::Value::Undefined);
+    let mut locals = NoLeafLocals;
     Some(run_leaf(
         function,
         receiver,
         arguments,
         code,
         &mut registers,
+        &mut locals,
     ))
-}
-
-fn code_uses_arguments(code: crate::machine::CodeView<'_>) -> bool {
-    (0..code.len()).any(|pc| {
-        let Some(instruction) = code.instruction(pc) else {
-            return false;
-        };
-        if instruction.opcode == crate::ir::Opcode::LoadLocalChecked
-            && code
-                .metadata_at(pc)
-                .and_then(|metadata| metadata.name.as_deref())
-                == Some("arguments")
-        {
-            return true;
-        }
-        instruction.opcode == crate::ir::Opcode::Slow
-            && code.cold(instruction).is_some_and(|cold| match cold {
-                crate::ops::Op::Conditional { consequent, alternate, .. } => {
-                    consequent.code().is_some_and(code_uses_arguments)
-                        || alternate.code().is_some_and(code_uses_arguments)
-                }
-                _ => false,
-            })
-    })
-}
-
-fn code_uses_function_call(code: crate::machine::CodeView<'_>) -> bool {
-    (0..code.len()).any(|pc| {
-        code.metadata_at(pc)
-            .and_then(|metadata| metadata.name.as_deref())
-            .is_some_and(|name| matches!(name, "call" | "apply" | "bind"))
-    })
 }
 
 fn proven_leaf(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     code: crate::machine::CodeView<'_>,
-) -> Result<(), LeafReject> {
+) -> Result<bool, LeafReject> {
     let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (LEAF_FACT_SLOTS - 1);
     let cached = LEAF_FACTS.with(|facts| facts.borrow().get(index).and_then(Clone::clone));
     if let Some(cached) = cached.filter(|cached| {
@@ -107,9 +180,11 @@ fn proven_leaf(
             .upgrade()
             .is_some_and(|value| std::rc::Rc::ptr_eq(&value, function))
     }) {
-        return cached.rejection.map_or(Ok(()), Err);
+        return cached.rejection.map_or(Ok(cached.extended), Err);
     }
-    let rejection = validate_leaf(code).err();
+    let result = validate_leaf(code);
+    let rejection = result.as_ref().err().copied();
+    let extended = result.as_ref().copied().unwrap_or(false);
     LEAF_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -118,18 +193,31 @@ fn proven_leaf(
         facts[index] = Some(LeafFact {
             function: std::rc::Rc::downgrade(function),
             rejection,
+            extended,
         });
     });
-    rejection.map_or(Ok(()), Err)
+    result
 }
 
-fn validate_leaf(code: crate::machine::CodeView<'_>) -> Result<(), LeafReject> {
-    validate_leaf_depth(code, 0)
+fn validate_leaf(code: crate::machine::CodeView<'_>) -> Result<bool, LeafReject> {
+    if validate_leaf_depth(code, 0, 16, SMALL_LEAF_REGISTERS, false).is_ok() {
+        return Ok(false);
+    }
+    validate_leaf_depth(code, 0, 40, LEAF_REGISTERS, true)?;
+    Ok(true)
 }
 
-fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Result<(), LeafReject> {
+fn validate_leaf_depth(
+    code: crate::machine::CodeView<'_>,
+    depth: u8,
+    max_len: usize,
+    max_registers: usize,
+    allow_locals: bool,
+) -> Result<(), LeafReject> {
     (depth < 4).then_some(()).ok_or(LeafReject::Depth)?;
-    (code.len() <= 16).then_some(()).ok_or(LeafReject::Length)?;
+    (code.len() <= max_len)
+        .then_some(())
+        .ok_or(LeafReject::Length)?;
     for pc in 0..code.len() {
         let op = code.instruction(pc).ok_or(LeafReject::Opcode)?;
         matches!(
@@ -137,6 +225,8 @@ fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Result<
             crate::ir::Opcode::LoadConst
                 | crate::ir::Opcode::Move
                 | crate::ir::Opcode::LoadLocalChecked
+                | crate::ir::Opcode::StoreLocalChecked
+                | crate::ir::Opcode::UpdateLocal
                 | crate::ir::Opcode::GetN
                 | crate::ir::Opcode::SetN
                 | crate::ir::Opcode::AGetI
@@ -145,22 +235,53 @@ fn validate_leaf_depth(code: crate::machine::CodeView<'_>, depth: u8) -> Result<
                 | crate::ir::Opcode::Return
                 | crate::ir::Opcode::Slow
         )
-        .then_some(()).ok_or(LeafReject::Opcode)?;
+        .then_some(())
+        .ok_or(LeafReject::Opcode)?;
+        if matches!(
+            op.opcode,
+            crate::ir::Opcode::StoreLocalChecked | crate::ir::Opcode::UpdateLocal
+        ) && !allow_locals
+        {
+            return Err(LeafReject::Opcode);
+        }
         leaf_registers(op)
             .into_iter()
-            .all(|register| usize::from(register) < LEAF_REGISTERS)
-            .then_some(()).ok_or(LeafReject::Register)?;
+            .all(|register| usize::from(register) < max_registers)
+            .then_some(())
+            .ok_or(LeafReject::Register)?;
+        if matches!(op.opcode, crate::ir::Opcode::StoreLocalChecked)
+            && usize::from(op.a) >= LEAF_LOCAL_SLOTS
+        {
+            return Err(LeafReject::Register);
+        }
+        if matches!(op.opcode, crate::ir::Opcode::UpdateLocal)
+            && usize::from(op.c) >= LEAF_LOCAL_SLOTS
+        {
+            return Err(LeafReject::Register);
+        }
         if op.opcode == crate::ir::Opcode::CallN {
             (op.flags <= 1).then_some(()).ok_or(LeafReject::Call)?;
         }
         if op.opcode == crate::ir::Opcode::Slow {
-            validate_leaf_control(code.cold(op).ok_or(LeafReject::Control)?, depth)?;
+            validate_leaf_control(
+                code.cold(op).ok_or(LeafReject::Control)?,
+                depth,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
         }
     }
     Ok(())
 }
 
-fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Result<(), LeafReject> {
+fn validate_leaf_control(
+    op: &crate::ops::Op,
+    depth: u8,
+    max_len: usize,
+    max_registers: usize,
+    allow_locals: bool,
+) -> Result<(), LeafReject> {
     let registers = match op {
         crate::ops::Op::Conditional {
             dst,
@@ -168,8 +289,20 @@ fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Result<(), LeafRejec
             consequent,
             alternate,
         } => {
-            validate_leaf_depth(consequent.code().ok_or(LeafReject::Control)?, depth + 1)?;
-            validate_leaf_depth(alternate.code().ok_or(LeafReject::Control)?, depth + 1)?;
+            validate_leaf_depth(
+                consequent.code().ok_or(LeafReject::Control)?,
+                depth + 1,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
+            validate_leaf_depth(
+                alternate.code().ok_or(LeafReject::Control)?,
+                depth + 1,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
             [*dst, *condition]
         }
         crate::ops::Op::Branch {
@@ -177,8 +310,20 @@ fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Result<(), LeafRejec
             then_ops,
             else_ops,
         } => {
-            validate_leaf_depth(then_ops.code().ok_or(LeafReject::Control)?, depth + 1)?;
-            validate_leaf_depth(else_ops.code().ok_or(LeafReject::Control)?, depth + 1)?;
+            validate_leaf_depth(
+                then_ops.code().ok_or(LeafReject::Control)?,
+                depth + 1,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
+            validate_leaf_depth(
+                else_ops.code().ok_or(LeafReject::Control)?,
+                depth + 1,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
             [*condition, 0]
         }
         crate::ops::Op::Loop {
@@ -191,24 +336,57 @@ fn validate_leaf_control(op: &crate::ops::Op, depth: u8) -> Result<(), LeafRejec
             dst,
             per_iteration,
         } if label.is_none() && !post_test && per_iteration.is_empty() => {
-            validate_leaf_depth(init.code().ok_or(LeafReject::Control)?, depth + 1)?;
-            validate_leaf_depth(test.code().ok_or(LeafReject::Control)?, depth + 1)?;
-            validate_leaf_depth(body.code().ok_or(LeafReject::Control)?, depth + 1)?;
-            validate_leaf_depth(update.code().ok_or(LeafReject::Control)?, depth + 1)?;
+            validate_leaf_depth(
+                init.code().ok_or(LeafReject::Control)?,
+                depth + 1,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
+            validate_leaf_depth(
+                test.code().ok_or(LeafReject::Control)?,
+                depth + 1,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
+            validate_leaf_depth(
+                body.code().ok_or(LeafReject::Control)?,
+                depth + 1,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
+            validate_leaf_depth(
+                update.code().ok_or(LeafReject::Control)?,
+                depth + 1,
+                max_len,
+                max_registers,
+                allow_locals,
+            )?;
             [*dst, 0]
+        }
+        crate::ops::Op::ResolveBindingTarget { dst, .. } if allow_locals => [*dst, 0],
+        crate::ops::Op::InitializeResolvedBinding { slot, src, .. }
+            if allow_locals && usize::from(*slot) < LEAF_LOCAL_SLOTS =>
+        {
+            [*src, 0]
         }
         _ => return Err(LeafReject::Control),
     };
     registers
         .into_iter()
-        .all(|register| usize::from(register) < LEAF_REGISTERS)
-        .then_some(()).ok_or(LeafReject::Register)
+        .all(|register| usize::from(register) < max_registers)
+        .then_some(())
+        .ok_or(LeafReject::Register)
 }
 
 fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
     use crate::ir::Opcode::*;
     match op.opcode {
         LoadConst | LoadLocalChecked | Return => [op.a, 0, 0],
+        StoreLocalChecked => [op.b, 0, 0],
+        UpdateLocal => [op.a, op.b, 0],
         Move => [op.a, op.b, 0],
         GetN | SetN => [op.a, op.b, 0],
         AGetI | Binary => [op.a, op.b, op.c],
@@ -224,9 +402,10 @@ fn run_leaf(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
     code: crate::machine::CodeView<'_>,
-    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+    registers: &mut impl LeafRegisterFile,
+    locals: &mut impl LeafLocalFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    run_leaf_fragment(function, receiver, arguments, code, registers)?
+    run_leaf_fragment(function, receiver, arguments, code, registers, locals)?
         .ok_or(crate::execute::VmError::MissingReturn)
 }
 
@@ -235,13 +414,16 @@ fn run_leaf_fragment(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
     code: crate::machine::CodeView<'_>,
-    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+    registers: &mut impl LeafRegisterFile,
+    locals: &mut impl LeafLocalFile,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     for pc in 0..code.len() {
         let op = code
             .instruction(pc)
             .ok_or(crate::execute::VmError::MissingReturn)?;
-        if let Some(value) = run_leaf_op(function, receiver, arguments, code, pc, op, registers)? {
+        if let Some(value) = run_leaf_op(
+            function, receiver, arguments, code, pc, op, registers, locals,
+        )? {
             return Ok(Some(value));
         }
     }
@@ -255,13 +437,24 @@ fn run_leaf_op(
     code: crate::machine::CodeView<'_>,
     pc: usize,
     op: crate::ir::Instruction,
-    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+    registers: &mut impl LeafRegisterFile,
+    locals: &mut impl LeafLocalFile,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     use crate::ir::Opcode::*;
+    crate::execution_trace::leaf_compact(op.opcode);
     let value = match op.opcode {
         LoadConst => code.constant_at(pc).map(|(_, value)| value.into()),
         Move => Some(registers[usize::from(op.b)].clone()),
-        LoadLocalChecked => Some(leaf_local(function, receiver, arguments, code, pc, op.b)?),
+        LoadLocalChecked => Some(leaf_local(
+            function, receiver, arguments, code, pc, op.b, locals,
+        )?),
+        StoreLocalChecked => {
+            leaf_store(function, op.a, registers[usize::from(op.b)].clone(), locals)?;
+            return Ok(None);
+        }
+        UpdateLocal => Some(leaf_update_local(
+            function, receiver, arguments, code, pc, op, registers, locals,
+        )?),
         GetN => Some(leaf_get_named(code, pc, &registers[usize::from(op.b)])?),
         SetN => {
             leaf_set_named(code, pc, op, registers)?;
@@ -278,7 +471,9 @@ fn run_leaf_op(
                 .ok_or(crate::execute::VmError::MissingReturn)?,
         )?),
         CallN => Some(leaf_call(code, pc, op, registers)?),
-        Slow => return leaf_control(function, receiver, arguments, code, op, registers),
+        Slow => {
+            return leaf_control(function, receiver, arguments, code, op, registers, locals);
+        }
         Return => return Ok(Some(registers[usize::from(op.a)].clone())),
         _ => None,
     };
@@ -292,7 +487,8 @@ fn leaf_conditional(
     arguments: &[crate::value::Value],
     code: crate::machine::CodeView<'_>,
     op: crate::ir::Instruction,
-    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+    registers: &mut impl LeafRegisterFile,
+    locals: &mut impl LeafLocalFile,
 ) -> Result<(u16, crate::value::Value), crate::execute::VmError> {
     let crate::ops::Op::Conditional {
         dst,
@@ -318,6 +514,7 @@ fn leaf_conditional(
             .code()
             .ok_or(crate::execute::VmError::MissingReturn)?,
         registers,
+        locals,
     )?;
     Ok((*dst, value))
 }
@@ -328,11 +525,13 @@ fn leaf_control(
     arguments: &[crate::value::Value],
     code: crate::machine::CodeView<'_>,
     op: crate::ir::Instruction,
-    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+    registers: &mut impl LeafRegisterFile,
+    locals: &mut impl LeafLocalFile,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     match code.cold(op) {
         Some(crate::ops::Op::Conditional { .. }) => {
-            let (dst, value) = leaf_conditional(function, receiver, arguments, code, op, registers)?;
+            let (dst, value) =
+                leaf_conditional(function, receiver, arguments, code, op, registers, locals)?;
             registers[usize::from(dst)] = value;
             Ok(None)
         }
@@ -350,8 +549,11 @@ fn leaf_control(
                 function,
                 receiver,
                 arguments,
-                selected.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                selected
+                    .code()
+                    .ok_or(crate::execute::VmError::MissingReturn)?,
                 registers,
+                locals,
             )
         }
         Some(crate::ops::Op::Loop {
@@ -368,6 +570,7 @@ fn leaf_control(
                 arguments,
                 init.code().ok_or(crate::execute::VmError::MissingReturn)?,
                 registers,
+                locals,
             )? {
                 return Ok(Some(value));
             }
@@ -378,6 +581,7 @@ fn leaf_control(
                     arguments,
                     test.code().ok_or(crate::execute::VmError::MissingReturn)?,
                     registers,
+                    locals,
                 )?;
                 if !crate::vm::is_truthy(&condition) {
                     break;
@@ -389,6 +593,7 @@ fn leaf_control(
                     arguments,
                     body.code().ok_or(crate::execute::VmError::MissingReturn)?,
                     registers,
+                    locals,
                 )? {
                     return Ok(Some(value));
                 }
@@ -396,12 +601,28 @@ fn leaf_control(
                     function,
                     receiver,
                     arguments,
-                    update.code().ok_or(crate::execute::VmError::MissingReturn)?,
+                    update
+                        .code()
+                        .ok_or(crate::execute::VmError::MissingReturn)?,
                     registers,
+                    locals,
                 )? {
                     return Ok(Some(value));
                 }
             }
+            Ok(None)
+        }
+        Some(crate::ops::Op::ResolveBindingTarget { dst, .. }) => {
+            registers[usize::from(*dst)] = crate::value::Value::Undefined;
+            Ok(None)
+        }
+        Some(crate::ops::Op::InitializeResolvedBinding { slot, src, .. }) => {
+            leaf_store(
+                function,
+                *slot,
+                registers[usize::from(*src)].clone(),
+                locals,
+            )?;
             Ok(None)
         }
         _ => Err(crate::execute::VmError::MissingReturn),
@@ -415,7 +636,11 @@ fn leaf_local(
     code: crate::machine::CodeView<'_>,
     pc: usize,
     slot: u16,
+    locals: &impl LeafLocalFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let Some(value) = locals.read(slot) {
+        return Ok(value);
+    }
     let base = u16::try_from(function.captures.len()).unwrap_or(u16::MAX);
     if slot < base {
         if function.captures.is_uninitialized(slot) {
@@ -442,6 +667,41 @@ fn leaf_local(
     Ok(crate::value::Value::Undefined)
 }
 
+fn leaf_store(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    slot: u16,
+    value: crate::value::Value,
+    locals: &mut impl LeafLocalFile,
+) -> Result<(), crate::execute::VmError> {
+    let capture_count = u16::try_from(function.captures.len()).unwrap_or(u16::MAX);
+    if slot < capture_count {
+        function.captures.set(slot, value);
+        return Ok(());
+    }
+    locals
+        .write(slot, value)
+        .ok_or(crate::execute::VmError::MissingReturn)
+}
+
+fn leaf_update_local(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    op: crate::ir::Instruction,
+    registers: &mut impl LeafRegisterFile,
+    locals: &mut impl LeafLocalFile,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let old = leaf_local(function, receiver, arguments, code, pc, op.c, locals)?;
+    let delta = crate::value::Value::Number(if op.flags == 0 { 1.0 } else { -1.0 });
+    let updated =
+        crate::vm::vm_arithmetic::evaluate_binary(&old, &delta, crate::ops::BinaryOp::NumericAdd)?;
+    registers[usize::from(op.b)] = updated.clone();
+    leaf_store(function, op.c, updated, locals)?;
+    Ok(old)
+}
+
 fn leaf_get_named(
     code: crate::machine::CodeView<'_>,
     pc: usize,
@@ -461,7 +721,7 @@ fn leaf_set_named(
     code: crate::machine::CodeView<'_>,
     pc: usize,
     op: crate::ir::Instruction,
-    registers: &mut [crate::value::Value; LEAF_REGISTERS],
+    registers: &mut impl LeafRegisterFile,
 ) -> Result<(), crate::execute::VmError> {
     let metadata = code
         .metadata_at(pc)
@@ -474,7 +734,9 @@ fn leaf_set_named(
     let value = registers[usize::from(op.b)].clone();
     if let crate::value::Value::Object(object) = &target {
         if !object.has_replacement() {
-            if let Some((layout, slot)) = crate::machine::unpack_named_cache(metadata.named_cache.get()) {
+            if let Some((layout, slot)) =
+                crate::machine::unpack_named_cache(metadata.named_cache.get())
+            {
                 if object.semantic_layout_id() == layout {
                     if let Some((_, crate::value::Value::BindingCell(cell))) =
                         object.hot_properties().get(slot as usize)
@@ -526,7 +788,7 @@ fn leaf_call(
     code: crate::machine::CodeView<'_>,
     pc: usize,
     op: crate::ir::Instruction,
-    registers: &[crate::value::Value; LEAF_REGISTERS],
+    registers: &impl LeafRegisterFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let receiver = crate::locals::resolved_replacement(registers[usize::from(op.b)].clone());
     let (callee, argument) = if op.flags == 0 {
