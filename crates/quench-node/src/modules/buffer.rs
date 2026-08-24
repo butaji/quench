@@ -262,6 +262,11 @@ pub fn concat(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    concat_values(args)
+}
+
+/// Shared Buffer.concat semantics for the generated host path and legacy adapter.
+pub fn concat_values(args: &[Value]) -> Result<Value, VmError> {
     let list = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(list, Value::Array(_)) {
         // Node reports a Buffer passed where an Array is required through its
