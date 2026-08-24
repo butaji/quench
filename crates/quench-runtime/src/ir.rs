@@ -338,6 +338,15 @@ impl Instruction {
             c: key,
         }
     }
+    pub const fn get_named(dst: Register, object: Register) -> Self {
+        Self {
+            opcode: Opcode::GetN,
+            flags: 0,
+            a: dst,
+            b: object,
+            c: 0,
+        }
+    }
     pub const fn array_set(object: Register, key: Register, src: Register, strict: bool) -> Self {
         Self {
             opcode: Opcode::ASetI,
@@ -459,6 +468,7 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
         Op::GetPropertyDynamic { dst, object, key } => {
             Some(Instruction::binary(Opcode::AGetI, *dst, *object, *key))
         }
+        Op::GetProperty { dst, object, .. } => Some(Instruction::get_named(*dst, *object)),
         Op::SetPropertyDynamic {
             object,
             key,
