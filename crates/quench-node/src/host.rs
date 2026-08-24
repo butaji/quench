@@ -57,6 +57,7 @@ pub struct HostState {
     /// `require('stream')` module value, evaluated once from the
     /// embedded JS prelude (`modules/stream_prelude.js`).
     pub stream_module: Option<Value>,
+    pub string_decoder_pending: std::collections::HashMap<u64, Vec<u8>>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -87,6 +88,7 @@ impl NodeHost {
             pending_uncaught: None,
             url_class: None,
             stream_module: None,
+            string_decoder_pending: std::collections::HashMap::new(),
         };
         Self {
             state: Rc::new(RefCell::new(state)),
