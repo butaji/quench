@@ -141,6 +141,7 @@ fn reduce_static_if(
             // empty block, leaving the body's sequence to inherit the
             // previous V (which is wrong per ES 13.6.2 step 5.d).
             let dst = crate::reduce_support::emit_undefined(ops, next_register);
+            let start = ops.len();
             let last = crate::reduce::reduce_statement(
                 selected,
                 ops,
@@ -149,6 +150,7 @@ fn reduce_static_if(
                 next_slot,
                 locals,
             )?;
+            crate::blocks::patch_abrupt_value(ops, start, last.or(Some(dst)));
             crate::reduce_support::seal_completion(ops, dst, last);
             Ok(Some(dst))
         }
@@ -227,6 +229,29 @@ pub fn reduce_declaration(
         if declaration.kind == VariableDeclarationKind::Var && declarator.init.is_none() {
             continue;
         }
+        // A dynamic object environment resolves a `var`/lexical binding before
+        // its initializer runs.  Capture that target now so an initializer
+        // such as `delete obj.x` cannot change which environment receives the
+        // declaration's result.
+        let resolved_target = if facts.has_dynamic_scope() {
+            match &declarator.id.kind {
+                oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) => {
+                    let Some(&slot) = locals.get(identifier.name.as_str()) else {
+                        return Err(vec!["Missing declaration binding slot".to_string()]);
+                    };
+                    let target = *next_register;
+                    *next_register = next_register.saturating_add(1);
+                    ops.push(Op::ResolveBindingTarget {
+                        dst: target,
+                        name: identifier.name.to_string(),
+                    });
+                    Some((target, slot, identifier.name.to_string()))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         facts.inferred_name = binding_inferred_name(&declarator.id, declarator.init.as_ref());
         let register = match declarator.init.as_ref() {
             Some(init) => reduce_expression(init, ops, facts, next_register, locals),
@@ -237,8 +262,24 @@ pub fn reduce_declaration(
             return Err(vec!["Unsupported variable initializer".to_string()]);
         };
         infer_declaration_name(&declarator.id, declarator.init.as_ref(), register, ops);
-        crate::binding_patterns::bind(&declarator.id, register, ops, facts, next_register, locals)
+        if let Some((target, slot, name)) = resolved_target {
+            ops.push(Op::InitializeResolvedBinding {
+                target,
+                slot,
+                name,
+                src: register,
+            });
+        } else {
+            crate::binding_patterns::bind(
+                &declarator.id,
+                register,
+                ops,
+                facts,
+                next_register,
+                locals,
+            )
             .ok_or_else(|| vec!["Unsupported binding pattern".to_string()])?;
+        }
         crate::using_scope::register_resource(
             declaration.kind,
             register,

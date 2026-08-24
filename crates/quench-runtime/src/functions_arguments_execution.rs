@@ -83,7 +83,7 @@ pub(crate) fn execute(
     // guards.  A function created inside `with` must retain that scope while a
     // promoted tail call replaces its activation, so drive this small class
     // through the guard-aware machine loop instead.
-    if !function.with_captures.is_empty() {
+    if !function.with_captures.is_empty() || crate::with_scope::is_active() {
         return execute_with_dynamic_scope(function, receiver, arguments);
     }
 

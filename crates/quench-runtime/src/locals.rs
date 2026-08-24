@@ -267,7 +267,7 @@ pub(crate) fn load_binding(
     }
     let environment = current();
     if dynamic {
-        if let Some(value) = crate::with_scope::resolve_binding(name)? {
+        if let Some(value) = crate::with_scope::resolve_active_binding(name)? {
             crate::execute::write_value(registers, dst, value);
             return Ok(());
         }
