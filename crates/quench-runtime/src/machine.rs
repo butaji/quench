@@ -501,6 +501,16 @@ impl<'a> CodeView<'a> {
             .and_then(|instruction| self.cold(instruction))
     }
 
+    #[inline]
+    pub fn metadata_at(self, pc: usize) -> Option<&'a InstructionMeta> {
+        let offset = (self.range.start as usize).checked_add(pc)?;
+        let range_start = self.store.ranges.get(self.range.code.0 as usize)?.0 as usize;
+        self.store
+            .metadata
+            .get(self.range.code.0 as usize)?
+            .get(offset.checked_sub(range_start)?)
+    }
+
     pub fn slice(self, start: usize, end: usize) -> Option<Self> {
         (start <= end && end <= self.len()).then(|| Self {
             store: self.store,
