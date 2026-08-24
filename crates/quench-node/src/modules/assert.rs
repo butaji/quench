@@ -27,6 +27,7 @@ pub fn build() -> Vec<(String, Value)> {
         pair("notEqual", SPEC_ASSERT_NOT_EQUAL),
         pair("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         pair("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        pair("partialDeepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         // Legacy deep equality aliases share the strict engine for now.
         pair("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         pair("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
