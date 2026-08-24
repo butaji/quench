@@ -116,6 +116,7 @@ struct OperandKey {
 #[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
+    leaf_compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
     slow: HashMap<&'static str, u64>,
     binary: HashMap<&'static str, u64>,
     constant: HashMap<&'static str, u64>,
@@ -501,6 +502,18 @@ pub(crate) fn compact(_: crate::ir::Opcode) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
+pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) {
+    if enabled() {
+        COUNTERS.with(|counters| counters.borrow_mut().leaf_compact[opcode as usize] += 1);
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn leaf_compact(_: crate::ir::Opcode) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
 pub(crate) fn operands(instruction: crate::ir::Instruction) {
     if enabled() && !instruction.opcode.is_slow() {
         COUNTERS.with(|counters| {
@@ -667,6 +680,15 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     })
                 })
                 .collect::<serde_json::Map<_, _>>();
+            let leaf_compact = (1..=crate::ir::Opcode::COUNT)
+                .filter_map(|id| {
+                    let count = counters.leaf_compact[id as usize];
+                    (count != 0).then(|| {
+                        let opcode = crate::ir::Opcode::from_u8(id).expect("declared opcode");
+                        (format!("{opcode:?}"), serde_json::json!(count))
+                    })
+                })
+                .collect::<serde_json::Map<_, _>>();
             let mut slow: Vec<_> = counters.slow.iter().collect();
             slow.sort_unstable_by_key(|(name, _)| *name);
             let slow = slow
@@ -808,6 +830,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "guest_total": compact_total,
                 "handler_total": compact_total + slow_total,
                 "compact": compact,
+                "leaf_compact": leaf_compact,
                 "slow": slow,
                 "binary": binary,
                 "constant": constant,
