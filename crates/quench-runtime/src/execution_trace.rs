@@ -70,6 +70,8 @@ execution_events! {
     LeafRejectCall => "leaf_reject_call",
     LeafRejectControl => "leaf_reject_control",
     LeafRejectDepth => "leaf_reject_depth",
+    RegExpCacheHit => "regexp_cache_hit",
+    RegExpCacheMiss => "regexp_cache_miss",
     BindingLoad => "binding_load",
     DynamicBindingLoad => "dynamic_binding_load",
     ValueDecode => "value_decode",
@@ -114,6 +116,7 @@ struct OperandKey {
 #[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
+    leaf_compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
     slow: HashMap<&'static str, u64>,
     binary: HashMap<&'static str, u64>,
     constant: HashMap<&'static str, u64>,
@@ -129,7 +132,7 @@ struct Counters {
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
     function_call_shapes: HashMap<(u16, usize, usize), u64>,
-    function_opcode_shapes: HashMap<(u16, u8, [u8; 16]), u64>,
+    function_opcode_shapes: HashMap<(u16, u8, [u8; 32]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
     crypto_direct_iterations: u64,
@@ -228,10 +231,10 @@ pub(crate) fn function_call_shape(
                 .function_call_shapes
                 .entry((params, captures, code_len))
                 .or_default() += 1;
-            let Some(code) = code.filter(|code| code.len() <= 16) else {
+            let Some(code) = code.filter(|code| code.len() <= 32) else {
                 return;
             };
-            let mut opcodes = [0; 16];
+            let mut opcodes = [0; 32];
             for (pc, opcode) in opcodes.iter_mut().enumerate().take(code.len()) {
                 *opcode = code
                     .instruction(pc)
@@ -296,6 +299,22 @@ fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeV
             dump_function_fragment("test", test.code());
             dump_function_fragment("body", body.code());
             dump_function_fragment("update", update.code());
+        }
+        if let Some(crate::ops::Op::Branch {
+            then_ops, else_ops, ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("then", then_ops.code());
+            dump_function_fragment("else", else_ops.code());
+        }
+        if let Some(crate::ops::Op::Conditional {
+            consequent,
+            alternate,
+            ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("consequent", consequent.code());
+            dump_function_fragment("alternate", alternate.code());
         }
     }
 }
@@ -499,6 +518,18 @@ pub(crate) fn compact(_: crate::ir::Opcode) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
+pub(crate) fn leaf_compact(opcode: crate::ir::Opcode) {
+    if enabled() {
+        COUNTERS.with(|counters| counters.borrow_mut().leaf_compact[opcode as usize] += 1);
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn leaf_compact(_: crate::ir::Opcode) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
 pub(crate) fn operands(instruction: crate::ir::Instruction) {
     if enabled() && !instruction.opcode.is_slow() {
         COUNTERS.with(|counters| {
@@ -665,6 +696,15 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     })
                 })
                 .collect::<serde_json::Map<_, _>>();
+            let leaf_compact = (1..=crate::ir::Opcode::COUNT)
+                .filter_map(|id| {
+                    let count = counters.leaf_compact[id as usize];
+                    (count != 0).then(|| {
+                        let opcode = crate::ir::Opcode::from_u8(id).expect("declared opcode");
+                        (format!("{opcode:?}"), serde_json::json!(count))
+                    })
+                })
+                .collect::<serde_json::Map<_, _>>();
             let mut slow: Vec<_> = counters.slow.iter().collect();
             slow.sort_unstable_by_key(|(name, _)| *name);
             let slow = slow
@@ -806,6 +846,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "guest_total": compact_total,
                 "handler_total": compact_total + slow_total,
                 "compact": compact,
+                "leaf_compact": leaf_compact,
                 "slow": slow,
                 "binary": binary,
                 "constant": constant,
