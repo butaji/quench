@@ -123,6 +123,7 @@ const CAP_RUN_EXIT: u16 = 0x070D;
 const CAP_INTERNAL_UTIL_SLEEP: u16 = 0x070E;
 const CAP_TIMERS_CLOSE: u16 = 0x070F;
 const CAP_TIMERS_GET_LIBUV_NOW: u16 = 0x0714;
+const CAP_TIMERS_TO_PRIMITIVE: u16 = 0x071D;
 const CAP_LINKED_LIST_INIT: u16 = 0x0718;
 const CAP_LINKED_LIST_REMOVE: u16 = 0x0719;
 const CAP_LINKED_LIST_APPEND: u16 = 0x071A;
@@ -429,6 +430,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_UTIL_SLEEP => internal_util_sleep,
         CAP_TIMERS_CLOSE => timers_method_close,
         CAP_TIMERS_GET_LIBUV_NOW => timers_get_libuv_now,
+        CAP_TIMERS_TO_PRIMITIVE => timers_method_to_primitive,
         CAP_LINKED_LIST_INIT => linked_list_init,
         CAP_LINKED_LIST_REMOVE => linked_list_remove,
         CAP_LINKED_LIST_APPEND => linked_list_append,
