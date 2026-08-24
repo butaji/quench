@@ -63,10 +63,10 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
             HostCapabilityKind::Custom(CapabilityName::BufferOf) => buffer_of(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => {
-                buffer_alloc_unsafe(arguments)
+                buffer_alloc_unsafe(arguments, false)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe) => {
-                buffer_alloc_unsafe(arguments)
+                buffer_alloc_unsafe(arguments, true)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding) => {
                 buffer_is_encoding(arguments)

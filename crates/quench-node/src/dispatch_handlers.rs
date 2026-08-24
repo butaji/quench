@@ -435,6 +435,13 @@ pub fn buffer_alloc_unsafe(
 ) -> Result<Value, VmError> {
     crate::modules::buffer::alloc_unsafe(state, args)
 }
+pub fn buffer_alloc_unsafe_slow(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::buffer::alloc_unsafe_slow(state, args)
+}
 pub fn buffer_is_encoding(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,

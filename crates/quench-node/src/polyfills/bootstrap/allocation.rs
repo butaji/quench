@@ -71,11 +71,14 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
   static alloc(size, fill = 0, encoding) {
     return __nodeBufferAllocate(size, fill, encoding);
   }
-  static allocUnsafe(size) {
+  static allocUnsafe(size, alignment) {
+    __nodeBufferValidateAlignment(alignment);
     __nodeAllocatorCounts.uninitialized++;
-    return new NodeBuffer(NodeBuffer._validateSize(size));
+    const length = NodeBuffer._validateSize(size);
+    return __nodeBufferPoolFrom(new NodeBuffer(length), alignment || 1) || new NodeBuffer(length);
   }
-  static allocUnsafeSlow(size) {
+  static allocUnsafeSlow(size, alignment) {
+    __nodeBufferValidateAlignment(alignment);
     __nodeAllocatorCounts.uninitialized++;
     return new NodeBuffer(NodeBuffer._validateSize(size));
   }
