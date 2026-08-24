@@ -158,6 +158,14 @@ pub const SPEC_BUFFER_INSPECT_MAX_BYTES_GET: NodeSpec =
     NodeSpec::new("buffer:inspectMaxBytesGet", 0x0854);
 pub const SPEC_BUFFER_INSPECT_MAX_BYTES_SET: NodeSpec =
     NodeSpec::new("buffer:inspectMaxBytesSet", 0x0855);
+pub const SPEC_WORKER_MESSAGE_CHANNEL: NodeSpec =
+    NodeSpec::new("worker_threads:MessageChannel", 0x1901);
+pub const SPEC_WORKER_PORT_POST_MESSAGE: NodeSpec =
+    NodeSpec::new("worker_threads:MessagePort.postMessage", 0x1902);
+pub const SPEC_WORKER_PORT_CLOSE: NodeSpec =
+    NodeSpec::new("worker_threads:MessagePort.close", 0x1903);
+pub const SPEC_WORKER_PORT_START: NodeSpec =
+    NodeSpec::new("worker_threads:MessagePort.start", 0x1904);
 
 macro_rules! buffer_num_specs {
     ($(($name:ident, $id:expr)),* $(,)?) => {

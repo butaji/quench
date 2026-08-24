@@ -234,7 +234,9 @@ pub(crate) fn make_pooled_buffer(bytes: &[u8]) -> Value {
                 (buffer.clone(), *offset)
             }
             _ => {
-                let buffer = Rc::new(ArrayBufferData::new(POOL_SIZE));
+                let mut pooled = ArrayBufferData::new(POOL_SIZE);
+                pooled.untransferable = true;
+                let buffer = Rc::new(pooled);
                 *pool = Some((buffer.clone(), 0));
                 (buffer, 0)
             }
