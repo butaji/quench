@@ -208,10 +208,16 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         )])),
         "internal/errors" => Some(crate::host::namespace_object_from_pairs(vec![(
             "codes".to_string(),
-            crate::host::namespace_object_from_pairs(vec![(
-                "ERR_OUT_OF_RANGE".to_string(),
-                Value::Builtin(quench_runtime::ops::Builtin::RangeError),
-            )]),
+            crate::host::namespace_object_from_pairs(vec![
+                (
+                    "ERR_OUT_OF_RANGE".to_string(),
+                    Value::Builtin(quench_runtime::ops::Builtin::RangeError),
+                ),
+                (
+                    "ERR_IPC_CHANNEL_CLOSED".to_string(),
+                    Value::Builtin(quench_runtime::ops::Builtin::Error),
+                ),
+            ]),
         )])),
         // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => {

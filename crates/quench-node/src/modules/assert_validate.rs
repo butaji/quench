@@ -163,6 +163,12 @@ fn validate_regexp(
     if regexp_matches(pattern, &error_text(error))? {
         return Ok(Value::Undefined);
     }
+    if let Value::String(name) = execute::get_property(error, "name") {
+        let full = format!("{name}: {}", error_text(error));
+        if regexp_matches(pattern, &full)? {
+            return Ok(Value::Undefined);
+        }
+    }
     if let Some(coded) = coded_text(error) {
         if regexp_matches(pattern, &coded)? {
             return Ok(Value::Undefined);
