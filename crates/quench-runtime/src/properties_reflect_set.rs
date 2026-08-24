@@ -48,12 +48,12 @@ fn set_proven_own_data(
         .rev()
         .find_map(|(name, value)| (name == key).then_some(value))
     {
-        *cell.borrow_mut() = value.clone();
+        cell.store(value.clone());
         return true;
     }
     crate::execution_trace::event(crate::execution_trace::Event::NamedSetPromoteCell);
     let value =
-        crate::value::Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(value.clone())));
+        crate::value::Value::BindingCell(crate::value::BindingCell::new(value.clone()));
     let updated = crate::builtins::object_alias::set(std::rc::Rc::clone(target), key, value);
     crate::locals::replace_value(
         &crate::value::Value::Object(std::rc::Rc::clone(target)),
@@ -141,7 +141,7 @@ mod proven_own_data_tests {
             Value::Undefined,
         ));
         assert!(!plain_writable_own_data(&deleted, "field"));
-        let cell = Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(Value::Undefined)));
+        let cell = Value::BindingCell(crate::value::BindingCell::new(Value::Undefined));
         assert!(!plain_writable_own_data(&object(None), "missing"));
         assert!(plain_writable_own_data(
             &ObjectData::new(vec![("field".into(), cell)]),
@@ -257,7 +257,7 @@ fn receiver_data_descriptor(
     create: bool,
 ) -> Vec<(String, crate::value::Value)> {
     let value = if create && matches!(receiver, crate::value::Value::Object(_)) {
-        crate::value::Value::BindingCell(std::rc::Rc::new(std::cell::RefCell::new(value.clone())))
+        crate::value::Value::BindingCell(crate::value::BindingCell::new(value.clone()))
     } else {
         value.clone()
     };
