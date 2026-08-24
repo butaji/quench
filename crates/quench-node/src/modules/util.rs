@@ -1205,7 +1205,7 @@ fn inspect_object(value: &Value, depth: usize) -> String {
                 } else {
                     key.clone()
                 },
-                inspect_property(value, key, depth - 1)
+                inspect_property(value, key, depth.saturating_sub(1))
             )
         })
         .collect::<Vec<_>>()
