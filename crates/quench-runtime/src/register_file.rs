@@ -112,6 +112,7 @@ impl RegisterFile {
     }
 
     pub fn read(&self, index: usize) -> Option<Value> {
+        crate::execution_trace::event(crate::execution_trace::Event::ValueDecode);
         let word = *self.words.get(index)?;
         match word.decode() {
             DecodedValue::ObjectPtr(pointer) => {
@@ -205,6 +206,7 @@ impl RegisterFile {
     }
 
     pub fn copy(&mut self, destination: usize, source: usize) -> bool {
+        crate::execution_trace::event(crate::execution_trace::Event::RegisterWordCopy);
         let Some(word) = self.words.get(source).copied() else {
             return false;
         };

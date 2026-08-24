@@ -88,6 +88,7 @@ fn run_instruction(
     context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::ir::Opcode;
+    crate::execution_trace::compact(instruction.opcode);
     match instruction.opcode {
         Opcode::Move => {
             copy_register(registers, instruction.a, instruction.b)?;
@@ -118,9 +119,11 @@ fn run_instruction(
                         .and_then(|array| array.dense_number_at(index))
                 });
                 if let Some(number) = number {
+                    crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
                     registers.write_number(usize::from(instruction.a), number);
                     return Ok(None);
                 }
+                crate::execution_trace::event(crate::execution_trace::Event::PackedArrayMiss);
             }
             let object = read_register(registers, instruction.b)?;
             let key = read_register(registers, instruction.c)?;
@@ -141,8 +144,10 @@ fn run_instruction(
                     })
             });
             if stored {
+                crate::execution_trace::event(crate::execution_trace::Event::PackedArraySet);
                 return Ok(None);
             }
+            crate::execution_trace::event(crate::execution_trace::Event::PackedArrayMiss);
             crate::properties::execute_set_property(
                 registers,
                 &crate::ops::Op::SetPropertyDynamic {
