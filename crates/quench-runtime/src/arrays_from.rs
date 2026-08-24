@@ -64,7 +64,7 @@ fn from_live_array(
         values.push(value);
         index += 1;
     }
-    create_result(receiver, values, false)
+    create_result(receiver, values, true)
 }
 
 fn from_iterable(
@@ -73,15 +73,40 @@ fn from_iterable(
     mapper: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    if !uses_custom_result(receiver) {
+        let mut values = Vec::new();
+        let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
+        let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
+        crate::collections::iterator::for_each_iterable(source, |item| {
+            let index = values.len();
+            values.push(map_item(mapper, &this_arg, item, index)?);
+            Ok(())
+        })?;
+        return Ok(Value::array(values));
+    }
+
+    let mut result = construct_result(receiver, 0, true)?;
+    let mut index = 0;
     let mut values = Vec::new();
     let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
     let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
     crate::collections::iterator::for_each_iterable(source, |item| {
-        let index = values.len();
-        values.push(map_item(mapper, &this_arg, item, index)?);
+        let value = map_item(mapper, &this_arg, item, index)?;
+        result = write_result_element(result.clone(), index, value)?;
+        values.push(Value::Undefined);
+        index += 1;
         Ok(())
     })?;
-    create_result(receiver, values, false)
+    result = set_result_length(result, values.len())?;
+    Ok(result)
+}
+
+fn uses_custom_result(receiver: Option<&Value>) -> bool {
+    matches!(
+        receiver,
+        Some(value) if !matches!(value, Value::Null | Value::Undefined)
+            && !matches!(value, Value::Builtin(crate::ops::Builtin::Array))
+    )
 }
 
 fn collect_array_iterator(
@@ -172,7 +197,7 @@ fn create_result(
 ) -> Result<Value, crate::execute::VmError> {
     let length = values.len();
     let plain_array = match receiver {
-        None => true,
+        None | Some(Value::Null | Value::Undefined) => true,
         Some(value) => matches!(value, Value::Builtin(crate::ops::Builtin::Array)),
     };
     if plain_array {
@@ -182,9 +207,15 @@ fn create_result(
     for (index, value) in values.into_iter().enumerate() {
         result = write_result_element(result, index, value)?;
     }
-    result =
-        crate::properties::assign_set_property(&result, "length", Value::Number(length as f64))?;
+    result = set_result_length(result, length)?;
     Ok(result)
+}
+
+fn set_result_length(result: Value, length: usize) -> Result<Value, crate::execute::VmError> {
+    let updated =
+        crate::properties::assign_set_property(&result, "length", Value::Number(length as f64))?;
+    crate::locals::replace_value(&result, &updated);
+    Ok(updated)
 }
 
 fn write_result_element(

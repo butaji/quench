@@ -2,22 +2,25 @@ pub(crate) fn concat(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let this = receiver.cloned().unwrap_or(Value::Undefined);
-    if matches!(this, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.concat called on null or undefined",
-        ));
-    }
+    let this = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
     let species = concat_species(&this)?;
     let mut items = vec![this];
     items.extend(arguments.iter().cloned());
-    if species.is_none() && sparse_array_items(&items)? {
+    let spreadable = items
+        .iter()
+        .map(is_concat_spreadable)
+        .collect::<Result<Vec<_>, _>>()?;
+    if species.is_none()
+        && items.iter().zip(&spreadable).all(|(item, spreadable)| {
+            matches!(item, Value::Array(values) if !values.is_arguments()) && *spreadable
+        })
+    {
         return concat_sparse_arrays(&items);
     }
     let mut elements = Vec::new();
     let mut holes = Vec::new();
-    for item in &items {
-        spread_concat_element(&mut elements, &mut holes, item)?;
+    for (item, spreadable) in items.iter().zip(spreadable) {
+        spread_concat_element(&mut elements, &mut holes, item, spreadable)?;
     }
     if species.is_none() {
         let mut data = crate::value::ArrayData::new(elements);
@@ -31,20 +34,24 @@ pub(crate) fn concat(
     let length = elements.len();
     for (index, value) in elements.into_iter().enumerate() {
         if !hole(index) {
-            target = crate::builtins::set_property(target, &index.to_string(), value);
+            let previous = target.clone();
+            target = crate::builtins::define_own_property(
+                &target,
+                &index.to_string(),
+                &[
+                    ("value".to_string(), value),
+                    ("writable".to_string(), Value::Boolean(true)),
+                    ("enumerable".to_string(), Value::Boolean(true)),
+                    ("configurable".to_string(), Value::Boolean(true)),
+                ],
+            )?;
+            crate::locals::replace_value(&previous, &target);
         }
     }
-    Ok(crate::builtins::set_property(
-        target,
-        "length",
-        Value::Number(length as f64),
-    ))
-}
-
-fn sparse_array_items(items: &[Value]) -> Result<bool, crate::execute::VmError> {
-    items.iter().try_fold(true, |all_arrays, item| {
-        Ok(all_arrays && matches!(item, Value::Array(_)) && is_concat_spreadable(item)?)
-    })
+    let updated =
+        crate::properties::assign_set_property(&target, "length", Value::Number(length as f64))?;
+    crate::locals::replace_value(&target, &updated);
+    Ok(updated)
 }
 
 fn concat_sparse_arrays(items: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -60,13 +67,15 @@ fn concat_sparse_arrays(items: &[Value]) -> Result<Value, crate::execute::VmErro
     result.set_length(length);
     let mut offset = 0;
     for item in items {
-        let Value::Array(values) = item else { continue };
-        let mut index = 0;
-        while let Some(current) = values.next_index(index, values.logical_len()) {
-            if let Some(value) = values.get_index(current) {
+        let Value::Array(values) = item else {
+            continue;
+        };
+        for current in 0..values.logical_len() {
+            let key = current.to_string();
+            if crate::with_scope::has_property(item, &key)? {
+                let value = crate::execute::get_property_result(item, &key)?;
                 result.set_index(offset + current, value);
             }
-            index = current.saturating_add(1);
         }
         offset += values.logical_len();
     }
@@ -102,9 +111,16 @@ fn spread_concat_element(
     elements: &mut Vec<Value>,
     holes: &mut Vec<usize>,
     item: &Value,
+    spreadable: bool,
 ) -> Result<(), crate::execute::VmError> {
-    let item = crate::locals::resolved_replacement(item.clone());
-    if !is_concat_spreadable(&item)? {
+    let item = match item {
+        // Arguments objects carry their observable `length` in the shared
+        // argument-live record.  COW replacement can otherwise select an
+        // older physical array and lose that override while spreading.
+        Value::Array(values) if values.is_arguments() => item.clone(),
+        _ => crate::locals::resolved_replacement(item.clone()),
+    };
+    if !spreadable {
         elements.push(item);
         return Ok(());
     }
@@ -135,18 +151,29 @@ fn is_concat_spreadable(value: &Value) -> Result<bool, crate::execute::VmError> 
     if !matches!(flag, Value::Undefined) {
         return Ok(crate::intl::tolocale::value::is_truthy(&flag));
     }
-    Ok(matches!(value, Value::Array(_)) || proxy_targets_array(value))
+    proxy_targets_array(value)
 }
 
-fn proxy_targets_array(value: &Value) -> bool {
-    let Value::Proxy(proxy) = value else {
-        return false;
-    };
-    matches!(&proxy.target, Value::Array(_))
+fn proxy_targets_array(value: &Value) -> Result<bool, crate::execute::VmError> {
+    match value {
+        Value::Array(_) => Ok(true),
+        Value::Proxy(proxy) => {
+            if crate::proxy::is_revoked(proxy) {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot perform operation on revoked proxy",
+                ));
+            }
+            proxy_targets_array(&proxy.target)
+        }
+        _ => Ok(false),
+    }
 }
 
 fn concat_array_like_length(value: &Value) -> Result<usize, crate::execute::VmError> {
-    let length = crate::execute::get_property_result(value, "length")?;
+    let length = match value {
+        Value::Array(values) if values.is_arguments() => values.arguments_length_value(),
+        _ => crate::execute::get_property_result(value, "length")?,
+    };
     let number = crate::conversion::to_number(&length)?;
     if number.is_nan() || number <= 0.0 {
         return Ok(0);
