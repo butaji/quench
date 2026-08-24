@@ -30,8 +30,20 @@ impl StatementReducer {
     }
 
     pub(super) fn new_with_global(source_type: SourceType, global: bool) -> Self {
+        Self::new_with_modes(source_type, global, global)
+    }
+
+    pub(super) fn new_with_script_this_global(source_type: SourceType) -> Self {
+        Self::new_with_modes(source_type, false, true)
+    }
+
+    fn new_with_modes(
+        source_type: SourceType,
+        global: bool,
+        script_this_global: bool,
+    ) -> Self {
         let locals = initialize_statement_locals(source_type);
-        let (mut ops, next_register) = initialize_statement_ops(global);
+        let (mut ops, next_register) = initialize_statement_ops(global, script_this_global);
         ops.push(Op::StoreLocal {
             slot: 0,
             src: next_register,
@@ -179,7 +191,7 @@ fn initialize_statement_locals(source_type: SourceType) -> HashMap<String, u16> 
     locals
 }
 
-fn initialize_statement_ops(global: bool) -> (Vec<Op>, u16) {
+fn initialize_statement_ops(global: bool, script_this_global: bool) -> (Vec<Op>, u16) {
     if global {
         return (vec![Op::LoadCurrentGlobal { dst: 0 }], 0);
     }
@@ -187,10 +199,17 @@ fn initialize_statement_ops(global: bool) -> (Vec<Op>, u16) {
     let mut next_register = 0;
     let properties = crate::globals::script_properties(&mut ops, &mut next_register);
     let object = next_register;
-    ops.push(Op::MakeObject {
-        dst: object,
-        properties: properties.clone(),
-    });
+    if script_this_global {
+        ops.push(Op::MakeGlobalObjectView {
+            dst: object,
+            properties: properties.clone(),
+        });
+    } else {
+        ops.push(Op::MakeObject {
+            dst: object,
+            properties: properties.clone(),
+        });
+    }
     next_register = next_register.saturating_add(1);
     append_script_properties_ops(&mut ops, object, &properties, &mut next_register);
     (ops, object)
