@@ -291,6 +291,7 @@ pub fn dispatch_event(
         .is_some_and(|identity| state.borrow().prevented_events.contains(&identity))
         || execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
     let reset = execute::set_property(event.clone(), "eventPhase", Value::Number(0.0));
+    let reset = execute::set_property(reset, "target", receiver.clone());
     execute::replace_value(event, &reset);
     Ok(Value::Boolean(!prevented))
 }
