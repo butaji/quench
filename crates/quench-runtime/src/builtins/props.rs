@@ -399,7 +399,10 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     if crate::builtin_meta::is_prototype(builtin)
-        && !matches!(builtin, Builtin::FunctionPrototype | Builtin::StringPrototype)
+        && !matches!(
+            builtin,
+            Builtin::FunctionPrototype | Builtin::StringPrototype
+        )
         && matches!(key, "length" | "name")
     {
         return None;

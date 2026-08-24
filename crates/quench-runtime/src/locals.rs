@@ -222,7 +222,11 @@ pub(crate) fn store(
             "Cannot access deleted binding '{slot}'"
         )));
     }
-    if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {
+    let initializing_binding = current().get(slot) == Value::Undefined;
+    if current().is_immutable_slot(slot)
+        && !current().is_uninitialized(slot)
+        && !initializing_binding
+    {
         if ACTIVE_EVAL.with(|active| *active.borrow())
             && !STRICT_EVAL.with(|strict| *strict.borrow())
         {
@@ -284,11 +288,7 @@ pub(crate) fn load_binding(
             "Cannot access '{name}' before initialization"
         )));
     }
-    crate::execute::write_value(
-        registers,
-        dst,
-        resolved_replacement(environment.get(slot)),
-    );
+    crate::execute::write_value(registers, dst, resolved_replacement(environment.get(slot)));
     Ok(())
 }
 
@@ -336,7 +336,9 @@ pub(crate) fn set_resolved_local(
     }
     if matches!(target, Value::Undefined) {
         ensure_initialized(slot, name)?;
-        if current().is_immutable_slot(slot) {
+        let initializing_function_binding =
+            current().get(slot) == Value::Undefined && crate::conversion::is_callable(&value);
+        if current().is_immutable_slot(slot) && !initializing_function_binding {
             return Err(crate::value::error::throw_type_error(
                 "Cannot assign to immutable binding",
             ));
@@ -440,7 +442,11 @@ pub(crate) fn update(
     if environment.is_uninitialized(slot) {
         return ensure_initialized(slot, &format!("local_{slot}"));
     }
-    crate::execute::write_value(registers, old_dst, resolved_replacement(environment.get(slot)));
+    crate::execute::write_value(
+        registers,
+        old_dst,
+        resolved_replacement(environment.get(slot)),
+    );
     registers.write_number(usize::from(updated_dst), 1.0);
     let operator = if decrement {
         crate::ops::BinaryOp::NumericSubtract

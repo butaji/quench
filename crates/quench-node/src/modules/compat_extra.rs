@@ -4,10 +4,6 @@ use quench_runtime::{execute::VmError, value::Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-fn empty(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    Ok(crate::host::namespace_object_from_pairs(vec![]))
-}
-
 fn load(source: &str) -> Result<Value, VmError> {
     let wrapped = format!("(function(module){{{source};return module.exports;}})");
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
@@ -27,14 +23,30 @@ fn load(source: &str) -> Result<Value, VmError> {
     quench_runtime::execute::get_property_result(&module, "exports")
 }
 
-pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> { load(include_str!("cluster.js")) }
-pub fn domain(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> { load(include_str!("domain.js")) }
-pub fn diagnostics_channel(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> { load(include_str!("diagnostics_channel.js")) }
-pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> { load(include_str!("v8.js")) }
-pub fn inspector(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> { load(include_str!("inspector.js")) }
-pub fn repl(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> { load(include_str!("repl.js")) }
-pub fn wasi(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> { load(include_str!("wasi.js")) }
-pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> { load(include_str!("worker_threads.js")) }
+pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("cluster.js"))
+}
+pub fn domain(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("domain.js"))
+}
+pub fn diagnostics_channel(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("diagnostics_channel.js"))
+}
+pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("v8.js"))
+}
+pub fn inspector(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("inspector.js"))
+}
+pub fn repl(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("repl.js"))
+}
+pub fn wasi(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("wasi.js"))
+}
+pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("worker_threads.js"))
+}
 
 pub fn sea_is_sea(
     _state: &Rc<RefCell<HostState>>,
