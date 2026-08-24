@@ -177,14 +177,14 @@ pub fn reset_module_jobs() {
 /// values. The wrapper keeps module linkage independent from slot storage.
 #[derive(Clone)]
 pub struct ModuleBindingCell {
-    cell: Rc<RefCell<Value>>,
+    cell: Rc<crate::value::BindingCell>,
 }
 
 impl std::fmt::Debug for ModuleBindingCell {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ModuleBindingCell")
-            .field("value", &self.cell.borrow().clone())
+            .field("value", &self.cell.load())
             .finish()
     }
 }
@@ -198,7 +198,7 @@ impl PartialEq for ModuleBindingCell {
 impl ModuleBindingCell {
     pub fn new(value: Value) -> Self {
         Self {
-            cell: Rc::new(RefCell::new(value)),
+            cell: crate::value::BindingCell::new(value),
         }
     }
 
@@ -211,7 +211,7 @@ impl ModuleBindingCell {
         ]))))
     }
 
-    pub fn from_shared(cell: Rc<RefCell<Value>>) -> Self {
+    pub fn from_shared(cell: Rc<crate::value::BindingCell>) -> Self {
         Self { cell }
     }
 
@@ -219,13 +219,13 @@ impl ModuleBindingCell {
         self.get_with_seen(&mut Vec::new())
     }
 
-    fn get_with_seen(&self, seen: &mut Vec<*const RefCell<Value>>) -> Value {
+    fn get_with_seen(&self, seen: &mut Vec<*const crate::value::BindingCell>) -> Value {
         let pointer = Rc::as_ptr(&self.cell);
         if seen.contains(&pointer) {
             return Value::Undefined;
         }
         seen.push(pointer);
-        match self.cell.borrow().clone() {
+        match self.cell.load() {
             Value::BindingCell(cell) => Self::from_shared(cell).get_with_seen(seen),
             value => value,
         }
@@ -248,7 +248,7 @@ impl ModuleBindingCell {
         })
     }
 
-    pub fn shared(&self) -> Rc<RefCell<Value>> {
+    pub fn shared(&self) -> Rc<crate::value::BindingCell> {
         Rc::clone(&self.cell)
     }
 }
