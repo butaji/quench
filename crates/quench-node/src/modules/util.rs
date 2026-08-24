@@ -681,6 +681,20 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
     if quench_runtime::execute::is_symbol(value) {
         return symbol_string(value);
     }
+    if matches!(
+        quench_runtime::execute::get_property_result(value, "\0regexp"),
+        Ok(Value::Boolean(true))
+    ) {
+        return inspect_regexp(value);
+    }
+    if quench_runtime::execute::has_own_property(value, "timeValue")
+        && matches!(
+            quench_runtime::execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
+        )
+    {
+        return inspect_date(value);
+    }
     match value {
         Value::String(s) => format!("'{s}'"),
         Value::Number(n) => js_number(*n),
@@ -694,6 +708,26 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         Value::Uint8Array(_) => "Uint8Array(0) []".into(),
         Value::BigInt(digits) => format!("{digits}n"),
         _ => "<unknown>".into(),
+    }
+}
+
+fn inspect_regexp(value: &Value) -> String {
+    let source = match quench_runtime::execute::get_property(value, "source") {
+        Value::String(source) => source,
+        _ => "(?:)".into(),
+    };
+    let flags = match quench_runtime::execute::get_property(value, "flags") {
+        Value::String(flags) => flags,
+        _ => String::new(),
+    };
+    format!("/{source}/{flags}")
+}
+
+fn inspect_date(value: &Value) -> String {
+    let method = quench_runtime::execute::get_property(value, "toISOString");
+    match quench_runtime::execute::call(&method, value, &[]) {
+        Ok(Value::String(date)) => date,
+        _ => "Invalid Date".into(),
     }
 }
 
