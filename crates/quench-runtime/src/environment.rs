@@ -44,6 +44,17 @@ impl TdzCells {
         Rc::new(Self(UnsafeCell::new(copy)))
     }
 
+    fn clone_prefix(source: &Rc<Self>, count: usize) -> Rc<Self> {
+        let copy = unsafe {
+            (&*source.0.get())
+                .iter()
+                .copied()
+                .filter(|slot| usize::from(*slot) < count)
+                .collect()
+        };
+        Rc::new(Self(UnsafeCell::new(copy)))
+    }
+
     fn insert(&self, slot: u16) {
         unsafe {
             (&mut *self.0.get()).insert(slot);
@@ -468,8 +479,8 @@ impl Drop for Environment {
     }
 }
 
-fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
-    source.as_ref().map(TdzCells::clone_values)
+fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
+    source.as_ref().map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
@@ -602,9 +613,10 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        environment
-            .uninitialized
-            .replace(clone_tdz(&captures.uninitialized.borrow()));
+        environment.uninitialized.replace(clone_tdz_prefix(
+            &captures.uninitialized.borrow(),
+            prefix_len,
+        ));
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
