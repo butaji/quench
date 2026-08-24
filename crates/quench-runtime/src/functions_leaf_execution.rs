@@ -91,7 +91,7 @@ enum LeafReject {
     Opcode,
     Register,
     Call,
-    Control,
+    Control(&'static str),
     Depth,
 }
 
@@ -103,8 +103,19 @@ impl LeafReject {
             Self::Opcode => LeafRejectOpcode,
             Self::Register => LeafRejectRegister,
             Self::Call => LeafRejectCall,
-            Self::Control => LeafRejectControl,
+            Self::Control(_) => LeafRejectControl,
             Self::Depth => LeafRejectDepth,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Length => "Length",
+            Self::Opcode => "Opcode",
+            Self::Register => "Register",
+            Self::Call => "Call",
+            Self::Control(name) => name,
+            Self::Depth => "Depth",
         }
     }
 }
@@ -126,6 +137,7 @@ fn execute_proven_leaf(
         Err(rejection) => {
             crate::execution_trace::event(crate::execution_trace::Event::LeafReject);
             crate::execution_trace::event(rejection.event());
+            crate::execution_trace::leaf_rejection(rejection.name());
             return None;
         }
     };
@@ -250,7 +262,7 @@ fn validate_leaf_depth(
         }
         if op.opcode == crate::ir::Opcode::Slow {
             validate_leaf_control(
-                code.cold(op).ok_or(LeafReject::Control)?,
+                code.cold(op).ok_or(LeafReject::Control("MissingColdOp"))?,
                 depth,
                 max_len,
                 max_registers,
@@ -276,14 +288,14 @@ fn validate_leaf_control(
             alternate,
         } => {
             validate_leaf_depth(
-                consequent.code().ok_or(LeafReject::Control)?,
+                consequent.code().ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
                 allow_locals,
             )?;
             validate_leaf_depth(
-                alternate.code().ok_or(LeafReject::Control)?,
+                alternate.code().ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
@@ -297,14 +309,14 @@ fn validate_leaf_control(
             else_ops,
         } => {
             validate_leaf_depth(
-                then_ops.code().ok_or(LeafReject::Control)?,
+                then_ops.code().ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
                 allow_locals,
             )?;
             validate_leaf_depth(
-                else_ops.code().ok_or(LeafReject::Control)?,
+                else_ops.code().ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
@@ -323,28 +335,28 @@ fn validate_leaf_control(
             per_iteration,
         } if label.is_none() && !post_test && per_iteration.is_empty() => {
             validate_leaf_depth(
-                init.code().ok_or(LeafReject::Control)?,
+                init.code().ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
                 allow_locals,
             )?;
             validate_leaf_depth(
-                test.code().ok_or(LeafReject::Control)?,
+                test.code().ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
                 allow_locals,
             )?;
             validate_leaf_depth(
-                body.code().ok_or(LeafReject::Control)?,
+                body.code().ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
                 allow_locals,
             )?;
             validate_leaf_depth(
-                update.code().ok_or(LeafReject::Control)?,
+                update.code().ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
@@ -358,13 +370,32 @@ fn validate_leaf_control(
         {
             [*src, 0]
         }
-        _ => return Err(LeafReject::Control),
+        crate::ops::Op::Unary { operator, .. } => {
+            return Err(LeafReject::Control(leaf_unary_name(*operator)));
+        }
+        op => return Err(LeafReject::Control(op.variant_name())),
     };
     registers
         .into_iter()
         .all(|register| usize::from(register) < max_registers)
         .then_some(())
         .ok_or(LeafReject::Register)
+}
+
+fn leaf_unary_name(operator: crate::ops::UnaryOp) -> &'static str {
+    use crate::ops::UnaryOp::*;
+    match operator {
+        Plus => "UnaryPlus",
+        Minus => "UnaryMinus",
+        Not => "UnaryNot",
+        BitwiseNot => "UnaryBitwiseNot",
+        Void => "UnaryVoid",
+        Typeof => "UnaryTypeof",
+        ToString => "UnaryToString",
+        ToNumeric => "UnaryToNumeric",
+        Delete => "UnaryDelete",
+        IsNullish => "UnaryIsNullish",
+    }
 }
 
 fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
