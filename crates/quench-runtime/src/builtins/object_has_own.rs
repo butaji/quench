@@ -17,12 +17,14 @@ fn has_own_property_result(
     key: Option<&Value>,
 ) -> Result<Value, VmError> {
     let receiver = require_object_coercible(receiver)?;
+    let receiver = crate::vm::resolve_global_owner(receiver)
+        .unwrap_or_else(|| crate::locals::resolved_replacement(receiver.clone()));
     let Some(key) = key else {
         return Ok(Value::Boolean(false));
     };
     let key = crate::properties::dynamic_property_key(key)?;
-    crate::module_bindings::exports(receiver, &key)?;
-    Ok(Value::Boolean(owns_property(receiver, &key)?))
+    crate::module_bindings::exports(&receiver, &key)?;
+    Ok(Value::Boolean(owns_property(&receiver, &key)?))
 }
 fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError> {
     match receiver {
