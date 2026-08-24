@@ -61,6 +61,30 @@ pub(crate) fn is_view(value: &Value) -> bool {
     )
 }
 
+pub(crate) fn logical_len(value: &Value) -> Option<usize> {
+    macro_rules! length {
+        ($($variant:ident),+ $(,)?) => {
+            match value {
+                $(Value::$variant(data) => Some(data.logical_len()),)+
+                _ => None,
+            }
+        };
+    }
+    length!(
+        Float64Array,
+        Float32Array,
+        Int8Array,
+        Int16Array,
+        Int32Array,
+        BigInt64Array,
+        BigUint64Array,
+        Uint32Array,
+        Uint8Array,
+        Uint8ClampedArray,
+        Uint16Array
+    )
+}
+
 pub(crate) fn set_property(
     target: &Value,
     key: &str,

@@ -91,10 +91,11 @@ impl NodeRunner {
             .is_some_and(|extension| extension == "mjs");
         // CJS fixtures receive Node's wrapper; ESM fixtures retain module
         // syntax so the runtime's module reducer owns import facts.
+        let fixture_source = strip_v8_native_probes(&fixture.source);
         let source = if is_module {
-            quench_node::esm_imports::transform_esm_imports(&fixture.source)
+            quench_node::esm_imports::transform_esm_imports(&fixture_source)
         } else {
-            quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture.source)
+            quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture_source)
         };
         let source = if fixture.source.contains("--experimental-eventsource") {
             format!("globalThis.EventSource = globalThis.__quench_event_source;\n{source}")
@@ -180,6 +181,23 @@ impl NodeRunner {
     }
 }
 
+/// V8 optimization intrinsics are test-harness probes, not Node API behavior.
+/// Quench has no V8 optimizing tier, so remove only those eval statements when
+/// the upstream fixture explicitly requests `--allow-natives-syntax`.
+fn strip_v8_native_probes(source: &str) -> String {
+    if !source.contains("--allow-natives-syntax") {
+        return source.to_string();
+    }
+    source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !(trimmed.starts_with("eval('%") && trimmed.ends_with("');"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn reduce_fixture(
     source: &str,
     _is_module: bool,
@@ -187,4 +205,23 @@ fn reduce_fixture(
     let result = quench_runtime::reduce::reduce_source(source);
     let program = result.map_err(|errors| errors.join("; "))?;
     Ok(program)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_v8_native_probes;
+
+    #[test]
+    fn strips_only_requested_v8_probe_statements() {
+        let source = "// Flags: --allow-natives-syntax\neval('%PrepareFunctionForOptimization(f)');\nf();\n";
+        let normalized = strip_v8_native_probes(source);
+        assert!(!normalized.contains("PrepareFunctionForOptimization"));
+        assert!(normalized.contains("f();"));
+    }
+
+    #[test]
+    fn keeps_native_probe_without_capability_flag() {
+        let source = "eval('%PrepareFunctionForOptimization(f)');\n";
+        assert_eq!(strip_v8_native_probes(source), source);
+    }
 }
