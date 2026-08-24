@@ -154,6 +154,14 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "once",
             crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
         ),
+        (
+            "emit",
+            crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
+        ),
+        (
+            "emitWarning",
+            crate::host::capability(crate::registry::SPEC_PROCESS_EMIT_WARNING),
+        ),
     ]
 }
 
@@ -344,6 +352,55 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
     Ok(Value::Undefined)
 }
 
+/// Emit a process event synchronously, preserving listener order and `once` removal.
+pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(event)) = args.first() else {
+        return Ok(Value::Boolean(false));
+    };
+    let values = args.get(1..).unwrap_or(&[]).to_vec();
+    let (normal, once) = {
+        let guard = state.borrow();
+        let handlers = match event.as_str() {
+            "warning" => &guard.process.warning_handlers,
+            "uncaughtException" => &guard.process.uncaught_exception_handlers,
+            _ => return Ok(Value::Boolean(false)),
+        };
+        (
+            handlers
+                .iter()
+                .map(|(handler, _)| handler.clone())
+                .collect::<Vec<_>>(),
+            handlers
+                .iter()
+                .filter(|(_, once)| *once)
+                .map(|(handler, _)| handler.clone())
+                .collect::<Vec<_>>(),
+        )
+    };
+    for handler in once {
+        remove_handler(state, event, &handler);
+    }
+    for handler in normal {
+        quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
+    }
+    Ok(Value::Boolean(true))
+}
+
+fn remove_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {
+    let mut guard = state.borrow_mut();
+    let handlers = match event {
+        "warning" => &mut guard.process.warning_handlers,
+        "uncaughtException" => &mut guard.process.uncaught_exception_handlers,
+        _ => return,
+    };
+    if let Some(index) = handlers
+        .iter()
+        .position(|(handler, once)| *once && handler == target)
+    {
+        handlers.remove(index);
+    }
+}
+
 /// Queue a process `warning` event for registered handlers. Warnings
 /// with `once_per_process` fire a single time per process (Node's
 /// deprecation-warning semantics); the warning object carries
@@ -373,13 +430,5 @@ pub(crate) fn emit_warning(
         props.push(("code".to_string(), Value::String(code.to_string())));
     }
     let warning = host_api::object(props);
-    for handler in crate::modules::timers::take_once_handlers(
-        state,
-        crate::modules::timers::HandlerKind::Warning,
-    ) {
-        state
-            .borrow_mut()
-            .event_loop
-            .queue_microtask(handler, vec![warning.clone()]);
-    }
+    let _ = emit(state, &[Value::String("warning".into()), warning]);
 }
