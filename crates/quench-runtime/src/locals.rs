@@ -232,6 +232,12 @@ pub(crate) fn global_lexical() -> Option<Rc<Environment>> {
 pub(crate) fn global_has_own_name(name: &str) -> bool {
     global_lexical().is_some_and(|environment| environment.has_own_name(name))
         || crate::vm::global_builtin_exists(name)
+        || matches!(current().get(0), Value::Object(object) if object
+            .iter()
+            .any(|(key, _)| key == name))
+        || matches!(current().get(0), Value::ObjectAlias(alias) if alias
+            .target()
+            .is_some_and(|object| object.iter().any(|(key, _)| key == name)))
         || matches!(crate::vm::current_global_object(), Value::Object(object) if object
             .iter()
             .any(|(key, _)| key == name))
@@ -663,6 +669,12 @@ pub(crate) fn resolve_name(name: &str) -> Option<Value> {
         if let Some(value) = global_lexical().and_then(|environment| environment.resolve_name(name))
         {
             return Some(value);
+        }
+        let captured_global = current().get(0);
+        if matches!(captured_global, Value::Object(_) | Value::ObjectAlias(_)) {
+            if let Ok(value) = crate::execute::get_property_result(&captured_global, name) {
+                return Some(value);
+            }
         }
         return crate::execute::get_property_result(&crate::vm::current_global_object(), name).ok();
     }
