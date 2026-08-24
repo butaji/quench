@@ -148,6 +148,8 @@ const CAP_STREAM_DUPLEX: u16 = 0x0C02;
 const CAP_STREAM_TRANSFORM: u16 = 0x0C03;
 const CAP_STREAM_PIPELINE: u16 = 0x0C04;
 const CAP_STRING_DECODER: u16 = 0x0D00;
+const CAP_STRING_DECODER_WRITE: u16 = 0x0D01;
+const CAP_STRING_DECODER_END: u16 = 0x0D02;
 const CAP_DNS_LOOKUP: u16 = 0x0E00;
 const CAP_DNS_RESOLVE4: u16 = 0x0E01;
 const CAP_HTTP_REQUEST: u16 = 0x0F00;
@@ -275,6 +277,8 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_CONSOLE_TRACE => console_trace,
         CAP_UTIL_FORMAT => util_format,
         CAP_UTIL_INSPECT => util_inspect,
+        CAP_STRING_DECODER_WRITE => string_decoder_write,
+        CAP_STRING_DECODER_END => string_decoder_end,
         _ => return events_dispatch(cap),
     };
     Some(h)

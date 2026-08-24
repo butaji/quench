@@ -147,9 +147,16 @@
       if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
     }
     if (st.flowing) {
+      if (st.decoder && st.buffer.length > 0 && !st.ended && !st.reading) {
+        st.reading = true;
+        stream._read(st.highWaterMark);
+      }
+      if (st.decoder && st.buffer.length > 1 && typeof Buffer !== "undefined") {
+        st.buffer = [Buffer.concat(st.buffer)];
+      }
       while (st.flowing && st.buffer.length > 0) {
         let chunk = st.buffer.shift();
-        if (st.decoder) chunk = st.decoder.write(chunk);
+        if (st.decoder && typeof chunk !== "string") chunk = st.decoder.write(chunk);
         if (chunk !== "") stream._emitter.emit("data", chunk);
         if (st.awaitDrainWriters &&
             (st.awaitDrainWriters instanceof Set
@@ -325,7 +332,7 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = false;
-        if (st.decoder) {
+        if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
@@ -344,7 +351,7 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = false;
-        if (st.decoder) {
+        if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
