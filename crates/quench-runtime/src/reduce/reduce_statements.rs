@@ -193,7 +193,7 @@ fn reduce_state_statement(
     state: &mut StatementReducer,
     statement: &Statement<'_>,
     facts: &mut ProgramDb,
-    program_scope: bool,
+    _program_scope: bool,
 ) -> Result<Option<u16>, Vec<String>> {
     let value = reduce_statement(
         statement,
@@ -203,14 +203,6 @@ fn reduce_state_statement(
         &mut state.next_slot,
         &mut state.locals,
     )?;
-    if program_scope && !state.script {
-        crate::reduce_support::mirror_script_bindings(
-            statement,
-            &state.locals,
-            &mut state.ops,
-            &mut state.next_register,
-        );
-    }
     Ok(value)
 }
 pub fn reduce_statements_with_locals(
