@@ -61,6 +61,8 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayCopyWithin => Some("copyWithin"),
         Builtin::ArrayToSorted => Some("toSorted"),
         Builtin::ArrayToReversed => Some("toReversed"),
+        Builtin::ArrayToSpliced => Some("toSpliced"),
+        Builtin::ArrayWith => Some("with"),
         Builtin::ArrayToString => Some("toString"),
         Builtin::ArraySplice => Some("splice"),
         Builtin::ArrayJoin => Some("join"),
@@ -127,7 +129,9 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
 
 const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
     match builtin {
-        Builtin::ArrayCopyWithin => Some(2.0),
+        Builtin::ArrayCopyWithin
+        | Builtin::ArrayToSpliced
+        | Builtin::ArrayWith => Some(2.0),
         Builtin::ArraySlice | Builtin::ArraySplice => Some(2.0),
         Builtin::ArrayConcat => Some(1.0),
         _ => None,
