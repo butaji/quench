@@ -87,21 +87,43 @@ pub(crate) fn execute(
         return execute_with_dynamic_scope(function, receiver, arguments);
     }
 
-    // Ordinary calls enter the same explicit machine loop used by top-level
-    // execution. Keeping function entry here means every nested JS call is
-    // represented by a VM continuation and never by Rust recursion.
-    let (mut registers, environment) = build_registers(function, &receiver, arguments);
-    let _private_environment = crate::private_environment::Guard::install_environment(
-        function.private_environment.clone(),
-    );
-    let _home = crate::super_scope::Guard::install(function, &receiver);
-    let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
-    crate::vm::execute_code_in_environment(
-        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
-        &mut registers,
-        crate::vm::current_context().as_ref(),
-        environment,
-    )
+    // Ordinary calls use the same bounded tail-call machine as dynamic-scope
+    // calls. Tail-call promotion is a representation detail; it must never
+    // escape as an observable VM error merely because the callee has no
+    // `with` capture.
+    let mut function = std::rc::Rc::clone(function);
+    let mut receiver = receiver;
+    let mut arguments = arguments.to_vec();
+    loop {
+        let (mut registers, environment) = build_registers(&function, &receiver, &arguments);
+        let _private_environment = crate::private_environment::Guard::install_environment(
+            function.private_environment.clone(),
+        );
+        let _home = crate::super_scope::Guard::install(&function, &receiver);
+        let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
+        let completion = crate::vm::execute_code_frame_completion(
+            function
+                .code
+                .code()
+                .ok_or(crate::execute::VmError::MissingReturn)?,
+            &mut registers,
+            &crate::vm::current_context(),
+            environment,
+        )?;
+        let crate::completion::Completion::TailCall(request) = completion else {
+            return crate::vm::completion_result(completion);
+        };
+        let crate::value::Value::Function(next) = request.callee else {
+            return crate::functions::execute_target(
+                &request.callee,
+                &request.receiver,
+                &request.arguments,
+            );
+        };
+        function = next;
+        receiver = crate::vm::bare_call_receiver(&function, &request.receiver);
+        arguments = request.arguments;
+    }
 }
 
 fn execute_with_dynamic_scope(

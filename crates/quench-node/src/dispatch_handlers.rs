@@ -456,6 +456,24 @@ pub fn process_next_tick(
 ) -> Result<Value, VmError> {
     crate::modules::process::next_tick(state, args)
 }
+
+pub fn queue_microtask(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !quench_runtime::is_callable(&callback) {
+        return Err(quench_runtime::execute::type_error(
+            "The \"callback\" argument must be of type function",
+        ));
+    }
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(callback, vec![]);
+    Ok(Value::Undefined)
+}
 pub fn process_hrtime(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -651,6 +669,13 @@ pub fn http_get(
 pub fn http_create_server(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::http::create_server(state, args)
+}
+
+pub fn http_create_server_construct(
+    state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::http::create_server(state, args)

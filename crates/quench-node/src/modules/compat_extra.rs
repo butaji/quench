@@ -9,10 +9,11 @@ fn load(source: &str) -> Result<Value, VmError> {
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let context = quench_runtime::vm::current_context();
-    let mut registers = quench_runtime::register_file::RegisterFile::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
-    })?;
+    // A compatibility module is a lexical root.  Evaluating its factory in
+    // the caller's in-place frame lets caller-local TDZ slots shadow module
+    // declarations (for example `const Channel`), so use a fresh environment
+    // while retaining the active host context.
+    let factory = quench_runtime::vm::execute_code_with_context(program.code(), &context)?;
     let module = quench_runtime::host_api::object(vec![(
         "exports".to_string(),
         quench_runtime::host_api::object(vec![]),

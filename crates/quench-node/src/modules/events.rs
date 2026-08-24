@@ -189,6 +189,9 @@ pub fn method_emit(
     let snapshot: Vec<Listener> = emitter.borrow().listeners_of(&event).to_vec();
     if snapshot.is_empty() {
         if event == "error" {
+            if let Some(result) = route_domain_error(receiver, args.get(1))? {
+                return Ok(result);
+            }
             return Err(unhandled_error(args.get(1)));
         }
         return Ok(Value::Boolean(false));
@@ -201,6 +204,33 @@ pub fn method_emit(
         execute::call(&listener.callback, receiver, &rest)?;
     }
     Ok(Value::Boolean(true))
+}
+
+/// Domain membership is an edge concern: EventEmitter owns the emission, and
+/// the attached domain owns unhandled-error policy.
+fn route_domain_error(
+    receiver: &Value,
+    argument: Option<&Value>,
+) -> Result<Option<Value>, VmError> {
+    let domain = execute::get_property_result(receiver, "domain")?;
+    if matches!(domain, Value::Undefined | Value::Null) {
+        return Ok(None);
+    }
+    let handler = execute::get_property_result(&domain, "_handler")?;
+    if matches!(handler, Value::Undefined | Value::Null) {
+        return Ok(None);
+    }
+    let original = argument.cloned();
+    let error = argument
+        .cloned()
+        .unwrap_or_else(|| host_api::object(vec![("message".into(), Value::String("Unhandled error.".into()))]));
+    let error = execute::set_property(error, "domain", domain.clone());
+    let error = execute::set_property(error, "domainEmitter", receiver.clone());
+    let error = execute::set_property(error, "domainThrown", Value::Boolean(false));
+    if let Some(original) = original {
+        execute::replace_value(&original, &error);
+    }
+    execute::call(&handler, &domain, &[error]).map(Some)
 }
 
 /// `emit('error')` with no listeners throws the error argument.
@@ -353,13 +383,21 @@ pub fn method_get_max_listeners(
     Ok(Value::Number(max as f64))
 }
 
-pub fn new_emitter(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let id = state.borrow_mut().emitters.allocate();
     let emitter = Rc::new(RefCell::new(EventEmitter::new()));
     state.borrow_mut().emitters.insert(id, emitter);
     let id_value = Value::Number(id.0 as f64);
-    let object =
+    let mut object =
         crate::host::namespace_object_from_pairs(vec![(EMITTER_ID_PROP.to_string(), id_value)]);
+    let capture = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .and_then(|options| execute::get_property_result(options, "captureRejections").ok())
+        .is_some_and(|value| matches!(value, Value::Boolean(true)));
+    if capture {
+        object = execute::set_property(object, "Symbol.kCapture\0quench", Value::Boolean(true));
+    }
     install_emitter_props(object)
 }
 

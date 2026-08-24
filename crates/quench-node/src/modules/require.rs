@@ -225,6 +225,8 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             crate::modules::os::build(),
         )),
         "events" => Some(crate::modules::events::build()),
+        "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
+        "domain" => crate::modules::compat_extra::domain(state).ok(),
         "async_hooks" => crate::modules::compat_extra::async_hooks(state).ok(),
         "string_decoder" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::string_decoder::build(),
