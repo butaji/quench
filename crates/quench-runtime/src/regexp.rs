@@ -547,7 +547,6 @@ fn fast_regex_parts(receiver: &Value) -> Option<(String, String, usize)> {
     else {
         return None;
     };
-    crate::execution_trace::last_index("header");
     crate::execution_trace::last_index("binding_cell");
     let index = crate::conversion::to_number(&last_index.borrow()).ok()?;
     Some((source.clone(), flags.clone(), to_length(index)))
