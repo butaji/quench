@@ -66,10 +66,16 @@ pub(crate) fn array_species_create(
 ) -> Result<Value, crate::execute::VmError> {
     let is_array = matches!(crate::builtins::is_array(Some(receiver))?, Value::Boolean(true));
     if !is_array {
+        if length > u32::MAX as usize {
+            return Err(crate::value::error::throw_range_error("Invalid array length"));
+        }
         return Ok(Value::array(Vec::new()));
     }
     let constructor = crate::execute::get_property_result(receiver, "constructor")?;
     if matches!(constructor, Value::Undefined | Value::Builtin(crate::ops::Builtin::Array)) {
+        if length > u32::MAX as usize {
+            return Err(crate::value::error::throw_range_error("Invalid array length"));
+        }
         return Ok(Value::array(Vec::new()));
     }
     if !crate::value::is_object(&constructor) {
@@ -79,6 +85,9 @@ pub(crate) fn array_species_create(
     }
     let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
     if matches!(species, Value::Undefined | Value::Null) {
+        if length > u32::MAX as usize {
+            return Err(crate::value::error::throw_range_error("Invalid array length"));
+        }
         return Ok(Value::array(Vec::new()));
     }
     crate::construct::construct_value(&species, &[Value::Number(length as f64)])
