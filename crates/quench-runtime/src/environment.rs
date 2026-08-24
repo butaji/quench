@@ -288,12 +288,23 @@ impl Environment {
         }
         let slots = environment.slots.borrow();
         let refs = slots.iter().take(count).cloned().collect();
+        // A captured environment may contain bindings belonging to its
+        // caller.  Do not carry immutable-slot markers for those discarded
+        // slots into the new function-local frame: slot numbers are reused
+        // by the callee after the captured prefix.
+        let immutable_slots = environment.immutable_slots.borrow().as_ref().map(|slots| {
+            slots
+                .iter()
+                .copied()
+                .filter(|slot| usize::from(*slot) < count)
+                .collect()
+        });
         Rc::new(Self {
             slots: RefCell::new(refs),
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            immutable_slots: RefCell::new(immutable_slots),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
