@@ -113,7 +113,7 @@ fn try_record_constructor(
     });
     record_prototype_is_data_only(&prototype, &fact)?;
     let mut properties = Vec::with_capacity(3);
-    properties.push(("\0prototype".to_string(), prototype));
+    properties.push(("\0prototype".to_string(), prototype.clone()));
     for (key, argument) in fact.fields {
         let value = arguments
             .get(usize::from(argument))
