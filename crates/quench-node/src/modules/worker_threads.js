@@ -57,7 +57,7 @@ var parentPort = workerEnv ? emitter({
   _closed: false,
   postMessage: function (value) {
     if (this._closed) throw new Error('Cannot post message after closing parentPort');
-    console.log('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(value));
+    proc.stdout.write('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(value) + '\n');
   },
   close: function () {
     if (!this._closed) {
@@ -70,6 +70,7 @@ function cloneMessage(value) {
   if (value && typeof value.postMessage === 'function' && typeof value.close === 'function') {
     return value;
   }
+  if (value instanceof ArrayBuffer) return value.slice(0);
   if (value instanceof Uint8Array) return new Uint8Array(value);
   if (Array.isArray(value)) {
     var array = [];
@@ -143,13 +144,13 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
     }
     if (!Array.isArray(transfer)) {
       if (typeof transfer[Symbol.iterator] !== 'function') {
-        throw Object.assign(new TypeError('Optional transferList argument must be an iterable'), {
+        throw Object.assign(new TypeError(options ? 'Optional options.transfer argument must be an iterable' : 'Optional transferList argument must be an iterable'), {
           code: 'ERR_INVALID_ARG_TYPE'
         });
       }
       var iterator = transfer[Symbol.iterator]();
       if (!iterator || typeof iterator.next !== 'function') {
-        throw Object.assign(new TypeError('Optional transferList argument must be an iterable'), {
+        throw Object.assign(new TypeError(options ? 'Optional options.transfer argument must be an iterable' : 'Optional transferList argument must be an iterable'), {
           code: 'ERR_INVALID_ARG_TYPE'
         });
       }
@@ -200,6 +201,14 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
   Object.setPrototypeOf(port, messagePort.prototype);
   return port;
 }
+messagePort.prototype.close = function () { return this; };
+messagePort.prototype.postMessage = function () { return this; };
+messagePort.prototype.start = function () { return this; };
+messagePort.prototype.ref = function () { return this; };
+messagePort.prototype.unref = function () { return this; };
+messagePort.prototype.hasRef = function () { return true; };
+Object.defineProperty(messagePort.prototype, 'onmessage', { configurable: true });
+Object.defineProperty(messagePort.prototype, 'onmessageerror', { configurable: true });
 var environmentData = {};
 function MessageChannel() {
   this.port1 = messagePort();
