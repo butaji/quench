@@ -84,6 +84,18 @@ fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
     if crate::builtin_meta::is_prototype(builtin) || builtin == Builtin::Temporal {
         return inherit_prototype_property(builtin, key);
     }
+    let object_prototype = crate::vm::realm_intrinsic(Builtin::ObjectPrototype);
+    if let Some(getter) = crate::property_define::accessor(&object_prototype, key, "get") {
+        return match getter {
+            Value::Undefined => Value::Undefined,
+            getter => invoke_accessor(&getter, value).unwrap_or(Value::Undefined),
+        };
+    }
+    if let Ok(inherited) = get_property_with_receiver(&object_prototype, key, value) {
+        if !matches!(inherited, Value::Undefined) {
+            return inherited;
+        }
+    }
     if callable_builtin_value(value) {
         if let Some(override_value) =
             crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
@@ -199,6 +211,7 @@ fn bound_function_fallback(
     shadow_wrapper: bool,
     key: &str,
 ) -> Value {
+    let receiver = Value::BoundFunction(Rc::new(bound.clone()));
     if shadow_wrapper {
         return function_prototype_property_for_builtin(Builtin::FunctionPrototype, key);
     }
@@ -229,6 +242,20 @@ fn bound_function_fallback(
         }
     }
     if matches!(result, Value::Undefined) {
+        if bound.target != Value::Builtin(Builtin::ObjectPrototype) {
+            let object_prototype = crate::vm::realm_intrinsic(Builtin::ObjectPrototype);
+            if let Some(getter) = crate::property_define::accessor(&object_prototype, key, "get") {
+                return match getter {
+                    Value::Undefined => Value::Undefined,
+                    getter => invoke_accessor(&getter, &receiver).unwrap_or(Value::Undefined),
+                };
+            }
+            if let Ok(inherited) = get_property_with_receiver(&object_prototype, key, &receiver) {
+                if !matches!(inherited, Value::Undefined) {
+                    return inherited;
+                }
+            }
+        }
         function_prototype_property_for_builtin(Builtin::FunctionPrototype, key)
     } else {
         result
