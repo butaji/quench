@@ -439,17 +439,19 @@ fn is_buffer_view(value: &Value) -> bool {
 
 fn inspect_buffer(value: &Value, view: &quench_runtime::value::Uint8ArrayData) -> String {
     let bytes = view.buffer.bytes.borrow();
-    let slice = &bytes[view.byte_offset..view.byte_offset + view.length];
+    let slice = &bytes[view.byte_offset..view.byte_offset + view.logical_len()];
+    let max = crate::modules::buffer::inspect_max_bytes();
     let shown = slice
         .iter()
-        .take(2)
+        .take(max)
         .map(|byte| format!("{byte:02x}"))
         .collect::<Vec<_>>();
-    let suffix = slice.len().saturating_sub(2);
+    let suffix = slice.len().saturating_sub(max);
+    let plural = if suffix == 1 { "" } else { "s" };
     let mut result = if suffix == 0 {
         format!("<Buffer {}>", shown.join(" "))
     } else {
-        format!("<Buffer {} ... {suffix} more bytes>", shown.join(" "))
+        format!("<Buffer {} ... {suffix} more byte{plural}>", shown.join(" "))
     };
     let properties = quench_runtime::execute::own_enumerable_keys(value)
         .into_iter()

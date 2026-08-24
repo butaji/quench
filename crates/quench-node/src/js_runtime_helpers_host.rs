@@ -139,9 +139,12 @@ fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
 fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
     match value {
         Some(Value::String(value)) => Ok(value.as_bytes().to_vec()),
-        Some(Value::Uint8Array(view)) => Ok(view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length]
-            .to_vec()),
+        Some(Value::Uint8Array(view)) => {
+            let length = view.logical_len();
+            Ok(view.buffer.bytes.borrow()
+                [view.byte_offset..view.byte_offset + length]
+                .to_vec())
+        }
         Some(Value::DataView(view)) => Ok(view.buffer.bytes.borrow()
             [view.byte_offset..view.byte_offset + view.byte_length]
             .to_vec()),

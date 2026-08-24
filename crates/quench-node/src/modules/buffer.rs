@@ -453,6 +453,11 @@ pub fn inspect_max_bytes_get(
     Ok(Value::Number(INSPECT_MAX_BYTES.with(Cell::get)))
 }
 
+/// Current byte budget shared by Buffer.prototype.inspect and util.inspect.
+pub fn inspect_max_bytes() -> usize {
+    INSPECT_MAX_BYTES.with(|current| current.get().max(0.0).floor() as usize)
+}
+
 pub fn inspect_max_bytes_set(
     _state: &Rc<RefCell<crate::host::HostState>>,
     _receiver: Option<&Value>,

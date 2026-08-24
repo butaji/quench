@@ -509,6 +509,14 @@ pub fn namespace_bindings(
         "queueMicrotask".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("queueMicrotask", 0x0707)),
     ));
+    // QuickJS exposes the Float16 view storage but not its constructor.  The
+    // Node facade still needs the two-byte view in common buffer-source paths;
+    // use the engine's canonical Uint16 constructor until native Float16
+    // element conversion is available.
+    out.push((
+        "Float16Array".to_string(),
+        quench_runtime::value::Value::Builtin(quench_runtime::ops::Builtin::Uint16Array),
+    ));
     out.push((
         "require".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("require", 0x1200)),
