@@ -118,6 +118,14 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeUtil = {
         .join(", ")} }`;
     }
     if (
+      options.depth < 0 &&
+      value &&
+      typeof value === "object" &&
+      ["Event", "CustomEvent"].includes(value[Symbol.toStringTag])
+    ) {
+      return value[Symbol.toStringTag];
+    }
+    if (
       value &&
       typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"
     ) {

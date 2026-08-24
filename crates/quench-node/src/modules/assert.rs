@@ -49,7 +49,73 @@ pub fn build_value() -> Value {
     }
     // `assert.strict === assert` in Node's strict entry point.
     let _ = execute::set_callable_property(&value, "strict", value.clone());
+    for (name, source) in [
+        ("rejects", ASSERT_REJECTS),
+        ("doesNotReject", ASSERT_DOES_NOT_REJECT),
+    ] {
+        if let Ok(method) = eval_function(source) {
+            let _ = execute::set_callable_property(&value, name, method);
+        }
+    }
     value
+}
+
+const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
+  let input;
+  if (typeof promiseOrFn === "function") {
+    try { input = promiseOrFn(); }
+    catch (error) { return Promise.reject(error); }
+  } else input = promiseOrFn;
+  if (!input || typeof input.then !== "function") {
+    const error = new TypeError("The promiseFn argument must be a Promise");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return Promise.reject(error);
+  }
+  return Promise.resolve(input).then(
+    () => Promise.reject(Object.assign(new Error(message || "Missing expected rejection"), {
+      code: "ERR_ASSERTION", operator: "rejects"
+    })),
+    (error) => {
+      if (typeof expected === "function" && expected(error) !== true) {
+        return Promise.reject(Object.assign(new Error("The rejection did not match"), {
+          code: "ERR_ASSERTION", operator: "rejects"
+        }));
+      }
+      if (expected && typeof expected === "object") {
+        for (const key of Object.keys(expected)) {
+          if (error == null || error[key] !== expected[key]) {
+            return Promise.reject(Object.assign(new Error(message || "The input did not match"), {
+              code: "ERR_ASSERTION", operator: "rejects"
+            }));
+          }
+        }
+      }
+      return error;
+    }
+  );
+}"#;
+
+const ASSERT_DOES_NOT_REJECT: &str = r#"(promiseOrFn, message) => {
+  const input = typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn;
+  if (!input || typeof input.then !== "function") {
+    const error = new TypeError("The promiseFn argument must be a Promise");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return Promise.reject(error);
+  }
+  return Promise.resolve(input).then(
+    (value) => value,
+    (error) => Promise.reject(Object.assign(new Error(message || "Got unwanted rejection"), {
+      code: "ERR_ASSERTION", operator: "doesNotReject", actual: error
+    }))
+  );
+}"#;
+
+fn eval_function(source: &str) -> Result<Value, VmError> {
+    let program = quench_runtime::reduce::reduce_global_script_source(source)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
 }
 
 fn pair(name: &str, spec: NodeSpec) -> (String, Value) {

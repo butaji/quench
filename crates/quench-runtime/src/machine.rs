@@ -870,6 +870,7 @@ pub enum Frame {
     Await {
         phase: u8,
         resume: CodeRange,
+        destination: u16,
     },
     Delegate {
         phase: u8,
@@ -1540,6 +1541,7 @@ mod tests {
             .try_push(super::Frame::Await {
                 phase: 0,
                 resume: range,
+                destination: 0,
             })
             .unwrap();
         assert_eq!(stack.top_offset(), Some(0));
@@ -1560,6 +1562,7 @@ mod tests {
                 .try_push(super::Frame::Await {
                     phase: 0,
                     resume: range,
+                    destination: 0,
                 })
                 .unwrap();
         }
@@ -1569,6 +1572,7 @@ mod tests {
         let rejected = stack.try_push(super::Frame::Await {
             phase: 0,
             resume: range,
+            destination: 0,
         });
         assert!(rejected.is_err());
         assert_eq!(stack.depth(), 5);

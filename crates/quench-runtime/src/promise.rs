@@ -102,11 +102,13 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
         PromiseContinuation::Aggregate { aggregate, index } => {
             aggregate_settle(&aggregate, index, state);
         }
-        PromiseContinuation::AsyncGenerator { generator, result } => {
-            process_async_continuation(generator, result, false, state)
-        }
+        PromiseContinuation::AsyncGenerator {
+            generator,
+            result,
+            async_function,
+        } => process_async_continuation(generator, result, false, async_function, state),
         PromiseContinuation::AsyncGeneratorYield { generator, result } => {
-            process_async_continuation(generator, result, true, state)
+            process_async_continuation(generator, result, true, false, state)
         }
     }
 }
@@ -115,6 +117,7 @@ fn process_async_continuation(
     generator: Rc<crate::value::GeneratorData>,
     result: Rc<PromiseData>,
     yielding: bool,
+    async_function: bool,
     state: &PromiseState,
 ) {
     let value = match state {
@@ -132,9 +135,9 @@ fn process_async_continuation(
         crate::generator::resume_async_after_await(&generator, false, value)
     };
     match resume {
-        Ok(value) => resolve_promise(&result, value),
+        Ok(value) => resolve_promise(&result, async_result_value(value, async_function)),
         Err(VmError::Suspended(awaited)) => {
-            register_async_generator(&awaited, generator, result);
+            register_async_generator(&awaited, generator, result, async_function);
         }
         Err(VmError::Thrown(reason)) => reject_promise(&result, reason),
         Err(_) => reject_promise(&result, Value::Undefined),
@@ -221,7 +224,16 @@ pub(crate) fn from_async_generator_completion(
     generator: Rc<crate::value::GeneratorData>,
 ) -> Value {
     let promise = Rc::new(PromiseData::default());
-    settle_async_generator_completion(completion, generator, Rc::clone(&promise));
+    settle_async_generator_completion(completion, generator, Rc::clone(&promise), false);
+    Value::Promise(promise)
+}
+
+pub(crate) fn from_async_function_completion(
+    completion: Result<Value, VmError>,
+    generator: Rc<crate::value::GeneratorData>,
+) -> Value {
+    let promise = Rc::new(PromiseData::default());
+    settle_async_generator_completion(completion, generator, Rc::clone(&promise), true);
     Value::Promise(promise)
 }
 
@@ -229,10 +241,13 @@ pub(crate) fn settle_async_generator_completion(
     completion: Result<Value, VmError>,
     generator: Rc<crate::value::GeneratorData>,
     promise: Rc<PromiseData>,
+    async_function: bool,
 ) {
     match completion {
-        Ok(value) => resolve_promise(&promise, value),
-        Err(VmError::Suspended(awaited)) => register_async_generator(&awaited, generator, promise),
+        Ok(value) => resolve_promise(&promise, async_result_value(value, async_function)),
+        Err(VmError::Suspended(awaited)) => {
+            register_async_generator(&awaited, generator, promise, async_function)
+        }
         Err(VmError::Thrown(reason)) => reject_promise(&promise, reason),
         Err(_) => reject_promise(&promise, Value::Undefined),
     }
@@ -242,6 +257,7 @@ pub(crate) fn register_async_generator(
     awaited: &Rc<PromiseData>,
     generator: Rc<crate::value::GeneratorData>,
     result: Rc<PromiseData>,
+    async_function: bool,
 ) {
     awaited
         .continuations
@@ -249,10 +265,22 @@ pub(crate) fn register_async_generator(
         .push(if *generator.pending_yield.borrow() {
             PromiseContinuation::AsyncGeneratorYield { generator, result }
         } else {
-            PromiseContinuation::AsyncGenerator { generator, result }
+            PromiseContinuation::AsyncGenerator {
+                generator,
+                result,
+                async_function,
+            }
         });
     if !matches!(*awaited.state.borrow(), PromiseState::Pending) {
         queue_promise(awaited);
+    }
+}
+
+fn async_result_value(value: Value, async_function: bool) -> Value {
+    if async_function {
+        crate::execute::get_property_result(&value, "value").unwrap_or(Value::Undefined)
+    } else {
+        value
     }
 }
 

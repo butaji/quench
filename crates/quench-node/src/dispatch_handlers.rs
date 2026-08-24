@@ -99,6 +99,15 @@ pub fn util_inspect(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let arg = args.first().cloned().unwrap_or(Value::Undefined);
+    if let (Value::Object(_), Some(options)) = (&arg, args.get(1)) {
+        let depth = execute::get_property(options, "depth");
+        let tag = execute::get_property(&arg, "Symbol.toStringTag");
+        if matches!(depth, Value::Number(value) if value < 0.0)
+            && matches!(tag, Value::String(ref value) if value == "Event" || value == "CustomEvent")
+        {
+            return Ok(tag);
+        }
+    }
     Ok(Value::String(crate::modules::util::inspect(&arg)))
 }
 
@@ -964,10 +973,15 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
             ),
         ])));
     }
-    let cancelable = execute::is_truthy(&execute::get_property(&options, "cancelable"));
+    let bubbles = execute::get_property_result(&options, "bubbles")
+        .map(|value| execute::is_truthy(&value))
+        .unwrap_or(false);
+    let cancelable = execute::get_property_result(&options, "cancelable")
+        .map(|value| execute::is_truthy(&value))
+        .unwrap_or(false);
     let event = host_api::object(vec![
         ("type".into(), Value::String(event_type)),
-        ("bubbles".into(), Value::Boolean(false)),
+        ("bubbles".into(), Value::Boolean(bubbles)),
         ("cancelable".into(), Value::Boolean(cancelable)),
         ("defaultPrevented".into(), Value::Boolean(false)),
         ("returnValue".into(), Value::Boolean(true)),
@@ -1168,6 +1182,9 @@ pub fn event_prevent_default(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
+        if execute::is_truthy(&execute::get_property(receiver, "\0event:passive")) {
+            return Ok(Value::Undefined);
+        }
         if let Some(identity) = receiver.object_identity() {
             state.borrow_mut().prevented_events.insert(identity);
         }
@@ -1220,6 +1237,12 @@ pub fn event_composed_path(
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    let active = receiver
+        .map(|value| matches!(execute::get_property(value, "eventPhase"), Value::Number(phase) if phase != 0.0))
+        .unwrap_or(false);
+    if !active {
+        return Ok(host_api::array(Vec::new()));
+    }
     match receiver.map(|value| execute::get_property(value, "target")) {
         Some(target) if !matches!(target, Value::Undefined | Value::Null) => {
             Ok(host_api::array(vec![target]))
