@@ -398,12 +398,12 @@ fn construct_function(
             crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
         return finish_derived_construct(result, final_this);
     }
-    let receiver = constructor_receiver(target);
     if function.instance_fields.borrow().is_empty() {
-        if let Some(object) = try_record_constructor(function, &receiver, arguments) {
+        if let Some(object) = try_record_constructor(function, target, arguments) {
             return Ok(object);
         }
     }
+    let receiver = constructor_receiver(target);
     let object = initialize_instance_fields(function, receiver)?;
     let (result, final_this) =
         crate::functions::execute_construct(function, &object, target, arguments)?;
