@@ -5,6 +5,7 @@
 (function (deps) {
   "use strict";
   const EventEmitter = deps.events.EventEmitter;
+  const StringDecoder = deps.string_decoder.StringDecoder;
   const nextTick = process.nextTick;
 
   // Shared EventEmitter delegation, mixed into every stream prototype.
@@ -98,7 +99,9 @@
     const valid = ["utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "latin1",
       "binary", "ascii", "base64", "base64url", "hex", "buffer"];
     if (!valid.includes(name)) {
-      const error = new TypeError("Unknown encoding: " + encoding);
+      const shown = encoding && typeof encoding === "object" && !Array.isArray(encoding)
+        ? "{}" : encoding;
+      const error = new TypeError("Unknown encoding: " + shown);
       error.code = "ERR_UNKNOWN_ENCODING";
       throw error;
     }
@@ -121,7 +124,8 @@
       emittedReadable: false,
       errored: null,
       closeEmitted: false,
-      encoding: null,
+      encoding: options.encoding ? validateEncoding(options.encoding) : null,
+      decoder: options.encoding ? new StringDecoder(options.encoding) : null,
       awaitDrainWriters: null,
       pipeCount: 0,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
@@ -144,7 +148,9 @@
     }
     if (st.flowing) {
       while (st.flowing && st.buffer.length > 0) {
-        stream._emitter.emit("data", st.buffer.shift());
+        let chunk = st.buffer.shift();
+        if (st.decoder) chunk = st.decoder.write(chunk);
+        if (chunk !== "") stream._emitter.emit("data", chunk);
         if (st.awaitDrainWriters &&
             (st.awaitDrainWriters instanceof Set
               ? st.awaitDrainWriters.size > 0
@@ -193,6 +199,14 @@
     return chunk;
   }
 
+  function readableChunkError(stream) {
+    const error = new TypeError("The chunk argument must be of type string or an instance of Buffer");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    stream._readableState.errored = error;
+    nextTick(() => stream._emitter.emit("error", error));
+    return false;
+  }
+
   class Readable {
     constructor(options) {
       initReadable(this, options || {});
@@ -210,6 +224,11 @@
 
     get readableObjectMode() {
       return this._readableState.objectMode;
+    }
+
+    get readableLength() {
+      return this._readableState.buffer.reduce((total, chunk) =>
+        total + (typeof chunk === "string" ? chunk.length : chunk?.byteLength ?? 1), 0);
     }
 
     get readableFlowing() {
@@ -257,6 +276,11 @@
       if (chunk === null) {
         st.ended = true;
       } else {
+        if (!st.objectMode && typeof chunk !== "string" &&
+            !(chunk && typeof chunk.byteLength === "number" &&
+              typeof chunk.byteOffset === "number")) {
+          return readableChunkError(this);
+        }
         if (!st.objectMode && typeof chunk === "string" && typeof Buffer !== "undefined") {
           chunk = Buffer.from(chunk, encoding || st.defaultEncoding);
         }
@@ -269,6 +293,11 @@
     unshift(chunk) {
       const st = this._readableState;
       if (chunk === null) return false;
+      if (!st.objectMode && typeof chunk !== "string" &&
+          !(chunk && typeof chunk.byteLength === "number" &&
+            typeof chunk.byteOffset === "number")) {
+        return readableChunkError(this);
+      }
       if (chunk !== undefined && chunk !== null &&
           typeof chunk.byteLength === "number" && chunk.byteLength === 0) return true;
       if (typeof chunk === "string" && chunk.length === 0) return true;
@@ -296,9 +325,9 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = false;
-        if (st.encoding) {
-          chunk = chunk.toString(st.encoding);
-          while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
+        if (st.decoder) {
+          chunk = st.decoder.write(chunk);
+          while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
@@ -315,9 +344,9 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = false;
-        if (st.encoding) {
-          chunk = chunk.toString(st.encoding);
-          while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
+        if (st.decoder) {
+          chunk = st.decoder.write(chunk);
+          while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           st.reading = true;
@@ -337,7 +366,15 @@
     }
 
     setEncoding(encoding) {
-      this._readableState.encoding = validateEncoding(encoding || "utf8");
+      const st = this._readableState;
+      st.encoding = validateEncoding(encoding || "utf8");
+      st.decoder = new StringDecoder(st.encoding);
+      if (st.buffer.length > 0 && typeof Buffer !== "undefined") {
+        const buffered = Buffer.concat(st.buffer);
+        st.buffer = [];
+        const decoded = st.decoder.write(buffered);
+        if (decoded) st.buffer.push(decoded);
+      }
       return this;
     }
 
@@ -418,6 +455,12 @@
           if (step == null || (iteratorResult && step.done)) {
             finished = true;
             readable.push(null);
+          } else if (iteratorResult && step.value === null) {
+            finished = true;
+            const error = new TypeError("May not write null values to stream");
+            error.code = "ERR_STREAM_NULL_VALUES";
+            readable._readableState.errored = error;
+            readable._emitter.emit("error", error);
           } else {
             readable.push(iteratorResult ? step.value : step);
           }
@@ -475,7 +518,9 @@
     if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._writableState = {
       objectMode: !!options.objectMode,
+      writable: options.writable !== false,
       decodeStrings: options.decodeStrings !== false,
+      defaultEncoding: validateEncoding(options.defaultEncoding || "utf8"),
       highWaterMark: defaultHwm(options),
       buffered: 0,
       needDrain: false,
@@ -489,9 +534,12 @@
       corked: 0,
       prefinished: false,
       final: options.final || null,
-      endCallback: null,
+      endCallbacks: [],
       autoDestroy: options.autoDestroy !== false,
       destroyed: false
+    };
+    stream._writableState.getBuffer = function () {
+      return this.pending.map((item) => item.chunk);
     };
     stream.writable = options.writable !== false;
     stream.writableAborted = false;
@@ -507,6 +555,11 @@
     state.bufferedRequestCount = state.pending.length;
   }
 
+  function completeEndCallbacks(state, error) {
+    const callbacks = state.endCallbacks.splice(0);
+    for (const callback of callbacks) callback(error);
+  }
+
   function finishWritable(stream) {
     const st = stream._writableState;
     if (st.destroyed) return;
@@ -520,11 +573,7 @@
         if (error) {
           st.errored = true;
           stream.writable = false;
-          if (st.endCallback) {
-            const callback = st.endCallback;
-            st.endCallback = null;
-            callback(error);
-          }
+          completeEndCallbacks(st, error);
           nextTick(() => stream._emitter.emit("error", error));
           return;
         }
@@ -540,6 +589,7 @@
       return;
     }
     st.finished = true;
+    completeEndCallbacks(st);
     stream._emitter.emit("finish");
     if (st.autoDestroy) nextTick(() => stream.destroy());
   }
@@ -585,7 +635,9 @@
     }
 
     _write(chunk, encoding, callback) {
-      callback(new Error("The _write() method is not implemented"));
+      throw Object.assign(new Error("The _write() method is not implemented"), {
+        code: "ERR_METHOD_NOT_IMPLEMENTED"
+      });
     }
 
     get writableEnded() {
@@ -608,6 +660,11 @@
       return this._writableState.corked;
     }
 
+    setDefaultEncoding(encoding) {
+      this._writableState.defaultEncoding = validateEncoding(encoding);
+      return this;
+    }
+
     cork() {
       this._writableState.corked += 1;
       return this;
@@ -624,6 +681,7 @@
         callback = encoding;
         encoding = undefined;
       }
+      const encodingProvided = encoding !== undefined;
       const st = this._writableState;
       if (st.ended) {
         const error = new Error("write after end");
@@ -645,7 +703,9 @@
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
-      if (typeof encoding === "string") validateEncoding(encoding);
+      encoding = encodingProvided
+        ? validateEncoding(encoding)
+        : st.defaultEncoding;
       if (!st.objectMode && st.decodeStrings && typeof chunk === "string") {
         chunk = Buffer.from(chunk, encoding || "utf8");
         encoding = "buffer";
@@ -661,7 +721,7 @@
         normalized.set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
         chunk = normalized;
       }
-      if (!st.objectMode && isByteView && encoding === undefined) encoding = "buffer";
+      if (!st.objectMode && isByteView && !encodingProvided) encoding = "buffer";
       const chunkLength = writableChunkLength(this, chunk);
       st.buffered += chunkLength;
       updateNeedDrain(st);
@@ -732,7 +792,10 @@
           st.pending.unshift(...pending);
           updateBufferedRequestCount(st);
           st.writing = false;
+          const wasEnded = st.ended;
+          st.ended = false;
           this.write(next.chunk, next.encoding, next.callback);
+          st.ended = wasEnded;
           return;
         }
         if (st.buffered <= st.highWaterMark) this._emitter.emit("drain");
@@ -745,6 +808,7 @@
           this._write(chunk, encoding, done);
         }
       } catch (error) {
+        if (this._write === WritableClass.prototype._write) throw error;
         done(error);
       }
       return !failed && st.buffered < st.highWaterMark;
@@ -758,8 +822,23 @@
         callback = encoding;
         encoding = undefined;
       }
-      this._writableState.endCallback = callback || null;
-      if (callback) this._emitter.once("finish", callback);
+      const state = this._writableState;
+      if (state.ended && chunk != null) {
+        const error = new Error("write after end");
+        error.code = "ERR_STREAM_WRITE_AFTER_END";
+        if (callback) nextTick(() => callback(error));
+        nextTick(() => this._emitter.emit("error", error));
+        return this;
+      }
+      if (this._writableState.finished) {
+        if (callback) {
+          const error = new Error("write after finish");
+          error.code = "ERR_STREAM_ALREADY_FINISHED";
+          nextTick(() => callback(error));
+        }
+        return this;
+      }
+      if (callback) state.endCallbacks.push(callback);
       if (chunk != null) this.write(chunk, encoding);
       this._writableState.corked = 0;
       flushCorked(this);
@@ -792,7 +871,7 @@
   Writable.prototype.destroy = function (error) {
     if (this.destroyed) return this;
     this.destroyed = true;
-    this.writableAborted = this.writable !== false && !this.writableFinished;
+    this.writableAborted = this._writableState.writable !== false && !this.writableFinished;
     if (this._writableState) this._writableState.destroyed = true;
     this.writable = false;
     if (error) this.writableErrored = error;

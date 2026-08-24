@@ -2,6 +2,18 @@
 
 const hooks = globalThis.__quenchAsyncHooks || [];
 Object.defineProperty(globalThis, "__quenchAsyncHooks", { configurable: true, value: hooks });
+Object.defineProperty(globalThis, "\0quench:process_next_tick_init", {
+  configurable: true,
+  value: () => {
+  const resource = { asyncId: ++globalThis.__quenchAsyncId, triggerAsyncId: 1 };
+  for (const hook of hooks) {
+    if (hook.callbacks && typeof hook.callbacks.init === "function") {
+      hook.callbacks.init(resource.asyncId, "TickObject", 1, resource);
+    }
+  }
+  return resource;
+  }
+});
 let nextId = globalThis.__quenchAsyncId || 1;
 Object.defineProperty(globalThis, "__quenchAsyncId", { configurable: true, writable: true, value: nextId });
 Object.defineProperty(globalThis, "__quenchAsyncInit", {
