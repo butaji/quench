@@ -29,3 +29,14 @@ require('events').addAbortListener(protectedController.signal, (event) => {
   assert.strictEqual(event.target, protectedController.signal);
 });
 protectedController.abort();
+const intervalController = new AbortController();
+const intervalEmitter = new EventEmitter();
+const interval = setInterval(() => intervalEmitter.emit('foo', 'foo'), 1);
+(async () => {
+  for await (const value of on(intervalEmitter, 'foo', { signal: intervalController.signal })) {
+    assert.strictEqual(value[0], 'foo');
+  }
+})().catch((error) => {
+  assert.strictEqual(error.name, 'AbortError');
+}).finally(() => clearInterval(interval));
+process.nextTick(() => intervalController.abort());
