@@ -112,6 +112,14 @@ pub fn util_inspect(
     Ok(Value::String(crate::modules::util::inspect(&arg)))
 }
 
+pub fn util_parse_env(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::util::parse_env(args)
+}
+
 pub fn util_promisify(
     state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,

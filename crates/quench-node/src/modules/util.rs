@@ -5,7 +5,9 @@
 //! for the test262 + Node fixture conformance surface).
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
+use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
 
 thread_local! {
@@ -22,6 +24,89 @@ pub fn format_with_options(args: &[Value], numeric_separator: bool) -> String {
     let result = format(args);
     SEPARATOR_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
     result
+}
+
+/// Parse Node's dotenv-style environment format into a null-prototype object.
+pub fn parse_env(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(source)) = arguments.first() else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "str must be a string".into(),
+        ));
+    };
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut values = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let mut line = lines[index].trim().to_string();
+        index += 1;
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(stripped) = line.strip_prefix("export ") {
+            line = stripped.to_string();
+        }
+        let Some((key, initial)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() || key.chars().any(char::is_whitespace) {
+            continue;
+        }
+        let mut raw = initial.trim().to_string();
+        if let Some(quote) = raw.chars().next().filter(|c| matches!(c, '\'' | '"' | '`')) {
+            while !has_closing_quote(&raw, quote) && index < lines.len() {
+                if looks_like_assignment(lines[index]) {
+                    break;
+                }
+                raw.push('\n');
+                raw.push_str(lines[index]);
+                index += 1;
+            }
+        }
+        values.push((key.to_string(), Value::String(parse_env_value(&raw))));
+    }
+    let mut unique = HashMap::new();
+    for (key, value) in values {
+        unique.insert(key, value);
+    }
+    let mut properties = vec![("\0prototype".into(), Value::Null)];
+    properties.extend(unique);
+    Ok(Value::object(properties))
+}
+
+fn has_closing_quote(value: &str, quote: char) -> bool {
+    value.chars().skip(1).any(|character| character == quote)
+}
+
+fn looks_like_assignment(line: &str) -> bool {
+    let line = line.trim();
+    let Some((key, _)) = line.split_once('=') else {
+        return false;
+    };
+    !key.is_empty() && !key.chars().any(char::is_whitespace)
+}
+
+fn parse_env_value(raw: &str) -> String {
+    let value = raw.trim();
+    let Some(quote) = value.chars().next() else {
+        return String::new();
+    };
+    if !matches!(quote, '\'' | '"' | '`') {
+        return value
+            .split_once('#')
+            .map_or(value, |(head, _)| head)
+            .trim()
+            .to_string();
+    }
+    let Some(end) = value[quote.len_utf8()..].find(quote) else {
+        return value.to_string();
+    };
+    let result = &value[quote.len_utf8()..quote.len_utf8() + end];
+    if quote == '"' {
+        result.replace("\\n", "\n")
+    } else {
+        result.to_string()
+    }
 }
 
 /// Module wiring: returns the `(name, value)` pairs the host
@@ -45,6 +130,10 @@ pub fn build() -> Vec<(String, Value)> {
         ("_extend".to_string(), object_assign),
         ("toUSVString".to_string(), to_usv_string),
         ("types".to_string(), types),
+        (
+            "parseEnv".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_PARSE_ENV),
+        ),
         (
             "format".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
