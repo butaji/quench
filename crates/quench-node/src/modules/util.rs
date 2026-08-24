@@ -292,7 +292,7 @@ pub fn type_predicate(name: &str, value: &Value) -> bool {
         "isTypedArray" => typed,
         "isUint8Array" => matches!(value, Value::Uint8Array(_)),
         "isUint8ClampedArray" => matches!(value, Value::Uint8ClampedArray(_)),
-        "isUint16Array" => matches!(value, Value::Uint16Array(_)),
+        "isUint16Array" => matches!(value, Value::Uint16Array(_)) && !value.is_float16_array(),
         "isUint32Array" => matches!(value, Value::Uint32Array(_)),
         "isInt8Array" => matches!(value, Value::Int8Array(_)),
         "isInt16Array" => matches!(value, Value::Int16Array(_)),
@@ -322,32 +322,20 @@ pub fn type_predicate(name: &str, value: &Value) -> bool {
             matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Set { .. }))
         }
         "isGeneratorObject" => matches!(value, Value::Generator(_)),
-        "isGeneratorFunction" => {
-            matches!(value, Value::Function(function) if function.kind == FunctionKind::Generator && !function.is_async)
-        }
-        "isAsyncFunction" => {
-            matches!(value, Value::Function(function) if function.is_async && function.kind != FunctionKind::Generator)
-        }
-        "isArgumentsObject" => {
-            matches!(quench_runtime::execute::get_property_result(value, "\0arguments"), Ok(found) if !matches!(found, Value::Undefined))
-        }
+        "isGeneratorFunction" => matches!(value, Value::Function(function) if function.kind == FunctionKind::Generator && !function.is_async),
+        "isAsyncFunction" => matches!(value, Value::Function(function) if function.is_async && function.kind != FunctionKind::Generator),
+        "isArgumentsObject" => value.is_arguments_object(),
         "isBooleanObject" => boxed_constructor(value, "Boolean"),
         "isNumberObject" => boxed_constructor(value, "Number"),
         "isStringObject" => boxed_constructor(value, "String"),
         "isSymbolObject" => boxed_constructor(value, "Symbol"),
         "isBigIntObject" => boxed_constructor(value, "BigInt"),
-        "isBoxedPrimitive" => ["Boolean", "Number", "String", "Symbol", "BigInt"]
-            .iter()
-            .any(|kind| boxed_constructor(value, kind)),
-        "isNativeError" => matches!(
-            quench_runtime::execute::get_property_result(value, "\0error_slot"),
-            Ok(Value::Boolean(true))
-        ),
-        "isFloat16Array"
-        | "isExternal"
-        | "isModuleNamespaceObject"
-        | "isKeyObject"
-        | "isCryptoKey" => false,
+        "isBoxedPrimitive" => ["Boolean", "Number", "String", "Symbol", "BigInt"].iter().any(|kind| boxed_constructor(value, kind)),
+        "isNativeError" => matches!(quench_runtime::execute::get_property_result(value, "\0error_slot"), Ok(Value::Boolean(true))),
+        "isExternal" => matches!(quench_runtime::execute::get_property_result(value, "__quench_external"), Ok(Value::Boolean(true))),
+        "isFloat16Array" => value.is_float16_array(),
+        "isModuleNamespaceObject" => matches!(quench_runtime::execute::get_property_result(value, "\0module_namespace"), Ok(Value::Boolean(true))),
+        "isKeyObject" | "isCryptoKey" => false,
         _ => false,
     }
 }
@@ -358,16 +346,13 @@ fn boxed_constructor(value: &Value, name: &str) -> bool {
         "Boolean" => quench_runtime::ops::Builtin::BooleanPrototype,
         "Number" => quench_runtime::ops::Builtin::NumberPrototype,
         "String" => quench_runtime::ops::Builtin::StringPrototype,
+        "Symbol" => quench_runtime::ops::Builtin::SymbolPrototype,
+        "BigInt" => quench_runtime::ops::Builtin::BigIntPrototype,
         _ => return false,
     };
-    matches!(
-        value,
-        Value::Object(_) | Value::ObjectAlias(_) | Value::BindingCell(_)
-    ) && matches!(prototype, Ok(Value::Builtin(actual)) if actual == expected)
-        && matches!(
-            quench_runtime::execute::get_property_result(value, "_value"),
-            Ok(Value::Boolean(_) | Value::Number(_) | Value::String(_))
-        )
+    matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::BindingCell(_))
+        && matches!(prototype, Ok(Value::Builtin(actual)) if actual == expected)
+        && matches!(quench_runtime::execute::get_property_result(value, "_value"), Ok(Value::Boolean(_) | Value::Number(_) | Value::String(_) | Value::BigInt(_)))
 }
 
 fn inspect_capability() -> Value {
