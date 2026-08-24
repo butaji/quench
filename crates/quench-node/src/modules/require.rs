@@ -258,20 +258,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "worker_threads" => Some(crate::host::namespace_object_from_pairs(vec![
-            ("isMainThread".to_string(), Value::Boolean(true)),
-            (
-                "Worker".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "worker_threads:Worker",
-                    0x1900,
-                )),
-            ),
-            (
-                "MessageChannel".to_string(),
-                crate::host::capability(crate::registry::SPEC_WORKER_MESSAGE_CHANNEL),
-            ),
-        ])),
+        "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
             "isSea".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),
