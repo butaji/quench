@@ -234,7 +234,7 @@ pub fn copy(
     copy_transfer(&view, &target, target_start, source_start, count)
 }
 
-fn as_byte_view(value: &Value) -> Option<Rc<Uint8ArrayData>> {
+pub(crate) fn as_byte_view(value: &Value) -> Option<Rc<Uint8ArrayData>> {
     macro_rules! view {
         ($data:expr) => {{
             Some(Rc::new(Uint8ArrayData::new(
