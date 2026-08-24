@@ -38,6 +38,14 @@ struct ForwardOnePlan {
 }
 
 #[derive(Clone, Copy)]
+struct CopyMethodPropertyPlan {
+    output_call_pc: usize,
+    input_call_pc: usize,
+    get_pc: usize,
+    set_pc: usize,
+}
+
+#[derive(Clone, Copy)]
 enum ShapeKernelPlan {
     StatePredicate(StatePredicatePlan),
     StateBitwise(StateBitwisePlan),
@@ -46,6 +54,7 @@ enum ShapeKernelPlan {
     PropertySelect(PropertySelectPlan),
     ForwardZero(ForwardZeroPlan),
     ForwardOne(ForwardOnePlan),
+    CopyMethodProperty(CopyMethodPropertyPlan),
 }
 
 #[derive(Clone)]
@@ -78,6 +87,9 @@ pub(crate) fn execute_shape_kernel(
         ShapeKernelPlan::ForwardZero(plan) => execute_forward_zero(function, receiver, plan),
         ShapeKernelPlan::ForwardOne(plan) => {
             execute_forward_one(function, receiver, arguments, plan)
+        }
+        ShapeKernelPlan::CopyMethodProperty(plan) => {
+            execute_copy_method_property(function, receiver, plan)
         }
     }
 }
@@ -218,7 +230,10 @@ fn shape_kernel_fact(
         })
         .or_else(|| match_property_select(function).map(ShapeKernelPlan::PropertySelect))
         .or_else(|| match_forward_zero(function).map(ShapeKernelPlan::ForwardZero))
-        .or_else(|| match_forward_one(function).map(ShapeKernelPlan::ForwardOne));
+        .or_else(|| match_forward_one(function).map(ShapeKernelPlan::ForwardOne))
+        .or_else(|| {
+            match_copy_method_property(function).map(ShapeKernelPlan::CopyMethodProperty)
+        });
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -429,3 +444,4 @@ fn fragment_returns(code: Option<crate::machine::CodeView<'_>>, register: u16) -
 
 include!("functions_shape_property_select.rs");
 include!("functions_shape_forward.rs");
+include!("functions_shape_copy.rs");
