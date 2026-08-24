@@ -271,6 +271,12 @@ pub(crate) fn load_binding(
             crate::execute::write_value(registers, dst, value);
             return Ok(());
         }
+        if slot < crate::locals::current_eval_var_scope_start() {
+            if let Some(value) = crate::with_scope::resolve_binding(name)? {
+                crate::execute::write_value(registers, dst, value);
+                return Ok(());
+            }
+        }
         if environment.is_deleted(&environment.slot_cell(slot)) {
             return Err(crate::value::error::throw_reference_error(&format!(
                 "Cannot access deleted binding '{name}'"
@@ -294,6 +300,10 @@ pub(crate) fn load_binding(
     }
     crate::execute::write_value(registers, dst, environment.get(slot));
     Ok(())
+}
+
+pub(crate) fn current_eval_var_scope_start() -> u16 {
+    current().captured_len() as u16
 }
 
 pub(crate) fn resolve_target(
