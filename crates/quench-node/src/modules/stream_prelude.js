@@ -534,7 +534,7 @@
     if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._writableState = {
       objectMode: !!options.objectMode,
-      writable: options.writable !== false,
+      writable: options.writable === false ? false : undefined,
       decodeStrings: options.decodeStrings !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8"),
       highWaterMark: defaultHwm(options),
@@ -721,7 +721,7 @@
       }
       encoding = encodingProvided
         ? validateEncoding(encoding)
-        : st.defaultEncoding;
+        : (st.objectMode ? undefined : st.defaultEncoding);
       if (!st.objectMode && st.decodeStrings && typeof chunk === "string") {
         chunk = Buffer.from(chunk, encoding || "utf8");
         encoding = "buffer";

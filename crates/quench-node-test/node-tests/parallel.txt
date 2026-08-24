@@ -31,6 +31,8 @@ test-regression-object-prototype.js
 test-stream-end-paused.js
 test-stream-event-names.js
 test-stream-ispaused.js
+test-stream-uint8array.js
+test-stream-writable-ended-state.js
 test-timers-api-refs.js
 test-timers-args.js
 test-timers-clear-null-does-not-throw-error.js
