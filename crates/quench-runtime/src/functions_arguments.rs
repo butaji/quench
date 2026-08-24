@@ -98,6 +98,9 @@ pub(crate) fn execute_construct(
     new_target: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
+    if let Some(result) = execute_forwarding_constructor(function, this_value, arguments) {
+        return result;
+    }
     let captures = function.captures.len() as u16;
     let (mut registers, environment) = build_registers(function, this_value, arguments);
     let this_slot = captures.saturating_add(function.params).saturating_add(1);
@@ -131,6 +134,7 @@ pub(crate) fn is_derived_constructor(function: &crate::value::FunctionValue) -> 
 }
 
 include!("functions_arguments_setup.rs");
+include!("functions_forwarding_constructor.rs");
 
 pub(crate) fn execute_bound(
     bound: &crate::value::BoundFunctionValue,
