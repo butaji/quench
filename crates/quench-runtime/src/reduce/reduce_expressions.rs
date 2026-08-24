@@ -233,7 +233,7 @@ pub fn reduce_declaration(
         // its initializer runs.  Capture that target now so an initializer
         // such as `delete obj.x` cannot change which environment receives the
         // declaration's result.
-        let resolved_target = if facts.has_dynamic_scope() && !facts.in_function {
+        let resolved_target = if facts.has_dynamic_scope() {
             match &declarator.id.kind {
                 oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) => {
                     let Some(&slot) = locals.get(identifier.name.as_str()) else {
@@ -264,6 +264,7 @@ pub fn reduce_declaration(
         infer_declaration_name(&declarator.id, declarator.init.as_ref(), register, ops);
         if facts.in_function
             && declaration.kind == VariableDeclarationKind::Var
+            && resolved_target.is_none()
             && matches!(
                 &declarator.id.kind,
                 oxc::ast::ast::BindingPatternKind::BindingIdentifier(_)
