@@ -30,6 +30,16 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
 }
 
 fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
+    let mut seen = HashSet::new();
+    retarget_nested_alias_seen(value, old, new, &mut seen);
+}
+
+fn retarget_nested_alias_seen(
+    value: &Value,
+    old: &Value,
+    new: &Value,
+    seen: &mut HashSet<usize>,
+) {
     match value {
         Value::ObjectAlias(alias) if alias_targets(alias, old) => {
             if let Value::Object(object) = new {
@@ -37,62 +47,114 @@ fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
             }
         }
         Value::Array(values) => {
+            if !seen.insert(Rc::as_ptr(values) as usize) {
+                return;
+            }
             for value in values.snapshot() {
-                retarget_nested_alias(&value, old, new);
+                retarget_nested_alias_seen(&value, old, new, seen);
             }
         }
         Value::Object(values) => {
-            for (_, value) in values.iter() {
-                retarget_nested_alias(value, old, new);
+            if !seen.insert(Rc::as_ptr(values) as usize) {
+                return;
             }
-            retarget_private_aliases(&values.private_slots, old, new);
+            for (_, value) in values.iter() {
+                retarget_nested_alias_seen(value, old, new, seen);
+            }
+            retarget_private_aliases_seen(&values.private_slots, old, new, seen);
         }
-        Value::Function(function) => retarget_private_aliases(&function.private_slots, old, new),
+        Value::Function(function) => {
+            if !seen.insert(Rc::as_ptr(function) as usize) {
+                return;
+            }
+            retarget_private_aliases_seen(&function.private_slots, old, new, seen);
+        }
         _ => {}
     }
 }
 
 fn contains_nested(value: &Value, target: &Value) -> bool {
+    let mut seen = HashSet::new();
+    contains_nested_seen(value, target, &mut seen)
+}
+
+fn contains_nested_seen(value: &Value, target: &Value, seen: &mut HashSet<usize>) -> bool {
     match value {
-        Value::BindingCell(cell) => contains_nested(&cell.borrow(), target),
+        Value::BindingCell(cell) => {
+            if !seen.insert(Rc::as_ptr(cell) as usize) {
+                return false;
+            }
+            contains_nested_seen(&cell.borrow(), target, seen)
+        }
         Value::ObjectAlias(alias) => alias_targets(alias, target),
-        Value::Array(values) => values
-            .snapshot()
-            .iter()
-            .any(|value| same_identity(value, target) || contains_nested(value, target)),
+        Value::Array(values) => {
+            if !seen.insert(Rc::as_ptr(values) as usize) {
+                return false;
+            }
+            values.snapshot().iter().any(|value| {
+                same_identity(value, target) || contains_nested_seen(value, target, seen)
+            })
+        }
         Value::Object(values) => {
-            values
-                .iter()
-                .any(|(_, value)| same_identity(value, target) || contains_nested(value, target))
-                || private_slots_contain(&values.private_slots, target)
+            if !seen.insert(Rc::as_ptr(values) as usize) {
+                return false;
+            }
+            values.iter().any(|(_, value)| {
+                same_identity(value, target) || contains_nested_seen(value, target, seen)
+            }) || private_slots_contain_seen(&values.private_slots, target, seen)
         }
         Value::Function(function) => {
+            if !seen.insert(Rc::as_ptr(function) as usize) {
+                return false;
+            }
             function.properties.borrow().iter().any(|(_, value)| {
-                same_identity(value, target) || alias_targets_value(value, target)
-            }) || private_slots_contain(&function.private_slots, target)
+                same_identity(value, target)
+                    || alias_targets_value(value, target)
+                    || contains_nested_seen(value, target, seen)
+            }) || private_slots_contain_seen(&function.private_slots, target, seen)
         }
         _ => false,
     }
 }
 
 fn retarget_private_aliases(slots: &crate::value::PrivateSlots, old: &Value, new: &Value) {
+    let mut seen = HashSet::new();
+    retarget_private_aliases_seen(slots, old, new, &mut seen);
+}
+
+fn retarget_private_aliases_seen(
+    slots: &crate::value::PrivateSlots,
+    old: &Value,
+    new: &Value,
+    seen: &mut HashSet<usize>,
+) {
     for (_, slot) in slots.borrow().iter() {
-        retarget_private_slot(slot, old, new);
+        retarget_private_slot_seen(slot, old, new, seen);
     }
 }
 
 fn retarget_private_slot(slot: &crate::value::PrivateSlot, old: &Value, new: &Value) {
+    let mut seen = HashSet::new();
+    retarget_private_slot_seen(slot, old, new, &mut seen);
+}
+
+fn retarget_private_slot_seen(
+    slot: &crate::value::PrivateSlot,
+    old: &Value,
+    new: &Value,
+    seen: &mut HashSet<usize>,
+) {
     match slot {
         crate::value::PrivateSlot::Data(value) | crate::value::PrivateSlot::Method(value) => {
-            retarget_nested_alias(value, old, new)
+            retarget_nested_alias_seen(value, old, new, seen)
         }
         crate::value::PrivateSlot::Accessor { get, set } => {
             get.as_ref()
                 .iter()
-                .for_each(|value| retarget_nested_alias(value, old, new));
+                .for_each(|value| retarget_nested_alias_seen(value, old, new, seen));
             set.as_ref()
                 .iter()
-                .for_each(|value| retarget_nested_alias(value, old, new));
+                .for_each(|value| retarget_nested_alias_seen(value, old, new, seen));
         }
     }
 }
@@ -120,29 +182,56 @@ fn replace_private_slot(slot: &mut crate::value::PrivateSlot, old: &Value, new: 
 }
 
 fn private_slots_contain(slots: &crate::value::PrivateSlots, target: &Value) -> bool {
+    let mut seen = HashSet::new();
+    private_slots_contain_seen(slots, target, &mut seen)
+}
+
+fn private_slots_contain_seen(
+    slots: &crate::value::PrivateSlots,
+    target: &Value,
+    seen: &mut HashSet<usize>,
+) -> bool {
     slots
         .borrow()
         .iter()
-        .any(|(_, slot)| private_slot_contains(slot, target))
+        .any(|(_, slot)| private_slot_contains_seen(slot, target, seen))
 }
 
 fn private_slot_contains(slot: &crate::value::PrivateSlot, target: &Value) -> bool {
+    let mut seen = HashSet::new();
+    private_slot_contains_seen(slot, target, &mut seen)
+}
+
+fn private_slot_contains_seen(
+    slot: &crate::value::PrivateSlot,
+    target: &Value,
+    seen: &mut HashSet<usize>,
+) -> bool {
     match slot {
         crate::value::PrivateSlot::Data(value) | crate::value::PrivateSlot::Method(value) => {
-            private_value_contains(value, target)
+            private_value_contains_seen(value, target, seen)
         }
         crate::value::PrivateSlot::Accessor { get, set } => {
             get.as_ref()
-                .is_some_and(|value| private_value_contains(value, target))
+                .is_some_and(|value| private_value_contains_seen(value, target, seen))
                 || set
                     .as_ref()
-                    .is_some_and(|value| private_value_contains(value, target))
+                    .is_some_and(|value| private_value_contains_seen(value, target, seen))
         }
     }
 }
 
 fn private_value_contains(value: &Value, target: &Value) -> bool {
-    same_identity(value, target) || contains_nested(value, target)
+    let mut seen = HashSet::new();
+    private_value_contains_seen(value, target, &mut seen)
+}
+
+fn private_value_contains_seen(
+    value: &Value,
+    target: &Value,
+    seen: &mut HashSet<usize>,
+) -> bool {
+    same_identity(value, target) || contains_nested_seen(value, target, seen)
 }
 
 fn replace_direct(value: &mut Value, old: &Value, new: &Value) {
