@@ -974,7 +974,9 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
         ("\0event:cancelBubble".into(), Value::Boolean(false)),
         ("composed".into(), Value::Boolean(false)),
         ("isTrusted".into(), Value::Boolean(false)),
-        ("target".into(), Value::Undefined),
+        ("target".into(), Value::Null),
+        ("currentTarget".into(), Value::Null),
+        ("srcElement".into(), Value::Null),
         ("eventPhase".into(), Value::Number(0.0)),
         ("timeStamp".into(), Value::Number(0.0)),
         ("Symbol.toStringTag".into(), Value::String("Event".into())),
@@ -1219,7 +1221,9 @@ pub fn event_composed_path(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     match receiver.map(|value| execute::get_property(value, "target")) {
-        Some(target) if !matches!(target, Value::Undefined) => Ok(host_api::array(vec![target])),
+        Some(target) if !matches!(target, Value::Undefined | Value::Null) => {
+            Ok(host_api::array(vec![target]))
+        }
         _ => Ok(host_api::array(Vec::new())),
     }
 }
