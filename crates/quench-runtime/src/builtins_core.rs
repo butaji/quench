@@ -221,10 +221,11 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
         crate::locals::replace_value(receiver, &Value::Array(updated));
         return Value::Number(length as f64);
     }
-    let mut result = values.to_vec();
-    result.extend_from_slice(arguments);
-    let length = result.len();
-    values.append_live(arguments);
-    crate::locals::replace_value(receiver, &Value::array(result));
+    let mut updated = std::rc::Rc::clone(values);
+    let data = std::rc::Rc::make_mut(&mut updated);
+    data.append_physical(arguments);
+    let length = data.logical_len();
+    data.append_live(arguments);
+    crate::locals::replace_value(receiver, &Value::Array(updated));
     Value::Number(length as f64)
 }
