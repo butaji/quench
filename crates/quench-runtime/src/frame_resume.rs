@@ -90,6 +90,7 @@ impl Frame {
             }
             Self::Await { resume, .. } => vec![*resume],
             Self::Delegate { .. } => Vec::new(),
+            Self::Dispose { body_resume, resume, .. } => vec![*body_resume, *resume],
         }
     }
     /// Return the register IDs owned by this frame's continuation.
@@ -110,6 +111,7 @@ impl Frame {
             Self::Private { yield_dst, .. } => vec![*yield_dst],
             Self::Loop { dst, yield_dst, .. } => vec![*dst, *yield_dst],
             Self::Await { .. } | Self::Delegate { .. } => Vec::new(),
+            Self::Dispose { yield_dst, .. } => vec![*yield_dst],
         }
     }
 
