@@ -44,6 +44,17 @@ impl TdzCells {
         Rc::new(Self(UnsafeCell::new(copy)))
     }
 
+    fn clone_prefix(source: &Rc<Self>, count: usize) -> Rc<Self> {
+        let copy = unsafe {
+            (&*source.0.get())
+                .iter()
+                .copied()
+                .filter(|slot| usize::from(*slot) < count)
+                .collect()
+        };
+        Rc::new(Self(UnsafeCell::new(copy)))
+    }
+
     fn insert(&self, slot: u16) {
         unsafe {
             (&mut *self.0.get()).insert(slot);
@@ -246,7 +257,7 @@ impl SlotStore {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct BindingRef {
+pub(crate) struct BindingRef {
     store: Rc<SlotStore>,
     index: usize,
 }
@@ -415,8 +426,8 @@ impl Drop for Environment {
     }
 }
 
-fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
-    source.as_ref().map(TdzCells::clone_values)
+fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
+    source.as_ref().map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 impl Environment {
@@ -445,7 +456,9 @@ impl Environment {
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
+            immutable_slots: RefCell::new(environment.immutable_slots.borrow().as_ref().map(|slots| {
+                slots.iter().copied().filter(|slot| usize::from(*slot) < count).collect()
+            })),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
@@ -516,9 +529,11 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        environment
-            .uninitialized
-            .replace(clone_tdz(&captures.uninitialized.borrow()));
+        let captured_len = captures.slots.borrow().shared_prefix().len();
+        environment.uninitialized.replace(clone_tdz_prefix(
+            &captures.uninitialized.borrow(),
+            captured_len,
+        ));
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
@@ -533,6 +548,10 @@ impl Environment {
     }
     pub(crate) fn len(&self) -> usize {
         self.slots.borrow().len()
+    }
+
+    pub(crate) fn captured_len(&self) -> usize {
+        self.slots.borrow().prefix.len()
     }
 
     pub(crate) fn get(&self, slot: u16) -> Value {
@@ -566,6 +585,9 @@ impl Environment {
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
+        if self.is_immutable_slot(slot) && !self.is_uninitialized(slot) {
+            return None;
+        }
         self.slot(slot)?.update_number(delta)
     }
 
@@ -696,6 +718,27 @@ impl Environment {
         self.eval_name_binding(name).map(|binding| binding.load())
     }
 
+    pub(crate) fn snapshot_eval_name_chain(&self) -> Vec<Option<HashMap<String, BindingRef>>> {
+        let mut snapshots = vec![self.eval_names.borrow().clone()];
+        if let Some(caller) = &self.caller {
+            snapshots.extend(caller.snapshot_eval_name_chain());
+        }
+        snapshots
+    }
+
+    pub(crate) fn restore_eval_name_chain(
+        &self,
+        snapshots: &[Option<HashMap<String, BindingRef>>],
+    ) {
+        let Some((current, rest)) = snapshots.split_first() else {
+            return;
+        };
+        self.eval_names.replace(current.clone());
+        if let Some(caller) = &self.caller {
+            caller.restore_eval_name_chain(rest);
+        }
+    }
+
     pub(crate) fn eval_name_aliases_slot(&self, name: &str, slot: u16) -> bool {
         if self
             .eval_names
@@ -705,12 +748,14 @@ impl Environment {
         {
             return true;
         }
-        if self.slot(slot).is_some() {
+        let Some(caller) = &self.caller else {
             return false;
-        }
-        self.caller
-            .as_ref()
-            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
+        };
+        let captured = self
+            .slot(slot)
+            .zip(caller.slot(slot))
+            .is_some_and(|(current, parent)| current.same(&parent));
+        captured && caller.eval_name_aliases_slot(name, slot)
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
@@ -1023,6 +1068,6 @@ mod tests {
             assert!(!environment.is_uninitialized(0));
             environment.get_number(0).unwrap()
         }));
-        eprintln!("slot_probe iterations={ITERATIONS} raw={raw:?} slot={slot:?} checked={checked:?} current={current:?}");
+        let _ = (raw, slot, checked, current);
     }
 }
