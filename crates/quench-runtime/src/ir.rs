@@ -64,6 +64,7 @@ instruction_set! {
     UpdateLocal = 23 / 3,
     LoadLocalChecked = 24 / 2,
     Binary = 25 / 3,
+    StoreLocalChecked = 26 / 2,
 }
 
 macro_rules! compact_binary_operators {
@@ -285,6 +286,15 @@ impl Instruction {
             c: 0,
         }
     }
+    pub const fn store_local_checked(slot: u16, src: Register) -> Self {
+        Self {
+            opcode: Opcode::StoreLocalChecked,
+            flags: 0,
+            a: slot,
+            b: src,
+            c: 0,
+        }
+    }
     pub const fn add(dst: Register, left: Register, right: Register) -> Self {
         Self {
             opcode: Opcode::Add,
@@ -427,6 +437,28 @@ impl Instruction {
             c: 0,
         }
     }
+    pub const fn call_named(dst: Register, object: Register, argument: Option<Register>) -> Self {
+        let (flags, argument) = match argument {
+            Some(argument) => (1, argument),
+            None => (0, MAX_REGISTER_ID),
+        };
+        Self {
+            opcode: Opcode::CallN,
+            flags,
+            a: dst,
+            b: object,
+            c: argument,
+        }
+    }
+    pub const fn call_registered_one(dst: Register, object: Register, callee: Register) -> Self {
+        Self {
+            opcode: Opcode::CallN,
+            flags: 1,
+            a: dst,
+            b: object,
+            c: callee,
+        }
+    }
 }
 impl Instruction {
     /// Encode the canonical instruction into its deterministic compact wire form.
@@ -550,6 +582,19 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
             strict,
         } => Some(Instruction::array_set(*object, *key, *src, *strict)),
         Op::Return { src } => Some(Instruction::ret(*src)),
+        Op::CallMethod {
+            dst,
+            object,
+            callee: Some(callee),
+            args,
+            spreads,
+            ..
+        } if args.as_slice() == [dst.saturating_sub(1)]
+            && *dst != 0
+            && spreads.as_slice() == [false] =>
+        {
+            Some(Instruction::call_registered_one(*dst, *object, *callee))
+        }
         _ => None,
     }
 }
@@ -917,7 +962,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::Binary as u8);
+        assert_eq!(Opcode::COUNT, Opcode::StoreLocalChecked as u8);
         assert!(Opcode::Slow.is_compact());
     }
 

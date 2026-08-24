@@ -43,9 +43,16 @@ pub(crate) fn build_registers(
     crate::register_file::RegisterFile,
     std::rc::Rc<crate::environment::Environment>,
 ) {
-    let mut parameters = arguments.to_vec();
-    parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
-    parameters.truncate(usize::from(function.params));
+    let mut parameters = crate::register_file::RegisterFile::new();
+    parameters.reserve(usize::from(function.params).saturating_add(4));
+    for index in 0..usize::from(function.params) {
+        parameters.push(
+            arguments
+                .get(index)
+                .cloned()
+                .unwrap_or(crate::value::Value::Undefined),
+        );
+    }
     parameters.push(crate::value::Value::Undefined);
     parameters.push(this_value.clone());
     let named = function
@@ -59,7 +66,8 @@ pub(crate) fn build_registers(
             parameters.push(crate::value::Value::Function(std::rc::Rc::clone(function)));
         }
     }
-    let environment = crate::environment::Environment::in_place_child(&function.captures, parameters);
+    let environment =
+        crate::environment::Environment::child_registers(&function.captures, parameters);
     let arguments_slot = function.captures.len() as u16 + function.params;
     if function.code.uses_slot(arguments_slot) {
         let arguments = arguments_object(function, arguments.to_vec(), &environment);

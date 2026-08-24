@@ -107,9 +107,13 @@ impl SlotStore {
     }
 
     fn from_values(values: Vec<Value>) -> Rc<Self> {
+        Self::from_registers(crate::register_file::RegisterFile::from_values(values))
+    }
+
+    fn from_registers(values: crate::register_file::RegisterFile) -> Rc<Self> {
         let store = Rc::new(Self {
             bridges: UnsafeCell::new(None),
-            values: UnsafeCell::new(crate::register_file::RegisterFile::from_values(values)),
+            values: UnsafeCell::new(values),
         });
         store.invariant();
         store
@@ -222,6 +226,31 @@ impl SlotStore {
             self.values_mut().write(index, value);
         }
         self.invariant();
+    }
+
+    fn copy_from_register(
+        &self,
+        index: usize,
+        registers: &crate::register_file::RegisterFile,
+        source: u16,
+    ) -> bool {
+        self.ensure(index);
+        if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
+            let Some(value) = registers.read(usize::from(source)) else {
+                return false;
+            };
+            *cell.borrow_mut() = value;
+            return true;
+        }
+        self.values_mut()
+            .copy_from(index, registers, usize::from(source))
+    }
+
+    fn existing_cell(&self, index: usize) -> Option<Rc<RefCell<Value>>> {
+        self.bridges()
+            .and_then(|bridges| bridges.get(index))
+            .and_then(Option::as_ref)
+            .map(Rc::clone)
     }
 
     fn update_number(&self, index: usize, delta: f64) -> Option<(f64, f64)> {
@@ -394,6 +423,18 @@ impl BindingRef {
         self.store.store(self.index, value);
     }
 
+    fn copy_from_register(
+        &self,
+        registers: &crate::register_file::RegisterFile,
+        source: u16,
+    ) -> bool {
+        self.store.copy_from_register(self.index, registers, source)
+    }
+
+    fn existing_cell(&self) -> Option<Rc<RefCell<Value>>> {
+        self.store.existing_cell(self.index)
+    }
+
     fn update_number(&self, delta: f64) -> Option<(f64, f64)> {
         self.store.update_number(self.index, delta)
     }
@@ -534,8 +575,18 @@ impl Environment {
     }
 
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
+        Self::child_registers(
+            captures,
+            crate::register_file::RegisterFile::from_values(values),
+        )
+    }
+
+    pub(crate) fn child_registers(
+        captures: &Rc<Self>,
+        values: crate::register_file::RegisterFile,
+    ) -> Rc<Self> {
         crate::execution_trace::environment_child(captures.len(), values.len());
-        let store = SlotStore::from_values(values);
+        let store = SlotStore::from_registers(values);
         let prefix = captures.slots.borrow().shared_prefix();
         let prefix_len = captures.len();
         let suffix_len = store.len();
@@ -609,6 +660,19 @@ impl Environment {
             binding.store(value);
         }
         self.initialize(slot);
+    }
+
+    pub(crate) fn copy_from_register(
+        &self,
+        slot: u16,
+        registers: &crate::register_file::RegisterFile,
+        source: u16,
+    ) -> bool {
+        let copied = self.ensure_slot(slot).copy_from_register(registers, source);
+        if copied {
+            self.initialize(slot);
+        }
+        copied
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
@@ -858,6 +922,13 @@ impl Environment {
             .caller
             .as_ref()
             .is_some_and(|caller| caller.is_deleted(cell))
+    }
+
+    pub(crate) fn is_deleted_slot(&self, slot: u16) -> bool {
+        let Some(cell) = self.slot(slot).and_then(|binding| binding.existing_cell()) else {
+            return false;
+        };
+        self.is_deleted(&cell)
     }
 
     fn mark_deleted_cell(&self, cell: Rc<RefCell<Value>>) {
