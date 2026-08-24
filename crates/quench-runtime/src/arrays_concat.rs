@@ -6,13 +6,21 @@ pub(crate) fn concat(
     let species = concat_species(&this)?;
     let mut items = vec![this];
     items.extend(arguments.iter().cloned());
-    if species.is_none() && sparse_array_items(&items)? {
+    let spreadable = items
+        .iter()
+        .map(is_concat_spreadable)
+        .collect::<Result<Vec<_>, _>>()?;
+    if species.is_none()
+        && items.iter().zip(&spreadable).all(|(item, spreadable)| {
+            matches!(item, Value::Array(values) if !values.is_arguments()) && *spreadable
+        })
+    {
         return concat_sparse_arrays(&items);
     }
     let mut elements = Vec::new();
     let mut holes = Vec::new();
-    for item in &items {
-        spread_concat_element(&mut elements, &mut holes, item)?;
+    for (item, spreadable) in items.iter().zip(spreadable) {
+        spread_concat_element(&mut elements, &mut holes, item, spreadable)?;
     }
     if species.is_none() {
         let mut data = crate::value::ArrayData::new(elements);
@@ -44,14 +52,6 @@ pub(crate) fn concat(
         crate::properties::assign_set_property(&target, "length", Value::Number(length as f64))?;
     crate::locals::replace_value(&target, &updated);
     Ok(updated)
-}
-
-fn sparse_array_items(items: &[Value]) -> Result<bool, crate::execute::VmError> {
-    items.iter().try_fold(true, |all_arrays, item| {
-        Ok(all_arrays
-            && matches!(item, Value::Array(values) if !values.is_arguments())
-            && is_concat_spreadable(item)?)
-    })
 }
 
 fn concat_sparse_arrays(items: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -111,6 +111,7 @@ fn spread_concat_element(
     elements: &mut Vec<Value>,
     holes: &mut Vec<usize>,
     item: &Value,
+    spreadable: bool,
 ) -> Result<(), crate::execute::VmError> {
     let item = match item {
         // Arguments objects carry their observable `length` in the shared
@@ -119,7 +120,7 @@ fn spread_concat_element(
         Value::Array(values) if values.is_arguments() => item.clone(),
         _ => crate::locals::resolved_replacement(item.clone()),
     };
-    if !is_concat_spreadable(&item)? {
+    if !spreadable {
         elements.push(item);
         return Ok(());
     }
@@ -150,14 +151,22 @@ fn is_concat_spreadable(value: &Value) -> Result<bool, crate::execute::VmError> 
     if !matches!(flag, Value::Undefined) {
         return Ok(crate::intl::tolocale::value::is_truthy(&flag));
     }
-    Ok(matches!(value, Value::Array(_)) || proxy_targets_array(value))
+    proxy_targets_array(value)
 }
 
-fn proxy_targets_array(value: &Value) -> bool {
-    let Value::Proxy(proxy) = value else {
-        return false;
-    };
-    matches!(&proxy.target, Value::Array(_))
+fn proxy_targets_array(value: &Value) -> Result<bool, crate::execute::VmError> {
+    match value {
+        Value::Array(_) => Ok(true),
+        Value::Proxy(proxy) => {
+            if crate::proxy::is_revoked(proxy) {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot perform operation on revoked proxy",
+                ));
+            }
+            proxy_targets_array(&proxy.target)
+        }
+        _ => Ok(false),
+    }
 }
 
 fn concat_array_like_length(value: &Value) -> Result<usize, crate::execute::VmError> {
