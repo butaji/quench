@@ -33,6 +33,7 @@ pub fn delegate_next(
                 typed_receiver,
                 typed_keys,
                 entries,
+                keys,
                 index,
                 done,
             } => {
@@ -42,6 +43,7 @@ pub fn delegate_next(
                     typed_receiver.as_ref(),
                     *typed_keys,
                     *entries,
+                    *keys,
                     index,
                     done,
                 );
@@ -115,6 +117,7 @@ fn native_delegation_step(
     typed_receiver: Option<&Value>,
     typed_keys: bool,
     entries: bool,
+    keys: bool,
     index: &mut usize,
     done: &mut bool,
 ) -> Result<DelegationResult, crate::execute::VmError> {
@@ -124,6 +127,7 @@ fn native_delegation_step(
         typed_receiver,
         typed_keys,
         entries,
+        keys,
         index,
         done,
     )?
