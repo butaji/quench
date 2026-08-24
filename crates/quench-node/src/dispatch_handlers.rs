@@ -770,6 +770,14 @@ pub fn string_decoder_call(
     crate::modules::string_decoder::call(state, args)
 }
 
+pub fn string_decoder_text(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::string_decoder::text(receiver, args)
+}
+
 // ---- require ----
 pub fn node_require(
     state: &Rc<RefCell<HostState>>,
