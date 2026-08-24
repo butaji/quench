@@ -65,6 +65,7 @@ var parentPort = workerEnv ? emitter({
   }
 }) : null;
 function cloneMessage(value) {
+  if (value instanceof Uint8Array) return new Uint8Array(value);
   if (Array.isArray(value)) {
     var array = [];
     for (var i = 0; i < value.length; i++) array.push(cloneMessage(value[i]));
@@ -79,7 +80,16 @@ function cloneMessage(value) {
   return value;
 }
 function messagePort() {
-  var port = emitter({ _queueEvents: true, _peer: null, close: function () { if (!this._closed) { this._closed = true; this.emit('close'); } } });
+var port = emitter({ _queueEvents: true, _peer: null, close: function (callback) {
+  if (this._closed) return;
+  this._closed = true;
+  this.emit('close');
+  if (typeof callback === 'function') callback.call(this);
+  if (this._peer && !this._peer._closed) {
+    this._peer._closed = true;
+    this._peer.emit('close');
+  }
+} });
   var onmessage = null;
   var onmessageListener = null;
   port.onmessage = null;
@@ -91,15 +101,40 @@ function messagePort() {
       if (onmessageListener) port.removeListener('message', onmessageListener);
       onmessage = typeof fn === 'function' ? fn : null;
       onmessageListener = onmessage ? function (value) {
-        onmessage.call(port, { data: value, target: port });
+        onmessage.call(port, { data: value, target: port, ports: [] });
       } : null;
       if (onmessageListener) port.on('message', onmessageListener);
     }
   });
   port.postMessage = function (value) {
-    if (!this._closed && this._peer && !this._peer._closed) this._peer.emit('message', cloneMessage(value));
+    var cloned = cloneMessage(value);
+    var transfer = arguments[1];
+    if (transfer && transfer.transfer) transfer = transfer.transfer;
+    if (transfer && typeof transfer.length === 'number') {
+      for (var t = 0; t < transfer.length; t++) {
+        var item = transfer[t];
+        var buffer = item instanceof ArrayBuffer ? item : item && item.buffer;
+        if (buffer instanceof ArrayBuffer) {
+          try { buffer.transfer(); } catch (_) {
+            throw Object.assign(new Error('ArrayBuffer is not transferable'), {
+              name: 'DataCloneError', code: 25
+            });
+          }
+        }
+      }
+    }
+    if (!this._closed && this._peer && !this._peer._closed) this._peer.emit('message', cloned);
   };
   port.start = function () { return this; };
+  port.addEventListener = function (name, fn) {
+    return this.on(name, function (value) {
+      fn.call(port, { type: name, detail: value, target: port });
+    });
+  };
+  port.removeEventListener = function (name, fn) {
+    return this.removeListener(name, fn);
+  };
+  Object.setPrototypeOf(port, messagePort.prototype);
   return port;
 }
 var environmentData = {};
