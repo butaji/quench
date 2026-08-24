@@ -87,6 +87,7 @@ fn kernel_checked_store(code: crate::machine::CodeView<'_>, check: usize, store:
 }
 
 fn run_linear_solve_kernel(loop_fact: CountedForFact, body: crate::machine::CodeView<'_>) -> Option<crate::completion::Completion> {
+    (loop_fact.timing == CountedStepTiming::AfterBody).then_some(())?;
     let fact = LinearSolveFact::recognize(body, loop_fact.slot)?;
     if let CountedBound::Slot(bound) = loop_fact.bound {
         (![loop_fact.slot, fact.current, fact.last, fact.next, fact.last_x].contains(&bound))
@@ -141,10 +142,18 @@ fn kernel_index(value: f64) -> Option<usize> {
 
 fn kernel_iteration_count(fact: CountedForFact, mut index: f64, bound: f64) -> Option<usize> {
     let mut count = 0usize;
-    while counted_comparison(fact.comparison, index, bound) {
+    loop {
+        if fact.timing == CountedStepTiming::BeforeTest {
+            index += fact.step;
+        }
+        if !counted_comparison(fact.comparison, index, bound) {
+            break;
+        }
         count = count.checked_add(1)?;
         (count <= u32::MAX as usize).then_some(())?;
-        index += fact.step;
+        if fact.timing == CountedStepTiming::AfterBody {
+            index += fact.step;
+        }
     }
     Some(count)
 }
