@@ -18,6 +18,7 @@ thread_local! {
     /// plain Uint8Arrays under `Object.getPrototypeOf` while
     /// inheriting typed-array lookups.
     static BUFFER_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static BUFFER_POOL: RefCell<Option<(Rc<ArrayBufferData>, usize)>> = const { RefCell::new(None) };
 }
 
 /// Methods installed (non-enumerable) on `Buffer.prototype`.
@@ -216,6 +217,34 @@ pub(crate) fn make_buffer(bytes: &[u8]) -> Value {
     let buf = Rc::new(ArrayBufferData::new(bytes.len()));
     buf.bytes.borrow_mut().copy_from_slice(bytes);
     make_view(buf, 0, bytes.len())
+}
+
+/// Small `Buffer.from(string)` allocations share Node's 8 KiB pool. The pool
+/// is an identity fact, while the views retain independent offsets and lengths.
+pub(crate) fn make_pooled_buffer(bytes: &[u8]) -> Value {
+    const POOL_SIZE: usize = 8192;
+    const POOL_THRESHOLD: usize = POOL_SIZE / 2;
+    if bytes.is_empty() || bytes.len() > POOL_THRESHOLD {
+        return make_buffer(bytes);
+    }
+    BUFFER_POOL.with(|pool| {
+        let mut pool = pool.borrow_mut();
+        let (buffer, offset) = match pool.as_mut() {
+            Some((buffer, offset)) if *offset + bytes.len() <= POOL_SIZE => {
+                (buffer.clone(), *offset)
+            }
+            _ => {
+                let buffer = Rc::new(ArrayBufferData::new(POOL_SIZE));
+                *pool = Some((buffer.clone(), 0));
+                (buffer, 0)
+            }
+        };
+        buffer.bytes.borrow_mut()[offset..offset + bytes.len()].copy_from_slice(bytes);
+        if let Some((_, next)) = pool.as_mut() {
+            *next = offset + bytes.len();
+        }
+        make_view(buffer, offset, bytes.len())
+    })
 }
 
 /// Construct a Buffer value over an existing ArrayBuffer (shared).
