@@ -61,10 +61,14 @@ fn run_loop(
     run_fragment(init, registers)?;
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
+            dump_counted_shape(body);
             if let Some(completion) = run_linear_solve_kernel(fact, body) {
                 return Ok(completion);
             }
             if let Some(completion) = run_advect_kernel(fact, body) {
+                return Ok(completion);
+            }
+            if let Some(completion) = run_packed_loop_kernel(fact, body) {
                 return Ok(completion);
             }
         }
@@ -103,6 +107,39 @@ fn run_loop(
     }
     Ok(crate::completion::Completion::Normal)
 }
+
+#[cfg(feature = "execution-trace")]
+fn dump_counted_shape(body: crate::machine::CodeView<'_>) {
+    use std::hash::{Hash, Hasher};
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+        std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_LOOP_SHAPES").is_some()) {
+        return;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for pc in 0..body.len() {
+        let instruction = body.instruction(pc).unwrap();
+        (instruction.opcode as u8).hash(&mut hasher);
+        instruction.flags.hash(&mut hasher);
+        instruction.a.hash(&mut hasher);
+        instruction.b.hash(&mut hasher);
+        instruction.c.hash(&mut hasher);
+    }
+    let fingerprint = hasher.finish();
+    if !SEEN.get_or_init(Default::default).lock().unwrap().insert(fingerprint) {
+        return;
+    }
+    eprintln!("LOOP_SHAPE len={} hash={fingerprint}", body.len());
+    for pc in 0..body.len() {
+        let instruction = body.instruction(pc).unwrap();
+        let cold = body.cold(instruction).map(crate::ops::Op::variant_name);
+        eprintln!("  {pc}: {instruction:?} cold={cold:?}");
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+fn dump_counted_shape(_: crate::machine::CodeView<'_>) {}
 
 fn run_counted_for(
     fact: CountedForFact,
