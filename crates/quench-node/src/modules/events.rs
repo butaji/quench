@@ -473,6 +473,11 @@ pub fn enqueue_callback(state: &Rc<RefCell<HostState>>, cb: Value, args: Vec<Val
 /// EventEmitter; EventEmitter.EventEmitter = EventEmitter`.
 pub fn build() -> Value {
     let value = crate::host::capability(crate::registry::SPEC_EVENTS_NEW);
+    // Host-backed constructors still expose the ordinary prototype contract;
+    // consumers may delete or override methods just like native Node does.
+    if let Ok(prototype) = install_emitter_props(host_api::object(Vec::new())) {
+        let _ = execute::set_callable_property(&value, "prototype", prototype);
+    }
     let once = eval_function(
         r#"(emitter, event, options) => {
           if (options !== undefined &&
