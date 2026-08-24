@@ -64,6 +64,9 @@ fn run_loop(
             if let Some(completion) = run_linear_solve_kernel(fact, body) {
                 return Ok(completion);
             }
+            if let Some(completion) = run_advect_kernel(fact, body) {
+                return Ok(completion);
+            }
         }
     }
     if label.is_none() && !post_test && per_iteration.is_empty() {
