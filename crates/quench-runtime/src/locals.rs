@@ -746,11 +746,37 @@ fn replace_object(old: &Value, new: &Value) -> bool {
     if Rc::ptr_eq(&old_latest, &new_latest) {
         return true;
     }
+    retarget_object_aliases(&old_latest, &new_latest);
     old_latest.replace_with(Rc::clone(&new_latest));
     if !Rc::ptr_eq(&old, &old_latest) {
         old.replace_with(new_latest);
     }
     true
+}
+
+fn retarget_object_aliases(old: &Rc<crate::value::ObjectData>, new: &Rc<crate::value::ObjectData>) {
+    for (_, value) in &old.properties {
+        retarget_alias_value(value, old, new);
+    }
+}
+
+fn retarget_alias_value(
+    value: &Value,
+    old: &Rc<crate::value::ObjectData>,
+    new: &Rc<crate::value::ObjectData>,
+) {
+    match value {
+        Value::ObjectAlias(alias) => {
+            if alias
+                .target()
+                .is_some_and(|target| Rc::ptr_eq(&target, old))
+            {
+                alias.retarget(Rc::downgrade(new));
+            }
+        }
+        Value::BindingCell(cell) => retarget_alias_value(&cell.borrow(), old, new),
+        _ => {}
+    }
 }
 
 fn latest_object(mut object: Rc<crate::value::ObjectData>) -> Rc<crate::value::ObjectData> {
