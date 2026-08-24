@@ -9,6 +9,11 @@ async function main() {
   const second = await iterator.next();
   assert.deepStrictEqual(second, { value: 'value', done: false });
   assert.deepStrictEqual(await iterator.return(), { value: undefined, done: true });
+  const controller = new AbortController();
+  const aborted = setInterval(100, 'never', { signal: controller.signal });
+  const pending = aborted[Symbol.asyncIterator]().next();
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError', code: 'ABORT_ERR' });
   console.log('timers/promises interval: ok');
 }
 
