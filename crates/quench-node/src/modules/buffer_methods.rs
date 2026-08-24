@@ -73,7 +73,10 @@ pub(crate) fn to_offset(value: Option<&Value>) -> f64 {
         Some(Value::BigInt(s)) => s.parse().unwrap_or(0.0),
         Some(Value::Array(array)) => match array.logical_len() {
             0 => 0.0,
-            1 => to_offset(array.index_value(0).as_ref()),
+            1 => {
+                let value = array.index_value(0);
+                to_offset(Some(&value))
+            }
             _ => f64::NAN,
         },
         _ => 0.0,
