@@ -44,6 +44,17 @@ impl TdzCells {
         Rc::new(Self(UnsafeCell::new(copy)))
     }
 
+    fn clone_prefix(source: &Rc<Self>, count: usize) -> Rc<Self> {
+        let copy = unsafe {
+            (&*source.0.get())
+                .iter()
+                .copied()
+                .filter(|slot| usize::from(*slot) < count)
+                .collect()
+        };
+        Rc::new(Self(UnsafeCell::new(copy)))
+    }
+
     fn insert(&self, slot: u16) {
         unsafe {
             (&mut *self.0.get()).insert(slot);
@@ -348,8 +359,10 @@ pub struct Environment {
     caller: Option<Rc<Self>>,
 }
 
-fn clone_tdz(source: &Option<Rc<TdzCells>>) -> Option<Rc<TdzCells>> {
-    source.as_ref().map(TdzCells::clone_values)
+fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
+    source
+        .as_ref()
+        .map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 impl Environment {
@@ -383,6 +396,9 @@ impl Environment {
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(immutable_slots),
+            // Captured bindings retain the live TDZ state of their parent;
+            // cloning here would freeze a declaration at its creation-time
+            // state and make later initialization invisible to closures.
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
@@ -406,9 +422,11 @@ impl Environment {
             deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
-        environment
-            .uninitialized
-            .replace(clone_tdz(&captures.uninitialized.borrow()));
+        let captured_len = captures.slots.borrow().shared_prefix().len();
+        environment.uninitialized.replace(clone_tdz_prefix(
+            &captures.uninitialized.borrow(),
+            captured_len,
+        ));
         environment
             .deleted_cells
             .replace(captures.deleted_cells.borrow().clone());
