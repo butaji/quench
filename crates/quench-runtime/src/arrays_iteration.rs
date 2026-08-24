@@ -82,6 +82,30 @@ pub(crate) fn find(
     Ok(Value::Undefined)
 }
 
+pub(crate) fn find_index(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = expect_array_like(receiver, "Array.prototype.findIndex")?;
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let length = crate::builtins::map_length(&receiver)?;
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
+    for index in 0..length {
+        let Some(value) = crate::builtins::map_value(&receiver, index)? else {
+            continue;
+        };
+        let args = [value, Value::Number(index as f64), receiver.clone()];
+        let result = crate::functions::execute_target(callback, this_arg, &args)?;
+        if crate::execute::is_truthy(&result) {
+            return Ok(Value::Number(index as f64));
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
+
 fn expect_array_like(
     receiver: Option<&Value>,
     method: &str,
@@ -98,4 +122,3 @@ fn expect_array_like(
     }
     Ok(receiver.clone())
 }
-
