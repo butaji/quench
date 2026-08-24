@@ -56,6 +56,7 @@ fn run_loop(
     config: (bool, u16, &[u16]),
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    crate::execution_trace::event(crate::execution_trace::Event::LoopEntry);
     let (post_test, dst, per_iteration) = config;
     run_fragment(init, registers)?;
     if label.is_none() && !post_test && per_iteration.is_empty() {
@@ -67,6 +68,7 @@ fn run_loop(
     }
     refresh_per_iteration(per_iteration);
     loop {
+        crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
         if !post_test && !loop_test(test, registers)? {
             break;
         }
@@ -101,6 +103,7 @@ fn run_counted_for(
 ) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
     let environment = crate::locals::current();
     loop {
+        crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
         let crate::value::Value::Number(index) = environment.get(fact.slot) else {
             return Ok(None);
         };
@@ -239,6 +242,7 @@ fn run_fragment(
     ops: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<(), crate::execute::VmError> {
+    crate::execution_trace::event(crate::execution_trace::Event::FragmentEntry);
     if ops.is_empty() {
         return Ok(());
     }
