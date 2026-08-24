@@ -33,7 +33,10 @@ fn execute_builtin_match(
     arguments: &[Value],
 ) -> BuiltinResult {
     use crate::ops::Builtin::*;
-    let result = match builtin {
+    if builtin == ArrayFlat {
+        return Some(flat(receiver, arguments));
+    }
+    match builtin {
         Array => return Some(crate::builtins::array(arguments)),
         ArrayIsArray => return Some(crate::builtins::is_array(arguments.first())),
         ArrayFrom => return Some(from(receiver, arguments)),
@@ -51,7 +54,6 @@ fn execute_builtin_match(
         ArrayLastIndexOf => return Some(last_index_of(receiver, arguments)),
         ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
-        ArrayFlat => flat(receiver, arguments),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
@@ -62,8 +64,7 @@ fn execute_builtin_match(
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
         _ => return None,
-    };
-    Some(Ok(result))
+    }
 }
 
 fn map_argument_error(
@@ -416,38 +417,67 @@ fn index(values: &crate::value::ArrayData, key: &str) -> Value {
 }
 
 include!("arrays_iteration.rs");
-pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
-    };
-    let depth = arguments
-        .first()
-        .and_then(|value| match value {
-            Value::Number(number) => Some(number.max(0.0) as usize),
-            _ => None,
-        })
-        .unwrap_or(1);
-    Value::array(flatten(&values.snapshot(), depth))
-}
-fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
-    // Allocate the result once and append through the whole traversal. The
-    // previous recursive form allocated one temporary Vec per nested array,
-    // then copied each temporary into its parent.
-    let mut result = Vec::with_capacity(values.len());
-    flatten_into(values, depth, &mut result);
-    result
+pub(crate) fn flat(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
+    let length = crate::builtins::map_length(&receiver)?;
+    let depth = flat_depth(arguments.first())?;
+    let mut target = crate::builtins::array_species_create(&receiver, 0)?;
+    let mut next = 0usize;
+    flatten_into(&receiver, length, depth, &mut target, &mut next)?;
+    target = crate::builtins::set_property(target, "length", Value::Number(next as f64));
+    Ok(target)
 }
 
-fn flatten_into(values: &[Value], depth: usize, result: &mut Vec<Value>) {
-    for value in values {
-        if depth > 0 {
-            if let Value::Array(nested) = value {
-                flatten_into(&nested.snapshot(), depth - 1, result);
-                continue;
-            }
-        }
-        result.push(value.clone());
+fn flat_depth(value: Option<&Value>) -> Result<usize, crate::execute::VmError> {
+    let Some(value) = value.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(1);
+    };
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number <= 0.0 || number == f64::NEG_INFINITY {
+        return Ok(0);
     }
+    if number == f64::INFINITY {
+        return Ok(usize::MAX);
+    }
+    Ok(number.trunc() as usize)
+}
+
+fn flatten_into(
+    source: &Value,
+    length: usize,
+    depth: usize,
+    target: &mut Value,
+    next: &mut usize,
+) -> Result<(), crate::execute::VmError> {
+    for index in 0..length {
+        let key = index.to_string();
+        if !crate::with_scope::has_property(source, &key)? {
+            continue;
+        }
+        let value = crate::execute::get_property_result(source, &key)?;
+        if depth > 0
+            && matches!(
+                crate::builtins::is_array(Some(&value))?,
+                Value::Boolean(true)
+            )
+        {
+            let nested = crate::construct::to_object(&value)?;
+            let nested_length = crate::builtins::map_length(&nested)?;
+            flatten_into(&nested, nested_length, depth - 1, target, next)?;
+            continue;
+        }
+        let updated = crate::builtins::create_data_property_or_throw(
+            target.clone(),
+            &next.to_string(),
+            value,
+        )?;
+        *target = updated;
+        *next = next.saturating_add(1);
+    }
+    Ok(())
 }
 pub(crate) fn flat_map(
     receiver: Option<&Value>,
