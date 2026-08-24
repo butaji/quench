@@ -25,6 +25,10 @@ macro_rules! instruction_set {
             pub const fn operand_width(self) -> u8 {
                 match self { $(Self::$name => $width),+ }
             }
+
+            pub const fn name(self) -> &'static str {
+                match self { $(Self::$name => stringify!($name)),+ }
+            }
         }
 
         const DISPATCH_TABLE: [u8; Opcode::COUNT as usize + 1] =
