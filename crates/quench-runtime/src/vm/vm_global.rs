@@ -186,6 +186,18 @@ pub(crate) fn synchronize_global_object(
     let (Value::Object(old_object), Value::Object(new_object)) = (old, new) else {
         return;
     };
+    if let Some(Value::Object(owner)) = resolve_global_owner(old) {
+        if !std::rc::Rc::ptr_eq(&owner, old_object) {
+            if is_global_declaration_batch_active() {
+                update_global_declaration_batch(new);
+            } else {
+                replace_global_object(&Value::Object(owner.clone()), new);
+            }
+            crate::locals::replace_value(old, new);
+            replace_register_aliases(registers, &owner, new_object);
+            return;
+        }
+    }
     // Script `this` aliases resolve to the staged global while declaration
     // instantiation is active.  A copy-on-write property write must update
     // that batch; waiting for the final flush would otherwise discard the
