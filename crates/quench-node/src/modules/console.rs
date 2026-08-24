@@ -58,6 +58,11 @@ const CONSOLE_CLASS: &str = r#"(class Console {
   log(...args) {
     const output = this._stdout;
     if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
+    if (!this._tickPending) {
+      this._tickPending = true;
+      const tick = globalThis.process && globalThis.process.nextTick;
+      if (typeof tick === "function") tick(() => { this._tickPending = false; });
+    }
   }
   info(...args) { this.log(...args); }
   warn(...args) {
