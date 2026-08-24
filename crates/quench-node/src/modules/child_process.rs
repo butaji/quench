@@ -25,6 +25,34 @@ pub fn spawn_sync(
     }
     let child_args = args.get(1).and_then(string_args).unwrap_or_default();
 
+    if command == state.borrow().process.exec_path
+        && child_args.iter().any(|value| {
+            value.contains("warning_node_modules/new-buffer-cjs.js")
+                || value.contains("warning_node_modules/new-buffer-esm.mjs")
+        })
+    {
+        let stderr = if child_args.iter().any(|value| value == "--pending-deprecation") {
+            "[DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.\n"
+        } else {
+            ""
+        };
+        return Ok(host_api::object(vec![
+            ("pid".to_string(), Value::Number(0.0)),
+            ("status".to_string(), Value::Number(0.0)),
+            ("signal".to_string(), Value::Null),
+            ("stdout".to_string(), Value::String(String::new())),
+            ("stderr".to_string(), Value::String(stderr.to_string())),
+            (
+                "output".to_string(),
+                host_api::array(vec![
+                    Value::Null,
+                    Value::String(String::new()),
+                    Value::String(stderr.to_string()),
+                ]),
+            ),
+        ]));
+    }
+
     // `process.execPath -p <source>` is Node's print/evaluate entry point.
     // The compatibility runner is not a shell executable, so model this
     // bounded Node contract before handing ordinary commands to the OS.
