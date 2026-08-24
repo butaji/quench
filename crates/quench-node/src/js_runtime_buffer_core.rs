@@ -42,6 +42,14 @@ fn buffer_module() -> Value {
             HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding),
         ),
         (
+            "isAscii",
+            HostCapabilityKind::Custom(CapabilityName::BufferIsAscii),
+        ),
+        (
+            "isUtf8",
+            HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8),
+        ),
+        (
             "copyBytesFrom",
             HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom),
         ),

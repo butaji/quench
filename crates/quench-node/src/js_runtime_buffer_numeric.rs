@@ -345,6 +345,9 @@ fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn buffer_is_ascii(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.first().is_some_and(buffer_value_detached) {
+        return Ok(Value::Boolean(true));
+    }
     Ok(Value::Boolean(
         string_or_bytes(arguments.first())?
             .iter()
@@ -353,9 +356,29 @@ fn buffer_is_ascii(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn buffer_is_utf8(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.first().is_some_and(buffer_value_detached) {
+        return Ok(Value::Boolean(true));
+    }
     Ok(Value::Boolean(
         std::str::from_utf8(&string_or_bytes(arguments.first())?).is_ok(),
     ))
+}
+
+fn buffer_value_detached(value: &Value) -> bool {
+    match value {
+        Value::ArrayBuffer(buffer) => *buffer.detached.borrow(),
+        Value::Uint8Array(view) => *view.buffer.detached.borrow(),
+        Value::Int8Array(view) => *view.buffer.detached.borrow(),
+        Value::Uint8ClampedArray(view) => *view.buffer.detached.borrow(),
+        Value::Uint16Array(view) => *view.buffer.detached.borrow(),
+        Value::Int16Array(view) => *view.buffer.detached.borrow(),
+        Value::Uint32Array(view) => *view.buffer.detached.borrow(),
+        Value::Int32Array(view) => *view.buffer.detached.borrow(),
+        Value::Float32Array(view) => *view.buffer.detached.borrow(),
+        Value::Float64Array(view) => *view.buffer.detached.borrow(),
+        Value::DataView(view) => *view.buffer.detached.borrow(),
+        _ => false,
+    }
 }
 
 fn text_encoder_constructor() -> Result<Value, VmError> {
