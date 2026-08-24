@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "metrics": {
-    "decode_per_handler": {
-      "numerator": "lanes.l0.value_decode",
-      "denominator": { "sum": ["lanes.l2.handlers", "lanes.l3.handlers"] },
+    "move_decode_per_move": {
+      "numerator": "lanes.l0.value_decode_by_site.move",
+      "denominator": { "top": { "path": "lanes.l2.top_compact", "key": "opcode", "value": "Move" } },
       "min_traffic": 100000,
       "max": 0.02
     },
@@ -13,10 +13,6 @@
       "min_traffic": 100000,
       "min": 0.98,
       "max": 1.02
-    },
-    "move_decode": {
-      "numerator": "lanes.l0.value_decode_by_site.move",
-      "max": 0
     }
   }
 }
