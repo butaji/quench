@@ -15,6 +15,12 @@
                  this.listenerCount("readable") === 0) {
         this.resume();
       }
+      if (name === "readable" && this._readableState &&
+          !this._readableState.reading && !this._readableState.ended) {
+        this._readableState.flowing = false;
+        this._readableState.reading = true;
+        this._read(this._readableState.highWaterMark);
+      }
       // A stream may finish synchronously while a pipe/end callback is being
       // installed. Preserve Node's observable completion guarantee for those
       // late listeners by delivering the already-emitted terminal event.
@@ -107,7 +113,7 @@
       objectMode: !!options.objectMode,
       highWaterMark: defaultHwm(options),
       buffer: [],
-      flowing: false,
+      flowing: null,
       flowScheduled: false,
       reading: false,
       ended: false,
@@ -128,7 +134,8 @@
 
   function flowReadable(stream) {
     const st = stream._readableState;
-    if (st.buffer.length > 0 && stream.listenerCount("readable") > 0) {
+    if (stream.listenerCount("readable") > 0 &&
+        (st.buffer.length > 0 || st.ended)) {
       stream._emitter.emit("readable");
       if (st.buffer.length > 0 && st.ended) nextTick(() => flowReadable(stream));
     }
@@ -152,7 +159,8 @@
       // otherwise strand the newly queued chunks until another event arrives.
       if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
-    if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
+    if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
+        (st.flowing || stream.listenerCount("readable") === 0)) {
       st.endEmitted = true;
       stream._emitter.emit("end");
     }
@@ -286,6 +294,11 @@
           while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
         }
         finishIfEnded();
+        if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          this._read(st.highWaterMark);
+        }
         return chunk;
       }
       if (!st.ended && !st.reading) {
@@ -299,7 +312,16 @@
           chunk = chunk.toString(st.encoding);
           while (st.buffer.length > 0) chunk += st.buffer.shift().toString(st.encoding);
         }
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          this._read(st.highWaterMark);
+        }
         finishIfEnded();
+        if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          this._read(st.highWaterMark);
+        }
         return chunk;
       }
       finishIfEnded();
