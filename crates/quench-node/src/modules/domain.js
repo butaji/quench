@@ -33,27 +33,3 @@ function create() {
 }
 function Domain() { return create(); }
 module.exports = { active: null, _stack: stack, Domain, create, createDomain: create };
-
-// Preserve the active domain across host-scheduled callbacks.  Capture the
-// domain at registration, then re-enter it only at the event-loop edge.
-var originalNextTick = globalThis.process && globalThis.process.nextTick;
-if (typeof originalNextTick === 'function' && !globalThis.__quenchDomainCallbacksPatched) {
-  globalThis.process.nextTick = function (callback) {
-    var active = module.exports.active;
-    var args = Array.prototype.slice.call(arguments, 1);
-    return originalNextTick(function () {
-      return active ? active.run(function () { return callback.apply(this, args); }) : callback.apply(this, args);
-    });
-  };
-  var originalThen = Promise.prototype.then;
-  Promise.prototype.then = function (onFulfilled, onRejected) {
-    var active = module.exports.active;
-    var wrap = function (callback) {
-      return typeof callback !== 'function' ? callback : function () {
-        return active ? active.run(function () { return callback.apply(this, arguments); }) : callback.apply(this, arguments);
-      };
-    };
-    return originalThen.call(this, wrap(onFulfilled), wrap(onRejected));
-  };
-  Object.defineProperty(globalThis, "__quenchDomainCallbacksPatched", { configurable: true, value: true });
-}
