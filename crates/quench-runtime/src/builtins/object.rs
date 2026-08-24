@@ -164,6 +164,7 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
         Value::Object(data) => set_object_prototype(data, prototype),
         _ => crate::builtins::set_property(target.clone(), "\0prototype", prototype),
     };
+    crate::locals::replace_value(target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
 }
@@ -243,17 +244,10 @@ fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
 }
 
 fn validate_set_prototype_value(prototype: &Value) -> Result<(), VmError> {
-    if matches!(
-        prototype,
-        Value::Object(_)
-            | Value::ObjectAlias(_)
-            | Value::Proxy(_)
-            | Value::Builtin(_)
-            | Value::Function(_)
-            | Value::BoundFunction(_)
-            | Value::HostCapability(_)
-            | Value::Null
-    ) {
+    if matches!(prototype, Value::Null)
+        || crate::value::is_object(prototype)
+        || matches!(prototype, Value::HostCapability(_))
+    {
         return Ok(());
     }
     Err(crate::value::error::throw_type_error(

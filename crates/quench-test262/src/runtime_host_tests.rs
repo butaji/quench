@@ -62,6 +62,35 @@ fn string_wrapper_concat_preserves_utf16_code_units() {
 }
 
 #[test]
+fn copy_within_preserves_array_holes() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var arr = [0, 1, , , 1];\n\
+         if (arr.hasOwnProperty(2) || arr.hasOwnProperty(3)) throw new Error('literal holes');\n\
+         arr.copyWithin(0, 1, 4);\n\
+         if (arr[0] !== 1) throw new Error('copyWithin value');\n\
+         if (arr.hasOwnProperty(1)) throw new Error('copyWithin hole 1');\n\
+         if (arr.hasOwnProperty(2)) throw new Error('copyWithin hole 2');\n\
+         if (arr.hasOwnProperty(3)) throw new Error('copyWithin hole 3');",
+    )
+    .expect("copyWithin must preserve deleted holes");
+}
+
+#[test]
+fn copy_within_observes_custom_array_prototype() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function longDenseArray(){ var a=[0]; for(var i=0;i<1024;i++) a[i]=i; return a; }\n\
+         var currArray=longDenseArray(); var proto=longDenseArray();\n\
+         Object.setPrototypeOf(currArray, proto);\n\
+         if (Object.getPrototypeOf(currArray)[1000] !== 1000) throw new Error('prototype setup');\n\
+         currArray.copyWithin(0, { valueOf: function(){ currArray.length=20; return 1000; } });\n\
+         if (currArray[0] !== 1000) throw new Error('inherited source');",
+    )
+    .expect("copyWithin must observe inherited array elements");
+}
+
+#[test]
 fn strict_non_extensible_write_throws() {
     let mut host = super::RuntimeHost;
     let result = host.run_harnessed_script(
