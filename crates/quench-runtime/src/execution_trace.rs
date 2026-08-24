@@ -119,6 +119,7 @@ struct Counters {
     regexp: HashMap<String, (u64, u128, u128)>,
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
+    function_call_shapes: HashMap<(u16, usize, usize), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
 }
@@ -197,6 +198,22 @@ pub(crate) fn function_shape(captures: usize, code_len: usize, allocated: bool) 
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn function_shape(_: usize, _: usize, _: bool) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn function_call_shape(params: u16, captures: usize, code_len: usize) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .function_call_shapes
+                .entry((params, captures, code_len))
+                .or_default() += 1;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn function_call_shape(_: u16, _: usize, _: usize) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn descriptor_object(origin: &'static str) {
@@ -548,6 +565,18 @@ pub fn snapshot() -> Option<serde_json::Value> {
             let function_shapes = function_shapes.into_iter().take(64).map(|(&(captures, code_len), &(allocated, dropped))| {
                 serde_json::json!({"captures": captures, "code_len": code_len, "allocated": allocated, "dropped": dropped})
             }).collect::<Vec<_>>();
+            let mut function_call_shapes: Vec<_> = counters.function_call_shapes.iter().collect();
+            function_call_shapes.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
+            let function_call_shapes = function_call_shapes.into_iter().take(64).map(
+                |(&(params, captures, code_len), &count)| {
+                    serde_json::json!({
+                        "params": params,
+                        "captures": captures,
+                        "code_len": code_len,
+                        "count": count,
+                    })
+                },
+            ).collect::<Vec<_>>();
             serde_json::json!({
                 "schema": 2,
                 "compact_total": compact_total,
@@ -567,6 +596,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "regexp": regexp,
                 "object_shapes": object_shapes,
                 "function_shapes": function_shapes,
+                "function_call_shapes": function_call_shapes,
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
