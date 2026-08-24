@@ -477,6 +477,7 @@
     if (!stream._emitter) stream._emitter = new EventEmitter();
     stream._writableState = {
       objectMode: !!options.objectMode,
+      writable: options.writable !== false,
       decodeStrings: options.decodeStrings !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8"),
       highWaterMark: defaultHwm(options),
@@ -495,6 +496,9 @@
       endCallback: null,
       autoDestroy: options.autoDestroy !== false,
       destroyed: false
+    };
+    stream._writableState.getBuffer = function () {
+      return this.pending.map((item) => item.chunk);
     };
     stream.writable = options.writable !== false;
     stream.writableAborted = false;
@@ -806,7 +810,7 @@
   Writable.prototype.destroy = function (error) {
     if (this.destroyed) return this;
     this.destroyed = true;
-    this.writableAborted = this.writable !== false && !this.writableFinished;
+    this.writableAborted = this._writableState.writable !== false && !this.writableFinished;
     if (this._writableState) this._writableState.destroyed = true;
     this.writable = false;
     if (error) this.writableErrored = error;
