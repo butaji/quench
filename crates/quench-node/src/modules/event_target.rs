@@ -225,6 +225,12 @@ pub fn dispatch_event(
         return Ok(Value::Boolean(false));
     };
     let snapshot: Vec<Listener> = target.borrow().listeners_of(&event_type).to_vec();
+    let active = execute::set_property(
+        execute::set_property(event.clone(), "target", receiver.clone()),
+        "eventPhase",
+        Value::Number(2.0),
+    );
+    execute::replace_value(event, &active);
     for listener in &snapshot {
         if listener.once {
             remove_event_listener(
@@ -235,7 +241,13 @@ pub fn dispatch_event(
         }
         execute::call(&listener.callback, receiver, std::slice::from_ref(event))?;
     }
-    Ok(Value::Boolean(true))
+    let prevented = event
+        .object_identity()
+        .is_some_and(|identity| state.borrow().prevented_events.contains(&identity))
+        || execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
+    let reset = execute::set_property(event.clone(), "eventPhase", Value::Number(0.0));
+    execute::replace_value(event, &reset);
+    Ok(Value::Boolean(!prevented))
 }
 
 /// Node-style invalid-argument TypeError carrying a `code`.

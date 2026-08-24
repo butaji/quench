@@ -4,5 +4,6 @@ event.preventDefault();
 if (event.defaultPrevented !== true) process.exit(1);
 const target = new EventTarget();
 let called = false;
-target.addEventListener('tick', (value) => { called = value === event; });
-if (!target.dispatchEvent(event) || !called) process.exit(1);
+const dispatched = new Event('tick');
+target.addEventListener('tick', (value) => { called = value === dispatched; });
+if (!target.dispatchEvent(dispatched) || !called) process.exit(1);
