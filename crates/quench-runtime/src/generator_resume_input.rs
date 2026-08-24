@@ -28,7 +28,8 @@ fn install_direct_resume_input(
     }
     let src = match point {
         crate::continuation::SuspensionPoint::Yield { src, .. }
-        | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. } => src,
+        | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. }
+        | crate::continuation::SuspensionPoint::Loop { yield_dst: src, .. } => src,
     };
     crate::execute::write_value(&mut registers_mut(generator), src, input.clone());
     true
@@ -47,6 +48,7 @@ fn install_frame_resume_input(
     install_try_frame_input(generator, input)
         || install_iterator_frame_input(generator, input)
         || install_private_frame_input(generator, input)
+        || install_loop_frame_input(generator, input)
         || install_branch_frame_input(generator, input)
 }
 

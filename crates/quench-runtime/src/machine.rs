@@ -697,6 +697,17 @@ pub enum Frame {
         resume: CodeRange,
         yield_dst: u16,
     },
+    Loop {
+        label: Option<String>,
+        body: CodeRange,
+        test: CodeRange,
+        update: CodeRange,
+        body_resume: CodeRange,
+        resume: CodeRange,
+        dst: u16,
+        yield_dst: u16,
+        post_test: bool,
+    },
 }
 
 include!("frame_resume.rs");
