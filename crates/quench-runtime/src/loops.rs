@@ -506,6 +506,7 @@ fn execute_loop_body(
 
 include!("loops_run.rs");
 include!("loops_numeric_kernel.rs");
+include!("loops_crypto_kernel.rs");
 include!("loops_advect_kernel.rs");
 include!("loops_packed_kernels.rs");
 include!("loops_body.rs");
