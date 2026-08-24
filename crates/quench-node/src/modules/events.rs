@@ -524,10 +524,76 @@ pub fn build() -> Value {
         }"#,
     )
     .unwrap_or(Value::Undefined);
+    let on = eval_function(
+        r#"(emitter, event, options) => {
+          if (options !== undefined && (options === null || typeof options !== "object")) {
+            const error = new TypeError("The options argument must be an object");
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+          options ||= {};
+          const target = typeof emitter?.on === "function";
+          if (!target && typeof emitter?.addEventListener !== "function") {
+            const error = new TypeError("The emitter must be an EventEmitter or EventTarget");
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+          if (options.signal !== undefined &&
+              (options.signal === null || typeof options.signal !== "object" ||
+               typeof options.signal.addEventListener !== "function")) {
+            const error = new TypeError("The signal option must be an AbortSignal");
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+          let queue = [], waiters = [], done = false, failure;
+          const finish = (error) => {
+            if (done) return;
+            failure = error;
+            done = true;
+            cleanup();
+            const pending = waiters.splice(0);
+            pending.forEach(({ resolve, reject }) => error ? reject(error) : resolve({ value: undefined, done: true }));
+          };
+          const push = (value) => {
+            if (done) return;
+            const waiter = waiters.shift();
+            if (waiter) waiter.resolve({ value, done: false });
+            else queue.push(value);
+          };
+          const onEvent = (...args) => push(args);
+          const onError = (error) => finish(error);
+          const onAbort = () => finish(Object.assign(new Error("The operation was aborted"), { name: "AbortError", code: "ABORT_ERR" }));
+          const cleanup = () => {
+            if (target) {
+              emitter.removeListener?.(event, onEvent);
+              emitter.removeListener?.("error", onError);
+            } else emitter.removeEventListener?.(event, onEvent);
+            options.signal?.removeEventListener?.("abort", onAbort);
+          };
+          if (target) { emitter.on(event, onEvent); if (event !== "error") emitter.on("error", onError); }
+          else emitter.addEventListener(event, onEvent);
+          if (options.signal?.aborted) onAbort();
+          else options.signal?.addEventListener?.("abort", onAbort, { once: true });
+          const iterator = {
+            next() {
+              if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
+              if (failure) return Promise.reject(failure);
+              if (done) return Promise.resolve({ value: undefined, done: true });
+              return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+            },
+            return() { finish(); return Promise.resolve({ value: undefined, done: true }); },
+            throw(reason) { finish(reason); return Promise.reject(reason); },
+            [Symbol.asyncIterator]() { return this; }
+          };
+          return iterator;
+        }"#,
+    )
+    .unwrap_or(Value::Undefined);
     let props: Vec<(String, Value)> = vec![
         ("EventEmitter".to_string(), value.clone()),
         ("defaultMaxListeners".to_string(), Value::Number(10.0)),
         ("once".to_string(), once),
+        ("on".to_string(), on),
         (
             "getMaxListeners".to_string(),
             cap("events:getMaxListeners:static", 0x0112),
