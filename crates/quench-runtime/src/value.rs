@@ -608,6 +608,16 @@ impl ObjectData {
         )
     }
 
+    pub(crate) fn with_shared_properties_for_owner(
+        owner: &Self,
+        properties: ObjectProperties,
+        private_slots: PrivateSlots,
+    ) -> Self {
+        let mut next = Self::with_shared_properties(properties, private_slots);
+        next.identity = owner.identity;
+        next
+    }
+
     pub(crate) fn from_shared_properties(properties: ObjectProperties) -> Self {
         Self::with_shared_properties(properties, Rc::new(RefCell::new(Vec::new())))
     }

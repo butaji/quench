@@ -115,7 +115,9 @@ pub(crate) fn patch_abrupt_value(ops: &mut [Op], start: usize, value: Option<u16
     for op in ops.iter_mut().skip(start) {
         match op {
             Op::Break { value: slot, .. } | Op::Continue { value: slot, .. } => {
-                *slot = value;
+                if slot.is_none() {
+                    *slot = value;
+                }
             }
             _ => {}
         }

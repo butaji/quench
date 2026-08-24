@@ -12,7 +12,12 @@ pub(crate) fn execute_delete_property(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let raw_target = crate::execute::read_register(registers, *object)?.clone();
-    let target = crate::locals::resolved_replacement(raw_target.clone());
+    let target = if crate::module_bindings::is_namespace(&raw_target) {
+        crate::locals::resolved_replacement(raw_target.clone())
+    } else {
+        crate::vm::resolve_global_owner(&raw_target)
+            .unwrap_or_else(|| crate::locals::resolved_replacement(raw_target.clone()))
+    };
     let target = match target {
         crate::value::Value::ObjectAlias(alias) if alias.target().is_none() => {
             // Top-level `this` aliases are weak COW views. If their replaced

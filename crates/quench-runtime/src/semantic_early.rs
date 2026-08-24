@@ -374,6 +374,32 @@ fn validate_nested(statements: &[Statement<'_>]) -> Result<(), Vec<String>> {
             Statement::LabeledStatement(statement) => {
                 validate_nested(std::slice::from_ref(&statement.body))?;
             }
+            Statement::IfStatement(statement) => {
+                if is_labelled_function(&statement.consequent)
+                    || statement
+                        .alternate
+                        .as_ref()
+                        .is_some_and(is_labelled_function)
+                {
+                    return Err(vec![
+                        "SyntaxError: labelled functions are not allowed in if statements"
+                            .to_string(),
+                    ]);
+                }
+                validate_nested(std::slice::from_ref(&statement.consequent))?;
+                if let Some(alternate) = &statement.alternate {
+                    validate_nested(std::slice::from_ref(alternate))?;
+                }
+            }
+            Statement::WithStatement(statement) => {
+                if is_labelled_function(&statement.body) {
+                    return Err(vec![
+                        "SyntaxError: labelled functions are not allowed in with statements"
+                            .to_string(),
+                    ]);
+                }
+                validate_nested(std::slice::from_ref(&statement.body))?;
+            }
             Statement::TryStatement(statement) => {
                 crate::semantic_catch::validate_try(statement, validate_nested)?;
             }
