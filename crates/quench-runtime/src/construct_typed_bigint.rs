@@ -184,8 +184,13 @@ fn typed_byte_length(length: usize) -> Result<usize, crate::execute::VmError> {
 }
 
 pub(crate) fn bigint_bits(value: &Value) -> Result<u64, crate::execute::VmError> {
+    if let Value::BindingCell(cell) = value {
+        return bigint_bits(&cell.borrow());
+    }
     let raw = match value {
-        Value::BigInt(raw) | Value::String(raw) => raw,
+        Value::BigInt(raw) | Value::String(raw) => raw.clone(),
+        Value::StringUnits(units) => String::from_utf16(&units.to_vec())
+            .map_err(|_| type_error("Invalid BigInt value"))?,
         _ => {
             return Err(type_error("Cannot convert a non-BigInt value to BigInt"));
         }
