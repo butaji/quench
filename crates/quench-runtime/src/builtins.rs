@@ -26,8 +26,7 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
 }
 
-pub(crate) fn async_iterator_prototype() -> Value {
-    let realm = crate::vm::current_context_or_default().realm();
+pub(crate) fn async_iterator_prototype_in(realm: crate::ops::RealmId) -> Value {
     ASYNC_ITERATOR_PROTOTYPES.with(|cell| {
         if let Some(value) = cell.borrow().get(&realm) {
             return value.clone();
@@ -43,7 +42,7 @@ pub(crate) fn async_iterator_prototype() -> Value {
             ),
             (
                 "\0prototype".to_string(),
-                Value::Builtin(Builtin::IteratorPrototype),
+                crate::vm::realm_intrinsic_for(realm, Builtin::IteratorPrototype),
             ),
         ])));
         for (key, method) in [
@@ -82,7 +81,7 @@ pub(crate) fn generator_prototype_in(realm: crate::ops::RealmId) -> Value {
         let mut value = Value::Object(Rc::new(ObjectData::new(vec![
             (
                 "constructor".to_string(),
-                Value::Builtin(Builtin::GeneratorFunctionPrototype),
+                crate::vm::realm_intrinsic_for(realm, Builtin::GeneratorFunctionPrototype),
             ),
             ("next".to_string(), Value::Builtin(Builtin::GeneratorNext)),
             (
@@ -96,7 +95,7 @@ pub(crate) fn generator_prototype_in(realm: crate::ops::RealmId) -> Value {
             ),
             (
                 "\0prototype".to_string(),
-                Value::Builtin(Builtin::IteratorPrototype),
+                crate::vm::realm_intrinsic_for(realm, Builtin::IteratorPrototype),
             ),
         ])));
         store_descriptor_metadata(
@@ -179,9 +178,12 @@ pub(crate) fn async_generator_prototype_in(realm: crate::ops::RealmId) -> Value 
             ),
             (
                 "constructor".to_string(),
-                crate::vm::realm_intrinsic(Builtin::AsyncGeneratorFunctionPrototype),
+                crate::vm::realm_intrinsic_for(realm, Builtin::AsyncGeneratorFunctionPrototype),
             ),
-            ("\0prototype".to_string(), async_iterator_prototype()),
+            (
+                "\0prototype".to_string(),
+                async_iterator_prototype_in(realm),
+            ),
         ])));
         for (key, method) in [
             ("next", Builtin::AsyncGeneratorNext),

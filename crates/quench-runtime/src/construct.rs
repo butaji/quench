@@ -162,7 +162,11 @@ fn construct_builtin_target(
     let prototype = needs_new_target
         .then(|| crate::execute::get_property_result(new_target, "prototype"))
         .transpose()?;
-    let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
+    let value = if is_dynamic_function_constructor(builtin) {
+        construct_dynamic_builtin_in_realm(builtin, arguments, target)?
+    } else {
+        construct_builtin_in_realm(builtin, arguments, new_target)?
+    };
     let value = if let Some(prototype) = prototype {
         apply_new_target_prototype(value, target, new_target, prototype)?
     } else {
@@ -170,6 +174,28 @@ fn construct_builtin_target(
     };
     validate_data_view(&value)?;
     Ok(value)
+}
+
+fn is_dynamic_function_constructor(builtin: crate::ops::Builtin) -> bool {
+    matches!(
+        builtin,
+        crate::ops::Builtin::Function
+            | crate::ops::Builtin::AsyncFunction
+            | crate::ops::Builtin::GeneratorFunction
+            | crate::ops::Builtin::AsyncGeneratorFunction
+    )
+}
+
+fn construct_dynamic_builtin_in_realm(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    constructor: &Value,
+) -> Result<Value, crate::execute::VmError> {
+    let realm = Some(constructor_realm(constructor));
+    match crate::functions_dynamic::construct_builtin_in_realm(builtin, arguments, realm) {
+        Some(result) => result,
+        None => Err(crate::vm::not_callable()),
+    }
 }
 
 fn validate_array_buffer_limits(arguments: &[Value]) -> Result<(), crate::execute::VmError> {
