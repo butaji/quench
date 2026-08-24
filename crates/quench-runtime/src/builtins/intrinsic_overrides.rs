@@ -3,7 +3,7 @@
 //! that should affect primitive lookups too; we record the descriptor here
 //! so subsequent reads see it.
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
 };
 
@@ -16,11 +16,21 @@ thread_local! {
         RefCell::new(HashSet::new());
     static INTRINSIC_PROTOTYPE_OVERRIDES: RefCell<HashMap<Builtin, Value>> =
         RefCell::new(HashMap::new());
+    static GENERATION: Cell<u64> = const { Cell::new(1) };
+}
+
+fn changed() {
+    GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1).max(1)));
+}
+
+pub(crate) fn generation() -> u64 {
+    GENERATION.with(Cell::get)
 }
 
 /// Record a `[[Prototype]]` override for the intrinsic `builtin`. Subsequent
 /// `get_prototype_of` lookups return the override instead of the default.
 pub(crate) fn write_prototype(builtin: Builtin, value: Value) {
+    changed();
     INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().insert(builtin, value);
     });
@@ -34,6 +44,7 @@ pub(crate) fn read_prototype(builtin: Builtin) -> Option<Value> {
 /// Clear the recorded `[[Prototype]]` override for the intrinsic `builtin`.
 #[allow(dead_code)]
 pub(crate) fn clear_prototype(builtin: Builtin) {
+    changed();
     INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().remove(&builtin);
     });
@@ -56,6 +67,7 @@ pub(crate) fn keys(builtin: Builtin) -> Vec<String> {
 }
 
 pub(crate) fn write(builtin: Builtin, key: &str, descriptor: Value) {
+    changed();
     INTRINSIC_OVERRIDES.with(|overrides| {
         overrides
             .borrow_mut()
@@ -67,6 +79,7 @@ pub(crate) fn write(builtin: Builtin, key: &str, descriptor: Value) {
 }
 
 pub(crate) fn remove(builtin: Builtin, key: &str) {
+    changed();
     INTRINSIC_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().remove(&(builtin, key.to_string()));
     });
@@ -76,6 +89,7 @@ pub(crate) fn remove(builtin: Builtin, key: &str) {
 /// Record that `key` was deleted from `builtin`'s prototype chain so a
 /// future hardcoded prototype-chain lookup can observe the deletion.
 pub(crate) fn mark_removed(builtin: Builtin, key: &str) {
+    changed();
     INTRINSIC_REMOVED.with(|removed| {
         removed.borrow_mut().insert((builtin, key.to_string()));
     });
@@ -90,6 +104,7 @@ pub(crate) fn is_removed(builtin: Builtin, key: &str) -> bool {
 /// Drop every cached override and recorded deletion so a fresh program can
 /// start with a clean prototype view.
 pub(crate) fn reset() {
+    changed();
     INTRINSIC_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
     INTRINSIC_REMOVED.with(|removed| removed.borrow_mut().clear());
     INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
