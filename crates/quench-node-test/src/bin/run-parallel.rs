@@ -240,11 +240,7 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
         results.push((path, result));
         println!("{:?} {}", result, path.display());
     }
-    let inventory_hash = entries.iter().fold(0xcbf29ce484222325u64, |hash, path| {
-        path.to_string_lossy().bytes().fold(hash, |hash, byte| {
-            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-        })
-    });
+    let inventory_hash = inventory_hash(&entries);
     let [passed, failed, timeout, crash] = counts;
     println!(
         "all: pass={passed} fail={failed} timeout={timeout} crash={crash} total={} inventory_hash={inventory_hash:016x}",
@@ -271,7 +267,18 @@ fn write_results(
 ) -> std::io::Result<()> {
     use std::io::Write;
     let mut file = std::fs::File::create(path)?;
-    writeln!(file, "{{\"inventory_hash\":\"{inventory_hash:016x}\",\"timeout_secs\":{timeout_secs},\"results\":[")?;
+    let node_version = command_output("node", &["--version"]);
+    let runtime_commit = command_output("git", &["rev-parse", "HEAD"]);
+    let tests_node_commit = command_output("git", &["-C", "tests/node", "rev-parse", "HEAD"]);
+    let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    writeln!(
+        file,
+        "{{\"schema_version\":1,\"inventory_hash\":\"{inventory_hash:016x}\",\"timeout_secs\":{timeout_secs},\"node_version\":\"{}\",\"runtime_commit\":\"{}\",\"tests_node_commit\":\"{}\",\"platform\":\"{}\",\"results\":[",
+        json_escape(&node_version),
+        json_escape(&runtime_commit),
+        json_escape(&tests_node_commit),
+        json_escape(&platform),
+    )?;
     for (index, (fixture, result)) in results.iter().enumerate() {
         let comma = if index + 1 == results.len() { "" } else { "," };
         writeln!(
@@ -282,6 +289,31 @@ fn write_results(
         )?;
     }
     writeln!(file, "]}}")
+}
+
+fn inventory_hash(entries: &[PathBuf]) -> u64 {
+    entries.iter().fold(0xcbf29ce484222325u64, |hash, path| {
+        let hash = path.to_string_lossy().bytes().fold(hash, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        });
+        std::fs::read(path)
+            .unwrap_or_default()
+            .into_iter()
+            .fold(hash, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+            })
+    })
+}
+
+fn command_output(program: &str, args: &[&str]) -> String {
+    std::process::Command::new(program)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|output| !output.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn json_escape(value: &str) -> String {
