@@ -53,21 +53,6 @@ fn attach_prototype(value: &crate::value::Value) {
     }
 }
 
-fn constructor_descriptor(value: crate::value::Value) -> crate::value::Value {
-    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("value".to_string(), value),
-        ("writable".to_string(), crate::value::Value::Boolean(true)),
-        (
-            "enumerable".to_string(),
-            crate::value::Value::Boolean(false),
-        ),
-        (
-            "configurable".to_string(),
-            crate::value::Value::Boolean(true),
-        ),
-    ])))
-}
-
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
     let parent = if function.is_async {
         crate::builtins::async_generator_prototype()
