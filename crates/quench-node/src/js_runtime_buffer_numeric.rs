@@ -324,6 +324,9 @@ fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
     let count = source_end
         .saturating_sub(source_start)
         .min(target_bytes.saturating_sub(target_start));
+    if target_buffer.immutable {
+        return Ok(Value::Number(0.0));
+    }
     target_buffer.bytes.borrow_mut()
         [target_offset + target_start..target_offset + target_start + count]
         .copy_from_slice(&source[source_start..source_start + count]);
@@ -331,75 +334,7 @@ fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
 }
 
 fn buffer_fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else {
-        return Err(VmError::NotCallable);
-    };
-    let mut fill = string_or_bytes(arguments.first()).or_else(|_| match arguments.first() {
-        Some(Value::Null) | Some(Value::Undefined) => Ok(vec![0]),
-        Some(Value::Number(value)) => Ok(vec![*value as u8]),
-        _ => Err(VmError::NotCallable),
-    })?;
-    let encoding_index = if matches!(arguments.get(1), Some(Value::String(_))) {
-        1
-    } else {
-        3
-    };
-    if matches!(arguments.get(encoding_index), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex"))
-    {
-        let Some(Value::String(value)) = arguments.first() else {
-            return Err(VmError::Thrown(fs_error(
-                "ERR_INVALID_ARG_VALUE",
-                "invalid hex fill",
-            )));
-        };
-        let decoded = decode_hex(value);
-        if decoded.len() * 2 != value.len() {
-            return Err(VmError::Thrown(fs_error(
-                "ERR_INVALID_ARG_VALUE",
-                "invalid hex fill",
-            )));
-        }
-        fill = decoded;
-    }
-    if fill.is_empty() {
-        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
-    }
-    if arguments
-        .get(1)
-        .is_some_and(|value| !matches!(value, Value::Number(_)))
-        || arguments
-            .get(2)
-            .is_some_and(|value| !matches!(value, Value::Number(_) | Value::String(_)))
-    {
-        return Err(VmError::Thrown(fs_error(
-            "ERR_INVALID_ARG_TYPE",
-            "range must be numeric",
-        )));
-    }
-    let start = arguments
-        .get(1)
-        .and_then(|value| match value {
-            Value::Number(value) => Some(*value as usize),
-            _ => None,
-        })
-        .unwrap_or(0)
-        .min(view.length);
-    let end = arguments
-        .get(2)
-        .and_then(|value| match value {
-            Value::Number(value) => Some(*value as usize),
-            _ => None,
-        })
-        .unwrap_or(view.length)
-        .min(view.length);
-    let mut bytes = view.buffer.bytes.borrow_mut();
-    for (index, byte) in bytes[view.byte_offset + start..view.byte_offset + end]
-        .iter_mut()
-        .enumerate()
-    {
-        *byte = fill[index % fill.len()];
-    }
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+    quench_node::modules::buffer_methods::fill_view(receiver, arguments)
 }
 
 fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {

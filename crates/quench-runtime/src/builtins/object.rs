@@ -182,6 +182,7 @@ fn set_function_prototype(target: &Value, prototype: Value) -> Value {
     let properties = match target {
         Value::Function(function) => &function.properties,
         Value::BoundFunction(function) => &function.properties,
+        Value::HostCapability(capability) => &capability.properties,
         _ => return target.clone(),
     };
     let mut properties = properties.borrow_mut();
@@ -213,8 +214,25 @@ fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
         Value::Object(_)
             | Value::Array(_)
             | Value::ObjectAlias(_)
+            | Value::ArrayBuffer(_)
+            | Value::DataView(_)
+            | Value::Float64Array(_)
+            | Value::Float32Array(_)
+            | Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+            | Value::Uint32Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+            | Value::Map(_)
+            | Value::Set(_)
+            | Value::Promise(_)
             | Value::Function(_)
             | Value::BoundFunction(_)
+            | Value::HostCapability(_)
             | Value::Builtin(_)
     ) {
         return Ok(());
@@ -233,6 +251,7 @@ fn validate_set_prototype_value(prototype: &Value) -> Result<(), VmError> {
             | Value::Builtin(_)
             | Value::Function(_)
             | Value::BoundFunction(_)
+            | Value::HostCapability(_)
             | Value::Null
     ) {
         return Ok(());

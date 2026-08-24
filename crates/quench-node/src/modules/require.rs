@@ -197,6 +197,17 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             "sleep".to_string(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
         )])),
+        "internal/test/binding" => Some(crate::host::namespace_object_from_pairs(vec![(
+            "internalBinding".to_string(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_BINDING),
+        )])),
+        "internal/errors" => Some(crate::host::namespace_object_from_pairs(vec![(
+            "codes".to_string(),
+            crate::host::namespace_object_from_pairs(vec![(
+                "ERR_OUT_OF_RANGE".to_string(),
+                Value::Builtin(quench_runtime::ops::Builtin::RangeError),
+            )]),
+        )])),
         // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => Some(crate::host::namespace_object_from_pairs(vec![(
             "kWeakHandler".to_string(),

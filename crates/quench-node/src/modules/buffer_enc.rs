@@ -55,6 +55,21 @@ pub fn buffer_out_of_bounds(message: &str) -> VmError {
     coded_error("RangeError", "ERR_BUFFER_OUT_OF_BOUNDS", message)
 }
 
+pub fn string_too_long() -> VmError {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(
+            "Cannot create a string longer than the maximum allowed length".into(),
+        )],
+    );
+    let error = quench_runtime::execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_STRING_TOO_LONG".into()),
+    );
+    VmError::Thrown(error)
+}
+
 fn coded_error(name: &str, code: &str, message: &str) -> VmError {
     let builtin = match name {
         "RangeError" => quench_runtime::ops::Builtin::RangeError,

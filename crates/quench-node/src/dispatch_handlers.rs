@@ -274,6 +274,52 @@ pub fn internal_util_sleep(
     Ok(Value::Undefined)
 }
 
+pub fn internal_binding(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(name)) = args.first() else {
+        return Err(VmError::EvalError("binding name must be a string".into()));
+    };
+    if name == "buffer" {
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "fill".to_string(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_FILL),
+        )]));
+    }
+    if name == "util" {
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "arrayBufferViewHasBuffer".to_string(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
+        )]));
+    }
+    Ok(crate::host::namespace_object_from_pairs(Vec::new()))
+}
+
+pub fn internal_buffer_fill(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::buffer_methods::internal_fill(args)
+}
+
+pub fn internal_view_has_buffer(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(view) = args.first() else {
+        return Err(VmError::NotCallable);
+    };
+    let length = quench_runtime::execute::get_property_result(view, "byteLength").ok();
+    Ok(Value::Boolean(
+        view.typed_array_buffer_materialized()
+            || matches!(length, Some(Value::Number(value)) if value >= 64.0),
+    ))
+}
+
 fn sleep_error(name: &str, message: &str) -> VmError {
     VmError::Thrown(quench_runtime::host_api::object(vec![
         ("name".to_string(), Value::String(name.to_string())),
