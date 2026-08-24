@@ -154,6 +154,10 @@ pub const SPEC_BUFFER_INCLUDES: NodeSpec = NodeSpec::new("buffer.prototype:inclu
 pub const SPEC_BUFFER_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:write", 0x081D);
 pub const SPEC_BUFFER_INSPECT: NodeSpec = NodeSpec::new("buffer.prototype:inspect", 0x081E);
 pub const SPEC_BUFFER_COPY_BYTES_FROM: NodeSpec = NodeSpec::new("buffer:copyBytesFrom", 0x081F);
+pub const SPEC_BUFFER_INSPECT_MAX_BYTES_GET: NodeSpec =
+    NodeSpec::new("buffer:inspectMaxBytesGet", 0x0854);
+pub const SPEC_BUFFER_INSPECT_MAX_BYTES_SET: NodeSpec =
+    NodeSpec::new("buffer:inspectMaxBytesSet", 0x0855);
 
 macro_rules! buffer_num_specs {
     ($(($name:ident, $id:expr)),* $(,)?) => {
