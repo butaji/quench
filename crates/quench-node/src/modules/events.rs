@@ -74,8 +74,12 @@ fn event_name(value: Option<&Value>) -> Result<String, VmError> {
 fn expect_listener(args: &[Value]) -> Result<Value, VmError> {
     match args.get(1) {
         Some(value) if quench_runtime::is_callable(value) => Ok(value.clone()),
-        _ => Err(execute::type_error(
-            "The \"listener\" argument must be of type function",
+        Some(value) => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"listener\" argument must be of type function.{}",
+            crate::modules::util::invalid_arg_received(value)
+        ))),
+        None => Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"listener\" argument must be of type function. Received undefined".into(),
         )),
     }
 }
