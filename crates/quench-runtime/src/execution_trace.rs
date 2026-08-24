@@ -51,6 +51,7 @@ struct Counters {
     slow: HashMap<&'static str, u64>,
     binary: HashMap<&'static str, u64>,
     constant: HashMap<&'static str, u64>,
+    environment_children: HashMap<(usize, usize), u64>,
     events: [u64; EVENT_NAMES.len()],
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
@@ -210,6 +211,24 @@ pub(crate) fn slow(_: &crate::ops::Op) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
+pub(crate) fn environment_child(captures: usize, locals: usize) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .environment_children
+                .entry((captures, locals))
+                .or_default() += 1;
+        });
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn environment_child(_: usize, _: usize) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
 pub(crate) fn event(event: Event) {
     if enabled() {
         COUNTERS.with(|counters| counters.borrow_mut().events[event as usize] += 1);
@@ -260,6 +279,13 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     )
                 })
                 .collect::<serde_json::Map<_, _>>();
+            let environment_children = counters
+                .environment_children
+                .iter()
+                .map(|(&(captures, locals), count)| {
+                    (format!("{captures}:{locals}"), serde_json::json!(count))
+                })
+                .collect::<serde_json::Map<_, _>>();
             let compact_total: u64 = counters.compact.iter().sum();
             let slow_total: u64 = counters.slow.values().sum();
             let mut transitions: Vec<_> = counters.transitions.iter().collect();
@@ -296,6 +322,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "slow": slow,
                 "binary": binary,
                 "constant": constant,
+                "environment_children": environment_children,
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
