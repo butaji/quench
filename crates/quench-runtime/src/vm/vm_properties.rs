@@ -161,13 +161,6 @@ fn get_property_value_tail(value: &Value, key: &str) -> Value {
 fn get_property_value_object_tail(value: &Value, key: &str) -> Value {
     use Value::*;
     match value {
-        HostCapability(capability) => capability
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find_map(|(name, property)| (name == key).then_some(property.clone()))
-            .unwrap_or(Value::Undefined),
         Function(function) if matches!(key, "apply" | "call" | "bind") => {
             function_prototype_method(key).unwrap_or_else(|| function_property(function, key))
         }
