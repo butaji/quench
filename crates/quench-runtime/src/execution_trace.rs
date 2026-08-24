@@ -35,6 +35,18 @@ struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
     slow: HashMap<&'static str, u64>,
     events: [u64; EVENT_NAMES.len()],
+    transitions: HashMap<(&'static str, &'static str), u64>,
+    previous: Option<&'static str>,
+}
+
+#[cfg(feature = "execution-trace")]
+impl Counters {
+    #[inline]
+    fn retire(&mut self, name: &'static str) {
+        if let Some(previous) = self.previous.replace(name) {
+            *self.transitions.entry((previous, name)).or_default() += 1;
+        }
+    }
 }
 
 #[cfg(feature = "execution-trace")]
@@ -60,7 +72,15 @@ pub(crate) const fn enabled() -> bool {
 #[cfg(feature = "execution-trace")]
 pub(crate) fn compact(opcode: crate::ir::Opcode) {
     if enabled() {
-        COUNTERS.with(|counters| counters.borrow_mut().compact[opcode as usize] += 1);
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            counters.compact[opcode as usize] += 1;
+            // Slow is a storage gateway, not a semantic operation. Its cold Op
+            // is recorded below so a transition contains each retirement once.
+            if !opcode.is_slow() {
+                counters.retire(opcode.name());
+            }
+        });
     }
 }
 
@@ -73,11 +93,10 @@ pub(crate) fn compact(_: crate::ir::Opcode) {}
 pub(crate) fn slow(op: &crate::ops::Op) {
     if enabled() {
         COUNTERS.with(|counters| {
-            *counters
-                .borrow_mut()
-                .slow
-                .entry(op.variant_name())
-                .or_default() += 1;
+            let mut counters = counters.borrow_mut();
+            let name = op.variant_name();
+            *counters.slow.entry(name).or_default() += 1;
+            counters.retire(name);
         });
     }
 }
@@ -130,8 +149,19 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 .collect::<serde_json::Map<_, _>>();
             let compact_total: u64 = counters.compact.iter().sum();
             let slow_total: u64 = counters.slow.values().sum();
+            let mut transitions: Vec<_> = counters.transitions.iter().collect();
+            transitions.sort_unstable_by(|left, right| right.1.cmp(left.1));
+            let transitions = transitions
+                .into_iter()
+                .take(64)
+                .map(|(&(from, to), &count)| {
+                    serde_json::json!({
+                        "from": from, "to": to, "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
             serde_json::json!({
-                "schema": 1,
+                "schema": 2,
                 "compact_total": compact_total,
                 "slow_total": slow_total,
                 "guest_total": compact_total,
@@ -139,6 +169,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "compact": compact,
                 "slow": slow,
                 "events": events,
+                "transitions": transitions,
             })
         })
     })
