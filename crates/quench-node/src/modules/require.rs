@@ -21,6 +21,11 @@ use crate::host::HostState;
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
+    if matches!(spec.as_str(), "async_hooks" | "node:async_hooks") {
+        let value = crate::modules::compat_extra::async_hooks(state)?;
+        state.borrow_mut().module_cache.insert(spec, value.clone());
+        return Ok(value);
+    }
     // `node:assert` exports a callable value whose identity is stable
     // across requires (assert.strict === assert); cache it like a CJS module.
     if matches!(
@@ -220,6 +225,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             crate::modules::os::build(),
         )),
         "events" => Some(crate::modules::events::build()),
+        "async_hooks" => crate::modules::compat_extra::async_hooks(state).ok(),
         "string_decoder" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::string_decoder::build(),
         )),
@@ -258,16 +264,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "worker_threads" => Some(crate::host::namespace_object_from_pairs(vec![
-            ("isMainThread".to_string(), Value::Boolean(true)),
-            (
-                "Worker".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "worker_threads:Worker",
-                    0x1900,
-                )),
-            ),
-        ])),
+        "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
             "isSea".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),

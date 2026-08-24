@@ -5,7 +5,7 @@
 //! `Uint8Array.prototype`). Static constructors and codecs are pure
 //! Rust; no JS shim.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
@@ -19,6 +19,10 @@ use crate::modules::buffer_enc as enc;
 pub const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
 /// Node's `buffer.constants.MAX_STRING_LENGTH`.
 pub const MAX_STRING_LENGTH: f64 = 536_870_888.0;
+
+thread_local! {
+    static INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(50.0) };
+}
 
 /// Static capability methods of the `Buffer` constructor.
 const STATIC_METHODS: &[(&str, crate::registry::NodeSpec)] = &[
@@ -370,10 +374,52 @@ pub fn build_module() -> Value {
             "kStringMaxLength".to_string(),
             Value::Number(MAX_STRING_LENGTH),
         ),
-        ("INSPECT_MAX_BYTES".to_string(), Value::Number(50.0)),
         ("constants".to_string(), constants_object()),
     ];
-    crate::host::namespace_object_from_pairs(module_props)
+    let module = crate::host::namespace_object_from_pairs(module_props);
+    let descriptor = host_api::object(vec![
+        (
+            "get".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_INSPECT_MAX_BYTES_GET),
+        ),
+        (
+            "set".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_INSPECT_MAX_BYTES_SET),
+        ),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]);
+    quench_runtime::execute::define_property(module, "INSPECT_MAX_BYTES", descriptor)
+        .unwrap_or_else(|_| Value::Undefined)
+}
+
+pub fn inspect_max_bytes_get(
+    _state: &Rc<RefCell<crate::host::HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(INSPECT_MAX_BYTES.with(Cell::get)))
+}
+
+pub fn inspect_max_bytes_set(
+    _state: &Rc<RefCell<crate::host::HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Number(value)) = args.first() else {
+        return Err(enc::invalid_arg_type(
+            "INSPECT_MAX_BYTES must be a number".to_string(),
+        ));
+    };
+    if value.is_nan() || *value < 0.0 {
+        return Err(enc::out_of_range(
+            "INSPECT_MAX_BYTES",
+            ">= 0",
+            &value.to_string(),
+        ));
+    }
+    INSPECT_MAX_BYTES.with(|current| current.set(*value));
+    Ok(Value::Undefined)
 }
 
 fn constants_object() -> Value {

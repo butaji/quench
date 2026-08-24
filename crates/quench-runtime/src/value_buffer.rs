@@ -28,6 +28,7 @@ pub struct ArrayBufferData {
     pub detached: Rc<RefCell<bool>>,
     pub max_byte_length: Option<usize>,
     pub immutable: bool,
+    pub untransferable: bool,
     prototype: RefCell<Option<Value>>,
     properties: RefCell<Vec<(String, Value)>>,
 }
@@ -46,6 +47,7 @@ impl ArrayBufferData {
             detached: Rc::new(RefCell::new(false)),
             max_byte_length: None,
             immutable: false,
+            untransferable: false,
             prototype: RefCell::new(None),
             properties: RefCell::new(Vec::new()),
         })
@@ -58,6 +60,7 @@ impl ArrayBufferData {
             detached: Rc::new(RefCell::new(false)),
             max_byte_length: None,
             immutable: false,
+            untransferable: false,
             prototype: RefCell::new(None),
             properties: RefCell::new(Vec::new()),
         }
