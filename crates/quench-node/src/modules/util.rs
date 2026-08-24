@@ -8,7 +8,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use quench_runtime::execute::VmError;
-use quench_runtime::value::Value;
+use quench_runtime::ops::FunctionKind;
+use quench_runtime::value::{IteratorState, Value};
 
 thread_local! {
     /// The live `util.inspect.defaultOptions` object; formatters read
@@ -118,10 +119,30 @@ pub fn build() -> Vec<(String, Value)> {
         .and_then(|object| quench_runtime::execute::get_property_result(&object, "assign").ok())
         .unwrap_or(Value::Undefined);
     let to_usv_string = crate::host::capability(crate::registry::SPEC_UTIL_TO_USV_STRING);
-    let types = quench_runtime::host_api::object(vec![(
-        "isNativeError".to_string(),
-        crate::host::capability(crate::registry::SPEC_UTIL_IS_NATIVE_ERROR),
-    )]);
+    let types = types_object();
+    /*let type_names = [
+        "isArgumentsObject", "isArrayBuffer", "isAsyncFunction", "isBigIntObject",
+        "isBooleanObject", "isDate", "isExternal", "isGeneratorFunction",
+        "isGeneratorObject", "isMap", "isMapIterator", "isModuleNamespaceObject",
+        "isNativeError", "isNumberObject", "isPromise", "isProxy", "isRegExp",
+        "isSet", "isSetIterator", "isSharedArrayBuffer", "isStringObject",
+        "isSymbolObject", "isWeakMap", "isWeakSet", "isAnyArrayBuffer",
+        "isBoxedPrimitive", "isArrayBufferView", "isDataView", "isTypedArray",
+        "isUint8Array", "isUint8ClampedArray", "isUint16Array", "isUint32Array",
+        "isInt8Array", "isInt16Array", "isInt32Array", "isFloat16Array",
+        "isFloat32Array", "isFloat64Array", "isBigInt64Array", "isBigUint64Array",
+        "isKeyObject", "isCryptoKey",
+    ];
+    let types = quench_runtime::host_api::object(type_names.iter().map(|name| (
+        (*name).to_string(),
+        quench_runtime::host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_UTIL_TYPE_PREDICATE.cap),
+            },
+            vec![Value::String((*name).to_string())],
+        ),
+    )).collect());*/
     vec![
         (
             "isArray".to_string(),
@@ -176,6 +197,97 @@ pub fn build() -> Vec<(String, Value)> {
             crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW),
         ),
     ]
+}
+
+pub fn types_object() -> Value {
+    let names = [
+        "isArgumentsObject", "isArrayBuffer", "isAsyncFunction", "isBigIntObject",
+        "isBooleanObject", "isDate", "isExternal", "isGeneratorFunction",
+        "isGeneratorObject", "isMap", "isMapIterator", "isModuleNamespaceObject",
+        "isNativeError", "isNumberObject", "isPromise", "isProxy", "isRegExp",
+        "isSet", "isSetIterator", "isSharedArrayBuffer", "isStringObject",
+        "isSymbolObject", "isWeakMap", "isWeakSet", "isAnyArrayBuffer",
+        "isBoxedPrimitive", "isArrayBufferView", "isDataView", "isTypedArray",
+        "isUint8Array", "isUint8ClampedArray", "isUint16Array", "isUint32Array",
+        "isInt8Array", "isInt16Array", "isInt32Array", "isFloat16Array",
+        "isFloat32Array", "isFloat64Array", "isBigInt64Array", "isBigUint64Array",
+        "isKeyObject", "isCryptoKey",
+    ];
+    quench_runtime::host_api::object(names.iter().map(|name| (
+        (*name).to_string(),
+        quench_runtime::host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_UTIL_TYPE_PREDICATE.cap),
+            },
+            vec![Value::String((*name).to_string())],
+        ),
+    )).collect())
+}
+
+/// Runtime identity predicates share one capability and differ only by this data key.
+pub fn type_predicate(name: &str, value: &Value) -> bool {
+    let typed = matches!(value,
+        Value::Float64Array(_) | Value::Float32Array(_) | Value::Int8Array(_) |
+        Value::Int16Array(_) | Value::Int32Array(_) | Value::BigInt64Array(_) |
+        Value::BigUint64Array(_) | Value::Uint32Array(_) | Value::Uint8Array(_) |
+        Value::Uint8ClampedArray(_) | Value::Uint16Array(_));
+    let view = typed || matches!(value, Value::DataView(_));
+    match name {
+        "isArrayBuffer" => matches!(value, Value::ArrayBuffer(_)),
+        "isSharedArrayBuffer" => matches!(value, Value::ArrayBuffer(buffer) if buffer.shared),
+        "isAnyArrayBuffer" => matches!(value, Value::ArrayBuffer(_)),
+        "isArrayBufferView" => view,
+        "isDataView" => matches!(value, Value::DataView(_)),
+        "isTypedArray" => typed,
+        "isUint8Array" => matches!(value, Value::Uint8Array(_)),
+        "isUint8ClampedArray" => matches!(value, Value::Uint8ClampedArray(_)),
+        "isUint16Array" => matches!(value, Value::Uint16Array(_)),
+        "isUint32Array" => matches!(value, Value::Uint32Array(_)),
+        "isInt8Array" => matches!(value, Value::Int8Array(_)),
+        "isInt16Array" => matches!(value, Value::Int16Array(_)),
+        "isInt32Array" => matches!(value, Value::Int32Array(_)),
+        "isFloat32Array" => matches!(value, Value::Float32Array(_)),
+        "isFloat64Array" => matches!(value, Value::Float64Array(_)),
+        "isBigInt64Array" => matches!(value, Value::BigInt64Array(_)),
+        "isBigUint64Array" => matches!(value, Value::BigUint64Array(_)),
+        "isPromise" => matches!(value, Value::Promise(_)),
+        "isProxy" => matches!(value, Value::Proxy(_)),
+        "isRegExp" => matches!(quench_runtime::execute::get_property_result(value, "\0regexp"), Ok(Value::Boolean(true))),
+        "isDate" => matches!(quench_runtime::execute::get_property_result(value, "timeValue"), Ok(Value::Number(_) | Value::BindingCell(_))),
+        "isMap" => matches!(value, Value::Map(data) if !data.is_weak()),
+        "isWeakMap" => matches!(value, Value::Map(data) if data.is_weak()),
+        "isSet" => matches!(value, Value::Set(data) if !data.is_weak()),
+        "isWeakSet" => matches!(value, Value::Set(data) if data.is_weak()),
+        "isMapIterator" => matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Map { .. })),
+        "isSetIterator" => matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Set { .. })),
+        "isGeneratorObject" => matches!(value, Value::Generator(_)),
+        "isGeneratorFunction" => matches!(value, Value::Function(function) if function.kind == FunctionKind::Generator && !function.is_async),
+        "isAsyncFunction" => matches!(value, Value::Function(function) if function.is_async && function.kind != FunctionKind::Generator),
+        "isArgumentsObject" => matches!(quench_runtime::execute::get_property_result(value, "\0arguments"), Ok(found) if !matches!(found, Value::Undefined)),
+        "isBooleanObject" => boxed_constructor(value, "Boolean"),
+        "isNumberObject" => boxed_constructor(value, "Number"),
+        "isStringObject" => boxed_constructor(value, "String"),
+        "isSymbolObject" => boxed_constructor(value, "Symbol"),
+        "isBigIntObject" => boxed_constructor(value, "BigInt"),
+        "isBoxedPrimitive" => ["Boolean", "Number", "String", "Symbol", "BigInt"].iter().any(|kind| boxed_constructor(value, kind)),
+        "isNativeError" => matches!(quench_runtime::execute::get_property_result(value, "\0error_slot"), Ok(Value::Boolean(true))),
+        "isFloat16Array" | "isExternal" | "isModuleNamespaceObject" | "isKeyObject" | "isCryptoKey" => false,
+        _ => false,
+    }
+}
+
+fn boxed_constructor(value: &Value, name: &str) -> bool {
+    let prototype = quench_runtime::execute::get_property_result(value, "\0prototype");
+    let expected = match name {
+        "Boolean" => quench_runtime::ops::Builtin::BooleanPrototype,
+        "Number" => quench_runtime::ops::Builtin::NumberPrototype,
+        "String" => quench_runtime::ops::Builtin::StringPrototype,
+        _ => return false,
+    };
+    matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::BindingCell(_))
+        && matches!(prototype, Ok(Value::Builtin(actual)) if actual == expected)
+        && matches!(quench_runtime::execute::get_property_result(value, "_value"), Ok(Value::Boolean(_) | Value::Number(_) | Value::String(_)))
 }
 
 fn inspect_capability() -> Value {

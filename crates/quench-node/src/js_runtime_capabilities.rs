@@ -45,6 +45,7 @@ impl CapabilityName {
     const ProcessActiveResourcesInfo: u16 = 2112;
     const ProcessPermissionHas: u16 = 2114;
     const UtilIsDate: u16 = 2130;
+    const UtilTypePredicate: u16 = 0x030C;
     const VmCreateContext: u16 = 2113;
     const VmRunInContext: u16 = 1361;
     const VmScript: u16 = 2115;
