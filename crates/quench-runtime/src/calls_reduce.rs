@@ -169,7 +169,10 @@ fn reduce_eval_call(
         callee,
         source,
         strict: direct && facts.strict,
-        global: !facts.in_function,
+        // A direct eval in a function uses that activation's variable
+        // environment.  The explicit `this` binding remains the reliable
+        // scope fact even when reduction is traversing a nested expression.
+        global: !facts.in_function && !bindings.iter().any(|(name, _)| name == "this"),
         direct,
         tail: false,
         bindings,
