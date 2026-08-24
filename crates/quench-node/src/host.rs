@@ -392,25 +392,33 @@ fn install_web_globals(mut context: VmContext) -> VmContext {
 
 /// Build a capability call descriptor for the host.
 pub fn capability(spec: NodeSpec) -> Value {
-    // Buffer.prototype methods are installed through the legacy NodeSpec
-    // registry, but the active JsRuntime dispatch uses the dedicated
-    // capability enum.  Keep this alias at the boundary so Buffer.prototype
-    // does not expose an unhandled numeric capability (0x0808).
-    let kind = if spec.cap == crate::registry::SPEC_BUFFER_TOSTRING.cap {
-        HostCapabilityKind::Custom(1563)
-    } else {
-        // Legacy HTTP registry IDs are still emitted by bootstrap method
-        // installation; translate them to the active host capability IDs.
-        let cap = match spec.cap {
-            0x1200 => 1,
-            0x0F00..=0x0F0D => spec.cap,
-            other => other,
-        };
-        HostCapabilityKind::Custom(cap)
-    };
+    let kind = capability_kind(spec);
     host_api::capability_function(HostCapabilityRef {
         realm: RealmId::ROOT,
         kind,
+    })
+}
+
+/// Build a host capability whose receiver remains the JavaScript call-site
+/// receiver. Prototype methods must not bind themselves to the capability
+/// token used to authorize dispatch.
+pub fn method_capability(spec: NodeSpec) -> Value {
+    let kind = capability_kind(spec);
+    Value::HostCapability(Rc::new(quench_runtime::value::HostCapabilityValue::new(
+        HostCapabilityRef { realm: RealmId::ROOT, kind },
+    )))
+}
+
+fn capability_kind(spec: NodeSpec) -> HostCapabilityKind {
+    // Translate legacy registry ids once at the host boundary.
+    HostCapabilityKind::Custom(if spec.cap == crate::registry::SPEC_BUFFER_TOSTRING.cap {
+        1563
+    } else {
+        match spec.cap {
+            0x1200 => 1,
+            0x0F00..=0x0F0D => spec.cap,
+            other => other,
+        }
     })
 }
 
