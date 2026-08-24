@@ -346,14 +346,23 @@ impl Environment {
             .filter_map(|index| environment.slot(index as u16))
             .collect::<Vec<_>>()
             .into();
+        // A captured environment may contain bindings belonging to its
+        // caller.  Do not carry immutable-slot markers for those discarded
+        // slots into the new function-local frame: slot numbers are reused
+        // by the callee after the captured prefix.
+        let immutable_slots = environment.immutable_slots.borrow().as_ref().map(|slots| {
+            slots
+                .iter()
+                .copied()
+                .filter(|slot| usize::from(*slot) < count)
+                .collect()
+        });
         Rc::new(Self {
             slots: RefCell::new(SlotRefs::from_prefix(refs)),
             names: RefCell::new(environment.names.borrow().clone()),
             eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
-            immutable_slots: RefCell::new(environment.immutable_slots.borrow().as_ref().map(|slots| {
-                slots.iter().copied().filter(|slot| usize::from(*slot) < count).collect()
-            })),
+            immutable_slots: RefCell::new(immutable_slots),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
@@ -413,6 +422,9 @@ impl Environment {
     }
 
     pub(crate) fn update_number(&self, slot: u16, delta: f64) -> Option<(f64, f64)> {
+        if self.is_immutable_slot(slot) && !self.is_uninitialized(slot) {
+            return None;
+        }
         self.slot(slot)?.update_number(delta)
     }
 
@@ -552,12 +564,18 @@ impl Environment {
         {
             return true;
         }
-        if self.slot(slot).is_some() {
+        let Some(caller) = &self.caller else {
             return false;
-        }
-        self.caller
-            .as_ref()
-            .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
+        };
+        // A call frame keeps captured bindings as the same cells while
+        // appending its own slots.  Only continue through the caller chain
+        // for a captured slot; a newly allocated local with the same index
+        // must continue to shadow an eval binding in the caller.
+        let captured = self
+            .slot(slot)
+            .zip(caller.slot(slot))
+            .is_some_and(|(current, parent)| current.same(&parent));
+        captured && caller.eval_name_aliases_slot(name, slot)
     }
 
     fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
