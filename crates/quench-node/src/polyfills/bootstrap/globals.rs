@@ -98,10 +98,19 @@ for (const name of "Uint8Array Uint8ClampedArray Int8Array Uint16Array Int16Arra
   __nodeTypedArraySets[name] = set;
   const Wrapped = function (...args) {
     const array = Reflect.construct(Native, args, new.target || Wrapped);
+    if (name === "Float16Array") {
+      Object.defineProperty(array, "\0float16_array", { value: true });
+      Object.setPrototypeOf(array, Wrapped.prototype);
+    }
     set.add(array);
     return array;
   };
   Wrapped.prototype = Native.prototype;
+  if (name === "Float16Array") {
+    Wrapped.prototype = Object.create(Native.prototype);
+    Wrapped.prototype.constructor = Wrapped;
+    Wrapped.name = name;
+  }
   Object.setPrototypeOf(Wrapped, Native);
   globalThis[name] = Wrapped;
 }

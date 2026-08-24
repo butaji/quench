@@ -389,6 +389,7 @@ pub enum Op {
         strictness: FunctionStrictness,
         is_async: bool,
         mapped_arguments: bool,
+        source: Option<String>,
     },
     Call {
         dst: u16,
