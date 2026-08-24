@@ -324,6 +324,9 @@ fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
     let count = source_end
         .saturating_sub(source_start)
         .min(target_bytes.saturating_sub(target_start));
+    if target_buffer.immutable {
+        return Ok(Value::Number(0.0));
+    }
     target_buffer.bytes.borrow_mut()
         [target_offset + target_start..target_offset + target_start + count]
         .copy_from_slice(&source[source_start..source_start + count]);
