@@ -45,6 +45,7 @@ const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
 const CAP_UTIL_IS_NATIVE_ERROR: u16 = 0x030A;
 const CAP_UTIL_PARSE_ENV: u16 = 0x030B;
 const CAP_UTIL_TYPE_PREDICATE: u16 = 0x030C;
+const CAP_INTERNAL_JS_STREAM: u16 = 0x0F10;
 const CAP_PATH_JOIN: u16 = 0x0400;
 const CAP_PATH_RESOLVE: u16 = 0x0401;
 const CAP_PATH_NORMALIZE: u16 = 0x0402;
@@ -601,6 +602,7 @@ pub fn assert_dispatch(cap: u16) -> Option<CallHandler> {
 pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
     use handlers::*;
     Some(match cap {
+        CAP_INTERNAL_JS_STREAM => internal_js_stream_construct,
         CAP_EVENTS_NEW => events_new,
         CAP_EVENT_TARGET_NEW => crate::modules::event_target::new_target,
         CAP_STREAM_READABLE => stream_readable,
