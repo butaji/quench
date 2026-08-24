@@ -311,18 +311,61 @@ fn function_fingerprint(params: u16, captures: usize, code: crate::machine::Code
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     params.hash(&mut hasher);
     captures.hash(&mut hasher);
+    hash_code_facts(code, &mut hasher);
+    hasher.finish()
+}
+
+#[cfg(feature = "execution-trace")]
+fn hash_code_facts(code: crate::machine::CodeView<'_>, hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    code.len().hash(hasher);
     for pc in 0..code.len() {
         let instruction = code.instruction(pc).expect("valid function instruction");
-        (instruction.opcode as u8).hash(&mut hasher);
-        instruction.flags.hash(&mut hasher);
-        instruction.a.hash(&mut hasher);
-        instruction.b.hash(&mut hasher);
-        instruction.c.hash(&mut hasher);
-        code.cold(instruction)
-            .map(crate::ops::Op::variant_name)
-            .hash(&mut hasher);
+        (instruction.opcode as u8).hash(&mut *hasher);
+        instruction.flags.hash(&mut *hasher);
+        instruction.a.hash(&mut *hasher);
+        instruction.b.hash(&mut *hasher);
+        instruction.c.hash(&mut *hasher);
+        code.metadata_at(pc)
+            .and_then(|metadata| metadata.name.as_deref())
+            .hash(hasher);
+        format!("{:?}", code.constant_at(pc)).hash(hasher);
+        let cold = code.cold(instruction);
+        cold.map(crate::ops::Op::variant_name).hash(hasher);
+        hash_nested_code(cold, hasher);
     }
-    hasher.finish()
+}
+
+#[cfg(feature = "execution-trace")]
+fn hash_nested_code(op: Option<&crate::ops::Op>, hasher: &mut impl std::hash::Hasher) {
+    use crate::ops::Op;
+    match op {
+        Some(Op::Loop {
+            init,
+            test,
+            body,
+            update,
+            ..
+        }) => [init, test, body, update]
+            .into_iter()
+            .filter_map(|fragment| fragment.code())
+            .for_each(|code| hash_code_facts(code, hasher)),
+        Some(Op::Branch {
+            then_ops, else_ops, ..
+        }) => [then_ops, else_ops]
+            .into_iter()
+            .filter_map(|fragment| fragment.code())
+            .for_each(|code| hash_code_facts(code, hasher)),
+        Some(Op::Conditional {
+            consequent,
+            alternate,
+            ..
+        }) => [consequent, alternate]
+            .into_iter()
+            .filter_map(|fragment| fragment.code())
+            .for_each(|code| hash_code_facts(code, hasher)),
+        _ => {}
+    }
 }
 
 #[cfg(feature = "execution-trace")]
