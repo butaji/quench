@@ -100,19 +100,18 @@ fn run_manifest() -> ExitCode {
         return ExitCode::from(2);
     }
     let mut failed = Vec::new();
-    // Resolve fixture paths against the startup CWD: a fixture may call
-    // process.chdir (e.g. tmpdir cleanup), which moves the process CWD
-    // shared by all fixtures in this process.
+    // Resolve fixture paths against the startup CWD and isolate every fixture
+    // in a child process. A manifest entry must not be able to retain module
+    // state, change the runner's CWD, crash the gate, or hang it indefinitely.
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     for name in &names {
         let path = root.join(PARALLEL_DIR).join(name);
-        // Fresh runner per fixture: host state (module cache, exit
-        // handlers, timers) must not leak across tests.
-        match quench_node_test::NodeTestRunner::new().run_file(&path) {
-            quench_node_test::NodeOutcome::Pass => println!("PASS  {name}"),
-            other => {
-                println!("FAIL  {name}");
-                failed.push(format!("{name}: {other:?}"));
+        match triage_one(&exe, &path, 30) {
+            RunResult::Pass => println!("PASS  {name}"),
+            result => {
+                println!("FAIL  {name} ({})", result.label());
+                failed.push(format!("{name}: {}", result.label()));
             }
         }
     }
