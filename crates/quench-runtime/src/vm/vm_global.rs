@@ -32,7 +32,35 @@ pub(crate) fn is_global_object(value: &Value) -> bool {
     let Some(object) = global_object_target(value) else {
         return false;
     };
-    matches!(current_global_object(), Value::Object(global) if Rc::ptr_eq(&global, &object))
+    if GLOBAL_DECLARATION_BASE
+        .with(|base| base.borrow().as_ref().is_some_and(|base| Rc::ptr_eq(base, &object)))
+    {
+        return true;
+    }
+    matches!(current_global_object(), Value::Object(global) if global.identity() == object.identity())
+}
+
+/// Return the live object owned by the realm for a global receiver retained
+/// across declaration staging or copy-on-write replacement.
+pub(crate) fn resolve_global_owner(value: &Value) -> Option<Value> {
+    let object = global_object_target(value)?;
+    if let Some(staged) = batched_global_object() {
+        let base = GLOBAL_DECLARATION_BASE.with(|base| base.borrow().clone());
+        if base.is_some_and(|base| Rc::ptr_eq(&base, &object)) {
+            return Some(Value::Object(staged));
+        }
+    }
+    // Global aliases expose a self-referential `globalThis` property.  That
+    // owner marker survives copy-on-write storage replacement even when the
+    // alias itself still points at the previous object allocation.
+    if crate::execute::get_property_result(value, "globalThis")
+        .ok()
+        .and_then(|global_this| global_object_target(&global_this))
+        .is_some_and(|global_this| global_this.identity() == object.identity())
+    {
+        return Some(current_global_object());
+    }
+    is_global_object(value).then(current_global_object)
 }
 
 fn global_object_target(value: &Value) -> Option<ObjectProperties> {
@@ -68,7 +96,8 @@ pub(crate) fn begin_global_declaration_batch() {
             ));
         }
     }
-    let staged = Rc::new(crate::value::ObjectData::with_shared_properties(
+    let staged = Rc::new(crate::value::ObjectData::with_shared_properties_for_owner(
+        &current,
         properties,
         Rc::new(RefCell::new(current.private_slots.borrow().clone())),
     ));
@@ -102,7 +131,18 @@ pub(crate) fn update_global_declaration_batch(updated: &Value) {
     if !is_global_declaration_batch_active() {
         return;
     }
-    GLOBAL_DECLARATION_BATCH.with(|batch| batch.replace(Some(updated.clone())));
+    let owner = GLOBAL_DECLARATION_BASE.with(|base| base.borrow().clone());
+    let staged = owner
+        .as_ref()
+        .map(|owner| {
+            Rc::new(crate::value::ObjectData::with_shared_properties_for_owner(
+                owner,
+                updated.properties.clone(),
+                Rc::new(RefCell::new(updated.private_slots.borrow().clone())),
+            ))
+        })
+        .unwrap_or_else(|| updated.clone());
+    GLOBAL_DECLARATION_BATCH.with(|batch| batch.replace(Some(staged)));
 }
 
 fn batched_global_object() -> Option<ObjectProperties> {
