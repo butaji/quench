@@ -699,10 +699,19 @@ fn legacy_resolve(from: &str, to: &str) -> String {
         return to.to_string();
     }
     if to.is_empty() {
-        return from.to_string();
+        return from
+            .split_once('#')
+            .map_or_else(|| from.to_string(), |(value, _)| value.to_string());
     }
     if to.contains("://") {
-        return to.to_string();
+        return if to
+            .split_once("://")
+            .is_some_and(|(_, value)| !value.contains(['/', '?', '#']))
+        {
+            format!("{to}/")
+        } else {
+            to.to_string()
+        };
     }
     if to.starts_with("//") {
         if let Some((protocol, _)) = from.split_once("://") {
@@ -711,7 +720,11 @@ fn legacy_resolve(from: &str, to: &str) -> String {
             }
             let authority = to.trim_start_matches('/');
             return if protocol_is_known_authority(&format!("{protocol}://")) {
-                format!("{protocol}://{authority}/")
+                if authority.contains('/') {
+                    format!("{protocol}://{authority}")
+                } else {
+                    format!("{protocol}://{authority}/")
+                }
             } else {
                 format!("{protocol}://{authority}")
             };
@@ -791,6 +804,9 @@ fn legacy_resolve(from: &str, to: &str) -> String {
     }
     let (protocol, host_part) = split_protocol(from);
     if !protocol.is_empty() && !protocol.ends_with("//") {
+        if to.starts_with(".//") {
+            return format!("{protocol}//{}", &to[3..]);
+        }
         let mut segments = host_part
             .split('/')
             .filter(|segment| !segment.is_empty())
@@ -798,6 +814,9 @@ fn legacy_resolve(from: &str, to: &str) -> String {
             .collect::<Vec<_>>();
         if !host_part.ends_with('/') {
             segments.pop();
+        }
+        if to.starts_with('/') {
+            segments.clear();
         }
         for segment in to.split('/') {
             match segment {
@@ -809,7 +828,12 @@ fn legacy_resolve(from: &str, to: &str) -> String {
             }
         }
         let path = segments.join("/");
-        return if to.starts_with('/') {
+        let path = if to.ends_with('/') && !path.ends_with('/') {
+            format!("{path}/")
+        } else {
+            path
+        };
+        return if to.starts_with('/') || host_part.starts_with('/') {
             format!("{protocol}/{path}")
         } else {
             format!("{protocol}{path}")
@@ -820,7 +844,13 @@ fn legacy_resolve(from: &str, to: &str) -> String {
     } else {
         match host_part.find('/') {
             Some(i) => (host_part[..i].to_string(), host_part[i..].to_string()),
-            None => (host_part.to_string(), "/".to_string()),
+            None => (
+                host_part
+                    .split_once(['?', '#'])
+                    .map_or(host_part, |(value, _)| value)
+                    .to_string(),
+                "/".to_string(),
+            ),
         }
     };
     let base_path = base_path
@@ -855,7 +885,7 @@ fn legacy_resolve(from: &str, to: &str) -> String {
     } else {
         format!("{base_dir}{to}")
     };
-    let normalized_path = if protocol_is_known_authority(&protocol) {
+    let normalized_path = if protocol_is_known_authority(&protocol) && !host.is_empty() {
         normalize_path(&path)
     } else {
         normalize_path_preserving_empty(&path)
@@ -914,7 +944,11 @@ fn normalize_path_preserving_empty(path: &str) -> String {
         match part {
             "." => {}
             ".." => {
-                if let Some(index) = parts.iter().rposition(|value: &String| !value.is_empty()) {
+                if parts.last().is_some_and(String::is_empty) {
+                    parts.pop();
+                } else if let Some(index) =
+                    parts.iter().rposition(|value: &String| !value.is_empty())
+                {
                     parts.remove(index);
                 }
             }
