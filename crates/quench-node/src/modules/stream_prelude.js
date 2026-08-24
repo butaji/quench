@@ -490,6 +490,7 @@
       prefinished: false,
       final: options.final || null,
       endCallback: null,
+      autoDestroy: options.autoDestroy !== false,
       destroyed: false
     };
     stream.writable = options.writable !== false;
@@ -540,6 +541,7 @@
     }
     st.finished = true;
     stream._emitter.emit("finish");
+    if (st.autoDestroy) nextTick(() => stream.destroy());
   }
 
   function flushCorked(stream) {
