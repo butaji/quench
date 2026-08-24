@@ -57,6 +57,7 @@ fn run_loop(
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::LoopEntry);
+    let loop_shape = crate::execution_trace::loop_shape(body);
     let (post_test, dst, per_iteration) = config;
     run_fragment(init, registers)?;
     if label.is_none() && !post_test {
@@ -78,7 +79,9 @@ fn run_loop(
     }
     if label.is_none() && !post_test && per_iteration.is_empty() {
         if let Some(fact) = CountedForFact::recognize(test, update) {
-            if let Some(completion) = run_counted_for(fact, body, update, dst, registers)? {
+            if let Some(completion) =
+                run_counted_for(fact, body, update, dst, registers, loop_shape)?
+            {
                 return Ok(completion);
             }
         }
@@ -86,6 +89,7 @@ fn run_loop(
     refresh_per_iteration(per_iteration);
     loop {
         crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
+        crate::execution_trace::loop_shape_iteration(loop_shape);
         if !post_test && !loop_test(test, registers)? {
             break;
         }
@@ -144,10 +148,12 @@ fn run_counted_for(
     update: crate::machine::CodeView<'_>,
     dst: u16,
     registers: &mut crate::register_file::RegisterFile,
+    loop_shape: u64,
 ) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
     let environment = crate::locals::current();
     loop {
         crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
+        crate::execution_trace::loop_shape_iteration(loop_shape);
         let Some(mut index) = environment.get_number(fact.slot) else {
             return Ok(None);
         };
