@@ -17,7 +17,7 @@ pub(crate) fn function_builtin(
         }
         crate::ops::Builtin::FunctionBind => bind_function_target(receiver, arguments),
         crate::ops::Builtin::ArrayJoin | crate::ops::Builtin::ArrayToString => {
-            Ok(crate::builtins::array_join(receiver, arguments))
+            crate::builtins::array_join(receiver, arguments)
         }
         crate::ops::Builtin::ArrayPush => crate::builtins::array_push(receiver, arguments),
         crate::ops::Builtin::ArrayShift => Ok(crate::builtins::array_shift(receiver)),
