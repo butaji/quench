@@ -80,9 +80,9 @@ pub(crate) fn resolve_global_owner(value: &Value) -> Option<Value> {
         .and_then(|global_this| global_object_target(&global_this))
         .is_some_and(|global_this| global_this.identity() == object.identity())
     {
-        return Some(current_global_object());
+        return Some(live_global_for_target(&object));
     }
-    is_global_object(value).then(current_global_object)
+    is_global_object(value).then(|| live_global_for_target(&object))
 }
 
 fn global_object_target(value: &Value) -> Option<ObjectProperties> {
@@ -91,6 +91,12 @@ fn global_object_target(value: &Value) -> Option<ObjectProperties> {
         Value::ObjectAlias(alias) => alias.target(),
         _ => None,
     }
+}
+
+fn live_global_for_target(object: &ObjectProperties) -> Value {
+    realm::id_for_global(object)
+        .and_then(realm::global)
+        .unwrap_or_else(current_global_object)
 }
 
 pub(crate) fn is_child_global_object(value: &Value) -> bool {
