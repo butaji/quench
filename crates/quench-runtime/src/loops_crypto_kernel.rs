@@ -12,6 +12,99 @@ struct IntegerMultiplyFact {
     x_high: u16,
 }
 
+thread_local! {
+    static INTEGER_FUNCTION: std::cell::RefCell<Option<std::rc::Weak<crate::value::FunctionValue>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn execute_crypto_integer_function(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &Value,
+    arguments: &[Value],
+) -> Option<Value> {
+    recognized_integer_function(function)?;
+    let [Value::Number(i), Value::Number(x), w, Value::Number(j), Value::Number(c), Value::Number(n), ..] = arguments else {
+        return None;
+    };
+    let input_value = crate::vm::proven_own_data(receiver, "array")
+        .map(crate::locals::resolved_replacement);
+    let output_value = crate::vm::proven_own_data(w, "array")
+        .map(crate::locals::resolved_replacement);
+    let (Some(Value::Array(input)), Some(Value::Array(output))) = (input_value, output_value) else {
+        return None;
+    };
+    let iterations = kernel_index(*n)?;
+    let x = crate::vm::vm_arithmetic::numeric_to_int32(*x);
+    let values = [*i, *j, *c, f64::from(x & 0x3fff), f64::from(x >> 14), *n];
+    let (_, _, carry, _, _, _) = multiply_integer_ranges(&input, &output, values, iterations)?;
+    Some(Value::Number(carry))
+}
+
+fn recognized_integer_function(function: &std::rc::Rc<crate::value::FunctionValue>) -> Option<()> {
+    if INTEGER_FUNCTION.with(|cached| {
+        cached.borrow().as_ref().and_then(std::rc::Weak::upgrade)
+            .is_some_and(|cached| std::rc::Rc::ptr_eq(&cached, function))
+    }) {
+        return Some(());
+    }
+    recognize_integer_function(function)?;
+    INTEGER_FUNCTION.with(|cached| *cached.borrow_mut() = Some(std::rc::Rc::downgrade(function)));
+    Some(())
+}
+
+fn recognize_integer_function(function: &crate::value::FunctionValue) -> Option<()> {
+    use crate::ir::Opcode::*;
+    const SHAPE: [crate::ir::Opcode; 24] = [
+        LoadLocalChecked, GetN, Slow, Slow, LoadLocalChecked, GetN, Slow, Slow,
+        LoadLocalChecked, LoadConst, Binary, Slow, Slow, LoadLocalChecked, LoadConst,
+        Binary, Slow, Slow, LoadConst, Slow, LoadLocalChecked, Return, LoadConst, Return,
+    ];
+    (function.params == 6 && function.code.capture_slots().len() == 14).then_some(())?;
+    let code = function.code.code()?;
+    (code.len() == SHAPE.len()).then_some(())?;
+    SHAPE.into_iter().enumerate().all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == opcode)).then_some(())?;
+    recognize_integer_function_graph(function, code)
+}
+
+fn recognize_integer_function_graph(
+    function: &crate::value::FunctionValue,
+    code: crate::machine::CodeView<'_>,
+) -> Option<()> {
+    let base = u16::try_from(function.captures.len()).ok()?;
+    let slots = [
+        base.checked_add(7)?,
+        base.checked_add(2)?,
+        base.checked_add(1)?,
+        base.checked_add(1)?,
+        base.checked_add(4)?,
+    ];
+    ([0, 4, 8, 13, 20].into_iter().zip(slots))
+        .all(|(pc, slot)| code.instruction(pc).is_some_and(|op| op.b == slot)).then_some(())?;
+    let mask = constant_number(code, 9, 0x3fff as f64)?;
+    binary_is(code, 10, crate::ops::BinaryOp::BitwiseAnd, code.instruction(8)?.a, mask)?;
+    let shift = constant_number(code, 14, 14.0)?;
+    binary_is(code, 15, crate::ops::BinaryOp::ShiftRight, code.instruction(13)?.a, shift)?;
+    recognize_integer_function_bindings(code, base)
+}
+
+fn recognize_integer_function_bindings(code: crate::machine::CodeView<'_>, base: u16) -> Option<()> {
+    let bindings = [(3, "this_array"), (7, "w_array"), (12, "xl"), (17, "xh")];
+    let mut slots = [0; 4];
+    for (index, (pc, expected)) in bindings.into_iter().enumerate() {
+        let crate::ops::Op::InitializeResolvedBinding { slot, name, .. } = code.cold_at(pc)? else { return None };
+        (name == expected).then_some(())?;
+        slots[index] = *slot;
+    }
+    let crate::ops::Op::Loop { test, body, update, .. } = code.cold_at(19)? else { return None };
+    let fact = CountedForFact::recognize(test.code()?, update.code()?)?;
+    let multiply = IntegerMultiplyFact::recognize(body.code()?)?;
+    (fact.slot == base.checked_add(5)?
+        && [multiply.input, multiply.output, multiply.x_low, multiply.x_high] == slots
+        && multiply.input_index == base
+        && multiply.output_index == base.checked_add(3)?
+        && multiply.carry == base.checked_add(4)?).then_some(())
+}
+
 impl IntegerMultiplyFact {
     fn recognize(code: crate::machine::CodeView<'_>) -> Option<Self> {
         recognize_integer_multiply_shape(code)?;
@@ -294,20 +387,9 @@ fn execute_integer_multiply_nonempty(
     values: [f64; 6],
     iterations: usize,
 ) -> Option<()> {
-    let [i, j, mut carry, x_low, x_high, remaining] = values;
-    let (mut i, mut j) = (kernel_index(i)?, kernel_index(j)?);
-    let (input, mut output_values) = integer_multiply_ranges(&input, &output, i, j, iterations)?;
-    trace_integer_multiply_storage();
-    let (low, high, product) = integer_multiply_loop(
-        &input,
-        &mut output_values,
-        &mut i,
-        &mut j,
-        &mut carry,
-        x_low,
-        x_high,
-    );
-    replace_integer_output(&output, j - output_values.len(), &output_values);
+    let remaining = values[5];
+    let (i, j, carry, low, high, product) =
+        multiply_integer_ranges(&input, &output, values, iterations)?;
     flush_integer_multiply(
         environment,
         fact,
@@ -322,6 +404,24 @@ fn execute_integer_multiply_nonempty(
         iterations,
     );
     Some(())
+}
+
+fn multiply_integer_ranges(
+    input: &std::rc::Rc<crate::value::ArrayData>,
+    output: &std::rc::Rc<crate::value::ArrayData>,
+    values: [f64; 6],
+    iterations: usize,
+) -> Option<(usize, usize, f64, f64, f64, f64)> {
+    let [i, j, mut carry, x_low, x_high, _] = values;
+    let (mut i, mut j) = (kernel_index(i)?, kernel_index(j)?);
+    let (input_values, mut output_values) =
+        integer_multiply_ranges(input, output, i, j, iterations)?;
+    trace_integer_multiply_storage();
+    let (low, high, product) = integer_multiply_loop(
+        &input_values, &mut output_values, &mut i, &mut j, &mut carry, x_low, x_high,
+    );
+    replace_integer_output(output, j - output_values.len(), &output_values);
+    Some((i, j, carry, low, high, product))
 }
 
 fn trace_integer_multiply_storage() {
