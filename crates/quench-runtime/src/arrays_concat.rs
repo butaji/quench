@@ -2,12 +2,7 @@ pub(crate) fn concat(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let this = receiver.cloned().unwrap_or(Value::Undefined);
-    if matches!(this, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.concat called on null or undefined",
-        ));
-    }
+    let this = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
     let species = concat_species(&this)?;
     let mut items = vec![this];
     items.extend(arguments.iter().cloned());
