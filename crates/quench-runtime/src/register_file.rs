@@ -79,6 +79,15 @@ impl OwnedWord {
         decode_owned(self.0).expect("owned execute word must decode")
     }
 
+    #[inline(always)]
+    pub(crate) fn number(&self) -> Option<f64> {
+        match self.0.decode() {
+            DecodedValue::Number(value) => Some(value),
+            DecodedValue::I31(value) => Some(f64::from(value)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn replace(&mut self, value: Value) -> Value {
         let previous = std::mem::replace(&mut self.0, encode(value));
         let value = decode_owned(previous).expect("owned execute word must decode");
