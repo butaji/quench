@@ -81,12 +81,6 @@ fn map_argument_error(
             "Array.prototype.map called on null or undefined",
         )));
     }
-    if !arguments
-        .first()
-        .is_some_and(crate::conversion::is_callable)
-    {
-        return Some(Err(crate::vm::not_callable()));
-    }
     None
 }
 
@@ -315,6 +309,10 @@ pub(crate) fn prototype_override_getter(key: &str) -> Option<Value> {
         .find_map(|(name, value)| (name == "get").then(|| value.clone()))
 }
 
+pub(crate) fn prototype_override_present(key: &str) -> bool {
+    crate::builtins::read_intrinsic_override(crate::ops::Builtin::ArrayPrototype, key).is_some()
+}
+
 pub(crate) fn array_index(key: &str) -> Option<u32> {
     if key.is_empty() || (key.len() > 1 && key.as_bytes()[0] == b'0') {
         return None;
@@ -515,6 +513,9 @@ pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::exec
         ));
     }
     let length = array_like_length(&this)?;
+    if length >= 1usize << 32 {
+        return Err(crate::value::error::throw_range_error("Invalid array length"));
+    }
     let mut values = Vec::with_capacity(length);
     for index in (0..length).rev() {
         values.push(crate::execute::get_property_result(
