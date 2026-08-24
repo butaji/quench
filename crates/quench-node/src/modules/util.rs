@@ -698,21 +698,53 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
 }
 
 fn inspect_function(value: &Value) -> String {
-    let prefix = match value {
-        Value::Function(function) if function.is_async && function.kind == quench_runtime::ops::FunctionKind::Generator => "AsyncGeneratorFunction",
-        Value::Function(function) if function.is_async => "AsyncFunction",
-        Value::Function(function) if function.kind == quench_runtime::ops::FunctionKind::Generator => "GeneratorFunction",
-        _ => "Function",
+    let is_generator = matches!(value, Value::Function(function) if function.kind == quench_runtime::ops::FunctionKind::Generator);
+    let is_async = matches!(value, Value::Function(function) if function.is_async);
+    let prefix = match (is_generator, is_async) {
+        (true, true) => "AsyncGeneratorFunction",
+        (true, false) => "GeneratorFunction",
+        (false, true) => "AsyncFunction",
+        (false, false) => "Function",
     };
     let name = match quench_runtime::execute::get_property(value, "name") {
         Value::String(name) if !name.is_empty() => name,
+        Value::String(_) => "(anonymous)".into(),
+        Value::Number(number) => js_number(number),
+        other if !matches!(other, Value::Undefined) => {
+            quench_runtime::execute::to_js_string(&other).unwrap_or_else(|_| "(anonymous)".into())
+        }
         _ => "(anonymous)".into(),
     };
-    if name == "(anonymous)" {
+    let null_prototype = matches!(quench_runtime::execute::get_prototype_of(value), Ok(Value::Null));
+    let tag = match quench_runtime::execute::has_own_property(value, "Symbol.toStringTag")
+        .then(|| quench_runtime::execute::get_property(value, "Symbol.toStringTag"))
+    {
+        Some(Value::String(tag)) if !tag.is_empty() => Some(tag),
+        _ => None,
+    };
+    let tag = if prefix == "AsyncFunction" { None } else { tag };
+    let display_name = if null_prototype && is_generator {
+        format!("(null prototype): {name}")
+    } else {
+        name
+    };
+    let body = if null_prototype && is_generator {
+        format!("[{prefix} {display_name}]")
+    } else if display_name == "(anonymous)" {
         format!("[{prefix} (anonymous)]")
     } else {
-        format!("[{prefix}: {name}]")
-    }
+        format!("[{prefix}: {display_name}]")
+    };
+    let body = if prefix == "GeneratorFunction"
+        && matches!(
+            quench_runtime::execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::AsyncFunctionPrototype))
+        ) {
+        format!("{body} AsyncFunction")
+    } else {
+        body
+    };
+    tag.map_or(body.clone(), |tag| format!("{body} [{tag}]"))
 }
 
 fn is_buffer_view(value: &Value) -> bool {
@@ -821,7 +853,8 @@ fn inspect_object(value: &Value, depth: usize) -> String {
         .iter()
         .map(|key| {
             format!(
-                "{key}: {}",
+                "{}: {}",
+                if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() },
                 inspect_at(&quench_runtime::execute::get_property(value, key), depth)
             )
         })
@@ -845,6 +878,7 @@ fn inspect_shallow(value: &Value) -> String {
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => "[Object]".into(),
         Value::Array(_) => "[Array]".into(),
+        Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
         Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
         Value::Uint8Array(view) => format!("Uint8Array({}) []", view.length),
         _ => "<unknown>".into(),
