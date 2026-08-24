@@ -52,6 +52,8 @@ struct Counters {
     binary: HashMap<&'static str, u64>,
     constant: HashMap<&'static str, u64>,
     environment_children: HashMap<(usize, usize), u64>,
+    call_shapes: HashMap<(usize, bool, bool), u64>,
+    call_targets: HashMap<&'static str, u64>,
     events: [u64; EVENT_NAMES.len()],
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
@@ -229,6 +231,30 @@ pub(crate) fn environment_child(_: usize, _: usize) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
+pub(crate) fn call_method(
+    args: usize,
+    spread: bool,
+    registered_callee: bool,
+    target: &'static str,
+) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            *counters
+                .call_shapes
+                .entry((args, spread, registered_callee))
+                .or_default() += 1;
+            *counters.call_targets.entry(target).or_default() += 1;
+        });
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn call_method(_: usize, _: bool, _: bool, _: &'static str) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
 pub(crate) fn event(event: Event) {
     if enabled() {
         COUNTERS.with(|counters| counters.borrow_mut().events[event as usize] += 1);
@@ -286,6 +312,21 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     (format!("{captures}:{locals}"), serde_json::json!(count))
                 })
                 .collect::<serde_json::Map<_, _>>();
+            let call_shapes = counters
+                .call_shapes
+                .iter()
+                .map(|(&(args, spread, registered), count)| {
+                    (
+                        format!("{args}:{}:{}", u8::from(spread), u8::from(registered)),
+                        serde_json::json!(count),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>();
+            let call_targets = counters
+                .call_targets
+                .iter()
+                .map(|(name, count)| ((*name).to_owned(), serde_json::json!(count)))
+                .collect::<serde_json::Map<_, _>>();
             let compact_total: u64 = counters.compact.iter().sum();
             let slow_total: u64 = counters.slow.values().sum();
             let mut transitions: Vec<_> = counters.transitions.iter().collect();
@@ -323,6 +364,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "binary": binary,
                 "constant": constant,
                 "environment_children": environment_children,
+                "call_shapes": call_shapes,
+                "call_targets": call_targets,
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
