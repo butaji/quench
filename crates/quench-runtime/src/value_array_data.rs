@@ -279,9 +279,13 @@ impl ArrayData {
     }
 
     pub fn logical_len(&self) -> usize {
-        self.argument_live
-            .as_ref()
-            .map_or(self.length, |live| live.borrow().length)
+        self.argument_live.as_ref().map_or(self.length, |live| {
+            let live = live.borrow();
+            live.length_override
+                .as_ref()
+                .and_then(argument_length)
+                .unwrap_or(live.length)
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -888,6 +892,15 @@ impl ArrayData {
                 live.deleted[index] = true;
             }
         }
+    }
+}
+
+fn argument_length(value: &Value) -> Option<usize> {
+    match value {
+        Value::Number(number) if number.is_finite() && *number >= 0.0 => {
+            Some(number.floor() as usize)
+        }
+        _ => None,
     }
 }
 
