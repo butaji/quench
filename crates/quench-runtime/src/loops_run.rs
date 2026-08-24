@@ -232,23 +232,27 @@ fn run_counted_for(
         crate::execution_trace::loop_shape_iteration(loop_shape);
         let Some(mut index) = environment.get_number(fact.slot) else {
             crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+            crate::execution_trace::kernel("counted_for", true);
             return Ok(None);
         };
         if fact.timing == CountedStepTiming::BeforeTest {
             let Some((_, updated)) = environment.update_number(fact.slot, fact.step) else {
                 crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+                crate::execution_trace::kernel("counted_for", true);
                 return Ok(None);
             };
             index = updated;
         }
         let Some(bound) = fact.bound.number(&environment) else {
             crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+            crate::execution_trace::kernel("counted_for", true);
             return Ok(None);
         };
         if !counted_comparison(fact.comparison, index, bound) {
             return Ok(Some(crate::completion::Completion::Normal));
         }
         crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
+        crate::execution_trace::kernel("counted_for", false);
         match execute_loop_body(registers, &None, body)? {
             crate::completion::LoopTransition::Continue(value) => {
                 store_loop_value(registers, dst, value)?;
@@ -264,6 +268,7 @@ fn run_counted_for(
         if fact.timing == CountedStepTiming::AfterBody {
             let Some((_, _)) = environment.update_number(fact.slot, fact.step) else {
                 crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+                crate::execution_trace::kernel("counted_for", true);
                 run_fragment(update, registers)?;
                 return Ok(None);
             };

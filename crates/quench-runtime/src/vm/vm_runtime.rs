@@ -158,11 +158,8 @@ fn run_instruction(
         Opcode::GetProperty | Opcode::AGetI => {
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
-                if let Some((array, index)) = registers
-                    .read_array(usize::from(instruction.b))
-                    .filter(|array| array.is_packed_ordinary())
-                    .zip(index)
-                {
+                let array = registers.read_array(usize::from(instruction.b));
+                if let Some((array, index)) = array.filter(|array| array.is_packed_ordinary()).zip(index) {
                     if let Some(number) = array.dense_number_at(index) {
                         crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
                         registers.write_number(usize::from(instruction.a), number);
@@ -174,7 +171,16 @@ fn run_instruction(
                         return Ok(None);
                     }
                 }
-                crate::execution_trace::event(crate::execution_trace::Event::PackedArrayMiss);
+                let reason = if array.is_none_or(|array| !array.is_packed_ordinary()) {
+                    "kind"
+                } else if index.is_none() {
+                    "other"
+                } else if index.expect("checked index") >= array.expect("checked array").logical_len() {
+                    "oob"
+                } else {
+                    "hole"
+                };
+                crate::execution_trace::packed_miss(reason);
             }
             let object = read_register(registers, instruction.b)?;
             let key = read_register(registers, instruction.c)?;
@@ -249,7 +255,7 @@ fn run_instruction(
                 crate::execution_trace::event(crate::execution_trace::Event::PackedArraySet);
                 return Ok(None);
             }
-            crate::execution_trace::event(crate::execution_trace::Event::PackedArrayMiss);
+            crate::execution_trace::packed_miss("other");
             crate::properties::execute_set_property(
                 registers,
                 &crate::ops::Op::SetPropertyDynamic {
