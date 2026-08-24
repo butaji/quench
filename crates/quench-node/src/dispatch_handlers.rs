@@ -730,6 +730,22 @@ pub fn string_decoder_new(
     crate::modules::string_decoder::new_decoder(state, args)
 }
 
+pub fn string_decoder_write(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::string_decoder::write(state, receiver, args)
+}
+
+pub fn string_decoder_end(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::string_decoder::end(state, receiver, args)
+}
+
 // ---- require ----
 pub fn node_require(
     state: &Rc<RefCell<HostState>>,
