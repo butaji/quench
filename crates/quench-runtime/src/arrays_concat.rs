@@ -85,7 +85,7 @@ fn concat_sparse_arrays(items: &[Value]) -> Result<Value, crate::execute::VmErro
 /// `ArraySpeciesCreate`: the species-constructed result, or `None` for the
 /// default plain array.
 fn concat_species(this: &Value) -> Result<Option<Value>, crate::execute::VmError> {
-    if !matches!(this, Value::Array(_)) {
+    if !matches!(crate::builtins::is_array(Some(this))?, Value::Boolean(true)) {
         return Ok(None);
     }
     let constructor = crate::execute::get_property_result(this, "constructor")?;
