@@ -16,7 +16,9 @@ pub(crate) fn function_builtin(
             crate::vm::execute_function_apply(receiver, arguments)
         }
         crate::ops::Builtin::FunctionBind => bind_function_target(receiver, arguments),
-        crate::ops::Builtin::ArrayJoin => Ok(crate::builtins::array_join(receiver, arguments)),
+        crate::ops::Builtin::ArrayJoin | crate::ops::Builtin::ArrayToString => {
+            Ok(crate::builtins::array_join(receiver, arguments))
+        }
         crate::ops::Builtin::ArrayPush => Ok(crate::builtins::array_push(receiver, arguments)),
         crate::ops::Builtin::ArrayShift => Ok(crate::builtins::array_shift(receiver)),
         crate::ops::Builtin::ArrayReverse => Ok(crate::builtins::array_reverse(receiver)),
@@ -32,9 +34,14 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayFindLastIndex => {
             crate::builtins::array_find_last_index(receiver, arguments)
         }
+        crate::ops::Builtin::ArrayFindIndex => crate::arrays::find_index(receiver, arguments),
         crate::ops::Builtin::ArrayToSorted => {
             Ok(crate::builtins::array_to_sorted(receiver, arguments))
         }
+        crate::ops::Builtin::ArrayToSpliced => {
+            crate::builtins::array_to_spliced(receiver, arguments)
+        }
+        crate::ops::Builtin::ArrayWith => crate::builtins::array_with(receiver, arguments),
         crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
             crate::builtins::object::object_property_is_enumerable(receiver, arguments),
         ),
