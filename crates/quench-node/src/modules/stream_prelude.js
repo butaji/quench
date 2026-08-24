@@ -912,8 +912,11 @@
     }
   });
 
-  Writable.prototype.destroy = function (error) {
-    if (this.destroyed) return this;
+  Writable.prototype.destroy = function (error, callback) {
+    if (this.destroyed) {
+      if (callback) nextTick(() => callback());
+      return this;
+    }
     this.destroyed = true;
     this.writableAborted = this._writableState.writable !== false && !this.writableFinished;
     if (this._writableState) this._writableState.destroyed = true;
