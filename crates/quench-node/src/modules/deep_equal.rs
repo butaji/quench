@@ -51,6 +51,12 @@ fn compare(
         (Value::Array(_), Value::Array(_)) => {
             compare_arrays(left, right, strict, skip_prototype, memo)
         }
+        (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => {
+            if strict && left.shared != right.shared {
+                return Ok(false);
+            }
+            Ok(left.bytes.borrow().as_slice() == right.bytes.borrow().as_slice())
+        }
         (Value::Object(_), Value::Object(_)) => {
             compare_objects(left, right, strict, skip_prototype, memo)
         }
@@ -113,23 +119,35 @@ fn compare_typed_arrays(
             return Ok(false);
         }
     }
-    let length = |value: &Value| match execute::get_property(value, "length") {
-        Value::Number(n) => n as usize,
-        _ => 0,
+    let Some(left_bytes) = typed_array_bytes(left) else {
+        return Ok(false);
     };
-    let (la, lb) = (length(left), length(right));
-    if la != lb {
+    let Some(right_bytes) = typed_array_bytes(right) else {
+        return Ok(false);
+    };
+    if left_bytes != right_bytes {
         return Ok(false);
     }
-    for index in 0..la {
-        let key = index.to_string();
-        let la = execute::get_property_result(left, &key)?;
-        let rb = execute::get_property_result(right, &key)?;
-        if !compare(&la, &rb, strict, skip_prototype, memo)? {
-            return Ok(false);
-        }
-    }
     same_enumerable_symbols(left, right, strict, skip_prototype, memo)
+}
+
+fn typed_array_bytes(value: &Value) -> Option<Vec<u8>> {
+    let (buffer, offset, length, element_size) = match value {
+        Value::Float64Array(view) => (&view.buffer, view.byte_offset, view.length, 8),
+        Value::Float32Array(view) => (&view.buffer, view.byte_offset, view.length, 4),
+        Value::Int8Array(view) => (&view.buffer, view.byte_offset, view.length, 1),
+        Value::Int16Array(view) => (&view.buffer, view.byte_offset, view.length, 2),
+        Value::Int32Array(view) => (&view.buffer, view.byte_offset, view.length, 4),
+        Value::BigInt64Array(view) => (&view.buffer, view.byte_offset, view.length, 8),
+        Value::BigUint64Array(view) => (&view.buffer, view.byte_offset, view.length, 8),
+        Value::Uint32Array(view) => (&view.buffer, view.byte_offset, view.length, 4),
+        Value::Uint8Array(view) => (&view.buffer, view.byte_offset, view.length, 1),
+        Value::Uint8ClampedArray(view) => (&view.buffer, view.byte_offset, view.length, 1),
+        Value::Uint16Array(view) => (&view.buffer, view.byte_offset, view.length, 2),
+        _ => return None,
+    };
+    let end = offset.checked_add(length.checked_mul(element_size)?)?;
+    buffer.bytes.borrow().get(offset..end).map(ToOwned::to_owned)
 }
 
 /// Both sides must own the same enumerable symbol keys with equal values.
