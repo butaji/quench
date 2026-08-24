@@ -133,12 +133,6 @@ fn dump_counted_shape(body: crate::machine::CodeView<'_>) {
     if !SEEN.get_or_init(Default::default).lock().unwrap().insert(fingerprint) {
         return;
     }
-    eprintln!("LOOP_SHAPE len={} hash={fingerprint}", body.len());
-    for pc in 0..body.len() {
-        let instruction = body.instruction(pc).unwrap();
-        let cold = body.cold(instruction).map(crate::ops::Op::variant_name);
-        eprintln!("  {pc}: {instruction:?} cold={cold:?}");
-    }
 }
 
 #[cfg(not(feature = "execution-trace"))]
