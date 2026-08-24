@@ -122,28 +122,33 @@ fn run_yield_star_step(
     resume: &crate::completion::Completion,
     next: usize,
 ) -> Result<Option<GeneratorStep>, VmError> {
-    let completion = crate::generator::execute_yield_star(registers, op, resume.clone())?;
-    if let Some(completion) = completion {
-        crate::vm::flush_global_declaration_batch(registers);
-        let offset = usize::from(!completion.is_suspension());
-        let suspension =
-            matches!(completion, crate::completion::Completion::Yield(_)).then(|| match op {
-                Op::YieldStar { dst, iterator, .. } => {
-                    crate::continuation::SuspensionPoint::YieldStar {
-                        pc: next,
-                        dst: *dst,
-                        iterator: *iterator,
-                    }
-                }
-                _ => crate::continuation::SuspensionPoint::Yield { pc: next, src: 0 },
-            });
-        return Ok(Some(GeneratorStep {
-            completion,
-            pc: next + offset,
-            suspension,
-        }));
-    }
-    Ok(None)
+    let completion = match crate::generator::execute_yield_star(registers, op, resume.clone()) {
+        Ok(Some(completion)) => completion,
+        Ok(None) => return Ok(None),
+        Err(error) => match crate::completion::Completion::from_vm_error(error) {
+            Ok(completion) => completion,
+            Err(error) => {
+                crate::vm::flush_global_declaration_batch(registers);
+                return Err(error);
+            }
+        },
+    };
+    crate::vm::flush_global_declaration_batch(registers);
+    let offset = usize::from(!completion.is_suspension());
+    let suspension =
+        matches!(completion, crate::completion::Completion::Yield(_)).then(|| match op {
+            Op::YieldStar { dst, iterator, .. } => crate::continuation::SuspensionPoint::YieldStar {
+                pc: next,
+                dst: *dst,
+                iterator: *iterator,
+            },
+            _ => crate::continuation::SuspensionPoint::Yield { pc: next, src: 0 },
+        });
+    Ok(Some(GeneratorStep {
+        completion,
+        pc: next + offset,
+        suspension,
+    }))
 }
 
 fn run_generator_op(
