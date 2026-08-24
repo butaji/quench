@@ -272,6 +272,29 @@ var api = {
         throw new TypeError('The "filename" argument must be a string');
       }
       var self = emitter({ threadId: 1, exited: false, _queueEvents: true });
+      var workerOn = self.on;
+      self.on = function (name, listener) {
+        if (name === 'exit' && self.exited && self._exitCode !== undefined && typeof listener === 'function') {
+          setTimeout(function () { self._destroyed = true; self.hasRef = function () { return undefined; }; }, 0);
+          listener.call(self, self._exitCode);
+          return self;
+        }
+        return workerOn.call(self, name, listener);
+      };
+      self._refed = true;
+      self._destroyed = false;
+      self.hasRef = function () { return self._destroyed ? undefined : self._refed; };
+      self.ref = function () { self._refed = true; return self; };
+      self.unref = function () { self._refed = false; return self; };
+      if (globalThis.__quenchAsyncHooks) {
+        var workerAsyncId = ++globalThis.__quenchAsyncId;
+        for (var hookIndex = 0; hookIndex < globalThis.__quenchAsyncHooks.length; hookIndex++) {
+          var hook = globalThis.__quenchAsyncHooks[hookIndex];
+          if (hook.callbacks && typeof hook.callbacks.init === 'function') {
+            hook.callbacks.init.call(hook, workerAsyncId, 'WORKER', 1, self);
+          }
+        }
+      }
       if (proc && typeof proc.emit === 'function') proc.emit('worker', { threadId: self.threadId });
       options = options || {};
       var cp = require('child_process');
@@ -315,12 +338,18 @@ var api = {
           }
         }
         self.exited = true;
-        self.emit('online');
-        self.emit('exit', status);
+        self._exitCode = status;
+        queueMicrotask(function () {
+          self.emit('online');
+          self.emit('exit', status);
+          self._destroyed = true;
+          self.hasRef = function () { return undefined; };
+        });
         if (status !== 0 && result && result.stderr) self.emit('error', new Error(String(result.stderr)));
         return status;
       }
       if (options.eval) {
+        runWorker(undefined, null);
         self.postMessage = function (message, transferList) {
           var transferredPort = message && message.port && typeof message.port.postMessage === 'function' ? message.port : null;
           var tokenized = transferredPort ? { port: { __quench_port: 0 } } : message;
@@ -330,8 +359,7 @@ var api = {
         runWorker(undefined, null);
         self.postMessage = function () {};
       }
-      self.terminate = function () { self.exited = true; return Promise.resolve(0); };
-      self.ref = self.unref = function () { return self; };
+      self.terminate = function () { self.exited = true; self._destroyed = true; return Promise.resolve(0); };
       return self;
     },
   receiveMessageOnPort: function (port) {
