@@ -96,6 +96,11 @@ impl NodeRunner {
         } else {
             quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture.source)
         };
+        let source = if fixture.source.contains("--experimental-eventsource") {
+            format!("globalThis.EventSource = globalThis.__quench_event_source;\n{source}")
+        } else {
+            source
+        };
         let program = match reduce_fixture(&source, is_module) {
             Ok(program) => program,
             Err(error) => {
