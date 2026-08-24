@@ -728,6 +728,11 @@ impl FunctionCode {
         &self.capture_slots
     }
 
+    pub(crate) fn uses_slot(&self, slot: u16) -> bool {
+        self.capture_slots.binary_search(&u16::MAX).is_ok()
+            || self.capture_slots.binary_search(&slot).is_ok()
+    }
+
     pub(crate) fn rehome(&mut self, arena: &mut CodeArena, store: &Rc<OnceLock<Rc<CodeStore>>>) {
         let body = self.source.take().map(|body| body.to_vec());
         let Some(body) = body else { return };
