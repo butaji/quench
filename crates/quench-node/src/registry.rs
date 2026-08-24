@@ -517,11 +517,10 @@ pub fn namespace_bindings(
     // Node facade still needs the two-byte view in common buffer-source paths;
     // use the engine's canonical Uint16 constructor until native Float16
     // element conversion is available.
+    let float16_prototype = quench_runtime::host_api::object(vec![]);
     let float16_receiver = quench_runtime::host_api::object(vec![
         ("\0float16_constructor".into(), quench_runtime::value::Value::Boolean(true)),
-        ("\0prototype".into(), quench_runtime::value::Value::Builtin(
-            quench_runtime::ops::Builtin::Uint16ArrayPrototype,
-        )),
+        ("\0prototype".into(), float16_prototype.clone()),
     ]);
     let float16_constructor = quench_runtime::host_api::bound_builtin(
             quench_runtime::ops::Builtin::Uint16Array,
@@ -530,7 +529,17 @@ pub fn namespace_bindings(
     let float16_constructor = quench_runtime::execute::set_property(
         float16_constructor,
         "prototype",
-        quench_runtime::value::Value::Builtin(quench_runtime::ops::Builtin::Uint16ArrayPrototype),
+        float16_prototype.clone(),
+    );
+    let float16_constructor = quench_runtime::execute::set_property(
+        float16_constructor,
+        "name",
+        quench_runtime::value::Value::String("Float16Array".into()),
+    );
+    let _ = quench_runtime::execute::set_property(
+        float16_prototype,
+        "constructor",
+        float16_constructor.clone(),
     );
     out.push(("Float16Array".to_string(), float16_constructor));
     out.push((
