@@ -82,6 +82,11 @@ pub(crate) fn iterator_prototype_property_callable(builtin: Builtin, key: &str) 
         }
     };
     match key {
+        "constructor" => Some(Value::Builtin(match builtin {
+            SetIteratorPrototype => Set,
+            MapIteratorPrototype => Map,
+            _ => return None,
+        })),
         "next" => Some(Value::Builtin(next)),
         "Symbol.iterator" => Some(Value::Builtin(IteratorSelf)),
         "Symbol.toStringTag" => Some(Value::String(tag.into())),

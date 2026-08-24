@@ -32,9 +32,11 @@ pub fn run_in_new_context(
 
 pub fn build() -> Value {
     let run = crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT);
+    let source_text_module = crate::host::capability(crate::registry::SPEC_VM_SOURCE_TEXT_MODULE);
     crate::host::namespace_object(vec![
         ("runInNewContext", run.clone()),
         ("runInContext", run),
+        ("SourceTextModule", source_text_module),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }
