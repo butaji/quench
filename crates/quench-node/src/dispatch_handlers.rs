@@ -1010,11 +1010,14 @@ pub fn event_set_cancel_bubble(
 }
 
 pub fn event_prevent_default(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(receiver) = receiver {
+        if let Some(identity) = receiver.object_identity() {
+            state.borrow_mut().prevented_events.insert(identity);
+        }
         if execute::is_truthy(&execute::get_property(receiver, "cancelable")) {
             let updated =
                 execute::set_property(receiver.clone(), "defaultPrevented", Value::Boolean(true));
@@ -1046,10 +1049,13 @@ pub fn event_stop_immediate(
 
 pub fn event_composed_path(
     _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(host_api::array(Vec::new()))
+    match receiver.map(|value| execute::get_property(value, "target")) {
+        Some(target) if !matches!(target, Value::Undefined) => Ok(host_api::array(vec![target])),
+        _ => Ok(host_api::array(Vec::new())),
+    }
 }
 
 pub fn abort_signal_new(
