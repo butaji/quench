@@ -3,11 +3,11 @@ pub(crate) fn some(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = expect_array_like(receiver, "Array.prototype.some")?;
+    let length = crate::builtins::map_length(&receiver)?;
     let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(callback) {
         return Err(crate::vm::not_callable());
     }
-    let length = crate::builtins::map_length(&receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for index in 0..length {
         let Some(value) = crate::builtins::map_value(&receiver, index)? else {
@@ -31,11 +31,11 @@ pub(crate) fn every(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = expect_array_like(receiver, "Array.prototype.every")?;
+    let length = crate::builtins::map_length(&receiver)?;
     let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(callback) {
         return Err(crate::vm::not_callable());
     }
-    let length = crate::builtins::map_length(&receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for index in 0..length {
         let Some(value) = crate::builtins::map_value(&receiver, index)? else {
