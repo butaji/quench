@@ -60,6 +60,10 @@ pub(crate) fn realm_token(realm: RealmId) -> Option<Value> {
     realm::token(realm).map(Value::HostCapability)
 }
 
+pub(crate) fn realm_global_value(realm: RealmId) -> Option<Value> {
+    realm::global(realm)
+}
+
 pub(crate) fn realm_id_for_global_value(value: &Value) -> Option<RealmId> {
     let Value::Object(object) = value else {
         return None;

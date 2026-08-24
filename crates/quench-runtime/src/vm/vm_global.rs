@@ -52,6 +52,13 @@ pub(crate) fn is_global_object(value: &Value) -> bool {
 /// across declaration staging or copy-on-write replacement.
 pub(crate) fn resolve_global_owner(value: &Value) -> Option<Value> {
     let object = global_object_target(value)?;
+    // A realm global alias carries its semantic owner in the realm registry;
+    // do not infer ownership through the alias's `globalThis` property, which
+    // can resolve through a stale COW replacement while the alias is being
+    // retargeted.
+    if let Some(realm) = realm::id_for_global(&object) {
+        return realm::global(realm);
+    }
     if matches!(value, Value::Object(view) if view.iter().any(|(name, _)| name == SCRIPT_GLOBAL_VIEW))
         || matches!(value, Value::ObjectAlias(alias) if alias
             .target()
@@ -342,6 +349,18 @@ fn replace_register_aliases(
 }
 
 fn current_realm() -> RealmId {
+    // Nested calls into a child realm install that realm's context while the
+    // caller's global storage is still live. Prefer the execution context so
+    // global name resolution and COW ownership observe the callee's realm.
+    let context_realm = CURRENT_CONTEXT.with(|context| {
+        context
+            .borrow()
+            .as_ref()
+            .map(|rc| rc.realm())
+    });
+    if let Some(realm) = context_realm.filter(|realm| *realm != RealmId::ROOT) {
+        return realm;
+    }
     // During declaration staging the VM context can still describe the
     // caller while GLOBAL_OBJECT is already the active realm's object.
     // Resolve the realm from that object first so intrinsic seeding uses the
