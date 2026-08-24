@@ -5,8 +5,11 @@
 //! for the test262 + Node fixture conformance surface).
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
-use quench_runtime::value::Value;
+use quench_runtime::execute::VmError;
+use quench_runtime::ops::FunctionKind;
+use quench_runtime::value::{IteratorState, Value};
 
 thread_local! {
     /// The live `util.inspect.defaultOptions` object; formatters read
@@ -24,6 +27,89 @@ pub fn format_with_options(args: &[Value], numeric_separator: bool) -> String {
     result
 }
 
+/// Parse Node's dotenv-style environment format into a null-prototype object.
+pub fn parse_env(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(source)) = arguments.first() else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "str must be a string".into(),
+        ));
+    };
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut values = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let mut line = lines[index].trim().to_string();
+        index += 1;
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(stripped) = line.strip_prefix("export ") {
+            line = stripped.to_string();
+        }
+        let Some((key, initial)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() || key.chars().any(char::is_whitespace) {
+            continue;
+        }
+        let mut raw = initial.trim().to_string();
+        if let Some(quote) = raw.chars().next().filter(|c| matches!(c, '\'' | '"' | '`')) {
+            while !has_closing_quote(&raw, quote) && index < lines.len() {
+                if looks_like_assignment(lines[index]) {
+                    break;
+                }
+                raw.push('\n');
+                raw.push_str(lines[index]);
+                index += 1;
+            }
+        }
+        values.push((key.to_string(), Value::String(parse_env_value(&raw))));
+    }
+    let mut unique = HashMap::new();
+    for (key, value) in values {
+        unique.insert(key, value);
+    }
+    let mut properties = vec![("\0prototype".into(), Value::Null)];
+    properties.extend(unique);
+    Ok(Value::object(properties))
+}
+
+fn has_closing_quote(value: &str, quote: char) -> bool {
+    value.chars().skip(1).any(|character| character == quote)
+}
+
+fn looks_like_assignment(line: &str) -> bool {
+    let line = line.trim();
+    let Some((key, _)) = line.split_once('=') else {
+        return false;
+    };
+    !key.is_empty() && !key.chars().any(char::is_whitespace)
+}
+
+fn parse_env_value(raw: &str) -> String {
+    let value = raw.trim();
+    let Some(quote) = value.chars().next() else {
+        return String::new();
+    };
+    if !matches!(quote, '\'' | '"' | '`') {
+        return value
+            .split_once('#')
+            .map_or(value, |(head, _)| head)
+            .trim()
+            .to_string();
+    }
+    let Some(end) = value[quote.len_utf8()..].find(quote) else {
+        return value.to_string();
+    };
+    let result = &value[quote.len_utf8()..quote.len_utf8() + end];
+    if quote == '"' {
+        result.replace("\\n", "\n")
+    } else {
+        result.to_string()
+    }
+}
+
 /// Module wiring: returns the `(name, value)` pairs the host
 /// installs into the `util` namespace.
 pub fn build() -> Vec<(String, Value)> {
@@ -33,10 +119,30 @@ pub fn build() -> Vec<(String, Value)> {
         .and_then(|object| quench_runtime::execute::get_property_result(&object, "assign").ok())
         .unwrap_or(Value::Undefined);
     let to_usv_string = crate::host::capability(crate::registry::SPEC_UTIL_TO_USV_STRING);
-    let types = quench_runtime::host_api::object(vec![(
-        "isNativeError".to_string(),
-        crate::host::capability(crate::registry::SPEC_UTIL_IS_NATIVE_ERROR),
-    )]);
+    let types = types_object();
+    /*let type_names = [
+        "isArgumentsObject", "isArrayBuffer", "isAsyncFunction", "isBigIntObject",
+        "isBooleanObject", "isDate", "isExternal", "isGeneratorFunction",
+        "isGeneratorObject", "isMap", "isMapIterator", "isModuleNamespaceObject",
+        "isNativeError", "isNumberObject", "isPromise", "isProxy", "isRegExp",
+        "isSet", "isSetIterator", "isSharedArrayBuffer", "isStringObject",
+        "isSymbolObject", "isWeakMap", "isWeakSet", "isAnyArrayBuffer",
+        "isBoxedPrimitive", "isArrayBufferView", "isDataView", "isTypedArray",
+        "isUint8Array", "isUint8ClampedArray", "isUint16Array", "isUint32Array",
+        "isInt8Array", "isInt16Array", "isInt32Array", "isFloat16Array",
+        "isFloat32Array", "isFloat64Array", "isBigInt64Array", "isBigUint64Array",
+        "isKeyObject", "isCryptoKey",
+    ];
+    let types = quench_runtime::host_api::object(type_names.iter().map(|name| (
+        (*name).to_string(),
+        quench_runtime::host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_UTIL_TYPE_PREDICATE.cap),
+            },
+            vec![Value::String((*name).to_string())],
+        ),
+    )).collect());*/
     vec![
         (
             "isArray".to_string(),
@@ -45,6 +151,10 @@ pub fn build() -> Vec<(String, Value)> {
         ("_extend".to_string(), object_assign),
         ("toUSVString".to_string(), to_usv_string),
         ("types".to_string(), types),
+        (
+            "parseEnv".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_PARSE_ENV),
+        ),
         (
             "format".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
@@ -87,6 +197,97 @@ pub fn build() -> Vec<(String, Value)> {
             crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW),
         ),
     ]
+}
+
+pub fn types_object() -> Value {
+    let names = [
+        "isArgumentsObject", "isArrayBuffer", "isAsyncFunction", "isBigIntObject",
+        "isBooleanObject", "isDate", "isExternal", "isGeneratorFunction",
+        "isGeneratorObject", "isMap", "isMapIterator", "isModuleNamespaceObject",
+        "isNativeError", "isNumberObject", "isPromise", "isProxy", "isRegExp",
+        "isSet", "isSetIterator", "isSharedArrayBuffer", "isStringObject",
+        "isSymbolObject", "isWeakMap", "isWeakSet", "isAnyArrayBuffer",
+        "isBoxedPrimitive", "isArrayBufferView", "isDataView", "isTypedArray",
+        "isUint8Array", "isUint8ClampedArray", "isUint16Array", "isUint32Array",
+        "isInt8Array", "isInt16Array", "isInt32Array", "isFloat16Array",
+        "isFloat32Array", "isFloat64Array", "isBigInt64Array", "isBigUint64Array",
+        "isKeyObject", "isCryptoKey",
+    ];
+    quench_runtime::host_api::object(names.iter().map(|name| (
+        (*name).to_string(),
+        quench_runtime::host_api::bound_capability_with_arguments(
+            quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_UTIL_TYPE_PREDICATE.cap),
+            },
+            vec![Value::String((*name).to_string())],
+        ),
+    )).collect())
+}
+
+/// Runtime identity predicates share one capability and differ only by this data key.
+pub fn type_predicate(name: &str, value: &Value) -> bool {
+    let typed = matches!(value,
+        Value::Float64Array(_) | Value::Float32Array(_) | Value::Int8Array(_) |
+        Value::Int16Array(_) | Value::Int32Array(_) | Value::BigInt64Array(_) |
+        Value::BigUint64Array(_) | Value::Uint32Array(_) | Value::Uint8Array(_) |
+        Value::Uint8ClampedArray(_) | Value::Uint16Array(_));
+    let view = typed || matches!(value, Value::DataView(_));
+    match name {
+        "isArrayBuffer" => matches!(value, Value::ArrayBuffer(_)),
+        "isSharedArrayBuffer" => matches!(value, Value::ArrayBuffer(buffer) if buffer.shared),
+        "isAnyArrayBuffer" => matches!(value, Value::ArrayBuffer(_)),
+        "isArrayBufferView" => view,
+        "isDataView" => matches!(value, Value::DataView(_)),
+        "isTypedArray" => typed,
+        "isUint8Array" => matches!(value, Value::Uint8Array(_)),
+        "isUint8ClampedArray" => matches!(value, Value::Uint8ClampedArray(_)),
+        "isUint16Array" => matches!(value, Value::Uint16Array(_)),
+        "isUint32Array" => matches!(value, Value::Uint32Array(_)),
+        "isInt8Array" => matches!(value, Value::Int8Array(_)),
+        "isInt16Array" => matches!(value, Value::Int16Array(_)),
+        "isInt32Array" => matches!(value, Value::Int32Array(_)),
+        "isFloat32Array" => matches!(value, Value::Float32Array(_)),
+        "isFloat64Array" => matches!(value, Value::Float64Array(_)),
+        "isBigInt64Array" => matches!(value, Value::BigInt64Array(_)),
+        "isBigUint64Array" => matches!(value, Value::BigUint64Array(_)),
+        "isPromise" => matches!(value, Value::Promise(_)),
+        "isProxy" => matches!(value, Value::Proxy(_)),
+        "isRegExp" => matches!(quench_runtime::execute::get_property_result(value, "\0regexp"), Ok(Value::Boolean(true))),
+        "isDate" => matches!(quench_runtime::execute::get_property_result(value, "timeValue"), Ok(Value::Number(_) | Value::BindingCell(_))),
+        "isMap" => matches!(value, Value::Map(data) if !data.is_weak()),
+        "isWeakMap" => matches!(value, Value::Map(data) if data.is_weak()),
+        "isSet" => matches!(value, Value::Set(data) if !data.is_weak()),
+        "isWeakSet" => matches!(value, Value::Set(data) if data.is_weak()),
+        "isMapIterator" => matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Map { .. })),
+        "isSetIterator" => matches!(value, Value::Iterator(iter) if matches!(*iter.state.borrow(), IteratorState::Set { .. })),
+        "isGeneratorObject" => matches!(value, Value::Generator(_)),
+        "isGeneratorFunction" => matches!(value, Value::Function(function) if function.kind == FunctionKind::Generator && !function.is_async),
+        "isAsyncFunction" => matches!(value, Value::Function(function) if function.is_async && function.kind != FunctionKind::Generator),
+        "isArgumentsObject" => matches!(quench_runtime::execute::get_property_result(value, "\0arguments"), Ok(found) if !matches!(found, Value::Undefined)),
+        "isBooleanObject" => boxed_constructor(value, "Boolean"),
+        "isNumberObject" => boxed_constructor(value, "Number"),
+        "isStringObject" => boxed_constructor(value, "String"),
+        "isSymbolObject" => boxed_constructor(value, "Symbol"),
+        "isBigIntObject" => boxed_constructor(value, "BigInt"),
+        "isBoxedPrimitive" => ["Boolean", "Number", "String", "Symbol", "BigInt"].iter().any(|kind| boxed_constructor(value, kind)),
+        "isNativeError" => matches!(quench_runtime::execute::get_property_result(value, "\0error_slot"), Ok(Value::Boolean(true))),
+        "isFloat16Array" | "isExternal" | "isModuleNamespaceObject" | "isKeyObject" | "isCryptoKey" => false,
+        _ => false,
+    }
+}
+
+fn boxed_constructor(value: &Value, name: &str) -> bool {
+    let prototype = quench_runtime::execute::get_property_result(value, "\0prototype");
+    let expected = match name {
+        "Boolean" => quench_runtime::ops::Builtin::BooleanPrototype,
+        "Number" => quench_runtime::ops::Builtin::NumberPrototype,
+        "String" => quench_runtime::ops::Builtin::StringPrototype,
+        _ => return false,
+    };
+    matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::BindingCell(_))
+        && matches!(prototype, Ok(Value::Builtin(actual)) if actual == expected)
+        && matches!(quench_runtime::execute::get_property_result(value, "_value"), Ok(Value::Boolean(_) | Value::Number(_) | Value::String(_)))
 }
 
 fn inspect_capability() -> Value {
