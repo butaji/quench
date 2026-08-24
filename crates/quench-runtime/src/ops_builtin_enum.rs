@@ -36,7 +36,7 @@ pub enum Builtin {
     ArrayBufferSlice, SharedArrayBufferSlice, ArrayBufferTransfer,
     ArrayBufferTransferToFixedLength, ArrayBufferTransferToImmutable,
     ArrayBufferSliceToImmutable,
-    ArrayIsArray, ArrayFrom, ArrayOf,
+    ArrayIsArray, ArrayFrom, ArrayFromAsync, ArrayOf,
     TypedArrayFrom, TypedArrayOf,
     ArrayMap, ArrayFilter,
     ArraySome, ArrayEvery,
