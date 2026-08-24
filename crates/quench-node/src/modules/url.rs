@@ -46,12 +46,10 @@ pub fn parse(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let raw_url = args
-        .first()
-        .map(value_to_string)
-        .unwrap_or_default()
-        .trim_matches(|character: char| character <= '\u{20}')
-        .to_string();
+    let raw_url =
+        crate::modules::path::validate_string(args.first().unwrap_or(&Value::Undefined), "url")?
+            .trim_matches(|character: char| character <= '\u{20}')
+            .to_string();
     let url = if let Some((head, fragment)) = raw_url.split_once('#') {
         format!("{}#{}", normalize_legacy_input(head), fragment)
     } else {
