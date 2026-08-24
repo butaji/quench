@@ -67,7 +67,7 @@ fn slice_index(
 /// `ArraySpeciesCreate`: the species-constructed result, or `None` for the
 /// default plain array of `count` holes.
 fn slice_species(this: &Value, count: isize) -> Result<Option<Value>, crate::execute::VmError> {
-    if !matches!(this, Value::Array(_)) {
+    if !matches!(crate::builtins::is_array(Some(this))?, Value::Boolean(true)) {
         return Ok(None);
     }
     let constructor = crate::locals::resolved_replacement(crate::execute::get_property_result(
