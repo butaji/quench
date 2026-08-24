@@ -8,15 +8,16 @@ struct StatePredicatePlan {
 }
 
 #[derive(Clone, Copy)]
-struct StateBitOrPlan {
+struct StateBitwisePlan {
     state_pc: usize,
     mask_slot: u16,
+    operator: crate::ops::BinaryOp,
 }
 
 #[derive(Clone, Copy)]
 enum ShapeKernelPlan {
     StatePredicate(StatePredicatePlan),
-    StateBitOr(StateBitOrPlan),
+    StateBitwise(StateBitwisePlan),
 }
 
 #[derive(Clone)]
@@ -37,7 +38,7 @@ fn execute_shape_kernel(
     let plan = shape_kernel_fact(function)?;
     match plan {
         ShapeKernelPlan::StatePredicate(plan) => execute_state_predicate(function, receiver, plan),
-        ShapeKernelPlan::StateBitOr(plan) => execute_state_bit_or(function, receiver, plan),
+        ShapeKernelPlan::StateBitwise(plan) => execute_state_bitwise(function, receiver, plan),
     }
 }
 
@@ -62,10 +63,10 @@ fn execute_state_predicate(
     ))
 }
 
-fn execute_state_bit_or(
+fn execute_state_bitwise(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
-    plan: StateBitOrPlan,
+    plan: StateBitwisePlan,
 ) -> Option<crate::value::Value> {
     let crate::value::Value::Object(object) = receiver else { return None };
     let metadata = function.code.code()?.metadata_at(plan.state_pc)?;
@@ -74,7 +75,12 @@ fn execute_state_bit_or(
     let cell = unsafe { &*cell };
     let state = exact_i32(cell.load_number()?)?;
     let mask = exact_i32(function.captures.get_number(plan.mask_slot)?)?;
-    cell.store(crate::value::Value::Number(f64::from(state | mask)));
+    let state = match plan.operator {
+        crate::ops::BinaryOp::BitwiseOr => state | mask,
+        crate::ops::BinaryOp::BitwiseAnd => state & mask,
+        _ => return None,
+    };
+    cell.store(crate::value::Value::Number(f64::from(state)));
     crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
     Some(crate::value::Value::Undefined)
 }
@@ -99,7 +105,7 @@ fn shape_kernel_fact(
     }
     let plan = match_state_predicate(function)
         .map(ShapeKernelPlan::StatePredicate)
-        .or_else(|| match_state_bit_or(function).map(ShapeKernelPlan::StateBitOr));
+        .or_else(|| match_state_bitwise(function).map(ShapeKernelPlan::StateBitwise));
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -182,9 +188,9 @@ fn match_state_predicate_alternate(
     })
 }
 
-fn match_state_bit_or(
+fn match_state_bitwise(
     function: &std::rc::Rc<crate::value::FunctionValue>,
-) -> Option<StateBitOrPlan> {
+) -> Option<StateBitwisePlan> {
     let code = function.code.code()?;
     let load_this = code.instruction(0)?;
     let move_one = code.instruction(1)?;
@@ -196,7 +202,8 @@ fn match_state_bit_or(
     let set_state = code.instruction(7)?;
     let load_undefined = code.instruction(8)?;
     let return_op = code.instruction(9)?;
-    if !state_bit_or_ops_match(
+    let operator = compact_bitwise_operator(bit_or.flags)?;
+    if !state_bitwise_ops_match(
         code,
         [
             load_this,
@@ -213,13 +220,20 @@ fn match_state_bit_or(
     ) {
         return None;
     }
-    Some(StateBitOrPlan {
+    Some(StateBitwisePlan {
         state_pc: 4,
         mask_slot: load_mask.b,
+        operator,
     })
 }
 
-fn state_bit_or_ops_match(
+fn compact_bitwise_operator(flags: u8) -> Option<crate::ops::BinaryOp> {
+    let operator = crate::ir::compact_binary_operator(flags)?;
+    matches!(operator, crate::ops::BinaryOp::BitwiseOr | crate::ops::BinaryOp::BitwiseAnd)
+        .then_some(operator)
+}
+
+fn state_bitwise_ops_match(
     code: crate::machine::CodeView<'_>,
     ops: [crate::ir::Instruction; 10],
 ) -> bool {
@@ -232,7 +246,7 @@ fn state_bit_or_ops_match(
         && (get_state.opcode, get_state.b) == (crate::ir::Opcode::GetN, load_again.a)
         && load_mask.opcode == crate::ir::Opcode::LoadLocalChecked
         && bit_or.opcode == crate::ir::Opcode::Binary
-        && bit_or.flags == crate::ir::compact_binary_id(crate::ops::BinaryOp::BitwiseOr)
+        && compact_bitwise_operator(bit_or.flags).is_some()
         && (bit_or.b, bit_or.c) == (get_state.a, load_mask.a)
         && (set_state.opcode, set_state.a, set_state.b)
             == (crate::ir::Opcode::SetN, move_two.a, bit_or.a)
