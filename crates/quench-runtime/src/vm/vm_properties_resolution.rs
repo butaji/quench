@@ -696,6 +696,7 @@ pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
                 && !is_iterator_next_builtin(builtin)
+                && !is_array_iterator_builtin(builtin)
                 && crate::intl::tolocale::symbol::name(builtin).is_none() =>
         {
             bind_method(receiver, Value::Builtin(builtin))
@@ -726,6 +727,13 @@ fn is_iterator_next_builtin(builtin: Builtin) -> bool {
             | Builtin::StringIteratorNext
             | Builtin::SetIteratorNext
             | Builtin::MapIteratorNext
+    )
+}
+
+fn is_array_iterator_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::ArrayIterator | Builtin::ArrayKeys | Builtin::ArrayEntries
     )
 }
 
