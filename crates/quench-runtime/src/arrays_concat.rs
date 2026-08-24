@@ -62,13 +62,15 @@ fn concat_sparse_arrays(items: &[Value]) -> Result<Value, crate::execute::VmErro
     result.set_length(length);
     let mut offset = 0;
     for item in items {
-        let Value::Array(values) = item else { continue };
-        let mut index = 0;
-        while let Some(current) = values.next_index(index, values.logical_len()) {
-            if let Some(value) = values.get_index(current) {
+        let Value::Array(values) = item else {
+            continue;
+        };
+        for current in 0..values.logical_len() {
+            let key = current.to_string();
+            if crate::with_scope::has_property(item, &key)? {
+                let value = crate::execute::get_property_result(item, &key)?;
                 result.set_index(offset + current, value);
             }
-            index = current.saturating_add(1);
         }
         offset += values.logical_len();
     }
