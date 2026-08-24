@@ -30,6 +30,30 @@ Schema 5 `lanes` contains:
 `loop_shapes`, `function_call_shapes`, and `heap_lifecycle` remain beside
 `lanes` in the snapshot.
 
+## Executable benchmark contracts
+
+`quench-bench/profile-contracts.json` is the single declaration of the expected
+execution profile for every V8-v7 benchmark. Assert a real traced/untraced run
+with:
+
+```sh
+node tools/analyze-quench-bench.cjs deltablue \
+  --assert-profile quench-bench/profile-contracts.json
+```
+
+Run the contract for every declared benchmark, or a named subset, with:
+
+```sh
+node tools/assert-quench-bench-profiles.cjs
+node tools/assert-quench-bench-profiles.cjs deltablue richards
+node tools/assert-quench-bench-profiles.cjs deltablue -- --timeout-ms 300000
+```
+
+The contract addresses any numeric field in the combined report by path and
+supports inclusive `min` and `max` bounds. Exact architectural invariants use
+the same value for both. Deterministic lane counters and normalized ratios are
+the primary contract; Score remains an untraced end-to-end gate.
+
 `vm_share_ppm` divides only L2 and L3 handlers. L0 operations and L1/L4 entries
 overlap those handlers and therefore must not be presented as exclusive time.
 Use untraced benchmark scores and OS hardware counters for wall time, cycles,
