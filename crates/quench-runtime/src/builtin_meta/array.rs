@@ -28,6 +28,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArraySome => Some("some"),
         Builtin::ArrayEvery => Some("every"),
         Builtin::ArrayFind => Some("find"),
+        Builtin::ArrayFindIndex => Some("findIndex"),
         Builtin::ArrayIterator | Builtin::TypedArrayIterator => Some("values"),
         Builtin::ArrayKeys => Some("keys"),
         Builtin::ArrayEntries => Some("entries"),
@@ -60,6 +61,7 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayCopyWithin => Some("copyWithin"),
         Builtin::ArrayToSorted => Some("toSorted"),
         Builtin::ArrayToReversed => Some("toReversed"),
+        Builtin::ArrayToString => Some("toString"),
         Builtin::ArraySplice => Some("splice"),
         Builtin::ArrayJoin => Some("join"),
         Builtin::ArrayToLocaleString => Some("toLocaleString"),
@@ -117,6 +119,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayPop
         | Builtin::ArrayToReversed
         | Builtin::ArrayJoin
+        | Builtin::ArrayToString
         | Builtin::ArrayToLocaleString => Some(0.0),
         _ => fn_len_tail(builtin),
     }
