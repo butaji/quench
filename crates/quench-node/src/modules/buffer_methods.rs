@@ -344,32 +344,6 @@ pub fn fill(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> HandlerResult {
-    if !matches!(receiver, Some(Value::Uint8Array(_)))
-        && matches!(args.first(), Some(Value::Uint8Array(_)))
-    {
-        let view = match args.first() {
-            Some(Value::Uint8Array(view)) => view,
-            _ => unreachable!(),
-        };
-        validate_fill_bound(args.get(1), view.length, "start")?;
-        validate_fill_bound(args.get(2), view.length, "end")?;
-        if let Some(Value::Number(value)) = args.get(3) {
-            if !value.is_finite() || *value < 0.0 || *value > 255.0 {
-                return Err(enc::out_of_range(
-                    "value",
-                    ">= 0 && <= 255",
-                    &enc::fmt_num(*value),
-                ));
-            }
-        }
-        let reordered = [
-            args.get(3).cloned().unwrap_or(Value::Undefined),
-            args.get(1).cloned().unwrap_or(Value::Undefined),
-            args.get(2).cloned().unwrap_or(Value::Undefined),
-            args.get(4).cloned().unwrap_or(Value::Undefined),
-        ];
-        return fill(state, args.first(), &reordered);
-    }
     let view = this_view(receiver)?;
     if let Some(receiver) = receiver {
         if let Ok(Value::Number(length)) =
