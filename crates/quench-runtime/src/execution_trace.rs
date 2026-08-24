@@ -80,6 +80,11 @@ execution_events! {
     RegisterFileRead => "register_file_read",
     OwnedWordRead => "owned_word_read",
     ShapeKernelHit => "shape_kernel_hit",
+    CountedForAttempt => "counted_for_attempt",
+    CountedForHit => "counted_for_hit",
+    CountedForDeopt => "counted_for_deopt",
+    CountedForRecognized => "counted_for_recognized",
+    CountedForPerIteration => "counted_for_per_iteration",
     RegisterWordCopy => "register_word_copy",
     PackedArrayGet => "packed_array_get",
     PackedArraySet => "packed_array_set",
@@ -160,6 +165,55 @@ impl Counters {
             *self.operand_transitions.entry((previous, key)).or_default() += 1;
         }
     }
+}
+
+#[cfg(feature = "execution-trace")]
+fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> serde_json::Value {
+    let event = |event: Event| counters.events[event as usize];
+    let leaf_total = counters.leaf_compact.iter().sum::<u64>();
+    let compact_slow = counters.compact[crate::ir::Opcode::Slow as usize];
+    let leaf_slow = counters.leaf_compact[crate::ir::Opcode::Slow as usize];
+    let l2 = compact_total.saturating_sub(compact_slow) + leaf_total.saturating_sub(leaf_slow);
+    let l3 = slow_total + leaf_slow;
+    let vm_total = l2 + l3;
+    let host_calls = counters
+        .call_targets
+        .iter()
+        .filter(|(target, _)| **target != "Function")
+        .map(|(_, count)| *count)
+        .sum::<u64>();
+    serde_json::json!({
+        "l0": {
+            "word_reads": event(Event::FixedWordRead) + event(Event::LocalWordRead)
+                + event(Event::RegisterFileRead) + event(Event::OwnedWordRead),
+            "word_copies": event(Event::RegisterWordCopy),
+            "value_decode": event(Event::ValueDecode),
+            "property_hit": event(Event::NamedPropertyHit),
+            "property_miss": event(Event::NamedPropertyMiss),
+            "packed_get": event(Event::PackedArrayGet),
+            "packed_set": event(Event::PackedArraySet),
+            "packed_miss": event(Event::PackedArrayMiss),
+        },
+        "l1": {
+            "shape_hits": event(Event::ShapeKernelHit),
+            "crypto_hits": event(Event::CryptoKernelHit),
+            "counted_attempts": event(Event::CountedForAttempt),
+            "counted_hits": event(Event::CountedForHit),
+            "counted_deopts": event(Event::CountedForDeopt),
+            "counted_recognized": event(Event::CountedForRecognized),
+            "counted_per_iteration_rejects": event(Event::CountedForPerIteration),
+        },
+        "l2": {"handlers": l2, "vm_share_ppm": ratio_ppm(l2, vm_total)},
+        "l3": {"handlers": l3, "vm_share_ppm": ratio_ppm(l3, vm_total)},
+        "l4": {"host_calls": host_calls},
+    })
+}
+
+#[cfg(feature = "execution-trace")]
+fn ratio_ppm(part: u64, total: u64) -> u64 {
+    part.saturating_mul(1_000_000)
+        .checked_div(total)
+        .unwrap_or(0)
 }
 
 #[cfg(feature = "execution-trace")]
@@ -922,8 +976,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     "ops": shape.2,
                 })
             }).collect::<Vec<_>>();
+            let lanes = lane_profile(&counters, compact_total, slow_total);
             serde_json::json!({
-                "schema": 3,
+                "schema": 4,
                 "compact_total": compact_total,
                 "slow_total": slow_total,
                 "guest_total": compact_total,
@@ -949,6 +1004,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "named_property_results": counters.named_property_results,
                 "crypto_direct_iterations": counters.crypto_direct_iterations,
                 "loop_shapes": loop_shapes,
+                "lanes": lanes,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
             })
         })
@@ -963,6 +1019,29 @@ pub fn snapshot() -> Option<serde_json::Value> {
 #[cfg(feature = "execution-trace")]
 pub fn emit() {
     let _ = snapshot();
+}
+
+#[cfg(all(test, feature = "execution-trace"))]
+mod lane_profile_tests {
+    use super::*;
+
+    #[test]
+    fn reports_vm_shares_and_native_deopts_from_one_event_table() {
+        let mut counters = Counters {
+            events: vec![0; EVENT_NAMES.len()],
+            ..Counters::default()
+        };
+        counters.compact[crate::ir::Opcode::Move as usize] = 8;
+        counters.compact[crate::ir::Opcode::Slow as usize] = 2;
+        counters.events[Event::CountedForHit as usize] = 4;
+        counters.events[Event::CountedForDeopt as usize] = 1;
+        let profile = lane_profile(&counters, 10, 2);
+        assert_eq!(profile["l1"]["counted_hits"], 4);
+        assert_eq!(profile["l1"]["counted_deopts"], 1);
+        assert_eq!(profile["l2"]["handlers"], 8);
+        assert_eq!(profile["l3"]["handlers"], 2);
+        assert_eq!(profile["l2"]["vm_share_ppm"], 800_000);
+    }
 }
 
 #[cfg(not(feature = "execution-trace"))]
