@@ -199,6 +199,21 @@ fn run_instruction(
             )?;
             Ok(None)
         }
+        Opcode::CallN => {
+            if instruction.flags == 1 {
+                crate::methods::execute_registered_one(registers, instruction)?;
+            } else {
+                let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
+                let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
+                crate::methods::execute_named(
+                    registers,
+                    instruction,
+                    key,
+                    &metadata.named_cache,
+                )?;
+            }
+            Ok(None)
+        }
         Opcode::ASetI => {
             let index = registers.read_array_index(usize::from(instruction.b));
             let number = registers.read_number(usize::from(instruction.c));
