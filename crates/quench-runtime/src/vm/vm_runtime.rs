@@ -152,6 +152,14 @@ fn run_instruction(
             write_value(registers, instruction.a, value);
             Ok(None)
         }
+        Opcode::GetN => {
+            let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
+            let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
+            let object = read_register(registers, instruction.b)?;
+            let value = get_named_property_result(&object, key, &metadata.named_cache)?;
+            write_value(registers, instruction.a, value);
+            Ok(None)
+        }
         Opcode::ASetI => {
             let index = registers.read_array_index(usize::from(instruction.b));
             let number = registers.read_number(usize::from(instruction.c));
