@@ -209,6 +209,7 @@ fn run_packed_loop_kernel(
     loop_fact: CountedForFact,
     body: crate::machine::CodeView<'_>,
 ) -> Option<crate::completion::Completion> {
+    (loop_fact.timing == CountedStepTiming::AfterBody).then_some(())?;
     let fact = PackedLoopFact::recognize(body, loop_fact.slot)?;
     let environment = crate::locals::current();
     let counter = environment.get_number(loop_fact.slot)?;
