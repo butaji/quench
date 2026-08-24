@@ -121,7 +121,17 @@ pub(crate) fn reduce_for_in(
         slot
     };
     let (mut body, _) = crate::switch::with_completion(dst, || {
-        crate::branch::reduce(&statement.body, facts, &body_locals)
+        let mut body = Vec::new();
+        let last = crate::loops::reduce_loop_body(
+            &statement.body,
+            &mut body,
+            facts,
+            next_register,
+            next_slot,
+            &mut body_locals,
+            dst,
+        )?;
+        Ok::<_, Vec<String>>((body, last))
     })?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
@@ -208,7 +218,17 @@ pub(crate) fn reduce_for_of(
         slot
     };
     let (mut body, _) = crate::switch::with_completion(dst, || {
-        crate::branch::reduce(&statement.body, facts, &body_locals)
+        let mut body = Vec::new();
+        let last = crate::loops::reduce_loop_body(
+            &statement.body,
+            &mut body,
+            facts,
+            next_register,
+            next_slot,
+            &mut body_locals,
+            dst,
+        )?;
+        Ok::<_, Vec<String>>((body, last))
     })?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
