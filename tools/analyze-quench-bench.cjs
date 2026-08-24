@@ -4,6 +4,7 @@
 const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { formatViolations, violations } = require("./lib/profile-contracts.cjs");
 
 const root = path.resolve(__dirname, "..");
 const suite = path.join(root, "quench-bench/js-engine-benchmark/v8-v7");
@@ -21,6 +22,7 @@ const timeoutMs = Number(option("--timeout-ms", "180000"));
 const output = option("--out", null);
 const baselinePath = option("--baseline", null);
 const sampleSeconds = Number(option("--sample-seconds", "0"));
+const contractPath = option("--assert-profile", null);
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) usage("invalid timeout");
 
 const runner = `
@@ -34,7 +36,7 @@ BenchmarkSuite.RunSuites({
 `;
 
 function usage(message) {
-  console.error(`${message}\nusage: analyze-quench-bench.cjs FIXTURE [--quench PATH] [--trace-quench PATH] [--timeout-ms N] [--sample-seconds N] [--baseline JSON] [--out JSON]`);
+  console.error(`${message}\nusage: analyze-quench-bench.cjs FIXTURE [--quench PATH] [--trace-quench PATH] [--timeout-ms N] [--sample-seconds N] [--baseline JSON] [--out JSON] [--assert-profile JSON]`);
   process.exit(2);
 }
 
@@ -98,6 +100,8 @@ function laneRatios(vm) {
       ? lanes.l1.crypto.hits / lanes.l1.crypto.direct_iterations : null,
     environments_per_call: calls ? (vm.heap_lifecycle?.environment?.allocated || 0) / calls : null,
     l3_handler_share: handlers ? l3 / handlers : null,
+    counted_hits_per_loop_iteration: vm.loop_iteration
+      ? (lanes.l1?.counted?.hits || 0) / vm.loop_iteration : null,
   };
 }
 
@@ -156,10 +160,14 @@ async function main() {
   report.ratios = laneRatios(vm);
   const baseline = baselinePath ? JSON.parse(fs.readFileSync(baselinePath, "utf8")) : null;
   report.delta = delta(report, baseline);
+  const contracts = contractPath ? JSON.parse(fs.readFileSync(contractPath, "utf8")) : null;
+  const failures = contracts ? violations(report, contracts) : [];
+  report.profile_contract = contracts ? { passed: failures.length === 0, failures } : null;
   const json = `${JSON.stringify(report, null, 2)}\n`;
   if (output) fs.writeFileSync(output, json);
   process.stdout.write(json);
-  if (!report.valid) process.exitCode = 1;
+  if (failures.length) console.error(formatViolations(fixture.replace(/\.js$/, ""), failures));
+  if (!report.valid || failures.length) process.exitCode = 1;
 }
 
 main().catch((error) => {
