@@ -118,5 +118,5 @@ fn expect_array_like(
             format!("{method} called on null or undefined").as_str(),
         ));
     }
-    Ok(receiver.clone())
+    crate::construct::to_object(receiver)
 }
