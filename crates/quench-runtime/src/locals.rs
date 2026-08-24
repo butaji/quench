@@ -399,11 +399,7 @@ pub(crate) fn load(
 ) -> Result<(), VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     let environment = current();
-    if let Some(number) = environment.get_number(slot) {
-        registers.write_number(usize::from(dst), number);
-    } else {
-        crate::execute::write_value(registers, dst, resolved_replacement(environment.get(slot)));
-    }
+    environment.load_into(registers, dst, slot);
     Ok(())
 }
 
@@ -421,11 +417,7 @@ pub(crate) fn load_checked(
         )));
     }
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
-    if let Some(number) = environment.get_number(slot) {
-        registers.write_number(usize::from(dst), number);
-    } else {
-        crate::execute::write_value(registers, dst, resolved_replacement(environment.get(slot)));
-    }
+    environment.load_into(registers, dst, slot);
     Ok(())
 }
 
