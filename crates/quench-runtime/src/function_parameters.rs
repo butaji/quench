@@ -126,17 +126,20 @@ fn mark_later_bindings(
 }
 
 fn initialize_direct_parameters(formal: &FormalParameters<'_>, captures: u16, ops: &mut Vec<Op>) {
+    let mut preceded_by_parameter_tdz = false;
     for (index, parameter) in formal.items.iter().enumerate() {
-        if matches!(
+        let direct = matches!(
             parameter.pattern.kind,
             BindingPatternKind::BindingIdentifier(_)
-        ) {
+        );
+        if direct && preceded_by_parameter_tdz {
             if let Ok(offset) = u16::try_from(index) {
                 ops.push(Op::InitializeLocal {
                     slot: captures.saturating_add(offset),
                 });
             }
         }
+        preceded_by_parameter_tdz |= !direct;
     }
 }
 
