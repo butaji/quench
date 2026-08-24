@@ -118,6 +118,7 @@ struct Counters {
     previous_operand: Option<OperandKey>,
     regexp: HashMap<String, (u64, u128, u128)>,
     object_shapes: HashMap<String, u64>,
+    function_shapes: HashMap<(usize, usize), (u64, u64)>,
 }
 
 #[cfg(feature = "execution-trace")]
@@ -173,6 +174,27 @@ pub(crate) fn object_shape(properties: &crate::value::ObjectProperties) {
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn object_shape(_: &crate::value::ObjectProperties) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn function_shape(captures: usize, code_len: usize, allocated: bool) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            let counts = counters
+                .function_shapes
+                .entry((captures, code_len))
+                .or_default();
+            if allocated {
+                counts.0 += 1;
+            } else {
+                counts.1 += 1;
+            }
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn function_shape(_: usize, _: usize, _: bool) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -470,6 +492,13 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 .take(64)
                 .map(|(shape, count)| serde_json::json!({"shape": shape, "count": count}))
                 .collect::<Vec<_>>();
+            let mut function_shapes: Vec<_> = counters.function_shapes.iter().collect();
+            function_shapes.sort_unstable_by_key(|(_, counts)| {
+                std::cmp::Reverse(counts.0.saturating_sub(counts.1))
+            });
+            let function_shapes = function_shapes.into_iter().take(64).map(|(&(captures, code_len), &(allocated, dropped))| {
+                serde_json::json!({"captures": captures, "code_len": code_len, "allocated": allocated, "dropped": dropped})
+            }).collect::<Vec<_>>();
             serde_json::json!({
                 "schema": 2,
                 "compact_total": compact_total,
@@ -488,6 +517,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "operand_transitions": operand_transitions,
                 "regexp": regexp,
                 "object_shapes": object_shapes,
+                "function_shapes": function_shapes,
                 "heap_lifecycle": heap_lifecycle_snapshot(),
             })
         })
