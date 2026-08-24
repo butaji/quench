@@ -109,6 +109,7 @@ test-buffer-from.js
 test-buffer-isencoding.js
 test-buffer-iterator.js
 test-buffer-no-negative-allocation.js
+test-buffer-new.js
 test-buffer-over-max-length.js
 test-buffer-parent-property.js
 test-buffer-read.js
