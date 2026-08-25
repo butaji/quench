@@ -60,23 +60,7 @@ pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
         ));
     };
     if is_helper_iter(data) {
-        let done = matches!(
-            &*data.state.borrow(),
-            IteratorState::Zip {
-                done: true,
-                started: false,
-                ..
-            } | IteratorState::ZipKeyed {
-                done: true,
-                started: false,
-                ..
-            } | IteratorState::Mapped { done: true, .. }
-                | IteratorState::Filtered { done: true, .. }
-                | IteratorState::FlatMapped { done: true, .. }
-                | IteratorState::Dropped { done: true, .. }
-                | IteratorState::Take { done: true, .. }
-        );
-        if *data.executing.borrow() || (*data.in_return.borrow() && !done) {
+        if *data.executing.borrow() || *data.in_return.borrow() {
             return Err(crate::value::error::throw_type_error(
                 "Iterator is already executing",
             ));
@@ -106,7 +90,6 @@ fn is_helper_iter(data: &crate::value::IteratorData) -> bool {
             | IteratorState::Dropped { .. }
             | IteratorState::Take { .. }
             | IteratorState::Zip { .. }
-            | IteratorState::ZipKeyed { .. }
             | IteratorState::Concat { .. }
     )
 }
@@ -151,14 +134,13 @@ pub(crate) fn builtin_for(data: &crate::value::IteratorData) -> crate::ops::Buil
         IteratorState::Native { .. } | IteratorState::Protocol { .. } => {
             crate::ops::Builtin::ArrayIteratorPrototype
         }
-        IteratorState::Mapped { .. } => crate::ops::Builtin::IteratorPrototype,
-        IteratorState::Filtered { .. } => crate::ops::Builtin::IteratorPrototype,
-        IteratorState::FlatMapped { .. } => crate::ops::Builtin::IteratorPrototype,
-        IteratorState::Dropped { .. } => crate::ops::Builtin::IteratorPrototype,
-        IteratorState::Take { .. } => crate::ops::Builtin::IteratorPrototype,
+        IteratorState::Mapped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Filtered { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::FlatMapped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Dropped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Take { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Concat { .. } => crate::ops::Builtin::IteratorPrototype,
         IteratorState::Zip { .. } => crate::ops::Builtin::IteratorPrototype,
-        IteratorState::ZipKeyed { .. } => crate::ops::Builtin::IteratorPrototype,
     }
 }
 
@@ -169,7 +151,6 @@ pub(crate) fn property(key: &str) -> Value {
         "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
         "filter" => Value::Builtin(crate::ops::Builtin::IteratorFilter),
         "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
-        "some" => Value::Builtin(crate::ops::Builtin::IteratorSome),
         "flatMap" => Value::Builtin(crate::ops::Builtin::IteratorFlatMap),
         "drop" => Value::Builtin(crate::ops::Builtin::IteratorDrop),
         "take" => Value::Builtin(crate::ops::Builtin::IteratorTake),
@@ -194,12 +175,8 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
                     IteratorState::Protocol { .. }
                         | IteratorState::Mapped { .. }
                         | IteratorState::Filtered { .. }
-                        | IteratorState::FlatMapped { .. }
-                        | IteratorState::Dropped { .. }
-                        | IteratorState::Take { .. }
                         | IteratorState::Concat { .. }
                         | IteratorState::Zip { .. }
-                        | IteratorState::ZipKeyed { .. }
                 )
         )
     {
@@ -225,7 +202,6 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
         IteratorState::Take { .. } => "Iterator",
         IteratorState::Concat { .. } => "Iterator",
         IteratorState::Zip { .. } => "Iterator",
-        IteratorState::ZipKeyed { .. } => "Iterator",
     };
     Value::String(tag.to_string())
 }
@@ -248,7 +224,6 @@ fn next_for(value: &Value) -> Value {
         IteratorState::Take { .. } => Builtin::IteratorNext,
         IteratorState::Concat { .. } => Builtin::IteratorNext,
         IteratorState::Zip { .. } => Builtin::IteratorNext,
-        IteratorState::ZipKeyed { .. } => Builtin::IteratorNext,
     };
     Value::Builtin(builtin)
 }

@@ -3,14 +3,9 @@ use crate::{
     ops::{Builtin, FunctionKind},
     value::{ProxyValue, Value},
 };
-use std::cell::Cell;
 use std::rc::Rc;
 use std::slice;
 include!("proxy_set.rs");
-
-thread_local! {
-    static ACTIVE_GET_TRAP: Cell<bool> = const { Cell::new(false) };
-}
 pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().ok_or(VmError::NotCallable)?;
     let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
@@ -115,23 +110,15 @@ pub(crate) fn proxy_get(
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "get") {
             let receiver = receiver.unwrap_or(target);
-            let result = ACTIVE_GET_TRAP.with(|active| {
-                if active.replace(true) {
-                    active.set(false);
-                    return proxy_target_property(proxy, prop, receiver);
-                }
-                let result = call_trap(
-                    &trap,
-                    &[
-                        proxy.target.clone(),
-                        crate::conversion::property_key_value(prop),
-                        receiver.clone(),
-                    ],
-                    Some(&proxy.handler),
-                );
-                active.set(false);
-                result
-            })?;
+            let result = call_trap(
+                &trap,
+                &[
+                    proxy.target.clone(),
+                    crate::conversion::property_key_value(prop),
+                    receiver.clone(),
+                ],
+                Some(&proxy.handler),
+            )?;
             let descriptor = crate::builtins::object::descriptor(
                 Some(&proxy.target),
                 Some(&Value::String(prop.to_string())),
@@ -328,15 +315,14 @@ pub(crate) fn proxy_construct(
         }
     }
     let new_target = new_target.unwrap_or(target);
-    let Value::Proxy(proxy) = target else {
-        return crate::construct::construct_value_with_new_target(target, new_target, arguments);
-    };
-    crate::construct::construct_value_with_new_target(&proxy.target, new_target, arguments)
+    crate::construct::construct_value_with_new_target(target, new_target, arguments)
 }
 
 fn is_constructible(value: &Value) -> bool {
     match value {
-        Value::Function(function) => crate::functions::is_constructible(function),
+        Value::Function(function) => {
+            !function.is_async && matches!(function.kind, FunctionKind::Ordinary)
+        }
         Value::BoundFunction(bound) => is_constructible(&bound.target),
         // A proxy is constructible exactly when its target is constructible.
         // The proxy itself does not acquire a [[Construct]] slot merely by
@@ -393,11 +379,6 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
             return Ok(Value::Boolean(success));
         }
     }
-    if matches!(target, Value::Builtin(Builtin::ObjectPrototype))
-        && !prototype_matches(target, prototype)?
-    {
-        return Ok(Value::Boolean(false));
-    }
     if prototype_matches(target, prototype)? {
         return Ok(Value::Boolean(true));
     }
@@ -440,10 +421,6 @@ pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
         }
     }
     require_reflect_object(target)?;
-    let target = match target {
-        Value::Proxy(proxy) => &proxy.target,
-        target => target,
-    };
     Ok(Value::Boolean(crate::properties::object_is_extensible(
         target,
     )))
@@ -598,15 +575,15 @@ pub(crate) fn proxy_define_property(
         }
     }
     let target = match target {
-        Value::Proxy(proxy) => crate::locals::resolved_replacement(proxy.target.clone()),
-        target => target.clone(),
+        Value::Proxy(proxy) => &proxy.target,
+        target => target,
     };
     let updated = crate::builtins::define_property(&[
         target.clone(),
         Value::String(prop.to_string()),
         descriptor.clone(),
     ])?;
-    crate::locals::replace_value(&target, &updated);
+    crate::locals::replace_value(target, &updated);
     Ok(Value::Boolean(true))
 }
 

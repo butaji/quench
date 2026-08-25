@@ -37,8 +37,7 @@ pub(crate) fn array_copy_within(
     // clone path below.
     if values.is_packed_ordinary() {
         let mut updated = values.clone();
-        let copied = Rc::make_mut(&mut updated).copy_dense_within(start, target, count);
-        debug_assert!(copied);
+        debug_assert!(Rc::make_mut(&mut updated).copy_dense_within(start, target, count));
         let result = Value::Array(updated);
         crate::locals::replace_value(receiver, &result);
         return Ok(result);

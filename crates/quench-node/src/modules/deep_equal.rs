@@ -736,11 +736,7 @@ fn typed_array_bytes(value: &Value) -> Option<Vec<u8>> {
         _ => return None,
     };
     let end = offset.checked_add(length.checked_mul(element_size)?)?;
-    buffer
-        .bytes
-        .borrow()
-        .get(offset..end)
-        .map(ToOwned::to_owned)
+    buffer.bytes.borrow().get(offset..end).map(ToOwned::to_owned)
 }
 
 /// Both sides must own the same enumerable symbol keys with equal values.

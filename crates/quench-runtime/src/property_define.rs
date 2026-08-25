@@ -163,13 +163,6 @@ fn accessor_bound(
 }
 
 fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
-    if builtin == Builtin::ObjectPrototype && key == "__proto__" {
-        return Some(match field {
-            "get" => Value::Builtin(Builtin::ObjectPrototypeProtoGetter),
-            "set" => Value::Builtin(Builtin::ObjectPrototypeProtoSetter),
-            _ => Value::Undefined,
-        });
-    }
     if builtin == Builtin::ErrorPrototype && key == "stack" && field == "set" {
         return Some(Value::Builtin(Builtin::ErrorPrototypeStackSetter));
     }

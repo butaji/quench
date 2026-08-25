@@ -48,27 +48,6 @@ pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
     ))))
 }
 
-pub(crate) fn dispose(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let receiver = receiver.ok_or_else(|| {
-        crate::value::error::throw_type_error("Iterator dispose called on incompatible receiver")
-    })?;
-    if matches!(
-        receiver,
-        Value::Builtin(crate::ops::Builtin::IteratorPrototype)
-    ) {
-        return Ok(Value::Undefined);
-    }
-    let method = crate::execute::get_property_result(receiver, "return")?;
-    if matches!(method, Value::Undefined | Value::Null) {
-        return Ok(Value::Undefined);
-    }
-    if !crate::conversion::is_callable(&method) {
-        return Err(crate::vm::not_callable());
-    }
-    crate::functions::execute_target(&method, receiver, &[])?;
-    Ok(Value::Undefined)
-}
-
 pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let inputs = arguments.first().cloned().unwrap_or(Value::Undefined);
     let options = arguments.get(1).cloned().unwrap_or(Value::Undefined);
@@ -78,198 +57,11 @@ pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError>
         ));
     }
     let mode = zip_mode(&options)?;
-    let padding_option = if mode == 1 && !matches!(options, Value::Undefined) {
-        Some(crate::execute::get_property_result(&options, "padding")?)
-    } else {
-        None
-    };
     let iterators = collect_zip_iterators(inputs)?;
-    let mut padding_values = Vec::new();
-    if let Some(padding) = padding_option {
-        if !matches!(padding, Value::Undefined) {
-            if !crate::value::is_object(&padding) {
-                let error = crate::value::error::throw_type_error("Iterator.zip padding");
-                return Err(close_zip_iterators(iterators, error));
-            }
-            let padding_iter = match open(padding.clone()) {
-                Ok(iterator) => iterator,
-                Err(error) => return Err(close_zip_iterators(iterators, error)),
-            };
-            if let Value::Iterator(data) = &padding_iter {
-                let target = match &*data.state.borrow() {
-                    IteratorState::Protocol { iterator, .. } => Some(iterator.clone()),
-                    _ => None,
-                };
-                if let Some(target) = target {
-                    let next = match crate::execute::get_property_result(&target, "next") {
-                        Ok(next) => next,
-                        Err(error) => return Err(close_zip_iterators(iterators, error)),
-                    };
-                    if let IteratorState::Protocol { next: slot, .. } =
-                        &mut *data.state.borrow_mut()
-                    {
-                        *slot = next;
-                    }
-                }
-            }
-            let mut using_iterator = true;
-            let mut exhausted_at = None;
-            for index in 0..iterators.len() {
-                if !using_iterator {
-                    if index < iterators.len() {
-                        padding_values.push(Value::Undefined);
-                    }
-                    continue;
-                }
-                match step_value(&padding_iter) {
-                    Ok(Some(value)) => {
-                        if index < iterators.len() {
-                            padding_values.push(value);
-                        }
-                    }
-                    Ok(None) => {
-                        using_iterator = false;
-                        exhausted_at = Some(index);
-                        if index < iterators.len() {
-                            padding_values.push(Value::Undefined);
-                        }
-                    }
-                    Err(error) => return Err(close_zip_iterators(iterators, error)),
-                }
-            }
-            if using_iterator || exhausted_at == Some(iterators.len()) {
-                match close(padding, crate::completion::Completion::Normal) {
-                    Ok(completion) => {
-                        if !matches!(completion, crate::completion::Completion::Normal) {
-                            if let Err(error) = completion.into_vm_error() {
-                                return Err(close_zip_iterators(iterators, error));
-                            }
-                        }
-                    }
-                    Err(error) => return Err(close_zip_iterators(iterators, error)),
-                }
-            }
-        }
-    }
     Ok(Value::Iterator(Rc::new(IteratorData::new(
         IteratorState::Zip {
             iterators,
             mode,
-            padding: Value::Undefined,
-            padding_values,
-            started: false,
-            done: false,
-        },
-    ))))
-}
-
-pub(crate) fn zip_keyed(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let inputs = arguments.first().cloned().unwrap_or(Value::Undefined);
-    if !crate::value::is_object(&inputs) {
-        return Err(crate::value::error::throw_type_error(
-            "Iterator.zipKeyed inputs",
-        ));
-    }
-    let options = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    let mode = zip_mode(&options)?;
-    let padding = if mode == 1 && !matches!(options, Value::Undefined) {
-        crate::execute::get_property_result(&options, "padding")?
-    } else {
-        Value::Undefined
-    };
-    if mode == 1 && !matches!(padding, Value::Undefined) && !crate::value::is_object(&padding) {
-        return Err(crate::value::error::throw_type_error(
-            "Iterator.zipKeyed padding",
-        ));
-    }
-    let keys = if matches!(inputs, Value::Proxy(_)) {
-        let key_array = crate::proxy::proxy_own_keys(&inputs)?;
-        match &key_array {
-            Value::Array(array) => (0..array.logical_len())
-                .filter_map(|index| {
-                    match crate::execute::get_property(&key_array, &index.to_string()) {
-                        Value::String(key) if !key.starts_with('\0') => Some(key),
-                        _ => None,
-                    }
-                })
-                .collect(),
-            _ => Vec::new(),
-        }
-    } else {
-        match crate::own_keys::all(&inputs)? {
-            Value::Array(array) => (0..array.logical_len())
-                .filter_map(|index| {
-                    match crate::execute::get_property(
-                        &Value::Array(array.clone()),
-                        &index.to_string(),
-                    ) {
-                        Value::String(key) if !key.starts_with('\0') => Some(key),
-                        _ => None,
-                    }
-                })
-                .collect(),
-            _ => Vec::new(),
-        }
-    };
-    let mut iterator_keys = Vec::new();
-    let mut iterators = Vec::new();
-    for key in keys {
-        let enumerable = if matches!(inputs, Value::Proxy(_)) {
-            let descriptor = match crate::proxy::proxy_get_own_property_descriptor(&inputs, &key) {
-                Ok(value) => value,
-                Err(error) => return Err(close_zip_iterators(iterators, error)),
-            };
-            matches!(descriptor, Value::Object(object) if crate::execute::is_truthy(&crate::execute::get_property_result(&Value::Object(object.clone()), "enumerable")?))
-        } else {
-            key.starts_with("Symbol.") || crate::own_keys::is_enumerable_property(&inputs, &key)
-        };
-        if !enumerable {
-            continue;
-        }
-        let value = match crate::execute::get_property_result(&inputs, &key) {
-            Ok(value) => value,
-            Err(error) => return Err(close_zip_iterators(iterators, error)),
-        };
-        if matches!(value, Value::Undefined) {
-            continue;
-        }
-        if matches!(value, Value::String(_) | Value::StringUnits(_)) {
-            let error = crate::value::error::throw_type_error("Iterator.zipKeyed string iterable");
-            return Err(close_zip_iterators(iterators, error));
-        }
-        let iterator = match zip_flattenable(value) {
-            Ok(iterator) => iterator,
-            Err(error) => return Err(close_zip_iterators(iterators, error)),
-        };
-        iterator_keys.push(key);
-        iterators.push(iterator);
-    }
-    let padding_values = if mode == 1 {
-        match iterator_keys
-            .iter()
-            .map(|key| {
-                if matches!(padding, Value::Undefined) {
-                    Ok(Value::Undefined)
-                } else {
-                    crate::execute::get_property_result(&padding, key)
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()
-        {
-            Ok(values) => values,
-            Err(error) => return Err(close_zip_iterators(iterators, error)),
-        }
-    } else {
-        Vec::new()
-    };
-    Ok(Value::Iterator(Rc::new(IteratorData::new(
-        IteratorState::ZipKeyed {
-            keys: iterator_keys,
-            iterators,
-            mode,
-            padding,
-            padding_values,
-            started: false,
             done: false,
         },
     ))))
@@ -302,7 +94,7 @@ pub(crate) fn close_iterators(
 fn make_protocol(iterator: Value) -> Value {
     make_protocol_with_next_mode(iterator, Value::Undefined, false)
 }
-pub(crate) fn make_protocol_with_next(iterator: Value, next: Value) -> Value {
+fn make_protocol_with_next(iterator: Value, next: Value) -> Value {
     make_protocol_with_next_mode(iterator, next, false)
 }
 fn make_protocol_async(iterator: Value) -> Value {
@@ -404,20 +196,10 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         IteratorState::Concat { current, done, .. } if !*done => Ok(current.clone()),
         IteratorState::Concat { .. } => Ok(None),
         IteratorState::Zip { .. } => Ok(None),
-        IteratorState::ZipKeyed { .. } => Ok(None),
     }
 }
 fn get_return_method(iterator: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     let method = crate::execute::get_property_result(iterator, "return")?;
-    let synthetic_return = matches!(method, Value::Builtin(crate::ops::Builtin::IteratorReturn))
-        || matches!(
-            &method,
-            Value::BoundFunction(bound)
-                if matches!(bound.target, Value::Builtin(crate::ops::Builtin::IteratorReturn))
-        );
-    if synthetic_return && !matches!(iterator, Value::Iterator(_)) {
-        return Ok(None);
-    }
     if matches!(method, Value::Null | Value::Undefined) {
         return Ok(None);
     }
@@ -718,15 +500,9 @@ pub(super) fn mark_done(data: &IteratorData) {
         IteratorState::Filtered { done, .. } => *done = true,
         IteratorState::FlatMapped { done, .. } => *done = true,
         IteratorState::Dropped { done, .. } => *done = true,
-        IteratorState::Take {
-            remaining, done, ..
-        } => {
-            *remaining = 0;
-            *done = true;
-        }
+        IteratorState::Take { remaining, .. } => *remaining = 0,
         IteratorState::Concat { done, .. } => *done = true,
         IteratorState::Zip { done, .. } => *done = true,
-        IteratorState::ZipKeyed { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {

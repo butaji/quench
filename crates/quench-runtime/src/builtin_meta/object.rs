@@ -5,10 +5,6 @@ use crate::ops::Builtin;
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::ObjectPrototypeValueOf => Some("Object.prototype.valueOf"),
-        Builtin::ObjectPrototypeToString => Some("Object.prototype.toString"),
-        Builtin::ObjectPrototypeToLocaleString => Some("Object.prototype.toLocaleString"),
-        Builtin::ObjectPrototypeProtoGetter => Some("Object.prototype.__proto__ getter"),
-        Builtin::ObjectPrototypeProtoSetter => Some("Object.prototype.__proto__ setter"),
         Builtin::ObjectHasOwnProperty => Some("Object.prototype.hasOwnProperty"),
         Builtin::ObjectHasOwn => Some("Object.hasOwn"),
         Builtin::ObjectPrototypeIsPrototypeOf => Some("Object.prototype.isPrototypeOf"),
@@ -30,8 +26,6 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectDefineProperties => Some("Object.defineProperties"),
         Builtin::ObjectGetOwnPropertyNames => Some("Object.getOwnPropertyNames"),
         Builtin::ObjectGetOwnPropertySymbols => Some("Object.getOwnPropertySymbols"),
-        Builtin::ObjectGetPrototypeOf => Some("Object.getPrototypeOf"),
-        Builtin::ObjectSetPrototypeOf => Some("Object.setPrototypeOf"),
         Builtin::ObjectCreate => Some("Object.create"),
         Builtin::ObjectFreeze => Some("Object.freeze"),
         Builtin::ObjectSeal => Some("Object.seal"),
@@ -53,6 +47,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         }
         Builtin::ObjectHasOwnProperty
         | Builtin::ObjectPrototypeIsPrototypeOf
+        | Builtin::ObjectPrototypeDefineGetter
+        | Builtin::ObjectPrototypeDefineSetter
         | Builtin::ObjectPrototypeLookupGetter
         | Builtin::ObjectPrototypeLookupSetter
         | Builtin::ObjectPropertyIsEnumerable
@@ -67,7 +63,6 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::ObjectIsFrozen
         | Builtin::ObjectIsSealed
         | Builtin::ObjectIsExtensible => Some(1.0),
-        Builtin::ObjectPrototypeDefineGetter | Builtin::ObjectPrototypeDefineSetter => Some(2.0),
         Builtin::ObjectHasOwn => Some(2.0),
         Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
         Builtin::ObjectCreate => Some(2.0),
@@ -80,10 +75,6 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::ProxyRevocable => Some(2.0),
         Builtin::ProxyRevoke => Some(0.0),
         Builtin::ObjectDefineProperty => Some(3.0),
-        Builtin::ObjectGetPrototypeOf => Some(1.0),
-        Builtin::ObjectSetPrototypeOf => Some(2.0),
-        Builtin::ObjectPrototypeToString | Builtin::ObjectPrototypeToLocaleString => Some(0.0),
-        Builtin::ObjectPrototypeProtoGetter | Builtin::ObjectPrototypeProtoSetter => Some(0.0),
         _ => None,
     }
 }
@@ -114,12 +105,6 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectDefineProperties => Some("defineProperties"),
         Builtin::ObjectGetOwnPropertyNames => Some("getOwnPropertyNames"),
         Builtin::ObjectGetOwnPropertySymbols => Some("getOwnPropertySymbols"),
-        Builtin::ObjectGetPrototypeOf => Some("getPrototypeOf"),
-        Builtin::ObjectSetPrototypeOf => Some("setPrototypeOf"),
-        Builtin::ObjectPrototypeToString => Some("toString"),
-        Builtin::ObjectPrototypeToLocaleString => Some("toLocaleString"),
-        Builtin::ObjectPrototypeProtoGetter => Some("get __proto__"),
-        Builtin::ObjectPrototypeProtoSetter => Some("set __proto__"),
         Builtin::ObjectCreate => Some("create"),
         Builtin::ObjectFreeze => Some("freeze"),
         Builtin::ObjectSeal => Some("seal"),

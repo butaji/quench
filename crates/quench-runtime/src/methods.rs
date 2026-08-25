@@ -253,9 +253,6 @@ fn execute_callee(
     args: &[u16],
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, VmError> {
-    if !crate::conversion::is_callable(&callee) {
-        return Err(crate::vm::not_callable());
-    }
     let value = match &callee {
         Value::Builtin(crate::ops::Builtin::String) => {
             execute_builtin_with_receiver(crate::ops::Builtin::String, arguments, None)?
