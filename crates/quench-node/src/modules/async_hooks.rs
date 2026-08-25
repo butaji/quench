@@ -92,6 +92,10 @@ pub fn build() -> Value {
             "AsyncLocalStorage",
             crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_STORAGE),
         ),
+        (
+            "__quenchWorkerResource",
+            crate::host::capability(crate::registry::SPEC_ASYNC_WORKER_RESOURCE),
+        ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }
@@ -270,6 +274,32 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
                 id_value.clone(),
                 resource_type.clone(),
                 trigger_value.clone(),
+                resource.clone(),
+            ],
+        );
+    }
+    Ok(resource)
+}
+
+/// Register an externally-created worker object with the canonical hook state.
+pub fn worker_resource(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let resource = args.first().cloned().unwrap_or(Value::Undefined);
+    let trigger = state.borrow().async_hooks.current_id;
+    let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
+    let resource = execute::set_property(resource, ASYNC_ID, Value::Number(id as f64));
+    let resource = execute::set_property(resource, TRIGGER_ID, Value::Number(trigger as f64));
+    for callback in active_callbacks(state, HookEvent::Init) {
+        let _ = execute::call(
+            &callback,
+            &Value::Undefined,
+            &[
+                Value::Number(id as f64),
+                Value::String("WORKER".into()),
+                Value::Number(trigger as f64),
                 resource.clone(),
             ],
         );
