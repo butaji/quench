@@ -19,6 +19,18 @@ pub(crate) fn execute_word_leaf_call(
     {
         return None;
     }
+    if let Some(argument) = argument {
+        if crate::functions::execute_cached_word_call(
+            caller,
+            destination,
+            argument,
+            function,
+        )
+        .is_some()
+        {
+            return Some(Ok(()));
+        }
+    }
     let code = function.code.code()?;
     let parameter_base = u16::try_from(function.captures.len()).ok()?;
     let mut frame = crate::register_file::FixedWordFile::<SMALL_LEAF_REGISTERS>::new();
