@@ -104,6 +104,10 @@ node_api! {
     (SPEC_INSPECTOR_OPEN, "inspector:open", 0x1505),
     (SPEC_INSPECTOR_CLOSE, "inspector:close", 0x1506),
     (SPEC_INSPECTOR_WAIT, "inspector:waitForDebugger", 0x1507),
+    (SPEC_WASI_CONSTRUCTOR, "wasi:WASI", 0x1C00),
+    (SPEC_WASI_START, "wasi:WASI:start", 0x1C01),
+    (SPEC_WASI_INITIALIZE, "wasi:WASI:initialize", 0x1C02),
+    (SPEC_WASI_IMPORT_OBJECT, "wasi:WASI:getImportObject", 0x1C03),
 }
 
 pub const SPEC_PATH_JOIN: NodeSpec = NodeSpec::new("path:join", 0x0400);
