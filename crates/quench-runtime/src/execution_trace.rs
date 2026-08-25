@@ -849,6 +849,24 @@ pub(crate) fn crypto_direct_iterations(count: usize) {
 pub(crate) fn crypto_direct_iterations(_: usize) {}
 
 #[cfg(feature = "execution-trace")]
+pub(crate) fn crypto_kernel_iterations(count: usize) {
+    if enabled() && count != 0 {
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            if counters.events.is_empty() {
+                counters.events.resize(EVENT_NAMES.len(), 0);
+            }
+            counters.crypto_direct_iterations += count as u64;
+            counters.events[Event::CryptoKernelHit as usize] += count as u64;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn crypto_kernel_iterations(_: usize) {}
+
+#[cfg(feature = "execution-trace")]
 pub(crate) fn loop_shape(body: crate::machine::CodeView<'_>) -> u64 {
     use std::hash::{Hash, Hasher};
     if !enabled() {

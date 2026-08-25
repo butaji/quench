@@ -105,11 +105,7 @@ fn run(id: &str) -> u64 {
                         let mut last_x = x[j * ROW_SIZE];
                         for _ in 0..WIDTH {
                             let value = (x0[current]
-                                + 0.1
-                                    * (last_x
-                                        + x[current + 1]
-                                        + x[last + 1]
-                                        + x[next + 1]))
+                                + 0.1 * (last_x + x[current + 1] + x[last + 1] + x[next + 1]))
                                 * 0.5;
                             x[current] = value;
                             last_x = value;
@@ -197,6 +193,76 @@ fn run(id: &str) -> u64 {
                 black_box(&x);
             }
             black_box(x[1] + x[ROW_SIZE]).to_bits()
+        }
+        "packed-smi-am3" => {
+            const LIMBS: usize = 256;
+            let input = vec![1_234_567_f64; LIMBS];
+            let mut output = vec![7_654_321_f64; LIMBS];
+            let x = 0x1234567_i32;
+            let (x_low, x_high) = (x & 0x3fff, x >> 14);
+            let mut checksum = 0_i32;
+            for round in 0_i32..100_000 {
+                let mut carry = round & 255;
+                for index in 0..LIMBS {
+                    let input = input[index] as i32;
+                    let (low, high) = (input & 0x3fff, input >> 14);
+                    let product = x_high * low + high * x_low;
+                    let value =
+                        x_low * low + ((product & 0x3fff) << 14) + output[index] as i32 + carry;
+                    carry = (value >> 28) + (product >> 14) + x_high * high;
+                    output[index] = f64::from(value & 0xfffffff);
+                }
+                checksum ^= carry;
+            }
+            black_box(checksum as u64 ^ output[LIMBS - 1].to_bits())
+        }
+        "packed-smi-square" => {
+            const LIMBS: usize = 128;
+            let input = vec![1_234_567_i32; LIMBS];
+            let mut output = vec![0_i32; 2 * LIMBS];
+            for _ in 0..2_000 {
+                output.fill(0);
+                for i in 0..LIMBS - 1 {
+                    let multiply = |input_index: usize,
+                                    output_index: usize,
+                                    multiplier: i32,
+                                    mut carry: i32,
+                                    count: usize,
+                                    output: &mut [i32]| {
+                        let (x_low, x_high) = (multiplier & 0x3fff, multiplier >> 14);
+                        for offset in 0..count {
+                            let input = input[input_index + offset];
+                            let (low, high) = (input & 0x3fff, input >> 14);
+                            let product = x_high * low + high * x_low;
+                            let value = x_low * low
+                                + ((product & 0x3fff) << 14)
+                                + output[output_index + offset]
+                                + carry;
+                            carry = (value >> 28) + (product >> 14) + x_high * high;
+                            output[output_index + offset] = value & 0x0fff_ffff;
+                        }
+                        carry
+                    };
+                    let carry = multiply(i, 2 * i, input[i], 0, 1, &mut output);
+                    let carry = multiply(
+                        i + 1,
+                        2 * i + 1,
+                        input[i].wrapping_mul(2),
+                        carry,
+                        LIMBS - i - 1,
+                        &mut output,
+                    );
+                    let index = i + LIMBS;
+                    let sum = output[index] + carry;
+                    if sum < 0x10000000 {
+                        output[index] = sum;
+                    } else {
+                        output[index] = sum - 0x10000000;
+                        output[index + 1] = 1;
+                    }
+                }
+            }
+            black_box(output[0] as u64 ^ (output[2 * LIMBS - 2] as u64).rotate_left(17))
         }
         _ => panic!("unknown L0 oracle: {id}"),
     }
