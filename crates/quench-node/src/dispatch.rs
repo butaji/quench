@@ -263,6 +263,8 @@ const CAP_DIAGNOSTICS_BOUNDED_SUBSCRIBE: u16 =
 const CAP_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE: u16 =
     crate::registry::SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE.cap;
 const CAP_DIAGNOSTICS_BOUNDED_RUN: u16 = crate::registry::SPEC_DIAGNOSTICS_BOUNDED_RUN.cap;
+const CAP_DIAGNOSTICS_CHANNEL_SCOPE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_SCOPE.cap;
+const CAP_DIAGNOSTICS_SCOPE_DISPOSE: u16 = crate::registry::SPEC_DIAGNOSTICS_SCOPE_DISPOSE.cap;
 const CAP_ZLIB_GZIP: u16 = 0x1700;
 const CAP_ZLIB_GUNZIP: u16 = 0x1701;
 const CAP_ZLIB_DEFLATE_RAW: u16 = 0x1702;
@@ -550,6 +552,8 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
             crate::modules::diagnostics_channel::bounded_unsubscribe
         }
         CAP_DIAGNOSTICS_BOUNDED_RUN => crate::modules::diagnostics_channel::bounded_run,
+        CAP_DIAGNOSTICS_CHANNEL_SCOPE => crate::modules::diagnostics_channel::with_store_scope,
+        CAP_DIAGNOSTICS_SCOPE_DISPOSE => crate::modules::diagnostics_channel::dispose_store_scope,
         _ => return os_buffer_dispatch(cap),
     })
 }

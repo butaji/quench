@@ -12,6 +12,7 @@ use crate::host::HostState;
 use crate::registry::{
     SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, SPEC_DIAGNOSTICS_BOUNDED_RUN,
     SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE,
+    SPEC_DIAGNOSTICS_CHANNEL_SCOPE, SPEC_DIAGNOSTICS_SCOPE_DISPOSE,
     SPEC_DIAGNOSTICS_CHANNEL, SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE,
     SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR, SPEC_DIAGNOSTICS_CHANNEL_PUBLISH,
     SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE, SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE,
@@ -25,6 +26,9 @@ const ID: &str = "\0quench:diagnostics_channel:id";
 const NAME: &str = "\0quench:diagnostics_channel:name";
 const TRACE: &str = "\0quench:diagnostics_channel:tracing";
 const BOUNDED: &str = "\0quench:diagnostics_channel:bounded";
+const SCOPE_STORE: &str = "\0quench:diagnostics_channel:scope:store";
+const SCOPE_PREVIOUS: &str = "\0quench:diagnostics_channel:scope:previous";
+const SCOPE_ACTIVE: &str = "\0quench:diagnostics_channel:scope:active";
 const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
 thread_local! { static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) }; }
@@ -282,17 +286,18 @@ fn tracing_object(channels: Vec<Value>) -> Value {
                   var callback = args[index];\
                   if (typeof fn !== 'function' || typeof callback !== 'function') throw new TypeError('callback');\
                   if (!this.hasSubscribers) return fn.apply(thisArg, args);\
-                  this.start?.publish(context);\
+                  var startScope = this.start?.withStoreScope(context); this.start?.publish(context);\
                   var self = this;\
                   var done = function(error, result) {\
                     if (error) { context.error = error; self.error?.publish(context); }\
                     else context.result = result;\
-                    self.asyncStart?.publish(context); self.asyncEnd?.publish(context);\
-                    return callback(error, result);\
+                    var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context);\
+                    try { return callback(error, result); } finally { asyncScope?.dispose?.(); }\
                   };\
                   args[index] = done;\
                   try { fn.apply(thisArg, args); self.end?.publish(context); }\
                   catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); throw error; }\
+                  finally { startScope?.dispose?.(); }\
                 }",
             )
             .unwrap_or(Value::Undefined),
@@ -304,11 +309,11 @@ fn tracing_object(channels: Vec<Value>) -> Value {
                   var args = Array.prototype.slice.call(arguments, 3);\
                   if (typeof fn !== 'function') throw new TypeError('fn');\
                   if (!this.hasSubscribers) return fn.apply(thisArg, args);\
-                  this.start?.publish(context); var self = this; var result;\
+                  var startScope = this.start?.withStoreScope(context); this.start?.publish(context); var self = this; var result;\
                   try { result = fn.apply(thisArg, args); context.result = result; self.end?.publish(context); }\
-                  catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); throw error; }\
-                  if (!result || typeof result.then !== 'function') { process.emitWarning(\"tracePromise was called with the function '<anonymous>', which returned a non-thenable.\"); return result; }\
-                  result.then(function(value) { context.result = value; self.asyncStart?.publish(context); self.asyncEnd?.publish(context); }, function(error) { context.error = error; self.error?.publish(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); });\
+                  catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); startScope?.dispose?.(); throw error; }\
+                  if (!result || typeof result.then !== 'function') { process.emitWarning(\"tracePromise was called with the function '<anonymous>', which returned a non-thenable.\"); startScope?.dispose?.(); return result; }\
+                  result.then(function(value) { context.result = value; var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); startScope?.dispose?.(); }, function(error) { context.error = error; self.error?.publish(context); var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); startScope?.dispose?.(); });\
                   return result;\
                 }",
             )
@@ -446,6 +451,10 @@ fn channel_object(id: u64, name: Value) -> Value {
         (
             "unbindStore".into(),
             crate::host::capability(SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE),
+        ),
+        (
+            "withStoreScope".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_CHANNEL_SCOPE),
         ),
     ];
     CHANNEL_PROTO.with(|slot| {
@@ -591,6 +600,66 @@ pub fn bind_store(
     }
     data.borrow_mut().store = Some((store, transform));
     Ok(receiver.unwrap().clone())
+}
+
+pub fn with_store_scope(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("channel"))?;
+    let context = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some((store, transform)) = channel_store(state, receiver) else {
+        return Ok(host_api::object(vec![(
+            "dispose".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
+        )]));
+    };
+    let previous = execute::call(
+        &execute::get_property(&store, "getStore"),
+        &store,
+        &[],
+    )
+    .ok()
+    .unwrap_or(Value::Undefined);
+    let transformed = execute::call(&transform, &Value::Undefined, std::slice::from_ref(&context))?;
+    let scope = host_api::object(vec![
+        (SCOPE_STORE.into(), store),
+        (SCOPE_PREVIOUS.into(), previous),
+        (SCOPE_ACTIVE.into(), Value::Boolean(true)),
+        (
+            "dispose".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
+        ),
+    ]);
+    let store_value = execute::get_property(&scope, SCOPE_STORE);
+    let _ = execute::call(
+        &execute::get_property(&store_value, "enterWith"),
+        &store_value,
+        std::slice::from_ref(&transformed),
+    );
+    Ok(scope)
+}
+
+pub fn dispose_store_scope(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("scope"))?;
+    if !execute::is_truthy(&execute::get_property(receiver, SCOPE_ACTIVE)) {
+        return Ok(Value::Undefined);
+    }
+    let store = execute::get_property(receiver, SCOPE_STORE);
+    let previous = execute::get_property(receiver, SCOPE_PREVIOUS);
+    let _ = execute::call(
+        &execute::get_property(&store, "enterWith"),
+        &store,
+        std::slice::from_ref(&previous),
+    );
+    let _ = state;
+    let _ = execute::set_property_in_place(receiver, SCOPE_ACTIVE, Value::Boolean(false));
+    Ok(Value::Undefined)
 }
 
 pub fn unbind_store(
