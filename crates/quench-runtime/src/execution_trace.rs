@@ -126,6 +126,18 @@ struct OperandKey {
 }
 
 #[cfg(feature = "execution-trace")]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct CompactSiteKey {
+    store: usize,
+    code: u32,
+    pc: u32,
+    source: u32,
+    opcode: u8,
+    window_len: u8,
+    window: [u8; 7],
+}
+
+#[cfg(feature = "execution-trace")]
 #[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
@@ -157,6 +169,8 @@ struct Counters {
     allocations: HashMap<&'static str, u64>,
     last_index: HashMap<&'static str, u64>,
     kernels: HashMap<&'static str, (u64, u64)>,
+    compact_sites: HashMap<CompactSiteKey, u64>,
+    compact_site_dropped: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -225,6 +239,8 @@ fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> ser
         "l2": {"handlers": l2, "vm_share_ppm": ratio_ppm(l2, vm_total),
             "slow_gateways": {"main": compact_slow, "leaf": leaf_slow},
             "top_compact": top_opcodes(&counters.compact, false),
+            "top_compact_sites": top_compact_sites(&counters.compact_sites),
+            "compact_site_dropped": counters.compact_site_dropped,
             "top_leaf_compact": top_opcodes(&counters.leaf_compact, false)},
         "l3": {"handlers": l3, "vm_share_ppm": ratio_ppm(l3, vm_total),
             "top_slow": top_map(&counters.slow, 8),
@@ -235,6 +251,33 @@ fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> ser
                 &["header", "getn", "binding_cell"])},
         "l4": host_profile(counters),
     })
+}
+
+#[cfg(feature = "execution-trace")]
+fn top_compact_sites(values: &HashMap<CompactSiteKey, u64>) -> Vec<serde_json::Value> {
+    let mut values = values.iter().collect::<Vec<_>>();
+    values.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
+    values
+        .into_iter()
+        .take(64)
+        .map(|(site, count)| {
+            let window = site.window[..usize::from(site.window_len)]
+                .iter()
+                .filter_map(|opcode| {
+                    crate::ir::Opcode::from_u8(*opcode).map(crate::ir::Opcode::name)
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "store": format!("{:x}", site.store),
+                "code": site.code,
+                "pc": site.pc,
+                "source": (site.source != u32::MAX).then_some(site.source),
+                "opcode": crate::ir::Opcode::from_u8(site.opcode).map(crate::ir::Opcode::name),
+                "window": window,
+                "count": count,
+            })
+        })
+        .collect()
 }
 
 #[cfg(feature = "execution-trace")]
@@ -449,6 +492,9 @@ pub(crate) fn function_call_shape(
     code: Option<crate::machine::CodeView<'_>>,
 ) {
     if enabled() {
+        if let Some(code) = code {
+            dump_function_shape(params, captures, code);
+        }
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
             let code_len = code.map_or(0, crate::machine::CodeView::len);
@@ -471,6 +517,63 @@ pub(crate) fn function_call_shape(
                 .entry((fingerprint, params, code.len() as u8, opcodes))
                 .or_default() += 1;
         });
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeView<'_>) {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    static SEEN: OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> = OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_FUNCTION_SHAPES").is_some()) {
+        return;
+    }
+    let fingerprint = function_fingerprint(params, captures, code);
+    if !SEEN
+        .get_or_init(Default::default)
+        .lock()
+        .expect("function shape trace lock")
+        .insert(fingerprint)
+    {
+        return;
+    }
+    let (store, code_id) = code.trace_identity();
+    eprintln!(
+        "FUNCTION_SHAPE store={store:x} code={code_id} params={params} captures={captures} len={} hash={fingerprint}",
+        code.len()
+    );
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).expect("valid function instruction");
+        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
+        eprintln!("  {pc}: {instruction:?} cold={cold:?}");
+        if let Some(crate::ops::Op::Loop {
+            init,
+            test,
+            body,
+            update,
+            ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("init", init.code());
+            dump_function_fragment("test", test.code());
+            dump_function_fragment("body", body.code());
+            dump_function_fragment("update", update.code());
+        }
+        if let Some(crate::ops::Op::Branch {
+            then_ops, else_ops, ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("then", then_ops.code());
+            dump_function_fragment("else", else_ops.code());
+        }
+        if let Some(crate::ops::Op::Conditional {
+            consequent,
+            alternate,
+            ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("consequent", consequent.code());
+            dump_function_fragment("alternate", alternate.code());
+        }
     }
 }
 
@@ -534,6 +637,27 @@ fn hash_nested_code(op: Option<&crate::ops::Op>, hasher: &mut impl std::hash::Ha
             .filter_map(|fragment| fragment.code())
             .for_each(|code| hash_code_facts(code, hasher)),
         _ => {}
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_function_fragment(label: &str, code: Option<crate::machine::CodeView<'_>>) {
+    let Some(code) = code else { return };
+    eprintln!("    {label} len={}", code.len());
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).expect("valid function fragment");
+        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
+        let name = code
+            .metadata_at(pc)
+            .and_then(|metadata| metadata.name.as_deref());
+        eprintln!("      {pc}: {instruction:?} cold={cold:?} name={name:?}");
+        if let Some(crate::ops::Op::Branch {
+            then_ops, else_ops, ..
+        }) = code.cold(instruction)
+        {
+            dump_function_fragment("then", then_ops.code());
+            dump_function_fragment("else", else_ops.code());
+        }
     }
 }
 
@@ -785,6 +909,54 @@ pub(crate) fn operands(instruction: crate::ir::Instruction) {
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn operands(_: crate::ir::Instruction) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
+pub(crate) fn compact_site(code: crate::machine::CodeView<'_>, pc: usize) {
+    if !enabled() {
+        return;
+    }
+    let Some(instruction) = code.instruction(pc) else {
+        return;
+    };
+    let start = pc.saturating_sub(3);
+    let end = code.len().min(pc.saturating_add(4));
+    let mut window = [0; 7];
+    for (index, offset) in (start..end).enumerate() {
+        window[index] = code.instruction(offset).map_or(0, |op| op.opcode as u8);
+    }
+    let (store, code_id) = code.trace_identity();
+    let key = CompactSiteKey {
+        store,
+        code: code_id,
+        pc: pc as u32,
+        source: code
+            .metadata_at(pc)
+            .and_then(|metadata| metadata.source)
+            .unwrap_or(u32::MAX),
+        opcode: instruction.opcode as u8,
+        window_len: (end - start) as u8,
+        window,
+    };
+    COUNTERS.with(|counters| record_compact_site(&mut counters.borrow_mut(), key));
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn compact_site(_: crate::machine::CodeView<'_>, _: usize) {}
+
+#[cfg(feature = "execution-trace")]
+fn record_compact_site(counters: &mut Counters, key: CompactSiteKey) {
+    if let Some(count) = counters.compact_sites.get_mut(&key) {
+        *count += 1;
+        return;
+    }
+    if counters.compact_sites.len() < 4096 {
+        counters.compact_sites.insert(key, 1);
+        return;
+    }
+    counters.compact_site_dropped += 1;
+}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
@@ -1266,7 +1438,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 
 #[cfg(feature = "execution-trace")]
 pub fn emit() {
-    let _ = snapshot();
+    if let Some(snapshot) = snapshot() {
+        eprintln!("QUENCH_EXEC_TRACE {snapshot}");
+    }
 }
 
 #[cfg(all(test, feature = "execution-trace"))]
@@ -1301,6 +1475,37 @@ mod lane_profile_tests {
         );
         assert_eq!(counters.events[Event::ValueDecode as usize], 1);
         assert_eq!(counters.value_decode_by_site.get("getn"), Some(&1));
+    }
+
+    #[test]
+    fn ranks_compact_sites_with_patchable_context() {
+        let mut counters = Counters {
+            events: vec![0; EVENT_NAMES.len()],
+            ..Counters::default()
+        };
+        counters.compact_sites.insert(
+            CompactSiteKey {
+                store: 1,
+                code: 7,
+                pc: 2,
+                source: 41,
+                opcode: crate::ir::Opcode::LoadLocalChecked as u8,
+                window_len: 3,
+                window: [8, 24, 20, 0, 0, 0, 0],
+            },
+            99,
+        );
+        let profile = lane_profile(&counters, 0, 0);
+        let site = &profile["l2"]["top_compact_sites"][0];
+        assert_eq!(site["code"], 7);
+        assert_eq!(site["pc"], 2);
+        assert_eq!(site["source"], 41);
+        assert_eq!(site["opcode"], "LoadLocalChecked");
+        assert_eq!(
+            site["window"],
+            serde_json::json!(["LoadLocal", "LoadLocalChecked", "GetN"])
+        );
+        assert_eq!(site["count"], 99);
     }
 
     #[test]
