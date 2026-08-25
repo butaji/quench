@@ -49,7 +49,7 @@ pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError>
     load(include_str!("worker_threads.js"))
 }
 pub fn async_hooks(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("async_hooks.js"))
+    Ok(crate::modules::async_hooks::build())
 }
 
 pub fn sea_is_sea(
