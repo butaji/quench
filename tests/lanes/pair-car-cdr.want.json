@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "oracle": { "max_ratio": 2 },
+  "metrics": {
+    "binding_cell_per_hit": {
+      "numerator": "lanes.l0.property_payload.binding_cell",
+      "denominator": "lanes.l0.property_hit",
+      "min_traffic": 250000,
+      "max": 0.01
+    },
+    "getn_decode_per_hit": {
+      "numerator": "lanes.l0.value_decode_by_site.getn",
+      "denominator": "lanes.l0.property_hit",
+      "min_traffic": 250000,
+      "max": 0.02
+    }
+  }
+}

@@ -43,23 +43,11 @@ fn set_proven_own_data(
     if !std::rc::Rc::ptr_eq(target, receiver) || !plain_writable_own_data(target, key) {
         return false;
     }
-    if let Some(crate::value::Value::BindingCell(cell)) = target
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == key).then_some(value))
-    {
-        cell.store(value.clone());
+    if let Some(slot) = target.hot_properties().position_rev(key) {
+        target.hot_properties().store_slot(slot, value.clone());
         return true;
     }
-    crate::execution_trace::event(crate::execution_trace::Event::NamedSetPromoteCell);
-    let value =
-        crate::value::Value::BindingCell(crate::value::BindingCell::new(value.clone()));
-    let updated = crate::builtins::object_alias::set(std::rc::Rc::clone(target), key, value);
-    crate::locals::replace_value(
-        &crate::value::Value::Object(std::rc::Rc::clone(target)),
-        &updated,
-    );
-    true
+    false
 }
 
 fn plain_writable_own_data(properties: &crate::value::ObjectData, key: &str) -> bool {
@@ -67,21 +55,21 @@ fn plain_writable_own_data(properties: &crate::value::ObjectData, key: &str) -> 
     let descriptor = crate::builtins::descriptor_key(key);
     let mut own = None;
     let mut metadata = None;
-    for (name, value) in properties.iter().rev() {
+    for (slot, name) in properties.hot_properties().names().enumerate().rev() {
         if name == &deleted {
             return false;
         }
         if own.is_none() && name == key {
-            own = Some(value);
+            own = properties.hot_properties().slot_value(slot);
         }
         if metadata.is_none() && name == &descriptor {
-            metadata = Some(value);
+            metadata = properties.hot_properties().slot_value(slot);
         }
     }
     if own.is_none() {
         return false;
     }
-    metadata.is_none_or(writable_data_descriptor)
+    metadata.is_none_or(|value| writable_data_descriptor(&value))
 }
 
 fn writable_data_descriptor(value: &crate::value::Value) -> bool {
@@ -234,16 +222,11 @@ fn set_receiver_data(
 }
 
 fn receiver_data_descriptor(
-    receiver: &crate::value::Value,
+    _receiver: &crate::value::Value,
     value: &crate::value::Value,
     create: bool,
 ) -> Vec<(String, crate::value::Value)> {
-    let value = if create && matches!(receiver, crate::value::Value::Object(_)) {
-        crate::value::Value::BindingCell(crate::value::BindingCell::new(value.clone()))
-    } else {
-        value.clone()
-    };
-    let mut descriptor = vec![("value".to_string(), value)];
+    let mut descriptor = vec![("value".to_string(), value.clone())];
     if create {
         descriptor.extend([
             ("writable".to_string(), crate::value::Value::Boolean(true)),
