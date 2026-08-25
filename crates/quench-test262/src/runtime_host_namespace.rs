@@ -7,7 +7,7 @@ impl LinkedModule {
             let Some(export) = self.export_cell(&name) else {
                 continue;
             };
-            sync_export_cells(properties, &name, export.get());
+            sync_export_cells(properties.iter(), &name, export.get());
         }
         true
     }
@@ -61,11 +61,13 @@ impl LinkedModule {
     }
 }
 
-fn sync_export_cells<K: AsRef<str>>(
-    properties: &[(K, quench_runtime::value::Value)],
+fn sync_export_cells<'a, I>(
+    properties: I,
     name: &str,
     live: quench_runtime::value::Value,
-) {
+) where
+    I: IntoIterator<Item = (&'a quench_runtime::value::PropertyName, &'a quench_runtime::value::Value)>,
+{
     let descriptor = format!("\0quench:descriptor:\0{name}");
     for (key, value) in properties {
         if key.as_ref() == name {
