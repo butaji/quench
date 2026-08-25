@@ -569,6 +569,36 @@ impl ArrayData {
         Some(std::cell::Ref::map(values.borrow(), Vec::as_slice))
     }
 
+    /// Borrow the canonical numeric payload as immutable IEEE words for a
+    /// guarded native kernel. No JavaScript can run while this borrow lives.
+    pub(crate) fn numeric_kernel_words(&self) -> Option<std::cell::Ref<'_, [f64]>> {
+        let DenseElements::Numbers(values) = &self.values else {
+            return None;
+        };
+        Some(std::cell::Ref::map(values.borrow(), |values| {
+            // SAFETY: `Cell<f64>` has the same layout as `f64`; the RefCell
+            // borrow prevents structural mutation for the returned lifetime.
+            unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<f64>(), values.len()) }
+        }))
+    }
+
+    /// Borrow the one canonical numeric payload exclusively. Admission must
+    /// prove this array distinct from every input before taking this view.
+    pub(crate) fn numeric_kernel_words_mut(
+        &self,
+    ) -> Option<std::cell::RefMut<'_, [f64]>> {
+        let DenseElements::Numbers(values) = &self.values else {
+            return None;
+        };
+        Some(std::cell::RefMut::map(values.borrow_mut(), |values| {
+            // SAFETY: `Cell<f64>` is layout-compatible with `f64`, and the
+            // exclusive RefCell borrow prevents every competing live view.
+            unsafe {
+                std::slice::from_raw_parts_mut(values.as_mut_ptr().cast::<f64>(), values.len())
+            }
+        }))
+    }
+
     /// Snapshot an own-data numeric range after proving that no indexed
     /// descriptor, argument mapping, hole, or sparse tail can intercept it.
     pub(crate) fn numeric_kernel_range(&self, start: usize, end: usize) -> Option<Vec<f64>> {
