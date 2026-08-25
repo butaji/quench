@@ -53,7 +53,7 @@ fn execute_builtin_match(
         ArrayFlat => flat(receiver, arguments),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(at(receiver, arguments)),
-        ArraySort => return Some(Ok(sort(receiver))),
+        ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
         ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
@@ -376,15 +376,33 @@ fn iterator_symbol_removed(key: &str) -> bool {
 
 include!("arrays_iterator.rs");
 
-fn sort(receiver: Option<&Value>) -> Value {
+fn sort(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     };
     let mut sorted = values.to_vec();
-    sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
+    if let Some(compare) = arguments.first().filter(|value| !matches!(value, Value::Undefined)) {
+        if !crate::conversion::is_callable(compare) {
+            return Err(crate::value::error::throw_type_error(
+                "The comparison function must be either a function or undefined",
+            ));
+        }
+        sorted.sort_by(|left, right| {
+            let result = crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])
+                .ok()
+                .and_then(|value| crate::conversion::to_number(&value).ok())
+                .unwrap_or(0.0);
+            result.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal)
+        });
+    } else {
+        sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
+    }
     let result = Value::array(sorted);
     crate::locals::replace_value(receiver, &result);
-    result
+    Ok(result)
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {
