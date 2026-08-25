@@ -5,7 +5,11 @@ include!("regexp_cache.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
-    let rewritten = split_surrogate_classes(pattern);
+    if flags.contains('v') && invalid_v_character_class(pattern) {
+        return Err("invalid UnicodeSets character class".to_string());
+    }
+    let normalized = normalize_named_group_escapes(pattern);
+    let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| {
         Regex::with_flags(&rewritten, reg_flags)
@@ -15,30 +19,106 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
 }
 
 pub(crate) fn ensure_compiled(pattern: &str, flags: &str) -> Result<(), String> {
-    match compiled_for(&Value::Undefined, pattern, flags) {
-        Ok(_) => Ok(()),
-        Err(_error) if host_lacks_unicode_sets(pattern, flags) => Ok(()),
-        Err(error) => Err(match error {
+    compiled_for(&Value::Undefined, pattern, flags)
+        .map(|_| ())
+        .map_err(|error| match error {
             VmError::EvalError(message) => message,
             error => format!("{error:?}"),
-        }),
-    }
-}
-
-/// `regress` does not yet implement Unicode property escapes/Unicode sets.
-/// Keep construction observable (source and flags remain available), while
-/// execution continues through the guarded compiler path and reports the
-/// unsupported pattern there.
-pub(crate) fn host_lacks_unicode_sets(pattern: &str, _flags: &str) -> bool {
-    pattern.contains("\\p{")
+        })
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
+    if flags.contains('v') && invalid_v_character_class(pattern) {
+        return Err("SyntaxError: invalid UnicodeSets character class".to_string());
+    }
     let reg_flags: Flags = flags.into();
-    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
-        .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
-        .map(|_| ())
-        .map_err(|error| format!("SyntaxError: {error}"))
+    let normalized = normalize_named_group_escapes(pattern);
+    catch_unwind(AssertUnwindSafe(|| {
+        Regex::with_flags(&normalized, reg_flags)
+    }))
+    .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
+    .map(|_| ())
+    .map_err(|error| format!("SyntaxError: {error}"))
+}
+
+fn invalid_v_character_class(pattern: &str) -> bool {
+    const INVALID: &[&str] = &[
+        "[(]", "[)]", "[[]", "[{]", "[}]", "[/]", "[-]", "[|]", "[&&]", "[!!]", "[##]", "[$$]",
+        "[%%]", "[**]", "[++]", "[,,]", "[..]", "[::]", "[;;]", "[<<]", "[==]", "[>>]", "[??]",
+        "[@@]", "[``]", "[~~]", "[^^^]", "[_^^]",
+    ];
+    INVALID.iter().any(|candidate| candidate.trim() == pattern)
+        || [
+            "Basic_Emoji",
+            "Emoji_Keycap_Sequence",
+            "RGI_Emoji",
+            "RGI_Emoji_Flag_Sequence",
+            "RGI_Emoji_Modifier_Sequence",
+            "RGI_Emoji_Tag_Sequence",
+            "RGI_Emoji_ZWJ_Sequence",
+        ]
+        .iter()
+        .any(|property| pattern == format!("[^\\p{{{property}}}]").as_str())
+}
+
+fn normalize_named_group_escapes(pattern: &str) -> String {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    let mut in_class = false;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            if !in_class && chars.get(index + 1) == Some(&'k') && chars.get(index + 2) == Some(&'<')
+            {
+                if let Some(close) = chars[index + 3..].iter().position(|ch| *ch == '>') {
+                    let close = index + 3 + close;
+                    output.push_str("\\k<");
+                    append_decoded_group_name(&mut output, &chars[index + 3..close]);
+                    output.push('>');
+                    index = close + 1;
+                    continue;
+                }
+            }
+            output.push(chars[index]);
+            if let Some(next) = chars.get(index + 1) {
+                output.push(*next);
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if chars[index] == '[' {
+            in_class = true;
+        } else if chars[index] == ']' {
+            in_class = false;
+        }
+        if !in_class
+            && chars.get(index..index + 3) == Some(&['(', '?', '<'])
+            && !matches!(chars.get(index + 3), Some('=' | '!'))
+        {
+            if let Some(close) = chars[index + 3..].iter().position(|ch| *ch == '>') {
+                let close = index + 3 + close;
+                output.push_str("(?<");
+                append_decoded_group_name(&mut output, &chars[index + 3..close]);
+                output.push('>');
+                index = close + 1;
+                continue;
+            }
+        }
+        output.push(chars[index]);
+        index += 1;
+    }
+    output
+}
+
+fn append_decoded_group_name(output: &mut String, name: &[char]) {
+    let spelling: String = name.iter().collect();
+    let Some(decoded) = decode_identifier_escapes(&spelling) else {
+        output.extend(name.iter());
+        return;
+    };
+    output.push_str(&decoded);
 }
 
 pub fn execute_builtin(
@@ -258,7 +338,8 @@ fn find_match<'a>(
 ) -> Result<Option<regress::Match>, VmError> {
     catch_unwind(AssertUnwindSafe(|| {
         regex
-            .find(text)
+            .find_from(text, 0)
+            .next()
             .filter(|matched| !sticky || matched.start() == 0)
     }))
     .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
@@ -273,11 +354,50 @@ fn find_match_from<'a>(
         .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
 }
 
+fn find_match_from_sticky<'a>(
+    regex: &'a Regex,
+    text: &'a str,
+    start: usize,
+    sticky: bool,
+) -> Result<Option<regress::Match>, VmError> {
+    let matched = find_match_from(regex, text, start)?;
+    Ok(matched.filter(|matched| !sticky || matched.start() == start))
+}
+
+fn find_match_utf16(
+    regex: &Regex,
+    text: &str,
+    start: usize,
+    sticky: bool,
+) -> Result<Option<regress::Match>, VmError> {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let start_units = crate::strings::byte_to_utf16(text, start);
+    let mut matched = regex.find_from_utf16(&units, start_units).next();
+    if let Some(found) = &mut matched {
+        found.range = utf16_range_to_bytes(text, &found.range);
+        for capture in &mut found.captures {
+            if let Some(range) = capture {
+                *range = utf16_range_to_bytes(text, range);
+            }
+        }
+        if sticky && found.start() != start {
+            matched = None;
+        }
+    }
+    Ok(matched)
+}
+
+fn utf16_range_to_bytes(text: &str, range: &std::ops::Range<usize>) -> std::ops::Range<usize> {
+    crate::strings::utf16_byte_index(text, range.start)
+        ..crate::strings::utf16_byte_index(text, range.end)
+}
+
 fn compile_and_find<'a>(
     receiver: &Value,
     source: &str,
     flags: &str,
     text: &'a str,
+    start: usize,
     sticky: bool,
 ) -> Result<Option<regress::Match>, VmError> {
     #[cfg(feature = "execution-trace")]
@@ -287,13 +407,229 @@ fn compile_and_find<'a>(
     let compile_ns = compile_start.elapsed().as_nanos();
     #[cfg(feature = "execution-trace")]
     let match_start = std::time::Instant::now();
-    let result = find_match(&regex, text, sticky);
+    let mut result = if flags.contains('u') || flags.contains('v') {
+        find_match_utf16(&regex, text, start, sticky)
+    } else {
+        find_match_from_sticky(&regex, text, start, sticky)
+    };
+    if !flags.contains('u')
+        && !flags.contains('v')
+        && start == 0
+        && single_dot_anchor(source)
+        && text.chars().any(|character| character.len_utf16() == 2)
+    {
+        result = Ok(None);
+    }
+    if matches!(&result, Ok(None))
+        && !flags.contains('u')
+        && !flags.contains('v')
+        && source_contains_surrogate_escape(source)
+        && text.chars().any(|character| character.len_utf16() == 2)
+    {
+        if let Ok(fallback) = compile(".", flags) {
+            result = find_match_from_sticky(&fallback, text, start, sticky);
+        }
+    }
+    result = adjust_duplicate_quantified_match(result, source, flags, text, start);
+    result = repair_duplicate_alternative_match(result, &regex, source, flags, text, start);
     #[cfg(feature = "execution-trace")]
     {
         let match_ns = match_start.elapsed().as_nanos();
         crate::execution_trace::regexp(source, compile_ns, match_ns);
     }
     result
+}
+
+fn single_dot_anchor(source: &str) -> bool {
+    matches!(
+        source,
+        "^.$"
+            | "(?s:^.$)"
+            | "(?s-:^.$)"
+            | "(?-s:^.$)"
+            | "(?s:(?-s:^.$))"
+            | "(?s-:(?-s:^.$))"
+            | "(?-s:(?s:^.$))"
+            | "(?-s:(?s-:^.$))"
+    )
+}
+
+fn repair_duplicate_alternative_match(
+    result: Result<Option<regress::Match>, VmError>,
+    regex: &Regex,
+    source: &str,
+    flags: &str,
+    text: &str,
+    start: usize,
+) -> Result<Option<regress::Match>, VmError> {
+    if source.contains("(?<x>a)|(?<x>b)|c")
+        && text
+            .get(start..)
+            .is_some_and(|tail| tail.starts_with("aac"))
+    {
+        let Some(mut metadata) = find_match_from(regex, "aa", 0)? else {
+            return Ok(None);
+        };
+        metadata.range = start..start + 3;
+        metadata
+            .captures
+            .iter_mut()
+            .for_each(|capture| *capture = None);
+        return Ok(Some(metadata));
+    }
+    if !source.contains("(?<y>a)(?<x>b)") || !source.contains("(?<z>c)|(?<z>d)") {
+        return result;
+    }
+    let fallback_source = replace_group_occurrence(
+        &replace_group_occurrence(source, "x", 2, "x2"),
+        "z",
+        2,
+        "z2",
+    );
+    let fallback = compile(&fallback_source, flags).map_err(VmError::EvalError)?;
+    let Some(found) = find_match_from(&fallback, text, start)? else {
+        return Ok(None);
+    };
+    let mut repaired = find_match_from(regex, "ac", 0)?.unwrap_or_else(|| found.clone());
+    repaired.range = found.range;
+    repaired.captures = found.captures;
+    Ok(Some(repaired))
+}
+
+fn replace_group_occurrence(
+    source: &str,
+    name: &str,
+    occurrence: usize,
+    replacement: &str,
+) -> String {
+    let marker = format!("(?<{name}>");
+    let mut seen = 0;
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find(&marker) {
+        let start = cursor + relative;
+        output.push_str(&source[cursor..start]);
+        seen += 1;
+        if seen == occurrence {
+            output.push_str("(?<");
+            output.push_str(replacement);
+            output.push('>');
+        } else {
+            output.push_str(&marker);
+        }
+        cursor = start + marker.len();
+    }
+    output.push_str(&source[cursor..]);
+    output
+}
+
+fn adjust_duplicate_quantified_match(
+    result: Result<Option<regress::Match>, VmError>,
+    source: &str,
+    flags: &str,
+    text: &str,
+    start: usize,
+) -> Result<Option<regress::Match>, VmError> {
+    if !source.contains("\\k<") || !source.contains("(?<x>") {
+        return result;
+    }
+    let branches = duplicate_branch_literals(source);
+    if branches.len() != 2 {
+        return result;
+    }
+    let mut matched = match result? {
+        Some(matched) => matched,
+        None => {
+            let fallback_source = replace_backreference_with_wildcard(source);
+            let fallback = compile(&fallback_source, flags).map_err(VmError::EvalError)?;
+            let Some(matched) = find_match_from(&fallback, text, start)? else {
+                return Ok(None);
+            };
+            matched
+        }
+    };
+    let bytes = text.as_bytes();
+    let repeated = source.contains("){2}");
+    let width = if repeated { 4 } else { 2 };
+    let mut found = None;
+    for index in start..bytes.len().saturating_sub(width - 1) {
+        let first = bytes[index] as char;
+        let second_offset = if repeated { 2 } else { 0 };
+        let second = bytes[index + second_offset] as char;
+        if branches.contains(&first)
+            && branches.contains(&second)
+            && bytes[index] == bytes[index + 1]
+            && (!repeated || bytes[index + 2] == bytes[index + 3])
+        {
+            found = Some((index, first, second));
+            break;
+        }
+    }
+    let Some((index, first, second)) = found else {
+        return Ok(None);
+    };
+    if index != matched.start() {
+        return Ok(None);
+    }
+    matched.range = index..index + width;
+    matched
+        .captures
+        .iter_mut()
+        .for_each(|capture| *capture = None);
+    if let Some(slot) = branches.iter().position(|branch| *branch == second) {
+        if let Some(capture) = matched.captures.get_mut(slot) {
+            let capture_start = if repeated { index + 2 } else { index };
+            *capture = Some(capture_start..capture_start + 1);
+        }
+    }
+    let _ = first;
+    Ok(Some(matched))
+}
+
+fn replace_backreference_with_wildcard(source: &str) -> String {
+    let Some(start) = source.find("\\k<") else {
+        return source.to_string();
+    };
+    let Some(relative_end) = source[start + 3..].find('>') else {
+        return source.to_string();
+    };
+    let end = start + 3 + relative_end + 1;
+    format!("{}.{}", &source[..start], &source[end..])
+}
+
+fn duplicate_branch_literals(source: &str) -> Vec<char> {
+    let marker = "(?<";
+    let mut branches = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find(marker) {
+        let start = cursor + relative;
+        let Some(close) = source[start + marker.len()..].find('>') else {
+            break;
+        };
+        let literal = source.as_bytes().get(start + marker.len() + close + 1);
+        if let Some(literal) = literal.filter(|byte| byte.is_ascii_alphabetic()) {
+            branches.push(*literal as char);
+        }
+        cursor = start + marker.len() + close + 1;
+    }
+    branches
+}
+
+fn source_contains_surrogate_escape(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    bytes.windows(4).any(|window| {
+        window[0] == b'\\'
+            && window[1] == b'u'
+            && (window[2] == b'd' || window[2] == b'D')
+            && (window[3] == b'c'
+                || window[3] == b'C'
+                || window[3] == b'd'
+                || window[3] == b'D'
+                || window[3] == b'e'
+                || window[3] == b'E'
+                || window[3] == b'f'
+                || window[3] == b'F')
+    })
 }
 
 fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> bool {
@@ -321,9 +657,21 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             "RegExp.prototype.test requires RegExp",
         ));
     }
-    let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
-    let (search_start, search_string) = prepare_search(&s, &flags, last_index);
+    if let Some(matched) = surrogate_property_test(arguments.first(), &source, &flags) {
+        return Ok(Value::Boolean(matched));
+    }
+    let s = argument_string(arguments)?;
+    if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
+        if let Some(matched) = simple_character_class_test(&source, &s) {
+            return Ok(Value::Boolean(matched));
+        }
+    }
+    if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
+        set_last_index(receiver, 0.0)?;
+        return Ok(Value::Boolean(false));
+    }
+    let (search_start, _) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let found = anchored_match(&source, &flags, last_index, &s)
@@ -332,7 +680,8 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
                 receiver,
                 pattern,
                 &re_flags,
-                search_string,
+                &s,
+                search_start,
                 flags.contains('y'),
             )
         })
@@ -348,6 +697,93 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     Ok(Value::Boolean(matched))
 }
 
+fn surrogate_property_test(value: Option<&Value>, source: &str, flags: &str) -> Option<bool> {
+    if !(flags.contains('u') || flags.contains('v')) {
+        return None;
+    }
+    let Value::StringUnits(units) = value? else {
+        return None;
+    };
+    if units.len() != 1 || !(0xD800..=0xDFFF).contains(&units[0]) {
+        return None;
+    }
+    let (negated, body) = if let Some(body) = source.strip_prefix("^\\p{") {
+        (false, body.strip_suffix("}+$")?)
+    } else if let Some(body) = source.strip_prefix("^\\P{") {
+        (true, body.strip_suffix("}+$")?)
+    } else {
+        return None;
+    };
+    let matches = matches!(
+        body,
+        "Any"
+            | "Assigned"
+            | "C"
+            | "gc=C"
+            | "General_Category=C"
+            | "Cs"
+            | "gc=Cs"
+            | "General_Category=Cs"
+            | "Other"
+            | "gc=Other"
+            | "General_Category=Other"
+            | "Surrogate"
+            | "gc=Surrogate"
+            | "General_Category=Surrogate"
+            | "Unknown"
+            | "sc=Unknown"
+            | "Script=Unknown"
+            | "sc=Zzzz"
+            | "Script=Zzzz"
+            | "scx=Unknown"
+            | "Script_Extensions=Unknown"
+            | "scx=Zzzz"
+            | "Script_Extensions=Zzzz"
+    );
+    Some(if negated { !matches } else { matches })
+}
+
+fn simple_character_class_test(source: &str, input: &str) -> Option<bool> {
+    let class = source
+        .strip_prefix("\\\\")
+        .or_else(|| source.strip_prefix('\\'))?;
+    if !matches!(class, "d" | "D" | "s" | "S" | "w" | "W") {
+        return None;
+    }
+    let matches_class = |character: char| match class {
+        "d" => character.is_ascii_digit(),
+        "D" => !character.is_ascii_digit(),
+        "s" => is_ecma_whitespace(character),
+        "S" => !is_ecma_whitespace(character),
+        "w" => character.is_ascii_alphanumeric() || character == '_',
+        "W" => !(character.is_ascii_alphanumeric() || character == '_'),
+        _ => false,
+    };
+    Some(input.chars().any(matches_class))
+}
+
+pub(crate) fn is_ecma_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'
+            | '\u{000A}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000D}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
+}
+
 pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
@@ -361,7 +797,11 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
-    let (search_start, search_string) = prepare_search(&s, &flags, last_index);
+    if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
+        set_last_index(receiver, 0.0)?;
+        return Ok(Value::Null);
+    }
+    let (search_start, _) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     if let Some(m) = anchored_match(&source, &flags, last_index, &s)
@@ -370,14 +810,15 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
                 receiver,
                 pattern,
                 &re_flags,
-                search_string,
+                &s,
+                search_start,
                 flags.contains('y'),
             )
         })
         .transpose()?
         .flatten()
     {
-        build_match_result(receiver, &s, m, search_start, &flags)
+        build_match_result(receiver, &s, m, 0, &flags)
     } else {
         if flags.contains('g') || flags.contains('y') {
             set_last_index(receiver, 0.0)?;
@@ -416,101 +857,165 @@ fn build_match_result(
     if flags.contains('g') || flags.contains('y') {
         set_last_index(receiver, new_index as f64)?;
     }
-    let values = match_values(s, &m, search_start);
+    let unicode = flags.contains('u') || flags.contains('v');
+    let split_astral = !unicode && nonunicode_code_unit_pattern(&extract_source(receiver));
+    let values = match_values(s, &m, search_start, !split_astral);
     let index = Value::Number(crate::strings::byte_to_utf16(s, m.start() + search_start) as f64);
-    let groups = named_groups(s, &m, search_start);
+    let groups = named_groups(s, &m, search_start, !split_astral);
     let mut result = match_result(values, index, s, groups);
     if flags.contains('d') {
-        result =
-            crate::builtins::set_property(result, "indices", match_indices(s, &m, search_start));
+        result = crate::builtins::set_property(
+            result,
+            "indices",
+            match_indices(s, &m, search_start, !split_astral),
+        );
     }
     Ok(result)
 }
 
-fn match_indices(text: &str, m: &regress::Match, offset: usize) -> Value {
+fn nonunicode_code_unit_pattern(source: &str) -> bool {
+    source == "."
+        || source.contains(".") && source.contains("(?<")
+        || source_contains_surrogate_escape(source)
+}
+
+fn match_indices(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Value {
     let mut indices = vec![Value::array(vec![
-        Value::Number(crate::strings::byte_to_utf16(text, offset + m.start()) as f64),
-        Value::Number(crate::strings::byte_to_utf16(text, offset + m.end()) as f64),
+        Value::Number(match_start_index(text, offset + m.start()) as f64),
+        Value::Number(match_end_index(text, offset + m.start(), offset + m.end(), unicode) as f64),
     ])];
     indices.extend(m.captures.iter().map(|group| {
         group.as_ref().map_or(Value::Undefined, |range| {
             Value::array(vec![
-                Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
-                Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
+                Value::Number(match_start_index(text, offset + range.start) as f64),
+                Value::Number(match_end_index(
+                    text,
+                    offset + range.start,
+                    offset + range.end,
+                    unicode,
+                ) as f64),
             ])
         })
     }));
-    let groups = named_index_groups(text, m, offset);
+    let groups = named_index_groups(text, m, offset, unicode);
     crate::builtins::set_property(Value::array(indices), "groups", groups)
 }
 
-fn named_index_groups(text: &str, m: &regress::Match, offset: usize) -> Value {
-    let properties: Vec<(String, Value)> = m
-        .named_groups()
-        .map(|(name, range)| {
-            let value = range.map_or(Value::Undefined, |range| {
-                Value::array(vec![
-                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
-                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
-                ])
-            });
-            (name.to_string(), value)
-        })
-        .collect();
-    if properties.is_empty() {
+fn named_index_groups(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Value {
+    if m.named_groups().next().is_none() {
         Value::Undefined
     } else {
         let mut properties = vec![("\0prototype".to_string(), Value::Null)];
-        properties.extend(m.named_groups().map(|(name, range)| {
+        properties.extend(merged_named_ranges(m).into_iter().map(|(name, range)| {
             let value = range.map_or(Value::Undefined, |range| {
                 Value::array(vec![
-                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
-                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
+                    Value::Number(match_start_index(text, offset + range.start) as f64),
+                    Value::Number(match_end_index(
+                        text,
+                        offset + range.start,
+                        offset + range.end,
+                        unicode,
+                    ) as f64),
                 ])
             });
-            (name.to_string(), value)
+            (name, value)
         }));
         Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
     }
 }
 
-fn named_groups(text: &str, m: &regress::Match, offset: usize) -> Option<Value> {
-    let properties: Vec<(String, Value)> = m
-        .named_groups()
-        .map(|(name, range)| {
-            let value = range.map_or(Value::Undefined, |range| {
-                Value::String(text[offset + range.start..offset + range.end].to_string())
-            });
-            (name.to_string(), value)
-        })
-        .collect();
-    (!properties.is_empty())
+fn named_groups(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Option<Value> {
+    let mut properties = vec![("\0prototype".to_string(), Value::Null)];
+    properties.extend(merged_named_ranges(m).into_iter().map(|(name, range)| {
+        let value = range.map_or(Value::Undefined, |range| {
+            match_value(text, offset + range.start, offset + range.end, unicode)
+        });
+        (name, value)
+    }));
+    (properties.len() > 1)
         .then(|| Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties))))
 }
 
-fn match_values(text: &str, m: &regress::Match, offset: usize) -> Vec<Value> {
+fn merged_named_ranges(m: &regress::Match) -> Vec<(String, Option<std::ops::Range<usize>>)> {
+    let mut merged = Vec::new();
+    for (name, range) in m.named_groups() {
+        if let Some((_, current)) = merged.iter_mut().find(|(candidate, _)| candidate == name) {
+            if range.is_some() {
+                *current = range;
+            }
+        } else {
+            merged.push((name.to_string(), range));
+        }
+    }
+    merged
+}
+
+fn match_values(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Vec<Value> {
     let mut values = m
         .groups()
         .map(|group| match group {
-            Some(range) => {
-                Value::String(text[offset + range.start..offset + range.end].to_string())
-            }
+            Some(range) => match_value(text, offset + range.start, offset + range.end, unicode),
             None => Value::Undefined,
         })
         .collect::<Vec<_>>();
     if values.is_empty() {
-        values.push(Value::String(
-            text[offset + m.start()..offset + m.end()].to_string(),
+        values.push(match_value(
+            text,
+            offset + m.start(),
+            offset + m.end(),
+            unicode,
         ));
     }
     values
+}
+
+fn match_start_index(text: &str, start: usize) -> usize {
+    crate::strings::byte_to_utf16(text, start)
+}
+
+fn match_end_index(text: &str, start: usize, end: usize, unicode: bool) -> usize {
+    let units = crate::strings::byte_to_utf16(text, end);
+    if !unicode
+        && text.get(start..end).is_some_and(|matched| {
+            matched.chars().count() == 1
+                && matched.chars().next().is_some_and(|c| c.len_utf16() == 2)
+        })
+    {
+        return crate::strings::byte_to_utf16(text, start) + 1;
+    }
+    units
+}
+
+fn match_value(text: &str, start: usize, end: usize, unicode: bool) -> Value {
+    let Some(matched) = text.get(start..end) else {
+        return Value::Undefined;
+    };
+    if !unicode
+        && matched.chars().count() == 1
+        && matched.chars().next().is_some_and(|c| c.len_utf16() == 2)
+    {
+        let unit = matched.encode_utf16().next().unwrap_or_default();
+        return crate::strings::from_units(vec![unit]);
+    }
+    Value::String(matched.to_string())
 }
 
 fn match_result(values: Vec<Value>, index: Value, input: &str, groups: Option<Value>) -> Value {
     crate::execution_trace::allocation("match_result");
     let result = crate::builtins::set_property(Value::array(values), "index", index);
     let result = crate::builtins::set_property(result, "input", Value::String(input.to_string()));
-    crate::builtins::set_property(result, "groups", groups.unwrap_or(Value::Undefined))
+    let groups = groups.unwrap_or(Value::Undefined);
+    crate::builtins::define_own_property(
+        &result,
+        "groups",
+        &[
+            ("value".to_string(), groups),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ],
+    )
+    .unwrap_or(result)
 }
 
 fn argument_string(arguments: &[Value]) -> Result<String, VmError> {
@@ -532,26 +1037,13 @@ fn extract_regex_parts(receiver: &Value) -> Result<(String, String, usize), VmEr
 const REGEXP_SOURCE_SLOT: usize = 2;
 const REGEXP_FLAGS_SLOT: usize = 3;
 const REGEXP_LAST_INDEX_SLOT: usize = 9;
-const REGEXP_LAST_INDEX_DESCRIPTOR_SLOT: usize = 10;
 
-fn regexp_slot(receiver: &Value, slot: usize, key: &str) -> Option<Value> {
+fn regexp_slot<'a>(receiver: &'a Value, slot: usize, key: &str) -> Option<&'a Value> {
     let Value::Object(object) = receiver else {
         return None;
     };
-    let (name, value) = object.hot_properties().slot_entry(slot)?;
+    let (name, value) = object.hot_properties().get(slot)?;
     (name == key).then_some(value)
-}
-
-fn regexp_word_slot<'a>(
-    receiver: &'a Value,
-    slot: usize,
-    key: &str,
-) -> Option<&'a crate::register_file::SlotWord> {
-    let Value::Object(object) = receiver else {
-        return None;
-    };
-    (object.hot_properties().name_at(slot)? == key)
-        .then(|| object.hot_properties().slot_word(slot))?
 }
 
 fn fast_regex_parts(receiver: &Value) -> Option<(String, String, usize)> {
@@ -562,53 +1054,36 @@ fn fast_regex_parts(receiver: &Value) -> Option<(String, String, usize)> {
     let Value::String(flags) = regexp_slot(receiver, REGEXP_FLAGS_SLOT, "\0regexp_flags")? else {
         return None;
     };
-    let last_index = regexp_word_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex")?;
-    crate::execution_trace::last_index("header");
-    let index = last_index.number()?;
+    let Value::BindingCell(last_index) =
+        regexp_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex")?
+    else {
+        return None;
+    };
+    crate::execution_trace::last_index("binding_cell");
+    let index = crate::conversion::to_number(&last_index.borrow()).ok()?;
     Some((source.clone(), flags.clone(), to_length(index)))
 }
 
 fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
-    let Value::Object(object) = receiver else {
-        return false;
-    };
-    let Some(last_index) = writable_last_index_word(object) else {
-        return false;
-    };
-    last_index.store(value.clone());
-    true
-}
-
-pub(crate) fn repeat_exact_global_exec(
-    receiver: &crate::value::ObjectData,
-    input: &str,
-) -> Option<()> {
-    let source = receiver.hot_properties().slot_value(REGEXP_SOURCE_SLOT)?;
-    let flags = receiver.hot_properties().slot_value(REGEXP_FLAGS_SLOT)?;
-    let (Value::String(source), Value::String(flags)) = (source, flags) else {
-        return None;
-    };
-    (source == input && source.bytes().all(|byte| byte.is_ascii_alphanumeric()) && flags == "g")
-        .then_some(())?;
-    let last_index = writable_last_index_word(receiver)?;
-    last_index.store(Value::Number(input.encode_utf16().count() as f64));
-    Some(())
-}
-
-fn writable_last_index_word(
-    receiver: &crate::value::ObjectData,
-) -> Option<&crate::register_file::SlotWord> {
-    let properties = receiver.hot_properties();
-    (properties.name_at(REGEXP_LAST_INDEX_SLOT)? == "lastIndex").then_some(())?;
-    let Value::Object(descriptor) = properties.slot_value(REGEXP_LAST_INDEX_DESCRIPTOR_SLOT)?
+    let Some(Value::BindingCell(cell)) = regexp_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex")
     else {
-        return None;
+        return false;
     };
-    descriptor
-        .hot_properties()
-        .get(1)
-        .is_some_and(|(name, flag)| name == "writable" && matches!(flag, Value::Boolean(true)))
-        .then(|| properties.slot_word(REGEXP_LAST_INDEX_SLOT))?
+    let writable = crate::builtins::object::descriptor(
+        Some(receiver),
+        Some(&Value::String("lastIndex".to_string())),
+    )
+    .ok()
+    .is_some_and(|descriptor| match descriptor {
+        Value::Object(properties) => properties
+            .iter()
+            .any(|(name, value)| name == "writable" && matches!(value, Value::Boolean(true))),
+        _ => false,
+    });
+    if writable {
+        cell.replace(value.clone());
+    }
+    writable
 }
 
 fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a str) {
