@@ -251,8 +251,8 @@ fn run_instruction(
             Ok(None)
         }
         Opcode::CallN => {
-            if instruction.flags == 1 {
-                crate::methods::execute_registered_one(registers, instruction)?;
+            if instruction.flags != 0 {
+                crate::methods::execute_registered(registers, instruction)?;
             } else {
                 let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
                 let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;

@@ -460,9 +460,17 @@ impl Instruction {
         }
     }
     pub const fn call_registered_one(dst: Register, object: Register, callee: Register) -> Self {
+        Self::call_registered_window(dst, object, callee, 1)
+    }
+    pub const fn call_registered_window(
+        dst: Register,
+        object: Register,
+        callee: Register,
+        argc: u8,
+    ) -> Self {
         Self {
             opcode: Opcode::CallN,
-            flags: 1,
+            flags: argc,
             a: dst,
             b: object,
             c: callee,
@@ -614,6 +622,21 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
             && spreads.as_slice() == [false] =>
         {
             Some(Instruction::call_registered_one(*dst, *object, *callee))
+        }
+        Op::CallMethod {
+            dst,
+            object,
+            callee: Some(callee),
+            args,
+            spreads,
+            ..
+        } if args.as_slice() == [dst.saturating_sub(2), dst.saturating_sub(1)]
+            && *dst >= 2
+            && spreads.as_slice() == [false, false] =>
+        {
+            Some(Instruction::call_registered_window(
+                *dst, *object, *callee, 2,
+            ))
         }
         _ => None,
     }
@@ -1075,6 +1098,21 @@ mod tests {
                 spreads: vec![false]
             }),
             Some(Instruction::call_one_arg(0, 4, 1))
+        );
+    }
+    #[test]
+    fn lowers_two_argument_method_window_without_operand_storage() {
+        let op = crate::ops::Op::CallMethod {
+            dst: 5,
+            object: 1,
+            key: "method".into(),
+            callee: Some(2),
+            args: vec![3, 4],
+            spreads: vec![false, false],
+        };
+        assert_eq!(
+            lower_compact(&op),
+            Some(Instruction::call_registered_window(5, 1, 2, 2))
         );
     }
     #[test]

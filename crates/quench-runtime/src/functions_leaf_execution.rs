@@ -271,7 +271,7 @@ fn validate_leaf_depth(
             return Err(LeafReject::Register);
         }
         if op.opcode == crate::ir::Opcode::CallN {
-            (op.flags <= 1).then_some(()).ok_or(LeafReject::Call)?;
+            (op.flags <= 2).then_some(()).ok_or(LeafReject::Call)?;
         }
         if op.opcode == crate::ir::Opcode::Slow {
             validate_leaf_control(
@@ -966,20 +966,21 @@ fn leaf_call(
     registers: &impl LeafRegisterFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let receiver = crate::locals::resolved_replacement(leaf_register(registers, op.b)?);
-    let (callee, argument) = if op.flags == 0 {
-        (leaf_get_named(code, pc, &receiver)?, None)
-    } else {
-        let argument =
-            op.a.checked_sub(1)
-                .ok_or(crate::execute::VmError::MissingReturn)?;
-        (
-            leaf_register(registers, op.c)?,
-            Some(leaf_register(registers, argument)?),
-        )
-    };
-    let arguments = argument
-        .as_ref()
-        .map(std::slice::from_ref)
-        .unwrap_or_default();
-    crate::functions::execute_target(&callee, &receiver, arguments)
+    if op.flags == 0 {
+        let callee = leaf_get_named(code, pc, &receiver)?;
+        return crate::functions::execute_target(&callee, &receiver, &[]);
+    }
+    let callee = leaf_register(registers, op.c)?;
+    let first = op
+        .a
+        .checked_sub(u16::from(op.flags))
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let arguments = [
+        leaf_register(registers, first)?,
+        (op.flags == 2)
+            .then(|| leaf_register(registers, first + 1))
+            .transpose()?
+            .unwrap_or(crate::value::Value::Undefined),
+    ];
+    crate::functions::execute_target(&callee, &receiver, &arguments[..usize::from(op.flags)])
 }
