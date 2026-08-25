@@ -1,14 +1,3 @@
-fn value_to_string(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
-        Value::Boolean(b) => b.to_string(),
-        Value::Null => "null".to_string(),
-        Value::Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
-}
-
 fn regex_receiver<'a>(receiver: Option<&'a Value>, method: &str) -> Result<&'a Value, VmError> {
     match receiver {
         Some(receiver @ Value::Object(_)) => Ok(receiver),
@@ -150,11 +139,14 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let receiver = regex_receiver(receiver, "@@replace")?;
     let s = to_string_argument(arguments)?;
     let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    let global = crate::execute::is_truthy(&crate::execute::get_property_result(receiver, "global")?);
     if crate::conversion::is_callable(&replacement) {
+        if dynamic_exec(receiver, global) {
+            return replace_with_exec_callable(receiver, &s, &replacement, global);
+        }
         return replace_with_callable(receiver, &s, &replacement);
     }
     let replacement = crate::conversion::to_string(&replacement)?;
-    let global = crate::execute::is_truthy(&crate::execute::get_property_result(receiver, "global")?);
     if dynamic_exec(receiver, global) {
         return replace_with_exec(receiver, &s, &replacement, global);
     }
@@ -163,8 +155,11 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
 
 fn dynamic_exec(receiver: &Value, global: bool) -> bool {
     let flags_global = extract_flags(receiver).contains('g');
+    let sticky = extract_flags(receiver).contains('y');
     let exec = crate::execute::get_property(receiver, "exec");
-    global != flags_global || !matches!(exec, Value::Builtin(crate::ops::Builtin::RegExpExec))
+    sticky
+        || global != flags_global
+        || !matches!(exec, Value::Builtin(crate::ops::Builtin::RegExpExec))
 }
 
 fn replace_with_exec(
@@ -180,10 +175,10 @@ fn replace_with_exec(
     let mut next_source = 0;
     loop {
         let result = regexp_exec(receiver, input)?;
-        let Some((matched, index, exec_result)) = exec_match(&result)? else { break };
+        let Some(exec) = exec_match(&result)? else { break };
         // The exec result's `index` is a UTF-16 code-unit count; convert to
         // a byte offset before slicing `input`.
-        let index = crate::strings::utf16_byte_index(input, index);
+        let index = exec_position(input, exec.position);
         // Spec §21.2.5.8 step 16.p: a position moving backwards (an ill-
         // behaving exec/subclass) is ignored — do not consume input past it.
         // A hostile exec result may also report a position beyond the input;
@@ -195,27 +190,117 @@ fn replace_with_exec(
                 replacement,
                 input,
                 clamped_index,
-                &matched,
-                &exec_result,
+                &exec.matched,
+                &exec.captures,
+                &exec.groups,
             )?);
-            next_source = (clamped_index + matched.len()).min(input.len());
+            next_source = exec_end(input, clamped_index, &exec.matched);
         }
         if !global {
             break;
         }
-        advance_empty_exec(receiver, input, &matched)?;
+        advance_empty_exec(receiver, input, &exec.matched)?;
     }
     output.push_str(&input[next_source.min(input.len())..]);
     Ok(Value::String(output))
 }
 
-fn exec_match(result: &Value) -> Result<Option<(String, usize, Value)>, VmError> {
+fn replace_with_exec_callable(
+    receiver: &Value,
+    input: &str,
+    replacement: &Value,
+    global: bool,
+) -> Result<Value, VmError> {
+    if global {
+        set_last_index(receiver, 0.0)?;
+    }
+    let mut output = String::new();
+    let mut next_source = 0;
+    loop {
+        let result = regexp_exec(receiver, input)?;
+        let Some(exec) = exec_match(&result)? else { break };
+        let index = exec_position(input, exec.position);
+        if index >= next_source && next_source <= input.len() {
+            output.push_str(&input[next_source..index.min(input.len())]);
+            let mut args = vec![Value::String(exec.matched.clone())];
+            args.extend(exec.captures.clone());
+            args.push(Value::Number(exec.position));
+            args.push(Value::String(input.to_string()));
+            if !matches!(exec.groups, Value::Undefined) {
+                args.push(exec.groups.clone());
+            }
+            let replaced = crate::functions::execute_target(replacement, &Value::Undefined, &args)?;
+            output.push_str(&crate::conversion::to_string(&replaced)?);
+            next_source = exec_end(input, index.min(input.len()), &exec.matched);
+        }
+        if !global {
+            break;
+        }
+        advance_empty_exec(receiver, input, &exec.matched)?;
+    }
+    output.push_str(&input[next_source.min(input.len())..]);
+    Ok(Value::String(output))
+}
+
+struct ExecMatch {
+    matched: String,
+    position: f64,
+    captures: Vec<Value>,
+    groups: Value,
+}
+
+fn exec_match(result: &Value) -> Result<Option<ExecMatch>, VmError> {
     if matches!(result, Value::Null) {
         return Ok(None);
     }
     let matched = crate::conversion::to_string(&crate::execute::get_property_result(result, "0")?)?;
-    let index = crate::conversion::to_number(&crate::execute::get_property_result(result, "index")?)?;
-    Ok(Some((matched, to_length(index), result.clone())))
+    let position = to_integer_or_infinity(crate::conversion::to_number(
+        &crate::execute::get_property_result(result, "index")?,
+    )?);
+    let length = array_like_length(result)?;
+    let captures = (1..length)
+        .map(|index| crate::execute::get_property_result(result, &index.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let groups = crate::execute::get_property_result(result, "groups")?;
+    Ok(Some(ExecMatch {
+        matched,
+        position,
+        captures,
+        groups,
+    }))
+}
+
+fn array_like_length(result: &Value) -> Result<usize, VmError> {
+    let length = crate::conversion::to_number(&crate::execute::get_property_result(result, "length")?)?;
+    if !length.is_finite() {
+        return Ok(if length.is_sign_positive() { usize::MAX } else { 0 });
+    }
+    Ok(length.max(0.0).trunc().min(9_007_199_254_740_991.0) as usize)
+}
+
+fn to_integer_or_infinity(value: f64) -> f64 {
+    if value.is_nan() || value == 0.0 {
+        0.0
+    } else if value.is_infinite() {
+        value
+    } else {
+        value.trunc()
+    }
+}
+
+fn exec_position(input: &str, position: f64) -> usize {
+    if position.is_sign_negative() || position.is_nan() {
+        0
+    } else if position.is_infinite() {
+        input.len()
+    } else {
+        crate::strings::utf16_byte_index(input, position.max(0.0) as usize)
+    }
+}
+
+fn exec_end(input: &str, start: usize, matched: &str) -> usize {
+    let units = crate::strings::utf16_len(matched);
+    crate::strings::utf16_byte_index(input, crate::strings::byte_to_utf16(input, start) + units)
 }
 
 fn expand_exec_template(
@@ -223,7 +308,8 @@ fn expand_exec_template(
     input: &str,
     match_index: usize,
     matched: &str,
-    exec_result: &Value,
+    captures: &[Value],
+    groups: &Value,
 ) -> Result<String, VmError> {
     let chars: Vec<char> = template.chars().collect();
     let mut output = String::new();
@@ -252,6 +338,27 @@ fn expand_exec_template(
                 output.push_str(&input[suffix_start..]);
                 cursor += 2;
             }
+            '0'..='9' => {
+                let mut end = cursor + 2;
+                while end < chars.len() && end < cursor + 3 && chars[end].is_ascii_digit() {
+                    end += 1;
+                }
+                let number: usize = chars[cursor + 1..end]
+                    .iter()
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0);
+                if number == 0 || number > captures.len() {
+                    output.push('$');
+                    cursor += 1;
+                    continue;
+                }
+                let capture = &captures[number - 1];
+                if !matches!(capture, Value::Undefined) {
+                    output.push_str(&crate::conversion::to_string(capture)?);
+                }
+                cursor = end;
+            }
             '<' => {
                 let end = chars[cursor + 2..]
                     .iter()
@@ -262,16 +369,15 @@ fn expand_exec_template(
                     cursor += 1;
                     continue;
                 };
-                let groups = crate::execute::get_property_result(exec_result, "groups")?;
                 if matches!(groups, Value::Undefined) {
                     output.push('$');
                     cursor += 1;
                     continue;
                 }
                 let name: String = chars[cursor + 2..end].iter().collect();
-                let capture = crate::execute::get_property_result(&groups, &name)?;
+                let capture = crate::execute::get_property_result(groups, &name)?;
                 if !matches!(capture, Value::Undefined) {
-                    output.push_str(&value_to_string(&capture));
+                    output.push_str(&crate::conversion::to_string(&capture)?);
                 }
                 cursor = end + 1;
             }
@@ -333,7 +439,7 @@ fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Resu
         let args = replacer_args(s, s, &m, end);
         out.push_str(&s[copied..start]);
         let replaced = crate::functions::execute_target(replacement, &Value::Undefined, &args)?;
-        out.push_str(&value_to_string(&replaced));
+        out.push_str(&crate::conversion::to_string(&replaced)?);
         copied = end;
         if !global {
             break;
@@ -413,12 +519,25 @@ fn expand_template_token(
         return None;
     }
     let token = *chars.get(index + 1)?;
+    if token.is_ascii_digit() {
+        let mut end = index + 2;
+        if chars.get(end).is_some_and(|ch| ch.is_ascii_digit()) {
+            end += 1;
+        }
+        let number = chars[index + 1..end]
+            .iter()
+            .collect::<String>()
+            .parse::<usize>()
+            .ok()?;
+        let replacement = template_group_number(m, rest, number)?;
+        out.push_str(&replacement);
+        return Some(end);
+    }
     let replacement = match token {
         '$' => "$".to_string(),
         '&' => rest[m.start()..m.end()].to_string(),
         '`' => replacement_prefix(input, rest, m),
         '\'' => replacement_suffix(input, rest, m),
-        digit @ '1'..='9' => template_group(m, rest, digit)?,
         '<' if m.named_groups().next().is_some() => {
             let end = chars[index + 2..].iter().position(|c| *c == '>')? + index + 2;
             let name: String = chars[index + 2..end].iter().collect();
@@ -446,9 +565,11 @@ fn replacement_suffix(input: &str, rest: &str, m: &regress::Match) -> String {
     input[offset + m.end()..].to_string()
 }
 
-fn template_group(m: &regress::Match, rest: &str, digit: char) -> Option<String> {
-    let index = (digit as usize) - ('1' as usize);
-    let group = groups_at(m).nth(index)?;
+fn template_group_number(m: &regress::Match, rest: &str, number: usize) -> Option<String> {
+    if number == 0 {
+        return None;
+    }
+    let group = groups_at(m).nth(number - 1)?;
     Some(group.map_or_else(String::new, |(start, end)| rest[start..end].to_string()))
 }
 
