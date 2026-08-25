@@ -120,6 +120,10 @@ impl DenseElements {
             values.borrow()[index].set(*number);
             return;
         }
+        if let Self::Values(values) = self {
+            values.borrow_mut()[index] = value;
+            return;
+        }
         self.materialize_values()[index] = value;
     }
 
