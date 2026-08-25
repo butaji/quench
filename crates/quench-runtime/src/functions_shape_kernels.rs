@@ -199,10 +199,7 @@ fn execute_state_predicate(
     let crate::value::Value::Object(object) = receiver else { return None };
     let code = function.code.code()?;
     let metadata = code.metadata_at(plan.state_pc)?;
-    let cell = crate::vm::get_named_cached_cell(object, &metadata.named_cache)?;
-    // SAFETY: `receiver` owns the object and therefore its property cell for
-    // the duration of this non-mutating kernel.
-    let state = unsafe { &*cell }.load_number()?;
+    let state = cached_shape_number(object, &metadata.named_cache)?;
     let state_i32 = exact_i32(state)?;
     let held = exact_i32(function.captures.get_number(plan.held_slot)?)?;
     let suspended = function.captures.get_number(plan.suspended_slot)?;
@@ -220,20 +217,42 @@ fn execute_state_bitwise(
 ) -> Option<crate::value::Value> {
     let crate::value::Value::Object(object) = receiver else { return None };
     let metadata = function.code.code()?.metadata_at(plan.state_pc)?;
-    let cell = crate::vm::get_named_cached_cell(object, &metadata.named_cache)?;
-    // SAFETY: the receiver retains the cached ordinary data-property cell.
-    let cell = unsafe { &*cell };
-    let state = exact_i32(cell.load_number()?)?;
+    let payload = crate::vm::get_named_cached_payload(object, &metadata.named_cache)?;
+    let state = exact_i32(match &payload {
+        crate::vm::NamedCachedPayload::Word(word) => unsafe { &**word }.number()?,
+        crate::vm::NamedCachedPayload::Cell(cell) => unsafe { &**cell }.load_number()?,
+        crate::vm::NamedCachedPayload::Value(value) => value.as_number()?,
+    })?;
     let mask = exact_i32(function.captures.get_number(plan.mask_slot)?)?;
     let state = match plan.operator {
         crate::ops::BinaryOp::BitwiseOr => state | mask,
         crate::ops::BinaryOp::BitwiseAnd => state & mask,
         _ => return None,
     };
-    cell.store(crate::value::Value::Number(f64::from(state)));
+    match payload {
+        crate::vm::NamedCachedPayload::Word(word) => {
+            unsafe { &*word }.store(crate::value::Value::Number(f64::from(state)))
+        }
+        crate::vm::NamedCachedPayload::Cell(cell) => {
+            unsafe { &*cell }.store(crate::value::Value::Number(f64::from(state)))
+        }
+        crate::vm::NamedCachedPayload::Value(_) => return None,
+    }
     crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
     crate::execution_trace::kernel("shape_state_bitwise", false);
     Some(crate::value::Value::Undefined)
+}
+
+#[inline(always)]
+fn cached_shape_number(
+    object: &crate::value::ObjectData,
+    cache: &std::cell::Cell<u64>,
+) -> Option<f64> {
+    match crate::vm::get_named_cached_payload(object, cache)? {
+        crate::vm::NamedCachedPayload::Word(word) => unsafe { &*word }.number(),
+        crate::vm::NamedCachedPayload::Cell(cell) => unsafe { &*cell }.load_number(),
+        crate::vm::NamedCachedPayload::Value(value) => value.as_number(),
+    }
 }
 
 fn exact_i32(value: f64) -> Option<i32> {
