@@ -460,6 +460,18 @@ impl ArrayData {
             self.set_sparse_index(index, value);
             return;
         }
+        if index == self.length
+            && index == self.values.len()
+            && self.properties.is_empty()
+            && self.descriptors.is_empty()
+            && self.prototype.borrow().is_none()
+            && !self.arguments
+            && self.argument_live.is_none()
+            && matches!(&value, Value::Number(number) if self.values.append_number(*number))
+        {
+            self.length += 1;
+            return;
+        }
         if index > self.values.len() {
             self.set_sparse_index(index, value);
             return;
