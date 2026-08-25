@@ -43,20 +43,35 @@ fn compare_partial(
                 let key = index.to_string();
                 let left_has = execute::has_own_property(left, &key);
                 let right_has = execute::has_own_property(right, &key);
-                if !left_has && !right_has {
+                if left_has == right_has {
                     continue;
                 }
-                if !right_has || !left_has {
-                    let present = if left_has {
-                        execute::get_property_result(left, &key)?
-                    } else if right_has {
-                        execute::get_property_result(right, &key)?
-                    } else {
-                        Value::Undefined
-                    };
-                    if matches!(present, Value::Undefined) {
-                        return Ok(false);
-                    }
+                if left_has {
+                    return Ok(true);
+                }
+                let present = execute::get_property_result(right, &key)?;
+                if matches!(present, Value::Undefined) {
+                    return Ok(false);
+                }
+                let later_left_extra = ((index + 1)..b.logical_len()).any(|later| {
+                    let key = later.to_string();
+                    execute::has_own_property(left, &key) && !execute::has_own_property(right, &key)
+                });
+                if later_left_extra {
+                    return Ok(true);
+                }
+                let later_overlap = ((index + 1)..b.logical_len()).any(|later| {
+                    let key = later.to_string();
+                    execute::has_own_property(left, &key) && execute::has_own_property(right, &key)
+                });
+                if later_overlap {
+                    return Ok(false);
+                }
+                return Ok(true);
+            }
+            for index in 0..b.logical_len() {
+                let key = index.to_string();
+                if !execute::has_own_property(left, &key) {
                     continue;
                 }
                 if !compare_partial(
@@ -67,9 +82,28 @@ fn compare_partial(
                     return Ok(false);
                 }
             }
-            Ok(true)
+            same_enumerable_symbols_shallow(left, right)
         }
         (Value::Object(_), Value::Object(_)) => {
+            let left_boxed = execute::get_property(left, "_value");
+            let right_boxed = execute::get_property(right, "_value");
+            let left_is_boxed = !matches!(left_boxed, Value::Undefined);
+            let right_is_boxed = !matches!(right_boxed, Value::Undefined);
+            if left_is_boxed != right_is_boxed {
+                return Ok(false);
+            }
+            if left_is_boxed && !compare(&left_boxed, &right_boxed, true, false, memo)? {
+                return Ok(false);
+            }
+            if is_error_value(left)
+                || is_error_value(right)
+                || is_date_value(left)
+                || is_date_value(right)
+                || (quench_runtime::regexp::has_regexp_internal_slot(left)
+                    || quench_runtime::regexp::has_regexp_internal_slot(right))
+            {
+                return compare(left, right, true, false, memo);
+            }
             if seen(memo, left, right) {
                 return Ok(true);
             }
@@ -89,6 +123,9 @@ fn compare_partial(
                 if !compare_partial(&left_value, &right_value, memo)? {
                     return Ok(false);
                 }
+            }
+            if !same_enumerable_symbols(left, right, true, false, memo)? {
+                return Ok(false);
             }
             Ok(true)
         }
@@ -385,7 +422,30 @@ fn compare_typed_arrays(
     if left_bytes != right_bytes {
         return Ok(false);
     }
-    same_enumerable_symbols(left, right, strict, skip_prototype, memo)
+    if strict {
+        same_enumerable_symbols_shallow(left, right)
+    } else {
+        Ok(true)
+    }
+}
+
+fn same_enumerable_symbols_shallow(left: &Value, right: &Value) -> Result<bool, VmError> {
+    let left_symbols = execute::own_enumerable_symbol_strings(left);
+    let right_symbols = execute::own_enumerable_symbol_strings(right);
+    if left_symbols.len() != right_symbols.len()
+        || left_symbols.iter().any(|key| !right_symbols.contains(key))
+    {
+        return Ok(false);
+    }
+    for key in &left_symbols {
+        if !execute::same_value(
+            &execute::get_property(left, key),
+            &execute::get_property(right, key),
+        ) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn typed_array_bytes(value: &Value) -> Option<Vec<u8>> {
@@ -429,7 +489,11 @@ fn same_enumerable_symbols(
             return Ok(false);
         }
     }
-    Ok(true)
+    if strict {
+        same_enumerable_symbols_shallow(left, right)
+    } else {
+        Ok(true)
+    }
 }
 
 fn is_typed_array(value: &Value) -> bool {
@@ -515,7 +579,11 @@ fn compare_arrays(
             return Ok(false);
         }
     }
-    Ok(true)
+    if strict {
+        same_enumerable_symbols(left, right, strict, skip_prototype, memo)
+    } else {
+        Ok(true)
+    }
 }
 
 fn compare_objects(
@@ -530,6 +598,15 @@ fn compare_objects(
     }
     if !strict && !same_loose_object_brand(left, right) {
         return Ok(false);
+    }
+    if !strict {
+        let left_boxed = execute::get_property(left, "_value");
+        let right_boxed = execute::get_property(right, "_value");
+        if !matches!(left_boxed, Value::Undefined)
+            && !compare(&left_boxed, &right_boxed, false, skip_prototype, memo)?
+        {
+            return Ok(false);
+        }
     }
     if strict && !same_shape(left, right, strict, skip_prototype, memo)? {
         return Ok(false);
