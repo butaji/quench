@@ -38,7 +38,6 @@ fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
     fn value_realm(value: &Value) -> Option<crate::ops::RealmId> {
         match value {
             Value::Function(function) => Some(function_realm_id(function)),
-            Value::Proxy(proxy) => value_realm(&proxy.target),
             Value::BoundFunction(bound) => bound
                 .properties
                 .borrow()

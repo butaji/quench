@@ -9,7 +9,7 @@ fn reflect_define_property(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let descriptor = to_property_descriptor(&descriptor)?;
     match proxy_define_property(target, &prop, &descriptor) {
-        Ok(result) => Ok(Value::Boolean(crate::execute::is_truthy(&result))),
+        Ok(_) => Ok(Value::Boolean(true)),
         Err(error) if define_rejected(&error) => Ok(Value::Boolean(false)),
         Err(error) => Err(error),
     }
@@ -130,7 +130,7 @@ fn reflect_property(arguments: &[Value]) -> Result<String, VmError> {
 pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap_result(proxy, "ownKeys")? {
+        if let Some(trap) = get_handler_trap(proxy, "ownKeys") {
             let result = call_trap(
                 &trap,
                 std::slice::from_ref(&proxy.target),
