@@ -17,6 +17,38 @@ use crate::modules::emitter::{emitter_id, EmitterId, EventEmitter, Listener, EMI
 
 thread_local! {
     static CAPTURE_REJECTIONS: Cell<bool> = const { Cell::new(false) };
+    static DEFAULT_MAX_LISTENERS: Cell<usize> = const { Cell::new(10) };
+}
+
+pub fn default_max_get(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(DEFAULT_MAX_LISTENERS.with(Cell::get) as f64))
+}
+
+pub fn default_max_set(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let n = validate_max_listeners(args.first())?;
+    DEFAULT_MAX_LISTENERS.with(|value| value.set(n));
+    state.borrow_mut().emitters.default_max = n;
+    Ok(Value::Undefined)
+}
+
+fn validate_max_listeners(value: Option<&Value>) -> Result<usize, VmError> {
+    match value {
+        Some(Value::Number(n)) if *n >= 0.0 && n.is_finite() => Ok(*n as usize),
+        Some(Value::Number(n)) => Err(crate::modules::buffer_enc::out_of_range(
+            "defaultMaxListeners",
+            "a non-negative number",
+            &execute::number_to_js_string(*n),
+        )),
+        _ => Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"defaultMaxListeners\" property must be a non-negative number".into(),
+        )),
+    }
 }
 
 pub fn capture_rejections_get(
@@ -545,14 +577,7 @@ pub fn method_set_max_listeners(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let n = match args.first() {
-        Some(Value::Number(n)) if *n >= 0.0 && n.is_finite() => *n as usize,
-        _ => {
-            return Err(execute::type_error(
-                "The \"n\" argument must be a non-negative number",
-            ))
-        }
-    };
+    let n = validate_max_listeners(args.first())?;
     if let Some(id) = expect_emitter(state, receiver) {
         if let Some(emitter) = state.borrow().emitters.get(id) {
             emitter.borrow_mut().max = Some(n);
@@ -569,13 +594,14 @@ pub fn method_get_max_listeners(
     let max = expect_emitter(state, receiver)
         .and_then(|id| state.borrow().emitters.get(id))
         .and_then(|emitter| emitter.borrow().max)
-        .unwrap_or_else(|| state.borrow().emitters.default_max);
+        .unwrap_or_else(|| DEFAULT_MAX_LISTENERS.with(Cell::get));
     Ok(Value::Number(max as f64))
 }
 
 pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let id = state.borrow_mut().emitters.allocate();
     let emitter = Rc::new(RefCell::new(EventEmitter::new()));
+    state.borrow_mut().emitters.default_max = DEFAULT_MAX_LISTENERS.with(Cell::get);
     state.borrow_mut().emitters.insert(id, emitter);
     let id_value = Value::Number(id.0 as f64);
     let mut object =
@@ -850,7 +876,6 @@ pub fn build() -> Value {
             "errorMonitor".to_string(),
             Value::String("Symbol.for.events.errorMonitor\0".into()),
         ),
-        ("defaultMaxListeners".to_string(), Value::Number(10.0)),
         ("once".to_string(), once),
         ("on".to_string(), on),
         ("addAbortListener".to_string(), add_abort_listener),
@@ -878,6 +903,13 @@ pub fn build() -> Value {
         ("configurable".into(), Value::Boolean(true)),
     ]);
     let _ = execute::define_property(value.clone(), "captureRejections", descriptor);
+    let descriptor = host_api::object(vec![
+        ("get".into(), cap("events:defaultMaxListeners:get", 0x0125)),
+        ("set".into(), cap("events:defaultMaxListeners:set", 0x0126)),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    let _ = execute::define_property(value.clone(), "defaultMaxListeners", descriptor);
     for (key, property) in props {
         let _ = execute::set_callable_property(&value, &key, property);
     }
