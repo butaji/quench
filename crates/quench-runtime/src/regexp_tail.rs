@@ -40,6 +40,10 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     if !flags.contains('g') {
         return regexp_exec(receiver, &input);
     }
+    if !unicode_mode(&flags) && extract_source(receiver) == "." {
+        let units = input.encode_utf16().map(|unit| crate::strings::from_units(vec![unit])).collect();
+        return Ok(Value::array(units));
+    }
     symbol_match_global(receiver, &input, unicode_mode(&flags))
 }
 
@@ -613,8 +617,22 @@ fn expand_template_token(
             .collect::<String>()
             .parse::<usize>()
             .ok()?;
-        let replacement = template_group_number(m, rest, number)?;
-        out.push_str(&replacement);
+        if let Some(replacement) = template_group_number(m, rest, number) {
+            out.push_str(&replacement);
+        } else if end == index + 3 {
+            let first = chars[index + 1].to_digit(10).unwrap_or(0) as usize;
+            if let Some(replacement) = template_group_number(m, rest, first) {
+                out.push_str(&replacement);
+                out.push(chars[index + 2]);
+            } else {
+                out.push('$');
+                out.push(chars[index + 1]);
+                out.push(chars[index + 2]);
+            }
+        } else {
+            out.push('$');
+            out.push(chars[index + 1]);
+        }
         return Some(end);
     }
     let replacement = match token {
@@ -668,6 +686,11 @@ fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let receiver = regex_receiver(receiver, "@@matchAll")?;
     let input = to_string_argument(arguments)?;
     let flags = match_all_flags(receiver)?;
+    if !flags.contains('g') {
+        return Err(crate::value::error::throw_type_error(
+            "String.prototype.matchAll requires a 'g' flag",
+        ));
+    }
     let last_index = match_all_start(receiver, &input)?;
     let matcher = match_all_matcher(receiver, &flags)?;
     let matcher = crate::builtins::set_property(
@@ -712,7 +735,13 @@ pub(crate) fn iterator_step(
 }
 
 fn match_all_flags(receiver: &Value) -> Result<String, VmError> {
-    crate::conversion::to_string(&crate::execute::get_property_result(receiver, "flags")?)
+    let value = crate::execute::get_property_result(receiver, "flags")?;
+    if matches!(value, Value::Undefined | Value::Null) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp flags must be coercible",
+        ));
+    }
+    crate::conversion::to_string(&value)
 }
 
 fn match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
