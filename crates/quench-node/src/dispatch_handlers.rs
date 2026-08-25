@@ -194,6 +194,20 @@ pub fn util_inspect(
             _ => false,
         }
     });
+    let colors = args.get(1).is_some_and(|options| {
+        matches!(execute::get_property(options, "colors"), Value::Boolean(true))
+    });
+    let break_length_one = args.get(1).is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "breakLength"),
+            Value::Number(value) if value <= 1.0
+        )
+    });
+    if colors && break_length_one {
+        if let Some(rendered) = crate::modules::util::inspect_proxy_colored(&arg) {
+            return Ok(Value::String(rendered));
+        }
+    }
     if let Some(rendered) = crate::modules::util::inspect_proxy(&arg, depth.unwrap_or(3), show_proxy) {
         return Ok(Value::String(rendered));
     }
