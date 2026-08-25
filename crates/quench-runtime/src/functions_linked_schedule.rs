@@ -61,14 +61,33 @@ fn execute_linked_schedule(
         if tcb.has_replacement() {
             return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
         }
-        let held = call_linked_method(&current_value, plan.body, plan.predicate_pc)?;
-        if crate::vm::is_truthy(&held) {
-            let Some(link) = crate::vm::proven_own_word(tcb, plan.link) else {
+        let direct = task_runners
+            .as_ref()
+            .and_then(|runners| runners.for_object(tcb));
+        if direct.is_some() {
+            crate::execution_trace::kernel("linked_tcb_word_slots", false);
+        }
+        let held = match direct.and_then(DirectTaskRunner::is_held_or_suspended) {
+            Some(held) => held,
+            None => crate::vm::is_truthy(&call_linked_method(
+                &current_value,
+                plan.body,
+                plan.predicate_pc,
+            )?),
+        };
+        if held {
+            let link = direct
+                .map(|runner| runner.word(runner.link))
+                .or_else(|| crate::vm::proven_own_word(tcb, plan.link));
+            let Some(link) = link else {
                 return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
             };
             current.store(link.load());
         } else {
-            let Some(id) = crate::vm::proven_own_word(tcb, plan.id) else {
+            let id = direct
+                .map(|runner| runner.word(runner.id))
+                .or_else(|| crate::vm::proven_own_word(tcb, plan.id));
+            let Some(id) = id else {
                 return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
             };
             current_id.store(id.load());
@@ -77,9 +96,6 @@ fn execute_linked_schedule(
                 (crate::value::Value::Function(actual), Some((expected, run)))
                     if std::rc::Rc::ptr_eq(actual, expected) =>
                 {
-                    let direct = task_runners
-                        .as_ref()
-                        .and_then(|runners| direct_task_runner(runners, id));
                     match execute_task_control_run(&current_value, run, direct)? {
                         Some(value) => value,
                         None => crate::functions::execute_target(&callee, &current_value, &[])?,
@@ -112,16 +128,25 @@ fn execute_task_control_run(
     if tcb.has_replacement() {
         return Ok(None);
     }
-    let Some(state) = writable_own_word(tcb, "state") else {
+    let state = direct
+        .map(|runner| runner.word(runner.state))
+        .or_else(|| writable_own_word(tcb, "state"));
+    let Some(state) = state else {
         return Ok(None);
     };
     let Some(state_number) = state.number() else {
         return Ok(None);
     };
-    let Some(queue) = writable_own_word(tcb, "queue") else {
+    let queue = direct
+        .map(|runner| runner.word(runner.queue))
+        .or_else(|| writable_own_word(tcb, "queue"));
+    let Some(queue) = queue else {
         return Ok(None);
     };
-    let Some(task) = crate::vm::proven_own_word(tcb, "task") else {
+    let task = direct
+        .map(|runner| runner.word(runner.task_word))
+        .or_else(|| crate::vm::proven_own_word(tcb, "task"));
+    let Some(task) = task else {
         return Ok(None);
     };
     let task = task.load();
@@ -315,43 +340,6 @@ fn linked_schedule_chain_is_proven(
         }
         cursor = link.load();
     }
-}
-
-fn linked_method(
-    receiver: &crate::value::Value,
-    code: crate::machine::CodeView<'_>,
-    pc: usize,
-) -> Result<crate::value::Value, crate::execute::VmError> {
-    let metadata = code
-        .metadata_at(pc)
-        .ok_or(crate::execute::VmError::MissingReturn)?;
-    let name = metadata
-        .name
-        .as_deref()
-        .ok_or(crate::execute::VmError::MissingReturn)?;
-    crate::vm::get_named_property_result(receiver, name, &metadata.named_cache)
-}
-
-fn call_linked_method(
-    receiver: &crate::value::Value,
-    code: crate::machine::CodeView<'_>,
-    pc: usize,
-) -> Result<crate::value::Value, crate::execute::VmError> {
-    let callee = linked_method(receiver, code, pc)?;
-    crate::functions::execute_target(&callee, receiver, &[])
-}
-
-fn writable_own_word<'a>(
-    object: &'a crate::value::ObjectData,
-    key: &str,
-) -> Option<&'a crate::register_file::SlotWord> {
-    if object.hot_properties().names().any(|name| {
-        crate::builtins::is_deleted_key_for(name, key)
-            || crate::builtins::is_descriptor_key_for(name, key)
-    }) {
-        return None;
-    }
-    crate::vm::proven_own_word(object, key)
 }
 
 #[derive(Clone, Copy)]
