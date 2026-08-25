@@ -184,6 +184,10 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     let left = from(arguments.first())?;
     let right = from(arguments.get(1))?;
     let relative_to_missing = match arguments.get(2) {
+        Some(Value::Object(options)) => matches!(
+            crate::execute::get_property_result(&Value::Object(options.clone()), "relativeTo")?,
+            Value::Undefined
+        ),
         Some(value) => matches!(value, Value::Undefined),
         None => true,
     };
@@ -197,10 +201,10 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     } else {
         exact_time_difference(&left, &right)
     };
-    if difference == 0.0 {
+    if difference == 0 {
         return Ok(Value::Number(0.0));
     }
-    Ok(Value::Number(difference.signum()))
+    Ok(Value::Number(if difference < 0 { -1.0 } else { 1.0 }))
 }
 
 fn validate_compare_options(options: Option<&Value>) -> Result<(), VmError> {
@@ -250,31 +254,31 @@ fn same_fields(left: Option<&Value>, right: Option<&Value>) -> bool {
     })
 }
 
-fn duration_value(value: &Value) -> f64 {
+fn duration_value(value: &Value) -> i128 {
     [
-        ("years", 31_536_000.0),
-        ("months", 2_592_000.0),
-        ("weeks", 604_800.0),
-        ("days", 86_400.0),
-        ("hours", 3_600.0),
-        ("minutes", 60.0),
-        ("seconds", 1.0),
-        ("milliseconds", 1e-3),
-        ("microseconds", 1e-6),
-        ("nanoseconds", 1e-9),
+        ("years", 31_536_000_000_000_000_i128),
+        ("months", 2_592_000_000_000_000),
+        ("weeks", 604_800_000_000_000),
+        ("days", 86_400_000_000_000),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
     ]
     .iter()
-    .map(|(name, scale)| number_property(value, name) * scale)
+    .map(|(name, scale)| number_property(value, name) as i128 * scale)
     .sum()
 }
 
-fn exact_time_difference(left: &Value, right: &Value) -> f64 {
+fn exact_time_difference(left: &Value, right: &Value) -> i128 {
     let left = time_nanoseconds(left);
     let right = time_nanoseconds(right);
     match left.cmp(&right) {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => 0.0,
-        std::cmp::Ordering::Greater => 1.0,
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
     }
 }
 
