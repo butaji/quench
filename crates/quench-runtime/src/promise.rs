@@ -487,9 +487,6 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         Some(Value::Builtin(Builtin::Promise)) => Ok(promise_resolve(arguments)),
         Some(Value::Promise(promise)) => {
             let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-            if !claim_promise(promise) {
-                return Ok(Value::Undefined);
-            }
             if let Value::Promise(other) = &value {
                 if Rc::ptr_eq(promise, other) {
                     settle_rejected(
@@ -506,6 +503,9 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
             }
             if !crate::value::is_object(&value) {
                 resolve_promise(promise, value);
+                return Ok(Value::Undefined);
+            }
+            if !claim_promise(promise) {
                 return Ok(Value::Undefined);
             }
             let resolved = resolve_value(value);
