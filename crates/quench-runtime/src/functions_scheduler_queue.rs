@@ -69,7 +69,7 @@ fn execute_scheduler_queue(
         return Ok(Some(target));
     }
     let target = crate::locals::resolved_replacement(target);
-    let crate::value::Value::Object(_) = &target else {
+    let crate::value::Value::Object(target_object) = &target else {
         return Ok(None);
     };
 
@@ -91,18 +91,232 @@ fn execute_scheduler_queue(
     let Some(current_tcb) = crate::vm::proven_own_word(scheduler, "currentTcb") else {
         return Ok(None);
     };
-    let callee = crate::execute::get_property_result(&target, "checkPriorityAdd")?;
-    if !crate::conversion::is_callable(&callee) {
+    let Some(code) = function.code.code() else {
         return Ok(None);
-    }
+    };
+    let Some(check_priority_metadata) = code.metadata_at(30) else {
+        return Ok(None);
+    };
+    let Some(callee) =
+        crate::vm::get_named_cached_object(target_object, &check_priority_metadata.named_cache)
+    else {
+        return Ok(None);
+    };
+    let crate::value::Value::Function(check_priority_add) = &callee else {
+        return Ok(None);
+    };
     let task = current_tcb.load();
+
+    let Some(transition) =
+        check_priority_transition(check_priority_add, target_object, &target, &task, packet)?
+    else {
+        return Ok(None);
+    };
 
     queue_count.store(crate::value::Value::Number(queue_count_number + 1.0));
     packet_link.store(crate::value::Value::Null);
     packet_id_slot.store(current_id.load());
-    let result = crate::functions::execute_target(&callee, &target, &[task, packet_value])?;
-    crate::execution_trace::kernel("scheduler_queue_word_slots", false);
+    let result = transition.apply(packet_link, packet_value.clone());
+    crate::execution_trace::kernel("scheduler_queue_check_priority_word_slots", false);
     Ok(Some(result))
+}
+
+enum CheckPriorityTransition {
+    Empty {
+        queue: *const crate::register_file::SlotWord,
+        state: *const crate::register_file::SlotWord,
+        next_state: f64,
+        result: crate::value::Value,
+    },
+    Append {
+        queue: *const crate::register_file::SlotWord,
+        tail_link: *const crate::register_file::SlotWord,
+        head: crate::value::Value,
+        result: crate::value::Value,
+    },
+}
+
+impl CheckPriorityTransition {
+    fn apply(
+        self,
+        packet_link: &crate::register_file::SlotWord,
+        packet: crate::value::Value,
+    ) -> crate::value::Value {
+        match self {
+            Self::Empty {
+                queue,
+                state,
+                next_state,
+                result,
+            } => {
+                // SAFETY: admission owns `target` and proved both slots before
+                // any mutation. Word stores cannot move the object's storage.
+                unsafe { &*queue }.store(packet);
+                unsafe { &*state }.store(crate::value::Value::Number(next_state));
+                result
+            }
+            Self::Append {
+                queue,
+                tail_link,
+                head,
+                result,
+            } => {
+                // `Scheduler.queue` has already established packet.link=null;
+                // the admitted Packet.addTo body would repeat that same store.
+                packet_link.store(crate::value::Value::Null);
+                unsafe { &*tail_link }.store(packet);
+                unsafe { &*queue }.store(head);
+                result
+            }
+        }
+    }
+}
+
+fn check_priority_transition(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    target: &crate::value::ObjectData,
+    target_value: &crate::value::Value,
+    task_value: &crate::value::Value,
+    packet: &crate::value::ObjectData,
+) -> Result<Option<CheckPriorityTransition>, crate::execute::VmError> {
+    let Some((ready, occupied)) = match_check_priority_add(function) else {
+        return Ok(None);
+    };
+    let Some(queue) = writable_own_word(target, "queue") else {
+        return Ok(None);
+    };
+    let head = queue.load();
+    if head.is_nullish() {
+        return Ok(check_priority_empty(
+            ready,
+            target,
+            target_value,
+            task_value,
+            queue,
+        ));
+    }
+    check_priority_append(occupied, packet, task_value, queue, head)
+}
+
+fn check_priority_append(
+    occupied: crate::machine::CodeView<'_>,
+    packet: &crate::value::ObjectData,
+    task: &crate::value::Value,
+    queue: &crate::register_file::SlotWord,
+    head: crate::value::Value,
+) -> Result<Option<CheckPriorityTransition>, crate::execute::VmError> {
+    let crate::value::Value::Object(head_object) = &head else {
+        return Ok(None);
+    };
+    let Some(add_to_metadata) = occupied.metadata_at(4) else {
+        return Ok(None);
+    };
+    let Some(add_to) = crate::vm::get_named_cached_object(packet, &add_to_metadata.named_cache)
+    else {
+        return Ok(None);
+    };
+    let crate::value::Value::Function(add_to) = add_to else {
+        return Ok(None);
+    };
+    if !packet_add_fact(&add_to) {
+        return Ok(None);
+    }
+    let Some(tail_link) =
+        packet_tail_link(std::rc::Rc::as_ptr(head_object), std::ptr::from_ref(packet))
+    else {
+        return Ok(None);
+    };
+    Ok(Some(CheckPriorityTransition::Append {
+        queue: std::ptr::from_ref(queue),
+        tail_link,
+        head,
+        result: task.clone(),
+    }))
+}
+
+fn check_priority_empty(
+    ready: crate::machine::CodeView<'_>,
+    target: &crate::value::ObjectData,
+    target_value: &crate::value::Value,
+    task_value: &crate::value::Value,
+    queue: &crate::register_file::SlotWord,
+) -> Option<CheckPriorityTransition> {
+    let crate::value::Value::Object(task) = task_value else {
+        return None;
+    };
+    if task.has_replacement() {
+        return None;
+    }
+    let (state, next_state) = runnable_state_transition(ready, target)?;
+    let target_priority = crate::vm::proven_own_word(target, "priority")?.number()?;
+    let task_priority = crate::vm::proven_own_word(task, "priority")?.number()?;
+    let result = if target_priority > task_priority {
+        target_value.clone()
+    } else {
+        task_value.clone()
+    };
+    Some(CheckPriorityTransition::Empty {
+        queue: std::ptr::from_ref(queue),
+        state,
+        next_state,
+        result,
+    })
+}
+
+fn runnable_state_transition(
+    ready: crate::machine::CodeView<'_>,
+    target: &crate::value::ObjectData,
+) -> Option<(*const crate::register_file::SlotWord, f64)> {
+    let mark = crate::vm::get_named_cached_object(target, &ready.metadata_at(6)?.named_cache)?;
+    let crate::value::Value::Function(mark) = mark else {
+        return None;
+    };
+    let ShapeKernelPlan::StateBitwise(plan) = shape_kernel_fact(&mark)? else {
+        return None;
+    };
+    if plan.operator != crate::ops::BinaryOp::BitwiseOr {
+        return None;
+    }
+    let state_name = mark
+        .code
+        .code()?
+        .metadata_at(plan.state_pc)?
+        .name
+        .as_deref()?;
+    let state = writable_own_word(target, state_name)?;
+    let state_number = exact_i32(state.number()?)?;
+    let mask = exact_i32(mark.captures.get_number(plan.mask_slot)?)?;
+    Some((std::ptr::from_ref(state), f64::from(state_number | mask)))
+}
+
+fn match_check_priority_add(
+    function: &crate::value::FunctionValue,
+) -> Option<(crate::machine::CodeView<'_>, crate::machine::CodeView<'_>)> {
+    let code = function.code.code()?;
+    if function.params != 2 || code.len() != 10 || !named(code, 1, "queue") {
+        return None;
+    }
+    let crate::ops::Op::Branch {
+        then_ops, else_ops, ..
+    } = code.cold_at(5)?
+    else {
+        return None;
+    };
+    let ready = then_ops.code()?;
+    let occupied = else_ops.code()?;
+    let crate::ops::Op::Branch { .. } = ready.cold_at(13)? else {
+        return None;
+    };
+    (ready.len() == 15
+        && occupied.len() == 10
+        && named(ready, 4, "queue")
+        && named(ready, 6, "markAsRunnable")
+        && named(ready, 8, "priority")
+        && named(ready, 10, "priority")
+        && named(occupied, 4, "addTo")
+        && named(occupied, 6, "queue")
+        && named(occupied, 8, "queue"))
+    .then_some((ready, occupied))
 }
 
 fn scheduler_queue_fact(function: &std::rc::Rc<crate::value::FunctionValue>) -> bool {
