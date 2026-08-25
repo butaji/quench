@@ -375,20 +375,53 @@ fn route_domain_error(
 
 /// `emit('error')` with no listeners throws the error argument.
 fn unhandled_error(arg: Option<&Value>) -> VmError {
-    match arg {
-        Some(value) if !matches!(value, Value::Undefined) => VmError::Thrown(value.clone()),
-        _ => VmError::Thrown(host_api::object(vec![
+    if let Some(value) = arg.filter(|value| !matches!(value, Value::Undefined)) {
+        if is_error(value) {
+            return VmError::Thrown(value.clone());
+        }
+        let custom = execute::get_property_result(value, "Symbol.for.nodejs.util.inspect.custom\0")
+            .ok()
+            .filter(quench_runtime::is_callable)
+            .or_else(|| execute::get_property_result(value, "undefined").ok());
+        let rendered = if quench_runtime::is_callable(custom.as_ref().unwrap_or(&Value::Undefined))
+        {
+            match execute::call(custom.as_ref().unwrap(), value, &[]) {
+                Ok(rendered) => crate::modules::util::inspect(&rendered),
+                Err(_) => "[object Object]".into(),
+            }
+        } else {
+            crate::modules::util::inspect(value)
+        };
+        return VmError::Thrown(host_api::object(vec![
             ("name".to_string(), Value::String("Error".to_string())),
             (
                 "message".to_string(),
-                Value::String("Unhandled error.".to_string()),
+                Value::String(format!("Unhandled error. ({rendered})")),
             ),
             (
                 "code".to_string(),
                 Value::String("ERR_UNHANDLED_ERROR".to_string()),
             ),
-        ])),
+        ]));
     }
+    VmError::Thrown(host_api::object(vec![
+        ("name".to_string(), Value::String("Error".to_string())),
+        (
+            "message".to_string(),
+            Value::String("Unhandled error.".to_string()),
+        ),
+        (
+            "code".to_string(),
+            Value::String("ERR_UNHANDLED_ERROR".to_string()),
+        ),
+    ]))
+}
+
+fn is_error(value: &Value) -> bool {
+    matches!(
+        execute::get_property_result(value, "\0error_slot"),
+        Ok(Value::Boolean(true))
+    )
 }
 
 pub fn method_remove_listener(
