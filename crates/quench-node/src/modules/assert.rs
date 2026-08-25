@@ -1572,8 +1572,12 @@ fn scalar_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<Str
         else { ops.push(('-', b[j].clone())); j += 1; }
     }
     let mut lines = vec![format!("{}[", " ".repeat(indent))];
-    for (index, (marker, value)) in ops.into_iter().enumerate() {
-        let suffix = if index + 1 < a.len().max(b.len()) { "," } else { "" };
+    let op_len = ops.len();
+    for (index, (marker, value)) in ops.iter().cloned().enumerate() {
+        let paired = marker != ' ' && ops.get(index + 1).is_some_and(|(next, _)| *next != ' ');
+        let suffix = if paired {
+            if index + 2 < op_len { "," } else { "" }
+        } else if index + 1 < op_len { "," } else { "" };
         let prefix = if marker == ' ' { "" } else { &marker.to_string() };
         let spaces = if marker == ' ' { indent + 2 } else { indent + 1 };
         lines.push(format!("{prefix}{}{}{suffix}", " ".repeat(spaces), rendered(&value)));
