@@ -320,6 +320,17 @@ fn finish_set_property(
             }
         }
     }
+    match target {
+        crate::value::Value::Map(data) => {
+            data.set_property(key, value);
+            return Ok(());
+        }
+        crate::value::Value::Set(data) => {
+            data.set_property(key, value);
+            return Ok(());
+        }
+        _ => {}
+    }
     ordinary_set(registers, object, target, key, value, strict)
 }
 

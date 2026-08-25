@@ -589,12 +589,7 @@ fn value_to_string(value: &Value) -> String {
     if quench_runtime::execute::is_symbol(value) {
         return symbol_string(value);
     }
-    if quench_runtime::execute::has_own_property(value, "timeValue")
-        && matches!(
-            quench_runtime::execute::get_prototype_of(value),
-            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
-        )
-    {
+    if is_date_value(value) {
         return inspect_date(value);
     }
     match value {
@@ -891,6 +886,7 @@ pub fn inspect_with_options(
         (Value::Object(_) | Value::ObjectAlias(_), _, true) => {
             inspect_object_with_getters(value, depth)
         }
+        (Value::Map(_) | Value::Set(_), _, true) => inspect_collection(value, depth, true),
         (Value::ArrayBuffer(buffer), Some(limit), _) => {
             inspect_array_buffer_with_limit(value, buffer, limit)
         }
@@ -1082,6 +1078,12 @@ fn inspect_proxy_handler(value: &Value, depth: usize) -> String {
 }
 
 fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
+    if quench_runtime::regexp::has_regexp_internal_slot(value) {
+        return inspect_regexp(value);
+    }
+    if is_date_value(value) {
+        return inspect_date(value);
+    }
     if depth <= 2 {
         return inspect_getter_recursive(value, depth.saturating_sub(1), 0, value.object_identity());
     }
@@ -1382,10 +1384,7 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
             format!("[{name}: {message}]")
         };
     }
-    if matches!(
-        quench_runtime::execute::get_property_result(value, "\0regexp"),
-        Ok(Value::Boolean(true))
-    ) {
+    if quench_runtime::regexp::has_regexp_internal_slot(value) {
         return inspect_regexp(value);
     }
     if quench_runtime::execute::has_own_property(value, "timeValue")
@@ -1404,6 +1403,7 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         Value::Undefined => "undefined".into(),
         Value::Object(_) | Value::ObjectAlias(_) => inspect_object(value, depth),
         Value::Array(_) => inspect_array(value, depth),
+        Value::Map(_) | Value::Set(_) => inspect_collection(value, depth, false),
         Value::ArrayBuffer(buffer) => inspect_array_buffer(value, buffer),
         Value::DataView(view) => inspect_data_view(value, view),
         Value::Float64Array(_)
@@ -1454,15 +1454,122 @@ fn inspect_regexp(value: &Value) -> String {
         Value::String(flags) => flags,
         _ => String::new(),
     };
-    format!("/{source}/{flags}")
+    let literal = format!("/{source}/{flags}");
+    let constructor = quench_runtime::execute::get_property(value, "constructor");
+    let name = match quench_runtime::execute::get_property(&constructor, "name") {
+        Value::String(name) if name != "RegExp" && !name.is_empty() => Some(name),
+        _ => None,
+    };
+    let props = quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .map(|key| {
+            format!(
+                "  '{key}': {}",
+                inspect_depth(&quench_runtime::execute::get_property(value, &key), 0)
+            )
+        })
+        .collect::<Vec<_>>();
+    let prefix = name.map(|name| format!("{name} ")).unwrap_or_default();
+    if props.is_empty() {
+        format!("{prefix}{literal}")
+    } else {
+        format!("{prefix}{literal} {{\n{}\n}}", props.join(",\n"))
+    }
+}
+
+fn inspect_collection(owner: &Value, depth: usize, sorted: bool) -> String {
+    let mut entries = match owner {
+        Value::Set(set) => set
+            .values
+            .borrow()
+            .iter()
+            .map(|entry| inspect_collection_entry(owner, entry, depth))
+            .collect::<Vec<_>>(),
+        Value::Map(map) => map
+            .keys
+            .borrow()
+            .iter()
+            .zip(map.values.borrow().iter())
+            .map(|(key, entry_value)| {
+                format!(
+                    "{} => {}",
+                    inspect_collection_entry(owner, key, depth),
+                    inspect_collection_entry(owner, entry_value, depth)
+                )
+            })
+            .collect::<Vec<_>>(),
+        _ => return "<unknown>".into(),
+    };
+    if sorted {
+        entries.sort();
+    }
+    let length = entries.len();
+    let name = if matches!(owner, Value::Set(_)) { "Set" } else { "Map" };
+    if entries.is_empty() {
+        return format!("{name}({length}) {{}}");
+    }
+    if sorted {
+        format!("{name}({length}) {{\n  {}\n}}", entries.join(",\n  "))
+    } else {
+        format!("{name}({length}) {{ {} }}", entries.join(", "))
+    }
+}
+
+fn inspect_collection_entry(owner: &Value, entry: &Value, depth: usize) -> String {
+    let circular = match (owner, entry) {
+        (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
+        _ => false,
+    };
+    if circular {
+        "[Circular]".into()
+    } else {
+        inspect_depth(entry, depth.saturating_sub(1))
+    }
 }
 
 fn inspect_date(value: &Value) -> String {
     let method = quench_runtime::execute::get_property(value, "toISOString");
-    match quench_runtime::execute::call(&method, value, &[]) {
-        Ok(Value::String(date)) => date,
-        _ => "Invalid Date".into(),
+    let Ok(Value::String(date)) = quench_runtime::execute::call(&method, value, &[]) else {
+        return "Invalid Date".into();
+    };
+    let constructor = quench_runtime::execute::get_property(value, "constructor");
+    let name = match quench_runtime::execute::get_property(&constructor, "name") {
+        Value::String(name) if name != "Date" && !name.is_empty() => Some(name),
+        _ => None,
+    };
+    let props = quench_runtime::execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .map(|key| {
+            format!(
+                "  '{key}': {}",
+                inspect_depth(&quench_runtime::execute::get_property(value, &key), 0)
+            )
+        })
+        .collect::<Vec<_>>();
+    let prefix = name.map(|name| format!("{name} ")).unwrap_or_default();
+    if props.is_empty() {
+        prefix + &date
+    } else {
+        format!("{prefix}{date} {{\n{}\n}}", props.join(",\n"))
     }
+}
+
+fn is_date_value(value: &Value) -> bool {
+    if !quench_runtime::execute::has_own_property(value, "timeValue") {
+        return false;
+    }
+    let mut prototype = quench_runtime::execute::get_prototype_of(value).ok();
+    for _ in 0..8 {
+        match prototype {
+            Some(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype)) => return true,
+            Some(next) => prototype = quench_runtime::execute::get_prototype_of(&next).ok(),
+            None => return false,
+        }
+    }
+    false
 }
 
 fn inspect_function(value: &Value) -> String {
@@ -1781,15 +1888,19 @@ fn inspect_object(value: &Value, depth: usize) -> String {
     let body = keys
         .iter()
         .map(|key| {
+            let property_value = quench_runtime::execute::get_property(value, key);
             let rendered = if matches!(key.as_str(), "actual" | "expected") {
-                match quench_runtime::execute::get_property(value, key) {
+                match property_value {
                     Value::String(text) if text.contains('\n') => {
                         let mut lines = text.split('\n').take(10).collect::<Vec<_>>().join("\\n");
                         lines.push_str("...");
                         format!("'{lines}'")
                     }
+                    _ if property_value.object_identity() == value.object_identity() => "[Circular]".into(),
                     _ => inspect_property(value, key, depth.saturating_sub(1)),
                 }
+            } else if property_value.object_identity() == value.object_identity() {
+                "[Circular]".into()
             } else {
                 inspect_property(value, key, depth.saturating_sub(1))
             };

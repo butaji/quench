@@ -33,6 +33,9 @@ fn compare_partial(
     }
     match (left, right) {
         (Value::Array(a), Value::Array(b)) => {
+            if left.is_arguments_object() != right.is_arguments_object() {
+                return Ok(false);
+            }
             if a.logical_len() < b.logical_len() || seen(memo, left, right) {
                 return Ok(a.logical_len() >= b.logical_len());
             }
@@ -41,7 +44,7 @@ fn compare_partial(
                 if !execute::has_own_property(right, &key)
                     || !execute::has_own_property(left, &key)
                 {
-                    return Ok(false);
+                    continue;
                 }
                 if !compare_partial(
                     &execute::get_property_result(left, &key)?,
@@ -61,11 +64,16 @@ fn compare_partial(
                 if !execute::has_own_property(left, &key) {
                     return Ok(false);
                 }
-                if !compare_partial(
-                    &execute::get_property_result(left, &key)?,
-                    &execute::get_property_result(right, &key)?,
-                    memo,
-                )? {
+                let left_value = execute::get_property_result(left, &key)?;
+                let right_value = execute::get_property_result(right, &key)?;
+                let cycle_shape_matches = same_cycle_target(&left_value, left)
+                    == same_cycle_target(&right_value, right)
+                    || same_cycle_target(&left_value, right)
+                    || same_cycle_target(&right_value, left);
+                if !cycle_shape_matches {
+                    return Ok(false);
+                }
+                if !compare_partial(&left_value, &right_value, memo)? {
                     return Ok(false);
                 }
             }
@@ -122,12 +130,140 @@ fn compare(
         (Value::DataView(_), Value::DataView(_)) => {
             compare_data_views(left, right, strict, skip_prototype, memo)
         }
+        (Value::Map(left), Value::Map(right)) => compare_maps(left, right, strict, skip_prototype, memo),
+        (Value::Set(left), Value::Set(right)) => compare_sets(left, right, strict, skip_prototype, memo),
         _ if is_typed_array(left) && is_typed_array(right) => {
             compare_typed_arrays(left, right, strict, skip_prototype, memo)
         }
         _ if strict => Ok(false),
         _ => execute::abstract_equal(left, right),
     }
+}
+
+fn compare_sets(
+    left: &Rc<quench_runtime::value::SetData>,
+    right: &Rc<quench_runtime::value::SetData>,
+    strict: bool,
+    skip_prototype: bool,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if seen(
+        memo,
+        &Value::Set(left.clone()),
+        &Value::Set(right.clone()),
+    ) {
+        return Ok(true);
+    }
+    let left_values = left.values.borrow().iter().cloned().collect::<Vec<_>>();
+    let right_values = right.values.borrow().iter().cloned().collect::<Vec<_>>();
+    if left_values.len() != right_values.len() || left.is_weak() != right.is_weak() {
+        return Ok(false);
+    }
+    let mut used = vec![false; right_values.len()];
+    for value in &left_values {
+        let Some(index) = right_values
+            .iter()
+            .enumerate()
+            .position(|(index, candidate)| {
+                !used[index]
+                    && same_cycle_target(value, &Value::Set(left.clone()))
+                        == same_cycle_target(candidate, &Value::Set(right.clone()))
+                    && compare(value, candidate, strict, skip_prototype, memo).unwrap_or(false)
+            })
+        else {
+            return Ok(false);
+        };
+        used[index] = true;
+    }
+    compare_collection_properties(
+        &Value::Set(left.clone()),
+        &Value::Set(right.clone()),
+        strict,
+        skip_prototype,
+        memo,
+    )
+}
+
+fn compare_maps(
+    left: &Rc<quench_runtime::value::MapData>,
+    right: &Rc<quench_runtime::value::MapData>,
+    strict: bool,
+    skip_prototype: bool,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if seen(
+        memo,
+        &Value::Map(left.clone()),
+        &Value::Map(right.clone()),
+    ) {
+        return Ok(true);
+    }
+    let left_entries = left
+        .keys
+        .borrow()
+        .iter()
+        .cloned()
+        .zip(left.values.borrow().iter().cloned())
+        .collect::<Vec<_>>();
+    let right_entries = right
+        .keys
+        .borrow()
+        .iter()
+        .cloned()
+        .zip(right.values.borrow().iter().cloned())
+        .collect::<Vec<_>>();
+    if left_entries.len() != right_entries.len() || left.is_weak() != right.is_weak() {
+        return Ok(false);
+    }
+    let mut used = vec![false; right_entries.len()];
+    for (key, value) in &left_entries {
+        let Some(index) = right_entries
+            .iter()
+            .enumerate()
+            .position(|(index, (candidate_key, candidate_value))| {
+                !used[index]
+                    && same_cycle_target(key, &Value::Map(left.clone()))
+                        == same_cycle_target(candidate_key, &Value::Map(right.clone()))
+                    && same_cycle_target(value, &Value::Map(left.clone()))
+                        == same_cycle_target(candidate_value, &Value::Map(right.clone()))
+                    && compare(key, candidate_key, strict, skip_prototype, memo).unwrap_or(false)
+                    && compare(value, candidate_value, strict, skip_prototype, memo)
+                        .unwrap_or(false)
+            })
+        else {
+            return Ok(false);
+        };
+        used[index] = true;
+    }
+    compare_collection_properties(
+        &Value::Map(left.clone()),
+        &Value::Map(right.clone()),
+        strict,
+        skip_prototype,
+        memo,
+    )
+}
+
+fn compare_collection_properties(
+    left: &Value,
+    right: &Value,
+    strict: bool,
+    skip_prototype: bool,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    let left_keys = execute::own_enumerable_keys(left);
+    let right_keys = execute::own_enumerable_keys(right);
+    if left_keys.len() != right_keys.len() || left_keys.iter().any(|key| !right_keys.contains(key)) {
+        return Ok(false);
+    }
+    for key in &left_keys {
+        let left_value = execute::get_property_result(left, key)?;
+        let right_value = execute::get_property_result(right, key)?;
+        if !compare(&left_value, &right_value, strict, skip_prototype, memo)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn compare_data_views(
@@ -267,6 +403,8 @@ fn identity(value: &Value) -> Option<*const ()> {
     match value {
         Value::Object(object) => Some(Rc::as_ptr(object).cast()),
         Value::Array(array) => Some(Rc::as_ptr(array).cast()),
+        Value::Map(map) => Some(Rc::as_ptr(map).cast()),
+        Value::Set(set) => Some(Rc::as_ptr(set).cast()),
         _ => None,
     }
 }
@@ -292,6 +430,9 @@ fn compare_arrays(
     let (Value::Array(a), Value::Array(b)) = (left, right) else {
         return Ok(false);
     };
+    if left.is_arguments_object() != right.is_arguments_object() {
+        return Ok(false);
+    }
     if a.logical_len() != b.logical_len() {
         return Ok(false);
     }
@@ -300,6 +441,12 @@ fn compare_arrays(
     }
     for index in 0..a.logical_len() {
         let key = index.to_string();
+        if execute::has_own_property(left, &key) != execute::has_own_property(right, &key) {
+            return Ok(false);
+        }
+        if !execute::has_own_property(left, &key) {
+            continue;
+        }
         let la = execute::get_property_result(left, &key)?;
         let rb = execute::get_property_result(right, &key)?;
         if !compare(&la, &rb, strict, skip_prototype, memo)? {
@@ -319,6 +466,9 @@ fn compare_objects(
     if seen(memo, left, right) {
         return Ok(true);
     }
+    if !strict && !same_loose_object_brand(left, right) {
+        return Ok(false);
+    }
     if strict && !same_shape(left, right, strict, skip_prototype, memo)? {
         return Ok(false);
     }
@@ -331,6 +481,12 @@ fn compare_objects(
     for key in &left_keys {
         let la = execute::get_property_result(left, key)?;
         let rb = execute::get_property_result(right, key)?;
+        let cycle_shape_matches = same_cycle_target(&la, left) == same_cycle_target(&rb, right)
+            || same_cycle_target(&la, right)
+            || same_cycle_target(&rb, left);
+        if !cycle_shape_matches {
+            return Ok(false);
+        }
         if !compare(&la, &rb, strict, skip_prototype, memo)? {
             return Ok(false);
         }
@@ -339,6 +495,28 @@ fn compare_objects(
         return Ok(false);
     }
     Ok(true)
+}
+
+fn same_cycle_target(value: &Value, target: &Value) -> bool {
+    execute::same_identity(value, target)
+}
+
+fn same_loose_object_brand(left: &Value, right: &Value) -> bool {
+    let left_boxed = execute::get_property(left, "_value");
+    let right_boxed = execute::get_property(right, "_value");
+    if matches!(left_boxed, Value::Undefined) != matches!(right_boxed, Value::Undefined) {
+        return false;
+    }
+    let constructor_name = |value: &Value| {
+        let constructor = execute::get_property(value, "constructor");
+        match execute::get_property(&constructor, "name") {
+            Value::String(name) => name,
+            _ => String::new(),
+        }
+    };
+    let left_name = constructor_name(left);
+    let right_name = constructor_name(right);
+    left_name == right_name
 }
 
 /// Strict-mode structural checks Node applies before enumerating

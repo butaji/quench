@@ -136,6 +136,8 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
             .filter(|key| key != "prototype")
             .collect(),
         Value::Array(values) => array_enumerable_keys(values),
+        Value::Map(data) => data.properties.borrow().iter().map(|(key, _)| key.clone()).collect(),
+        Value::Set(data) => data.properties.borrow().iter().map(|(key, _)| key.clone()).collect(),
         Value::Builtin(builtin) => builtin_enumerable_keys(*builtin),
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             string_indices(value)
