@@ -123,6 +123,17 @@ impl OwnedWord {
     }
 
     #[inline(always)]
+    fn object_or_null_ptr(&self) -> Option<Option<*const crate::value::ObjectData>> {
+        match self.0.decode() {
+            DecodedValue::ObjectPtr(pointer) => {
+                Some(Some(pointer as *const crate::value::ObjectData))
+            }
+            DecodedValue::Null => Some(None),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
     fn function_ptr(&self) -> Option<*const crate::value::FunctionValue> {
         let DecodedValue::FunctionPtr(pointer) = self.0.decode() else {
             return None;
@@ -244,6 +255,13 @@ impl SlotWord {
     #[inline(always)]
     pub(crate) fn array_ptr(&self) -> Option<*const crate::value::ArrayData> {
         self.with_word(OwnedWord::array_ptr)
+    }
+
+    #[inline(always)]
+    pub(crate) fn object_or_null_ptr(
+        &self,
+    ) -> Option<Option<*const crate::value::ObjectData>> {
+        self.with_word(OwnedWord::object_or_null_ptr)
     }
 
     #[inline(always)]
