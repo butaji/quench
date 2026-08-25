@@ -481,8 +481,8 @@ pub(crate) fn regexp(_: &str, _: u128, _: u128) {}
 pub(crate) fn object_shape(properties: &crate::value::ObjectProperties) {
     if enabled() {
         let shape = properties
-            .iter()
-            .map(|(name, _)| name.as_str())
+            .names()
+            .map(|name| name.as_str())
             .collect::<Vec<_>>()
             .join("|");
         COUNTERS.with(|counters| {
@@ -1036,6 +1036,19 @@ fn enter_decode(site: DecodeSite, name: &'static str) -> DecodeGuard {
         let _ = (site, name);
         DecodeGuard
     }
+}
+
+#[inline(always)]
+pub(crate) fn attribution_scope(origin: &'static str) -> DecodeGuard {
+    enter_decode(DecodeSite::Other, origin)
+}
+
+/// Attribute execute-word traffic performed inside an admitted native lane to
+/// that lane instead of whichever VM opcode happened to invoke its guard.
+/// L0/L1 traffic overlaps VM handlers, but its origin must remain truthful.
+#[inline(always)]
+pub(crate) fn kernel_scope(id: &'static str) -> DecodeGuard {
+    attribution_scope(id)
 }
 
 #[inline(always)]
@@ -1711,6 +1724,16 @@ mod lane_profile_tests {
             decode_site_for_opcode(crate::ir::Opcode::CallN, false),
             DecodeSite::Call
         ));
+    }
+
+    #[test]
+    fn attribution_scope_replaces_and_restores_stale_opcode_attribution() {
+        CURRENT_OP.with(|current| current.set("ResolveName"));
+        {
+            let _scope = attribution_scope("SetN:ordinary");
+            assert_eq!(CURRENT_OP.with(std::cell::Cell::get), "SetN:ordinary");
+        }
+        assert_eq!(CURRENT_OP.with(std::cell::Cell::get), "ResolveName");
     }
 
     #[test]
