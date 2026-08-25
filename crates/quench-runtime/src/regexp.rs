@@ -620,11 +620,11 @@ fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a
     (search_start, &s[search_start..])
 }
 
-fn extract_source(receiver: &Value) -> String {
+pub(crate) fn extract_source(receiver: &Value) -> String {
     internal_regexp_string(receiver, "source").unwrap_or_default()
 }
 
-fn extract_flags(receiver: &Value) -> String {
+pub(crate) fn extract_flags(receiver: &Value) -> String {
     internal_regexp_string(receiver, "flags").unwrap_or_default()
 }
 

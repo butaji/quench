@@ -310,6 +310,8 @@ const CAP_ASSERT_IF_ERROR: u16 = crate::registry::SPEC_ASSERT_IF_ERROR.cap;
 const CAP_ASSERT_MATCH: u16 = crate::registry::SPEC_ASSERT_MATCH.cap;
 const CAP_ASSERT_DOES_NOT_MATCH: u16 = crate::registry::SPEC_ASSERT_DOES_NOT_MATCH.cap;
 const CAP_ASSERT_CONSTRUCTOR: u16 = crate::registry::SPEC_ASSERT_CONSTRUCTOR.cap;
+const CAP_ASSERTION_ERROR_CONSTRUCTOR: u16 =
+    crate::registry::SPEC_ASSERTION_ERROR_CONSTRUCTOR.cap;
 const CAP_ASSERT_PARTIAL_DEEP_STRICT_EQUAL: u16 =
     crate::registry::SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL.cap;
 const CAP_ASSERT_DEEP_EQUAL: u16 = crate::registry::SPEC_ASSERT_DEEP_EQUAL.cap;
@@ -823,6 +825,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_EVENT => handlers::event_new,
         CAP_CUSTOM_EVENT => handlers::custom_event_new,
         CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_new,
+        CAP_ASSERTION_ERROR_CONSTRUCTOR => crate::modules::assert::assertion_error_constructor,
         _ => return None,
     })
 }
