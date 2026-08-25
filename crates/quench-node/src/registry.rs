@@ -212,6 +212,7 @@ pub const SPEC_TIMERS_REFRESH: NodeSpec = NodeSpec::new("timers:refresh", 0x070B
 pub const SPEC_RUN_LOOP: NodeSpec = NodeSpec::new("__quench_run_loop__", 0x070C);
 pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D);
 pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
+pub const SPEC_INTERNAL_UTIL_ASSERT_CRYPTO: NodeSpec = NodeSpec::new("internal/util:assertCrypto", 0x0721);
 pub const SPEC_TIMERS_CLOSE: NodeSpec = NodeSpec::new("timers:close", 0x070F);
 pub const SPEC_TIMERS_TO_PRIMITIVE: NodeSpec = NodeSpec::new("timers:toPrimitive", 0x071D);
 pub const SPEC_TIMERS_GET_LIBUV_NOW: NodeSpec = NodeSpec::new("timers:getLibuvNow", 0x0714);
