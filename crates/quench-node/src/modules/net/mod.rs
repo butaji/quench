@@ -370,7 +370,8 @@ pub(crate) fn emit(
     event: &str,
     args: Vec<Value>,
 ) -> Result<(), VmError> {
-    let listeners: Vec<Listener> = emitter_id(receiver)
+    let id = emitter_id(receiver).or_else(|| state.borrow().emitters.identity(receiver));
+    let listeners: Vec<Listener> = id
         .and_then(|id| state.borrow().emitters.get(id))
         .map(|emitter| emitter.borrow().listeners_of(event).to_vec())
         .unwrap_or_default();
@@ -382,7 +383,7 @@ pub(crate) fn emit(
     }
     for listener in &listeners {
         if listener.once {
-            if let Some(id) = emitter_id(receiver) {
+            if let Some(id) = id {
                 if let Some(emitter) = state.borrow().emitters.get(id) {
                     emitter.borrow_mut().remove(event, &listener.callback);
                 }

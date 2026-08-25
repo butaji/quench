@@ -14,6 +14,13 @@
       const wrapper = (...args) => fn.apply(this, args);
       (this._listenerWrappers ||= []).push({ name, fn, wrapper });
       this._emitter.on(name, wrapper);
+      if (name === "error" && this.destroyed && this._destroyError) {
+        this._emitter.removeListener(name, wrapper);
+        fn.call(this, this._destroyError);
+      } else if (name === "close" && this.destroyed && this._destroyClosePending) {
+        this._emitter.removeListener(name, wrapper);
+        fn.call(this);
+      }
       if (name === "data" && this._readableState &&
                  this.listenerCount("readable") === 0) {
         this.resume();
@@ -28,6 +35,10 @@
       // late listeners by delivering the already-emitted terminal event.
       if (name === "end" && this.readable !== false &&
           this._readableState && this._readableState.endEmitted) {
+        nextTick(() => fn.call(this));
+      } else if (name === "error" && this._destroyErrorEmitted) {
+        nextTick(() => fn.call(this, this._destroyError));
+      } else if (name === "close" && this._destroyCloseEmitted) {
         nextTick(() => fn.call(this));
       } else if (name === "finish" && this.writable !== false &&
                  this._writableState && this._writableState.finished) {
@@ -642,6 +653,8 @@
     }
     if (this.destroyed) return this;
     this.destroyed = true;
+    this._destroyError = error;
+    this._destroyClosePending = true;
     this.readableAborted = this.readable !== false && !this.readableEnded;
     this.readable = false;
     if (this._writableState?.pending?.length) {
@@ -667,8 +680,11 @@
         const endError = destroy ? destroyError : error;
         if (endError) {
           stream._readableState.errored = endError;
+          stream._destroyError = endError;
+          stream._destroyErrorEmitted = true;
           stream._emitter.emit("error", endError);
         }
+        stream._destroyCloseEmitted = true;
         stream._emitter.emit("close");
         if (callback) callback(endError);
     };
@@ -1126,6 +1142,8 @@
       return this;
     }
     this.destroyed = true;
+    this._destroyError = error;
+    this._destroyClosePending = true;
     this.writableAborted = this._writableState.writable !== false && !this.writableFinished;
     if (this._writableState) this._writableState.destroyed = true;
     this.writable = false;
@@ -1150,8 +1168,11 @@
           if (endError) completeEndCallbacks(stream._writableState, endError);
           if (destroyError && !stream._writableState.errorEmitted) {
           stream._writableState.errorEmitted = true;
+          stream._destroyError = destroyError;
+          stream._destroyErrorEmitted = true;
           stream._emitter.emit("error", destroyError);
         }
+        stream._destroyCloseEmitted = true;
         stream._emitter.emit("close");
         if (callback) callback(endError);
       };
