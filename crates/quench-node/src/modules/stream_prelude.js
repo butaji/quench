@@ -591,7 +591,8 @@
 
   function completeEndCallbacks(state, error) {
     const callbacks = state.endCallbacks.splice(0);
-    for (const callback of callbacks) callback(error);
+    const result = error === undefined ? null : error;
+    for (const callback of callbacks) callback(result);
   }
 
   function finishWritable(stream) {
