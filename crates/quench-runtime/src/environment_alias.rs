@@ -10,7 +10,7 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
         Value::Array(values) => Rc::make_mut(values),
         Value::Object(values) => {
             for (_, value) in values.iter() {
-                retarget_nested_alias(value, old, new);
+                retarget_nested_alias(&value, old, new);
             }
             retarget_private_aliases(&values.private_slots, old, new);
             return;
@@ -43,7 +43,7 @@ fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
         }
         Value::Object(values) => {
             for (_, value) in values.iter() {
-                retarget_nested_alias(value, old, new);
+                retarget_nested_alias(&value, old, new);
             }
             retarget_private_aliases(&values.private_slots, old, new);
         }
@@ -63,7 +63,7 @@ fn contains_nested(value: &Value, target: &Value) -> bool {
         Value::Object(values) => {
             values
                 .iter()
-                .any(|(_, value)| same_identity(value, target) || contains_nested(value, target))
+                .any(|(_, value)| same_identity(&value, target) || contains_nested(&value, target))
                 || private_slots_contain(&values.private_slots, target)
         }
         Value::Function(function) => {

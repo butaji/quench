@@ -114,7 +114,7 @@ fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -
         .rev()
         .find_map(|(name, value)| (name == key).then_some(value))
         .and_then(|value| match value {
-            Value::BindingCell(cell) => Some(Rc::clone(cell)),
+            Value::BindingCell(cell) => Some(Rc::clone(&cell)),
             _ => None,
         });
     let mut values: crate::value::ObjectProperties = properties
@@ -389,10 +389,11 @@ fn array_descriptor_flag(values: &crate::value::ArrayData, key: &str, flag: &str
     let Value::Object(descriptor) = values.descriptor(key)? else {
         return None;
     };
-    descriptor
+    let result = descriptor
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == flag).then_some(matches!(value, Value::Boolean(true))))
+        .find_map(|(name, value)| (name == flag).then_some(matches!(value, Value::Boolean(true))));
+    result
 }
 
 fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value: Value) -> Value {

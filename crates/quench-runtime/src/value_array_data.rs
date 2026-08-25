@@ -822,7 +822,7 @@ impl ArrayData {
         else {
             return;
         };
-        if let Some((_, current)) = Rc::make_mut(descriptor)
+        if let Some((_, mut current)) = Rc::make_mut(descriptor)
             .iter_mut()
             .find(|(name, _)| name == "value")
         {

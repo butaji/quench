@@ -94,6 +94,11 @@ execution_events! {
     PackedArrayMiss => "packed_array_miss",
     NamedPropertyHit => "named_property_hit",
     NamedPropertyMiss => "named_property_miss",
+    NamedGetReplacement => "named_get_replacement",
+    NamedGetCacheEmpty => "named_get_cache_empty",
+    NamedGetLayoutMismatch => "named_get_layout_mismatch",
+    NamedGetPrototypeMiss => "named_get_prototype_miss",
+    NamedGetSlotMissing => "named_get_slot_missing",
     EqualityWordHit => "equality_word_hit",
     EqualityWordMiss => "equality_word_miss",
     NamedPropertySetHit => "named_property_set_hit",
@@ -161,6 +166,7 @@ struct Counters {
     function_opcode_shapes: HashMap<(u64, u16, u8, [u8; 32]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
+    named_property_misses: HashMap<String, u64>,
     crypto_direct_iterations: u64,
     loop_shapes: HashMap<u64, (u64, u64, Vec<&'static str>)>,
     value_decode_by_site: HashMap<&'static str, u64>,
@@ -173,6 +179,13 @@ struct Counters {
     kernels: HashMap<&'static str, (u64, u64)>,
     compact_sites: HashMap<CompactSiteKey, u64>,
     compact_site_dropped: u64,
+}
+
+#[cfg(feature = "execution-trace")]
+thread_local! {
+    static NAMED_GET_MISS_REASON: std::cell::Cell<&'static str> = const {
+        std::cell::Cell::new("unknown")
+    };
 }
 
 #[derive(Clone, Copy)]
@@ -376,6 +389,16 @@ fn top_map(map: &HashMap<&'static str, u64>, limit: usize) -> Vec<serde_json::Va
     rows.into_iter()
         .take(limit)
         .map(|(name, count)| serde_json::json!({"op": name, "count": count}))
+        .collect()
+}
+
+#[cfg(feature = "execution-trace")]
+fn top_string_map(map: &HashMap<String, u64>, limit: usize) -> Vec<serde_json::Value> {
+    let mut rows = map.iter().collect::<Vec<_>>();
+    rows.sort_unstable_by_key(|row| std::cmp::Reverse(*row.1));
+    rows.into_iter()
+        .take(limit)
+        .map(|(name, count)| serde_json::json!({"name": name, "count": count}))
         .collect()
 }
 
@@ -746,8 +769,71 @@ pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Va
     }
 }
 
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_property_miss(key: &str) {
+    if enabled() {
+        let reason = NAMED_GET_MISS_REASON.with(std::cell::Cell::get);
+        let key = format!("{reason}:{key}");
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            if let Some(count) = counters.named_property_misses.get_mut(&key) {
+                *count += 1;
+            } else if counters.named_property_misses.len() < 64 {
+                counters.named_property_misses.insert(key, 1);
+            } else {
+                *counters
+                    .named_property_misses
+                    .entry("other".into())
+                    .or_default() += 1;
+            }
+        });
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_get_miss_reason(reason: &'static str) {
+    if enabled() {
+        NAMED_GET_MISS_REASON.with(|current| current.set(reason));
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_property_word(tier: &'static str, payload: &'static str) {
+    if enabled() {
+        let kind = match (tier, payload) {
+            ("own", "number") => "own:number",
+            ("own", "object") => "own:object",
+            ("own", "function") => "own:function",
+            ("own", "binding_cell") => "own:binding_cell:other",
+            ("own", _) => "own:other",
+            ("prototype", "number") => "prototype:number",
+            ("prototype", "object") => "prototype:object",
+            ("prototype", "function") => "prototype:function",
+            ("prototype", "binding_cell") => "prototype:binding_cell:other",
+            ("prototype", _) => "prototype:other",
+            _ => "unknown",
+        };
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .named_property_results
+                .entry(kind)
+                .or_default() += 1;
+        });
+    }
+}
+
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn named_property_result(_: &'static str, _: &crate::value::Value) {}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_property_miss(_: &str) {}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_get_miss_reason(_: &'static str) {}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_property_word(_: &'static str, _: &'static str) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn crypto_direct_iterations(count: usize) {
@@ -1442,6 +1528,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "function_opcode_shapes": function_opcode_shapes,
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
+                "named_property_misses": top_string_map(&counters.named_property_misses, 32),
                 "crypto_direct_iterations": counters.crypto_direct_iterations,
                 "loop_shapes": loop_shapes,
                 "lanes": lanes,
