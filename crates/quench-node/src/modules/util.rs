@@ -622,6 +622,13 @@ fn value_to_string(value: &Value) -> String {
             let depth = COMPACT_OVERRIDE.with(|slot| slot.borrow().is_some_and(|value| value));
             inspect_array(value, if depth { 1 } else { 3 })
         }
+        Value::Proxy(proxy) => {
+            if *proxy.revoked.borrow() {
+                "<Revoked Proxy>".into()
+            } else {
+                inspect_depth(value, 0)
+            }
+        }
         Value::ArrayBuffer(buffer) => inspect_array_buffer(value, buffer),
         Value::DataView(view) => inspect_data_view(value, view),
         _ => "<unknown>".into(),
@@ -977,6 +984,22 @@ pub fn inspect_with_options(
     rendered
 }
 
+pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<String> {
+    let Value::Proxy(proxy) = value else {
+        return None;
+    };
+    if *proxy.revoked.borrow() {
+        return Some("<Revoked Proxy>".into());
+    }
+    let target = inspect_custom(&proxy.target, depth)
+        .unwrap_or_else(|| inspect_depth(&proxy.target, depth.saturating_sub(1)));
+    if !show_proxy {
+        return Some(target);
+    }
+    let handler = inspect_depth(&proxy.handler, depth.saturating_sub(1));
+    Some(format!("Proxy [\n  {target},\n  {handler}\n]"))
+}
+
 fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
     if depth <= 2 {
         return inspect_getter_recursive(value, depth.saturating_sub(1), 0, value.object_identity());
@@ -1213,6 +1236,19 @@ fn inspect_string_segment(value: &str) -> String {
 }
 
 fn inspect_depth(value: &Value, depth: usize) -> String {
+    if let Value::Proxy(proxy) = value {
+        if *proxy.revoked.borrow() {
+            return "<Revoked Proxy>".into();
+        }
+        if let Some(custom) = inspect_custom(&proxy.target, depth) {
+            return custom;
+        }
+        return if depth == 0 {
+            inspect_shallow(&proxy.target)
+        } else {
+            inspect_depth(&proxy.target, depth.saturating_sub(1))
+        };
+    }
     if quench_runtime::execute::is_symbol(value) {
         return symbol_string(value);
     }
@@ -1720,6 +1756,13 @@ fn inspect_shallow(value: &Value) -> String {
         return symbol_string(value);
     }
     match value {
+        Value::Proxy(proxy) => {
+            if *proxy.revoked.borrow() {
+                "<Revoked Proxy>".into()
+            } else {
+                inspect_shallow(&proxy.target)
+            }
+        }
         Value::String(s) => inspect_string(s),
         Value::Number(n) => js_number(*n),
         Value::Boolean(b) => b.to_string(),
@@ -1744,6 +1787,29 @@ fn inspect_shallow(value: &Value) -> String {
         Value::Uint8Array(_) => inspect_typed_array_compact(value),
         _ => "<unknown>".into(),
     }
+}
+
+fn inspect_custom(value: &Value, depth: usize) -> Option<String> {
+    let method = quench_runtime::execute::get_property_result(
+        value,
+        "Symbol.for.nodejs.util.inspect.custom\0",
+    )
+    .ok()
+    .filter(quench_runtime::is_callable)
+    .or_else(|| quench_runtime::execute::get_property_result(value, "undefined").ok())?;
+    if !quench_runtime::is_callable(&method) {
+        return None;
+    }
+    let result = quench_runtime::execute::call(
+        &method,
+        value,
+        &[
+            Value::Number(depth as f64),
+            Value::object(vec![("showProxy".into(), Value::Boolean(false))]),
+        ],
+    )
+    .ok()?;
+    Some(inspect_depth(&result, depth.saturating_sub(1)))
 }
 
 fn inspect_array_buffer(value: &Value, buffer: &quench_runtime::value::ArrayBufferData) -> String {

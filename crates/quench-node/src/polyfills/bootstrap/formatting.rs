@@ -94,6 +94,12 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeUtil = {
     if (typeof value === "function") return __nodeUtilInspectFunction(value);
     if (value instanceof Error) return __nodeUtilInspectError(value);
     if (value instanceof NodeBuffer) return __nodeUtilInspectBuffer(value);
+    const getProxyDetails = globalThis.__quenchGetProxyDetails;
+    const proxyDetails =
+      typeof getProxyDetails === "function" ? getProxyDetails(value, true) : undefined;
+    if (Array.isArray(proxyDetails) && proxyDetails.length === 2) {
+      return proxyDetails[0] === null ? "<Revoked Proxy>" : "Proxy";
+    }
     if (
       value &&
       typeof value === "object" &&

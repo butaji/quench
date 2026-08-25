@@ -241,6 +241,10 @@ pub fn install_with_argv(
     context = context.with_host_value("TextDecoder".to_string(), text_decoder);
     let text_encoder = crate::host::capability(crate::registry::SPEC_TEXT_ENCODER_NEW);
     context = context.with_host_value("TextEncoder".to_string(), text_encoder);
+    context = context.with_host_value(
+        "__quenchGetProxyDetails".to_string(),
+        crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
+    );
     let console = namespace_object_from_pairs(vec![
         (
             "log".to_string(),
