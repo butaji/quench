@@ -266,24 +266,31 @@ fn execute_linear_solve_rows(
     a: f64,
     inv_c: f64,
 ) -> LinearSolveFinal {
-    let mut final_state = LinearSolveFinal { last: 0, current: 0, next: 0, last_x: 0.0 };
-    for row in start..start + rows {
-        let (mut last, mut current, mut next) =
-            ((row - 1) * row_size, row * row_size + 1, (row + 1) * row_size);
-        let mut last_x = x[row * row_size];
-        for _ in 0..columns {
-            let value = (x0[current]
-                + a * (last_x + x[current + 1] + x[last + 1] + x[next + 1]))
+    // Every cell depends on its new top/left and old bottom/right neighbors.
+    // A diagonal is therefore an independent frontier: the prior diagonal
+    // produced top/left, while the next diagonal still owns bottom/right.
+    for diagonal in 0..rows + columns - 1 {
+        let first_row = diagonal.saturating_sub(columns - 1);
+        let last_row = diagonal.min(rows - 1);
+        for row_offset in first_row..=last_row {
+            let column = diagonal - row_offset;
+            let current = (start + row_offset) * row_size + column + 1;
+            x[current] = (x0[current]
+                + a * (x[current - 1]
+                    + x[current + 1]
+                    + x[current - row_size]
+                    + x[current + row_size]))
                 * inv_c;
-            x[current] = value;
-            last_x = value;
-            current += 1;
-            last += 1;
-            next += 1;
         }
-        final_state = LinearSolveFinal { last, current, next, last_x };
     }
-    final_state
+    let row = start + rows - 1;
+    let current = row * row_size + columns + 1;
+    LinearSolveFinal {
+        last: (row - 1) * row_size + columns,
+        current,
+        next: (row + 1) * row_size + columns,
+        last_x: x[current - 1],
+    }
 }
 
 fn flush_linear_solve_rows(
