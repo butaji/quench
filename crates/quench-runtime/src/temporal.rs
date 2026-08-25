@@ -35,7 +35,8 @@ fn zoned_record(
     timezone: String,
     prototype: crate::ops::Builtin,
 ) -> crate::value::Value {
-    let seconds = epoch.div_euclid(1_000_000_000);
+    let offset_nanos = fixed_offset_nanos(&timezone);
+    let seconds = (epoch + offset_nanos).div_euclid(1_000_000_000);
     let nanos = epoch.rem_euclid(1_000_000_000) as i64;
     let date = chrono::DateTime::from_timestamp(seconds as i64, nanos as u32)
         .map(|value| value.date_naive())
@@ -63,9 +64,12 @@ fn zoned_record(
         ),
         (
             "offset".into(),
-            crate::value::Value::String("+00:00".into()),
+            crate::value::Value::String(format_offset(offset_nanos)),
         ),
-        ("offsetNanoseconds".into(), crate::value::Value::Number(0.0)),
+        (
+            "offsetNanoseconds".into(),
+            crate::value::Value::Number(offset_nanos as f64),
+        ),
         (
             "year".into(),
             crate::value::Value::Number(date.year() as f64),
@@ -125,6 +129,23 @@ fn zoned_record(
             crate::value::Value::Builtin(prototype),
         ),
     ])))
+}
+
+fn fixed_offset_nanos(timezone: &str) -> i128 {
+    let bytes = timezone.as_bytes();
+    if bytes.len() != 6 || !matches!(bytes[0], b'+' | b'-') || bytes[3] != b':' {
+        return 0;
+    }
+    let hour = timezone[1..3].parse::<i128>().unwrap_or(0);
+    let minute = timezone[4..6].parse::<i128>().unwrap_or(0);
+    let sign = if bytes[0] == b'-' { -1 } else { 1 };
+    sign * (hour * 3_600_000_000_000 + minute * 60_000_000_000)
+}
+
+fn format_offset(offset: i128) -> String {
+    let sign = if offset < 0 { '-' } else { '+' };
+    let minutes = offset.unsigned_abs() / 60_000_000_000;
+    format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
 pub(crate) fn execute(
@@ -237,6 +258,7 @@ mod stubs {
         let value =
             value.ok_or_else(|| crate::value::error::throw_type_error("Invalid ZonedDateTime"))?;
         if let Value::String(text) = value {
+            let has_z = text.split('[').next().unwrap_or(text).contains('Z');
             let date_time = text
                 .split('[')
                 .next()
@@ -251,10 +273,37 @@ mod stubs {
                 .split('-')
                 .map(|part| part.parse::<i32>().unwrap_or(0))
                 .collect::<Vec<_>>();
-            let time_parts = time
+            let offset_start = time[1..].find(['+', '-']).map(|index| index + 1);
+            let (clock, offset_text) = offset_start
+                .map(|index| (&time[..index], &time[index..]))
+                .unwrap_or((time, "+00:00"));
+            let mut time_parts = clock
                 .split(':')
                 .map(|part| part.parse::<i64>().unwrap_or(0))
                 .collect::<Vec<_>>();
+            let fractional_nanos = clock
+                .split(':')
+                .nth(2)
+                .and_then(|part| part.split_once('.').map(|(_, fraction)| fraction))
+                .map(|fraction| {
+                    format!("{fraction:0<9}")
+                        .chars()
+                        .take(9)
+                        .collect::<String>()
+                        .parse::<i128>()
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0);
+            if let Some(second) = clock
+                .split(':')
+                .nth(2)
+                .and_then(|part| part.split('.').next())
+                .and_then(|part| part.parse::<i64>().ok())
+            {
+                if time_parts.len() > 2 {
+                    time_parts[2] = second;
+                }
+            }
             if date_parts.len() < 3 {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid ZonedDateTime",
@@ -269,16 +318,21 @@ mod stubs {
             let days = date
                 .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch"))
                 .num_days() as i128;
-            let epoch = days * 86_400_000_000_000
+            let local_epoch = days * 86_400_000_000_000
                 + time_parts.get(0).copied().unwrap_or(0) as i128 * 3_600_000_000_000
                 + time_parts.get(1).copied().unwrap_or(0) as i128 * 60_000_000_000
-                + time_parts.get(2).copied().unwrap_or(0) as i128 * 1_000_000_000;
+                + time_parts.get(2).copied().unwrap_or(0) as i128 * 1_000_000_000
+                + fractional_nanos;
+            let mut epoch = local_epoch - super::fixed_offset_nanos(offset_text);
             let timezone = text
                 .split('[')
                 .nth(1)
                 .and_then(|part| part.split(']').next())
                 .unwrap_or("UTC")
                 .to_string();
+            if !has_z && offset_start.is_none() {
+                epoch -= super::fixed_offset_nanos(&timezone);
+            }
             return Ok(super::zoned_record(
                 epoch,
                 timezone,
@@ -379,10 +433,11 @@ mod stubs {
         let microsecond = crate::conversion::to_number(&property("microsecond")?)? as u32;
         let nanosecond = crate::conversion::to_number(&property("nanosecond")?)? as u32;
         let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+        let offset = crate::conversion::to_string(&property("offset")?)?;
         let suffix = format!(".{:03}{:03}{:03}", millisecond, microsecond, nanosecond)
             .trim_end_matches('0')
             .to_string();
-        let text = format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{suffix}+00:00[{timezone}]");
+        let text = format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{suffix}{offset}[{timezone}]");
         Ok(Value::String(text))
     }
 
