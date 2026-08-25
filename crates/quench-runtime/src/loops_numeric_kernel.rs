@@ -88,13 +88,17 @@ fn kernel_checked_store(
     value: u16,
 ) -> Option<()> {
     let instruction = code.instruction(pc)?;
-    (instruction.opcode == crate::ir::Opcode::StoreLocalChecked
+    (matches!(instruction.opcode, crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked)
         && instruction.a == slot
         && instruction.b == value)
         .then_some(())
 }
 
-fn run_linear_solve_kernel(loop_fact: CountedForFact, body: crate::machine::CodeView<'_>) -> Option<crate::completion::Completion> {
+fn run_linear_solve_kernel(
+    loop_fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    loop_shape: u64,
+) -> Option<crate::completion::Completion> {
     (loop_fact.timing == CountedStepTiming::AfterBody).then_some(())?;
     let fact = LinearSolveFact::recognize(body, loop_fact.slot)?;
     if let CountedBound::Slot(bound) = loop_fact.bound {
@@ -102,8 +106,8 @@ fn run_linear_solve_kernel(loop_fact: CountedForFact, body: crate::machine::Code
             .then_some(())?;
     }
     let environment = crate::locals::current();
-    let Value::Array(x) = environment.get(fact.x) else { return None };
-    let Value::Array(x0) = environment.get(fact.x0) else { return None };
+    let Value::Array(x) = crate::locals::resolved_replacement(environment.get(fact.x)) else { return None };
+    let Value::Array(x0) = crate::locals::resolved_replacement(environment.get(fact.x0)) else { return None };
     let mut counter = environment.get_number(loop_fact.slot)?;
     let mut current = kernel_index(environment.get_number(fact.current)?)?;
     let mut last = kernel_index(environment.get_number(fact.last)?)?;
@@ -112,7 +116,7 @@ fn run_linear_solve_kernel(loop_fact: CountedForFact, body: crate::machine::Code
     let a = environment.get_number(fact.a)?;
     let inv_c = environment.get_number(fact.inv_c)?;
     let bound = loop_fact.bound.number(&environment)?;
-    let iterations = kernel_iteration_count(loop_fact, counter, bound)?;
+    let iterations = unit_iteration_count(loop_fact, counter, bound)?;
     if iterations == 0 { return Some(crate::completion::Completion::Normal); }
     let end = iterations - 1;
     let max_x = [
@@ -127,6 +131,13 @@ fn run_linear_solve_kernel(loop_fact: CountedForFact, body: crate::machine::Code
     (x.is_packed_ordinary() && x0.is_packed_ordinary() && max_x < x.header_length() && max_x0 < x0.header_length()).then_some(())?;
     let x_values = x.numeric_cells()?;
     let x0_values = x0.numeric_cells()?;
+    crate::execution_trace::numeric_kernel_iterations(
+        "counted_packed_f64_jacobi",
+        loop_shape,
+        iterations,
+        4,
+        1,
+    );
     for _ in 0..iterations {
         let value = (x0_values[current].get() + a * (last_x + x_values[current + 1].get() + x_values[last + 1].get() + x_values[next + 1].get())) * inv_c;
         x_values[current].set(value);
@@ -146,6 +157,21 @@ fn run_linear_solve_kernel(loop_fact: CountedForFact, body: crate::machine::Code
 
 fn kernel_index(value: f64) -> Option<usize> {
     (value >= 0.0 && value <= usize::MAX as f64 && value.fract() == 0.0).then_some(value as usize)
+}
+
+fn unit_iteration_count(fact: CountedForFact, index: f64, bound: f64) -> Option<usize> {
+    (fact.timing == CountedStepTiming::AfterBody
+        && fact.step == 1.0
+        && index.is_finite()
+        && bound.is_finite())
+    .then_some(())?;
+    let count = match fact.comparison {
+        crate::ops::BinaryOp::LessThan if bound > index => (bound - index).ceil(),
+        crate::ops::BinaryOp::LessEqual if bound >= index => (bound - index).floor() + 1.0,
+        crate::ops::BinaryOp::LessThan | crate::ops::BinaryOp::LessEqual => 0.0,
+        _ => return None,
+    };
+    (count <= u32::MAX as f64).then(|| count as usize)
 }
 
 fn kernel_iteration_count(fact: CountedForFact, mut index: f64, bound: f64) -> Option<usize> {
