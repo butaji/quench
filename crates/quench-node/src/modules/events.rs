@@ -240,6 +240,15 @@ pub fn method_emit(
     }
     let rest: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
     for listener in &snapshot {
+        if listener.once
+            && !emitter
+                .borrow()
+                .listeners_of(&event)
+                .iter()
+                .any(|current| execute::same_value(&current.callback, &listener.callback))
+        {
+            continue;
+        }
         if listener.once {
             let removed = emitter.borrow_mut().remove(&event, &listener.callback);
             if removed && event != "removeListener" {
@@ -589,7 +598,14 @@ pub fn emitter_prototype() -> Result<Value, VmError> {
 fn emitter_props() -> Vec<(&'static str, Value)> {
     let on = cap("events:on", 0x0102);
     let remove_listener = cap("events:removeListener", 0x0106);
+    let constructor = cap("events:EventEmitter", 0x0100);
+    let _ = execute::set_callable_property(
+        &constructor,
+        "name",
+        Value::String("EventEmitter".into()),
+    );
     vec![
+        ("constructor", constructor),
         ("on", on.clone()),
         ("addListener", on),
         ("once", cap("events:once", 0x0105)),
@@ -638,6 +654,7 @@ pub fn enqueue_callback(state: &Rc<RefCell<HostState>>, cb: Value, args: Vec<Val
 /// EventEmitter; EventEmitter.EventEmitter = EventEmitter`.
 pub fn build() -> Value {
     let value = crate::host::capability(crate::registry::SPEC_EVENTS_NEW);
+    let _ = execute::set_callable_property(&value, "name", Value::String("EventEmitter".into()));
     // Host-backed constructors still expose the ordinary prototype contract;
     // consumers may delete or override methods just like native Node does.
     if let Ok(prototype) = emitter_prototype() {
