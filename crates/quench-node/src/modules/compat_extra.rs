@@ -24,9 +24,6 @@ fn load(source: &str) -> Result<Value, VmError> {
     quench_runtime::execute::get_property_result(&module, "exports")
 }
 
-pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("cluster.js"))
-}
 pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("v8.js"))
 }
