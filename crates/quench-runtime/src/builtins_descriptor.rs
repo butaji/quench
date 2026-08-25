@@ -15,6 +15,18 @@ pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<
             .and_then(|properties| descriptor_flag_in(properties.as_ref(), key, field)),
         Value::Array(values) => array_flag(values, key, field),
         Value::Builtin(builtin) => builtin_flag(*builtin, key, field),
+        Value::DataView(_)
+        | Value::Float64Array(_)
+        | Value::Float32Array(_)
+        | Value::Int8Array(_)
+        | Value::Int16Array(_)
+        | Value::Int32Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::Uint32Array(_)
+        | Value::Uint8Array(_)
+        | Value::Uint8ClampedArray(_)
+        | Value::Uint16Array(_) => descriptor_flag_via_descriptor(target, key, field),
         Value::Function(_) | Value::BoundFunction(_) => {
             descriptor_flag_via_descriptor(target, key, field)
         }
