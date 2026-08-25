@@ -13,6 +13,7 @@ pub mod buffer_proto;
 pub mod buffer_rw;
 pub mod buffer_write;
 pub mod child_process;
+pub mod cluster;
 pub mod clone;
 pub mod compat_extra;
 pub mod console;
