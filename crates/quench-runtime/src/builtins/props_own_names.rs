@@ -112,6 +112,8 @@ const REFLECT_NAMES: &[&str] = &[
     "Symbol.toStringTag",
 ];
 
+const PROMISE_METHOD_NAMES: &[&str] = &["length", "name"];
+
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
         Builtin::Temporal
@@ -203,6 +205,35 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
 
 fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::PromiseResolve
+        | Builtin::PromiseReject
+        | Builtin::PromiseAll
+        | Builtin::PromiseAllKeyed
+        | Builtin::PromiseAllSettled
+        | Builtin::PromiseAllSettledKeyed
+        | Builtin::PromiseAny
+        | Builtin::PromiseRace
+        | Builtin::PromiseWithResolvers
+        | Builtin::PromiseTry => PROMISE_METHOD_NAMES,
+        Builtin::Iterator => &["prototype", "concat", "from", "zip", "zipKeyed"],
+        Builtin::IteratorPrototype => &[
+            "constructor",
+            "map",
+            "filter",
+            "take",
+            "drop",
+            "flatMap",
+            "reduce",
+            "toArray",
+            "forEach",
+            "every",
+            "find",
+            "some",
+            "return",
+            "Symbol.iterator",
+            "Symbol.dispose",
+            "Symbol.toStringTag",
+        ],
         Builtin::ArrayBufferPrototype => &[
             "constructor",
             "byteLength",
@@ -406,6 +437,48 @@ fn own_property_names_tail_registry(builtin: Builtin) -> &'static [&'static str]
 
 fn own_property_names_tail_end(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::Object => &[
+            "length",
+            "name",
+            "prototype",
+            "assign",
+            "getOwnPropertyDescriptor",
+            "getOwnPropertyDescriptors",
+            "getOwnPropertyNames",
+            "getOwnPropertySymbols",
+            "hasOwn",
+            "is",
+            "preventExtensions",
+            "seal",
+            "create",
+            "defineProperties",
+            "defineProperty",
+            "freeze",
+            "getPrototypeOf",
+            "setPrototypeOf",
+            "isExtensible",
+            "isFrozen",
+            "isSealed",
+            "keys",
+            "entries",
+            "fromEntries",
+            "values",
+            "groupBy",
+        ],
+        Builtin::ObjectPrototype => &[
+            "constructor",
+            "__defineGetter__",
+            "__defineSetter__",
+            "hasOwnProperty",
+            "__lookupGetter__",
+            "__lookupSetter__",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "toString",
+            "valueOf",
+            "__proto__",
+            "toLocaleString",
+        ],
         Builtin::ArrayPrototype => &["length", "Symbol.unscopables"],
         Builtin::ArrayIteratorPrototype => &["next", "constructor", "Symbol.toStringTag"],
         Builtin::Math => MATH_NAMES,

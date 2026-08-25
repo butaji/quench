@@ -1,11 +1,7 @@
 include!("vm_generator_step.rs");
 include!("vm_completion_step.rs");
 
-fn run_ops(
-    ops: &[Op],
-    registers: &mut crate::register_file::RegisterFile,
-    context: &VmContext,
-) -> Result<Value, VmError> {
+fn run_ops(ops: &[Op], registers: &mut crate::register_file::RegisterFile, context: &VmContext) -> Result<Value, VmError> {
     completion_result(run_ops_completion(ops, registers, context)?)
 }
 
@@ -77,9 +73,7 @@ fn run_code_completion_step_from(
             Err(error) => return completion_step_after_error(registers, error, pc + 1),
         };
         pc += 1;
-        if let Some(completion) =
-            result.filter(|value| !matches!(value, crate::completion::Completion::Normal))
-        {
+        if let Some(completion) = result.filter(|value| !matches!(value, crate::completion::Completion::Normal)) {
             return completion_step_after_transition(registers, completion, pc);
         }
     }
@@ -105,20 +99,11 @@ fn run_instruction(
             Ok(None)
         }
         Opcode::Move => {
-            if instruction.flags == 1 {
-                crate::locals::move_proven_local(
-                    registers,
-                    instruction.a,
-                    instruction.b,
-                    instruction.c,
-                )?;
-            } else {
-                copy_register(registers, instruction.a, instruction.b)?;
-            }
+            copy_register(registers, instruction.a, instruction.b)?;
             Ok(None)
         }
         Opcode::LoadLocal => {
-            crate::locals::load_proven(registers, instruction.a, instruction.b)?;
+            crate::locals::load(registers, instruction.a, instruction.b)?;
             Ok(None)
         }
         Opcode::LoadLocalChecked => {
@@ -136,10 +121,6 @@ fn run_instruction(
                 .unwrap_or("binding");
             crate::locals::check_initialized(instruction.a, name)?;
             crate::locals::store(registers, instruction.a, instruction.b)?;
-            Ok(None)
-        }
-        Opcode::StoreLocal => {
-            crate::locals::store_proven(registers, instruction.a, instruction.b)?;
             Ok(None)
         }
         Opcode::InitLocal => {
@@ -165,13 +146,7 @@ fn run_instruction(
                 Opcode::Div => crate::ops::BinaryOp::Divide,
                 _ => unreachable!(),
             };
-            vm_arithmetic::execute_binary(
-                registers,
-                instruction.a,
-                operator,
-                instruction.b,
-                instruction.c,
-            )?;
+            vm_arithmetic::execute_binary(registers, instruction.a, operator, instruction.b, instruction.c)?;
             Ok(None)
         }
         Opcode::Binary => {
@@ -187,18 +162,6 @@ fn run_instruction(
             Ok(None)
         }
         Opcode::Call => {
-            let argument = (instruction.flags == 1).then_some(instruction.c);
-            if instruction.flags <= 1 {
-                if let Some(result) = crate::functions::execute_word_leaf_call(
-                    registers,
-                    instruction.a,
-                    instruction.b,
-                    argument,
-                ) {
-                    result?;
-                    return Ok(None);
-                }
-            }
             let argument = [instruction.c];
             let spreads = [false];
             let (arguments, spreads) = if instruction.flags == 0 {
@@ -221,24 +184,20 @@ fn run_instruction(
         Opcode::GetProperty | Opcode::AGetI => {
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
-                let array = registers
-                    .read_array(usize::from(instruction.b))
-                    .filter(|array| crate::locals::array_word_is_current(array));
-                if let Some((array, index)) =
-                    array.filter(|array| array.is_packed_ordinary()).zip(index)
-                {
+                let array = registers.read_array(usize::from(instruction.b));
+                if let Some((array, index)) = array.filter(|array| array.is_packed_ordinary()).zip(index) {
                     if let Some(number) = array.dense_number_at(index) {
-                        crate::execution_trace::event(
-                            crate::execution_trace::Event::PackedArrayGet,
-                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
                         registers.write_number(usize::from(instruction.a), number);
                         return Ok(None);
                     }
                     if let Some(value) = array.dense_value_at(index) {
-                        crate::execution_trace::event(
-                            crate::execution_trace::Event::PackedArrayGet,
+                        crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
+                        write_value(
+                            registers,
+                            instruction.a,
+                            crate::locals::resolved_replacement(value),
                         );
-                        write_value(registers, instruction.a, value);
                         return Ok(None);
                     }
                 }
@@ -246,9 +205,7 @@ fn run_instruction(
                     "kind"
                 } else if index.is_none() {
                     "other"
-                } else if index.expect("checked index")
-                    >= array.expect("checked array").logical_len()
-                {
+                } else if index.expect("checked index") >= array.expect("checked array").logical_len() {
                     "oob"
                 } else {
                     "hole"
@@ -265,30 +222,12 @@ fn run_instruction(
         Opcode::GetN => {
             let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
             let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
-            if key == "length" {
-                if let Some(array) = registers
-                    .read_array(usize::from(instruction.b))
-                    .filter(|array| crate::locals::array_word_is_current(array))
-                {
-                    registers
-                        .write_number(usize::from(instruction.a), array.header_length() as f64);
-                    crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-                    crate::execution_trace::named_property_word("own", "number");
-                    return Ok(None);
-                }
-            }
             if instruction.a != instruction.b {
                 let object = registers.read_object(usize::from(instruction.b));
-                if let Some(payload) = object
-                    .and_then(|object| get_named_cached_payload(object, &metadata.named_cache))
-                {
+                if let Some(payload) = object.and_then(|object| {
+                    get_named_cached_payload(object, &metadata.named_cache)
+                }) {
                     match payload {
-                        NamedCachedPayload::Word(word) => {
-                            // SAFETY: the source register owns the containing
-                            // object until this complete word copy returns.
-                            unsafe { &*word }
-                                .copy_to_register(registers, usize::from(instruction.a));
-                        }
                         NamedCachedPayload::Cell(cell) => {
                             // SAFETY: the source register keeps the containing
                             // object alive until the word copy completes.
@@ -323,11 +262,16 @@ fn run_instruction(
         }
         Opcode::CallN => {
             if instruction.flags != 0 {
-                crate::methods::execute_registered(registers, instruction, code, pc)?;
+                crate::methods::execute_registered(registers, instruction)?;
             } else {
                 let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
                 let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
-                crate::methods::execute_named(registers, instruction, key, &metadata.named_cache)?;
+                crate::methods::execute_named(
+                    registers,
+                    instruction,
+                    key,
+                    &metadata.named_cache,
+                )?;
             }
             Ok(None)
         }
@@ -337,7 +281,6 @@ fn run_instruction(
             let stored = index.zip(number).is_some_and(|(index, number)| {
                 registers
                     .read_array(usize::from(instruction.a))
-                    .filter(|array| crate::locals::array_word_is_current(array))
                     .is_some_and(|array| {
                         array.set_existing_f64(index, number)
                             || array.append_preallocated_f64(index, number)
@@ -362,12 +305,22 @@ fn run_instruction(
         Opcode::Return => read_register(registers, instruction.a)
             .map(crate::completion::Completion::Return)
             .map(Some),
-        Opcode::Slow => run_op(
-            registers,
-            code.cold(instruction)
-                .ok_or_else(|| VmError::EvalError("missing cold instruction".into()))?,
-            context,
-        ),
+        Opcode::Slow => {
+            let op = code
+                .cold(instruction)
+                .ok_or_else(|| VmError::EvalError("missing cold instruction".into()))?;
+            if matches!(op, crate::ops::Op::YieldStar { .. }) {
+                return match crate::generator::execute_yield_star(
+                    registers,
+                    op,
+                    crate::completion::Completion::Normal,
+                )? {
+                    Some(completion) => Ok(Some(completion)),
+                    None => Ok(None),
+                };
+            }
+            run_op(registers, op, context)
+        }
         _ => Err(VmError::EvalError("unsupported compact instruction".into())),
     }
 }
@@ -413,7 +366,7 @@ pub(crate) fn bare_call_receiver(
     function: &crate::value::FunctionValue,
     this_value: &Value,
 ) -> Value {
-    if matches!(function.kind, FunctionKind::Ordinary)
+    if !matches!(function.kind, FunctionKind::Arrow)
         && matches!(function.strictness, FunctionStrictness::Sloppy)
     {
         let realm = function
@@ -426,18 +379,30 @@ pub(crate) fn bare_call_receiver(
                     .flatten()
             })
             .or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)));
-        let global = realm
-            .and_then(|realm| {
-                crate::vm::with_realm(realm, || Some(crate::vm::current_global_object()))
-            })
+        let realm_global = realm
+            .and_then(|realm| crate::vm::with_realm(realm, || Some(crate::vm::current_global_object())))
             .flatten()
             .unwrap_or_else(crate::vm::current_global_object);
+        let captured = function.captures.get(0);
+        let global = if matches!(&captured, Value::Object(_)) {
+            captured
+        } else {
+            realm_global
+        };
         return to_object_value_in_realm(this_value, &global);
     }
     this_value.clone()
 }
 
 fn to_object_value_in_realm(this_value: &Value, global: &Value) -> Value {
+    // A sloppy call's null/undefined receiver resolves to the function's
+    // realm global.  Preserve the captured script view (and its owner
+    // identity) when that global is a view rather than the physical object.
+    if matches!(this_value, Value::Null | Value::Undefined)
+        && matches!(global, Value::Object(_) | Value::ObjectAlias(_))
+    {
+        return global.clone();
+    }
     let Some(realm) = crate::vm::realm_id_for_global_value(global) else {
         return to_object_value(this_value);
     };
@@ -486,8 +451,21 @@ fn to_object_value(this_value: &Value) -> Value {
 
 fn boxed_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
     let mut properties = vec![("_value".to_string(), value.clone())];
+    let prototype = match constructor {
+        crate::ops::Builtin::Boolean => crate::ops::Builtin::BooleanPrototype,
+        crate::ops::Builtin::String => crate::ops::Builtin::StringPrototype,
+        crate::ops::Builtin::BigInt => crate::ops::Builtin::BigIntPrototype,
+        _ => crate::ops::Builtin::NumberPrototype,
+    };
+    properties.push((
+        "\0prototype".to_string(),
+        crate::vm::realm_intrinsic(prototype),
+    ));
     if constructor != Builtin::Number {
-        properties.push(("constructor".to_string(), Value::Builtin(constructor)));
+        properties.push((
+            "constructor".to_string(),
+            crate::vm::realm_intrinsic(constructor),
+        ));
     }
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
 }

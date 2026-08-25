@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use super::{LinkedModule, LinkedModuleGraph};
-use crate::Test262Host;
 use crate::module_graph::ModuleGraph;
+use crate::Test262Host;
 use quench_runtime::value::Value;
 
 #[test]
@@ -15,18 +15,386 @@ fn stage_report_requires_complete_path_coverage() {
         failures: vec![(paths[1].clone(), "failure".to_string())],
     };
     assert!(complete.covers(&paths));
-    assert!(!crate::StageReport { total: 1, ..complete }.covers(&paths));
+    assert!(!crate::StageReport {
+        total: 1,
+        ..complete
+    }
+    .covers(&paths));
 }
 
 #[test]
 fn sequential_script_units_share_global_function_bindings() {
     let mut host = super::RuntimeHost;
     host.run_harnessed_script(
-        &["function Test262Error(message) { this.message = message; }"] ,
+        &["function Test262Error(message) { this.message = message; }"],
         "if (typeof Test262Error !== 'function') throw new Error('missing global function');",
         false,
     )
     .expect("sequential harness scripts must share global function bindings");
+}
+
+#[test]
+fn define_property_updates_sloppy_arguments_length() {
+    let mut host = super::RuntimeHost;
+    host.run_harnessed_script(
+        &[],
+        "var args = (function(a, b, c) { return arguments; })(1, 2, 3);\n\
+         Object.defineProperty(args, 'length', { value: 6 });\n\
+         if (args.length !== 6) throw new Error('direct length missing');\n\
+         if ([].concat(args).length !== 6) throw new Error('concat length missing');",
+        false,
+    )
+    .expect("arguments length defineProperty must remain observable");
+}
+
+#[test]
+fn string_wrapper_concat_preserves_utf16_code_units() {
+    let mut host = super::RuntimeHost;
+    host.run_harnessed_script(
+        &[],
+        "var value = new String('\\uD83D\\uDCA9');\n\
+         value[Symbol.isConcatSpreadable] = true;\n\
+         var result = [].concat(value);\n\
+         if (result.length !== 2 || result[0] !== '\\uD83D' || result[1] !== '\\uDCA9') throw new Error('UTF-16 code units were folded');",
+        false,
+    )
+    .expect("string wrapper concat must expose UTF-16 code units");
+}
+
+#[test]
+fn copy_within_preserves_array_holes() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var arr = [0, 1, , , 1];\n\
+         if (arr.hasOwnProperty(2) || arr.hasOwnProperty(3)) throw new Error('literal holes');\n\
+         arr.copyWithin(0, 1, 4);\n\
+         if (arr[0] !== 1) throw new Error('copyWithin value');\n\
+         if (arr.hasOwnProperty(1)) throw new Error('copyWithin hole 1');\n\
+         if (arr.hasOwnProperty(2)) throw new Error('copyWithin hole 2');\n\
+         if (arr.hasOwnProperty(3)) throw new Error('copyWithin hole 3');",
+    )
+    .expect("copyWithin must preserve deleted holes");
+}
+
+#[test]
+fn copy_within_observes_custom_array_prototype() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "function longDenseArray(){ var a=[0]; for(var i=0;i<1024;i++) a[i]=i; return a; }\n\
+         var currArray=longDenseArray(); var proto=longDenseArray();\n\
+         Object.setPrototypeOf(currArray, proto);\n\
+         if (Object.getPrototypeOf(currArray)[1000] !== 1000) throw new Error('prototype setup');\n\
+         currArray.copyWithin(0, { valueOf: function(){ currArray.length=20; return 1000; } });\n\
+         if (currArray[0] !== 1000) throw new Error('inherited source');",
+    )
+    .expect("copyWithin must observe inherited array elements");
+}
+
+#[test]
+fn strict_non_extensible_write_throws() {
+    let mut host = super::RuntimeHost;
+    let result = host.run_harnessed_script(
+        &[],
+        "var obj = {}; Object.preventExtensions(obj); obj.missing = 1;",
+        true,
+    );
+    assert!(result.is_err(), "strict write must reject a new property");
+}
+
+#[test]
+fn top_level_var_is_visible_on_global_this_during_declaration_staging() {
+    let mut host = super::RuntimeHost;
+    let source = "var x = 1;\n\nif (this.x !== 1) {\n  throw new Error('#1: variable x is a property of global object');\n}";
+    host.run_harnessed_script(&[], source, false)
+        .expect("top-level var must be visible on global this");
+}
+
+#[test]
+fn unresolved_global_updates_target_the_live_global_object() {
+    let mut host = super::RuntimeHost;
+    let source = "index6 = 0;\nfor (index6 = 0; index6 < 2; index6++) {}\nif (index6 !== 2) {\n  throw new Error('global update did not advance');\n}";
+    host.run_harnessed_script(&[], source, false)
+        .expect("unresolved global increment must update the live global object");
+}
+
+#[test]
+fn deleted_global_property_keeps_strict_reference_error_semantics() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var count = 0; var global = this;\n\
+         Object.defineProperty(this, 'x', { configurable: true, value: 1 });\n\
+         (function() {\n\
+           'use strict';\n\
+           var threw = false;\n\
+           try { count++; x = (delete global.x, 2); count++; }\n\
+           catch (error) { if (!(error instanceof ReferenceError)) throw error; threw = true; }\n\
+           if (!threw) throw new Error('missing ReferenceError');\n\
+           count++;\n\
+         })();\n\
+         if (count !== 2 || ('x' in this) || ('x' in global)) throw new Error('stale global alias');",
+    )
+    .expect("global aliases must follow copy-on-write replacement");
+}
+
+#[test]
+fn direct_eval_parameter_var_reaches_captured_function() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var x = 'outside'; var probe;\n\
+         (function(_ = (eval(\"var x = 'inside';\"), probe = function() { return x; })) {})();\n\
+         if (probe() !== 'inside') throw new Error('eval parameter binding');",
+    )
+    .expect("direct eval var bindings must follow captured cells");
+}
+
+#[test]
+fn sort_returns_boxed_primitive_receiver() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var result = [].sort.call(false);\n\
+         if (typeof result !== 'object') throw new Error('type');\n\
+         if (Object.getPrototypeOf(result) !== Boolean.prototype) throw new Error('prototype');\n\
+         if (!(result instanceof Boolean)) throw new Error('instanceof');",
+    )
+    .expect("sort must return ToObject receiver");
+}
+
+#[test]
+fn numeric_class_methods_keep_callable_super_properties() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "class B { 1() { return 1; } }\n\
+         if (typeof B.prototype['1'] !== 'function') throw new Error('method');\n\
+         class C extends B { 1() { return super[1](); } }\n\
+         if (new C()['1']() !== 1) throw new Error('super');",
+    )
+    .expect("numeric class methods must remain callable through super");
+}
+
+#[test]
+fn derived_constructor_instances_follow_prototype_chain() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var calls = 0; class Base { constructor() { this.prop = 1; calls++; } }\n\
+         class Derived extends Base { constructor() { super(); return; } }\n\
+         var object = new Derived();\n\
+         if (object.prop !== 1 || calls !== 1) throw new Error('body');\n\
+         if (Object.getPrototypeOf(object) === Base.prototype) throw new Error('base proto');\n\
+         if (Object.getPrototypeOf(object) !== Derived.prototype) throw new Error('derived proto');\n\
+         if (!(object instanceof Base)) throw new Error('base instance');\n\
+         if (!(object instanceof Derived)) throw new Error('derived instance');",
+    )
+    .expect("derived constructor prototype");
+}
+
+#[test]
+fn function_subclass_instances_are_callable_and_branded() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "class Subclass extends Function {}\n\
+         var sub = new Subclass();\n\
+         if (typeof sub !== 'function') throw new Error('callable');\n\
+         if (Object.getPrototypeOf(sub) !== Subclass.prototype) throw new Error('prototype');\n\
+         if (!(sub instanceof Subclass)) throw new Error('subclass');\n\
+         if (!(sub instanceof Function)) throw new Error('function');",
+    )
+    .expect("Function subclasses must preserve callable instances");
+}
+
+#[test]
+fn typed_array_subclass_values_keep_the_typed_receiver() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "class MyUint8Array extends Uint8Array {}\n\
+         var rab = new ArrayBuffer(8, { maxByteLength: 16 });\n\
+         var value = new MyUint8Array(rab);\n\
+         if (!(value instanceof Uint8Array)) throw new Error('typed subclass');\n\
+         if (!ArrayBuffer.isView(value)) throw new Error('view');\n\
+         var direct = Uint8Array.prototype.values.call(value);\n\
+         if (direct.next().value !== 0) throw new Error('direct typed subclass iterator');\n\
+         if (typeof value.values !== 'function') throw new Error('values');\n\
+         var iterator = value.values();\n\
+         if (iterator.next().value !== 0) throw new Error('typed subclass iterator');",
+    )
+    .expect("typed array subclasses must preserve typed receivers");
+}
+
+#[test]
+fn array_from_splice_deletions_terminate_at_live_length() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var array = [0, 1, -2, 4, -8, 16]; var calls = 0;\n\
+         var result = Array.from(array, function(value, index) {\n\
+           calls++; if (calls > 10) throw new Error('non-terminating iterator');\n\
+           array.splice(array.length - 1, 1); return 127;\n\
+         });\n\
+         if (calls !== 3 || result.length !== 3) throw new Error('live length');",
+    )
+    .expect("Array.from must observe splice deletions and terminate");
+}
+
+#[test]
+fn splice_moves_suffix_before_inserting_items() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var array = [0, 1, 2, 3];\n\
+         var removed = array.splice(0, 3, 4, 5);\n\
+         if (removed.length !== 3 || removed[2] !== 2) throw new Error('removed');\n\
+         if (array.length !== 3) throw new Error('suffix length');\n\
+         if (array[0] !== 4) throw new Error('suffix zero');\n\
+         if (array[1] !== 5) throw new Error('suffix one');\n\
+         if (array[2] !== 3) throw new Error('suffix two');",
+    )
+    .expect("splice must preserve the suffix when inserting fewer items than deleted");
+}
+
+#[test]
+fn splice_moves_suffix_on_array_like_object() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var object = {0: 0, 1: 1, 2: 2, 3: 3}; object.length = 4;\n\
+         object.splice = Array.prototype.splice;\n\
+         var removed = object.splice(0, 3, 4, 5);\n\
+         if (removed[2] !== 2) throw new Error('removed');\n\
+         if (object.length !== 3) throw new Error('length');\n\
+         if (object[0] !== 4) throw new Error('zero');\n\
+         if (object[1] !== 5) throw new Error('one');\n\
+         if (object[2] !== 3) throw new Error('two');",
+    )
+    .expect("splice must preserve the suffix on array-like objects");
+}
+
+#[test]
+fn ordinary_function_arguments_binding_is_an_object() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var fn = function(a, b, c) { return arguments; };\n\
+         var value = fn(1, 2, 3);\n\
+         if (value == null || value.length !== 3 || value[1] !== 2) throw new Error('arguments');",
+    )
+    .expect("ordinary function calls must initialize arguments");
+}
+
+#[test]
+fn array_prototype_numeric_setter_is_visible_to_array_writes() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var calls = 0; Object.defineProperty(Array.prototype, '0', { set: function() { calls++; Object.freeze(array); } });\n\
+         var array = [];\n\
+         var descriptor = Object.getOwnPropertyDescriptor(Array.prototype, '0');\n\
+         if (typeof descriptor.set !== 'function') throw new Error('setter descriptor');\n\
+         var threw = false; try { array.push(1); } catch (_) { threw = true; }\n\
+         if (calls !== 1) throw new Error('setter calls');\n\
+         if (!threw) throw new Error('setter did not throw');\n\
+         if (array.length !== 0) throw new Error('setter length');\n\
+         var lengthThrew = false; try { Object.defineProperty(Array.prototype, 'length', { configurable: true }); } catch (_) { lengthThrew = true; }\n\
+         if (!lengthThrew) throw new Error('length configurable');",
+    )
+    .expect("Array.prototype numeric setters must remain observable");
+}
+
+#[test]
+fn reduce_right_walks_inherited_array_indices() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "foo.prototype = new Array(0, 1, 2, 3); function foo() {} var f = new foo();\n\
+         if (f.length !== 4 || f[3] !== 3) throw new Error('inherited array');\n\
+         var result = f.reduceRight(function(prev, value) { return prev + value; });\n\
+         if (result !== 6) throw new Error('reduceRight');",
+    )
+    .expect("reduceRight must include inherited array elements");
+}
+
+#[test]
+fn slice_species_create_overwrites_target_descriptor() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var a = [1]; a.constructor = {}; a.constructor[Symbol.species] = function() { var q = []; Object.defineProperty(q, 0, { value: 0, writable: false, configurable: true, enumerable: false }); return q; };\n\
+         var r = a.slice(0); if (!Array.isArray(r)) throw new Error('slice array'); var d = Object.getOwnPropertyDescriptor(r, 0);\n\
+         if (r[0] !== 1) throw new Error('slice value');\n\
+         if (d.writable !== true) throw new Error('slice writable');\n\
+         if (d.enumerable !== true) throw new Error('slice enumerable');\n\
+         if (d.configurable !== true) throw new Error('slice configurable');",
+    )
+    .expect("slice must overwrite configurable target descriptors");
+}
+
+#[test]
+fn with_global_copy_on_write_updates_the_active_realm() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var count = 0; (function() { with (this) { count++; } })();\n\
+         if (count !== 1) throw new Error('with global replacement');",
+    )
+    .expect("with writes must publish the active global replacement");
+}
+
+#[test]
+fn async_with_nested_function_runs_before_returning_promise() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var count = 0; async function f() { count++; (function() { count++; with (this) { count++; } })(); }\n\
+         f(); if (count !== 3) throw new Error('async with ordering');",
+    )
+    .expect("async function body must run synchronously through nested with calls");
+}
+
+#[test]
+fn cross_realm_class_evaluations_keep_private_static_brands_distinct() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var first = $262.createRealm(); var second = $262.createRealm();\n\
+         var source1 = '(class { static #value = 1; static read() { return this.#value; } })';\n\
+         var source2 = '(class { static #value = 2; static read() { return this.#value; } })';\n\
+         var C1 = first.evalScript(source1); var C2 = second.evalScript(source2);\n\
+         if (C1 === C2 || C1.read() !== 1 || C2.read() !== 2) throw new Error('private static setup');\n\
+         var threw = false;\n\
+         try { C1.read.call(C2); } catch (error) { if (!(error instanceof first.global.TypeError)) throw error; threw = true; }\n\
+         if (!threw) throw new Error('cross-realm private brand');",
+    )
+    .expect("private static names must remain distinct across realm evaluations");
+}
+
+#[test]
+fn cross_realm_global_alias_writes_owned_realm() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var other = $262.createRealm().global; other.value = 1;\n\
+         if (other.eval('value') !== 1) throw new Error('cross-realm global write');",
+    )
+    .expect("writes through a realm global alias must stay in that realm");
+}
+
+#[test]
+fn script_this_define_delete_preserves_global_owner() {
+    let mut host = super::RuntimeHost;
+    host.run_harnessed_script(
+        &[],
+        "Object.defineProperty(this, '__fixed', { value: 1, configurable: false });\n\
+         if (delete this['__fixed'] !== false) throw new Error('delete');",
+        false,
+    )
+    .expect("script this property deletion must honor the global owner");
+}
+
+#[test]
+fn symbols_are_unique_and_format_descriptions() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        "var first = Symbol(); var second = Symbol('desc');\n\
+         if (first === second) throw new Error('symbol identity');\n\
+         if (String(first) !== 'Symbol()' || String(second) !== 'Symbol(desc)') throw new Error('symbol format');",
+    )
+    .expect("symbols must preserve identity and descriptions");
+}
+
+#[test]
+fn regexp_identifier_ascii_class_matches() {
+    let mut host = super::RuntimeHost;
+    host.run_script(
+        r#"if (!/(?:[A-Za-z\xAA\u02C1])/.test('f')) throw new Error('identifier class');"#,
+    )
+    .expect("ASCII characters must match generated identifier classes");
 }
 
 #[test]
@@ -179,34 +547,72 @@ fn default_export_cell_observes_module_execution() {
 }
 
 #[test]
+fn default_export_propagates_function_throw() {
+    let module = LinkedModule::compile("export default (function() { throw 1; })();")
+        .expect("module compiles");
+    assert!(module.execute().is_err(), "default expression must execute");
+}
+
+#[test]
 fn json_module_exports_recursive_runtime_values() {
-    let module = LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
+    let module =
+        LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
     let cell = module.export_cell("default").expect("default export cell");
     module.execute().expect("module executes");
-    let Value::Array(values) = cell.get() else { panic!("JSON default export is not an array") };
+    let Value::Array(values) = cell.get() else {
+        panic!("JSON default export is not an array")
+    };
     assert_eq!(values.logical_len(), 2);
-    assert_eq!(values.get(0), Some(Value::Boolean(true)));
-    assert!(matches!(values.get(1), Some(Value::Object(_))));
+    let array = Value::Array(values);
+    assert_eq!(
+        quench_runtime::execute::get_property_result(&array, "0").unwrap(),
+        Value::Boolean(true)
+    );
+    assert!(matches!(
+        quench_runtime::execute::get_property_result(&array, "1"),
+        Ok(Value::Object(_))
+    ));
 }
 
 #[test]
 fn linked_import_reads_the_exporters_live_default_cell() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import value from './dep.js'; export default value;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import value from './dep.js'; export default value;".to_string(),
+    );
     graph.add_dependency(PathBuf::from("dep.js"), "export default true;".to_string());
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
 fn namespace_import_reads_live_export_cells() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import * as ns from './dep.js'; export default ns.value;".to_string());
-    graph.add_dependency(PathBuf::from("dep.js"), "export const value = true;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import * as ns from './dep.js'; export default ns.value;".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = true;".to_string(),
+    );
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
@@ -217,7 +623,8 @@ fn text_import_attribute_does_not_parse_fixture_as_javascript() {
         "import value from './note.js' with { type: 'text' };\nexport default value;\n".to_string(),
     );
     graph.add_text_dependency(PathBuf::from("note.js"), "invalid { javascript".to_string());
-    graph.link(entry, graph.resolve(entry, "./note.js").expect("resolved"))
+    graph
+        .link(entry, graph.resolve(entry, "./note.js").expect("resolved"))
         .expect("linked");
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
@@ -272,6 +679,30 @@ fn import_defer_does_not_evaluate_dependency() {
 }
 
 #[test]
+fn deferred_namespace_then_probe_does_not_evaluate_dependency() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import './setup.js';\nimport defer * as ns from './dep.js';\n'then' in Object.create(ns);\nexport default globalThis.evaluations.length;\n"
+            .to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("setup.js"),
+        "globalThis.evaluations = [];\n".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "globalThis.evaluations.push('dep');\nexport const value = 2;\n".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked.export_cell(entry, "default").expect("default").get(),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn deferred_export_cell_is_live_after_namespace_get() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
@@ -309,7 +740,10 @@ fn deferred_gopd_after_own_keys() {
         )
         .to_string(),
     );
-    graph.add_dependency(PathBuf::from("dep.js"), "export const foo = 1;\nexport const bar = 2;\n".to_string());
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const foo = 1;\nexport const bar = 2;\n".to_string(),
+    );
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
     assert_eq!(
@@ -329,19 +763,34 @@ fn function_var_is_per_activation() {
         "void 0;\n",
     );
     let program = quench_runtime::reduce::reduce_source(source).expect("reduce");
-    let _ = quench_runtime::vm::execute_code_with_context(program.code(), &quench_runtime::vm::VmContext::isolated())
-        .expect("execute");
+    let _ = quench_runtime::vm::execute_code_with_context(
+        program.code(),
+        &quench_runtime::vm::VmContext::isolated(),
+    )
+    .expect("execute");
     let again = quench_runtime::reduce::reduce_source(
         "function f(){ var x; if(x===undefined){x=0;}else{x=1;} return x; } return [f(), f()];",
     )
     .expect("reduce2");
-    let value = quench_runtime::vm::execute_code_with_context(again.code(), &quench_runtime::vm::VmContext::isolated())
-        .expect("execute2");
+    let value = quench_runtime::vm::execute_code_with_context(
+        again.code(),
+        &quench_runtime::vm::VmContext::isolated(),
+    )
+    .expect("execute2");
     let Value::Array(items) = value else {
         panic!("expected array, got {value:?}");
     };
-    assert_eq!(items.get(0), Some(Value::Number(0.0)), "first call");
-    assert_eq!(items.get(1), Some(Value::Number(0.0)), "second call");
+    let items = Value::Array(items);
+    assert_eq!(
+        quench_runtime::execute::get_property_result(&items, "0").unwrap(),
+        Value::Number(0.0),
+        "first call"
+    );
+    assert_eq!(
+        quench_runtime::execute::get_property_result(&items, "1").unwrap(),
+        Value::Number(0.0),
+        "second call"
+    );
 }
 
 #[test]
@@ -456,10 +905,25 @@ fn deferred_module_throw_is_replayed_on_get() {
 #[test]
 fn export_star_forwards_live_cells() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import { value } from './barrel.js'; export default value;".to_string());
-    graph.add_dependency(PathBuf::from("barrel.js"), "export * from './dep.js';".to_string());
-    graph.add_dependency(PathBuf::from("dep.js"), "export const value = true;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import { value } from './barrel.js'; export default value;".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("barrel.js"),
+        "export * from './dep.js';".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = true;".to_string(),
+    );
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
 }

@@ -207,7 +207,9 @@ fn alloc_impl(args: &[Value], zero_fill: bool, pooled: bool) -> Result<Value, Vm
             Some(Value::Number(value)) => *value as usize,
             _ => 8,
         };
-        Ok(crate::modules::buffer_proto::make_pooled_buffer_aligned(&bytes, alignment))
+        Ok(crate::modules::buffer_proto::make_pooled_buffer_aligned(
+            &bytes, alignment,
+        ))
     } else {
         Ok(crate::modules::buffer_proto::make_buffer(&bytes))
     }

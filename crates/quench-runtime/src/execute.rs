@@ -181,14 +181,19 @@ pub fn own_keys(value: &crate::value::Value) -> Vec<crate::value::Value> {
     let Ok(crate::value::Value::Array(keys)) = crate::own_keys::all(value) else {
         return Vec::new();
     };
-    (0..keys.len()).filter_map(|index| keys.get(index)).collect()
+    (0..keys.len())
+        .filter_map(|index| keys.get(index))
+        .collect()
 }
 
 pub fn has_own_property(value: &crate::value::Value, key: &str) -> bool {
-    matches!(crate::builtins::object::has_own_property(
-        Some(value),
-        Some(&crate::value::Value::String(key.to_string())),
-    ), crate::value::Value::Boolean(true))
+    matches!(
+        crate::builtins::object::has_own_property(
+            Some(value),
+            Some(&crate::value::Value::String(key.to_string())),
+        ),
+        crate::value::Value::Boolean(true)
+    )
 }
 
 /// Canonical JavaScript `ToString` (may run user `toString`/`valueOf`).

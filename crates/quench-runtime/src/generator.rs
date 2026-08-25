@@ -59,6 +59,7 @@ pub(crate) fn create(
         pending_yield: RefCell::new(false),
         executing: RefCell::new(false),
         running: RefCell::new(false),
+        pending_completion: RefCell::new(None),
         async_next_queue: RefCell::new(VecDeque::new()),
     })))
 }
@@ -274,14 +275,20 @@ pub(crate) enum Resume {
     Throw(Value),
 }
 
-pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
+pub(crate) fn resume(generator: &GeneratorData, input: Resume) -> Result<Value, VmError> {
+    let realm = crate::construct::function_realm_id(&generator.function);
+    if realm != crate::vm::current_context_or_default().realm() {
+        return crate::vm::with_realm(realm, || resume(generator, input))
+            .unwrap_or_else(|| Err(crate::vm::not_callable()));
+    }
     if *generator.running.borrow() {
+        *generator.done.borrow_mut() = true;
         return Err(crate::value::error::throw_type_error(
             "Generator is already executing",
         ));
     }
     *generator.running.borrow_mut() = true;
-    let result = resume_inner(generator, resume);
+    let result = resume_inner(generator, input);
     *generator.running.borrow_mut() = false;
     result
 }
@@ -389,13 +396,9 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
 
 fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
     let iterator = push_iterator_frame(generator, state)?;
-    if suspended_try(generator, state).is_some()
-        && !matches!(
-            generator.machine.borrow().frames.frames.last(),
-            Some(crate::machine::Frame::Try { .. })
-        )
-    {
-        push_try_frame(generator, state)?;
+    let frame_count = generator.machine.borrow().frame_count();
+    push_try_frame(generator, state)?;
+    if generator.machine.borrow().frame_count() > frame_count {
         return Ok(true);
     }
     if iterator {

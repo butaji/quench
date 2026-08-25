@@ -121,15 +121,22 @@ fn schedule(
     Ok(object)
 }
 
-fn async_resource(state: &Rc<RefCell<HostState>>, kind: &TimerKind) -> Result<Value, VmError> {
-    let name = match kind {
-        TimerKind::Immediate => "Immediate",
-        TimerKind::Timeout | TimerKind::Interval => "Timeout",
-    };
-    crate::modules::async_hooks::new_resource(
-        state,
-        &[Value::Undefined, Value::String(name.to_string())],
-    )
+fn async_resource(_state: &Rc<RefCell<HostState>>, kind: &TimerKind) -> Result<Value, VmError> {
+    let resource = crate::host::namespace_object_from_pairs(Vec::new());
+    let global = quench_runtime::vm::current_global_object();
+    let helper = quench_runtime::execute::get_property(&global, "__quenchAsyncInit");
+    if quench_runtime::is_callable(&helper) {
+        let name = match kind {
+            TimerKind::Immediate => "Immediate",
+            TimerKind::Timeout | TimerKind::Interval => "Timeout",
+        };
+        return quench_runtime::execute::call(
+            &helper,
+            &Value::Undefined,
+            &[Value::String(name.to_string()), resource],
+        );
+    }
+    Ok(resource)
 }
 
 pub(crate) fn async_destroy(resource: &Value) {

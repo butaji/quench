@@ -25,6 +25,7 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
                 "Property descriptor must be an object",
             ));
         }
+        reject_mixed_descriptor(&descriptor)?;
         let descriptor = descriptor_fields(&descriptor)?;
         let result = define_own_property(&target, &key, &descriptor)?;
         crate::locals::replace_value(&target, &result);
@@ -71,7 +72,9 @@ pub(crate) fn descriptor_fields(
         "enumerable",
         "configurable",
     ] {
-        if !crate::with_scope::has_property(descriptor, field)? {
+        let own = crate::own_keys::names(Some(descriptor))?;
+        let own = matches!(own, Value::Array(ref keys) if keys.snapshot().iter().any(|key| matches!(key, Value::String(name) if name == field)));
+        if !own && !crate::with_scope::has_property(descriptor, field)? {
             continue;
         }
         let value = crate::execute::get_property_result(descriptor, field)?;

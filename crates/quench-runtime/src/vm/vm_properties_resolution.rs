@@ -1,5 +1,8 @@
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
-    let value = crate::locals::resolved_replacement(value.clone());
+    let value = match value {
+        Value::Promise(_) => value.clone(),
+        _ => crate::locals::resolved_replacement(value.clone()),
+    };
     // A materialized global binding can transiently leave the receiver nullish
     // while lowering a member assignment.  Recover only when the requested
     // property is a real Math intrinsic; this preserves ordinary nullish
@@ -12,7 +15,10 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
         value
     };
     let result = get_property_with_receiver(&value, key, &value)?;
-    Ok(crate::locals::resolved_replacement(result))
+    Ok(match result {
+        Value::Promise(_) => result,
+        result => crate::locals::resolved_replacement(result),
+    })
 }
 
 pub(crate) fn get_named_property_result(
@@ -20,23 +26,13 @@ pub(crate) fn get_named_property_result(
     key: &str,
     cache: &std::cell::Cell<u64>,
 ) -> Result<Value, VmError> {
-    let retry_resolved = !matches!(value, Value::Object(object) if !object.has_replacement());
     if let Value::Object(object) = value {
         if let Some(value) = get_named_cached_object(object, cache) {
             return Ok(value);
         }
     }
-    let resolved = crate::locals::resolved_replacement(value.clone());
-    if retry_resolved {
-        if let Value::Object(object) = &resolved {
-            if let Some(value) = get_named_cached_object(object, cache) {
-                crate::execution_trace::named_get_miss_reason("unknown");
-                return Ok(value);
-            }
-        }
-    }
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyMiss);
-    crate::execution_trace::named_property_miss(key);
+    let resolved = crate::locals::resolved_replacement(value.clone());
     let result = get_property_result(&resolved, key)?;
     if let Value::Object(object) = &resolved {
         if let Some(slot) = cacheable_own_slot(&resolved, key) {
@@ -59,14 +55,12 @@ pub(crate) fn get_named_cached_object(
     cache: &std::cell::Cell<u64>,
 ) -> Option<Value> {
     match get_named_cached_payload(object, cache)? {
-        NamedCachedPayload::Word(word) => Some(unsafe { &*word }.load()),
         NamedCachedPayload::Cell(cell) => Some(unsafe { &*cell }.load()),
         NamedCachedPayload::Value(value) => Some(value),
     }
 }
 
 pub(crate) enum NamedCachedPayload {
-    Word(*const crate::register_file::SlotWord),
     Cell(*const crate::value::BindingCell),
     Value(Value),
 }
@@ -77,41 +71,22 @@ pub(crate) fn get_named_cached_payload(
     cache: &std::cell::Cell<u64>,
 ) -> Option<NamedCachedPayload> {
     if object.has_replacement() {
-        crate::execution_trace::event(crate::execution_trace::Event::NamedGetReplacement);
-        crate::execution_trace::named_get_miss_reason("replacement");
         return None;
     }
     let layout = object.semantic_layout_id();
     let cached = cache.get();
-    if cached & PROTOTYPE_CACHE_TAG != 0 {
-        if let Some(value) = prototype_cache_hit(object, layout, cached, cache as *const _ as usize)
-        {
-            crate::execution_trace::named_property_result("prototype", &value);
-            crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-            return Some(named_cached_payload(&value));
-        }
-        crate::execution_trace::event(crate::execution_trace::Event::NamedGetPrototypeMiss);
-        crate::execution_trace::named_get_miss_reason("prototype");
-        return None;
+    if let Some(value) = prototype_cache_hit(object, layout, cached) {
+        crate::execution_trace::named_property_result("prototype", value);
+        crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+        return Some(named_cached_payload(value));
     }
-    let Some((cached_layout, slot)) = crate::machine::unpack_named_cache(cached) else {
-        crate::execution_trace::event(crate::execution_trace::Event::NamedGetCacheEmpty);
-        crate::execution_trace::named_get_miss_reason("empty");
-        return None;
-    };
-    if layout != cached_layout {
-        crate::execution_trace::event(crate::execution_trace::Event::NamedGetLayoutMismatch);
-        crate::execution_trace::named_get_miss_reason("layout");
-        return None;
-    }
-    let Some(word) = object.hot_properties().slot_word(slot as usize) else {
-        crate::execution_trace::event(crate::execution_trace::Event::NamedGetSlotMissing);
-        crate::execution_trace::named_get_miss_reason("slot");
-        return None;
-    };
-    word.trace_named_payload("own");
+    let (cached_layout, slot) = (cached & PROTOTYPE_CACHE_TAG == 0)
+        .then(|| crate::machine::unpack_named_cache(cached))??;
+    let (_, value) = (layout == cached_layout)
+        .then(|| object.hot_properties().get(slot as usize))??;
+    crate::execution_trace::named_property_result("own", value);
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-    Some(NamedCachedPayload::Word(word))
+    Some(named_cached_payload(value))
 }
 
 #[inline(always)]
@@ -131,7 +106,6 @@ pub(crate) fn get_named_cached_cell(
     cache: &std::cell::Cell<u64>,
 ) -> Option<*const crate::value::BindingCell> {
     match get_named_cached_payload(object, cache)? {
-        NamedCachedPayload::Word(_) => None,
         NamedCachedPayload::Cell(cell) => Some(cell),
         NamedCachedPayload::Value(_) => None,
     }
@@ -140,18 +114,11 @@ pub(crate) fn get_named_cached_cell(
 const PROTOTYPE_CACHE_TAG: u64 = 1 << 63;
 
 #[derive(Clone)]
-struct PrototypeLink {
+struct PrototypeNamedCache {
+    receiver_layout: u32,
     prototype_slot: u32,
     prototype: std::rc::Weak<crate::value::ObjectData>,
     prototype_layout: u32,
-}
-
-#[derive(Clone)]
-struct PrototypeNamedCache {
-    site: usize,
-    receiver_layout: u32,
-    depth: u8,
-    links: [Option<PrototypeLink>; 4],
     value_slot: u32,
 }
 
@@ -163,12 +130,11 @@ thread_local! {
 
 const PROTOTYPE_CACHE_SLOTS: usize = 4096;
 
-fn prototype_cache_hit(
-    receiver: &crate::value::ObjectData,
+fn prototype_cache_hit<'a>(
+    receiver: &'a crate::value::ObjectData,
     receiver_layout: u32,
     cache: u64,
-    site: usize,
-) -> Option<Value> {
+) -> Option<&'a Value> {
     if cache & PROTOTYPE_CACHE_TAG == 0 {
         return None;
     }
@@ -176,36 +142,25 @@ fn prototype_cache_hit(
     PROTOTYPE_NAMED_CACHES.with(|caches| {
         let caches = caches.borrow();
         let entry = caches.get(index)?.as_ref()?;
-        if entry.site != site || entry.receiver_layout != receiver_layout {
+        if entry.receiver_layout != receiver_layout {
             return None;
         }
-        let mut retained = std::array::from_fn::<_, 4, _>(|_| None);
-        for (depth, link) in entry.links[..usize::from(entry.depth)]
-            .iter()
-            .flatten()
-            .enumerate()
+        let (_, Value::Object(prototype)) = receiver
+            .hot_properties()
+            .get(entry.prototype_slot as usize)?
+        else {
+            return None;
+        };
+        let expected = entry.prototype.upgrade()?;
+        if !std::rc::Rc::ptr_eq(prototype, &expected)
+            || prototype.semantic_layout_id() != entry.prototype_layout
         {
-            let owner = if depth == 0 {
-                receiver
-            } else {
-                retained[depth - 1].as_deref()?
-            };
-            let Value::Object(prototype) = owner
-                .hot_properties()
-                .slot_value(link.prototype_slot as usize)?
-            else {
-                return None;
-            };
-            let expected = link.prototype.upgrade()?;
-            if !std::rc::Rc::ptr_eq(&prototype, &expected)
-                || prototype.semantic_layout_id() != link.prototype_layout
-            {
-                return None;
-            }
-            retained[depth] = Some(prototype);
+            return None;
         }
-        let owner = retained[usize::from(entry.depth).checked_sub(1)?].as_deref()?;
-        owner.hot_properties().slot_value(entry.value_slot as usize)
+        prototype
+            .hot_properties()
+            .get(entry.value_slot as usize)
+            .map(|(_, value)| value)
     })
 }
 
@@ -213,47 +168,29 @@ fn cacheable_immediate_prototype(
     receiver: &crate::value::ObjectData,
     key: &str,
 ) -> Option<PrototypeNamedCache> {
-    let mut links = std::array::from_fn(|_| None);
-    let mut retained = std::array::from_fn::<_, 4, _>(|_| None);
-    for depth in 0..links.len() {
-        let owner = if depth == 0 {
-            receiver
-        } else {
-            retained[depth - 1].as_deref()?
-        };
-        if shadows_named_property(owner, key) {
-            return None;
-        }
-        let prototype_slot = owner.hot_properties().position_rev("\0prototype")?;
-        let Value::Object(prototype) = owner.hot_properties().slot_value(prototype_slot)? else {
-            return None;
-        };
-        links[depth] = Some(PrototypeLink {
-            prototype_slot: u32::try_from(prototype_slot).ok()?,
-            prototype: std::rc::Rc::downgrade(&prototype),
-            prototype_layout: prototype.semantic_layout_id(),
-        });
-        if let Some(value_slot) =
-            cacheable_own_slot(&Value::Object(std::rc::Rc::clone(&prototype)), key)
-        {
-            return Some(PrototypeNamedCache {
-                site: 0,
-                receiver_layout: receiver.semantic_layout_id(),
-                depth: u8::try_from(depth + 1).ok()?,
-                links,
-                value_slot,
-            });
-        }
-        retained[depth] = Some(prototype);
-    }
-    None
-}
-
-fn shadows_named_property(object: &crate::value::ObjectData, key: &str) -> bool {
-    object.hot_properties().names().any(|name| {
+    if receiver.hot_properties().iter().any(|(name, _)| {
         name == key
             || crate::builtins::is_deleted_key_for(name, key)
             || crate::builtins::is_descriptor_key_for(name, key)
+    }) {
+        return None;
+    }
+    let (prototype_slot, (_, prototype)) = receiver
+        .hot_properties()
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, (name, _))| name.as_str() == "\0prototype")?;
+    let Value::Object(prototype) = prototype else {
+        return None;
+    };
+    let value_slot = cacheable_own_slot(&Value::Object(std::rc::Rc::clone(prototype)), key)?;
+    Some(PrototypeNamedCache {
+        receiver_layout: receiver.semantic_layout_id(),
+        prototype_slot: u32::try_from(prototype_slot).ok()?,
+        prototype: std::rc::Rc::downgrade(prototype),
+        prototype_layout: prototype.semantic_layout_id(),
+        value_slot,
     })
 }
 
@@ -263,27 +200,14 @@ fn install_prototype_cache(cache: &std::cell::Cell<u64>, entry: PrototypeNamedCa
         if caches.is_empty() {
             caches.resize_with(PROTOTYPE_CACHE_SLOTS, || None);
         }
-        let mut entry = entry;
-        entry.site = cache as *const _ as usize;
-        let start = entry.links[..usize::from(entry.depth)]
-            .iter()
-            .flatten()
-            .fold(entry.site ^ entry.receiver_layout as usize, |hash, link| {
-                hash.wrapping_mul(0x9e37_79b1)
-                    .wrapping_add(link.prototype.as_ptr() as usize)
-                    .wrapping_add(link.prototype_layout as usize)
-                    .wrapping_add((link.prototype_slot as usize) << 8)
-            })
+        let pointer = entry.prototype.as_ptr() as usize;
+        let index = pointer
+            .wrapping_add(entry.receiver_layout as usize)
+            .wrapping_mul(0x9e37_79b1)
+            .wrapping_add(entry.prototype_layout as usize)
+            .wrapping_add((entry.prototype_slot as usize) << 8)
             .wrapping_add(entry.value_slot as usize)
             & (PROTOTYPE_CACHE_SLOTS - 1);
-        let index = (0..PROTOTYPE_CACHE_SLOTS)
-            .map(|offset| (start + offset) & (PROTOTYPE_CACHE_SLOTS - 1))
-            .find(|index| {
-                caches[*index]
-                    .as_ref()
-                    .is_none_or(|cached| cached.site == entry.site)
-            })
-            .unwrap_or(start);
         caches[index] = Some(entry);
         cache.set(PROTOTYPE_CACHE_TAG | index as u64 + 1);
     });
@@ -329,22 +253,22 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
     }
     let mut own = None;
     let mut metadata = None;
-    for (slot, name) in object.hot_properties().names().enumerate().rev() {
+    for (slot, (name, candidate)) in object.hot_properties().iter().enumerate().rev() {
         if crate::builtins::is_deleted_key_for(name, key) {
             return None;
         }
         if name == key && own.is_none() {
-            own = Some((slot, object.hot_properties().slot_value(slot)?));
+            own = Some((slot, candidate));
         }
         if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
-            metadata = object.hot_properties().slot_value(slot);
+            metadata = Some(candidate);
         }
     }
     let (slot, value) = own?;
     if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }
-    if metadata.is_some_and(|value| accessor_descriptor(&value)) {
+    if metadata.is_some_and(accessor_descriptor) {
         return None;
     }
     u32::try_from(slot).ok()
@@ -356,6 +280,27 @@ pub(crate) fn get_property_with_receiver(
     receiver: &Value,
 ) -> Result<Value, VmError> {
     crate::module_bindings::exports(value, key)?;
+    if matches!(value, Value::Builtin(crate::ops::Builtin::Promise))
+        && key == "Symbol.species"
+    {
+        if let Some(override_value) = crate::builtins::read_descriptor_value(
+            crate::ops::Builtin::Promise,
+            key,
+        ) {
+            return Ok(override_value);
+        }
+    }
+    if matches!(value, Value::Builtin(crate::ops::Builtin::PromisePrototype))
+        && matches!(key, "then" | "catch" | "finally")
+    {
+        let property = crate::builtins::property(crate::ops::Builtin::PromisePrototype, key);
+        if !matches!(property, Value::Undefined) {
+            if matches!(receiver, Value::Builtin(crate::ops::Builtin::PromisePrototype)) {
+                return Ok(property);
+            }
+            return Ok(crate::vm::bind_receiver_property(property, receiver));
+        }
+    }
     if let Some(value) = proven_own_data(value, key) {
         return Ok(value);
     }
@@ -392,51 +337,25 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
     }
     let mut own = None;
     let mut metadata = None;
-    for (slot, name) in properties.names().enumerate().rev() {
+    for (name, value) in properties.iter().rev() {
         if crate::builtins::is_deleted_key_for(name, key) {
             return None;
         }
         if own.is_none() && name == key {
-            own = properties.slot_value(slot);
+            own = Some(value);
         }
         if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
-            metadata = properties.slot_value(slot);
+            metadata = Some(value);
         }
     }
     let own = own?;
     if matches!(own, Value::Null) && crate::vm::global_builtin_exists(key) {
         return None;
     }
-    if metadata.is_some_and(|value| accessor_descriptor(&value)) {
+    if metadata.is_some_and(accessor_descriptor) {
         return None;
     }
-    Some(property_value(&own))
-}
-
-/// Return the canonical execute word for proven ordinary own data. This is
-/// the L0 projection of `proven_own_data`: callers inspect the tag in place
-/// and fall back before any accessor, descriptor, deletion, or cell semantics.
-pub(crate) fn proven_own_word<'a>(
-    object: &'a crate::value::ObjectData,
-    key: &str,
-) -> Option<&'a crate::register_file::SlotWord> {
-    let mut own = None;
-    let mut metadata = None;
-    for (slot, name) in object.hot_properties().names().enumerate().rev() {
-        if crate::builtins::is_deleted_key_for(name, key) {
-            return None;
-        }
-        if own.is_none() && name == key {
-            own = object.hot_properties().slot_word(slot);
-        }
-        if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
-            metadata = object.hot_properties().slot_value(slot);
-        }
-    }
-    if metadata.is_some_and(|value| accessor_descriptor(&value)) {
-        return None;
-    }
-    own
+    Some(property_value(own))
 }
 
 fn accessor_descriptor(value: &Value) -> bool {
@@ -444,8 +363,8 @@ fn accessor_descriptor(value: &Value) -> bool {
         return true;
     };
     fields
-        .names()
-        .any(|name| matches!(name.as_str(), "get" | "set"))
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "get" | "set"))
 }
 
 fn function_inherited_property_result(
@@ -456,6 +375,17 @@ fn function_inherited_property_result(
     let Value::Function(function) = value else {
         return None;
     };
+    if let Some(builtin) = match key {
+        "apply" => Some(crate::ops::Builtin::FunctionApply),
+        "call" => Some(crate::ops::Builtin::FunctionCall),
+        "bind" => Some(crate::ops::Builtin::FunctionBind),
+        _ => None,
+    } {
+        return Some(Ok(crate::vm::bind_receiver_property(
+            Value::Builtin(builtin),
+            receiver,
+        )));
+    }
     let properties = function.properties.borrow();
     if properties.iter().any(|(name, _)| name == key) {
         return None;
@@ -476,6 +406,32 @@ fn function_inherited_property_result(
             (name == "\0function_prototype" || name == "\0prototype").then(|| value.clone())
         })
         .unwrap_or_else(|| function_kind_prototype(function));
+    if matches!(prototype, Value::Builtin(crate::ops::Builtin::Promise))
+        && matches!(
+            key,
+            "resolve"
+                | "reject"
+                | "all"
+                | "allSettled"
+                | "any"
+                | "race"
+                | "withResolvers"
+                | "try"
+        )
+    {
+        let property = crate::builtins::property(crate::ops::Builtin::Promise, key);
+        if !matches!(property, Value::Undefined) {
+            return Some(Ok(crate::vm::bind_receiver_property(property, receiver)));
+        }
+    }
+    if matches!(prototype, Value::Builtin(crate::ops::Builtin::Promise))
+        && key == "Symbol.species"
+    {
+        return Some(Ok(crate::builtins::property(
+            crate::ops::Builtin::Promise,
+            key,
+        )));
+    }
     Some(get_property_with_receiver(&prototype, key, receiver))
 }
 
@@ -503,8 +459,26 @@ fn object_inherited_property_result(
     let Value::Object(properties) = value else {
         return None;
     };
+    if key == "stack" && receiver_has_error_prototype(receiver)
+    {
+        return Some(invoke_accessor(
+            &Value::Builtin(crate::ops::Builtin::ErrorPrototypeStackGetter),
+            receiver,
+        ));
+    }
     if properties.iter().any(|(name, _)| name == key) {
         return None;
+    }
+    if key == "Symbol.iterator"
+        && properties.iter().any(|(name, value)| {
+            name == "_value" && matches!(value, Value::String(_))
+        })
+    {
+        return Some(get_property_with_receiver(
+            &Value::Builtin(crate::ops::Builtin::StringPrototype),
+            key,
+            receiver,
+        ));
     }
     // Per spec §GetV for boxed primitives: an exotic String object exposes
     // its [[StringData]] as virtual indexed properties. Resolve the tag
@@ -512,12 +486,51 @@ fn object_inherited_property_result(
     if let Some(value) = boxed_string_property(properties, key) {
         return Some(Ok(value));
     }
-    let prototype_slot = properties.position_rev("\0prototype")?;
-    let prototype = properties.slot_value(prototype_slot)?;
+    // Ordinary object literals inherit from Object.prototype even though
+    // their compact representation stores no prototype entry.  An explicit
+    // entry still wins, including `null` for a null-prototype object.  Only
+    // claim a default inherited property when Object.prototype actually has
+    // it; host objects use the fall-through lookup paths below for their own
+    // dynamic surface.
+    let explicit = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value));
+    let prototype = match explicit {
+        Some(prototype) => prototype.clone(),
+        None => Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+    };
     if matches!(prototype, Value::Null) {
         return Some(Ok(Value::Undefined));
     }
-    Some(get_property_with_receiver(&prototype, key, receiver))
+    let inherited = get_property_with_receiver(&prototype, key, receiver);
+    if explicit.is_none() && matches!(&inherited, Ok(Value::Undefined)) {
+        return None;
+    }
+    Some(inherited)
+}
+
+fn receiver_has_error_prototype(receiver: &Value) -> bool {
+    let Value::Object(object) = receiver else { return false };
+    if !object.iter().any(|(name, _)| name == crate::builtins::ERROR_SLOT) {
+        return false;
+    }
+    let mut prototype = object
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value.clone()));
+    for _ in 0..8 {
+        let Some(candidate) = prototype else { return false };
+        let name = crate::execute::get_property(&candidate, "constructor");
+        if matches!(name, Value::BoundFunction(_) | Value::Builtin(_)) {
+            let name = crate::execute::get_property(&name, "name");
+            if matches!(name, Value::String(name) if matches!(name.as_str(), "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError" | "TypeError" | "URIError" | "AggregateError" | "SuppressedError")) {
+                return true;
+            }
+        }
+        prototype = crate::builtins::object::get_prototype_of(Some(&candidate)).ok();
+    }
+    false
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
@@ -593,6 +606,11 @@ fn array_property_result(
         return None;
     };
     if array_has_own_property(values, key) {
+        if let Ok(index) = key.parse::<usize>() {
+            return values
+                .get_index(index)
+                .map(|value| Ok(crate::locals::resolved_replacement(value)));
+        }
         return None;
     }
     if values.is_arguments() {
@@ -602,9 +620,48 @@ fn array_property_result(
             receiver,
         ));
     }
+    let intrinsic = crate::arrays::property(values, key);
+    if !matches!(intrinsic, Value::Undefined) {
+        let property = if matches!(key, "constructor" | "prototype") {
+            intrinsic
+        } else {
+            crate::vm::bind_receiver_property(intrinsic, receiver)
+        };
+        return Some(Ok(property));
+    }
     crate::arrays::prototype_override_getter(key).map(|getter| match getter {
         Value::Undefined => Ok(Value::Undefined),
         getter => invoke_accessor(&getter, receiver),
+    }).or_else(|| {
+        if let Some(Value::Object(properties)) =
+            crate::builtins::read_intrinsic_override(crate::ops::Builtin::ObjectPrototype, key)
+        {
+            if let Some(getter) = properties
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "get").then_some(value.clone()))
+            {
+                return Some(match getter {
+                    Value::Undefined => Ok(Value::Undefined),
+                    getter => invoke_accessor(&getter, receiver),
+                });
+            }
+            if let Some(value) = properties
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "value").then_some(value.clone()))
+            {
+                return Some(Ok(value));
+            }
+        }
+        let prototype = crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype);
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&prototype),
+            Some(&Value::String(key.to_string())),
+        )
+        .ok()?;
+        (!matches!(descriptor, Value::Undefined))
+            .then(|| get_property_with_receiver(&prototype, key, receiver))
     })
 }
 
@@ -621,6 +678,28 @@ fn descriptor_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     if let Value::Builtin(builtin) = value {
+        if key == "description"
+            && crate::intl::tolocale::symbol::name(*builtin).is_some()
+        {
+            return Some(invoke_accessor(
+                &Value::Builtin(crate::ops::Builtin::SymbolDescriptionGetter),
+                receiver,
+            ));
+        }
+        if let Some(Value::Object(descriptor)) =
+            crate::builtins::read_intrinsic_override(*builtin, key)
+        {
+            if let Some(getter) = descriptor
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "get").then_some(value.clone()))
+            {
+                return Some(match getter {
+                    Value::Undefined => Ok(Value::Undefined),
+                    getter => invoke_accessor(&getter, receiver),
+                });
+            }
+        }
         if let Some(getter) = crate::builtins::object::intrinsic_getter(*builtin, key) {
             return Some(invoke_accessor(&Value::Builtin(getter), receiver));
         }
@@ -628,11 +707,16 @@ fn descriptor_property_result(
         return (!matches!(property, Value::Undefined)).then_some(Ok(property));
     }
     if let Value::Array(values) = value {
+        if values.is_arguments() && key == "length" {
+            return Some(Ok(values.arguments_length_value()));
+        }
         if key == "length" {
             return Some(Ok(Value::Number(values.logical_len() as f64)));
         }
         if let Ok(index) = key.parse::<usize>() {
-            return values.get_index(index).map(Ok);
+            return values
+                .get_index(index)
+                .map(|value| Ok(crate::locals::resolved_replacement(value)));
         }
         if values.descriptor(key).is_none() {
             return values.property(key).map(|value| Ok(property_value(&value)));
@@ -643,8 +727,7 @@ fn descriptor_property_result(
             return Some(Ok(Value::Number(crate::strings::utf16_len(text) as f64)));
         }
         if let Ok(index) = key.parse::<usize>() {
-            return crate::strings::char_at_utf16(text, index)
-                .map(Ok);
+            return crate::strings::char_at_utf16(text, index).map(Ok);
         }
         return None;
     }
@@ -677,7 +760,7 @@ fn descriptor_property_result(
         {
             return Some(match getter {
                 Value::Undefined => Ok(Value::Undefined),
-                getter => invoke_accessor(&getter, receiver),
+                getter => invoke_accessor(getter, receiver),
             });
         }
     }
@@ -739,6 +822,11 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 }
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
+    if matches!(value, Value::Builtin(Builtin::PromisePrototype))
+        && matches!(key, "then" | "catch" | "finally")
+    {
+        return bind_receiver_property(crate::builtins::property(Builtin::PromisePrototype, key), receiver);
+    }
     let property = get_property(value, key);
     if should_preserve_receiver_property(value, key, &property, receiver)
         || same_property_receiver(value, receiver)
@@ -819,12 +907,33 @@ pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
                 && !is_iterator_next_builtin(builtin)
+                && crate::builtin_meta::array::fn_name(builtin).is_none()
                 && crate::intl::tolocale::symbol::name(builtin).is_none() =>
         {
             bind_method(receiver, Value::Builtin(builtin))
         }
+        Value::BoundFunction(bound)
+            if receiver_bound_builtin(&bound)
+                || matches!(
+                    bound.target,
+                    Value::Builtin(
+                        Builtin::PromiseThen | Builtin::PromiseCatch | Builtin::PromiseFinally
+                    )
+                ) =>
+        {
+            bind_method(receiver, bound.target.clone())
+        }
         other => other,
     }
+}
+
+fn receiver_bound_builtin(bound: &crate::value::BoundFunctionValue) -> bool {
+    matches!(
+        bound.target,
+        Value::Builtin(crate::ops::Builtin::TypedArrayIterator)
+    )
+        && bound.arguments.is_empty()
+        && bound.properties.borrow().is_empty()
 }
 
 fn is_iterator_next_builtin(builtin: Builtin) -> bool {
