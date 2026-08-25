@@ -217,11 +217,11 @@ fn own_descriptor(name: &str) -> Option<Descriptor> {
     };
     let immutable = crate::globals::immutable_value(name).is_some();
     Some(Descriptor {
-        value: field(&fields, "value").unwrap_or(Value::Undefined),
-        writable: !immutable && flag(&fields, "writable"),
-        enumerable: !immutable && flag(&fields, "enumerable"),
-        configurable: !immutable && flag(&fields, "configurable"),
-        data: has_field(&fields, "value") || has_field(&fields, "writable"),
+        value: field(fields.as_ref(), "value").unwrap_or(Value::Undefined),
+        writable: !immutable && flag(fields.as_ref(), "writable"),
+        enumerable: !immutable && flag(fields.as_ref(), "enumerable"),
+        configurable: !immutable && flag(fields.as_ref(), "configurable"),
+        data: has_field(fields.as_ref(), "value") || has_field(fields.as_ref(), "writable"),
     })
 }
 
@@ -281,17 +281,17 @@ fn define_global(
     Ok(())
 }
 
-fn field<K: AsRef<str>>(fields: &[(K, Value)], name: &str) -> Option<Value> {
+fn field<P: crate::value::PropertyEntries + ?Sized>(fields: &P, name: &str) -> Option<Value> {
     fields
-        .iter()
+        .entries()
         .rev()
-        .find_map(|(key, value)| (key.as_ref() == name).then(|| value.clone()))
+        .find_map(|(key, value)| (key == name).then(|| value.clone()))
 }
 
-fn has_field<K: AsRef<str>>(fields: &[(K, Value)], name: &str) -> bool {
-    fields.iter().any(|(key, _)| key.as_ref() == name)
+fn has_field<P: crate::value::PropertyEntries + ?Sized>(fields: &P, name: &str) -> bool {
+    fields.entries().any(|(key, _)| key == name)
 }
 
-fn flag<K: AsRef<str>>(fields: &[(K, Value)], name: &str) -> bool {
+fn flag<P: crate::value::PropertyEntries + ?Sized>(fields: &P, name: &str) -> bool {
     matches!(field(fields, name), Some(Value::Boolean(true)))
 }

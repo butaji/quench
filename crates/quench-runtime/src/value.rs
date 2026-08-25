@@ -474,73 +474,148 @@ impl PartialEq<String> for PropertyName {
     }
 }
 
+impl PartialEq<str> for &PropertyName {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<String> for &PropertyName {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
 /// Canonical ordinary-property table. Callers use this boundary instead of
 /// depending on the eventual physical slot layout.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct ObjectProperties(Vec<(PropertyName, Value)>);
+pub struct ObjectProperties {
+    names: Vec<PropertyName>,
+    values: Vec<Value>,
+}
 
 impl ObjectProperties {
     pub fn new() -> Self {
-        Self(Vec::new())
+        Self::default()
     }
     pub fn with_capacity(capacity: usize) -> Self {
-        Self(Vec::with_capacity(capacity))
+        Self {
+            names: Vec::with_capacity(capacity),
+            values: Vec::with_capacity(capacity),
+        }
     }
 
     #[cold]
     pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> {
-        self.0.clone()
+        self.names
+            .iter()
+            .cloned()
+            .zip(self.values.iter().cloned())
+            .collect()
     }
 
     #[inline]
     pub(crate) fn slot_value(&self, slot: usize) -> Option<&Value> {
-        self.0.get(slot).map(|(_, value)| value)
+        self.values.get(slot)
+    }
+
+    #[inline]
+    pub(crate) fn slot_value_mut(&mut self, slot: usize) -> Option<&mut Value> {
+        self.values.get_mut(slot)
+    }
+
+    #[inline]
+    pub(crate) fn name_at(&self, slot: usize) -> Option<&PropertyName> {
+        self.names.get(slot)
     }
 
     #[inline]
     pub(crate) fn slot_entry(&self, slot: usize) -> Option<(&PropertyName, &Value)> {
-        self.0.get(slot).map(|(name, value)| (name, value))
+        self.names.get(slot).zip(self.values.get(slot))
     }
-}
 
-impl std::ops::Deref for ObjectProperties {
-    type Target = Vec<(PropertyName, Value)>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.names.len()
     }
-}
 
-impl std::ops::DerefMut for ObjectProperties {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    pub fn capacity(&self) -> usize {
+        debug_assert_eq!(self.names.capacity(), self.values.capacity());
+        self.names.capacity().min(self.values.capacity())
+    }
+
+    pub fn push(&mut self, (name, value): (PropertyName, Value)) {
+        self.names.push(name);
+        self.values.push(value);
+    }
+
+    pub fn iter(
+        &self,
+    ) -> std::iter::Zip<std::slice::Iter<'_, PropertyName>, std::slice::Iter<'_, Value>> {
+        self.names.iter().zip(&self.values)
+    }
+
+    pub fn iter_mut(
+        &mut self,
+    ) -> std::iter::Zip<std::slice::Iter<'_, PropertyName>, std::slice::IterMut<'_, Value>> {
+        self.names.iter().zip(&mut self.values)
+    }
+
+    pub fn get(&self, index: usize) -> Option<(&PropertyName, &Value)> {
+        self.slot_entry(index)
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut((&PropertyName, &Value)) -> bool) {
+        let mut names = Vec::with_capacity(self.names.len());
+        let mut values = Vec::with_capacity(self.values.len());
+        for (name, value) in self.names.drain(..).zip(self.values.drain(..)) {
+            if keep((&name, &value)) {
+                names.push(name);
+                values.push(value);
+            }
+        }
+        self.names = names;
+        self.values = values;
     }
 }
 
 impl From<Vec<(PropertyName, Value)>> for ObjectProperties {
     fn from(entries: Vec<(PropertyName, Value)>) -> Self {
-        Self(entries)
+        entries.into_iter().collect()
     }
 }
 
 impl FromIterator<(PropertyName, Value)> for ObjectProperties {
     fn from_iter<T: IntoIterator<Item = (PropertyName, Value)>>(entries: T) -> Self {
-        Self(entries.into_iter().collect())
+        let iterator = entries.into_iter();
+        let (lower, _) = iterator.size_hint();
+        let mut properties = Self::with_capacity(lower);
+        for entry in iterator {
+            properties.push(entry);
+        }
+        properties
     }
 }
 
 impl<'a> IntoIterator for &'a ObjectProperties {
-    type Item = &'a (PropertyName, Value);
-    type IntoIter = std::slice::Iter<'a, (PropertyName, Value)>;
+    type Item = (&'a PropertyName, &'a Value);
+    type IntoIter = std::iter::Zip<std::slice::Iter<'a, PropertyName>, std::slice::Iter<'a, Value>>;
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
+        self.names.iter().zip(&self.values)
     }
 }
 
 impl<'a> IntoIterator for &'a mut ObjectProperties {
-    type Item = &'a mut (PropertyName, Value);
-    type IntoIter = std::slice::IterMut<'a, (PropertyName, Value)>;
+    type Item = (&'a PropertyName, &'a mut Value);
+    type IntoIter =
+        std::iter::Zip<std::slice::Iter<'a, PropertyName>, std::slice::IterMut<'a, Value>>;
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter_mut()
+        self.names.iter().zip(&mut self.values)
     }
 }
 
@@ -556,14 +631,14 @@ pub(crate) trait PropertyEntries {
 
 impl PropertyEntries for ObjectProperties {
     type Iter<'a> = std::iter::Map<
-        std::slice::Iter<'a, (PropertyName, Value)>,
-        fn(&'a (PropertyName, Value)) -> (&'a str, &'a Value),
+        std::iter::Zip<std::slice::Iter<'a, PropertyName>, std::slice::Iter<'a, Value>>,
+        fn((&'a PropertyName, &'a Value)) -> (&'a str, &'a Value),
     >;
     fn entries(&self) -> Self::Iter<'_> {
-        fn split(entry: &(PropertyName, Value)) -> (&str, &Value) {
-            (entry.0.as_str(), &entry.1)
+        fn split<'a>((name, value): (&'a PropertyName, &'a Value)) -> (&'a str, &'a Value) {
+            (name.as_str(), value)
         }
-        self.0.iter().map(split)
+        self.iter().map(split)
     }
 }
 
@@ -817,7 +892,7 @@ fn intern_object_layout(properties: &ObjectProperties) -> u32 {
     })
 }
 
-fn creation_order(properties: &[(PropertyName, Value)]) -> Vec<PropertyName> {
+fn creation_order(properties: &ObjectProperties) -> Vec<PropertyName> {
     // Bootstrap objects commonly arrive with all properties at once. Reserve
     // the final key count so creation-order storage does not repeatedly grow
     // and retain transient allocator pages during bootstrap.
@@ -884,7 +959,10 @@ mod object_identity_tests {
     #[test]
     fn creation_order_shares_the_canonical_property_name() {
         let object = ObjectData::new(vec![("currentTask".into(), super::Value::Undefined)]);
-        assert!(Rc::ptr_eq(&object.properties[0].0 .0, &object.created[0].0));
+        assert!(Rc::ptr_eq(
+            &object.properties.name_at(0).unwrap().0,
+            &object.created[0].0
+        ));
     }
 }
 /// Derived layout facts for ordinary objects. These are never authoritative;
@@ -988,7 +1066,7 @@ impl ObjectData {
             debug_assert_eq!(self.slot_for(name), Some(slot));
             debug_assert!(self
                 .value_at_slot(slot)
-                .is_some_and(|candidate| std::ptr::eq(candidate, value)));
+                .is_some_and(|candidate| std::ptr::eq(candidate, *value)));
         }
     }
 
@@ -1804,7 +1882,7 @@ mod shape_tests {
         let mut object = ObjectData::new(vec![("key".into(), Value::Undefined)]);
         assert_eq!(object.properties.len(), 1);
         assert_eq!(object.slot_for("key"), Some(0));
-        object.properties[0].1 = Value::Number(7.0);
+        *object.properties.slot_value_mut(0).unwrap() = Value::Number(7.0);
         assert_eq!(object.value_at_slot(0), Some(&Value::Number(7.0)));
         assert_eq!(object.properties.capacity(), 1);
     }
@@ -1874,7 +1952,7 @@ mod shape_tests {
             Some(&Value::Number(2.0))
         );
 
-        object.properties[0].1 = Value::Number(9.0);
+        *object.properties.slot_value_mut(0).unwrap() = Value::Number(9.0);
         assert_eq!(object.shape().id, initial_shape);
         assert_eq!(
             object.value_for_shape_slot(initial_shape, 0),
