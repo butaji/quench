@@ -376,16 +376,8 @@ globalThis.process = {
   },
   umask: (mask) =>
     globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
-  nextTick: (callback, ...args) => {
-    if (typeof callback !== "function") {
-      throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
-    }
-    const activeDomain = globalThis.__quench_active_domain;
-    queueMicrotask(() => {
-      if (activeDomain) activeDomain.run(callback, ...args);
-      else callback(...args);
-    });
-  },
+  nextTick: (callback, ...args) =>
+    globalThis.__quench_process_next_tick(callback, ...args),
   send: (...values) => {
     const callback = values.at(-1);
     const hasCallback = typeof callback === "function";

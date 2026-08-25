@@ -623,6 +623,10 @@ pub fn namespace_bindings(
         crate::host::capability(crate::registry::SPEC_RUN_LOOP),
     ));
     out.push((
+        "__quench_process_next_tick".to_string(),
+        crate::host::capability(crate::registry::SPEC_PROCESS_NEXT_TICK),
+    ));
+    out.push((
         "__quench_run_exit__".to_string(),
         crate::host::capability(crate::registry::SPEC_RUN_EXIT),
     ));
