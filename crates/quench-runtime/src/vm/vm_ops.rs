@@ -115,13 +115,15 @@ pub fn execute_call_continuation(
             }
         }
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
-        if let Some(result) =
-            crate::functions::execute_proven_leaf(function, &receiver, &continuation.arguments)
-        {
-            let value = result?;
-            *registers = continuation.caller_registers;
-            super::write_value(registers, continuation.destination, value);
-            return Ok(());
+        if !function.is_async && !matches!(function.kind, crate::ops::FunctionKind::Generator) {
+            if let Some(result) =
+                crate::functions::execute_proven_leaf(function, &receiver, &continuation.arguments)
+            {
+                let value = result?;
+                *registers = continuation.caller_registers;
+                super::write_value(registers, continuation.destination, value);
+                return Ok(());
+            }
         }
     }
     let mut stack: Vec<ActiveCall> = Vec::new();

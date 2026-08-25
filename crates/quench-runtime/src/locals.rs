@@ -317,6 +317,16 @@ pub(crate) fn load_binding(
             crate::execute::write_value(registers, dst, value);
             return Ok(());
         }
+        // A captured slot can still be rebound by a sloppy direct eval in an
+        // enclosing activation.  Consult the shared eval-alias map before
+        // falling back to the captured slot value; otherwise closures created
+        // before eval keep reading the outer/global snapshot.
+        if environment.eval_name_aliases_slot(name, slot) {
+            if let Some(value) = resolve_eval_name(name) {
+                crate::execute::write_value(registers, dst, value);
+                return Ok(());
+            }
+        }
         if slot < crate::locals::current_eval_var_scope_start() {
             if let Some(value) = crate::with_scope::resolve_binding(name)? {
                 crate::execute::write_value(registers, dst, value);
@@ -327,12 +337,6 @@ pub(crate) fn load_binding(
             return Err(crate::value::error::throw_reference_error(&format!(
                 "Cannot access deleted binding '{name}'"
             )));
-        }
-        if environment.eval_name_aliases_slot(name, slot) {
-            if let Some(value) = resolve_eval_name(name) {
-                crate::execute::write_value(registers, dst, value);
-                return Ok(());
-            }
         }
     }
     if environment.is_uninitialized(slot) {

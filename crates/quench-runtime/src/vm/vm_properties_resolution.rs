@@ -512,6 +512,11 @@ fn array_property_result(
         return None;
     };
     if array_has_own_property(values, key) {
+        if let Ok(index) = key.parse::<usize>() {
+            return values
+                .get_index(index)
+                .map(|value| Ok(crate::locals::resolved_replacement(value)));
+        }
         return None;
     }
     if values.is_arguments() {
@@ -607,7 +612,9 @@ fn descriptor_property_result(
             return Some(Ok(Value::Number(values.logical_len() as f64)));
         }
         if let Ok(index) = key.parse::<usize>() {
-            return values.get_index(index).map(Ok);
+            return values
+                .get_index(index)
+                .map(|value| Ok(crate::locals::resolved_replacement(value)));
         }
         if values.descriptor(key).is_none() {
             return values.property(key).map(|value| Ok(property_value(&value)));

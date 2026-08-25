@@ -109,6 +109,12 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let descriptor = descriptor_fields(descriptor)?;
     let result = define_own_property(&target, &key, &descriptor)?;
     crate::locals::replace_value(&target, &result);
+    // Global objects use copy-on-write storage.  Keep the realm owner and
+    // every retained global alias on the same replacement when the public
+    // Object.defineProperty path mutates one; the VM DefineProperty op does
+    // the same publication explicitly.
+    let mut registers = crate::register_file::RegisterFile::new();
+    crate::vm::synchronize_global_object(&mut registers, &target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
 }

@@ -1,3 +1,5 @@
+use oxc::ast::visit::Visit;
+
 pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
     formal: &oxc::ast::ast::FormalParameters<'_>,
@@ -106,7 +108,8 @@ fn reduce_function_body(
     );
     facts.eval_var_scope_start = layout.1;
     facts.eval_arrow_scope = arrow_expression.is_some();
-    facts.function_has_direct_eval = function_has_direct_eval(syntax.0);
+    facts.function_has_direct_eval =
+        inherited.2 || function_has_direct_eval(syntax.0, syntax.1);
     let previous_name_slot = facts.function_name_slot;
     facts.function_name_slot = self_name_slot
         .or_else(|| previous_name_slot.filter(|slot| captured_name_slot.contains(slot)));
@@ -120,7 +123,10 @@ fn reduce_function_body(
     result
 }
 
-fn function_has_direct_eval(statements: &[oxc::ast::ast::Statement<'_>]) -> bool {
+fn function_has_direct_eval(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    formal: &oxc::ast::ast::FormalParameters<'_>,
+) -> bool {
     struct Finder(bool);
     impl<'a> oxc::ast::visit::Visit<'a> for Finder {
         fn visit_call_expression(&mut self, call: &oxc::ast::ast::CallExpression<'a>) {
@@ -148,6 +154,7 @@ fn function_has_direct_eval(statements: &[oxc::ast::ast::Statement<'_>]) -> bool
     for statement in statements {
         oxc::ast::visit::walk::walk_statement(&mut finder, statement);
     }
+    finder.visit_formal_parameters(formal);
     finder.0
 }
 
