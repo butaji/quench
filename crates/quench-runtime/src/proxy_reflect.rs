@@ -168,7 +168,7 @@ fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), Vm
         )?;
         if is_non_configurable_descriptor(&descriptor) && !returned.contains(key) {
             return Err(crate::value::error::throw_type_error(
-                "Proxy ownKeys trap omitted non-configurable property",
+                &format!("'ownKeys' on proxy: trap result did not include '{key}'"),
             ));
         }
     }
@@ -177,7 +177,7 @@ fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), Vm
             || target_keys.iter().any(|key| !returned.contains(key)))
     {
         return Err(crate::value::error::throw_type_error(
-            "Proxy ownKeys trap result does not match non-extensible target",
+            "'ownKeys' on proxy: trap result did not include all non-configurable target keys",
         ));
     }
     Ok(())
