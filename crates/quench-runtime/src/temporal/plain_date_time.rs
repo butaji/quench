@@ -446,10 +446,27 @@ fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Valu
 }
 
 fn fields(value: &Value) -> Result<Vec<f64>, VmError> {
+    let Value::Object(object) = value else {
+        return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
+    };
     NAMES
         .iter()
-        .map(|name| crate::execute::get_property_result(value, name))
-        .map(|value| value.and_then(|value| crate::conversion::to_number(&value)))
+        .map(|name| {
+            object
+                .iter()
+                .find(|(key, value)| {
+                    (key == name || key == &format!("\0temporal-slot:\0{name}"))
+                        && matches!(value, Value::Number(_))
+                })
+                .map(|(_, value)| match value {
+                    Value::Number(value) => Ok(*value),
+                    _ => unreachable!(),
+                })
+                .unwrap_or_else(|| {
+                    crate::execute::get_property_result(value, name)
+                        .and_then(|value| crate::conversion::to_number(&value))
+                })
+        })
         .collect()
 }
 
