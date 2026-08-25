@@ -93,6 +93,12 @@ pub fn set_callable_property(
                 .push((key.to_owned(), value));
             Ok(())
         }
+        crate::value::Value::HostCapability(capability) => {
+            let mut properties = capability.properties.borrow_mut();
+            properties.retain(|(name, _)| name != key);
+            properties.push((key.to_owned(), value));
+            Ok(())
+        }
         _ => Err(VmError::NotCallable),
     }
 }
