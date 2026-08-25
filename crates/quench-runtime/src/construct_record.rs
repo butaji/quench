@@ -113,7 +113,7 @@ fn try_record_constructor(
     });
     record_prototype_is_data_only(&prototype, &fact)?;
     let mut properties = Vec::with_capacity(3);
-    properties.push(("\0prototype".to_string(), prototype));
+    properties.push(("\0prototype".to_string(), prototype.clone()));
     for (key, argument) in fact.fields {
         let value = arguments
             .get(usize::from(argument))
@@ -121,12 +121,12 @@ fn try_record_constructor(
             .unwrap_or(crate::value::Value::Undefined);
         properties.push((
             key.to_string(),
-            crate::value::Value::BindingCell(crate::value::BindingCell::new(value)),
+            value,
         ));
     }
-    Some(crate::value::Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(properties),
-    )))
+    let object = std::rc::Rc::new(crate::value::ObjectData::new(properties));
+    object.capture_original_prototype(prototype);
+    Some(crate::value::Value::Object(object))
 }
 
 fn record_prototype_is_data_only(

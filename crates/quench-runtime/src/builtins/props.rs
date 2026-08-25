@@ -38,6 +38,8 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     }
     match key {
         "Symbol.iterator" => Some(Value::Builtin(Builtin::IteratorSelf)),
+        "Symbol.toStringTag" => Some(Value::String("Iterator".into())),
+        "constructor" => Some(Value::Builtin(Builtin::Iterator)),
         "filter" => Some(Value::Builtin(Builtin::IteratorFilter)),
         _ => None,
     }
@@ -94,9 +96,6 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     }
     if builtin == Iterator && key == "zip" {
         return Some(IteratorZip);
-    }
-    if builtin == Iterator && key == "zipKeyed" {
-        return Some(IteratorZipKeyed);
     }
     if builtin == SharedArrayBuffer && key == "prototype" {
         return Some(SharedArrayBufferPrototype);
@@ -341,7 +340,8 @@ fn uint8_array_base64_method(builtin: Builtin, key: &str) -> Option<Builtin> {
             return Some(method);
         }
     }
-    (key == "subarray" && is_typed_array_prototype(builtin)).then_some(Builtin::Uint8ArraySubarray)
+    (key == "subarray" && is_typed_array_prototype(builtin))
+        .then_some(Builtin::Uint8ArraySubarray)
 }
 fn is_typed_array_prototype(builtin: Builtin) -> bool {
     use Builtin::*;
@@ -368,23 +368,6 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
             (1, "basename") => Custom(2),
             (3, "log") => Custom(4),
             (5, "cwd") => Custom(6),
-            (100, "start") => Custom(101),
-            (100, "receiveBroadcast") => Custom(102),
-            (100, "report") => Custom(103),
-            (100, "getReport") => Custom(104),
-            (100, "safeBroadcast") => Custom(105),
-            (100, "waitUntil") => Custom(106),
-            (100, "leaving") => Custom(107),
-            (100, "tryYield") => Custom(108),
-            (100, "monotonicNow") => Custom(109),
-            (100, "setTimeout") => Custom(110),
-            (100, "timeouts") => Custom(111),
-            (100, "getReportAsync") => Custom(112),
-            (100, "safeBroadcastAsync") => Custom(113),
-            (100, "trySleep") => Custom(114),
-            (111, "small") => Custom(115),
-            (111, "long") => Custom(116),
-            (111, "huge") => Custom(117),
             _ => return None,
         };
         return Some(Builtin::HostCapability(custom));
@@ -395,7 +378,6 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
         "evalScript" => EvalScript,
         "detachArrayBuffer" => DetachArrayBuffer,
         "IsHTMLDDA" => IsHTMLDDA,
-        "agent" => Custom(100),
         "AbstractModuleSource" => return Some(Builtin::AbstractModuleSource),
         _ => return None,
     };

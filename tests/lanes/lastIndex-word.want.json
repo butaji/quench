@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "oracle": { "max_ratio": 2 },
+  "metrics": {
+    "regexp_exec_hit_per_iteration": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "regexp_exact_global_exec", "field": "hits" } },
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "min": 0.99
+    },
+    "header_per_access": {
+      "numerator": "lanes.l3.last_index.header",
+      "denominator": {
+        "sum": [
+          "lanes.l3.last_index.header",
+          "lanes.l3.last_index.getn",
+          "lanes.l3.last_index.binding_cell"
+        ]
+      },
+      "min_traffic": 100000,
+      "min": 0.99
+    },
+    "binding_cell_per_access": {
+      "numerator": "lanes.l3.last_index.binding_cell",
+      "denominator": {
+        "sum": [
+          "lanes.l3.last_index.header",
+          "lanes.l3.last_index.getn",
+          "lanes.l3.last_index.binding_cell"
+        ]
+      },
+      "min_traffic": 100000,
+      "max": 0
+    }
+  }
+}

@@ -59,7 +59,6 @@ pub(crate) fn create(
         pending_yield: RefCell::new(false),
         executing: RefCell::new(false),
         running: RefCell::new(false),
-        pending_completion: RefCell::new(None),
         async_next_queue: RefCell::new(VecDeque::new()),
     })))
 }
@@ -93,6 +92,7 @@ fn initialize_parameters(
             nested: 0,
             private_environment: None,
             suspension: None,
+            async_for_of: None,
         }),
         registers,
         marker as u32,
@@ -154,7 +154,7 @@ pub(crate) fn async_next(receiver: Option<&Value>, arguments: &[Value]) -> Resul
         return async_next_error();
     }
     if *generator.executing.borrow() {
-        let promise = Rc::new(crate::value::PromiseData::default());
+        let promise = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
         generator
             .async_next_queue
             .borrow_mut()
@@ -274,20 +274,14 @@ pub(crate) enum Resume {
     Throw(Value),
 }
 
-pub(crate) fn resume(generator: &GeneratorData, input: Resume) -> Result<Value, VmError> {
-    let realm = crate::construct::function_realm_id(&generator.function);
-    if realm != crate::vm::current_context_or_default().realm() {
-        return crate::vm::with_realm(realm, || resume(generator, input))
-            .unwrap_or_else(|| Err(crate::vm::not_callable()));
-    }
+pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if *generator.running.borrow() {
-        *generator.done.borrow_mut() = true;
         return Err(crate::value::error::throw_type_error(
             "Generator is already executing",
         ));
     }
     *generator.running.borrow_mut() = true;
-    let result = resume_inner(generator, input);
+    let result = resume_inner(generator, resume);
     *generator.running.borrow_mut() = false;
     result
 }
@@ -327,7 +321,7 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
     state.suspension = step.suspension;
     capture_suspended_private_environment(generator, &mut state, &step.completion);
     update_machine_frame(generator, &state)?;
-    update_await_frame(generator, &state, &step.completion)?;
+    update_await_frame(generator, &mut state, &step.completion)?;
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
     result
@@ -395,9 +389,13 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
 
 fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
     let iterator = push_iterator_frame(generator, state)?;
-    let frame_count = generator.machine.borrow().frame_count();
-    push_try_frame(generator, state)?;
-    if generator.machine.borrow().frame_count() > frame_count {
+    if suspended_try(generator, state).is_some()
+        && !matches!(
+            generator.machine.borrow().frames.frames.last(),
+            Some(crate::machine::Frame::Try { .. })
+        )
+    {
+        push_try_frame(generator, state)?;
         return Ok(true);
     }
     if iterator {
@@ -514,6 +512,14 @@ fn resume_suspended_contexts(
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
     let mut completion = completion.clone();
+    if state.async_for_of.is_some() {
+        let spec = state.async_for_of.take().ok_or(VmError::MissingReturn)?;
+        let input = crate::execute::read_register(&registers(generator), spec.await_dst)?;
+        let (next, pending) =
+            crate::loops::resume_async_for_of(&mut registers_mut(generator), &spec, input)?;
+        state.async_for_of = pending;
+        return resume_machine_frame(generator, state, next).map(Some);
+    }
     if let Some(resumed) = resume_delegate_frame(generator, &completion)? {
         if resumed.is_suspension() {
             return resume_machine_frame(generator, state, resumed).map(Some);
@@ -645,5 +651,6 @@ fn initialize_state(generator: &GeneratorData) {
         nested: 0,
         private_environment: None,
         suspension: None,
+        async_for_of: None,
     });
 }

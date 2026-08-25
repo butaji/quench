@@ -24,32 +24,14 @@ fn load(source: &str) -> Result<Value, VmError> {
     quench_runtime::execute::get_property_result(&module, "exports")
 }
 
-pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("cluster.js"))
-}
-pub fn domain(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("domain.js"))
-}
-pub fn diagnostics_channel(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("diagnostics_channel.js"))
-}
 pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("v8.js"))
-}
-pub fn inspector(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("inspector.js"))
-}
-pub fn repl(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("repl.js"))
-}
-pub fn wasi(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("wasi.js"))
 }
 pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("worker_threads.js"))
 }
 pub fn async_hooks(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("async_hooks.js"))
+    Ok(crate::modules::async_hooks::build())
 }
 
 pub fn sea_is_sea(

@@ -70,8 +70,10 @@ fn accept_one(
     peer: SocketAddr,
 ) -> Result<(), VmError> {
     let (object, id) = new_net_object(state, socket_props())?;
+    let object = install_socket_counters(object)?;
     let local = stream.local_addr().ok();
     let object = install_methods(object, net_info_props(peer, local))?;
+    set_socket_state(&object, false, false, "open");
     let socket = Rc::new(RefCell::new(NetSocket {
         id,
         stream: Some(stream),
@@ -79,9 +81,13 @@ fn accept_one(
         state: SocketState::Open,
         server_id: Some(server_id),
         write_buf: Vec::new(),
+        bytes_read: 0,
+        bytes_written: 0,
         read_eof: false,
         close_emitted: false,
         connect_announced: true,
+        peer: Some(peer),
+        local,
         encoding: None,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
@@ -107,7 +113,14 @@ struct SocketEvents {
 fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let events = read_sockets(state);
     for sock in events.connects {
-        let js = sock.borrow().js.clone();
+        let (js, peer, local) = {
+            let guard = sock.borrow();
+            (guard.js.clone(), guard.peer, guard.local)
+        };
+        if let (Some(peer), Some(local)) = (peer, local) {
+            install_methods(js.clone(), net_info_props(peer, Some(local)))?;
+        }
+        set_socket_state(&js, false, false, "open");
         emit(state, &js, "connect", Vec::new())?;
     }
     for (sock, bytes) in events.datas {
@@ -161,19 +174,28 @@ fn read_available(
     guard: &mut std::cell::RefMut<'_, NetSocket>,
     datas: &mut Vec<(Rc<RefCell<NetSocket>>, Vec<u8>)>,
 ) -> bool {
-    let Some(stream) = guard.stream.as_mut() else {
+    if guard.stream.is_none() {
         return false;
-    };
+    }
     let mut had_eof = false;
     loop {
         let mut buf = [0u8; READ_CHUNK];
-        match stream.read(&mut buf) {
+        let result = guard
+            .stream
+            .as_mut()
+            .expect("stream checked above")
+            .read(&mut buf);
+        match result {
             Ok(0) => {
                 guard.read_eof = true;
                 had_eof = true;
                 break;
             }
-            Ok(n) => datas.push((sock.clone(), buf[..n].to_vec())),
+            Ok(n) => {
+                guard.bytes_read = guard.bytes_read.saturating_add(n as u64);
+                update_socket_counters(&guard);
+                datas.push((sock.clone(), buf[..n].to_vec()));
+            }
             Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(_) => {
                 guard.read_eof = true;
@@ -264,6 +286,7 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     drop(host);
     for sock in to_close {
         let js = sock.borrow().js.clone();
+        set_socket_state(&js, true, false, "closed");
         emit(state, &js, "close", Vec::new())?;
     }
     Ok(())

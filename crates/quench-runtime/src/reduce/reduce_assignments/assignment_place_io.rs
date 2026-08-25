@@ -4,7 +4,15 @@ use crate::ops::Op;
 pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u16> {
     let dst = take_register(next);
     match place {
-        Place::Local { slot } => ops.push(Op::LoadLocal { dst, slot: *slot }),
+        Place::Local { slot, initialized } => {
+            if !initialized {
+                ops.push(Op::CheckInitialized {
+                    slot: *slot,
+                    name: format!("local_{slot}"),
+                });
+            }
+            ops.push(Op::LoadLocal { dst, slot: *slot });
+        }
         Place::FunctionName { slot, .. } => ops.push(Op::LoadLocal { dst, slot: *slot }),
         Place::DynamicLocal {
             name, slot, target, ..
@@ -81,7 +89,7 @@ fn emit_property_get(ops: &mut Vec<Op>, dst: u16, object: u16, key: &PlaceKey) {
 
 pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
     match place {
-        Place::Local { slot } => put_local(ops, slot, value),
+        Place::Local { slot, initialized } => put_local(ops, slot, value, initialized),
         Place::FunctionName { slot, strict } => ops.push(Op::StoreFunctionName {
             slot,
             src: value,
@@ -131,11 +139,13 @@ fn put_tail(place: Place, value: u16, ops: &mut Vec<Op>) {
     }
 }
 
-fn put_local(ops: &mut Vec<Op>, slot: u16, value: u16) {
-    ops.push(Op::CheckInitialized {
-        slot,
-        name: format!("local_{slot}"),
-    });
+fn put_local(ops: &mut Vec<Op>, slot: u16, value: u16, initialized: bool) {
+    if !initialized {
+        ops.push(Op::CheckInitialized {
+            slot,
+            name: format!("local_{slot}"),
+        });
+    }
     ops.push(Op::StoreLocal { slot, src: value });
 }
 

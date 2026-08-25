@@ -273,22 +273,18 @@ pub(crate) fn is_descriptor_key(key: &str) -> bool {
 /// Look up cold descriptor metadata without exposing the storage key to
 /// ordinary property-slot callers. The metadata vector is authoritative;
 /// this helper is deliberately a projection, not a second semantic record.
-pub(crate) fn descriptor_metadata<'a, K: AsRef<str>>(
-    properties: &'a [(K, Value)],
+pub(crate) fn descriptor_metadata<P: crate::value::PropertyEntries + ?Sized>(
+    properties: &P,
     key: &str,
-) -> Option<&'a Value> {
+) -> Option<Value> {
     properties
-        .iter()
+        .entries()
         .rev()
-        .find(|(name, _)| is_descriptor_key_for(name.as_ref(), key))
+        .find(|(name, _)| is_descriptor_key_for(name, key))
         .map(|(_, value)| value)
 }
 pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Value> {
     overrides::read(builtin, key)
-}
-
-pub(crate) fn intrinsic_override_removed(builtin: Builtin, key: &str) -> bool {
-    overrides::is_removed(builtin, key)
 }
 
 pub(crate) fn intrinsic_override_generation() -> u64 {
@@ -306,11 +302,12 @@ pub(crate) fn read_descriptor_value(builtin: Builtin, key: &str) -> Option<Value
     let Value::Object(properties) = read_intrinsic_override(builtin, key)? else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
         .find(|(name, _)| name == "value")
-        .map(|(_, value)| value.clone())
+        .map(|(_, value)| value.clone());
+    result
 }
 
 pub(crate) fn write_intrinsic_override(builtin: Builtin, key: &str, descriptor: Value) {
@@ -397,6 +394,7 @@ include!("builtins_array_fill.rs");
 include!("builtins_array_copy_within.rs");
 include!("builtins_array_find_last.rs");
 include!("builtins_array_to_sorted.rs");
+include!("builtins_array_extra.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let base = arguments
         .first()
@@ -499,7 +497,7 @@ fn set_function_property(
     key: &str,
     value: Value,
 ) -> Value {
-    if descriptor_flag_in(&function.properties.borrow(), key, "writable") == Some(false) {
+    if descriptor_flag_in(&function.properties.borrow()[..], key, "writable") == Some(false) {
         return Value::Function(function);
     }
     {

@@ -8,9 +8,12 @@ fn construct_builtin_match(
         crate::ops::Builtin::SharedArrayBuffer => construct_shared_array_buffer(arguments),
         crate::ops::Builtin::DataView => construct_data_view(arguments),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
-        crate::ops::Builtin::Iterator => Err(crate::value::error::throw_type_error(
-            "Iterator is not callable or constructable",
-        )),
+        crate::ops::Builtin::Iterator => Ok(crate::value::Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![(
+                "\0prototype".to_string(),
+                crate::value::Value::Builtin(crate::ops::Builtin::IteratorPrototype),
+            )]),
+        ))),
         crate::ops::Builtin::Number => construct_number(arguments),
         crate::ops::Builtin::Boolean => construct_boolean(arguments),
         crate::ops::Builtin::String => construct_string(arguments),
@@ -126,6 +129,31 @@ fn construct_typed_builtin(
         BigUint64Array => construct_biguint64_array(arguments),
         _ => return None,
     })
+}
+
+pub(crate) fn construct_float16_array(
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = construct_uint16_array(arguments)?;
+    let Some(source) = arguments.first() else {
+        return Ok(value);
+    };
+    let Value::Array(source) = source else {
+        return Ok(value);
+    };
+    let Value::Uint16Array(target) = &value else {
+        return Ok(value);
+    };
+    for index in 0..source.logical_len() {
+        let item = crate::execute::get_property(
+            &Value::Array(source.clone()),
+            &index.to_string(),
+        );
+        if matches!(item, Value::Number(number) if number == 0.0 && number.is_sign_negative()) {
+            target.set(index, 0x8000);
+        }
+    }
+    Ok(value)
 }
 
 fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {

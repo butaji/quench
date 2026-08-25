@@ -129,11 +129,13 @@ pub(crate) fn begin_global_declaration_batch() {
     };
     let mut properties = current.properties.clone();
     if let Some(math) = realm::intrinsic(current_realm(), crate::ops::Builtin::Math) {
-        if let Some((_, value)) = properties.iter_mut().rev().find(|(name, _)| name == "Math") {
-            match value {
+        if let Some(slot) = properties.position_rev("Math") {
+            let mut value = properties.slot_value(slot).unwrap_or(Value::Undefined);
+            match &mut value {
                 Value::BindingCell(cell) => cell.store(math),
                 value => *value = Value::BindingCell(crate::value::BindingCell::new(math)),
             }
+            properties.store_slot(slot, value);
         } else {
             properties.push((
                 "Math".into(),
@@ -331,13 +333,6 @@ pub(crate) fn replace_global_object(old: &Value, new: &Value) {
     }
     GLOBAL_OBJECT.with(|global| global.replace(Some(new_object.clone())));
     crate::locals::replace_value(old, new);
-}
-
-pub(crate) fn replace_realm_global_value(realm: RealmId, new: &Value) {
-    let Value::Object(object) = new else {
-        return;
-    };
-    replace_realm_global(realm, object.clone());
 }
 
 fn replace_register_aliases(

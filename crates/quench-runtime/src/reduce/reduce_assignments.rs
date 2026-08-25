@@ -17,6 +17,7 @@ pub(crate) enum PlaceKey {
 pub(crate) enum Place {
     Local {
         slot: u16,
+        initialized: bool,
     },
     FunctionName {
         slot: u16,
@@ -132,13 +133,9 @@ pub(crate) fn reduce_place(
     locals: &HashMap<String, u16>,
 ) -> Option<Place> {
     match target {
-        AssignmentTarget::AssignmentTargetIdentifier(identifier) => Some(identifier_place(
-            identifier.name.as_str(),
-            facts.strict,
-            facts.has_dynamic_scope(),
-            facts.function_name_slot,
-            locals,
-        )),
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+            Some(identifier_place(identifier.name.as_str(), facts, locals))
+        }
         AssignmentTarget::StaticMemberExpression(member) => member_place(
             &member.object,
             PlaceKey::Static(member.property.name.to_string()),
@@ -208,13 +205,7 @@ pub(crate) fn identifier_assignment_place(
     facts: &ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Place {
-    identifier_place(
-        name,
-        facts.strict,
-        facts.has_dynamic_scope(),
-        facts.function_name_slot,
-        locals,
-    )
+    identifier_place(name, facts, locals)
 }
 
 pub(crate) fn reduce_simple_place(
@@ -226,13 +217,7 @@ pub(crate) fn reduce_simple_place(
 ) -> Option<Place> {
     match target {
         oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
-            Some(identifier_place(
-                identifier.name.as_str(),
-                facts.strict,
-                facts.has_dynamic_scope(),
-                facts.function_name_slot,
-                locals,
-            ))
+            Some(identifier_place(identifier.name.as_str(), facts, locals))
         }
         oxc::ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => member_place(
             &member.object,
@@ -257,35 +242,34 @@ pub(crate) fn reduce_simple_place(
     }
 }
 
-fn identifier_place(
-    name: &str,
-    strict: bool,
-    dynamic_scope: bool,
-    function_name_slot: Option<u16>,
-    locals: &HashMap<String, u16>,
-) -> Place {
+fn identifier_place(name: &str, facts: &ProgramDb, locals: &HashMap<String, u16>) -> Place {
     locals.get(name).map_or_else(
         || Place::Name {
             name: name.to_string(),
-            strict,
+            strict: facts.strict,
             target: None,
         },
         |slot| {
-            if function_name_slot == Some(*slot) {
+            if facts.function_name_slot == Some(*slot) {
                 return Place::FunctionName {
                     slot: *slot,
-                    strict,
+                    strict: facts.strict,
                 };
             }
-            if dynamic_scope {
+            if facts.has_dynamic_scope() {
                 Place::DynamicLocal {
                     name: name.to_string(),
                     slot: *slot,
-                    strict,
+                    strict: facts.strict,
                     target: None,
                 }
             } else {
-                Place::Local { slot: *slot }
+                Place::Local {
+                    slot: *slot,
+                    initialized: crate::identifiers::proven_initialized_local(
+                        name, *slot, facts, locals,
+                    ),
+                }
             }
         },
     )

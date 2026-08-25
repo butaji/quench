@@ -3,13 +3,92 @@ const SMALL_LEAF_REGISTERS: usize = 32;
 const LEAF_LOCAL_SLOTS: usize = 128;
 const LEAF_FACT_SLOTS: usize = 256;
 
+pub(crate) fn execute_word_leaf_call(
+    caller: &mut crate::register_file::RegisterFile,
+    destination: u16,
+    callee: u16,
+    argument: Option<u16>,
+) -> Option<Result<(), crate::execute::VmError>> {
+    let function = caller.function_ptr(usize::from(callee))?;
+    // SAFETY: the caller register owns the function word for the complete
+    // call. This lane never overwrites that register before returning.
+    let function = unsafe { &*function };
+    if function.is_async
+        || !matches!(function.kind, crate::ops::FunctionKind::Ordinary)
+        || usize::from(function.params) != usize::from(argument.is_some())
+    {
+        return None;
+    }
+    if let Some(argument) = argument {
+        if crate::functions::execute_cached_word_call(
+            caller,
+            destination,
+            argument,
+            function,
+        )
+        .is_some()
+        {
+            return Some(Ok(()));
+        }
+    }
+    let code = function.code.code()?;
+    let parameter_base = u16::try_from(function.captures.len()).ok()?;
+    let mut frame = crate::register_file::FixedWordFile::<SMALL_LEAF_REGISTERS>::new();
+    crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
+    for pc in 0..code.len() {
+        let op = code.instruction(pc)?;
+        let _decode_guard = crate::execution_trace::leaf_compact(op.opcode);
+        match op.opcode {
+            crate::ir::Opcode::LoadConst => {
+                let (_, constant) = code.constant_at(pc)?;
+                let crate::ops::Constant::Number(number) = constant else {
+                    return None;
+                };
+                frame.write_number(usize::from(op.a), *number)?;
+            }
+            crate::ir::Opcode::LoadLocal => {
+                let parameter = op.b.checked_sub(parameter_base)?;
+                if parameter >= function.params {
+                    return None;
+                }
+                let source = argument.filter(|_| parameter == 0)?;
+                frame.copy_from(usize::from(op.a), caller, usize::from(source))?;
+            }
+            crate::ir::Opcode::Add
+            | crate::ir::Opcode::Sub
+            | crate::ir::Opcode::Mul
+            | crate::ir::Opcode::Div
+            | crate::ir::Opcode::Binary => {
+                let left = frame.number(usize::from(op.b))?;
+                let right = frame.number(usize::from(op.c))?;
+                let operator = leaf_binary_operator(op)?;
+                let crate::value::Value::Number(result) =
+                    crate::vm::vm_arithmetic::fast_number_binary(left, right, operator)?
+                else {
+                    return None;
+                };
+                frame.write_number(usize::from(op.a), result)?;
+            }
+            crate::ir::Opcode::Return => {
+                frame.copy_to_register(usize::from(op.a), caller, usize::from(destination))?;
+                crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+                return Some(Ok(()));
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 trait LeafRegisterFile {
     fn read(&self, index: usize) -> Option<crate::value::Value>;
     fn write(&mut self, index: usize, value: crate::value::Value) -> Option<()>;
+    fn write_number(&mut self, index: usize, value: f64) -> Option<()>;
     fn copy(&mut self, destination: usize, source: usize) -> Option<()>;
     fn truthiness(&self, index: usize) -> Option<bool>;
     fn number(&self, index: usize) -> Option<f64>;
     fn object(&self, index: usize) -> Option<&crate::value::ObjectData>;
+    fn write_slot(&mut self, index: usize, slot: &crate::register_file::SlotWord) -> Option<()>;
     fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()>;
     fn load_environment(
         &mut self,
@@ -17,6 +96,18 @@ trait LeafRegisterFile {
         destination: usize,
         slot: u16,
     ) -> bool;
+    fn copy_from_local(
+        &mut self,
+        locals: &crate::register_file::LocalWordFile<LEAF_LOCAL_SLOTS>,
+        destination: usize,
+        slot: u16,
+    ) -> Option<()>;
+    fn copy_to_local(
+        &self,
+        locals: &mut crate::register_file::LocalWordFile<LEAF_LOCAL_SLOTS>,
+        slot: u16,
+        source: usize,
+    ) -> Option<()>;
 }
 
 impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N> {
@@ -25,6 +116,9 @@ impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N>
     }
     fn write(&mut self, index: usize, value: crate::value::Value) -> Option<()> {
         self.write(index, value)
+    }
+    fn write_number(&mut self, index: usize, value: f64) -> Option<()> {
+        self.write_number(index, value)
     }
     fn copy(&mut self, destination: usize, source: usize) -> Option<()> {
         self.copy(destination, source)
@@ -38,6 +132,9 @@ impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N>
     fn object(&self, index: usize) -> Option<&crate::value::ObjectData> {
         self.object(index)
     }
+    fn write_slot(&mut self, index: usize, slot: &crate::register_file::SlotWord) -> Option<()> {
+        slot.copy_to_fixed(self, index)
+    }
     fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()> {
         cell.with_word(|word| self.write_owned(index, word))
     }
@@ -49,11 +146,30 @@ impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N>
     ) -> bool {
         environment.load_into_fixed(self, destination, slot)
     }
+    fn copy_from_local(
+        &mut self,
+        locals: &crate::register_file::LocalWordFile<LEAF_LOCAL_SLOTS>,
+        destination: usize,
+        slot: u16,
+    ) -> Option<()> {
+        locals.copy_to_fixed(slot, self, destination)
+    }
+    fn copy_to_local(
+        &self,
+        locals: &mut crate::register_file::LocalWordFile<LEAF_LOCAL_SLOTS>,
+        slot: u16,
+        source: usize,
+    ) -> Option<()> {
+        locals.copy_from_fixed(slot, self, source)
+    }
 }
 
 trait LeafLocalFile {
     fn read(&self, slot: u16) -> Option<crate::value::Value>;
     fn write(&mut self, slot: u16, value: crate::value::Value) -> Option<()>;
+    fn copy_to(&self, slot: u16, registers: &mut impl LeafRegisterFile, destination: usize) -> Option<()>;
+    fn copy_from(&mut self, slot: u16, registers: &impl LeafRegisterFile, source: usize) -> Option<()>;
+    fn update_number(&mut self, slot: u16, delta: f64) -> Option<(f64, f64)>;
 }
 
 impl LeafLocalFile for crate::register_file::LocalWordFile<LEAF_LOCAL_SLOTS> {
@@ -63,6 +179,18 @@ impl LeafLocalFile for crate::register_file::LocalWordFile<LEAF_LOCAL_SLOTS> {
 
     fn write(&mut self, slot: u16, value: crate::value::Value) -> Option<()> {
         self.write(slot, value)
+    }
+
+    fn copy_to(&self, slot: u16, registers: &mut impl LeafRegisterFile, destination: usize) -> Option<()> {
+        registers.copy_from_local(self, destination, slot)
+    }
+
+    fn copy_from(&mut self, slot: u16, registers: &impl LeafRegisterFile, source: usize) -> Option<()> {
+        registers.copy_to_local(self, slot, source)
+    }
+
+    fn update_number(&mut self, slot: u16, delta: f64) -> Option<(f64, f64)> {
+        self.update_number(slot, delta)
     }
 }
 
@@ -76,6 +204,9 @@ impl LeafLocalFile for NoLeafLocals {
     fn write(&mut self, _: u16, _: crate::value::Value) -> Option<()> {
         None
     }
+    fn copy_to(&self, _: u16, _: &mut impl LeafRegisterFile, _: usize) -> Option<()> { None }
+    fn copy_from(&mut self, _: u16, _: &impl LeafRegisterFile, _: usize) -> Option<()> { None }
+    fn update_number(&mut self, _: u16, _: f64) -> Option<(f64, f64)> { None }
 }
 
 #[derive(Clone)]
@@ -130,6 +261,12 @@ pub(crate) fn execute_proven_leaf(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
+    // Async functions must be lowered through the generator completion path;
+    // a leaf hit would let a body throw escape synchronously instead of
+    // becoming a rejected Promise.
+    if function.is_async {
+        return None;
+    }
     crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
     let code = function.code.code()?;
     let extended = match proven_leaf(function, code) {
@@ -145,6 +282,18 @@ pub(crate) fn execute_proven_leaf(
     if extended {
         let mut registers = crate::register_file::FixedWordFile::<LEAF_REGISTERS>::new();
         let mut locals = crate::register_file::LocalWordFile::<LEAF_LOCAL_SLOTS>::new();
+        let parameter_base = u16::try_from(function.captures.len()).unwrap_or(u16::MAX);
+        for offset in 0..function.params {
+            let value = arguments
+                .get(usize::from(offset))
+                .cloned()
+                .unwrap_or(crate::value::Value::Undefined);
+            locals.write(parameter_base.saturating_add(offset), value)?;
+        }
+        locals.write(
+            parameter_base.saturating_add(function.params).saturating_add(1),
+            receiver.clone(),
+        )?;
         return Some(run_leaf(
             function,
             receiver,
@@ -231,11 +380,16 @@ fn validate_leaf_depth(
         let op = code
             .instruction(pc)
             .ok_or(LeafReject::Opcode("MissingInstruction"))?;
+        if op.opcode == crate::ir::Opcode::Move && op.flags != 0 {
+            return Err(LeafReject::Opcode("MoveLocal"));
+        }
         matches!(
             op.opcode,
             crate::ir::Opcode::LoadConst
                 | crate::ir::Opcode::Move
+                | crate::ir::Opcode::LoadLocal
                 | crate::ir::Opcode::LoadLocalChecked
+                | crate::ir::Opcode::StoreLocal
                 | crate::ir::Opcode::StoreLocalChecked
                 | crate::ir::Opcode::InitLocal
                 | crate::ir::Opcode::UpdateLocal
@@ -255,7 +409,8 @@ fn validate_leaf_depth(
         .ok_or(LeafReject::Opcode(op.opcode.name()))?;
         if matches!(
             op.opcode,
-            crate::ir::Opcode::StoreLocalChecked
+            crate::ir::Opcode::StoreLocal
+                | crate::ir::Opcode::StoreLocalChecked
                 | crate::ir::Opcode::InitLocal
                 | crate::ir::Opcode::UpdateLocal
         ) && !allow_locals
@@ -267,7 +422,10 @@ fn validate_leaf_depth(
             .all(|register| usize::from(register) < max_registers)
             .then_some(())
             .ok_or(LeafReject::Register)?;
-        if matches!(op.opcode, crate::ir::Opcode::StoreLocalChecked)
+        if matches!(
+            op.opcode,
+            crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked
+        )
             && usize::from(op.a) >= LEAF_LOCAL_SLOTS
         {
             return Err(LeafReject::Register);
@@ -421,8 +579,8 @@ fn leaf_unary_name(operator: crate::ops::UnaryOp) -> &'static str {
 fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
     use crate::ir::Opcode::*;
     match op.opcode {
-        LoadConst | LoadLocalChecked | Return => [op.a, 0, 0],
-        StoreLocalChecked | InitLocal => [op.b, 0, 0],
+        LoadConst | LoadLocal | LoadLocalChecked | Return => [op.a, 0, 0],
+        StoreLocal | StoreLocalChecked | InitLocal => [op.b, 0, 0],
         UpdateLocal => [op.a, op.b, 0],
         Move => [op.a, op.b, 0],
         GetN | SetN => [op.a, op.b, 0],
@@ -442,8 +600,9 @@ fn run_leaf(
     registers: &mut impl LeafRegisterFile,
     locals: &mut impl LeafLocalFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    run_leaf_fragment(function, receiver, arguments, code, registers, locals)?
-        .ok_or(crate::execute::VmError::MissingReturn)
+    Ok(run_leaf_fragment(function, receiver, arguments, code, registers, locals)?.unwrap_or(
+        crate::value::Value::Undefined,
+    ))
 }
 
 fn run_leaf_fragment(
@@ -487,13 +646,18 @@ fn run_leaf_op(
                 .ok_or(crate::execute::VmError::MissingReturn)?;
             return Ok(None);
         }
-        LoadLocalChecked if leaf_load_capture(function, code, pc, op, registers)? => {
+        LoadLocal | LoadLocalChecked if leaf_load_capture(function, code, pc, op, registers)? => {
             return Ok(None);
         }
-        LoadLocalChecked => Some(leaf_local(
-            function, receiver, arguments, code, pc, op.b, locals,
-        )?),
-        StoreLocalChecked => {
+        LoadLocal | LoadLocalChecked if locals.copy_to(op.b, registers, usize::from(op.a)).is_some() => {
+            return Ok(None);
+        }
+        LoadLocal | LoadLocalChecked => Some(leaf_local(function, receiver, arguments, code, pc, op.b, locals)?),
+        StoreLocal | StoreLocalChecked => {
+            let capture_count = u16::try_from(function.captures.len()).unwrap_or(u16::MAX);
+            if op.a >= capture_count && locals.copy_from(op.a, registers, usize::from(op.b)).is_some() {
+                return Ok(None);
+            }
             leaf_store(function, op.a, leaf_register(registers, op.b)?, locals)?;
             return Ok(None);
         }
@@ -518,7 +682,10 @@ fn run_leaf_op(
             &leaf_register(registers, op.c)?,
         )?),
         Add | Sub | Mul | Div | Binary => if let Some(value) = leaf_number_binary(op, registers) {
-            Some(value)
+            registers
+                .write_number(usize::from(op.a), value)
+                .ok_or(crate::execute::VmError::MissingReturn)?;
+            return Ok(None);
         } else {
             let left = leaf_register(registers, op.b)?;
             let right = leaf_register(registers, op.c)?;
@@ -583,11 +750,14 @@ fn leaf_register(
 fn leaf_number_binary(
     op: crate::ir::Instruction,
     registers: &impl LeafRegisterFile,
-) -> Option<crate::value::Value> {
+) -> Option<f64> {
     let operator = leaf_binary_operator(op)?;
     let left = registers.number(usize::from(op.b))?;
     let right = registers.number(usize::from(op.c))?;
-    crate::vm::vm_arithmetic::fast_number_binary(left, right, operator)
+    match crate::vm::vm_arithmetic::fast_number_binary(left, right, operator)? {
+        crate::value::Value::Number(value) => Some(value),
+        _ => None,
+    }
 }
 
 fn leaf_binary_operator(op: crate::ir::Instruction) -> Option<crate::ops::BinaryOp> {
@@ -830,15 +1000,30 @@ fn leaf_update_local(
     registers: &mut impl LeafRegisterFile,
     locals: &mut impl LeafLocalFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    let capture_count = u16::try_from(function.captures.len()).unwrap_or(u16::MAX);
+    let decrement = op.flags != 0;
+    let delta = 1.0;
+    if op.c >= capture_count {
+        if let Some((old, updated)) = locals.update_number(op.c, delta) {
+            registers
+                .write_number(usize::from(op.b), updated)
+                .ok_or(crate::execute::VmError::MissingReturn)?;
+            return Ok(crate::value::Value::Number(old));
+        }
+    }
     let old = leaf_local(function, receiver, arguments, code, pc, op.c, locals)?;
-    let delta = crate::value::Value::Number(if op.flags == 0 { 1.0 } else { -1.0 });
-    let updated =
-        crate::vm::vm_arithmetic::evaluate_binary(&old, &delta, crate::ops::BinaryOp::NumericAdd)?;
+    let delta = crate::value::Value::Number(delta);
+    let operator = if decrement {
+        crate::ops::BinaryOp::NumericSubtract
+    } else {
+        crate::ops::BinaryOp::NumericAdd
+    };
+    let updated = crate::vm::vm_arithmetic::evaluate_binary(&old, &delta, operator)?;
     registers
         .write(usize::from(op.b), updated.clone())
         .ok_or(crate::execute::VmError::MissingReturn)?;
     leaf_store(function, op.c, updated, locals)?;
-    Ok(old)
+    crate::vm::vm_arithmetic::evaluate_to_numeric(&old)
 }
 
 fn leaf_get_named(
@@ -887,17 +1072,21 @@ fn leaf_get_named_word(
     let metadata = code
         .metadata_at(pc)
         .ok_or(crate::execute::VmError::MissingReturn)?;
-    let cell = registers
+    let payload = registers
         .object(usize::from(op.b))
-        .and_then(|object| crate::vm::get_named_cached_cell(object, &metadata.named_cache));
-    let Some(cell) = cell else { return Ok(false) };
-    // SAFETY: the source register still owns the object containing this cell;
-    // admission rejects an in-place destination, so the following write cannot
-    // release that owner before the word copy completes.
-    let cell = unsafe { &*cell };
-    registers
-        .write_cell(usize::from(op.a), cell)
-        .ok_or(crate::execute::VmError::MissingReturn)?;
+        .and_then(|object| crate::vm::get_named_cached_payload(object, &metadata.named_cache));
+    let Some(payload) = payload else { return Ok(false) };
+    match payload {
+        crate::vm::NamedCachedPayload::Word(slot) => registers
+            .write_slot(usize::from(op.a), unsafe { &*slot })
+            .ok_or(crate::execute::VmError::MissingReturn)?,
+        crate::vm::NamedCachedPayload::Cell(cell) => registers
+            .write_cell(usize::from(op.a), unsafe { &*cell })
+            .ok_or(crate::execute::VmError::MissingReturn)?,
+        crate::vm::NamedCachedPayload::Value(value) => registers
+            .write(usize::from(op.a), value)
+            .ok_or(crate::execute::VmError::MissingReturn)?,
+    }
     Ok(true)
 }
 
@@ -923,7 +1112,7 @@ fn leaf_set_named(
             {
                 if object.semantic_layout_id() == layout {
                     if let Some((_, crate::value::Value::BindingCell(cell))) =
-                        object.hot_properties().get(slot as usize)
+                        object.hot_properties().slot_entry(slot as usize)
                     {
                         cell.store(value);
                         return Ok(());
