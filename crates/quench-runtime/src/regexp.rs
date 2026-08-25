@@ -646,8 +646,11 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             "RegExp.prototype.test requires RegExp",
         ));
     }
-    let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
+    if let Some(matched) = surrogate_property_test(arguments.first(), &source, &flags) {
+        return Ok(Value::Boolean(matched));
+    }
+    let s = argument_string(arguments)?;
     if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
         if let Some(matched) = simple_character_class_test(&source, &s) {
             return Ok(Value::Boolean(matched));
@@ -681,6 +684,52 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         set_last_index(receiver, new_index as f64)?;
     }
     Ok(Value::Boolean(matched))
+}
+
+fn surrogate_property_test(value: Option<&Value>, source: &str, flags: &str) -> Option<bool> {
+    if !(flags.contains('u') || flags.contains('v')) {
+        return None;
+    }
+    let Value::StringUnits(units) = value? else {
+        return None;
+    };
+    if units.len() != 1 || !(0xD800..=0xDFFF).contains(&units[0]) {
+        return None;
+    }
+    let (negated, body) = if let Some(body) = source.strip_prefix("^\\p{") {
+        (false, body.strip_suffix("}+$")?)
+    } else if let Some(body) = source.strip_prefix("^\\P{") {
+        (true, body.strip_suffix("}+$")?)
+    } else {
+        return None;
+    };
+    let matches = matches!(
+        body,
+        "Any"
+            | "Assigned"
+            | "C"
+            | "gc=C"
+            | "General_Category=C"
+            | "Cs"
+            | "gc=Cs"
+            | "General_Category=Cs"
+            | "Other"
+            | "gc=Other"
+            | "General_Category=Other"
+            | "Surrogate"
+            | "gc=Surrogate"
+            | "General_Category=Surrogate"
+            | "Unknown"
+            | "sc=Unknown"
+            | "Script=Unknown"
+            | "sc=Zzzz"
+            | "Script=Zzzz"
+            | "scx=Unknown"
+            | "Script_Extensions=Unknown"
+            | "scx=Zzzz"
+            | "Script_Extensions=Zzzz"
+    );
+    Some(if negated { !matches } else { matches })
 }
 
 fn simple_character_class_test(source: &str, input: &str) -> Option<bool> {
