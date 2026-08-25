@@ -227,6 +227,12 @@ pub fn method_emit(
     let Some(emitter) = state.borrow().emitters.get(id) else {
         return Ok(Value::Boolean(false));
     };
+    if event == "error" {
+        let monitor = emitter.borrow().listeners_of("Symbol.for.events.errorMonitor\0").to_vec();
+        for listener in monitor {
+            execute::call(&listener.callback, receiver, args.get(1..).unwrap_or(&[]))?;
+        }
+    }
     let capture_rejections = emitter.borrow().capture_rejections;
     let snapshot: Vec<Listener> = emitter.borrow().listeners_of(&event).to_vec();
     if snapshot.is_empty() {
@@ -840,6 +846,10 @@ pub fn build() -> Value {
     .unwrap_or(Value::Undefined);
     let props: Vec<(String, Value)> = vec![
         ("EventEmitter".to_string(), value.clone()),
+        (
+            "errorMonitor".to_string(),
+            Value::String("Symbol.for.events.errorMonitor\0".into()),
+        ),
         ("defaultMaxListeners".to_string(), Value::Number(10.0)),
         ("once".to_string(), once),
         ("on".to_string(), on),
