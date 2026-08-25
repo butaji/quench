@@ -1,7 +1,7 @@
 fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
     let descriptor = object_descriptor(
         match global {
-            Value::Object(properties) => properties.as_ref(),
+            Value::Object(properties) => properties,
             _ => return None,
         },
         key,
@@ -10,7 +10,7 @@ fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
         return None;
     };
     let mut properties = properties.properties.clone();
-    if let Some((_, mut value)) = properties
+    if let Some((_, value)) = properties
         .iter_mut()
         .find(|(name, _)| name == "configurable")
     {
@@ -55,6 +55,45 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
 }
 
 fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
+    if let Some((_, metadata)) = function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &super::descriptor_key(key))
+    {
+        return Some(public_descriptor(metadata));
+    }
+    if let Value::Builtin(builtin) = function.target {
+        if matches!(key, "length" | "name") {
+            if builtin == Builtin::ProxyRevoke && key == "name" {
+                return Some(descriptor_object_with_flags(
+                    Value::String(String::new()),
+                    false,
+                    false,
+                    true,
+                ));
+            }
+            let property = crate::builtins::property(builtin, key);
+            if !matches!(property, Value::Undefined) {
+                return Some(descriptor_object_with_flags(property, false, false, true));
+            }
+            if key == "length" {
+                return Some(descriptor_object_with_flags(
+                    Value::Number(0.0),
+                    false,
+                    false,
+                    true,
+                ));
+            }
+            return Some(descriptor_object_with_flags(
+                Value::String(String::new()),
+                false,
+                false,
+                true,
+            ));
+        }
+    }
     let deleted = crate::builtins::deleted_key(key);
     if function
         .properties
@@ -77,15 +116,6 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
                 return Some(descriptor);
             }
         }
-    }
-    if let Some((_, metadata)) = function
-        .properties
-        .borrow()
-        .iter()
-        .rev()
-        .find(|(name, _)| name == &super::descriptor_key(key))
-    {
-        return Some(public_descriptor(metadata));
     }
     if function.target == Value::Builtin(Builtin::AbstractModuleSource) {
         if matches!(key, "length" | "name") {
@@ -114,41 +144,69 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         .find(|(name, _)| name == key)
         .map(|(_, value)| descriptor_object(value))
 }
-fn object_descriptor<P: crate::value::PropertyEntries + ?Sized>(
-    properties: &P,
+fn object_descriptor(
+    properties: &[(crate::value::PropertyName, Value)],
     key: &str,
 ) -> Option<Value> {
+    if properties
+        .iter()
+        .any(|(name, _)| name == &crate::builtins::deleted_key(key))
+    {
+        return None;
+    }
+    if properties.iter().any(|(name, value)| {
+        name == "\0regexp" && matches!(value, Value::Boolean(true))
+    }) && regexp_virtual_key(key)
+    {
+        return None;
+    }
     if let Some(Value::String(value)) = properties
-        .entries()
+        .iter()
         .rev()
         .find_map(|(name, value)| (name == "_value").then_some(value))
     {
         if key == "length" {
-            return Some(string_length_descriptor(&value));
+            return Some(string_length_descriptor(value));
         }
-        if let Some(descriptor) = string_descriptor(&value, key) {
+        if let Some(descriptor) = string_descriptor(value, key) {
             return Some(descriptor);
         }
     }
     if let Some(metadata) = super::descriptor_metadata(properties, key) {
         let live = properties
-            .entries()
+            .iter()
             .rev()
-            .find(|(name, _)| *name == key)
-            .map(|(_, value)| public_value(&value));
-        return Some(live_descriptor(&metadata, live));
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| public_value(value));
+        return Some(live_descriptor(metadata, live));
     }
     properties
-        .entries()
+        .iter()
         .rev()
-        .find(|(name, _)| *name == key)
+        .find(|(name, _)| name == key)
         .map(|(_, value)| {
             if matches!(value, Value::Builtin(_)) && crate::vm::global_builtin_exists(key) {
                 descriptor_object_with_flags(value.clone(), true, false, true)
             } else {
-                descriptor_object(&value)
+                descriptor_object(value)
             }
         })
+}
+
+fn regexp_virtual_key(key: &str) -> bool {
+    matches!(
+        key,
+        "source"
+            | "flags"
+            | "global"
+            | "ignoreCase"
+            | "multiline"
+            | "dotAll"
+            | "unicode"
+            | "unicodeSets"
+            | "sticky"
+            | "hasIndices"
+    )
 }
 fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
     let legacy = is_regexp_legacy_accessor(key);
@@ -169,6 +227,20 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
             Builtin::ErrorPrototypeStackGetter,
             Some(Builtin::ErrorPrototypeStackSetter),
         ),
+        (Builtin::IteratorPrototype, "constructor") => accessor_descriptor_with_setter(
+            getter,
+            Some(Builtin::IteratorPrototypeConstructorSetter),
+        ),
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => accessor_descriptor_with_setter(
+            getter,
+            Some(Builtin::IteratorPrototypeToStringTagSetter),
+        ),
+        (Builtin::ObjectPrototype, "__proto__") => {
+            accessor_descriptor_with_setter(
+                Builtin::ObjectPrototypeProtoGetter,
+                Some(Builtin::ObjectPrototypeProtoSetter),
+            )
+        }
         _ => accessor_descriptor_with_setter(getter, None),
     };
     Some(descriptor)
@@ -215,6 +287,8 @@ pub(crate) fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
         ) => Builtin::SpeciesGetter,
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
+        (Builtin::IteratorPrototype, "constructor") => Builtin::IteratorPrototypeConstructorGetter,
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => Builtin::IteratorPrototypeToStringTagGetter,
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
@@ -227,6 +301,7 @@ pub(crate) fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn intrinsic_getter_extended(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match (builtin, key) {
+        (Builtin::ObjectPrototype, "__proto__") => Builtin::ObjectPrototypeProtoGetter,
         (ArrayBufferPrototype, "byteLength") => ArrayBufferByteLengthGetter,
         (ArrayBufferPrototype, "detached") => ArrayBufferDetachedGetter,
         (ArrayBufferPrototype, "immutable") => ArrayBufferImmutableGetter,
@@ -245,6 +320,7 @@ fn intrinsic_getter_extended(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match (builtin, key) {
+        (SymbolPrototype, "description") => SymbolDescriptionGetter,
         (TemporalDurationPrototype, "years") => TemporalDurationYearsGetter,
         (TemporalDurationPrototype, "months") => TemporalDurationMonthsGetter,
         (TemporalDurationPrototype, "weeks") => TemporalDurationWeeksGetter,
@@ -339,6 +415,9 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             ));
         }
     }
+    if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
+        return Some(public_descriptor(&descriptor));
+    }
     if let Some(descriptor) = intrinsic_accessor(builtin, key) {
         return Some(descriptor);
     }
@@ -380,6 +459,14 @@ fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor_for_property(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::FunctionPrototypeToString && key == "name" {
+        return Some(descriptor_object_with_flags(
+            Value::String("toString".to_string()),
+            false,
+            false,
+            true,
+        ));
+    }
     let property = super::special_property(builtin, key)
         .or_else(|| super::callable_property(builtin, key))
         .or_else(|| match super::property(builtin, key) {
@@ -388,6 +475,20 @@ fn builtin_descriptor_for_property(builtin: Builtin, key: &str) -> Option<Value>
         })?;
     let writable = builtin_property_is_writable(builtin, key);
     let configurable = builtin_property_is_configurable(builtin, key, &property);
+    let property = if matches!(builtin, Builtin::ArrayPrototype | Builtin::RegExpPrototype)
+        && key == "toString"
+        || builtin == Builtin::Promise
+            && matches!(
+                key,
+                "resolve" | "reject" | "all" | "allKeyed" | "allSettled" | "allSettledKeyed" | "any"
+                    | "race" | "withResolvers" | "try"
+            )
+    {
+        crate::execute::get_property_result(&Value::Builtin(builtin), key)
+            .unwrap_or(property)
+    } else {
+        property
+    };
     Some(descriptor_object_with_flags(
         property,
         writable,
@@ -433,6 +534,12 @@ fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         ]))));
     }
     let descriptor = match (builtin, key) {
+        (Builtin::FunctionPrototype, "length") => {
+            (Value::Number(0.0), false, false, true)
+        }
+        (Builtin::FunctionPrototype, "name") => {
+            (Value::String(String::new()), false, false, true)
+        }
         (Builtin::FunctionPrototype, "Symbol.hasInstance") => (
             Value::Builtin(Builtin::FunctionPrototypeHasInstance),
             false,

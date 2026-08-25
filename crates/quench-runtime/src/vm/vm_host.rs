@@ -97,10 +97,11 @@ fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
             )));
         }
     };
-    match realm {
+    let result = match realm {
         Some(realm) => execute_indirect_eval_in_realm(realm, program.code()),
         None => execute_indirect_eval(program.code()),
-    }
+    };
+    result
 }
 
 pub(crate) fn create_shadow_realm_value() -> Value {
@@ -124,6 +125,7 @@ fn realm_global_object(
     for (name, builtin) in [
         ("eval", Builtin::Eval),
         ("Object", Builtin::Object),
+        ("Proxy", Builtin::Proxy),
         ("Function", Builtin::Function),
         ("Number", Builtin::Number),
         ("String", Builtin::String),

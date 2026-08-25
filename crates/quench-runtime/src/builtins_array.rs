@@ -109,6 +109,12 @@ fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str
 }
 
 fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -> Value {
+    let has_own = properties.iter().any(|(name, _)| name == key);
+    let deleted_marker = crate::builtins::deleted_key(key);
+    let already_deleted = properties.iter().any(|(name, _)| name == &deleted_marker);
+    if !has_own && !already_deleted {
+        return Value::Object(properties);
+    }
     let cell = properties
         .iter()
         .rev()
@@ -122,9 +128,10 @@ fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -
         .filter(|(name, _)| name != key && name != &descriptor_key(key))
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
-    if let Some(cell) = cell {
-        values.push((crate::builtins::deleted_key(key).into(), Value::BindingCell(cell)));
-    }
+    values.push((
+        deleted_marker.into(),
+        cell.map_or(Value::Boolean(true), Value::BindingCell),
+    ));
     if crate::vm::is_global_object(&Value::Object(Rc::clone(&properties)))
         && crate::vm::global_builtin_exists(key)
     {
