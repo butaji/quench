@@ -16,6 +16,7 @@ const TEMPORAL_DURATION_PROTOTYPE_NAMES: &[&str] = &[
     "abs",
     "negated",
     "round",
+    "total",
     "add",
     "subtract",
     "toString",
