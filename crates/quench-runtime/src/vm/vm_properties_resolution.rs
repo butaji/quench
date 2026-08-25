@@ -77,7 +77,7 @@ pub(crate) fn get_named_cached_payload(
     let (cached_layout, slot) = (cached & PROTOTYPE_CACHE_TAG == 0)
         .then(|| crate::machine::unpack_named_cache(cached))??;
     let (_, value) = (layout == cached_layout)
-        .then(|| object.hot_properties().get(slot as usize))??;
+        .then(|| object.hot_properties().slot_entry(slot as usize))??;
     crate::execution_trace::named_property_result("own", value);
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
     Some(named_cached_payload(value))
