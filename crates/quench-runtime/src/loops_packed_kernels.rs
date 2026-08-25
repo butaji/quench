@@ -1,6 +1,7 @@
 #[derive(Clone, Copy)]
 enum PackedLoopFact {
     AddFields { x: u16, source: u16, scale: u16 },
+    Fill3 { arrays: [u16; 3] },
     CopyRow(CopyRowFact),
     Divergence(DivergenceFact),
     Projection(ProjectionFact),
@@ -29,12 +30,37 @@ impl PackedLoopFact {
     fn recognize(code: crate::machine::CodeView<'_>, counter: u16) -> Option<Self> {
         match code.len() {
             15 => recognize_add_fields(code, counter),
+            17 => recognize_fill3(code, counter),
             11 | 20 => CopyRowFact::recognize(code).map(Self::CopyRow),
             30 => DivergenceFact::recognize(code).map(Self::Divergence),
             38 => ProjectionFact::recognize(code).map(Self::Projection),
             _ => None,
         }
     }
+}
+
+fn recognize_fill3(code: crate::machine::CodeView<'_>, counter: u16) -> Option<PackedLoopFact> {
+    compact_shape!(code;
+        0 => StaticLoad, 1 => Move, 2 => StaticLoad, 3 => Move,
+        4 => StaticLoad, 5 => Move, 6 => StaticLoad, 7 => Move,
+        8 => StaticLoad, 9 => Move, 10 => StaticLoad, 11 => Move,
+        12 => LoadConst, 13 => ASetI, 14 => ASetI, 15 => ASetI, 16 => Move
+    );
+    let arrays = [recognized_static_load(code, 0)?.1,
+        recognized_static_load(code, 4)?.1, recognized_static_load(code, 8)?.1];
+    let indices = [recognized_static_load(code, 2)?.1,
+        recognized_static_load(code, 6)?.1, recognized_static_load(code, 10)?.1];
+    indices.into_iter().all(|slot| slot == counter).then_some(())?;
+    matches!(code.constant_at(12), Some((_, crate::ops::Constant::Number(0.0)))).then_some(())?;
+    for (pc, (array_pc, index_pc)) in [13, 14, 15].into_iter().zip([(8, 10), (4, 6), (0, 2)]) {
+        let set = code.instruction(pc)?;
+        let target = code.instruction(index_pc + 1)?;
+        (target.b == code.instruction(array_pc + 1)?.a
+            && set.a == target.a
+            && set.b == code.instruction(index_pc)?.a
+            && set.c == code.instruction(12)?.a).then_some(())?;
+    }
+    Some(PackedLoopFact::Fill3 { arrays })
 }
 
 #[derive(Clone, Copy)]
@@ -233,6 +259,9 @@ fn run_packed_loop_kernel(
         PackedLoopFact::AddFields { x, source, scale } => {
             run_add_fields(&environment, x, source, scale, counter, iterations, loop_fact)?
         }
+        PackedLoopFact::Fill3 { arrays } => {
+            run_fill3(&environment, arrays, counter, iterations, loop_fact)?
+        }
         PackedLoopFact::CopyRow(fact) => run_copy_row(&environment, fact, counter, iterations, loop_fact)?,
         PackedLoopFact::Divergence(fact) => run_divergence(&environment, fact, counter, iterations, loop_fact)?,
         PackedLoopFact::Projection(fact) => run_projection(&environment, fact, counter, iterations, loop_fact)?,
@@ -246,11 +275,32 @@ impl PackedLoopFact {
     fn trace_fact(self) -> (&'static str, usize, usize) {
         match self {
             Self::AddFields { .. } => ("counted_packed_f64_add_fields", 2, 1),
+            Self::Fill3 { .. } => ("counted_packed_f64_fill3", 0, 3),
             Self::CopyRow(fact) => ("counted_packed_f64_copy", fact.pair_count, fact.pair_count),
             Self::Divergence(_) => ("counted_packed_f64_divergence", 4, 2),
             Self::Projection(_) => ("counted_packed_f64_projection", 6, 2),
         }
     }
+}
+
+fn run_fill3(
+    environment: &crate::environment::Environment,
+    arrays: [u16; 3],
+    counter: f64,
+    iterations: usize,
+    loop_fact: CountedForFact,
+) -> Option<()> {
+    (loop_fact.comparison == crate::ops::BinaryOp::LessThan && loop_fact.step == 1.0)
+        .then_some(())?;
+    let start = kernel_index(counter)?;
+    let end = start.checked_add(iterations)?;
+    for slot in arrays {
+        let array = packed_array(environment, slot)?;
+        let mut words = array.numeric_kernel_words_mut()?;
+        words.get_mut(start..end)?.fill(0.0);
+    }
+    environment.set(loop_fact.slot, Value::Number(end as f64));
+    Some(())
 }
 
 fn run_copy_row(
