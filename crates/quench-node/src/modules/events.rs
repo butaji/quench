@@ -879,6 +879,94 @@ pub fn enqueue_callback(state: &Rc<RefCell<HostState>>, cb: Value, args: Vec<Val
     state.borrow_mut().event_loop.queue_immediate(cb, args);
 }
 
+pub fn abort_listener_callback(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let listener = args.first().ok_or(VmError::NotCallable)?;
+    let event = args.get(1).cloned().unwrap_or(Value::Undefined);
+    execute::call(listener, &Value::Undefined, &[event])
+}
+
+pub fn abort_listener_dispose(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let signal = args.first().ok_or_else(|| execute::type_error("signal"))?;
+    let wrapped = args.get(1).ok_or_else(|| execute::type_error("listener"))?;
+    crate::modules::event_target::remove_event_listener(
+        state,
+        Some(signal),
+        &[Value::String("abort".to_string()), wrapped.clone()],
+    )
+}
+
+pub fn add_abort_listener(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let signal = args.first().cloned().unwrap_or(Value::Undefined);
+    let listener = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !quench_runtime::is_callable(&execute::get_property(&signal, "addEventListener")) {
+        return Err(coded_abort_error("signal", "AbortSignal"));
+    }
+    if !quench_runtime::is_callable(&listener) {
+        return Err(coded_abort_error("listener", "function"));
+    }
+    let wrapped = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_EVENTS_ABORT_LISTENER.cap,
+            ),
+        },
+        vec![listener],
+    );
+    execute::set_callable_property(
+        &wrapped,
+        "\0quench:abort-listener",
+        Value::Boolean(true),
+    )?;
+    crate::modules::event_target::add_event_listener(
+        state,
+        Some(&signal),
+        &[Value::String("abort".to_string()), wrapped.clone()],
+    )?;
+    if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
+        state.borrow_mut().event_loop.queue_microtask(
+            wrapped.clone(),
+            vec![host_api::object(vec![(
+                "type".to_string(),
+                Value::String("abort".to_string()),
+            )])],
+        );
+    }
+    let dispose = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_EVENTS_ABORT_DISPOSE.cap,
+            ),
+        },
+        vec![signal, wrapped],
+    );
+    Ok(host_api::object(vec![("Symbol.dispose".to_string(), dispose)]))
+}
+
+fn coded_abort_error(argument: &str, expected: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".to_string(), Value::String("TypeError".to_string())),
+        (
+            "code".to_string(),
+            Value::String("ERR_INVALID_ARG_TYPE".to_string()),
+        ),
+        (
+            "message".to_string(),
+            Value::String(format!("The \"{argument}\" argument must be a {expected}")),
+        ),
+    ]))
+}
+
 /// `require('events')` is the `EventEmitter` constructor itself, with
 /// the statics attached — mirroring Node's `module.exports =
 /// EventEmitter; EventEmitter.EventEmitter = EventEmitter`.
@@ -1013,27 +1101,7 @@ pub fn build() -> Value {
         }"#,
     )
     .unwrap_or(Value::Undefined);
-    let add_abort_listener = eval_function(
-        r#"(signal, listener) => {
-          if (!signal || typeof signal.addEventListener !== "function") {
-            const error = new TypeError("The \"signal\" argument must be an AbortSignal");
-            error.code = "ERR_INVALID_ARG_TYPE";
-            throw error;
-          }
-          if (typeof listener !== "function") {
-            const error = new TypeError("The \"listener\" argument must be a function");
-            error.code = "ERR_INVALID_ARG_TYPE";
-            throw error;
-          }
-          const wrapped = (event) => listener(event);
-          wrapped["\0quench:abort-listener"] = true;
-          signal.addEventListener("abort", wrapped);
-          if (signal.aborted) queueMicrotask(() => wrapped(new Event("abort")));
-          const dispose = () => signal.removeEventListener("abort", wrapped);
-          return { [Symbol.dispose]: dispose };
-        }"#,
-    )
-    .unwrap_or(Value::Undefined);
+    let add_abort_listener = crate::host::capability(crate::registry::SPEC_EVENTS_ADD_ABORT);
     let props: Vec<(String, Value)> = vec![
         ("EventEmitter".to_string(), value.clone()),
         (
