@@ -391,7 +391,8 @@ impl LiveForOf {
 
 thread_local! {
     static LIVE_FOR_OF: LiveForOf = const { LiveForOf::new() };
-    static PENDING_ASYNC_FOR_OF: LiveForOf = const { LiveForOf::new() };
+    static PENDING_ASYNC_FOR_OF: std::cell::UnsafeCell<Vec<crate::value::AsyncForOfState>> =
+        const { std::cell::UnsafeCell::new(Vec::new()) };
 }
 
 fn remember_for_of(iterator: crate::value::Value) {
@@ -406,12 +407,12 @@ pub(crate) fn take_live_for_of() -> Option<crate::value::Value> {
     LIVE_FOR_OF.with(LiveForOf::pop)
 }
 
-fn remember_pending_async_for_of(iterator: crate::value::Value) {
-    PENDING_ASYNC_FOR_OF.with(|pending| pending.push(iterator));
+fn remember_pending_async_for_of(state: crate::value::AsyncForOfState) {
+    PENDING_ASYNC_FOR_OF.with(|pending| unsafe { (&mut *pending.get()).push(state) });
 }
 
-pub(crate) fn take_pending_async_for_of() -> Option<crate::value::Value> {
-    PENDING_ASYNC_FOR_OF.with(LiveForOf::pop)
+pub(crate) fn take_pending_async_for_of() -> Option<crate::value::AsyncForOfState> {
+    PENDING_ASYNC_FOR_OF.with(|pending| unsafe { (&mut *pending.get()).pop() })
 }
 
 type ForInLoopData<'a> = (
@@ -559,8 +560,18 @@ fn iterate_loop_values(
     iteration_slots: &[u16],
     dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let body_code = body.clone();
     let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
+    };
+    let pending = crate::value::AsyncForOfState {
+        label: label.clone(),
+        slot,
+        body: body_code,
+        per_iteration,
+        iteration_slots: iteration_slots.to_vec(),
+        iterator: iterator.clone(),
+        dst,
     };
     loop {
         let value = match if await_values {
@@ -576,7 +587,7 @@ fn iterate_loop_values(
                 );
             }
             Err(crate::execute::VmError::Suspended(promise)) if await_values => {
-                remember_pending_async_for_of(iterator);
+                remember_pending_async_for_of(pending);
                 return Err(crate::execute::VmError::Suspended(promise));
             }
             Err(error) => return Err(error),
@@ -647,7 +658,7 @@ pub(crate) fn resume_async_for_of(
         next_value = match crate::collections::iterator::step_value_await(&spec.iterator) {
             Ok(value) => value,
             Err(crate::execute::VmError::Suspended(promise)) => {
-                remember_pending_async_for_of(spec.iterator.clone());
+                remember_pending_async_for_of(spec.clone());
                 return Ok((
                     crate::completion::Completion::Suspend(promise),
                     Some(spec.clone()),
