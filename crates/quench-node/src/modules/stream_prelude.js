@@ -629,6 +629,104 @@
     return values;
   };
 
+  function operatorConcurrency(options) {
+    const value = options?.concurrency ?? 1;
+    const number = Number(value);
+    if (!Number.isInteger(number) || number < 1) {
+      const error = new RangeError("The concurrency option must be a positive integer");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return number;
+  }
+
+  function readableOperator(stream, mapper, filtering, options) {
+    const concurrency = operatorConcurrency(options);
+    const signal = options?.signal;
+    const source = stream.__quenchIterator || stream[Symbol.asyncIterator]?.();
+    const output = new ReadableClass({ objectMode: true });
+    let ended = false;
+    let pending = [];
+    let sourceDone = false;
+    const pull = async () => {
+      if (sourceDone) return null;
+      const step = await source.next();
+      if (step.done) sourceDone = true;
+      return step;
+    };
+    const enqueue = async () => {
+      const step = await pull();
+      if (!step || step.done) return false;
+      let result;
+      try {
+        result = mapper(step.value, { signal });
+      } catch (error) {
+        result = Promise.reject(error);
+      }
+      const task = { done: false, value: undefined };
+      task.promise = Promise.resolve(result).then((value) => {
+        task.done = true;
+        task.value = value;
+        return value;
+      });
+      pending.push(task);
+      return true;
+    };
+    const fill = async () => {
+      while (pending.filter((task) => !task.done).length < concurrency && !sourceDone) {
+        if (!(await enqueue())) break;
+      }
+    };
+    const next = async () => {
+      if (ended) return { value: undefined, done: true };
+      if (signal?.aborted) throw sliceAbortError();
+      await fill();
+      if (pending.length === 0) {
+        ended = true;
+        return { value: undefined, done: true };
+      }
+      while (!pending[0].done) {
+        await Promise.race(pending.filter((task) => !task.done).map((task) => task.promise));
+        await fill();
+      }
+      const task = pending.shift();
+      await fill();
+      const value = task.value;
+      if (filtering && !value.keep) return next();
+      return { value: filtering ? value.value : value, done: false };
+    };
+    output.__quenchIterator = { next, return() { ended = true; return Promise.resolve({ value: undefined, done: true }); } };
+    output.__quenchIterator[Symbol.asyncIterator] = function () { return this; };
+    output[Symbol.asyncIterator] = async function* () {
+      while (true) {
+        const step = await output.__quenchIterator.next();
+        if (step.done) return;
+        yield step.value;
+      }
+    };
+    output.toArray = async function () {
+      const values = [];
+      while (true) {
+        const step = await output.__quenchIterator.next();
+        if (step.done) return values;
+        values.push(step.value);
+      }
+    };
+    return output;
+  }
+
+  function operatorMapper(stream, mapper, filtering, options) {
+    if (typeof mapper !== "function") {
+      const error = new TypeError("The callback must be a function");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const callback = filtering
+      ? async (value, context) => ({ value, keep: await mapper(value, context) })
+      : mapper;
+    return readableOperator(stream, callback, filtering, options);
+  }
+
   function sliceCount(count) {
     const number = Number(count);
     if (!Number.isFinite(number) && number !== Infinity) return 0;
@@ -721,6 +819,12 @@
   };
   ReadableClass.prototype.drop = function (count, options) {
     return sliceReadable(this, Infinity, count, options);
+  };
+  ReadableClass.prototype.map = function (mapper, options) {
+    return operatorMapper(this, mapper, false, options);
+  };
+  ReadableClass.prototype.filter = function (predicate, options) {
+    return operatorMapper(this, predicate, true, options);
   };
   ReadableClass.prototype.toArray = async function () {
     const values = [];
