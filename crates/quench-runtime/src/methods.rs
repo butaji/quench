@@ -49,6 +49,9 @@ pub(crate) fn execute_named(
     key: &str,
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), VmError> {
+    if instruction.flags == 0 && execute_named_word(registers, instruction, cache).is_some() {
+        return Ok(());
+    }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = crate::vm::get_named_property_result(&receiver, key, cache)?;
     let argument = (instruction.flags == 1)
@@ -75,6 +78,31 @@ pub(crate) fn execute_named(
     )?;
     write_value(registers, instruction.a, value);
     Ok(())
+}
+
+fn execute_named_word(
+    registers: &mut crate::register_file::RegisterFile,
+    instruction: crate::ir::Instruction,
+    cache: &std::cell::Cell<u64>,
+) -> Option<()> {
+    let receiver = registers.read_object(usize::from(instruction.b))?;
+    let crate::vm::NamedCachedPayload::Word(slot) =
+        crate::vm::get_named_cached_payload(receiver, cache)?
+    else {
+        return None;
+    };
+    // SAFETY: receiver owns the method slot and the register owns receiver
+    // throughout this non-mutating call.
+    let function = unsafe { &*(&*slot).function_ptr()? };
+    let value = crate::functions::execute_shape_kernel_word(function, receiver)?;
+    crate::execution_trace::call_method(0, false, true, "Function");
+    crate::execution_trace::function_call_shape(
+        function.params,
+        function.code.capture_slots().len(),
+        function.code.code(),
+    );
+    registers.write_number(usize::from(instruction.a), value);
+    Some(())
 }
 
 pub(crate) fn execute_registered(
