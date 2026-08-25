@@ -187,15 +187,21 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             continue;
         }
         let has_handlers = !state.borrow().process.unhandled_rejection_handlers.is_empty();
+        let has_warning_handlers = !state.borrow().process.warning_handlers.is_empty();
         if has_handlers {
             crate::modules::process::emit(
                 state,
                 &[
                     Value::String("unhandledRejection".into()),
-                    reason,
+                    reason.clone(),
                     Value::Promise(promise),
                 ],
             )?;
+            if has_warning_handlers {
+                crate::modules::process::emit_unhandled_rejection_warnings(state, &reason);
+            }
+        } else if has_warning_handlers {
+            crate::modules::process::emit_unhandled_rejection_warnings(state, &reason);
         } else if !state.borrow().process.uncaught_exception_handlers.is_empty() {
             let error = unhandled_rejection_error(&reason);
             crate::modules::process::emit(

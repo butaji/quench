@@ -549,3 +549,32 @@ pub(crate) fn emit_warning(
     let warning = host_api::object(props);
     let _ = emit(state, &[Value::String("warning".into()), warning]);
 }
+
+/// Emit the pair of warnings Node exposes for an unhandled rejection in
+/// `warn` mode: the reason and the note describing its origin.
+pub(crate) fn emit_unhandled_rejection_warnings(
+    state: &Rc<RefCell<HostState>>,
+    reason: &Value,
+) {
+    let rendered = match quench_runtime::execute::get_property(reason, "message") {
+        Value::String(message) => message,
+        _ => crate::modules::util::inspect(reason),
+    };
+    let stack = match quench_runtime::execute::get_property(reason, "stack") {
+        Value::String(stack) => stack,
+        _ => String::new(),
+    };
+    let first = format!("UnhandledPromiseRejectionWarning: {rendered}");
+    let note = "Unhandled promise rejection. This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch().";
+    for message in [first, note.to_string()] {
+        let mut props = vec![
+            ("name".to_string(), Value::String("UnhandledPromiseRejectionWarning".into())),
+            ("message".to_string(), Value::String(message.clone())),
+        ];
+        if !stack.is_empty() {
+            props.push(("stack".to_string(), Value::String(stack.clone())));
+        }
+        let warning = host_api::object(props);
+        let _ = emit(state, &[Value::String("warning".into()), warning]);
+    }
+}
