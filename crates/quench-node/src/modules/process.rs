@@ -540,6 +540,12 @@ pub(crate) fn emit_warning(
     if let Some(code) = code {
         props.push(("code".to_string(), Value::String(code.to_string())));
     }
+    let global = quench_runtime::vm::current_global_object();
+    let stack = match quench_runtime::execute::get_property(&global, "\0quench_vm_filename") {
+        Value::String(filename) => format!("{name}: {message}\n    at {filename}"),
+        _ => format!("{name}: {message}"),
+    };
+    props.push(("stack".to_string(), Value::String(stack)));
     let warning = host_api::object(props);
     let _ = emit(state, &[Value::String("warning".into()), warning]);
 }
