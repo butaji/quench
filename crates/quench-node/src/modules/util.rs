@@ -978,6 +978,9 @@ pub fn inspect_with_options(
 }
 
 fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
+    if depth <= 2 {
+        return inspect_getter_recursive(value, depth.saturating_sub(1), 0, value.object_identity());
+    }
     let own_keys = quench_runtime::execute::own_keys(value)
         .into_iter()
         .filter_map(|key| match key {
@@ -1039,6 +1042,127 @@ fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
     match name {
         Some(name) => format!("{name} {{ {body} }}"),
         None => format!("{{ {body} }}"),
+    }
+}
+
+fn inspect_getter_recursive(
+    value: &Value,
+    depth: usize,
+    indent: usize,
+    root_identity: Option<u64>,
+) -> String {
+    let own_keys = quench_runtime::execute::own_keys(value)
+        .into_iter()
+        .filter_map(|key| match key {
+            Value::String(key) if !key.starts_with('\0') => Some(key),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut keys = own_keys.clone();
+    let mut prototype = quench_runtime::execute::get_prototype_of(value).ok();
+    while let Some(current) = prototype {
+        for key in quench_runtime::execute::own_keys(&current).into_iter().filter_map(|key| {
+            match key {
+                Value::String(key) if key != "constructor" && !key.starts_with('\0') => Some(key),
+                _ => None,
+            }
+        }) {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        prototype = quench_runtime::execute::get_prototype_of(&current).ok();
+    }
+    let name = quench_runtime::execute::get_prototype_of(value)
+        .ok()
+        .map(|prototype| quench_runtime::execute::get_property(&prototype, "constructor"))
+        .and_then(|constructor| match quench_runtime::execute::get_property(&constructor, "name") {
+            Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let mut parts = Vec::new();
+    for key in keys {
+        let inherited = !own_keys.contains(&key);
+        let label = if inherited { format!("[{key}]") } else { key.clone() };
+        let rendered = inspect_getter_property(value, &key, depth, root_identity);
+        parts.push(format!("{label}: {rendered}"));
+    }
+    let prefix = if name.is_empty() { String::new() } else { format!("{name} ") };
+    if indent == 0 {
+        let pad = " ".repeat(indent + 2);
+        let body = parts
+            .into_iter()
+            .map(|part| format!("{pad}{part}"))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        if root_identity.is_some() {
+            format!("<ref *1> {prefix}{{\n{body}\n{}}}", " ".repeat(indent))
+        } else {
+            format!("{prefix}{{\n{body}\n{}}}", " ".repeat(indent))
+        }
+    } else {
+        format!("{prefix}{{ {} }}", parts.join(", "))
+    }
+}
+
+fn inspect_getter_property(
+    value: &Value,
+    key: &str,
+    depth: usize,
+    root_identity: Option<u64>,
+) -> String {
+    let descriptor = inherited_property_descriptor(value, key);
+    if let Some(Value::Object(descriptor)) = descriptor {
+        let getter = quench_runtime::execute::get_property(&Value::Object(descriptor.clone()), "get");
+        if !matches!(getter, Value::Undefined) {
+            if let Ok(result) = quench_runtime::execute::call(&getter, value, &[]) {
+                let shown = if result.object_identity() == root_identity {
+                    "[Circular *1]".into()
+                } else if depth == 0 {
+                    inspect_shallow(&result)
+                } else if matches!(result, Value::Object(_) | Value::ObjectAlias(_)) {
+                    inspect_getter_recursive(&result, depth - 1, 1, root_identity)
+                } else {
+                    inspect_shallow(&result)
+                };
+                return if matches!(result, Value::Object(_) | Value::ObjectAlias(_)) {
+                    format!("[Getter] {shown}")
+                } else {
+                    format!("[Getter: {shown}]")
+                };
+            }
+            return "[Getter]".into();
+        }
+    }
+    let result = quench_runtime::execute::get_property(value, key);
+    if result.object_identity() == root_identity {
+        "[Circular *1]".into()
+    } else if depth == 0 {
+        inspect_shallow(&result)
+    } else if matches!(result, Value::Object(_) | Value::ObjectAlias(_)) {
+        inspect_getter_recursive(&result, depth - 1, 1, root_identity)
+    } else {
+        inspect_shallow(&result)
+    }
+}
+
+fn inherited_property_descriptor(value: &Value, key: &str) -> Option<Value> {
+    let mut owner = value.clone();
+    loop {
+        let descriptor = quench_runtime::execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+            &Value::Undefined,
+            &[owner.clone(), Value::String(key.to_string())],
+        )
+        .ok();
+        if !matches!(descriptor, None | Some(Value::Undefined)) {
+            return descriptor;
+        }
+        owner = match quench_runtime::execute::get_prototype_of(&owner) {
+            Ok(Value::Null) | Err(_) => return None,
+            Ok(next) => next,
+        };
     }
 }
 
