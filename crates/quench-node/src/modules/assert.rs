@@ -883,20 +883,23 @@ fn deep_assert(
                 rendered(&expected)
             )
         } else {
-            format!(
-                "Expected values to be strictly deep-equal:\n+ actual - expected\n\n{}\n",
-                deep_diff_for_mode(&actual, &expected, full_diff)
-            )
+            let diff = deep_diff_for_mode(&actual, &expected, full_diff);
+            format!("Expected values to be strictly deep-equal:\n+ actual - expected{}", diff_block(&diff))
         },
-        |message| format!(
-            "{message}\n+ actual - expected\n\n{}\n",
-            deep_diff_for_mode(&actual, &expected, full_diff)
-        ),
+        |message| {
+            let diff = deep_diff_for_mode(&actual, &expected, full_diff);
+            format!("{message}\n+ actual - expected{}", diff_block(&diff))
+        },
     );
     Err(with_instance_diff(
         assertion_error(message, operator, actual, expected, generated),
         _r,
     ))
+}
+
+fn diff_block(diff: &str) -> String {
+    let separator = if diff.starts_with("... Skipped lines") { "\n" } else { "\n\n" };
+    format!("{separator}{diff}\n")
 }
 
 fn is_primitive_value(value: &Value) -> bool {
@@ -1537,7 +1540,46 @@ fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
     };
     let left_value = Value::Array(left.clone());
     let right_value = Value::Array(right.clone());
-    Some(recursive_array_diff(&left_value, &right_value, 2).join("\n"))
+    let length = left.logical_len().max(right.logical_len());
+    let prefix = (0..left.logical_len().min(right.logical_len()))
+        .take_while(|index| {
+            let key = index.to_string();
+            execute::same_value(
+                &execute::get_property(&left_value, &key),
+                &execute::get_property(&right_value, &key),
+            )
+        })
+        .count();
+    let skipped = prefix >= 4
+        && ((left.logical_len() != right.logical_len() && length > 6) || length > 8);
+    let body = recursive_array_diff(&left_value, &right_value, 2).join("\n");
+    Some(if skipped { format!("... Skipped lines\n\n{body}") } else { body })
+}
+
+fn scalar_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<String> {
+    let Value::Array(left) = actual else { return vec![] };
+    let Value::Array(right) = expected else { return vec![] };
+    let a = (0..left.logical_len()).map(|i| execute::get_property(actual, &i.to_string())).collect::<Vec<_>>();
+    let b = (0..right.logical_len()).map(|i| execute::get_property(expected, &i.to_string())).collect::<Vec<_>>();
+    let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() { for j in (0..b.len()).rev() {
+        dp[i][j] = if execute::same_value(&a[i], &b[j]) { 1 + dp[i + 1][j + 1] } else { dp[i + 1][j].max(dp[i][j + 1]) };
+    }}
+    let mut ops = Vec::new(); let (mut i, mut j) = (0, 0);
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && execute::same_value(&a[i], &b[j]) { ops.push((' ', a[i].clone())); i += 1; j += 1; }
+        else if j == b.len() || (i < a.len() && dp[i + 1][j] >= dp[i][j + 1]) { ops.push(('+', a[i].clone())); i += 1; }
+        else { ops.push(('-', b[j].clone())); j += 1; }
+    }
+    let mut lines = vec![format!("{}[", " ".repeat(indent))];
+    for (index, (marker, value)) in ops.into_iter().enumerate() {
+        let suffix = if index + 1 < a.len().max(b.len()) { "," } else { "" };
+        let prefix = if marker == ' ' { "" } else { &marker.to_string() };
+        let spaces = if marker == ' ' { indent + 2 } else { indent + 1 };
+        lines.push(format!("{prefix}{}{}{suffix}", " ".repeat(spaces), rendered(&value)));
+    }
+    lines.push(format!("{}]", " ".repeat(indent)));
+    lines
 }
 
 fn recursive_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<String> {
@@ -1547,8 +1589,46 @@ fn recursive_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<
     let left_value = Value::Array(left.clone());
     let right_value = Value::Array(right.clone());
     let length = left.logical_len().max(right.logical_len());
+    let scalar_values = (0..length).all(|index| {
+        let key = index.to_string();
+        [execute::get_property(&left_value, &key), execute::get_property(&right_value, &key)]
+            .into_iter()
+            .all(|value| !matches!(value, Value::Array(_)))
+    });
+    let first_diff = (0..length).find(|index| {
+        let key = index.to_string();
+        let left_has = execute::has_own_property(&left_value, &key);
+        let right_has = execute::has_own_property(&right_value, &key);
+        left_has != right_has
+            || !execute::same_value(
+                &execute::get_property(&left_value, &key),
+                &execute::get_property(&right_value, &key),
+            )
+    }).unwrap_or(length);
+    let scalar_long = first_diff >= 4
+        && ((left.logical_len() != right.logical_len() && length > 6) || length > 8)
+        && (0..length).all(|index| {
+            let key = index.to_string();
+            [execute::get_property(&left_value, &key), execute::get_property(&right_value, &key)]
+                .into_iter()
+                .all(|value| !matches!(value, Value::Array(_)))
+        });
+    if scalar_values && length <= 12 && !scalar_long {
+        return scalar_array_diff(&left_value, &right_value, indent);
+    }
+    let tail_start = if left.logical_len() == right.logical_len() {
+        length.saturating_sub(3)
+    } else {
+        length.saturating_sub(2)
+    };
     let mut lines = vec![format!("{}[", " ".repeat(indent))];
     for index in 0..length {
+        if scalar_long && index == 4 {
+            lines.push("...".into());
+        }
+        if scalar_long && index >= 4 && index < tail_start {
+            continue;
+        }
         let key = index.to_string();
         let left_has = index < left.logical_len() && execute::has_own_property(&left_value, &key);
         let right_has = index < right.logical_len() && execute::has_own_property(&right_value, &key);
