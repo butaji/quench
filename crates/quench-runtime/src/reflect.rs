@@ -1,5 +1,18 @@
 use crate::execute::VmError;
 use crate::value::Value;
+use std::cell::Cell;
+
+thread_local! {
+    static SHADOW_METHOD_REALM: Cell<Option<crate::ops::RealmId>> = const { Cell::new(None) };
+}
+
+pub(crate) fn note_shadow_method_realm(realm: crate::ops::RealmId) {
+    SHADOW_METHOD_REALM.with(|slot| slot.set(Some(realm)));
+}
+
+fn take_shadow_method_realm() -> Option<crate::ops::RealmId> {
+    SHADOW_METHOD_REALM.with(|slot| slot.take())
+}
 
 pub(crate) fn builtin(
     builtin: crate::ops::Builtin,
@@ -52,7 +65,14 @@ fn evaluate_builtin(
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate
         && crate::conversion::is_callable(&result)
     {
-        return wrap_shadow_function_with_caller(&result, realm, error_realm);
+        let method_realm = take_shadow_method_realm();
+        let caller_realm = method_realm.or(error_realm);
+        return wrap_shadow_function_with_caller_mode(
+            &result,
+            realm,
+            caller_realm,
+            method_realm.is_some(),
+        );
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
         return Err(shadow_type_error_for_realm(
@@ -101,6 +121,15 @@ pub(crate) fn wrap_shadow_function_with_caller(
     realm: Option<crate::ops::RealmId>,
     caller: Option<crate::ops::RealmId>,
 ) -> Result<Value, VmError> {
+    wrap_shadow_function_with_caller_mode(target, realm, caller, false)
+}
+
+pub(crate) fn wrap_shadow_function_with_caller_mode(
+    target: &Value,
+    realm: Option<crate::ops::RealmId>,
+    caller: Option<crate::ops::RealmId>,
+    caller_realm_explicit: bool,
+) -> Result<Value, VmError> {
     let name = match shadow_property(target, "name", realm)? {
         Value::String(value) if !crate::conversion::is_symbol_string(&value) => value,
         _ => String::new(),
@@ -111,11 +140,19 @@ pub(crate) fn wrap_shadow_function_with_caller(
         _ => 0.0,
     };
     let mut properties = shadow_function_properties(target, &name, length);
+    let prototype_realm = caller.or(realm).unwrap_or(crate::ops::RealmId::ROOT);
+    properties.push((
+        "\0function_prototype".to_string(),
+        crate::vm::realm_intrinsic_for(prototype_realm, crate::ops::Builtin::FunctionPrototype),
+    ));
     if let Some(realm) = realm.and_then(crate::vm::realm_token) {
         properties.push(("\0realm".to_string(), realm));
     }
     if let Some(caller) = caller.and_then(crate::vm::realm_token) {
         properties.push(("\0caller_realm".to_string(), caller));
+    }
+    if caller_realm_explicit {
+        properties.push(("\0caller_realm_explicit".to_string(), Value::Boolean(true)));
     }
     Ok(Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
@@ -168,7 +205,8 @@ fn shadow_type_error(message: &str) -> VmError {
 }
 
 pub(crate) fn shadow_type_error_for_realm(receiver: Option<&Value>, message: &str) -> VmError {
-    let realm = shadow_creation_realm(receiver)
+    let realm = take_shadow_method_realm()
+        .or_else(|| shadow_creation_realm(receiver))
         .or_else(|| crate::vm::realm_id_for_intrinsic_receiver(receiver));
     let constructor = realm
         .and_then(|realm| {
@@ -177,7 +215,21 @@ pub(crate) fn shadow_type_error_for_realm(receiver: Option<&Value>, message: &st
             })
         })
         .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeError));
-    shadow_type_error_with_constructor(message, constructor)
+    let VmError::Thrown(error) = shadow_type_error_with_constructor(message, constructor) else {
+        unreachable!()
+    };
+    let prototype = realm
+        .and_then(|realm| {
+            crate::vm::with_realm(realm, || {
+                crate::vm::realm_intrinsic(crate::ops::Builtin::TypeErrorPrototype)
+            })
+        })
+        .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeErrorPrototype));
+    VmError::Thrown(crate::builtins::set_property(
+        error,
+        "\0prototype",
+        prototype,
+    ))
 }
 
 fn shadow_creation_realm(receiver: Option<&Value>) -> Option<crate::ops::RealmId> {
@@ -207,12 +259,6 @@ fn shadow_type_error_with_constructor(message: &str, constructor: Value) -> VmEr
 }
 
 pub(crate) fn shadow_wrapped_object_error(realm: crate::ops::RealmId) -> VmError {
-    let error = crate::builtins::error(
-        crate::ops::Builtin::TypeError,
-        &[Value::String(
-            "ShadowRealm wrapped function must return a primitive".to_string(),
-        )],
-    );
     let constructor = if realm == crate::ops::RealmId::ROOT {
         Value::Builtin(crate::ops::Builtin::TypeError)
     } else {
@@ -223,6 +269,23 @@ pub(crate) fn shadow_wrapped_object_error(realm: crate::ops::RealmId) -> VmError
     } else {
         crate::vm::realm_intrinsic(crate::ops::Builtin::TypeErrorPrototype)
     };
+    shadow_wrapped_object_error_with_intrinsics(constructor, prototype)
+}
+
+pub(crate) fn shadow_wrapped_object_error_for_realm(realm: crate::ops::RealmId) -> VmError {
+    shadow_wrapped_object_error_with_intrinsics(
+        crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::TypeError),
+        crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::TypeErrorPrototype),
+    )
+}
+
+fn shadow_wrapped_object_error_with_intrinsics(constructor: Value, prototype: Value) -> VmError {
+    let error = crate::builtins::error(
+        crate::ops::Builtin::TypeError,
+        &[Value::String(
+            "ShadowRealm wrapped function must return a primitive".to_string(),
+        )],
+    );
     let error = crate::builtins::set_property(error, "constructor", constructor);
     VmError::Thrown(crate::builtins::set_property(
         error,
@@ -260,7 +323,14 @@ pub(crate) fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
         Some(Value::Object(properties))
             if properties.iter().any(|(key, value)| {
                 key == "\0prototype"
-                    && value == Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
+                    && (matches!(
+                        value,
+                        Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
+                    ) || matches!(
+                        value,
+                        Value::BoundFunction(bound)
+                            if matches!(bound.target, Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype))
+                    ))
             })
     )
 }
