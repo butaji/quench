@@ -73,6 +73,11 @@ fn run_loop(
         if let Some(fact) = CountedForFact::recognize(test, update) {
             trace_counted_recognition(body, fact, per_iteration);
             if let Some(completion) =
+                run_pair_word_walk(fact, body, dst, per_iteration, registers, loop_shape)
+            {
+                return Ok(completion);
+            }
+            if let Some(completion) =
                 run_invariant_sum_kernel(fact, body, dst, per_iteration, registers, loop_shape)
             {
                 return Ok(completion);
@@ -515,6 +520,13 @@ fn dump_counted_shape(
         let instruction = body.instruction(pc).unwrap();
         let cold = body.cold(instruction).map(crate::ops::Op::variant_name);
         eprintln!("  {pc}: {instruction:?} cold={cold:?}");
+        if let Some(crate::ops::Op::Branch {
+            then_ops, else_ops, ..
+        }) = body.cold(instruction)
+        {
+            dump_loop_fragment("then", then_ops.code().unwrap());
+            dump_loop_fragment("else", else_ops.code().unwrap());
+        }
     }
 }
 
