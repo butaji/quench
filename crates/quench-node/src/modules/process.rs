@@ -16,6 +16,7 @@ pub struct ProcessState {
     /// `(handler, once)` — `once` handlers fire a single time.
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
     pub warning_handlers: Vec<(Value, bool)>,
+    pub unhandled_rejection_handlers: Vec<(Value, bool)>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
     pub exit_handlers_ran: bool,
@@ -48,6 +49,7 @@ impl ProcessState {
             before_exit_handlers: Vec::new(),
             uncaught_exception_handlers: Vec::new(),
             warning_handlers: Vec::new(),
+            unhandled_rejection_handlers: Vec::new(),
             warnings_emitted: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
@@ -161,6 +163,14 @@ fn method_props() -> Vec<(&'static str, Value)> {
         (
             "emit",
             crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
+        ),
+        (
+            "removeListener",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
+        ),
+        (
+            "removeAllListeners",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_ALL_LISTENERS),
         ),
         (
             "emitWarning",
@@ -277,7 +287,9 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
             "exit" | "beforeExit" => {
                 on(state, args)?;
             }
-            "uncaughtException" | "warning" => push_handler(state, handler, event.as_str(), true),
+            "uncaughtException" | "warning" | "unhandledRejection" => {
+                push_handler(state, handler, event.as_str(), true)
+            }
             _ => {}
         }
     }
@@ -292,6 +304,9 @@ fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, on
             .uncaught_exception_handlers
             .push((handler.clone(), once)),
         "warning" => process.warning_handlers.push((handler.clone(), once)),
+        "unhandledRejection" => process
+            .unhandled_rejection_handlers
+            .push((handler.clone(), once)),
         _ => {}
     }
 }
@@ -348,7 +363,9 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
                 .process
                 .before_exit_handlers
                 .push(handler.clone()),
-            "uncaughtException" => push_handler(state, handler, "uncaughtException", false),
+            "uncaughtException" | "unhandledRejection" => {
+                push_handler(state, handler, event, false)
+            }
             "warning" => push_handler(state, handler, "warning", false),
             _ => {}
         }
@@ -367,6 +384,7 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
         let handlers = match event.as_str() {
             "warning" => &guard.process.warning_handlers,
             "uncaughtException" => &guard.process.uncaught_exception_handlers,
+            "unhandledRejection" => &guard.process.unhandled_rejection_handlers,
             _ => return Ok(Value::Boolean(false)),
         };
         (
@@ -390,11 +408,55 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     Ok(Value::Boolean(true))
 }
 
+pub fn remove_listener(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (Some(Value::String(event)), Some(target)) = (args.first(), args.get(1)) else {
+        return Ok(Value::Undefined);
+    };
+    let mut guard = state.borrow_mut();
+    let handlers = match event.as_str() {
+        "warning" => &mut guard.process.warning_handlers,
+        "uncaughtException" => &mut guard.process.uncaught_exception_handlers,
+        "unhandledRejection" => &mut guard.process.unhandled_rejection_handlers,
+        _ => return Ok(Value::Undefined),
+    };
+    if let Some(index) = handlers.iter().rposition(|(handler, _)| handler == target) {
+        handlers.remove(index);
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn remove_all_listeners(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let event = match args.first() {
+        Some(Value::String(event)) => Some(event.as_str()),
+        Some(Value::Undefined) | None => None,
+        _ => return Ok(Value::Undefined),
+    };
+    let mut guard = state.borrow_mut();
+    let process = &mut guard.process;
+    if event.is_none() || event == Some("warning") {
+        process.warning_handlers.clear();
+    }
+    if event.is_none() || event == Some("uncaughtException") {
+        process.uncaught_exception_handlers.clear();
+    }
+    if event.is_none() || event == Some("unhandledRejection") {
+        process.unhandled_rejection_handlers.clear();
+    }
+    Ok(Value::Undefined)
+}
+
 fn remove_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {
     let mut guard = state.borrow_mut();
     let handlers = match event {
         "warning" => &mut guard.process.warning_handlers,
         "uncaughtException" => &mut guard.process.uncaught_exception_handlers,
+        "unhandledRejection" => &mut guard.process.unhandled_rejection_handlers,
         _ => return,
     };
     if let Some(index) = handlers
