@@ -132,7 +132,17 @@ fn reduce_dynamic_for(
     let test = super::reduce_fragment(statement.test.as_ref(), ops, facts, next_register, locals)?;
     let var_names = body_var_names(&statement.body);
     propagate_body_vars(locals, next_slot, &var_names);
-    let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals, dst)?;
+    let mut body_slots = Vec::new();
+    let body = reduce_body_fragment_with_slots(
+        statement,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+        dst,
+        &mut body_slots,
+    )?;
     let mut update =
         super::reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
     if statement.init.as_ref().is_some_and(|init| {
@@ -152,10 +162,15 @@ fn reduce_dynamic_for(
         crate::machine::FunctionCode::pending_many(vec![init, test, body, update])
             .try_into()
             .expect("four loop bodies");
-    let per_iteration = lexical_names
+    let mut per_iteration = lexical_names
         .iter()
         .filter_map(|name| locals.get(name.as_str()).copied())
-        .collect();
+        .collect::<Vec<_>>();
+    for slot in body_slots {
+        if !per_iteration.contains(&slot) {
+            per_iteration.push(slot);
+        }
+    }
     ops.push(Op::Loop {
         label: None,
         init,
@@ -296,10 +311,25 @@ fn reduce_body_fragment(
     locals: &mut HashMap<String, u16>,
     dst: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
+    reduce_body_fragment_with_slots(
+        statement, _parent_ops, facts, next_register, next_slot, locals, dst, &mut Vec::new(),
+    )
+}
+
+fn reduce_body_fragment_with_slots(
+    statement: &ForStatement<'_>,
+    _parent_ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+    dst: u16,
+    body_slots: &mut Vec<u16>,
+) -> Result<Vec<Op>, Vec<String>> {
     let mut fragment = Vec::new();
     let barrier_len = facts.eval_var_barrier.len();
     extend_for_barrier(statement, facts);
-    let result = crate::loops::reduce_loop_body(
+    let result = crate::loops::reduce_loop_body_slots(
         &statement.body,
         &mut fragment,
         facts,
@@ -307,6 +337,7 @@ fn reduce_body_fragment(
         next_slot,
         locals,
         dst,
+        body_slots,
     );
     facts.eval_var_barrier.truncate(barrier_len);
     result.map(|_| fragment)
