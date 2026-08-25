@@ -473,6 +473,20 @@ fn for_in_keys(value: &crate::value::Value) -> Vec<String> {
     ) {
         return Vec::new();
     }
+    if matches!(value, crate::value::Value::Proxy(_)) {
+        if let Ok(crate::value::Value::Array(keys)) = crate::proxy::proxy_own_keys(value) {
+            return keys
+                .snapshot()
+                .into_iter()
+                .filter_map(|key| match key {
+                    crate::value::Value::String(key) => Some(key),
+                    _ => None,
+                })
+                .filter(|key| crate::own_keys::is_enumerable_property(value, key))
+                .collect();
+        }
+        return Vec::new();
+    }
     crate::own_keys::enumerate_object_properties(value)
 }
 
