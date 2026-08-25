@@ -46,8 +46,7 @@ fn run(id: &str) -> u64 {
             });
             let mut total = 0_u64;
             for index in 0..LONG_ITERATIONS {
-                total = black_box(total)
-                    .wrapping_add(black_box(collection.elements[index & 3]));
+                total = black_box(total).wrapping_add(black_box(collection.elements[index & 3]));
             }
             total
         }
@@ -93,27 +92,35 @@ fn run(id: &str) -> u64 {
             matches + last_index as u64
         }
         "packed-f64-jacobi" => {
-            const WIDTH: usize = 4096;
+            const WIDTH: usize = 128;
+            const HEIGHT: usize = 128;
             const ROW_SIZE: usize = WIDTH + 2;
-            let mut x = vec![1.01_f64; ROW_SIZE * 3];
-            let x0 = vec![2.03_f64; ROW_SIZE * 3];
-            let mut checksum = 0.0;
-            for _ in 0..6_104 {
-                let (mut last, mut current, mut next) = (0, ROW_SIZE + 1, ROW_SIZE * 2);
-                let mut last_x = x[ROW_SIZE];
-                for _ in 0..WIDTH {
-                    let value = (x0[current]
-                        + 0.1 * (last_x + x[current + 1] + x[last + 1] + x[next + 1]))
-                        * 0.5;
-                    x[current] = value;
-                    last_x = value;
-                    current += 1;
-                    last += 1;
-                    next += 1;
+            let mut x = vec![1.01_f64; ROW_SIZE * (HEIGHT + 2)];
+            let x0 = vec![2.03_f64; ROW_SIZE * (HEIGHT + 2)];
+            for _ in 0..100 {
+                for _ in 0..20 {
+                    for j in 1..=HEIGHT {
+                        let (mut last, mut current, mut next) =
+                            ((j - 1) * ROW_SIZE, j * ROW_SIZE + 1, (j + 1) * ROW_SIZE);
+                        let mut last_x = x[j * ROW_SIZE];
+                        for _ in 0..WIDTH {
+                            let value = (x0[current]
+                                + 0.1
+                                    * (last_x
+                                        + x[current + 1]
+                                        + x[last + 1]
+                                        + x[next + 1]))
+                                * 0.5;
+                            x[current] = value;
+                            last_x = value;
+                            current += 1;
+                            last += 1;
+                            next += 1;
+                        }
+                    }
                 }
-                checksum += last_x;
             }
-            black_box(checksum).to_bits()
+            black_box(x[HEIGHT * ROW_SIZE + WIDTH]).to_bits()
         }
         "packed-f64-advect" => {
             const WIDTH: usize = 4096;
@@ -168,6 +175,28 @@ fn run(id: &str) -> u64 {
                 black_box((&density, &u, &v));
             }
             black_box(density[0] + u[0] + v[0]).to_bits()
+        }
+        "packed-f64-boundary" => {
+            const WIDTH: usize = 4096;
+            const HEIGHT: usize = 64;
+            const ROW_SIZE: usize = WIDTH + 2;
+            let mut x = vec![1.25_f64; ROW_SIZE * (HEIGHT + 2)];
+            for _ in 0..10_000 {
+                for i in 1..=WIDTH {
+                    x[i] = x[i + ROW_SIZE];
+                    x[i + (HEIGHT + 1) * ROW_SIZE] = x[i + HEIGHT * ROW_SIZE];
+                }
+                for j in 1..=HEIGHT {
+                    x[j * ROW_SIZE] = x[1 + j * ROW_SIZE];
+                    x[WIDTH + 1 + j * ROW_SIZE] = x[WIDTH + j * ROW_SIZE];
+                }
+                for i in 1..=WIDTH {
+                    x[i] = -x[i + ROW_SIZE];
+                    x[i + (HEIGHT + 1) * ROW_SIZE] = -x[i + HEIGHT * ROW_SIZE];
+                }
+                black_box(&x);
+            }
+            black_box(x[1] + x[ROW_SIZE]).to_bits()
         }
         _ => panic!("unknown L0 oracle: {id}"),
     }

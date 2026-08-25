@@ -12,6 +12,14 @@ struct LinearSolveFact {
     inv_c: u16,
 }
 
+#[derive(Clone, Copy)]
+struct LinearSolveRowsFact {
+    inner: LinearSolveFact,
+    outer_slot: u16,
+    row_size: u16,
+    inner_loop: CountedForFact,
+}
+
 impl LinearSolveFact {
     fn recognize(code: crate::machine::CodeView<'_>, _counter: u16) -> Option<Self> {
         (code.len() == 28).then_some(())?;
@@ -99,6 +107,9 @@ fn run_linear_solve_kernel(
     body: crate::machine::CodeView<'_>,
     loop_shape: u64,
 ) -> Option<crate::completion::Completion> {
+    if let Some(completion) = run_linear_solve_rows_kernel(loop_fact, body, loop_shape) {
+        return Some(completion);
+    }
     (loop_fact.timing == CountedStepTiming::AfterBody).then_some(())?;
     let fact = LinearSolveFact::recognize(body, loop_fact.slot)?;
     if let CountedBound::Slot(bound) = loop_fact.bound {
@@ -153,6 +164,159 @@ fn run_linear_solve_kernel(
     environment.set(fact.last_x, Value::Number(last_x));
     environment.set(loop_fact.slot, Value::Number(counter));
     Some(crate::completion::Completion::Normal)
+}
+
+fn run_linear_solve_rows_kernel(
+    outer_loop: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    outer_shape: u64,
+) -> Option<crate::completion::Completion> {
+    let (fact, inner_body) = recognize_linear_solve_rows(outer_loop, body)?;
+    let environment = crate::locals::current();
+    let outer_start = kernel_index(environment.get_number(fact.outer_slot)?)?;
+    let outer_bound = outer_loop.bound.number(&environment)?;
+    let rows = unit_iteration_count(outer_loop, outer_start as f64, outer_bound)?;
+    let inner_start = initialized_number(inner_body.0, fact.inner_loop.slot)?;
+    let inner_bound = fact.inner_loop.bound.number(&environment)?;
+    let columns = unit_iteration_count(fact.inner_loop, inner_start, inner_bound)?;
+    (rows != 0 && columns != 0 && outer_start >= 1).then_some(())?;
+    let row_size = kernel_index(environment.get_number(fact.row_size)?)?;
+    let Value::Array(x) = crate::locals::resolved_replacement(environment.get(fact.inner.x)) else { return None };
+    let Value::Array(x0) = crate::locals::resolved_replacement(environment.get(fact.inner.x0)) else { return None };
+    (!std::rc::Rc::ptr_eq(&x, &x0)).then_some(())?;
+    validate_linear_solve_rows(&x, &x0, outer_start, rows, row_size, columns)?;
+    let mut x_values = x.numeric_kernel_words_mut()?;
+    let x0_values = x0.numeric_kernel_words()?;
+    let a = environment.get_number(fact.inner.a)?;
+    let inv_c = environment.get_number(fact.inner.inv_c)?;
+    let final_state = execute_linear_solve_rows(
+        &mut x_values, &x0_values, outer_start, rows, row_size, columns, a, inv_c,
+    );
+    flush_linear_solve_rows(&environment, fact, outer_start + rows, inner_start, columns, final_state);
+    trace_linear_solve_rows(outer_shape, inner_body.1, rows, columns);
+    Some(crate::completion::Completion::Normal)
+}
+
+fn recognize_linear_solve_rows(
+    outer_loop: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+) -> Option<(LinearSolveRowsFact, (crate::machine::CodeView<'_>, crate::machine::CodeView<'_>))> {
+    (body.len() == 25 && outer_loop.timing == CountedStepTiming::AfterBody
+        && outer_loop.step == 1.0).then_some(())?;
+    same_static_slot(body, &[0, 6, 10], outer_loop.slot)?;
+    let row_size = same_static_slots(body, &[3, 7, 13])?;
+    let last = initialized_compact_slot(body, 5, body.instruction(4)?.a)?;
+    let current = initialized_compact_slot(body, 9, body.instruction(8)?.a)?;
+    let next = initialized_compact_slot(body, 15, body.instruction(14)?.a)?;
+    let last_x = initialized_compact_slot(body, 19, body.instruction(18)?.a)?;
+    let crate::ops::Op::Loop { init, test, body: inner, update, post_test, .. } = body.cold_at(23)? else { return None };
+    (!*post_test).then_some(())?;
+    let (init, test, inner, update) = (init.code()?, test.code()?, inner.code()?, update.code()?);
+    let inner_loop = CountedForFact::recognize(test, update)?;
+    let fact = LinearSolveFact::recognize(inner, inner_loop.slot)?;
+    (fact.last == last && fact.current == current && fact.next == next && fact.last_x == last_x)
+        .then_some(())?;
+    Some((LinearSolveRowsFact { inner: fact, outer_slot: outer_loop.slot, row_size, inner_loop }, (init, inner)))
+}
+
+fn initialized_compact_slot(
+    code: crate::machine::CodeView<'_>, pc: usize, source: u16,
+) -> Option<u16> {
+    let op = code.instruction(pc)?;
+    (op.opcode == crate::ir::Opcode::InitLocal && op.b == source).then_some(op.a)
+}
+
+fn initialized_number(code: crate::machine::CodeView<'_>, slot: u16) -> Option<f64> {
+    for pc in 0..code.len() {
+        let Some((register, crate::ops::Constant::Number(number))) = code.constant_at(pc) else { continue };
+        for store_pc in pc + 1..code.len() {
+            let store = code.instruction(store_pc)?;
+            if matches!(store.opcode, crate::ir::Opcode::InitLocal | crate::ir::Opcode::StoreLocal)
+                && store.a == slot && store.b == register { return Some(*number); }
+        }
+    }
+    None
+}
+
+fn validate_linear_solve_rows(
+    x: &crate::value::ArrayData,
+    x0: &crate::value::ArrayData,
+    start: usize,
+    rows: usize,
+    row_size: usize,
+    columns: usize,
+) -> Option<()> {
+    let last_row = start.checked_add(rows)?.checked_sub(1)?;
+    let max_x = last_row.checked_add(1)?.checked_mul(row_size)?.checked_add(columns)?;
+    let max_x0 = last_row.checked_mul(row_size)?.checked_add(columns)?;
+    (x.is_packed_ordinary() && x0.is_packed_ordinary()
+        && max_x < x.header_length() && max_x0 < x0.header_length()).then_some(())
+}
+
+#[derive(Clone, Copy)]
+struct LinearSolveFinal { last: usize, current: usize, next: usize, last_x: f64 }
+
+fn execute_linear_solve_rows(
+    x: &mut [f64],
+    x0: &[f64],
+    start: usize,
+    rows: usize,
+    row_size: usize,
+    columns: usize,
+    a: f64,
+    inv_c: f64,
+) -> LinearSolveFinal {
+    let mut final_state = LinearSolveFinal { last: 0, current: 0, next: 0, last_x: 0.0 };
+    for row in start..start + rows {
+        let (mut last, mut current, mut next) =
+            ((row - 1) * row_size, row * row_size + 1, (row + 1) * row_size);
+        let mut last_x = x[row * row_size];
+        for _ in 0..columns {
+            let value = (x0[current]
+                + a * (last_x + x[current + 1] + x[last + 1] + x[next + 1]))
+                * inv_c;
+            x[current] = value;
+            last_x = value;
+            current += 1;
+            last += 1;
+            next += 1;
+        }
+        final_state = LinearSolveFinal { last, current, next, last_x };
+    }
+    final_state
+}
+
+fn flush_linear_solve_rows(
+    environment: &crate::environment::Environment,
+    fact: LinearSolveRowsFact,
+    outer_end: usize,
+    inner_start: f64,
+    columns: usize,
+    final_state: LinearSolveFinal,
+) {
+    let values = [
+        (fact.outer_slot, outer_end as f64),
+        (fact.inner_loop.slot, inner_start + columns as f64),
+        (fact.inner.last, final_state.last as f64),
+        (fact.inner.current, final_state.current as f64),
+        (fact.inner.next, final_state.next as f64),
+        (fact.inner.last_x, final_state.last_x),
+    ];
+    for (slot, value) in values { environment.set(slot, Value::Number(value)); }
+}
+
+fn trace_linear_solve_rows(
+    outer_shape: u64,
+    inner_body: crate::machine::CodeView<'_>,
+    rows: usize,
+    columns: usize,
+) {
+    let inner_shape = crate::execution_trace::loop_shape(inner_body);
+    crate::execution_trace::loop_shape_entries(inner_shape, rows.saturating_sub(1));
+    crate::execution_trace::counted_loop_iterations(outer_shape, rows);
+    crate::execution_trace::numeric_kernel_iterations(
+        "counted_packed_f64_jacobi", inner_shape, rows.saturating_mul(columns), 4, 1,
+    );
 }
 
 fn kernel_index(value: f64) -> Option<usize> {
