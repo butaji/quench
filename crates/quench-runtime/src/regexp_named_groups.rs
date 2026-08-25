@@ -17,10 +17,11 @@ fn collect_group_names(body: &str) -> Result<Option<Vec<String>>, String> {
         if next >= bytes.len() {
             return Ok(None);
         }
-        let name = group_name_at(body, next)?;
-        if seen.iter().any(|existing| existing == name) {
-            return Err(syntax_error());
+        if matches!(bytes[next], b'=' | b'!') {
+            index = next + 1;
+            continue;
         }
+        let name = group_name_at(body, next)?;
         seen.push(name.to_string());
         index = find_close_bracket(body, next).ok_or_else(syntax_error)? + 1;
     }
@@ -62,7 +63,10 @@ fn find_close_bracket(body: &str, start: usize) -> Option<usize> {
 }
 
 fn is_valid_group_name(name: &str) -> bool {
-    let mut chars = name.chars();
+    let Some(decoded) = decode_identifier_escapes(name) else {
+        return false;
+    };
+    let mut chars = decoded.chars();
     let Some(first) = chars.next() else {
         return false;
     };
@@ -77,6 +81,50 @@ fn is_valid_group_name(name: &str) -> bool {
     true
 }
 
+fn decode_identifier_escapes(name: &str) -> Option<String> {
+    let mut units = Vec::new();
+    let mut chars = name.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            let mut encoded = [0; 2];
+            units.extend(ch.encode_utf16(&mut encoded).iter().copied());
+            continue;
+        }
+        if chars.next()? != 'u' {
+            return None;
+        }
+        let first = chars.next()?;
+        let value = if first == '{' {
+            let mut digits = String::new();
+            loop {
+                let digit = chars.next()?;
+                if digit == '}' {
+                    break;
+                }
+                if !digit.is_ascii_hexdigit() {
+                    return None;
+                }
+                digits.push(digit);
+            }
+            u32::from_str_radix(&digits, 16).ok()?
+        } else {
+            let mut digits = String::from(first);
+            digits.extend(chars.by_ref().take(3));
+            if digits.len() != 4 || !digits.chars().all(|digit| digit.is_ascii_hexdigit()) {
+                return None;
+            }
+            u32::from_str_radix(&digits, 16).ok()?
+        };
+        if value > u32::from(u16::MAX) {
+            let mut encoded = [0; 2];
+            units.extend(char::from_u32(value)?.encode_utf16(&mut encoded).iter().copied());
+        } else {
+            units.push(u16::try_from(value).ok()?);
+        }
+    }
+    String::from_utf16(&units).ok()
+}
+
 fn is_id_start(ch: char) -> bool {
     if ch.is_ascii() {
         ch.is_ascii_alphabetic() || ch == b'_' as char || ch == b'$' as char
@@ -89,7 +137,8 @@ fn is_id_continue(ch: char) -> bool {
     if ch.is_ascii() {
         ch.is_ascii_alphanumeric() || ch == b'_' as char || ch == b'$' as char
     } else {
-        (ch.is_alphabetic() || ch.is_alphanumeric()) && !is_surrogate(ch)
+        (ch.is_alphabetic() || ch.is_alphanumeric() || matches!(ch, '\u{200C}' | '\u{200D}'))
+            && !is_surrogate(ch)
     }
 }
 
