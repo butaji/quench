@@ -111,9 +111,13 @@ pub fn constructor_new(
         Value::Undefined | Value::Null => "simple".to_string(),
         Value::String(value) if value == "simple" || value == "full" => value,
         value => {
+            let received = match value {
+                Value::String(ref value) => value.clone(),
+                _ => crate::modules::util::inspect(&value),
+            };
             return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
                 "The property 'options.diff' must be one of: 'simple', 'full'. Received '{}'",
-                crate::modules::util::inspect(&value)
+                received
             )))
         }
     };
@@ -145,10 +149,18 @@ pub fn constructor_new(
         quench_runtime::execute::set_property(instance, name, crate::host::capability(spec))
     });
     let instance = if strict {
-        let equal = quench_runtime::execute::get_property(&instance, "strictEqual");
-        let not_equal = quench_runtime::execute::get_property(&instance, "notStrictEqual");
-        let instance = quench_runtime::execute::set_property(instance, "equal", equal);
-        quench_runtime::execute::set_property(instance, "notEqual", not_equal)
+        let strict_equal = crate::host::capability(SPEC_ASSERT_STRICT_EQUAL);
+        let not_strict_equal = crate::host::capability(SPEC_ASSERT_NOT_STRICT_EQUAL);
+        let deep_strict_equal = crate::host::capability(SPEC_ASSERT_DEEP_STRICT_EQUAL);
+        let not_deep_strict_equal = crate::host::capability(SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL);
+        let instance = quench_runtime::execute::set_property(instance, "strictEqual", strict_equal.clone());
+        let instance = quench_runtime::execute::set_property(instance, "equal", strict_equal);
+        let instance = quench_runtime::execute::set_property(instance, "notStrictEqual", not_strict_equal.clone());
+        let instance = quench_runtime::execute::set_property(instance, "notEqual", not_strict_equal);
+        let instance = quench_runtime::execute::set_property(instance, "deepStrictEqual", deep_strict_equal.clone());
+        let instance = quench_runtime::execute::set_property(instance, "deepEqual", deep_strict_equal);
+        let instance = quench_runtime::execute::set_property(instance, "notDeepStrictEqual", not_deep_strict_equal.clone());
+        quench_runtime::execute::set_property(instance, "notDeepEqual", not_deep_strict_equal)
     } else {
         instance
     };
