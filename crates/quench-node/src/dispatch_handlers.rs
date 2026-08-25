@@ -83,6 +83,30 @@ pub fn events_call(
     crate::modules::events::new_emitter(state, &[])
 }
 
+pub fn events_abort_listener(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::events::abort_listener_callback(state, args)
+}
+
+pub fn events_abort_dispose(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::events::abort_listener_dispose(state, args)
+}
+
+pub fn events_add_abort_listener(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::events::add_abort_listener(state, args)
+}
+
 pub fn buffer_of(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -1400,11 +1424,6 @@ pub fn abort_controller_abort(
         return Ok(Value::Undefined);
     };
     let original_signal = quench_runtime::execute::get_property(controller, "signal");
-    let signal = quench_runtime::execute::set_property(
-        original_signal.clone(),
-        "aborted",
-        Value::Boolean(true),
-    );
     let reason = args.first().cloned().unwrap_or_else(|| {
         quench_runtime::host_api::object(vec![
             ("name".into(), Value::String("AbortError".into())),
@@ -1414,9 +1433,12 @@ pub fn abort_controller_abort(
             ),
         ])
     });
-    let signal = quench_runtime::execute::set_property(signal, "reason", reason);
-    quench_runtime::execute::replace_value(&original_signal, &signal);
-    let _ = quench_runtime::execute::set_property(controller.clone(), "signal", signal.clone());
+    quench_runtime::execute::set_property_in_place(
+        &original_signal,
+        "aborted",
+        Value::Boolean(true),
+    );
+    quench_runtime::execute::set_property_in_place(&original_signal, "reason", reason);
     let event = quench_runtime::host_api::object(vec![
         ("type".into(), Value::String("abort".into())),
         (
@@ -1424,7 +1446,7 @@ pub fn abort_controller_abort(
             crate::host::capability(crate::registry::SPEC_ABORT_EVENT_STOP_IMMEDIATE),
         ),
     ]);
-    crate::modules::event_target::dispatch_event(state, Some(&signal), &[event])
+    crate::modules::event_target::dispatch_event(state, Some(&original_signal), &[event])
 }
 
 pub fn abort_event_stop_immediate(
