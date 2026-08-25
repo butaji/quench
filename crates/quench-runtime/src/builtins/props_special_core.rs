@@ -105,6 +105,26 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "withCalendar") => {
             Some(Value::Builtin(TemporalPlainDateWithCalendar))
         }
+        (TemporalPlainDatePrototype, "add") => Some(Value::Builtin(TemporalPlainDateAdd)),
+        (TemporalPlainDatePrototype, "subtract") => Some(Value::Builtin(TemporalPlainDateSubtract)),
+        (TemporalPlainDatePrototype, "equals") => Some(Value::Builtin(TemporalPlainDateEquals)),
+        (TemporalPlainDatePrototype, "until") => Some(Value::Builtin(TemporalPlainDateUntil)),
+        (TemporalPlainDatePrototype, "since") => Some(Value::Builtin(TemporalPlainDateSince)),
+        (TemporalPlainDatePrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalPlainDateToLocaleString))
+        }
+        (TemporalPlainDatePrototype, "toPlainDateTime") => {
+            Some(Value::Builtin(TemporalPlainDateToPlainDateTime))
+        }
+        (TemporalPlainDatePrototype, "toPlainMonthDay") => {
+            Some(Value::Builtin(TemporalPlainDateToPlainMonthDay))
+        }
+        (TemporalPlainDatePrototype, "toPlainYearMonth") => {
+            Some(Value::Builtin(TemporalPlainDateToPlainYearMonth))
+        }
+        (TemporalPlainDatePrototype, "toZonedDateTime") => {
+            Some(Value::Builtin(TemporalPlainDateToZonedDateTime))
+        }
         (TemporalPlainDatePrototype, "monthsInYear") => {
             Some(Value::Builtin(TemporalPlainDateMonthsInYearGetter))
         }
