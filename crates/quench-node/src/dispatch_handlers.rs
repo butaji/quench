@@ -555,10 +555,6 @@ pub fn internal_binding(
                 "arrayBufferViewHasBuffer".to_string(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
             ),
-            (
-                "getProxyDetails".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
-            ),
         ]));
     }
     if name == "js_stream" {
@@ -809,28 +805,6 @@ pub fn internal_view_has_buffer(
     ))
 }
 
-pub fn internal_get_proxy_details(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(Value::Proxy(proxy)) = args.first() else {
-        return Ok(Value::Undefined);
-    };
-    let show_handler = matches!(args.get(1), Some(Value::Boolean(true)));
-    if *proxy.revoked.borrow() {
-        return Ok(if show_handler {
-            quench_runtime::host_api::array(vec![Value::Null, Value::Null])
-        } else {
-            Value::Null
-        });
-    }
-    Ok(if show_handler {
-        quench_runtime::host_api::array(vec![proxy.target.clone(), proxy.handler.clone()])
-    } else {
-        proxy.target.clone()
-    })
-}
 
 fn sleep_error(name: &str, message: &str) -> VmError {
     VmError::Thrown(quench_runtime::host_api::object(vec![
