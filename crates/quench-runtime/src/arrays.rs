@@ -33,38 +33,36 @@ fn execute_builtin_match(
     arguments: &[Value],
 ) -> BuiltinResult {
     use crate::ops::Builtin::*;
-    if builtin == ArrayFlat {
-        return Some(flat(receiver, arguments));
-    }
-    match builtin {
+    let result = match builtin {
         Array => return Some(crate::builtins::array(arguments)),
         ArrayIsArray => return Some(crate::builtins::is_array(arguments.first())),
         ArrayFrom => return Some(from(receiver, arguments)),
         ArrayOf => {
-            return Some(of(receiver, arguments));
+            return Some(create_result(receiver, arguments.to_vec(), false));
         }
         ArrayMap => return Some(crate::builtins::array_map(receiver, arguments)),
         ArrayFilter => return Some(crate::builtins::array_filter(receiver, arguments)),
         ArraySome => return Some(some(receiver, arguments)),
         ArrayEvery => return Some(every(receiver, arguments)),
         ArrayFind => return Some(find(receiver, arguments)),
-        ArrayFindIndex => return Some(find_index(receiver, arguments)),
         ArrayIncludes => return Some(includes(receiver, arguments)),
         ArrayIndexOf => return Some(index_of(receiver, arguments)),
         ArrayLastIndexOf => return Some(last_index_of(receiver, arguments)),
         ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
+        ArrayFlat => flat(receiver, arguments),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(at(receiver, arguments)),
-        ArraySort => return Some(sort(receiver, arguments)),
+        ArraySort => return Some(Ok(sort(receiver))),
         ArrayToReversed => return Some(to_reversed(receiver)),
-        ArraySplice => return Some(splice(receiver, arguments)),
+        ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
         _ => return None,
-    }
+    };
+    Some(Ok(result))
 }
 
 fn map_argument_error(
@@ -81,6 +79,12 @@ fn map_argument_error(
         return Some(Err(crate::value::error::throw_type_error(
             "Array.prototype.map called on null or undefined",
         )));
+    }
+    if !arguments
+        .first()
+        .is_some_and(crate::conversion::is_callable)
+    {
+        return Some(Err(crate::vm::not_callable()));
     }
     None
 }
@@ -128,129 +132,26 @@ include!("arrays_mutation.rs");
 include!("arrays_typed_static.rs");
 include!("arrays_from.rs");
 
-fn splice(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.splice called on null or undefined",
-        ));
+fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(receiver @ Value::Array(values)) = receiver else {
+        return Value::array(Vec::new());
     };
-    let mut target = crate::construct::to_object(receiver)?;
-    let length = crate::builtins::map_length(&target)?;
+    let length = values.len();
     let start = relative_index(arguments.first(), length as isize) as usize;
-    let start = start.min(length);
-    let item_count = arguments.len().saturating_sub(2);
-    let delete_count = match arguments.len() {
-        0 => 0,
-        1 => length - start,
-        _ => crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?
+    let delete_count = arguments.get(1).map_or(length - start, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
             .max(0.0)
-            .min((length - start) as f64) as usize,
-    };
-    const MAX_SAFE_LENGTH: usize = 9_007_199_254_740_991;
-    let resulting_length = length
-        .saturating_sub(delete_count)
-        .checked_add(item_count)
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid array length"))?;
-    if resulting_length > MAX_SAFE_LENGTH {
-        return Err(crate::value::error::throw_type_error("Invalid array length"));
-    }
-    let removed_target = crate::builtins::array_species_create(&target, delete_count)?;
-    let mut removed = removed_target;
-    for offset in 0..delete_count {
-        let key = (start + offset).to_string();
-        if crate::with_scope::has_property(&target, &key)? {
-            let value = crate::execute::get_property_result(&target, &key)?;
-            removed = crate::builtins::create_data_property_or_throw(
-                removed,
-                &offset.to_string(),
-                value,
-            )?;
-        }
-    }
-    removed = crate::properties::assign_set_property(
-        &removed,
-        "length",
-        Value::Number(delete_count as f64),
-    )?;
-    if let Value::Array(values) = &target {
-        if values.is_packed_ordinary() {
-            let mut updated = values.to_vec();
-            let removed_start = start;
-            let removed_end = start + delete_count;
-            updated.splice(
-                removed_start..removed_end,
-                arguments.iter().skip(2).cloned(),
-            );
-            let updated = Value::array(updated);
-            crate::locals::replace_value(receiver, &updated);
-            return Ok(removed);
-        }
-    }
-    if item_count < delete_count {
-        for index in start..(length - delete_count) {
-            let from = (index + delete_count).to_string();
-            let to = (index + item_count).to_string();
-            if crate::with_scope::has_property(&target, &from)? {
-                let value = crate::execute::get_property_result(&target, &from)?;
-                target = crate::properties::assign_set_property(&target, &to, value)?;
-            } else {
-                let (updated, deleted) = crate::builtins::delete_property(target, &to);
-                if !deleted {
-                    return Err(crate::value::error::throw_type_error(
-                        "Cannot delete property during splice",
-                    ));
-                }
-                target = updated;
-            }
-            target = crate::locals::resolved_replacement(target);
-        }
-        for index in ((length - delete_count + item_count)..length).rev() {
-            let (updated, deleted) = crate::builtins::delete_property(target, &index.to_string());
-            if !deleted {
-                return Err(crate::value::error::throw_type_error(
-                    "Cannot delete property during splice",
-                ));
-            }
-            target = crate::locals::resolved_replacement(updated);
-        }
-    } else if item_count > delete_count {
-        for index in (start + 1..=length - delete_count).rev() {
-            let from = (index + delete_count - 1).to_string();
-            let to = (index + item_count - 1).to_string();
-            if crate::with_scope::has_property(&target, &from)? {
-                let value = crate::execute::get_property_result(&target, &from)?;
-                target = crate::properties::assign_set_property(&target, &to, value)?;
-            } else {
-                let (updated, deleted) = crate::builtins::delete_property(target, &to);
-                if !deleted {
-                    return Err(crate::value::error::throw_type_error(
-                        "Cannot delete property during splice",
-                    ));
-                }
-                target = updated;
-            }
-            target = crate::locals::resolved_replacement(target);
-        }
-    }
-    for (offset, value) in arguments.iter().skip(2).cloned().enumerate() {
-        target = crate::properties::assign_set_property(
-            &target,
-            &(start + offset).to_string(),
-            value,
-        )?;
-        target = crate::locals::resolved_replacement(target);
-    }
-    let new_length = resulting_length;
-    target = crate::properties::assign_set_property(
-        &crate::locals::resolved_replacement(target),
-        "length",
-        Value::Number(new_length as f64),
-    )?;
-    crate::locals::replace_value(receiver, &target);
-    Ok(removed)
+            .min((length - start) as f64) as usize
+    });
+    let mut updated = values.to_vec();
+    let removed = updated
+        .splice(
+            start..start + delete_count,
+            arguments.iter().skip(2).cloned(),
+        )
+        .collect();
+    crate::locals::replace_value(receiver, &Value::array(updated));
+    Value::array(removed)
 }
 
 pub(crate) fn reduce(
@@ -331,7 +232,6 @@ fn array_method_core(key: &str) -> Option<crate::ops::Builtin> {
         "some" => crate::ops::Builtin::ArraySome,
         "every" => crate::ops::Builtin::ArrayEvery,
         "find" => crate::ops::Builtin::ArrayFind,
-        "findIndex" => crate::ops::Builtin::ArrayFindIndex,
         "includes" => crate::ops::Builtin::ArrayIncludes,
         "indexOf" => crate::ops::Builtin::ArrayIndexOf,
         "lastIndexOf" => crate::ops::Builtin::ArrayLastIndexOf,
@@ -342,8 +242,7 @@ fn array_method_core(key: &str) -> Option<crate::ops::Builtin> {
         "at" => crate::ops::Builtin::ArrayAt,
         "sort" => crate::ops::Builtin::ArraySort,
         "toReversed" => crate::ops::Builtin::ArrayToReversed,
-        "join" => crate::ops::Builtin::ArrayJoin,
-        "toString" => crate::ops::Builtin::ArrayToString,
+        "join" | "toString" => crate::ops::Builtin::ArrayJoin,
         "push" => crate::ops::Builtin::ArrayPush,
         "shift" => crate::ops::Builtin::ArrayShift,
         "reverse" => crate::ops::Builtin::ArrayReverse,
@@ -352,8 +251,6 @@ fn array_method_core(key: &str) -> Option<crate::ops::Builtin> {
         "fill" => crate::ops::Builtin::ArrayFill,
         "copyWithin" => crate::ops::Builtin::ArrayCopyWithin,
         "toSorted" => crate::ops::Builtin::ArrayToSorted,
-        "toSpliced" => crate::ops::Builtin::ArrayToSpliced,
-        "with" => crate::ops::Builtin::ArrayWith,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         _ => return array_method_tail(key),
@@ -378,9 +275,6 @@ include!("arrays_search_methods.rs");
 
 fn own_index(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     let index = array_index(key)? as usize;
-    if values.is_arguments() {
-        return values.get_index(index);
-    }
     // Keep the dense backing-store read independent from generic properties.
     // `direct_property` has already handled indexed property overrides; this
     // path only reads an actual dense slot.
@@ -393,10 +287,11 @@ fn array_prototype_override(key: &str) -> Option<Value> {
     let Value::Object(properties) = descriptor else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "value").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "value").then(|| value.clone()));
+    result
 }
 
 /// The `get` accessor of a user-defined `Array.prototype` override, e.g.
@@ -407,10 +302,11 @@ pub(crate) fn prototype_override_getter(key: &str) -> Option<Value> {
     let Value::Object(properties) = descriptor else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "get").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "get").then(|| value.clone()));
+    result
 }
 
 pub(crate) fn prototype_override_setter(key: &str) -> Option<Value> {
@@ -419,10 +315,11 @@ pub(crate) fn prototype_override_setter(key: &str) -> Option<Value> {
     let Value::Object(properties) = descriptor else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "set").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "set").then(|| value.clone()));
+    result
 }
 
 pub(crate) fn prototype_override_present(key: &str) -> bool {
@@ -479,159 +376,15 @@ fn iterator_symbol_removed(key: &str) -> bool {
 
 include!("arrays_iterator.rs");
 
-fn sort(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.sort called on null or undefined",
-        ));
+fn sort(receiver: Option<&Value>) -> Value {
+    let Some(receiver @ Value::Array(values)) = receiver else {
+        return Value::Undefined;
     };
-    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
-    if let Some(compare) = compare {
-        if !crate::conversion::is_callable(compare) {
-            return Err(crate::value::error::throw_type_error(
-                "Array.prototype.sort comparator is not callable",
-            ));
-        }
-    }
-    let mut target = crate::construct::to_object(receiver)?;
-    let length = crate::builtins::map_length(&target)?;
-    let mut values = Vec::new();
-    let mut undefined_count = 0usize;
-    for index in 0..length {
-        target = crate::locals::resolved_replacement(target);
-        let key = index.to_string();
-        if !crate::with_scope::has_property(&target, &key)? {
-            continue;
-        }
-        let value = crate::execute::get_property_result(&target, &key)?;
-        if matches!(value, Value::Undefined) {
-            undefined_count += 1;
-        } else {
-            values.push(value);
-        }
-    }
-    let value_count = values.len();
-    if let Some(compare) = compare {
-        sort_with_comparator(&mut values, compare)?;
-    } else {
-        sort_by_string(&mut values)?;
-    }
-
-    target = crate::locals::resolved_replacement(target);
-    for (index, value) in values.into_iter().enumerate() {
-        target = sort_write(target, &index.to_string(), value)?;
-        crate::locals::replace_value(receiver, &target);
-    }
-    for index in value_count..value_count + undefined_count {
-        target = sort_write(target, &index.to_string(), Value::Undefined)?;
-        crate::locals::replace_value(receiver, &target);
-    }
-    let final_count = value_count + undefined_count;
-    for index in final_count..length {
-        let (updated, deleted) = crate::builtins::delete_property(target, &index.to_string());
-        if !deleted {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot delete property during sort",
-            ));
-        }
-        target = updated;
-        crate::locals::replace_value(receiver, &target);
-    }
-    crate::locals::replace_value(receiver, &target);
-    Ok(target)
-}
-
-fn sort_with_comparator(
-    values: &mut Vec<Value>,
-    compare: &Value,
-) -> Result<(), crate::execute::VmError> {
-    let mut index = 1;
-    while index < values.len() {
-        let value = values.remove(index);
-        let mut position = 0;
-        while position < index {
-            let result = crate::functions::execute_target(
-                compare,
-                &Value::Undefined,
-                &[value.clone(), values[position].clone()],
-            )?;
-            let result = crate::conversion::to_number(&result)?;
-            if !result.is_nan() && result < 0.0 {
-                break;
-            }
-            position += 1;
-        }
-        values.insert(position, value);
-        index += 1;
-    }
-    Ok(())
-}
-
-fn sort_by_string(values: &mut Vec<Value>) -> Result<(), crate::execute::VmError> {
-    let mut index = 1;
-    while index < values.len() {
-        let value = values.remove(index);
-        let value_key = crate::conversion::to_string(&value)?;
-        let mut position = 0;
-        while position < index {
-            let current_key = crate::conversion::to_string(&values[position])?;
-            if value_key < current_key {
-                break;
-            }
-            position += 1;
-        }
-        values.insert(position, value);
-        index += 1;
-    }
-    Ok(())
-}
-
-fn sort_write(
-    target: Value,
-    key: &str,
-    value: Value,
-) -> Result<Value, crate::execute::VmError> {
-    if let Some(setter) = sort_setter(&target, key)? {
-        let (_, updated) = crate::functions::execute_target_with_receiver(
-            &setter,
-            &target,
-            std::slice::from_ref(&value),
-        )?;
-        return Ok(crate::locals::resolved_replacement(updated));
-    }
-    if let Value::Array(_) = &target {
-        if crate::builtins::descriptor_flag(&target, key, "writable") == Some(false)
-            || !crate::properties::object_is_extensible(&target)
-                && !crate::with_scope::has_property(&target, key)?
-        {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot assign property during sort",
-            ));
-        }
-        return Ok(crate::builtins::set_property(target, key, value));
-    }
-    crate::properties::assign_set_property(&target, key, value)
-}
-
-fn sort_setter(target: &Value, key: &str) -> Result<Option<Value>, crate::execute::VmError> {
-    if let Some(setter) = crate::property_define::accessor(target, key, "set") {
-        if !matches!(setter, Value::Undefined) {
-            return Ok(Some(setter));
-        }
-    }
-    if let Some(Value::Object(descriptor)) = crate::builtins::read_intrinsic_override(
-        crate::ops::Builtin::ObjectPrototype,
-        key,
-    ) {
-        let setter = crate::execute::get_property_result(&Value::Object(descriptor), "set")?;
-        if !matches!(setter, Value::Undefined) {
-            return Ok(Some(setter));
-        }
-    }
-    Ok(None)
+    let mut sorted = values.to_vec();
+    sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
+    let result = Value::array(sorted);
+    crate::locals::replace_value(receiver, &result);
+    result
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {
@@ -641,106 +394,66 @@ fn index(values: &crate::value::ArrayData, key: &str) -> Value {
 }
 
 include!("arrays_iteration.rs");
-pub(crate) fn flat(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let receiver = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
-    let length = crate::builtins::map_length(&receiver)?;
-    let depth = flat_depth(arguments.first())?;
-    let mut target = crate::builtins::array_species_create(&receiver, 0)?;
-    let mut next = 0usize;
-    flatten_into(&receiver, length, depth, &mut target, &mut next)?;
-    Ok(target)
-}
-
-fn flat_depth(value: Option<&Value>) -> Result<usize, crate::execute::VmError> {
-    let Some(value) = value.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(1);
+pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::array(Vec::new());
     };
-    let number = crate::conversion::to_number(value)?;
-    if number.is_nan() || number <= 0.0 || number == f64::NEG_INFINITY {
-        return Ok(0);
-    }
-    if number == f64::INFINITY {
-        return Ok(usize::MAX);
-    }
-    Ok(number.trunc() as usize)
+    let depth = arguments
+        .first()
+        .and_then(|value| match value {
+            Value::Number(number) => Some(number.max(0.0) as usize),
+            _ => None,
+        })
+        .unwrap_or(1);
+    Value::array(flatten(&values.snapshot(), depth))
+}
+fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
+    // Allocate the result once and append through the whole traversal. The
+    // previous recursive form allocated one temporary Vec per nested array,
+    // then copied each temporary into its parent.
+    let mut result = Vec::with_capacity(values.len());
+    flatten_into(values, depth, &mut result);
+    result
 }
 
-fn flatten_into(
-    source: &Value,
-    length: usize,
-    depth: usize,
-    target: &mut Value,
-    next: &mut usize,
-) -> Result<(), crate::execute::VmError> {
-    for index in 0..length {
-        let key = index.to_string();
-        if !crate::with_scope::has_property(source, &key)? {
-            continue;
+fn flatten_into(values: &[Value], depth: usize, result: &mut Vec<Value>) {
+    for value in values {
+        if depth > 0 {
+            if let Value::Array(nested) = value {
+                flatten_into(&nested.snapshot(), depth - 1, result);
+                continue;
+            }
         }
-        let value = crate::execute::get_property_result(source, &key)?;
-        if depth > 0
-            && matches!(
-                crate::builtins::is_array(Some(&value))?,
-                Value::Boolean(true)
-            )
-        {
-            let nested = crate::construct::to_object(&value)?;
-            let nested_length = crate::builtins::map_length(&nested)?;
-            flatten_into(&nested, nested_length, depth - 1, target, next)?;
-            continue;
-        }
-        let updated = crate::builtins::create_data_property_or_throw(
-            target.clone(),
-            &next.to_string(),
-            value,
-        )?;
-        *target = updated;
-        *next = next.saturating_add(1);
+        result.push(value.clone());
     }
-    Ok(())
 }
 pub(crate) fn flat_map(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let receiver = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
-    let length = crate::builtins::map_length(&receiver)?;
-    let Some(callback) = arguments.first() else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.flatMap callback is not callable",
-        ));
+    let Some(Value::Array(values)) = receiver else {
+        return Ok(Value::array(Vec::new()));
     };
-    if !crate::conversion::is_callable(callback) {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.flatMap callback is not callable",
-        ));
-    }
-    let mut target = crate::builtins::array_species_create(&receiver, 0)?;
-    let mut next = 0usize;
+    let Some(callback) = arguments.first() else {
+        return Ok(Value::Array(values.clone()));
+    };
+    // Each source element contributes at least one output slot in the common case.
+    // Reserve that lower bound once; nested results can still grow the vector.
+    let mut mapped = Vec::with_capacity(values.len());
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    for index in 0..length {
-        let Some(value) = crate::builtins::map_value(&receiver, index)? else {
-            continue;
-        };
-        let args = [value, Value::Number(index as f64), receiver.clone()];
-        let mapped = crate::functions::execute_target(callback, this_arg, &args)?;
-        if matches!(
-            crate::builtins::is_array(Some(&mapped))?,
-            Value::Boolean(true)
-        ) {
-            let nested = crate::construct::to_object(&mapped)?;
-            let nested_length = crate::builtins::map_length(&nested)?;
-            flatten_into(&nested, nested_length, 0, &mut target, &mut next)?;
-        } else {
-            target =
-                crate::builtins::create_data_property_or_throw(target, &next.to_string(), mapped)?;
-            next = next.saturating_add(1);
+    for (index, value) in values.snapshot().into_iter().enumerate() {
+        let args = [
+            value,
+            Value::Number(index as f64),
+            receiver.cloned().unwrap_or(Value::Undefined),
+        ];
+        let result = crate::functions::execute_target(callback, this_arg, &args)?;
+        match result {
+            Value::Array(nested) => mapped.extend(nested.snapshot()),
+            value => mapped.push(value),
         }
     }
-    Ok(target)
+    Ok(Value::array(mapped))
 }
 pub(crate) fn at(
     receiver: Option<&Value>,
@@ -751,26 +464,24 @@ pub(crate) fn at(
             "Array.prototype.at called on null or undefined",
         ));
     };
-    let length = array_like_length(receiver)?;
+    let Value::Array(values) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.at called on non-array",
+        ));
+    };
     let number = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
     if number.is_nan() {
-        return crate::execute::get_property_result(receiver, "0");
+        return Ok(values.first().unwrap_or(Value::Undefined));
     }
     let index = number.trunc();
-    let length = length as f64;
+    let length = values.len() as f64;
     let position = if index < 0.0 { length + index } else { index };
     if position < 0.0 || position >= length {
         return Ok(Value::Undefined);
     }
-    let position = position as usize;
-    if receiver.is_typed_array() {
-        if crate::typed_array_prototype::is_out_of_bounds(receiver)
-            || !crate::typed_array_prototype::index_exists(receiver, position)
-        {
-            return Ok(Value::Undefined);
-        }
-    }
-    crate::execute::get_property_result(receiver, &position.to_string())
+    Ok(values
+        .get_index(position as usize)
+        .unwrap_or(Value::Undefined))
 }
 pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let this = receiver.cloned().unwrap_or(Value::Undefined);
@@ -780,9 +491,6 @@ pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::exec
         ));
     }
     let length = array_like_length(&this)?;
-    if length >= 1usize << 32 {
-        return Err(crate::value::error::throw_range_error("Invalid array length"));
-    }
     let mut values = Vec::with_capacity(length);
     for index in (0..length).rev() {
         values.push(crate::execute::get_property_result(
@@ -802,57 +510,68 @@ pub(crate) fn reduce_values(
             "Array.prototype.reduce called on null or undefined",
         ));
     };
-    let receiver = crate::construct::to_object(receiver)?;
-    let length = crate::builtins::map_length(&receiver)?;
-    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
-    if !crate::conversion::is_callable(callback) {
-        return Err(crate::vm::not_callable());
+    if matches!(receiver, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.reduce called on null or undefined",
+        ));
     }
-    let mut index = if reverse { length } else { 0 };
-    let mut accumulator = if let Some(initial) = arguments.get(1) {
-        initial.clone()
+    let values: Vec<Value> = if let Value::Array(values) = receiver {
+        values.snapshot()
     } else {
-        let mut found = None;
-        while if reverse { index > 0 } else { index < length } {
-            if reverse {
-                index -= 1;
-            }
-            let key = index.to_string();
-            if crate::with_scope::has_property(&receiver, &key)? {
-                found = Some(crate::execute::get_property_result(&receiver, &key)?);
-                if !reverse {
-                    index += 1;
+        let length = crate::execute::get_property_result(receiver, "length")
+            .ok()
+            .and_then(|v| {
+                if let Value::Number(n) = v {
+                    let clamped = if n.is_nan() || n < 0.0 {
+                        0.0
+                    } else if n > 1_048_576.0 {
+                        1_048_576.0
+                    } else {
+                        n
+                    };
+                    Some(clamped.trunc() as usize)
+                } else {
+                    None
                 }
-                break;
-            }
-            if !reverse {
-                index += 1;
-            }
-        }
-        found.ok_or_else(|| {
-            crate::value::error::throw_type_error(
-                "Reduce of empty array with no initial value",
-            )
-        })?
+            })
+            .unwrap_or(0);
+        (0..length)
+            .map(|i| {
+                crate::execute::get_property_result(receiver, &i.to_string())
+                    .unwrap_or(Value::Undefined)
+            })
+            .collect()
     };
-    while if reverse { index > 0 } else { index < length } {
-        if reverse {
-            index -= 1;
+    let Some(callback) = arguments.first() else {
+        return Ok(Value::Undefined);
+    };
+    let (mut accumulator, start) = match arguments.get(1) {
+        Some(initial) => (initial.clone(), 0),
+        None if values.is_empty() => return Ok(Value::Undefined),
+        None => {
+            let index = if reverse { values.len() - 1 } else { 0 };
+            (values[index].clone(), 1)
         }
-        let current = index;
-        let key = current.to_string();
-        if crate::with_scope::has_property(&receiver, &key)? {
-            let value = crate::execute::get_property_result(&receiver, &key)?;
-            let args = [
-                accumulator.clone(),
-                value,
-                Value::Number(current as f64),
-                receiver.clone(),
-            ];
-            accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+    };
+    let apply = |index: usize, accumulator: &mut Value| -> Result<(), crate::execute::VmError> {
+        let args = [
+            accumulator.clone(),
+            values[index].clone(),
+            Value::Number(index as f64),
+            receiver.clone(),
+        ];
+        *accumulator = crate::functions::execute_target(callback, receiver, &args)?;
+        Ok(())
+    };
+    if reverse {
+        let end = values.len().saturating_sub(start);
+        for index in (0..end).rev() {
+            apply(index, &mut accumulator)?;
         }
-        if !reverse {
-            index += 1;
+    } else {
+        let begin = if arguments.get(1).is_some() { 0 } else { 1 };
+        for index in begin..values.len() {
+            apply(index, &mut accumulator)?;
         }
     }
     Ok(accumulator)

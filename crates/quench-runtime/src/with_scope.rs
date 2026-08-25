@@ -460,7 +460,7 @@ fn callable_on(object: &Value, callee: &Value) -> bool {
         return false;
     };
     object.properties.iter().any(|(name, value)| {
-        !name.starts_with('\0') && crate::builtins::same_value(Some(value), Some(callee))
+        !name.starts_with('\0') && crate::builtins::same_value(Some(&value), Some(callee))
     })
 }
 

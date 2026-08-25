@@ -148,9 +148,10 @@ pub fn is_namespace(value: &Value) -> bool {
     let Value::Object(properties) = unwrap_cells(value) else {
         return false;
     };
-    properties
+    let result = properties
         .iter()
-        .any(|(name, value)| name == MODULE_NAMESPACE && matches!(value, Value::Boolean(true)))
+        .any(|(name, value)| name == MODULE_NAMESPACE && matches!(value, Value::Boolean(true)));
+    result
 }
 
 fn unwrap_cells(value: &Value) -> Value {

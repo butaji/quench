@@ -384,10 +384,28 @@ impl CodeArena {
                 cursor += 2;
                 continue;
             }
+            if let Some(instruction) = lower_proven_local_move(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor], source));
+                cursor += 3;
+                continue;
+            }
             if let Some(instruction) = lower_named_call(&body[cursor..]) {
                 self.instructions.push(instruction);
                 metadata.push(metadata_for(&body[cursor], source));
                 cursor += 2;
+                continue;
+            }
+            if let Some(instruction) = lower_proven_local_postfix_update(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor], source));
+                cursor += 5;
+                continue;
+            }
+            if let Some(instruction) = lower_proven_local_update(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor], source));
+                cursor += 4;
                 continue;
             }
             if let Some(instruction) = lower_local_update(&body[cursor..]) {
@@ -491,6 +509,21 @@ fn lower_local_initialization(ops: &[Op]) -> Option<crate::ir::Instruction> {
     (slot == initialized).then(|| crate::ir::Instruction::init_local(*slot, *src))
 }
 
+fn lower_proven_local_move(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::LoadLocal {
+        dst: loaded,
+        slot: source,
+    }, Op::StoreLocal {
+        slot: target,
+        src: stored,
+    }, Op::Move { dst, src }, ..] = ops
+    else {
+        return None;
+    };
+    (*stored == *loaded && *src == *loaded)
+        .then(|| crate::ir::Instruction::move_local(*dst, *source, *target))
+}
+
 fn lower_named_call(ops: &[Op]) -> Option<crate::ir::Instruction> {
     let [Op::GetProperty {
         dst: callee,
@@ -538,6 +571,65 @@ fn lower_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
         && lhs == old
         && rhs == one
         && slot == checked
+        && slot == stored
+        && updated == src)
+        .then(|| crate::ir::Instruction::update_local(*old, *updated, *slot, decrement))
+}
+
+fn lower_proven_local_postfix_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::LoadLocal { dst: old, slot }, Op::Const {
+        dst: one,
+        value: Constant::Number(value),
+    }, Op::Binary {
+        dst: updated,
+        operator,
+        lhs,
+        rhs,
+    }, Op::StoreLocal { slot: stored, src }, Op::Unary {
+        dst: numeric_old,
+        operator: crate::ops::UnaryOp::ToNumeric,
+        src: unary_src,
+    }, ..] = ops
+    else {
+        return None;
+    };
+    let decrement = match operator {
+        crate::ops::BinaryOp::NumericAdd => false,
+        crate::ops::BinaryOp::NumericSubtract => true,
+        _ => return None,
+    };
+    (*value == 1.0
+        && old != updated
+        && lhs == old
+        && rhs == one
+        && slot == stored
+        && updated == src
+        && unary_src == old)
+        .then(|| crate::ir::Instruction::update_local(*numeric_old, *updated, *slot, decrement))
+}
+
+fn lower_proven_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::LoadLocal { dst: old, slot }, Op::Const {
+        dst: one,
+        value: Constant::Number(value),
+    }, Op::Binary {
+        dst: updated,
+        operator,
+        lhs,
+        rhs,
+    }, Op::StoreLocal { slot: stored, src }, ..] = ops
+    else {
+        return None;
+    };
+    let decrement = match operator {
+        crate::ops::BinaryOp::NumericAdd => false,
+        crate::ops::BinaryOp::NumericSubtract => true,
+        _ => return None,
+    };
+    (*value == 1.0
+        && old != updated
+        && lhs == old
+        && rhs == one
         && slot == stored
         && updated == src)
         .then(|| crate::ir::Instruction::update_local(*old, *updated, *slot, decrement))
@@ -1390,6 +1482,54 @@ mod tests {
         assert_eq!(
             code.instruction(0),
             Some(crate::ir::Instruction::update_local(2, 4, 7, false))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn local_postfix_update_and_numeric_result_lower_as_one_instruction() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::LoadLocal { dst: 2, slot: 7 },
+            super::Op::Const {
+                dst: 3,
+                value: super::Constant::Number(1.0),
+            },
+            super::Op::Binary {
+                dst: 4,
+                operator: crate::ops::BinaryOp::NumericAdd,
+                lhs: 2,
+                rhs: 3,
+            },
+            super::Op::StoreLocal { slot: 7, src: 4 },
+            super::Op::Unary {
+                dst: 5,
+                operator: crate::ops::UnaryOp::ToNumeric,
+                src: 2,
+            },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::update_local(5, 4, 7, false))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn proven_local_assignment_lowers_as_one_flagged_move() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::LoadLocal { dst: 2, slot: 7 },
+            super::Op::StoreLocal { slot: 8, src: 2 },
+            super::Op::Move { dst: 4, src: 2 },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::move_local(4, 7, 8))
         );
         assert!(code.cold_at(0).is_none());
     }

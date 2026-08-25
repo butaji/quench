@@ -136,7 +136,7 @@ pub(crate) fn proxy_get(
                         .find_map(|(n, v)| (n == "writable").then_some(v));
                     if matches!(writable, Some(Value::Boolean(false)))
                         && value_desc
-                            .is_some_and(|v| !crate::builtins::same_value(Some(v), Some(&result)))
+                            .is_some_and(|v| !crate::builtins::same_value(Some(&v), Some(&result)))
                     {
                         return Err(crate::value::error::throw_type_error(
                             "Proxy get invariant violated",
@@ -540,7 +540,7 @@ fn validate_get_own_property_descriptor_result(
                 .iter()
                 .find_map(|(n, v)| (n == field).then_some(v))
             {
-                if !crate::builtins::same_value(Some(expected), Some(actual)) {
+                if !crate::builtins::same_value(Some(&expected), Some(&actual)) {
                     return Err(crate::value::error::throw_type_error(
                         "Proxy getOwnPropertyDescriptor invariant violated",
                     ));
@@ -626,7 +626,7 @@ fn validate_define_invariant(
             .find_map(|(name, value)| (name == "value").then_some(value));
         if let Some(current_value) = current_value {
             if let Some(requested_value) = requested_value {
-                if !crate::builtins::same_value(Some(current_value), Some(requested_value)) {
+                if !crate::builtins::same_value(Some(&current_value), Some(requested_value)) {
                     return Err(crate::value::error::throw_type_error(
                         "Proxy defineProperty invariant violated",
                     ));

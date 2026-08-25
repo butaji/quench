@@ -42,7 +42,7 @@ fn refresh_array_descriptor(
         return descriptor;
     };
     if key == "length" {
-        if let Some((_, current)) = Rc::make_mut(properties)
+        if let Some((_, mut current)) = Rc::make_mut(properties)
             .iter_mut()
             .find(|(name, _)| name == "value")
         {
@@ -56,7 +56,7 @@ fn refresh_array_descriptor(
     let Some(value) = values.get_index(index) else {
         return descriptor;
     };
-    if let Some((_, current)) = Rc::make_mut(properties)
+    if let Some((_, mut current)) = Rc::make_mut(properties)
         .iter_mut()
         .find(|(name, _)| name == "value")
     {
