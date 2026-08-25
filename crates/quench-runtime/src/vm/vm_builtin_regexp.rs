@@ -50,18 +50,11 @@ fn regexp_prototype_accessor(receiver: Option<&Value>, key: &str) -> Result<Valu
         ));
     };
     if matches!(value, Value::Builtin(Builtin::RegExpPrototype)) {
-        return Ok(Value::String(if key == "source" {
-            "(?:)".to_string()
-        } else {
-            String::new()
-        }));
-    }
-    if !crate::regexp::has_regexp_internal_slot(value)
-        || !crate::regexp::is_current_realm(value)
-    {
-        return Err(crate::value::error::throw_type_error(
-            "RegExp accessor called on incompatible receiver",
-        ));
+        return Ok(match key {
+            "source" => Value::String("(?:)".to_string()),
+            "flags" => Value::String(String::new()),
+            _ => Value::Undefined,
+        });
     }
     if key == "flags" {
         if !crate::value::is_object(value) {
@@ -70,6 +63,13 @@ fn regexp_prototype_accessor(receiver: Option<&Value>, key: &str) -> Result<Valu
             ));
         }
         return regexp_flags(value);
+    }
+    if !crate::regexp::has_regexp_internal_slot(value)
+        || !crate::regexp::is_current_realm(value)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp accessor called on incompatible receiver",
+        ));
     }
     Ok(crate::execute::get_property(value, key))
 }
