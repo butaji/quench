@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::Cell;
 
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
@@ -16,6 +17,10 @@ use crate::host::HostState;
 pub type CallHandler =
     fn(&Rc<RefCell<HostState>>, Option<&Value>, &[Value]) -> Result<Value, VmError>;
 pub type ConstructHandler = fn(&Rc<RefCell<HostState>>, &[Value]) -> Result<Value, VmError>;
+
+thread_local! {
+    static OS_PRIORITY: Cell<i32> = const { Cell::new(0) };
+}
 
 fn value_text(value: &Value) -> String {
     match value {
@@ -434,6 +439,86 @@ pub fn internal_util_emit_warning(
         None,
         true,
     );
+    Ok(Value::Undefined)
+}
+
+fn os_priority_error(code: &str, message: &str) -> VmError {
+    VmError::Thrown(Value::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+    ]))
+}
+
+fn os_pid(arguments: &[Value]) -> Result<u32, VmError> {
+    let pid = arguments.first().cloned().unwrap_or(Value::Number(0.0));
+    if matches!(pid, Value::Undefined) {
+        return Ok(0);
+    }
+    let Value::Number(pid) = pid else {
+        return Err(os_priority_error(
+            "ERR_INVALID_ARG_TYPE",
+            "The \"pid\" argument must be of type number.",
+        ));
+    };
+    if !pid.is_finite() || pid.fract() != 0.0 || pid < 0.0 || pid > u32::MAX as f64 {
+        return Err(VmError::Thrown(Value::object(vec![
+            ("name".into(), Value::String("RangeError".into())),
+            ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+            ("message".into(), Value::String("The value of \"pid\" is out of range.".into())),
+        ])));
+    }
+    Ok(pid as u32)
+}
+
+pub fn os_get_priority(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if matches!(args.first(), Some(Value::Number(value)) if *value == -1.0) {
+        return Err(VmError::Thrown(Value::object(vec![
+            ("name".into(), Value::String("SystemError".into())),
+            ("code".into(), Value::String("ERR_SYSTEM_ERROR".into())),
+            (
+                "message".into(),
+                Value::String("A system error occurred: uv_os_getpriority returned ESRCH".into()),
+            ),
+        ])));
+    }
+    let _ = os_pid(args)?;
+    Ok(Value::Number(OS_PRIORITY.with(Cell::get) as f64))
+}
+
+pub fn os_set_priority(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let priority = if args.len() == 1 {
+        args[0].clone()
+    } else {
+        let _ = os_pid(args)?;
+        args.get(1).cloned().unwrap_or(Value::Number(0.0))
+    };
+    let Value::Number(priority) = priority else {
+        return Err(os_priority_error(
+            "ERR_INVALID_ARG_TYPE",
+            "The \"priority\" argument must be of type number.",
+        ));
+    };
+    if !priority.is_finite()
+        || priority.fract() != 0.0
+        || priority < -20.0
+        || priority > 19.0
+    {
+        return Err(VmError::Thrown(Value::object(vec![
+            ("name".into(), Value::String("RangeError".into())),
+            ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+            ("message".into(), Value::String("The value of \"priority\" is out of range.".into())),
+        ])));
+    }
+    OS_PRIORITY.with(|value| value.set(priority as i32));
     Ok(Value::Undefined)
 }
 
