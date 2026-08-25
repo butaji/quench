@@ -73,7 +73,7 @@ fn run(id: &str) -> u64 {
             let pairs = black_box([Pair { car: 1, cdr: 1 }, Pair { car: 2, cdr: 0 }]);
             let mut pair = 0;
             let mut sum = 0_u64;
-            for _ in 0..DEFAULT_ITERATIONS {
+            for _ in 0..LONG_ITERATIONS {
                 sum = black_box(sum).wrapping_add(black_box(pairs[pair].car));
                 pair = black_box(pairs[pair].cdr);
             }
@@ -83,7 +83,7 @@ fn run(id: &str) -> u64 {
             let haystack = black_box(b"x");
             let mut last_index = 0;
             let mut matches = 0;
-            for _ in 0..DEFAULT_ITERATIONS {
+            for _ in 0..LONG_ITERATIONS {
                 last_index = 0;
                 if black_box(haystack).get(last_index) == Some(&b'x') {
                     last_index += 1;
