@@ -27,14 +27,8 @@ fn load(source: &str) -> Result<Value, VmError> {
 pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("cluster.js"))
 }
-pub fn diagnostics_channel(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("diagnostics_channel.js"))
-}
 pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("v8.js"))
-}
-pub fn repl(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("repl.js"))
 }
 pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("worker_threads.js"))
