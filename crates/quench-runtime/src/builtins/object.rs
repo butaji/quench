@@ -41,11 +41,10 @@ pub(crate) fn execute_special(
         Builtin::ObjectGetOwnPropertyDescriptor => {
             let (target, key) = static_target(arguments);
             require_object_coercible(target)?;
-            let key = key.cloned().unwrap_or(Value::Undefined);
-            if let (Some(target @ Value::Proxy(_)), Value::String(key)) = (target, &key) {
+            if let (Some(target @ Value::Proxy(_)), Some(Value::String(key))) = (target, key) {
                 return crate::proxy::proxy_get_own_property_descriptor(target, key);
             }
-            descriptor(target, Some(&key))
+            descriptor(target, key)
         }
         _ => execute_special_tail(builtin, receiver, arguments),
     }
@@ -170,20 +169,11 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             );
         }
     }
-    let proxy_target = matches!(target, Value::Proxy(_));
     let result = match target {
         Value::Function(_) | Value::BoundFunction(_) => set_function_prototype(target, prototype),
         Value::Object(data) => set_object_prototype(data, prototype),
         _ => crate::builtins::set_property(target.clone(), "\0prototype", prototype),
     };
-    if matches!(result, Value::Boolean(false)) {
-        return Err(crate::value::error::throw_type_error(
-            "Proxy setPrototypeOf trap returned false",
-        ));
-    }
-    if proxy_target && matches!(result, Value::Boolean(true)) {
-        return Ok(target.clone());
-    }
     crate::locals::replace_value(target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
@@ -306,7 +296,8 @@ pub(crate) fn descriptor(
     let (Some(value), Some(key)) = (value, key) else {
         return Ok(Value::Undefined);
     };
-    let value = crate::locals::resolved_replacement(value.clone());
+    let value = crate::vm::resolve_global_owner(value)
+        .unwrap_or_else(|| crate::locals::resolved_replacement(value.clone()));
     let value = unwrap_binding_cells(value);
     let key = crate::conversion::to_property_key(key)?;
     if matches!(value, Value::Proxy(_)) {
