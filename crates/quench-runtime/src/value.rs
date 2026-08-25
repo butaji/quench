@@ -216,6 +216,14 @@ pub struct PromiseData {
 }
 
 impl PromiseData {
+    /// Allocate a promise and notify the embedding host at the engine edge.
+    /// The notification is inert when no host lifecycle observer is present.
+    pub fn allocate(state: PromiseState) -> Rc<Self> {
+        let promise = Rc::new(Self::new(state));
+        crate::promise::promise_created(&promise);
+        promise
+    }
+
     pub fn new(state: PromiseState) -> Self {
         let already_resolved = !matches!(state, PromiseState::Pending);
         let result = match &state {
