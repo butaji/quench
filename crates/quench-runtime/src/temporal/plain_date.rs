@@ -62,6 +62,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateWithCalendar => {
             Some(with_calendar(receiver, arguments.first()))
         }
+        crate::ops::Builtin::TemporalPlainDateWith => {
+            Some(with(receiver, arguments.first(), arguments.get(1)))
+        }
         crate::ops::Builtin::TemporalPlainDateAdd => Some(add(receiver, arguments.first(), 1.0)),
         crate::ops::Builtin::TemporalPlainDateSubtract => {
             Some(add(receiver, arguments.first(), -1.0))
@@ -554,6 +557,56 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         field(object, "day"),
         calendar.clone(),
     ])
+}
+
+fn with(
+    receiver: Option<&Value>,
+    changes: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
+    let (year, month, day) = date_parts(receiver)?;
+    let changes = changes
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
+    let year = number_or_field(changes, "year", year)?;
+    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    let month = if matches!(month_code, Value::Undefined) {
+        number_or_field(changes, "month", month)?
+    } else {
+        month_code_number(&month_code)?
+    };
+    let mut day = number_or_field(changes, "day", day)?;
+    let overflow = options
+        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
+        .unwrap_or(Value::String("constrain".into()));
+    let max_day = days_in_month(year, month);
+    if day > max_day {
+        if matches!(overflow, Value::String(value) if value == "constrain") {
+            day = max_day;
+        } else {
+            return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+        }
+    }
+    construct(&[
+        Value::Number(year),
+        Value::Number(month),
+        Value::Number(day),
+    ])
+}
+
+fn number_or_field(object: &Value, name: &str, default: f64) -> Result<f64, VmError> {
+    match crate::execute::get_property_result(object, name)? {
+        Value::Undefined => Ok(default),
+        value => crate::conversion::to_number(&value),
+    }
+}
+
+fn month_code_number(value: &Value) -> Result<f64, VmError> {
+    let code = crate::conversion::to_string(value)?;
+    code.strip_prefix('M')
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| (1.0..=12.0).contains(value))
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
 }
 
 fn invalid_receiver() -> VmError {
