@@ -1,12 +1,15 @@
-fn format_json_value(value: &Value) -> String {
-    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
-        if let Ok(self_value) = quench_runtime::execute::get_property_result(value, "self") {
-            if matches!(self_value, Value::Object(_) | Value::ObjectAlias(_)) {
-                return "[Circular]".into();
-            }
+fn format_json_value(value: &Value) -> Result<String, VmError> {
+    let value = match quench_runtime::execute::get_property_result(value, "toJSON") {
+        Ok(method) if matches!(method, Value::Function(_) | Value::BoundFunction(_)) => {
+            quench_runtime::execute::call(&method, value, &[])?
         }
+        _ => value.clone(),
+    };
+    match quench_runtime::execute::json_stringify(&value) {
+        Ok(Value::String(json)) => Ok(json),
+        Ok(_) => Ok("undefined".into()),
+        Err(error) => Err(error),
     }
-    "undefined".into()
 }
 
 fn format_compact_array(value: &Value) -> String {

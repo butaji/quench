@@ -432,6 +432,33 @@ pub fn format(args: &[Value]) -> String {
     format_varargs(args)
 }
 
+/// Execute observable `toJSON` hooks before the string-only formatter runs.
+/// The dispatch edge uses this to preserve thrown user errors.
+pub fn validate_json_arguments(args: &[Value]) -> Result<(), VmError> {
+    let Some(Value::String(template)) = args.first() else {
+        return Ok(());
+    };
+    let mut index = 1;
+    let mut chars = template.chars();
+    while let Some(character) = chars.next() {
+        if character != '%' {
+            continue;
+        }
+        let Some(specifier) = chars.next() else { break };
+        if specifier == '%' || specifier != 'j' {
+            continue;
+        }
+        let Some(value) = args.get(index) else { break };
+        index += 1;
+        if let Ok(method) = quench_runtime::execute::get_property_result(value, "toJSON") {
+            if matches!(method, Value::Function(_) | Value::BoundFunction(_)) {
+                quench_runtime::execute::call(&method, value, &[])?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Public for `console.log` reuse.
 pub fn format_template(template: &str, args: &[Value]) -> String {
     let mut out = String::new();
@@ -450,6 +477,13 @@ pub fn format_template(template: &str, args: &[Value]) -> String {
             out.push('%');
             continue;
         }
+        // Unknown specifiers are literal text and do not consume the next
+        // argument.  This is observable for `util.format('a% b', 'x')`.
+        if !matches!(spec, 's' | 'd' | 'i' | 'f' | 'j' | 'o' | 'O' | 'c') {
+            out.push('%');
+            out.push(spec);
+            continue;
+        }
         let Some(arg) = args.get(index).cloned() else {
             out.push('%');
             out.push(spec);
@@ -462,7 +496,7 @@ pub fn format_template(template: &str, args: &[Value]) -> String {
     // by spaces, mirroring console.log's behavior.
     for arg in args.iter().skip(index) {
         out.push(' ');
-        out.push_str(&format_spec('s', arg));
+        out.push_str(&format_extra(arg));
     }
     out
 }
@@ -485,8 +519,26 @@ fn format_spec(spec: char, arg: &Value) -> String {
         'i' => to_int_string(arg),
         'f' => to_float_string(arg),
         'j' => json_string(arg),
-        'o' | 'O' => inspect(arg),
+        // Node gives `%o` the full, hidden-property inspection profile while
+        // `%O` uses the ordinary compact profile.  Keep the distinction at
+        // this boundary; both profiles consume the same property facts.
+        'o' => inspect_verbose(arg, 4, 0),
+        'O' => inspect_with_options(arg, 2, false, None, false),
+        'c' => String::new(),
         other => format!("%{other}"),
+    }
+}
+
+fn format_extra(value: &Value) -> String {
+    match value {
+        Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
+        Value::String(value)
+            if quench_runtime::execute::is_symbol(&Value::String(value.clone())) =>
+        {
+            symbol_string(&Value::String(value.clone()))
+        }
+        Value::String(value) => value.clone(),
+        _ => format_spec('s', value),
     }
 }
 
@@ -1222,6 +1274,83 @@ fn inspect_at(value: &Value, depth: usize) -> String {
         Value::Array(_) => inspect_array(value, depth),
         _ => inspect_shallow(value),
     }
+}
+
+/// `%o`'s hidden-property profile.  The layout is deliberately derived from
+/// own keys and ordinary property reads, rather than maintaining a second
+/// object model for formatting.
+fn inspect_verbose(value: &Value, depth: usize, indent: usize) -> String {
+    if depth == 0 {
+        return inspect_shallow(value);
+    }
+    match value {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            let keys = quench_runtime::execute::own_enumerable_keys(value);
+            if keys.is_empty() {
+                return "{}".into();
+            }
+            let pad = " ".repeat(indent + 2);
+            let body = keys
+                .iter()
+                .map(|key| {
+                    let display = if key.parse::<usize>().is_ok() {
+                        format!("'{key}'")
+                    } else {
+                        key.clone()
+                    };
+                    format!(
+                        "{pad}{display}: {}",
+                        inspect_verbose(
+                            &quench_runtime::execute::get_property(value, key),
+                            depth - 1,
+                            indent + 2,
+                        )
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",\n");
+            format!("{{\n{body}\n{}}}", " ".repeat(indent))
+        }
+        Value::Array(array) => {
+            let pad = " ".repeat(indent + 2);
+            let items = (0..array.len())
+                .map(|index| {
+                    format!(
+                        "{pad}{}",
+                        inspect_verbose(
+                            &quench_runtime::execute::get_property(value, &index.to_string()),
+                            depth - 1,
+                            indent + 2,
+                        )
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut lines = items;
+            lines.push(format!(
+                "{pad}[length]: {}",
+                array.len()
+            ));
+            format!("[\n{}\n{}]", lines.join(",\n"), " ".repeat(indent))
+        }
+        Value::Function(_) | Value::BoundFunction(_) => inspect_verbose_function(value, indent),
+        _ => inspect_depth(value, depth),
+    }
+}
+
+fn inspect_verbose_function(value: &Value, indent: usize) -> String {
+    let name = match quench_runtime::execute::get_property(value, "name") {
+        Value::String(name) if !name.is_empty() => name,
+        _ => "(anonymous)".into(),
+    };
+    let length = inspect_shallow(&quench_runtime::execute::get_property(value, "length"));
+    let pad = " ".repeat(indent + 2);
+    let prototype = "{ [constructor]: [Circular *1] }";
+    format!(
+        "<ref *1> {} {{\n{pad}[length]: {length},\n{pad}[name]: {},\n{pad}[prototype]: {prototype}\n{}}}",
+        inspect_function(value),
+        inspect_string(&name),
+        " ".repeat(indent),
+    )
 }
 
 /// Plain objects render as `{ key: value, ... }` with shallow values.

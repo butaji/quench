@@ -144,6 +144,7 @@ pub fn util_format(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    crate::modules::util::validate_json_arguments(args)?;
     Ok(Value::String(crate::modules::util::format(args)))
 }
 pub fn util_inspect(
@@ -1918,6 +1919,7 @@ pub fn util_format_with_options(
         options,
         "numericSeparator",
     ));
+    crate::modules::util::validate_json_arguments(&args[1..])?;
     Ok(Value::String(crate::modules::util::format_with_options(
         &args[1..],
         separator,
