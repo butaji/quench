@@ -394,7 +394,10 @@ pub fn resource_run(
     resource_before(state, Some(&resource), &[])?;
     let result = args
         .first()
-        .map(|f| execute::call(f, &resource, &args[1..]))
+        .map(|f| {
+            let this_arg = args.get(1).unwrap_or(&Value::Undefined);
+            execute::call(f, this_arg, args.get(2..).unwrap_or(&[]))
+        })
         .transpose()?;
     resource_after(state, Some(&resource), &[])?;
     Ok(result.unwrap_or(Value::Undefined))
