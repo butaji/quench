@@ -526,6 +526,10 @@ fn binary_assert(
                     rendered(&actual),
                     rendered(&expected)
                 ),
+                _ if operator == "notDeepStrictEqual" => format!(
+                    "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
+                    rendered(&actual)
+                ),
                 _ => format!(
                     "Expected values to be {}:\n\n{} {} {}\n",
                     label,
@@ -553,11 +557,17 @@ fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String
         }
     };
     match operator {
-        "strictEqual" => format!(
-            "Expected values to be strictly equal:\n+ actual - expected\n\n{}\n{}\n",
-            if actual.contains('\n') { simple_side(actual, "+", 100) } else { format!("+ '{actual}'") },
-            if expected.contains('\n') { simple_side(expected, "-", 100) } else { format!("- '{expected}'") }
-        ),
+        "strictEqual" => {
+            if actual.len() <= 10 && expected.len() <= 10 {
+                format!("Expected values to be strictly equal:\n\n'{actual}' !== '{expected}'\n")
+            } else {
+                format!(
+                    "Expected values to be strictly equal:\n+ actual - expected\n\n{}\n{}\n",
+                    if actual.contains('\n') { simple_side(actual, "+", 100) } else { format!("+ '{actual}'") },
+                    if expected.contains('\n') { simple_side(expected, "-", 100) } else { format!("- '{expected}'") }
+                )
+            }
+        }
         "notStrictEqual" => format!(
             "Expected \"actual\" to be strictly unequal to:\n\n{}",
             value(actual, 48)
