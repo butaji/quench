@@ -17,6 +17,7 @@ use crate::host::HostState;
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
 const HOOK_ID: &str = "\0quench:async_hooks:hook";
+const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 
 #[derive(Clone, Debug, Default)]
 struct Hook {
@@ -33,7 +34,8 @@ use crate::registry::{SPEC_ASYNC_CREATE_HOOK, SPEC_ASYNC_EXECUTION_ID,
     SPEC_ASYNC_EXECUTION_RESOURCE, SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE,
     SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER, SPEC_ASYNC_RESOURCE_BEFORE,
     SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN,
-    SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_TRIGGER_ID};
+    SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_TRIGGER_ID, SPEC_ASYNC_LOCAL_GET,
+    SPEC_ASYNC_LOCAL_RUN, SPEC_ASYNC_LOCAL_ENTER, SPEC_ASYNC_LOCAL_DISABLE};
 
 #[derive(Debug)]
 pub struct AsyncHooksState {
@@ -43,6 +45,9 @@ pub struct AsyncHooksState {
     current_resource: Option<Value>,
     hooks: Vec<Hook>,
     promise_resources: HashMap<usize, Value>,
+    local_stores: HashMap<u64, Value>,
+    next_local_id: u64,
+    pub(crate) current_local_store: Option<Value>,
 }
 
 impl AsyncHooksState {
@@ -54,6 +59,9 @@ impl AsyncHooksState {
             current_resource: None,
             hooks: Vec::new(),
             promise_resources: HashMap::new(),
+            local_stores: HashMap::new(),
+            next_local_id: 1,
+            current_local_store: None,
         }
     }
 
@@ -80,6 +88,10 @@ pub fn build() -> Value {
             crate::host::capability(SPEC_ASYNC_EXECUTION_RESOURCE),
         ),
         ("createHook", crate::host::capability(SPEC_ASYNC_CREATE_HOOK)),
+        (
+            "AsyncLocalStorage",
+            crate::host::capability(crate::registry::SPEC_ASYNC_LOCAL_STORAGE),
+        ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }
@@ -90,6 +102,98 @@ pub fn execution_id(
     _: &[Value],
 ) -> Result<Value, VmError> {
     Ok(Value::Number(state.borrow().async_hooks.current_id as f64))
+}
+
+pub fn new_async_local_storage(
+    state: &Rc<RefCell<HostState>>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let mut host = state.borrow_mut();
+    let id = host.async_hooks.next_local_id;
+    host.async_hooks.next_local_id += 1;
+    let object = crate::host::namespace_object_from_pairs(vec![(
+        LOCAL_ID.to_string(),
+        Value::Number(id as f64),
+    )]);
+    let object = execute::set_property(
+        object,
+        "getStore",
+        crate::host::capability(SPEC_ASYNC_LOCAL_GET),
+    );
+    let object = execute::set_property(
+        object,
+        "run",
+        crate::host::capability(SPEC_ASYNC_LOCAL_RUN),
+    );
+    let object = execute::set_property(
+        object,
+        "enterWith",
+        crate::host::capability(SPEC_ASYNC_LOCAL_ENTER),
+    );
+    Ok(execute::set_property(
+        object,
+        "disable",
+        crate::host::capability(SPEC_ASYNC_LOCAL_DISABLE),
+    ))
+}
+
+fn local_id(receiver: Option<&Value>) -> Option<u64> {
+    match receiver.map(|value| execute::get_property(value, LOCAL_ID)) {
+        Some(Value::Number(id)) if id.is_finite() && id >= 0.0 => Some(id as u64),
+        _ => None,
+    }
+}
+
+pub fn local_get_store(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(state
+        .borrow()
+        .async_hooks
+        .current_local_store
+        .clone()
+        .unwrap_or(Value::Undefined))
+}
+
+pub fn local_enter_with(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    state.borrow_mut().async_hooks.current_local_store =
+        Some(args.first().cloned().unwrap_or(Value::Undefined));
+    Ok(Value::Undefined)
+}
+
+pub fn local_disable(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    state.borrow_mut().async_hooks.current_local_store = None;
+    Ok(Value::Undefined)
+}
+
+pub fn local_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let callback = args.get(1).ok_or_else(|| VmError::Thrown(host_api::object(vec![])))?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(VmError::Thrown(host_api::object(vec![])));
+    }
+    let previous = state.borrow().async_hooks.current_local_store.clone();
+    state.borrow_mut().async_hooks.current_local_store =
+        Some(args.first().cloned().unwrap_or(Value::Undefined));
+    let result = execute::call(callback, receiver.unwrap_or(&Value::Undefined), &args[2..]);
+    match previous {
+        Some(value) => state.borrow_mut().async_hooks.current_local_store = Some(value),
+        None => state.borrow_mut().async_hooks.current_local_store = None,
+    };
+    result
 }
 
 pub fn trigger_id(

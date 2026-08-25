@@ -32,7 +32,7 @@ thread_local! { static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::
 struct ChannelData {
     name: Value,
     subscribers: Vec<Value>,
-    store: Value,
+    store: Option<(Value, Value)>,
 }
 
 impl ChannelData {
@@ -40,7 +40,7 @@ impl ChannelData {
         Self {
             name,
             subscribers: Vec::new(),
-            store: Value::Undefined,
+            store: None,
         }
     }
 }
@@ -369,6 +369,8 @@ pub fn trace_sync(
     let tracing = TRACE_CHANNELS.iter().any(|name| {
         channel_has_subscribers(state, &execute::get_property(receiver, name))
     });
+    let start_store = channel_store(state, &start);
+    let previous_store = enter_store(start_store.as_ref(), &context);
     if tracing && channel_has_subscribers(state, &start) {
         publish(state, Some(&start), std::slice::from_ref(&context))?;
     }
@@ -379,6 +381,7 @@ pub fn trace_sync(
             if tracing && channel_has_subscribers(state, &end) {
                 publish(state, Some(&end), std::slice::from_ref(&completion))?;
             }
+            restore_store(start_store.as_ref(), previous_store);
             Ok(result)
         }
         Err(thrown) => {
@@ -394,6 +397,7 @@ pub fn trace_sync(
             if tracing && channel_has_subscribers(state, &end) {
                 publish(state, Some(&end), std::slice::from_ref(&completion))?;
             }
+            restore_store(start_store.as_ref(), previous_store);
             Err(thrown)
         }
     }
@@ -478,7 +482,10 @@ pub fn has_subscribers(
         return Ok(Value::Boolean(TRACE_CHANNELS.iter().any(|name| {
             let channel = execute::get_property(tracing, name);
             channel_data(state, &channel)
-                .map(|data| !data.borrow().subscribers.is_empty())
+                .map(|data| {
+                    let data = data.borrow();
+                    !data.subscribers.is_empty() || data.store.is_some()
+                })
                 .unwrap_or(false)
         })));
     }
@@ -530,12 +537,24 @@ pub fn publish(
     let message = args.first().cloned().unwrap_or(Value::Undefined);
     let name = data.borrow().name.clone();
     let callbacks = data.borrow().subscribers.clone();
+    let store = data.borrow().store.clone();
+    let store_active = state.borrow().async_hooks.current_local_store.is_some();
+    let previous = (!store_active).then(|| enter_store(store.as_ref(), &message)).flatten();
     for callback in callbacks {
-        execute::call(
+        let result = execute::call(
             &callback,
             &Value::Undefined,
             &[message.clone(), name.clone()],
-        )?;
+        );
+        if let Err(error) = result {
+            if !store_active {
+                restore_store(store.as_ref(), previous);
+            }
+            return Err(error);
+        }
+    }
+    if !store_active {
+        restore_store(store.as_ref(), previous);
     }
     Ok(Value::Undefined)
 }
@@ -546,7 +565,12 @@ pub fn bind_store(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let data = channel_data(state, receiver.ok_or_else(|| type_error("channel"))?)?;
-    data.borrow_mut().store = args.first().cloned().unwrap_or(Value::Undefined);
+    let store = args.first().cloned().unwrap_or(Value::Undefined);
+    let transform = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !quench_runtime::is_callable(&transform) {
+        return Err(type_error("transform"));
+    }
+    data.borrow_mut().store = Some((store, transform));
     Ok(receiver.unwrap().clone())
 }
 
@@ -559,11 +583,47 @@ pub fn unbind_store(
     let data = channel_data(state, receiver)?;
     if args
         .first()
-        .is_none_or(|value| *value == data.borrow().store)
+        .is_none_or(|value| data.borrow().store.as_ref().is_some_and(|(store, _)| *value == *store))
     {
-        data.borrow_mut().store = Value::Undefined;
+        data.borrow_mut().store = None;
     }
     Ok(receiver.clone())
+}
+
+fn enter_store(store: Option<&(Value, Value)>, message: &Value) -> Option<Value> {
+    let (store, transform) = store?;
+    let previous = execute::call(
+        &execute::get_property(store, "getStore"),
+        store,
+        &[],
+    )
+    .ok();
+    let value = execute::call(transform, &Value::Undefined, std::slice::from_ref(message)).ok()?;
+    let _ = execute::call(
+        &execute::get_property(store, "enterWith"),
+        store,
+        std::slice::from_ref(&value),
+    );
+    previous
+}
+
+fn channel_store(
+    state: &Rc<RefCell<HostState>>,
+    channel: &Value,
+) -> Option<(Value, Value)> {
+    channel_data(state, channel)
+        .ok()
+        .and_then(|data| data.borrow().store.clone())
+}
+
+fn restore_store(store: Option<&(Value, Value)>, previous: Option<Value>) {
+    if let (Some((store, _)), Some(previous)) = (store, previous) {
+        let _ = execute::call(
+            &execute::get_property(store, "enterWith"),
+            store,
+            std::slice::from_ref(&previous),
+        );
+    }
 }
 
 fn subscribe_to(
@@ -619,7 +679,10 @@ fn channel_data(
 
 fn channel_has_subscribers(state: &Rc<RefCell<HostState>>, channel: &Value) -> bool {
     channel_data(state, channel)
-        .map(|data| !data.borrow().subscribers.is_empty())
+        .map(|data| {
+            let data = data.borrow();
+            !data.subscribers.is_empty() || data.store.is_some()
+        })
         .unwrap_or(false)
 }
 
