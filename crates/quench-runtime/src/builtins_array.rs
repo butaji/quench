@@ -120,7 +120,7 @@ fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -
     let mut values: crate::value::ObjectProperties = properties
         .iter()
         .filter(|(name, _)| name != key && name != &descriptor_key(key))
-        .cloned()
+        .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
     if let Some(cell) = cell {
         values.push((crate::builtins::deleted_key(key).into(), Value::BindingCell(cell)));

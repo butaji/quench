@@ -1,7 +1,7 @@
 fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
     let descriptor = object_descriptor(
         match global {
-            Value::Object(properties) => properties,
+            Value::Object(properties) => properties.as_ref(),
             _ => return None,
         },
         key,
@@ -114,12 +114,12 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         .find(|(name, _)| name == key)
         .map(|(_, value)| descriptor_object(value))
 }
-fn object_descriptor(
-    properties: &[(crate::value::PropertyName, Value)],
+fn object_descriptor<P: crate::value::PropertyEntries + ?Sized>(
+    properties: &P,
     key: &str,
 ) -> Option<Value> {
     if let Some(Value::String(value)) = properties
-        .iter()
+        .entries()
         .rev()
         .find_map(|(name, value)| (name == "_value").then_some(value))
     {
@@ -132,16 +132,16 @@ fn object_descriptor(
     }
     if let Some(metadata) = super::descriptor_metadata(properties, key) {
         let live = properties
-            .iter()
+            .entries()
             .rev()
-            .find(|(name, _)| name == key)
+            .find(|(name, _)| *name == key)
             .map(|(_, value)| public_value(value));
         return Some(live_descriptor(metadata, live));
     }
     properties
-        .iter()
+        .entries()
         .rev()
-        .find(|(name, _)| name == key)
+        .find(|(name, _)| *name == key)
         .map(|(_, value)| {
             if matches!(value, Value::Builtin(_)) && crate::vm::global_builtin_exists(key) {
                 descriptor_object_with_flags(value.clone(), true, false, true)

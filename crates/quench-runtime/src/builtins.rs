@@ -271,14 +271,14 @@ pub(crate) fn is_descriptor_key(key: &str) -> bool {
 /// Look up cold descriptor metadata without exposing the storage key to
 /// ordinary property-slot callers. The metadata vector is authoritative;
 /// this helper is deliberately a projection, not a second semantic record.
-pub(crate) fn descriptor_metadata<'a, K: AsRef<str>>(
-    properties: &'a [(K, Value)],
+pub(crate) fn descriptor_metadata<'a, P: crate::value::PropertyEntries + ?Sized>(
+    properties: &'a P,
     key: &str,
 ) -> Option<&'a Value> {
     properties
-        .iter()
+        .entries()
         .rev()
-        .find(|(name, _)| is_descriptor_key_for(name.as_ref(), key))
+        .find(|(name, _)| is_descriptor_key_for(name, key))
         .map(|(_, value)| value)
 }
 pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Value> {

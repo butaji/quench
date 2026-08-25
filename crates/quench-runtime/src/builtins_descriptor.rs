@@ -214,17 +214,17 @@ fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value>
     let Value::Object(properties) = descriptor else {
         return None;
     };
-    descriptor_value_in(properties, field)
+    descriptor_value_in(properties.as_ref(), field)
 }
 
-fn descriptor_value_in<'a, K: AsRef<str>>(
-    descriptor: &'a [(K, Value)],
+fn descriptor_value_in<'a, P: crate::value::PropertyEntries + ?Sized>(
+    descriptor: &'a P,
     field: &str,
 ) -> Option<&'a Value> {
     descriptor
-        .iter()
+        .entries()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == field).then_some(value))
+        .find_map(|(name, value)| (name == field).then_some(value))
 }
 
 fn cannot_redefine() -> crate::execute::VmError {
