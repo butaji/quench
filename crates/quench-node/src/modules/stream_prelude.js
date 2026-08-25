@@ -138,6 +138,7 @@
       decoder: options.encoding ? new StringDecoder(options.encoding) : null,
       awaitDrainWriters: null,
       pipeCount: 0,
+      autoDestroy: options.autoDestroy !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8")
     };
     stream.readable = options.readable !== false;
@@ -146,6 +147,11 @@
     stream.readableAborted = false;
     if (options.read) stream._read = options.read;
     if (options.destroy) stream._destroy = options.destroy;
+    if (options.autoDestroy !== false) {
+      stream.on("error", () => {
+        if (!stream.destroyed) stream.destroy();
+      });
+    }
   }
 
   function requestRead(stream) {
@@ -200,6 +206,9 @@
             (st.flowing || stream.listenerCount("readable") === 0)) {
           st.endEmitted = true;
           stream._emitter.emit("end");
+          if (st.autoDestroy && (!stream._isDuplex || stream._writableState.finished)) {
+            nextTick(() => stream.destroy());
+          }
         }
       }));
     }
@@ -536,7 +545,7 @@
         stream._emitter.emit("close");
     };
     if (destroy) {
-      destroy.call(stream, error, finish);
+      destroy.call(stream, error ?? null, finish);
     } else {
       nextTick(() => finish());
     }
@@ -594,6 +603,11 @@
     if (options.write) stream._write = options.write;
     if (options.writev) stream._writev = options.writev;
     if (options.destroy) stream._destroy = options.destroy;
+    if (options.autoDestroy !== false) {
+      stream.on("error", () => {
+        if (!stream.destroyed) stream.destroy();
+      });
+    }
   }
 
   function updateNeedDrain(state) {
@@ -652,8 +666,12 @@
     }
     st.finished = true;
     completeEndCallbacks(st);
-    stream._emitter.emit("finish");
-    if (st.autoDestroy) nextTick(() => stream.destroy());
+    nextTick(() => {
+      stream._emitter.emit("finish");
+      if (st.autoDestroy && (!stream._isDuplex || stream._readableState.endEmitted)) {
+        stream.destroy();
+      }
+    });
   }
 
   function flushCorked(stream) {
