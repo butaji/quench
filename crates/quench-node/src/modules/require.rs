@@ -483,6 +483,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::SPEC_CP_EXEC),
             ),
             (
+                "execFile".to_string(),
+                crate::host::capability(crate::registry::SPEC_CP_EXECFILE),
+            ),
+            (
                 "spawn".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_SPAWN),
             ),
