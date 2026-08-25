@@ -225,7 +225,7 @@ pub fn trace_sync(
     if !quench_runtime::is_callable(callback) {
         return Err(type_error("fn"));
     }
-    let context = args
+    let mut context = args
         .get(1)
         .filter(|value| execute::is_truthy(value))
         .cloned()
@@ -240,7 +240,7 @@ pub fn trace_sync(
     }
     match execute::call(callback, &this_arg, call_args) {
         Ok(result) => {
-            execute::set_property(context.clone(), "result", result.clone());
+            context = execute::set_property(context, "result", result.clone());
             if channel_has_subscribers(state, &end) {
                 publish(state, Some(&end), std::slice::from_ref(&context))?;
             }
@@ -251,7 +251,7 @@ pub fn trace_sync(
                 VmError::Thrown(value) => value.clone(),
                 _ => Value::Undefined,
             };
-            execute::set_property(context.clone(), "error", error_value);
+            context = execute::set_property(context, "error", error_value);
             if channel_has_subscribers(state, &error) {
                 publish(state, Some(&error), std::slice::from_ref(&context))?;
             }
@@ -333,10 +333,10 @@ pub fn has_subscribers(
     args: &[Value],
 ) -> Result<Value, VmError> {
     if receiver.is_some_and(|value| {
-        matches!(
-            execute::get_property_result(value, TRACE),
-            Ok(Value::Boolean(true))
-        )
+        TRACE_CHANNELS.iter().all(|name| {
+            let channel = execute::get_property(value, name);
+            channel_data(state, &channel).is_ok()
+        })
     }) {
         let tracing = receiver.unwrap();
         return Ok(Value::Boolean(TRACE_CHANNELS.iter().any(|name| {
