@@ -785,6 +785,20 @@ impl ArrayData {
                 || self.mapped.get(index).and_then(Option::as_ref).is_some()
                 || self.property(&index.to_string()).is_some())
     }
+
+    /// O(1) proof that an indexed write updates an ordinary own data slot.
+    /// Custom descriptors, argument mappings, holes, and sparse properties
+    /// remain on the property-aware path.
+    #[inline]
+    pub(crate) fn has_plain_dense_index(&self, index: usize) -> bool {
+        !self.arguments
+            && self.argument_live.is_none()
+            && self.descriptors.is_empty()
+            && index < self.logical_len()
+            && index < self.values.len()
+            && self.deleted.get(index) != Some(&true)
+            && self.mapped.get(index).and_then(Option::as_ref).is_none()
+    }
     /// Copy a fully dense range within the backing store using memmove ordering.
     ///
     /// This fast path is deliberately conservative: a hole in either range

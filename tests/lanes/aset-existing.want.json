@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "metrics": {
+    "descriptor_views_per_store": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l3.descriptor_views_by_op",
+          "key": "op",
+          "value": "ASetI",
+          "field": "count"
+        }
+      },
+      "denominator": "compact.ASetI",
+      "min_traffic": 100000,
+      "max": 0.01
+    }
+  }
+}
