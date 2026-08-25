@@ -288,22 +288,19 @@ pub fn is_utf8(value: &Value) -> Result<bool, VmError> {
         Value::String(_) | Value::StringUnits(_) => Err(invalid_arg_type(
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
-        Value::Uint8Array(view) => {
-            if *view.buffer.detached.borrow() {
-                return Ok(true);
-            }
-            let bytes = view.buffer.bytes.borrow();
-            Ok(
-                std::str::from_utf8(&bytes[view.byte_offset..view.byte_offset + view.length])
-                    .is_ok(),
-            )
-        }
         Value::ArrayBuffer(buf) => {
             if *buf.detached.borrow() {
                 return Ok(true);
             }
             Ok(std::str::from_utf8(&buf.bytes.borrow()).is_ok())
         }
+        value if is_view(value) => view_bytes(value).map_or(Ok(true), |(buffer, offset, length)| {
+            if *buffer.detached.borrow() {
+                return Ok(true);
+            }
+            let bytes = buffer.bytes.borrow();
+            Ok(std::str::from_utf8(&bytes[offset..offset + length]).is_ok())
+        }),
         _ => Err(invalid_arg_type(
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
@@ -316,23 +313,74 @@ pub fn is_ascii(value: &Value) -> Result<bool, VmError> {
         Value::String(_) | Value::StringUnits(_) => Err(invalid_arg_type(
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
-        Value::Uint8Array(view) => {
-            if *view.buffer.detached.borrow() {
-                return Ok(true);
-            }
-            let bytes = view.buffer.bytes.borrow();
-            Ok(bytes[view.byte_offset..view.byte_offset + view.length].is_ascii())
-        }
         Value::ArrayBuffer(buf) => {
             if *buf.detached.borrow() {
                 return Ok(true);
             }
             Ok(buf.bytes.borrow().is_ascii())
         }
+        value if is_view(value) => view_bytes(value).map_or(Ok(true), |(buffer, offset, length)| {
+            if *buffer.detached.borrow() {
+                return Ok(true);
+            }
+            let bytes = buffer.bytes.borrow();
+            Ok(bytes[offset..offset + length].is_ascii())
+        }),
         _ => Err(invalid_arg_type(
             "The \"value\" argument must be an instance of ArrayBuffer or ArrayBufferView".into(),
         )),
     }
+}
+
+fn is_view(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Float64Array(_)
+            | Value::Float32Array(_)
+            | Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+            | Value::Uint32Array(_)
+            | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+            | Value::DataView(_)
+    )
+}
+
+macro_rules! typed_view_fact {
+    ($value:expr, $( $variant:ident ),+ $(,)?) => {
+        match $value {
+            $(Value::$variant(view) => Some((view.buffer.clone(), view.byte_offset, view.byte_length())),)+
+            Value::DataView(view) => Some((view.buffer.clone(), view.byte_offset, view.byte_length())),
+            _ => None,
+        }
+    };
+}
+
+fn view_bytes(
+    value: &Value,
+) -> Option<(
+    std::rc::Rc<quench_runtime::value::ArrayBufferData>,
+    usize,
+    usize,
+)> {
+    typed_view_fact!(
+        value,
+        Float64Array,
+        Float32Array,
+        Int8Array,
+        Int16Array,
+        Int32Array,
+        BigInt64Array,
+        BigUint64Array,
+        Uint32Array,
+        Uint8Array,
+        Uint8ClampedArray,
+        Uint16Array,
+    )
 }
 
 /// Node's `ERR_INVALID_ARG_TYPE` "Received …" suffix.
