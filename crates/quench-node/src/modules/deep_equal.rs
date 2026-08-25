@@ -116,6 +116,9 @@ fn compare_partial(
             same_enumerable_symbols_shallow(left, right)
         }
         (Value::Object(_), Value::Object(_)) => {
+            if is_url_like(left) || is_url_like(right) {
+                return compare_url_like(left, right);
+            }
             let left_boxed = execute::get_property(left, "_value");
             let right_boxed = execute::get_property(right, "_value");
             let left_is_boxed = !matches!(left_boxed, Value::Undefined);
@@ -168,6 +171,23 @@ fn is_date_value(value: &Value) -> bool {
     matches!(value, Value::Object(_))
         && execute::has_own_property(value, "timeValue")
         && matches!(execute::get_prototype_of(value), Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype)))
+}
+
+fn is_url_like(value: &Value) -> bool {
+    matches!(execute::get_property(value, "href"), Value::String(_))
+        && matches!(execute::get_property(value, "protocol"), Value::String(_))
+}
+
+fn compare_url_like(left: &Value, right: &Value) -> Result<bool, VmError> {
+    if !is_url_like(left) || !is_url_like(right) {
+        return Ok(false);
+    }
+    for key in ["href", "protocol", "username", "password", "host", "hostname", "port", "pathname", "search", "hash", "origin"] {
+        if !execute::same_value(&execute::get_property(left, key), &execute::get_property(right, key)) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn same_property(left: &Value, right: &Value, key: &str) -> bool {

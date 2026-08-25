@@ -114,6 +114,11 @@ fn construct_with_new_target(
             with_new_target_prototype(value, &target, &new_target)
         }
         Value::Builtin(builtin) => {
+            if *builtin == crate::ops::Builtin::Uint16Array
+                && is_float16_new_target(&new_target)
+            {
+                return construct_float16_array(arguments);
+            }
             construct_builtin_target(*builtin, &target, &new_target, arguments)
         }
         Value::Function(function) => construct_function(function, &new_target, arguments),
@@ -121,6 +126,14 @@ fn construct_with_new_target(
         Value::Proxy(_) => crate::proxy::proxy_construct(&target, arguments, Some(&new_target)),
         _ => Err(crate::vm::not_callable()),
     }
+}
+
+fn is_float16_new_target(value: &Value) -> bool {
+    let prototype = crate::execute::get_property(value, "prototype");
+    matches!(
+        crate::execute::get_property(&prototype, "\0float16_constructor"),
+        Value::Boolean(true)
+    )
 }
 
 fn construct_builtin_target(
@@ -360,11 +373,16 @@ fn construct_bound(
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     let new_target = bound_construct_new_target(target, new_target);
-    let mut value = construct_bound_target(bound, &bound.target, &new_target, &combined)?;
-    if matches!(
+    let float16 = matches!(
         crate::execute::get_property_result(&bound.receiver, "\0float16_constructor"),
         Ok(Value::Boolean(true))
-    ) {
+    );
+    let mut value = if float16 {
+        construct_float16_array(&combined)?
+    } else {
+        construct_bound_target(bound, &bound.target, &new_target, &combined)?
+    };
+    if float16 {
         value.mark_float16_array();
         if let Ok(prototype) = crate::execute::get_property_result(&bound.receiver, "\0prototype") {
             value = crate::execute::set_prototype_of(&value, &prototype)?;
