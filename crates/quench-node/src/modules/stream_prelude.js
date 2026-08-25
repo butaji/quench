@@ -305,7 +305,7 @@
       const pendingReads = st.readRequests;
       if (pendingReads > 0) st.readRequests -= 1;
       st.reading = st.readRequests > 0;
-      if (st.ended || st.errored) {
+      if (this.destroyed || st.ended || st.errored) {
         if (chunk !== null && !st.errored) {
           if (pendingReads > 0) return false;
           const error = new Error("stream.push() after EOF");
@@ -537,7 +537,7 @@
         finished = true;
         stream._readableState.closeEmitted = true;
         stream.closed = true;
-        const endError = destroyError || error;
+        const endError = destroy ? destroyError : error;
         if (endError) {
           stream._readableState.errored = endError;
           stream._emitter.emit("error", endError);
@@ -560,6 +560,7 @@
   }
   Readable.prototype = ReadableClass.prototype;
   Readable.prototype.constructor = Readable;
+  ReadableClass.prototype.destroyed = false;
   Readable.from = ReadableClass.from;
 
   function writableChunkLength(stream, chunk) {
@@ -968,6 +969,7 @@
   }
   Writable.prototype = WritableClass.prototype;
   mixEmitter(Writable.prototype);
+  WritableClass.prototype.destroyed = false;
   Object.defineProperty(Writable.prototype, "errored", {
     configurable: true,
     get() { return this._writableState.errored || null; }
