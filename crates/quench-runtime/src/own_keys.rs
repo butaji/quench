@@ -325,6 +325,14 @@ pub(crate) fn enumerate_object_properties(target: &Value) -> Vec<String> {
 }
 
 pub(crate) fn is_enumerable_property(target: &Value, key: &str) -> bool {
+    if let Value::Proxy(proxy) = target {
+        if let Ok(descriptor) = crate::proxy::proxy_get_own_property_descriptor(target, key) {
+            if matches!(descriptor, Value::Object(_)) {
+                return descriptor_enumerable_value(Some(&descriptor));
+            }
+        }
+        return is_enumerable_property(&proxy.target, key);
+    }
     let mut current = Some(target.clone());
     while let Some(object) = current {
         if matches!(object, Value::Null | Value::Undefined) {
@@ -677,7 +685,13 @@ fn function_keys(function: &crate::value::FunctionValue, symbols: bool) -> Vec<S
 }
 
 fn bound_function_keys(bound: &crate::value::BoundFunctionValue, symbols: bool) -> Vec<String> {
-    ordered(&bound.properties.borrow(), symbols)
+    let mut keys = ordered(&bound.properties.borrow(), symbols);
+    if !symbols && matches!(bound.target, Value::Builtin(_)) {
+        keys.retain(|key| key != "length" && key != "name");
+        keys.insert(0, "name".to_string());
+        keys.insert(0, "length".to_string());
+    }
+    keys
 }
 
 fn ordered<K: AsRef<str>>(properties: &[(K, Value)], symbols: bool) -> Vec<String> {

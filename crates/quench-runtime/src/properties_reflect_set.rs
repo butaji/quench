@@ -41,6 +41,15 @@ pub(crate) fn set_with_receiver(
     if key == "length" && crate::regexp::has_regexp_internal_slot(&resolved_target) {
         return set_receiver_data(receiver, key, value);
     }
+    let parent = crate::builtins::object::get_prototype_of(Some(&resolved_target))?;
+    if matches!(parent, crate::value::Value::Proxy(_)) {
+        return Ok(crate::execute::is_truthy(&crate::proxy::proxy_set(
+            &parent,
+            key,
+            value,
+            Some(receiver),
+        )?));
+    }
     let descriptor = inherited_descriptor(target, key)?;
     match descriptor {
         Some(descriptor) if descriptor_field_exists(&descriptor, "set") => {
@@ -236,7 +245,7 @@ fn set_receiver_data(
         if descriptor_field_exists(&current, "set") || !descriptor_writable(&current)? {
             return Ok(false);
         }
-    } else if rejects_new_property(receiver, key) {
+    } else if rejects_new_property(&receiver_resolved, key) {
         return Ok(false);
     }
     let descriptor = receiver_data_descriptor(
@@ -257,7 +266,8 @@ fn set_receiver_data(
             // internal defineProperty rejection.
             return Ok(false);
         }
-        result => result?,
+        Err(error) => return Err(error),
+        Ok(updated) => updated,
     };
     crate::locals::replace_value(receiver, &updated);
     Ok(true)
