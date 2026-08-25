@@ -223,6 +223,24 @@ fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::TemporalDurationPrototype, "nanoseconds") => {
             Builtin::TemporalDurationNanosecondsGetter
         }
+        (Builtin::TemporalInstantPrototype, "epochMilliseconds") => {
+            Builtin::TemporalInstantEpochMillisecondsGetter
+        }
+        (Builtin::TemporalZonedDateTimePrototype, "epochMilliseconds") => {
+            Builtin::TemporalZonedDateTimeEpochMillisecondsGetter
+        }
+        (Builtin::TemporalZonedDateTimePrototype, "timeZoneId") => {
+            Builtin::TemporalZonedDateTimeTimeZoneIdGetter
+        }
+        (Builtin::TemporalZonedDateTimePrototype, "offset") => {
+            Builtin::TemporalZonedDateTimeOffsetGetter
+        }
+        (Builtin::TemporalZonedDateTimePrototype, "offsetNanoseconds") => {
+            Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter
+        }
+        (Builtin::TemporalZonedDateTimePrototype, "hoursInDay") => {
+            Builtin::TemporalZonedDateTimeHoursInDayGetter
+        }
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
