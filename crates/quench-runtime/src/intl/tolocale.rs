@@ -105,7 +105,7 @@ pub(crate) mod value {
             Some(Value::StringUnits(value)) => {
                 super::parse_num::parse_number(&String::from_utf16_lossy(value))
             }
-            Some(Value::Object(properties)) => boxed_number(properties),
+            Some(Value::Object(properties)) => boxed_number(properties.as_ref()),
             Some(value) if is_non_numeric(value) => f64::NAN,
             Some(_) => f64::NAN,
         }
@@ -141,10 +141,10 @@ pub(crate) mod value {
                 | Value::Iterator(_)
         )
     }
-    fn boxed_number<K: AsRef<str>>(properties: &[(K, Value)]) -> f64 {
+    fn boxed_number<P: crate::value::PropertyEntries + ?Sized>(properties: &P) -> f64 {
         properties
-            .iter()
-            .find_map(|(key, value)| (key.as_ref() == "_value").then_some(value))
+            .entries()
+            .find_map(|(key, value)| (key == "_value").then_some(value))
             .map_or(f64::NAN, |value| to_number(Some(value)))
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {

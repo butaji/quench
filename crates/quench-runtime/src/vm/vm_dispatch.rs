@@ -528,8 +528,8 @@ fn run_conditional(
 #[inline(never)]
 fn render_thrown(value: &Value) -> String {
     if let Value::Object(properties) = value {
-        let name = property_string(properties, "name");
-        let message = property_string(properties, "message");
+        let name = property_string(properties.as_ref(), "name");
+        let message = property_string(properties.as_ref(), "message");
         match (name, message) {
             (Some(name), Some(message)) => format!("{name}: {message}"),
             (Some(name), None) => name,
@@ -550,14 +550,14 @@ fn constructor_name(value: &Value) -> String {
     }
 }
 
-fn property_string(
-    properties: &[(crate::value::PropertyName, Value)],
+fn property_string<P: crate::value::PropertyEntries + ?Sized>(
+    properties: &P,
     key: &str,
 ) -> Option<String> {
     properties
-        .iter()
+        .entries()
         .rev()
-        .find(|(name, _)| name == key)
+        .find(|(name, _)| *name == key)
         .map(|(_, value)| to_string(Some(value)))
 }
 

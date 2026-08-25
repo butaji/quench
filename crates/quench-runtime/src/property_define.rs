@@ -77,9 +77,9 @@ fn has_own_key(value: &Value, key: &str) -> bool {
 
 fn accessor_field_on(value: &Value, descriptor_key: &str, field: &str) -> Option<Value> {
     match value {
-        Value::Object(properties) => accessor_field(properties, descriptor_key, field),
+        Value::Object(properties) => accessor_field(properties.as_ref(), descriptor_key, field),
         Value::Function(function) => {
-            accessor_field(&function.properties.borrow(), descriptor_key, field)
+            accessor_field(&function.properties.borrow()[..], descriptor_key, field)
         }
         _ => None,
     }
@@ -94,22 +94,24 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
     // class definition installs its prototype).
     let function_meta_key = matches!(key, "length" | "name" | "caller" | "arguments");
     match value {
-        Value::Object(properties) => accessor_field(properties, key, field).or_else(|| {
-            properties
-                .iter()
-                .rev()
-                .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-                .and_then(|prototype| accessor_value(&prototype, key, field))
-        }),
+        Value::Object(properties) => {
+            accessor_field(properties.as_ref(), key, field).or_else(|| {
+                properties
+                    .iter()
+                    .rev()
+                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+                    .and_then(|prototype| accessor_value(&prototype, key, field))
+            })
+        }
         Value::Function(function) => {
-            let own = accessor_field(&function.properties.borrow(), key, field);
+            let own = accessor_field(&function.properties.borrow()[..], key, field);
             if own.is_some() || !function_meta_key {
                 return own;
             }
             accessor_builtin(Builtin::FunctionPrototype, key, field)
         }
         Value::ObjectAlias(alias) => alias.0.borrow().upgrade().and_then(|properties| {
-            accessor_field(&properties, key, field).or_else(|| {
+            accessor_field(properties.as_ref(), key, field).or_else(|| {
                 properties
                     .iter()
                     .rev()
@@ -117,9 +119,9 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
                     .and_then(|prototype| accessor_value(&prototype, key, field))
             })
         }),
-        Value::Promise(promise) => accessor_field(&promise.properties.borrow(), key, field),
+        Value::Promise(promise) => accessor_field(&promise.properties.borrow()[..], key, field),
         Value::BoundFunction(bound) => {
-            let own = accessor_field(&bound.properties.borrow(), key, field);
+            let own = accessor_field(&bound.properties.borrow()[..], key, field);
             if own.is_some() || !function_meta_key {
                 return own;
             }
@@ -291,15 +293,15 @@ fn builtin_prototype(builtin: Builtin) -> Option<Value> {
     Some(Value::Builtin(next))
 }
 
-fn accessor_field<K: AsRef<str>>(
-    properties: &[(K, Value)],
+fn accessor_field<P: crate::value::PropertyEntries + ?Sized>(
+    properties: &P,
     key: &str,
     field: &str,
 ) -> Option<Value> {
     let descriptor = properties
-        .iter()
+        .entries()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == key).then_some(value));
+        .find_map(|(name, value)| (name == key).then_some(value));
     if let Some(Value::Object(descriptor)) = descriptor {
         return descriptor
             .iter()
@@ -307,8 +309,8 @@ fn accessor_field<K: AsRef<str>>(
             .find_map(|(name, value)| (name == field).then(|| value.clone()));
     }
     let prototype = properties
-        .iter()
+        .entries()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == "\0prototype").then_some(value));
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value));
     prototype.and_then(|prototype| accessor_value(prototype, key, field))
 }
