@@ -123,26 +123,34 @@ impl Drop for GlobalLexicalGuard {
 
 pub(crate) struct IterationBinding {
     environment: Rc<Environment>,
-    slot: u16,
-    previous: Option<Rc<crate::value::BindingCell>>,
+    previous: Vec<(u16, Rc<crate::value::BindingCell>)>,
 }
 
 impl IterationBinding {
     pub(crate) fn install(slot: u16, value: Value) -> Self {
+        Self::install_many(std::iter::once((slot, value)))
+    }
+
+    pub(crate) fn install_many<I>(bindings: I) -> Self
+    where
+        I: IntoIterator<Item = (u16, Value)>,
+    {
         let environment = current();
-        let previous = Some(environment.replace_slot(slot, value));
-        Self {
-            environment,
-            slot,
-            previous,
-        }
+        let previous = bindings
+            .into_iter()
+            .map(|(slot, value)| {
+                environment.clear_immutable_slot(slot);
+                (slot, environment.replace_slot(slot, value))
+            })
+            .collect();
+        Self { environment, previous }
     }
 }
 
 impl Drop for IterationBinding {
     fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            self.environment.restore_slot(self.slot, previous);
+        for (slot, previous) in self.previous.drain(..).rev() {
+            self.environment.restore_slot(slot, previous);
         }
     }
 }

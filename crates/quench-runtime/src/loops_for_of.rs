@@ -126,6 +126,21 @@ fn refresh_iteration_locals(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> u16 {
+    let pattern_binding = matches!(
+        left,
+        oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration)
+            if declaration.declarations.first().is_some_and(|declarator| {
+                !matches!(
+                    declarator.id.kind,
+                    oxc::ast::ast::BindingPatternKind::BindingIdentifier(_)
+                )
+            })
+    );
+    let temporary = pattern_binding.then(|| {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        slot
+    });
     let mut first = None;
     for name in for_declaration_names(left) {
         let slot = *next_slot;
@@ -134,11 +149,11 @@ fn refresh_iteration_locals(
         locals.insert(format!("\0lexical-predeclared:{name}"), slot);
         first.get_or_insert(slot);
     }
-    first.unwrap_or_else(|| {
+    temporary.unwrap_or_else(|| first.unwrap_or_else(|| {
         let slot = *next_slot;
         *next_slot = next_slot.saturating_add(1);
         slot
-    })
+    }))
 }
 
 fn for_left_lexical(left: &oxc::ast::ast::ForStatementLeft<'_>) -> bool {

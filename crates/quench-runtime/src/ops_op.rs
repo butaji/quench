@@ -523,6 +523,7 @@ pub enum Op {
         slot: u16,
         body: crate::machine::FunctionCode,
         per_iteration: bool,
+        iteration_slots: Vec<u16>,
         dst: u16,
     },
     ForOf {
@@ -531,6 +532,7 @@ pub enum Op {
         slot: u16,
         body: crate::machine::FunctionCode,
         per_iteration: bool,
+        iteration_slots: Vec<u16>,
         r#await: bool,
         dst: u16,
     },
