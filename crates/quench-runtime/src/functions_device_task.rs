@@ -45,25 +45,48 @@ fn execute_device_task(
         return Ok(None);
     };
 
-    if let Some(value) = call.store {
-        v1.store(value);
-    }
-    let result = match &call.argument {
-        Some(argument) => crate::functions::execute_target(
-            &call.callee,
-            &scheduler,
-            std::slice::from_ref(argument),
-        ),
-        None => crate::functions::execute_target(&call.callee, &scheduler, &[]),
-    }?;
+    let result = call.execute(v1, &scheduler)?;
     crate::execution_trace::kernel("device_task_run_word_slots", false);
     Ok(Some(result))
 }
 
-struct DeviceTaskCall {
-    callee: crate::value::Value,
-    argument: Option<crate::value::Value>,
-    store: Option<crate::value::Value>,
+enum DeviceTaskCall {
+    Suspend(SchedulerSuspendWordTransition),
+    Invoke {
+        callee: crate::value::Value,
+        argument: Option<crate::value::Value>,
+        store: Option<crate::value::Value>,
+    },
+}
+
+impl DeviceTaskCall {
+    fn execute(
+        self,
+        v1: &crate::register_file::SlotWord,
+        scheduler: &crate::value::Value,
+    ) -> Result<crate::value::Value, crate::execute::VmError> {
+        match self {
+            Self::Suspend(transition) => {
+                crate::execution_trace::kernel("device_suspend_word_transition", false);
+                Ok(transition.execute())
+            }
+            Self::Invoke {
+                callee,
+                argument,
+                store,
+            } => {
+                if let Some(value) = store {
+                    v1.store(value);
+                }
+                match argument {
+                    Some(argument) => {
+                        crate::functions::execute_target(&callee, scheduler, &[argument])
+                    }
+                    None => crate::functions::execute_target(&callee, scheduler, &[]),
+                }
+            }
+        }
+    }
 }
 
 fn device_task_call(
@@ -98,11 +121,9 @@ fn device_suspend_call(
         return None;
     };
     let callee = cached_shape_method(scheduler, then_ops.code()?, 2)?;
-    Some(DeviceTaskCall {
-        callee,
-        argument: None,
-        store: None,
-    })
+    Some(DeviceTaskCall::Suspend(scheduler_suspend_word_transition(
+        &callee, scheduler,
+    )?))
 }
 
 fn device_queue_call(
@@ -111,7 +132,7 @@ fn device_queue_call(
     packet: crate::value::Value,
 ) -> Option<DeviceTaskCall> {
     let callee = cached_shape_method(scheduler, code, 16)?;
-    Some(DeviceTaskCall {
+    Some(DeviceTaskCall::Invoke {
         callee,
         argument: Some(packet),
         store: Some(crate::value::Value::Null),
@@ -124,7 +145,7 @@ fn device_hold_call(
     packet: crate::value::Value,
 ) -> Option<DeviceTaskCall> {
     let callee = cached_shape_method(scheduler, code, 7)?;
-    Some(DeviceTaskCall {
+    Some(DeviceTaskCall::Invoke {
         callee,
         argument: None,
         store: Some(packet),

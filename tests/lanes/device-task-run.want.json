@@ -22,6 +22,17 @@
         }
       },
       "max": 0
+    },
+    "suspend_transition_hits": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "device_suspend_word_transition",
+          "field": "hits"
+        }
+      },
+      "min": 19000
     }
   }
 }
