@@ -1,6 +1,7 @@
 //! Polyfill: `cluster`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchRequireStreamIter = () => {
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"const __quenchRequireStreamIter = () => {
   const toStreamable = Symbol.for("nodejs.stream.iter.toStreamable");
   const toAsyncStreamable = Symbol.for("nodejs.stream.iter.toAsyncStreamable");
   const normalizeOptions = (options) => {
@@ -1261,7 +1262,7 @@ const __quenchVmValidateContext = (sandbox) => {
       'The "contextifiedObject" argument must be of type object.'
     );
   }
-  if (!__quenchVmContexts.has(sandbox)) {
+  if (!__quenchVmHasContext(sandbox)) {
     __quenchVmTypeError(
       'The "contextifiedObject" argument must be an vm.Context'
     );
@@ -1324,7 +1325,9 @@ const __quenchVmModule = {
       __quenchVmTypeError("The options argument must be an object");
     }
     __quenchVmValidateContextOptions(options);
-    __quenchVmContexts.add(sandbox);
+    if (!__quenchVmHasContext(sandbox)) {
+      __quenchVmContexts[__quenchVmContexts.length] = sandbox;
+    }
     return sandbox;
   },
   isContext: (value) => __quenchVmIsContext(value),
@@ -1651,4 +1654,5 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "node:test" || name === "test") return __quenchNodeTestModule;
   return __quenchRequireClusterInternal(name);
 };
-"#);
+"#
+);
