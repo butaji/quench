@@ -228,8 +228,16 @@ fn to_plain_date_time(receiver: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn to_stub(receiver: Option<&Value>, prototype: crate::ops::Builtin) -> Result<Value, VmError> {
-    let _ = date_parts(receiver)?;
-    crate::temporal::construct_stub(prototype)
+    let (year, month, day) = date_parts(receiver)?;
+    match prototype {
+        crate::ops::Builtin::TemporalPlainMonthDayPrototype => {
+            crate::temporal::plain_month_day::construct(month, day)
+        }
+        crate::ops::Builtin::TemporalPlainYearMonthPrototype => {
+            crate::temporal::plain_year_month::construct(year, month)
+        }
+        _ => crate::temporal::construct_stub(prototype),
+    }
 }
 
 fn number_property(object: &crate::value::ObjectData, name: &str) -> f64 {
