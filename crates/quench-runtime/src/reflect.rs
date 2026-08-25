@@ -260,7 +260,7 @@ pub(crate) fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
         Some(Value::Object(properties))
             if properties.iter().any(|(key, value)| {
                 key == "\0prototype"
-                    && *value == Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
+                    && value == Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
             })
     )
 }

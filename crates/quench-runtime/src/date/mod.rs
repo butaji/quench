@@ -50,7 +50,7 @@ pub fn extract_time(receiver: Option<&Value>) -> f64 {
             .iter()
             .find(|(k, _)| k == "timeValue")
             .and_then(|(_, v)| match v {
-                Value::Number(ms) => Some(*ms),
+                Value::Number(ms) => Some(ms),
                 Value::BindingCell(cell) => match &*cell.borrow() {
                     Value::Number(ms) => Some(*ms),
                     _ => None,

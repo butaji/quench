@@ -68,6 +68,32 @@ pub(crate) struct OwnedWord(TaggedValue);
 
 const _: () = assert!(std::mem::size_of::<OwnedWord>() == 8);
 
+/// Pre-resolved physical operands for one immediate-word move. Construction
+/// proves that all three locations contain non-owning words and that their
+/// backing vectors are fully sized before any pointer is retained.
+pub(crate) struct ImmediateCopyPlan {
+    source: *const TaggedValue,
+    target: *mut TaggedValue,
+}
+
+impl ImmediateCopyPlan {
+    pub(crate) fn new(source: *const TaggedValue, target: *mut TaggedValue) -> Self {
+        Self { source, target }
+    }
+
+    #[inline(always)]
+    pub(crate) fn execute(&self) {
+        // SAFETY: the plan constructor sizes all backing RegisterFiles before
+        // returning. An admitted move-only body performs no operation capable
+        // of resizing them, and all words are non-owning immediates.
+        unsafe {
+            let word = *self.source;
+            debug_assert!(!word.owns_rc());
+            *self.target = word;
+        }
+    }
+}
+
 impl OwnedWord {
     pub(crate) fn new(value: Value) -> Self {
         Self(encode(value))
@@ -104,11 +130,155 @@ impl OwnedWord {
     fn tagged(&self) -> TaggedValue {
         self.0
     }
+
+    #[cfg(feature = "execution-trace")]
+    fn payload_kind(&self) -> &'static str {
+        match self.0.decode() {
+            DecodedValue::Number(_) | DecodedValue::I31(_) => "number",
+            DecodedValue::ObjectPtr(_) => "object",
+            DecodedValue::FunctionPtr(_) => "function",
+            DecodedValue::HeapPtr(pointer) => {
+                // SAFETY: heap words originate in `encode` and the owning
+                // slot keeps this allocation alive for the classification.
+                match &unsafe { &*(pointer as *const AlignedValue) }.0 {
+                    Value::BindingCell(_) => "binding_cell",
+                    Value::Number(_) => "number",
+                    Value::Object(_) => "object",
+                    Value::Function(_) => "function",
+                    _ => "other",
+                }
+            }
+            _ => "other",
+        }
+    }
+}
+
+impl Clone for OwnedWord {
+    fn clone(&self) -> Self {
+        retain(self.0);
+        Self(self.0)
+    }
+}
+
+impl std::fmt::Debug for OwnedWord {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("OwnedWord")
+            .field(&self.load())
+            .finish()
+    }
+}
+
+impl PartialEq for OwnedWord {
+    fn eq(&self, other: &Self) -> bool {
+        self.load() == other.load()
+    }
 }
 
 impl Drop for OwnedWord {
     fn drop(&mut self) {
         release(self.0);
+    }
+}
+
+/// One canonical mutable object slot.
+///
+/// Quench executes a realm on one thread. Ordinary own-data property mutation
+/// therefore needs interior mutability, but not dynamic borrow tracking or a
+/// second `Value` representation. The cell remains exactly one execute word;
+/// accessors/arguments mappings stay in the spec layer.
+#[doc(hidden)]
+pub struct SlotWord(std::cell::UnsafeCell<OwnedWord>);
+
+const _: () = assert!(std::mem::size_of::<SlotWord>() == 8);
+
+impl SlotWord {
+    pub(crate) fn new(value: Value) -> Self {
+        Self(std::cell::UnsafeCell::new(OwnedWord::new(value)))
+    }
+
+    #[inline(always)]
+    pub(crate) fn load(&self) -> Value {
+        // SAFETY: realm execution is single-threaded and this creates an owned
+        // decoded value rather than exposing a reference into the slot.
+        unsafe { (&*self.0.get()).load() }
+    }
+
+    #[inline(always)]
+    pub(crate) fn with_word<R>(&self, use_word: impl FnOnce(&OwnedWord) -> R) -> R {
+        // SAFETY: the callback cannot retain the private `OwnedWord` type and
+        // stores cannot occur concurrently in a single-threaded realm.
+        unsafe { use_word(&*self.0.get()) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn store(&self, value: Value) {
+        // SAFETY: property mutation is serialized by the VM's single-threaded
+        // execution model. No reference to the contained value is exposed.
+        unsafe { (&mut *self.0.get()).store(value) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn number(&self) -> Option<f64> {
+        // SAFETY: this is a read-only tag inspection during single-threaded
+        // realm execution and exposes no reference to the slot payload.
+        unsafe { (&*self.0.get()).number() }
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy_to_register(&self, registers: &mut RegisterFile, index: usize) {
+        self.with_word(|word| registers.write_owned(index, word));
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy_to_fixed<const N: usize>(
+        &self,
+        registers: &mut FixedWordFile<N>,
+        index: usize,
+    ) -> Option<()> {
+        self.with_word(|word| registers.write_owned(index, word))
+    }
+
+    #[inline(always)]
+    pub(crate) fn store_from_register(&self, registers: &RegisterFile, index: usize) -> Option<()> {
+        let tagged = *registers.words.get(index)?;
+        retain(tagged);
+        // SAFETY: realm execution is single-threaded; replacing the complete
+        // owning word cannot expose a partially-written value.
+        let previous = unsafe { std::mem::replace(&mut (*self.0.get()).0, tagged) };
+        release(previous);
+        Some(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn trace_named_payload(&self, tier: &'static str) {
+        #[cfg(feature = "execution-trace")]
+        self.with_word(|word| {
+            crate::execution_trace::named_property_word(tier, word.payload_kind())
+        });
+        #[cfg(not(feature = "execution-trace"))]
+        let _ = tier;
+    }
+}
+
+impl Clone for SlotWord {
+    fn clone(&self) -> Self {
+        self.with_word(|word| Self(std::cell::UnsafeCell::new(word.clone())))
+    }
+}
+
+impl std::fmt::Debug for SlotWord {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("SlotWord")
+            .field(&self.load())
+            .finish()
+    }
+}
+
+impl PartialEq for SlotWord {
+    fn eq(&self, other: &Self) -> bool {
+        self.load() == other.load()
     }
 }
 
@@ -194,6 +364,14 @@ impl<const N: usize> FixedWordFile<N> {
     }
 
     #[inline(always)]
+    pub(crate) fn write_number(&mut self, index: usize, value: f64) -> Option<()> {
+        let destination = self.words.get_mut(index)?;
+        let previous = std::mem::replace(destination, TaggedValue::number(value));
+        release(previous);
+        Some(())
+    }
+
+    #[inline(always)]
     pub(crate) fn copy(&mut self, destination: usize, source: usize) -> Option<()> {
         let word = *self.words.get(source)?;
         retain(word);
@@ -222,6 +400,20 @@ impl<const N: usize> FixedWordFile<N> {
         retain(word);
         let previous = std::mem::replace(self.words.get_mut(destination)?, word);
         release(previous);
+        Some(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy_to_register(
+        &self,
+        source: usize,
+        registers: &mut RegisterFile,
+        destination: usize,
+    ) -> Option<()> {
+        let word = *self.words.get(source)?;
+        registers.resize_undefined(destination + 1);
+        retain(word);
+        release(std::mem::replace(&mut registers.words[destination], word));
         Some(())
     }
 
@@ -294,6 +486,60 @@ impl<const N: usize> LocalWordFile<N> {
             self.initialized[index / 64] |= 1 << (index % 64);
         }
         Some(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy_to_fixed<const R: usize>(
+        &self,
+        slot: u16,
+        registers: &mut FixedWordFile<R>,
+        destination: usize,
+    ) -> Option<()> {
+        crate::execution_trace::event(crate::execution_trace::Event::LocalWordRead);
+        let index = usize::from(slot);
+        self.is_initialized(index).then_some(())?;
+        let word = unsafe { self.words[index].assume_init() };
+        retain(word);
+        let target = registers.words.get_mut(destination)?;
+        release(std::mem::replace(target, word));
+        Some(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy_from_fixed<const R: usize>(
+        &mut self,
+        slot: u16,
+        registers: &FixedWordFile<R>,
+        source: usize,
+    ) -> Option<()> {
+        let index = usize::from(slot);
+        (index < N).then_some(())?;
+        let word = *registers.words.get(source)?;
+        retain(word);
+        if self.is_initialized(index) {
+            let previous =
+                std::mem::replace(&mut self.words[index], std::mem::MaybeUninit::new(word));
+            release(unsafe { previous.assume_init() });
+        } else {
+            self.words[index].write(word);
+            self.initialized[index / 64] |= 1 << (index % 64);
+        }
+        Some(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn update_number(&mut self, slot: u16, delta: f64) -> Option<(f64, f64)> {
+        let index = usize::from(slot);
+        self.is_initialized(index).then_some(())?;
+        let target = unsafe { self.words[index].assume_init_mut() };
+        let old = match target.decode() {
+            DecodedValue::Number(value) => value,
+            DecodedValue::I31(value) => f64::from(value),
+            _ => return None,
+        };
+        let updated = old + delta;
+        release(std::mem::replace(target, TaggedValue::number(updated)));
+        Some((old, updated))
     }
 
     fn is_initialized(&self, index: usize) -> bool {
@@ -383,6 +629,14 @@ impl RegisterFile {
         // SAFETY: the register word owns the `Rc<ObjectData>` for the returned
         // lifetime; moving or resizing the word vector cannot move the object.
         Some(unsafe { &*(pointer as *const crate::value::ObjectData) })
+    }
+
+    #[inline(always)]
+    pub(crate) fn function_ptr(&self, index: usize) -> Option<*const crate::value::FunctionValue> {
+        let DecodedValue::FunctionPtr(pointer) = self.words.get(index)?.decode() else {
+            return None;
+        };
+        Some(pointer as *const crate::value::FunctionValue)
     }
 
     /// Read the exact non-negative integer domain accepted by packed array
@@ -534,6 +788,13 @@ impl RegisterFile {
         retain(word);
         release(std::mem::replace(&mut self.words[destination], word));
         true
+    }
+
+    #[inline(always)]
+    pub(crate) fn immediate_word_ptr(&mut self, index: usize) -> Option<*mut TaggedValue> {
+        self.resize_undefined(index + 1);
+        let word = self.words.get_mut(index)?;
+        (!word.owns_rc()).then(|| word as *mut TaggedValue)
     }
 
     /// Copy one canonical execute word between storage owners. This is the

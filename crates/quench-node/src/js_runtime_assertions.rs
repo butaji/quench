@@ -210,7 +210,7 @@ fn rejection_matches(reason: &Value, expected: Option<&Value>) -> bool {
         .iter()
         .filter(|(key, _)| !key.starts_with('\0'))
         .all(|(key, wanted)| {
-            let wanted = safe_value_string(wanted);
+            let wanted = safe_value_string(&wanted);
             quench_runtime::execute::get_property_result(reason, &key)
                 .map(|received| safe_value_string(&received) == wanted)
                 .unwrap_or(false)

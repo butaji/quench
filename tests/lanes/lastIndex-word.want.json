@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "oracle": { "max_ratio": 2 },
+  "metrics": {
+    "header_per_access": {
+      "numerator": "lanes.l3.last_index.header",
+      "denominator": {
+        "sum": [
+          "lanes.l3.last_index.header",
+          "lanes.l3.last_index.getn",
+          "lanes.l3.last_index.binding_cell"
+        ]
+      },
+      "min_traffic": 100000,
+      "min": 0.99
+    },
+    "binding_cell_per_access": {
+      "numerator": "lanes.l3.last_index.binding_cell",
+      "denominator": {
+        "sum": [
+          "lanes.l3.last_index.header",
+          "lanes.l3.last_index.getn",
+          "lanes.l3.last_index.binding_cell"
+        ]
+      },
+      "min_traffic": 100000,
+      "max": 0
+    }
+  }
+}

@@ -99,11 +99,20 @@ fn run_instruction(
             Ok(None)
         }
         Opcode::Move => {
-            copy_register(registers, instruction.a, instruction.b)?;
+            if instruction.flags == 1 {
+                crate::locals::move_proven_local(
+                    registers,
+                    instruction.a,
+                    instruction.b,
+                    instruction.c,
+                )?;
+            } else {
+                copy_register(registers, instruction.a, instruction.b)?;
+            }
             Ok(None)
         }
         Opcode::LoadLocal => {
-            crate::locals::load(registers, instruction.a, instruction.b)?;
+            crate::locals::load_proven(registers, instruction.a, instruction.b)?;
             Ok(None)
         }
         Opcode::LoadLocalChecked => {
@@ -121,6 +130,10 @@ fn run_instruction(
                 .unwrap_or("binding");
             crate::locals::check_initialized(instruction.a, name)?;
             crate::locals::store(registers, instruction.a, instruction.b)?;
+            Ok(None)
+        }
+        Opcode::StoreLocal => {
+            crate::locals::store_proven(registers, instruction.a, instruction.b)?;
             Ok(None)
         }
         Opcode::InitLocal => {
@@ -162,6 +175,18 @@ fn run_instruction(
             Ok(None)
         }
         Opcode::Call => {
+            let argument = (instruction.flags == 1).then_some(instruction.c);
+            if instruction.flags <= 1 {
+                if let Some(result) = crate::functions::execute_word_leaf_call(
+                    registers,
+                    instruction.a,
+                    instruction.b,
+                    argument,
+                ) {
+                    result?;
+                    return Ok(None);
+                }
+            }
             let argument = [instruction.c];
             let spreads = [false];
             let (arguments, spreads) = if instruction.flags == 0 {
@@ -224,6 +249,14 @@ fn run_instruction(
                     get_named_cached_payload(object, &metadata.named_cache)
                 }) {
                     match payload {
+                        NamedCachedPayload::Word(word) => {
+                            // SAFETY: the source register owns the containing
+                            // object until this complete word copy returns.
+                            unsafe { &*word }.copy_to_register(
+                                registers,
+                                usize::from(instruction.a),
+                            );
+                        }
                         NamedCachedPayload::Cell(cell) => {
                             // SAFETY: the source register keeps the containing
                             // object alive until the word copy completes.

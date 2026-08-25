@@ -225,7 +225,7 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
                         key == "Symbol.toStringTag" && matches!(value, Value::String(_))
                     })
                 {
-                    if !crate::conversion::is_symbol_string(tag) {
+                    if !crate::conversion::is_symbol_string(&tag) {
                         return Some(tag.clone());
                     }
                 }
@@ -233,8 +233,7 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
                 current = properties
                     .iter()
                     .rev()
-                    .find_map(|(key, value)| (key == "\0prototype").then_some(value))
-                    .cloned();
+                    .find_map(|(key, value)| (key == "\0prototype").then_some(value));
             }
             Iterator(data) => {
                 current = Some(Value::Builtin(crate::collections::iterator::builtin_for(

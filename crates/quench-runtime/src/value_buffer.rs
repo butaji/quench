@@ -198,7 +198,7 @@ impl DataViewData {
         let mut properties = self.properties.borrow_mut();
         let non_configurable = properties.iter().any(|(name, value)| {
             name == descriptor_key
-                && matches!(value, Value::Object(metadata) if metadata.iter().any(|(field, flag)| field == "configurable" && flag == &Value::Boolean(false)))
+                && matches!(value, Value::Object(metadata) if metadata.iter().any(|(field, flag)| field == "configurable" && flag == Value::Boolean(false)))
         });
         if non_configurable {
             return false;

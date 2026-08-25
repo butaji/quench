@@ -106,7 +106,7 @@ impl QuenchNodeHost {
             .iter()
             .find_map(|(key, value)| {
                 (key == "\0dirId").then(|| match value {
-                    Value::Number(id) => Some(*id as u16),
+                    Value::Number(id) => Some(id as u16),
                     _ => None,
                 })
             })
@@ -165,7 +165,7 @@ impl QuenchNodeHost {
             .iter()
             .find_map(|(key, value)| {
                 (key == "\0fd").then(|| match value {
-                    Value::Number(fd) => Some(*fd as i32),
+                    Value::Number(fd) => Some(fd as i32),
                     _ => None,
                 })
             })
@@ -185,7 +185,7 @@ impl QuenchNodeHost {
             .iter()
             .find_map(|(key, value)| {
                 (key == "\0fd").then(|| match value {
-                    Value::Number(fd) => Some(*fd as i32),
+                    Value::Number(fd) => Some(fd as i32),
                     _ => None,
                 })
             })
