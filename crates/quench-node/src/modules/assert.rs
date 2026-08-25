@@ -123,7 +123,13 @@ pub fn constructor_new(
     };
     let instance = host_api::object(vec![
         ("strict".into(), Value::Boolean(strict)),
-        ("skipPrototype".into(), Value::Boolean(false)),
+        (
+            "skipPrototype".into(),
+            Value::Boolean(matches!(
+                quench_runtime::execute::get_property(options, "skipPrototype"),
+                Value::Boolean(true)
+            )),
+        ),
         ("diff".into(), Value::String(diff)),
         ("AssertionError".into(), assertion_error_type()),
     ]);
@@ -505,13 +511,19 @@ fn binary_assert(
                 ),
             }
         } else {
-            format!(
-                "Expected values to be {}:\n\n{} {} {}\n",
-                label,
-                rendered(&actual),
-                relation,
-                rendered(&expected)
-            )
+            match (&actual, &expected) {
+                (Value::String(actual), Value::String(expected)) =>
+                {
+                    simple_binary_message(operator, actual, expected)
+                }
+                _ => format!(
+                    "Expected values to be {}:\n\n{} {} {}\n",
+                    label,
+                    rendered(&actual),
+                    relation,
+                    rendered(&expected)
+                ),
+            }
         }
     });
     Err(with_instance_diff(
@@ -520,6 +532,66 @@ fn binary_assert(
         ),
         receiver,
     ))
+}
+
+fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String {
+    let value = |text: &str, limit: usize| {
+        if text.contains('\n') {
+            simple_side(text, "", limit)
+        } else {
+            format!("'{text}'")
+        }
+    };
+    match operator {
+        "strictEqual" => format!(
+            "Expected values to be strictly equal:\n+ actual - expected\n\n{}\n{}\n",
+            if actual.contains('\n') { simple_side(actual, "+", 100) } else { format!("+ '{actual}'") },
+            if expected.contains('\n') { simple_side(expected, "-", 100) } else { format!("- '{expected}'") }
+        ),
+        "notStrictEqual" => format!(
+            "Expected \"actual\" to be strictly unequal to:\n\n{}",
+            value(actual, 48)
+        ),
+        _ => format!(
+            "Expected values to be {}:\n\n{} !== {}\n",
+            if operator == "equal" { "loosely equal" } else { "loosely unequal" },
+            simple_side(actual, "", 53),
+            simple_side(expected, "", 53)
+        ),
+    }
+}
+
+fn simple_loose_message(actual: &str, expected: &str) -> String {
+    let scalar = |value: &str| {
+        if value.contains('\n') {
+            simple_side(value, "", 52)
+        } else if value.len() > 508 {
+            format!("'{}...", &value[..508])
+        } else {
+            format!("'{value}'")
+        }
+    };
+    format!(
+        "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
+        scalar(actual),
+        scalar(expected)
+    )
+}
+
+fn simple_side(value: &str, marker: &str, limit: usize) -> String {
+    let lines = value.lines().take(limit).collect::<Vec<_>>();
+    let mut rendered = lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let indent = if index == 0 { "" } else { "  " };
+            format!("{marker}{indent}'{line}\\n' +")
+        })
+        .collect::<Vec<_>>();
+    while rendered.len() < limit {
+        rendered.push(format!("{marker}  '...'"));
+    }
+    rendered.join("\n")
 }
 
 fn with_instance_diff(error: VmError, receiver: Option<&Value>) -> VmError {
@@ -585,7 +657,11 @@ fn deep_assert(
     }
     let actual = arg(args, 0);
     let expected = arg(args, 1);
-    let operator = if _r.is_some_and(|receiver| {
+    let operator = if strict_override == Some(true) {
+        "deepStrictEqual"
+    } else if strict_override == Some(false) {
+        "deepEqual"
+    } else if _r.is_some_and(|receiver| {
         matches!(execute::get_property(receiver, "strict"), Value::Boolean(false))
     }) {
         "deepEqual"
@@ -593,7 +669,8 @@ fn deep_assert(
         "deepStrictEqual"
     };
     let strict = strict_override.unwrap_or(operator == "deepStrictEqual");
-    if crate::modules::deep_equal::deep_equal(&actual, &expected, strict)?
+    let skip_prototype = receiver_skip_prototype(_r);
+    if crate::modules::deep_equal::deep_equal_opts(&actual, &expected, strict, skip_prototype)?
         && typed_props_equal(&actual, &expected)
     {
         return Ok(Value::Undefined);
@@ -603,13 +680,23 @@ fn deep_assert(
     let full_diff = _r.is_some_and(|receiver| {
         matches!(execute::get_property(receiver, "diff"), Value::String(mode) if mode == "full")
     });
+    let simple_diff = _r.is_some_and(|receiver| {
+        matches!(execute::get_property(receiver, "diff"), Value::String(mode) if mode == "simple")
+    });
     let message = custom.map_or_else(
         || if !strict {
-            format!(
-                "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
-                rendered_deep_for_mode(&actual, full_diff),
-                rendered_deep_for_mode(&expected, full_diff)
-            )
+            match (&actual, &expected) {
+                (Value::String(actual), Value::String(expected))
+                    if simple_diff =>
+                {
+                    simple_loose_message(actual, expected)
+                }
+                _ => format!(
+                    "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
+                    rendered_deep_for_mode(&actual, full_diff),
+                    rendered_deep_for_mode(&expected, full_diff)
+                ),
+            }
         } else {
             format!(
                 "Expected values to be strictly deep-equal:\n+ actual - expected\n\n{}\n",
@@ -733,7 +820,7 @@ pub fn deep_strict_equal(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    deep_assert(state, receiver, args, None)
+    deep_assert(state, receiver, args, Some(true))
 }
 
 pub fn deep_equal(
@@ -751,6 +838,15 @@ fn typed_props_equal(actual: &Value, expected: &Value) -> bool {
     }
 }
 
+fn receiver_skip_prototype(receiver: Option<&Value>) -> bool {
+    receiver.is_some_and(|value| {
+        matches!(execute::get_property(value, "skipPrototype"), Value::Boolean(true))
+    }) || matches!(
+        execute::get_property(&quench_runtime::vm::current_global_object(), "__nodeAssertSkipPrototype"),
+        Value::Boolean(true)
+    )
+}
+
 fn deep_diff(actual: &Value, expected: &Value) -> String {
     if let Some(diff) = regexp_diff(actual, expected) {
         return diff;
@@ -762,6 +858,9 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
         return diff;
     }
     if let Some(diff) = collection_diff(actual, expected) {
+        return diff;
+    }
+    if let Some(diff) = array_diff(actual, expected) {
         return diff;
     }
     let (Value::Object(left), Value::Object(right)) = (actual, expected) else {
@@ -787,6 +886,32 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
     }
     lines.push("  }".to_string());
     lines.join("\n")
+}
+
+fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let (Value::Array(left), Value::Array(right)) = (actual, expected) else {
+        return None;
+    };
+    if left.logical_len() != right.logical_len() {
+        return None;
+    }
+    let left_value = Value::Array(left.clone());
+    let right_value = Value::Array(right.clone());
+    let mut lines = vec!["  [".to_string()];
+    for index in 0..left.logical_len() {
+        let key = index.to_string();
+        let left_item = execute::get_property(&left_value, &key);
+        let right_item = execute::get_property(&right_value, &key);
+        let suffix = if index + 1 == left.logical_len() { "" } else { "," };
+        if execute::same_value(&left_item, &right_item) {
+            lines.push(format!("    {}{suffix}", rendered(&left_item)));
+        } else {
+            lines.push(format!("+   {}{suffix}", rendered(&left_item)));
+            lines.push(format!("-   {}{suffix}", rendered(&right_item)));
+        }
+    }
+    lines.push("  ]".into());
+    Some(lines.join("\n"))
 }
 
 fn collection_diff(actual: &Value, expected: &Value) -> Option<String> {
@@ -1045,8 +1170,10 @@ pub fn not_deep_strict_equal(
     if args.len() < 2 {
         return Err(missing_args());
     }
+    let skip_prototype = receiver_skip_prototype(_r);
     binary_assert(_r, args, "notDeepStrictEqual", false, |a, b| {
-        Ok(crate::modules::deep_equal::deep_equal(a, b, true)? && typed_props_equal(a, b))
+        Ok(crate::modules::deep_equal::deep_equal_opts(a, b, true, skip_prototype)?
+            && typed_props_equal(a, b))
     })
 }
 
@@ -1058,8 +1185,10 @@ pub fn not_deep_equal(
     if args.len() < 2 {
         return Err(missing_args());
     }
+    let skip_prototype = receiver_skip_prototype(_r);
     binary_assert(_r, args, "notDeepEqual", false, |a, b| {
-        Ok(crate::modules::deep_equal::deep_equal(a, b, false)? && typed_props_equal(a, b))
+        Ok(crate::modules::deep_equal::deep_equal_opts(a, b, false, skip_prototype)?
+            && typed_props_equal(a, b))
     })
 }
 
