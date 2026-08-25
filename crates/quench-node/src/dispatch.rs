@@ -264,6 +264,7 @@ const CAP_ASSERT_IF_ERROR: u16 = 0x142A;
 const CAP_ASSERT_MATCH: u16 = 0x142B;
 const CAP_ASSERT_DOES_NOT_MATCH: u16 = 0x142C;
 const CAP_ASSERT_CONSTRUCTOR: u16 = 0x142D;
+const CAP_ASSERT_PARTIAL_DEEP_STRICT_EQUAL: u16 = 0x142E;
 const CAP_CJS_WRAP: u16 = 0x1d00;
 const CAP_UTIL_GETCALLSITES: u16 = 0x0303;
 const CAP_BUFFER_ATOB: u16 = 0x0806;
@@ -675,6 +676,7 @@ pub fn assert_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_ASSERT_EQUAL => assert::equal,
         CAP_ASSERT_NOT_EQUAL => assert::not_equal,
         CAP_ASSERT_DEEP_STRICT_EQUAL => assert::deep_strict_equal,
+        CAP_ASSERT_PARTIAL_DEEP_STRICT_EQUAL => assert::partial_deep_strict_equal,
         CAP_ASSERT_NOT_DEEP_STRICT_EQUAL => assert::not_deep_strict_equal,
         CAP_ASSERT_THROWS => assert_validate::throws,
         CAP_ASSERT_DOES_NOT_THROW => assert_validate::does_not_throw,
