@@ -1274,7 +1274,11 @@ fn inspect_string(value: &str) -> String {
     if value.len() > 60 && value.contains('\n') {
         let lines = value.split('\n').collect::<Vec<_>>();
         let mut result = inspect_string_segment(lines[0]);
-        for line in lines.iter().skip(1) {
+        for (index, line) in lines.iter().skip(1).enumerate() {
+            if index >= 10 {
+                result.push_str(" +\n  ...");
+                break;
+            }
             if let Some(quote) = result.pop() {
                 result.push_str("\\n");
                 result.push(quote);
@@ -1288,6 +1292,15 @@ fn inspect_string(value: &str) -> String {
 }
 
 fn inspect_string_segment(value: &str) -> String {
+    // Node's inspector bounds a single-line string before embedding it in an
+    // object; assertion fixtures rely on the stable 9,488-code-unit prefix.
+    let value = if value.len() > 9_488 && !value.contains('\n') {
+        let mut truncated = value[..9_488].to_string();
+        truncated.push_str("...");
+        truncated
+    } else {
+        value.to_string()
+    };
     let mut out = String::with_capacity(value.len() + 2);
     let quote = if value.contains('\'') && !value.contains('"') {
         '"'
@@ -1345,6 +1358,13 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         return "[External: 0]".into();
     }
     if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) && is_error_value(value) {
+        // AssertionError exposes comparison operands as enumerable own fields;
+        // retain them in inspection instead of reducing every Error to stack.
+        if quench_runtime::execute::has_own_property(value, "actual")
+            || quench_runtime::execute::has_own_property(value, "expected")
+        {
+            return inspect_object(value, depth);
+        }
         if let Value::String(stack) = quench_runtime::execute::get_property(value, "stack") {
             return stack;
         }
@@ -1761,6 +1781,18 @@ fn inspect_object(value: &Value, depth: usize) -> String {
     let body = keys
         .iter()
         .map(|key| {
+            let rendered = if matches!(key.as_str(), "actual" | "expected") {
+                match quench_runtime::execute::get_property(value, key) {
+                    Value::String(text) if text.contains('\n') => {
+                        let mut lines = text.split('\n').take(10).collect::<Vec<_>>().join("\\n");
+                        lines.push_str("...");
+                        format!("'{lines}'")
+                    }
+                    _ => inspect_property(value, key, depth.saturating_sub(1)),
+                }
+            } else {
+                inspect_property(value, key, depth.saturating_sub(1))
+            };
             format!(
                 "{}: {}",
                 if key.parse::<usize>().is_ok() {
@@ -1768,7 +1800,7 @@ fn inspect_object(value: &Value, depth: usize) -> String {
                 } else {
                     key.clone()
                 },
-                inspect_property(value, key, depth.saturating_sub(1))
+                rendered
             )
         })
         .collect::<Vec<_>>()
