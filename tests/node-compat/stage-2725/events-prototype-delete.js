@@ -37,6 +37,21 @@ special.on('__proto__', () => { specialSeen = true; });
 special.emit('__proto__');
 assert.strictEqual(specialSeen, true);
 
+const visible = new EventEmitter();
+const first = () => {};
+const second = () => {};
+visible.on('visible', first);
+assert.strictEqual(visible._events.visible, first);
+visible.on('visible', second);
+assert.deepStrictEqual(visible._events.visible, [first, second]);
+const once = () => 1;
+visible.once('once', once);
+const raw = visible.rawListeners('once');
+assert.strictEqual(raw.length, 1);
+assert.strictEqual(raw[0].listener, once);
+assert.strictEqual(raw[0](), 1);
+assert.deepStrictEqual(visible.rawListeners('once'), []);
+
 assert.strictEqual(EventEmitter.defaultMaxListeners, 10);
 assert.throws(
   () => { EventEmitter.defaultMaxListeners = -1; },
