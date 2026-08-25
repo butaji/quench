@@ -33,7 +33,7 @@ fn match_forward_zero(
     let [receiver, nested, call, returned, fallback, fallback_return] =
         std::array::from_fn(|pc| code.instruction(pc).unwrap());
     use crate::ir::Opcode::*;
-    (receiver.opcode == LoadLocalChecked
+    (is_local_load(receiver)
         && (nested.opcode, nested.b) == (GetN, receiver.a)
         && call.opcode == CallN
         && call.flags == 0
@@ -83,10 +83,10 @@ fn match_forward_one(
     let [receiver, nested, callee, argument, call, returned, fallback, fallback_return] =
         std::array::from_fn(|pc| code.instruction(pc).unwrap());
     use crate::ir::Opcode::*;
-    (receiver.opcode == LoadLocalChecked
+    (is_local_load(receiver)
         && (nested.opcode, nested.b) == (GetN, receiver.a)
         && (callee.opcode, callee.b) == (GetN, nested.a)
-        && argument.opcode == LoadLocalChecked
+        && is_local_load(argument)
         && call.opcode == CallN
         && call.flags == 1
         && (call.b, call.c) == (nested.a, callee.a)
