@@ -187,7 +187,11 @@ fn run_instruction(
                     }
                     if let Some(value) = array.dense_value_at(index) {
                         crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
-                        write_value(registers, instruction.a, value);
+                        write_value(
+                            registers,
+                            instruction.a,
+                            crate::locals::resolved_replacement(value),
+                        );
                         return Ok(None);
                     }
                 }

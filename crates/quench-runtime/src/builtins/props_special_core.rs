@@ -97,6 +97,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ShadowRealmPrototype, "importValue") => Some(Value::Builtin(ShadowRealmImportValue)),
         (ShadowRealmPrototype, "Symbol.toStringTag") => Some(Value::String("ShadowRealm".into())),
         (String, "prototype") => Some(Value::Builtin(StringPrototype)),
+        (StringPrototype, "length") => Some(Value::Number(0.0)),
         (StringPrototype, "constructor") => Some(Value::Builtin(String)),
         _ => special_match_middle(builtin, key),
     }

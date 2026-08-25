@@ -73,6 +73,12 @@ pub(crate) fn execute_shape_kernel(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Option<crate::value::Value> {
+    // Async functions must materialize their promise completion before any
+    // value-preserving leaf/kernel shortcut.  The kernel is only valid for
+    // synchronous call observables.
+    if function.is_async {
+        return None;
+    }
     let plan = shape_kernel_fact(function)?;
     match plan {
         ShapeKernelPlan::StatePredicate(plan) => execute_state_predicate(function, receiver, plan),
@@ -95,6 +101,9 @@ pub(crate) fn execute_shape_kernel(
 }
 
 pub(crate) fn is_shape_kernel_candidate(function: &crate::value::FunctionValue) -> bool {
+    if function.is_async {
+        return false;
+    }
     function.code.code().is_some_and(|code| {
         matches!(code.len(), 6..=9)
             && code
