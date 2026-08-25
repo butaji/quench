@@ -25,12 +25,17 @@ pub fn set_property(
 /// Mutate one existing ordinary-object slot while preserving object identity.
 /// Host state machines use this only where JavaScript observes identity.
 pub fn set_property_in_place(target: &crate::value::Value, key: &str, value: crate::value::Value) -> bool {
-    let crate::value::Value::Object(object) = target else {
-        return false;
+    let object = match target {
+        crate::value::Value::Object(object) => Rc::clone(object),
+        crate::value::Value::ObjectAlias(alias) => match alias.target() {
+            Some(object) => object,
+            None => return false,
+        },
+        _ => return false,
     };
     // The host has exclusive semantic ownership of this identity-sensitive
     // transition; the runtime's ordinary object path remains copy-on-write.
-    unsafe { (&mut *(Rc::as_ptr(object) as *mut crate::value::ObjectData)).set_property_in_place(key, value); }
+    unsafe { (&mut *(Rc::as_ptr(&object) as *mut crate::value::ObjectData)).set_property_in_place(key, value); }
     true
 }
 
