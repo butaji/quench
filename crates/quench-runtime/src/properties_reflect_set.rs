@@ -38,6 +38,23 @@ pub(crate) fn set_with_receiver(
     if set_proven_own_data(&resolved_target, key, value, receiver) {
         return Ok(true);
     }
+    let own = crate::builtins::object::has_own_property(
+        Some(&resolved_target),
+        Some(&crate::value::Value::String(key.to_string())),
+    ) == crate::value::Value::Boolean(true);
+    if own {
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&resolved_target),
+            Some(&crate::value::Value::String(key.to_string())),
+        )?;
+        if descriptor_field_exists(&descriptor, "set") {
+            return call_setter(&descriptor, receiver, value);
+        }
+        if !descriptor_writable(&descriptor)? {
+            return Ok(false);
+        }
+        return set_receiver_data(receiver, key, value);
+    }
     if key == "length" && crate::regexp::has_regexp_internal_slot(&resolved_target) {
         return set_receiver_data(receiver, key, value);
     }

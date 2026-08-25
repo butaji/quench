@@ -435,19 +435,7 @@ fn match_indices(text: &str, m: &regress::Match, offset: usize) -> Value {
 }
 
 fn named_index_groups(text: &str, m: &regress::Match, offset: usize) -> Value {
-    let properties: Vec<(String, Value)> = m
-        .named_groups()
-        .map(|(name, range)| {
-            let value = range.map_or(Value::Undefined, |range| {
-                Value::array(vec![
-                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
-                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
-                ])
-            });
-            (name.to_string(), value)
-        })
-        .collect();
-    if properties.is_empty() {
+    if m.named_groups().next().is_none() {
         Value::Undefined
     } else {
         let mut properties = vec![("\0prototype".to_string(), Value::Null)];
@@ -465,16 +453,14 @@ fn named_index_groups(text: &str, m: &regress::Match, offset: usize) -> Value {
 }
 
 fn named_groups(text: &str, m: &regress::Match, offset: usize) -> Option<Value> {
-    let properties: Vec<(String, Value)> = m
-        .named_groups()
-        .map(|(name, range)| {
-            let value = range.map_or(Value::Undefined, |range| {
-                Value::String(text[offset + range.start..offset + range.end].to_string())
-            });
-            (name.to_string(), value)
-        })
-        .collect();
-    (!properties.is_empty())
+    let mut properties = vec![("\0prototype".to_string(), Value::Null)];
+    properties.extend(m.named_groups().map(|(name, range)| {
+        let value = range.map_or(Value::Undefined, |range| {
+            Value::String(text[offset + range.start..offset + range.end].to_string())
+        });
+        (name.to_string(), value)
+    }));
+    (properties.len() > 1)
         .then(|| Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties))))
 }
 
@@ -500,7 +486,18 @@ fn match_result(values: Vec<Value>, index: Value, input: &str, groups: Option<Va
     crate::execution_trace::allocation("match_result");
     let result = crate::builtins::set_property(Value::array(values), "index", index);
     let result = crate::builtins::set_property(result, "input", Value::String(input.to_string()));
-    crate::builtins::set_property(result, "groups", groups.unwrap_or(Value::Undefined))
+    let groups = groups.unwrap_or(Value::Undefined);
+    crate::builtins::define_own_property(
+        &result,
+        "groups",
+        &[
+            ("value".to_string(), groups),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ],
+    )
+    .unwrap_or(result)
 }
 
 fn argument_string(arguments: &[Value]) -> Result<String, VmError> {
@@ -522,7 +519,6 @@ fn extract_regex_parts(receiver: &Value) -> Result<(String, String, usize), VmEr
 const REGEXP_SOURCE_SLOT: usize = 2;
 const REGEXP_FLAGS_SLOT: usize = 3;
 const REGEXP_LAST_INDEX_SLOT: usize = 9;
-const REGEXP_LAST_INDEX_DESCRIPTOR_SLOT: usize = 10;
 
 fn regexp_slot<'a>(receiver: &'a Value, slot: usize, key: &str) -> Option<&'a Value> {
     let Value::Object(object) = receiver else {
@@ -555,17 +551,17 @@ fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
     else {
         return false;
     };
-    let Some(Value::Object(descriptor)) = regexp_slot(
-        receiver,
-        REGEXP_LAST_INDEX_DESCRIPTOR_SLOT,
-        &crate::builtins::descriptor_key("lastIndex"),
-    ) else {
-        return false;
-    };
-    let writable = descriptor
-        .hot_properties()
-        .get(1)
-        .is_some_and(|(name, flag)| name == "writable" && matches!(flag, Value::Boolean(true)));
+    let writable = crate::builtins::object::descriptor(
+        Some(receiver),
+        Some(&Value::String("lastIndex".to_string())),
+    )
+    .ok()
+    .is_some_and(|descriptor| match descriptor {
+        Value::Object(properties) => properties
+            .iter()
+            .any(|(name, value)| name == "writable" && matches!(value, Value::Boolean(true))),
+        _ => false,
+    });
     if writable {
         cell.replace(value.clone());
     }
