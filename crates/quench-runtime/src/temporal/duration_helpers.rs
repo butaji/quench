@@ -181,7 +181,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         if let Some(options) = arguments.get(2) {
             validate_compare_options(Some(options))?;
             if crate::value::is_object(options) {
-                let relative_to = crate::execute::get_property_result(options, "relativeTo")?;
+                let relative_to = relative_to_option(options)?;
                 if !matches!(relative_to, Value::Undefined) {
                     relative_date(&relative_to)?;
                 }
@@ -201,9 +201,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         }
     }
     let relative_to = match arguments.get(2) {
-        Some(value) if !matches!(value, Value::Undefined) => {
-            Some(crate::execute::get_property_result(value, "relativeTo")?)
-        }
+        Some(value) if !matches!(value, Value::Undefined) => Some(relative_to_option(value)?),
         _ => None,
     };
     if (date_units(&left) || date_units(&right))
@@ -215,11 +213,12 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
             "relativeTo is required for date units",
         ));
     }
+    let date = relative_to
+        .as_ref()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(|value| relative_date(value))
+        .transpose()?;
     let difference = if date_units(&left) || date_units(&right) {
-        let date = relative_to
-            .as_ref()
-            .map(|value| relative_date(value))
-            .transpose()?;
         duration_difference(&left, &right, date)
     } else {
         exact_time_difference(&left, &right)
@@ -228,6 +227,24 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(if difference < 0 { -1.0 } else { 1.0 }))
+}
+
+fn relative_to_option(value: &Value) -> Result<Value, VmError> {
+    let result = crate::execute::get_property_result(value, "relativeTo")?;
+    if !matches!(result, Value::Undefined) {
+        return Ok(result);
+    }
+    let object = match value {
+        Value::Object(object) => Some(object.clone()),
+        Value::ObjectAlias(alias) => alias.target(),
+        _ => None,
+    };
+    if let Some(object) = object {
+        if let Some((_, value)) = object.iter().find(|(key, _)| key == "relativeTo") {
+            return Ok(value.clone());
+        }
+    }
+    Ok(result)
 }
 
 fn duration_difference(left: &Value, right: &Value, relative_to: Option<(i32, u32, u32)>) -> i128 {
@@ -273,12 +290,22 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
             crate::temporal::plain_date::from(Some(&Value::String(date.into())))?
         }
         _ => {
+            let resolved = crate::locals::resolved_replacement(value.clone());
+            if let Value::Object(object) = &resolved {
+                let has_prototype = object.iter().any(|(key, _)| key == "\0prototype");
+                if !has_prototype {
+                    validate_property_bag_fields(value)?;
+                }
+            }
             let date = crate::temporal::plain_date::from(Some(value))?;
             let timezone = crate::execute::get_property_result(value, "timeZone")?;
             if !matches!(timezone, Value::Undefined) {
                 let Value::String(timezone) = timezone else {
                     return Err(crate::value::error::throw_type_error("Invalid time zone"));
                 };
+                if crate::conversion::is_symbol_string(&timezone) {
+                    return Err(crate::value::error::throw_type_error("Invalid time zone"));
+                }
                 validate_relative_string(&timezone)?;
                 validate_timezone_string(&timezone)?;
             }
@@ -301,6 +328,34 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
     ))
 }
 
+fn validate_property_bag_fields(value: &Value) -> Result<(), VmError> {
+    for name in ["year", "month", "day"] {
+        let field = crate::execute::get_property_result(value, name)?;
+        if matches!(field, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error("Invalid relativeTo"));
+        }
+        let number = crate::conversion::to_number(&field)?;
+        if !number.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
+        }
+    }
+    for name in [
+        "hour",
+        "minute",
+        "second",
+        "millisecond",
+        "microsecond",
+        "nanosecond",
+    ] {
+        let field = crate::execute::get_property_result(value, name)?;
+        if !matches!(field, Value::Undefined) && !crate::conversion::to_number(&field)?.is_finite()
+        {
+            return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_relative_string(text: &str) -> Result<(), VmError> {
     if text.is_empty() {
         return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
@@ -308,11 +363,30 @@ fn validate_relative_string(text: &str) -> Result<(), VmError> {
     if text.contains("[u-ca=") && !text.contains("[u-ca=iso8601]") {
         return Err(crate::value::error::throw_range_error("Invalid calendar"));
     }
+    if text.starts_with("-000000-") {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
     if let Some((_, time)) = text.split_once(['T', 't']) {
         let base = time.split_once('[').map_or(time, |(base, _)| base);
+        let clock = base
+            .trim_end_matches('Z')
+            .split_once(['+', '-'])
+            .map_or(base.trim_end_matches('Z'), |(clock, _)| clock);
+        let clock_parts = clock.split(':').collect::<Vec<_>>();
+        if clock_parts.iter().any(|part| part.contains('.')) {
+            return Err(crate::value::error::throw_range_error(
+                "Fractional relativeTo time",
+            ));
+        }
         if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
             let offset = &base[sign..];
             if !valid_offset(offset) {
+                return Err(crate::value::error::throw_range_error("Invalid time zone"));
+            }
+        }
+        if let Some((_, annotation)) = time.split_once('[') {
+            let annotation = annotation.strip_suffix(']').unwrap_or(annotation);
+            if annotation.starts_with(['+', '-']) && !valid_offset(annotation) {
                 return Err(crate::value::error::throw_range_error("Invalid time zone"));
             }
         }
