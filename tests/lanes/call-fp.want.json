@@ -2,6 +2,12 @@
   "schema": 1,
   "oracle": { "max_ratio": 2 },
   "metrics": {
+    "word_call_hit_per_iteration": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "counted_word_call", "field": "hits" } },
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "min": 0.99
+    },
     "environment_per_call": {
       "numerator": "heap_lifecycle.environment.allocated",
       "denominator": "events.loop_iteration",
