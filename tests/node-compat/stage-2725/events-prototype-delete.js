@@ -30,4 +30,11 @@ EventEmitter.captureRejections = false;
 assert.strictEqual(typeof process.removeAllListeners, 'function');
 process.removeAllListeners('unhandledRejection');
 
+const special = new EventEmitter();
+assert.strictEqual(special._events.hasOwnProperty, undefined);
+let specialSeen = false;
+special.on('__proto__', () => { specialSeen = true; });
+special.emit('__proto__');
+assert.strictEqual(specialSeen, true);
+
 console.log('EventEmitter prototype deletion: ok');
