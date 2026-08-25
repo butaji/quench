@@ -153,6 +153,19 @@ mod stubs {
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeFrom {
             return Some(zoned_from(arguments.first()));
         }
+        if matches!(
+            builtin,
+            crate::ops::Builtin::TemporalZonedDateTimeToString
+                | crate::ops::Builtin::TemporalZonedDateTimeToJSON
+                | crate::ops::Builtin::TemporalZonedDateTimeToLocaleString
+                | crate::ops::Builtin::TemporalZonedDateTimeToInstant
+                | crate::ops::Builtin::TemporalZonedDateTimeToPlainDateTime
+                | crate::ops::Builtin::TemporalZonedDateTimeToPlainDate
+                | crate::ops::Builtin::TemporalZonedDateTimeToPlainTime
+                | crate::ops::Builtin::TemporalZonedDateTimeEquals
+        ) {
+            return Some(zoned_method(builtin, _receiver, arguments));
+        }
         if builtin == crate::ops::Builtin::TemporalPlainMonthDayFrom {
             return Some(plain_month_day_from(arguments.first()));
         }
@@ -290,6 +303,87 @@ mod stubs {
             timezone,
             crate::ops::Builtin::TemporalZonedDateTimePrototype,
         ))
+    }
+
+    fn zoned_method(
+        builtin: crate::ops::Builtin,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let receiver = receiver
+            .filter(|value| matches!(value, Value::Object(_)))
+            .ok_or_else(|| {
+                crate::value::error::throw_type_error("Invalid ZonedDateTime receiver")
+            })?;
+        let property = |name: &str| crate::execute::get_property_result(receiver, name);
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeEquals {
+            let other = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing value"))?;
+            return Ok(Value::Boolean(
+                property("epochNanoseconds")?
+                    == crate::execute::get_property_result(other, "epochNanoseconds")?,
+            ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeToInstant {
+            return Ok(Value::Object(std::rc::Rc::new(
+                crate::value::ObjectData::new(vec![
+                    ("epochNanoseconds".into(), property("epochNanoseconds")?),
+                    (
+                        "\0prototype".into(),
+                        Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype),
+                    ),
+                ]),
+            )));
+        }
+        let year = crate::conversion::to_number(&property("year")?)?;
+        let month = crate::conversion::to_number(&property("month")?)?;
+        let day = crate::conversion::to_number(&property("day")?)?;
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeToPlainDate {
+            return crate::temporal::plain_date::construct(&[
+                Value::Number(year),
+                Value::Number(month),
+                Value::Number(day),
+            ]);
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeToPlainTime {
+            return crate::temporal::plain_time::construct(&[
+                property("hour")?,
+                property("minute")?,
+                property("second")?,
+                property("millisecond")?,
+                property("microsecond")?,
+                property("nanosecond")?,
+            ]);
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeToPlainDateTime {
+            return crate::temporal::plain_date_time::construct(&[
+                Value::Number(year),
+                Value::Number(month),
+                Value::Number(day),
+                property("hour")?,
+                property("minute")?,
+                property("second")?,
+                property("millisecond")?,
+                property("microsecond")?,
+                property("nanosecond")?,
+            ]);
+        }
+        let year = year as i32;
+        let month = month as u32;
+        let day = day as u32;
+        let hour = crate::conversion::to_number(&property("hour")?)? as u32;
+        let minute = crate::conversion::to_number(&property("minute")?)? as u32;
+        let second = crate::conversion::to_number(&property("second")?)? as u32;
+        let millisecond = crate::conversion::to_number(&property("millisecond")?)? as u32;
+        let microsecond = crate::conversion::to_number(&property("microsecond")?)? as u32;
+        let nanosecond = crate::conversion::to_number(&property("nanosecond")?)? as u32;
+        let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+        let suffix = format!(".{:03}{:03}{:03}", millisecond, microsecond, nanosecond)
+            .trim_end_matches('0')
+            .to_string();
+        let text = format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{suffix}+00:00[{timezone}]");
+        Ok(Value::String(text))
     }
 
     fn plain_month_day_from(value: Option<&Value>) -> Result<Value, VmError> {

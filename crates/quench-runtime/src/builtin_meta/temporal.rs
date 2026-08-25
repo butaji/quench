@@ -53,6 +53,24 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainYearMonthEraYearGetter => Some("get eraYear"),
         Builtin::TemporalZonedDateTimeFrom => Some("Temporal.ZonedDateTime.from"),
         Builtin::TemporalZonedDateTimeCompare => Some("Temporal.ZonedDateTime.compare"),
+        Builtin::TemporalZonedDateTimeToString => Some("Temporal.ZonedDateTime.prototype.toString"),
+        Builtin::TemporalZonedDateTimeToJSON => Some("Temporal.ZonedDateTime.prototype.toJSON"),
+        Builtin::TemporalZonedDateTimeToLocaleString => {
+            Some("Temporal.ZonedDateTime.prototype.toLocaleString")
+        }
+        Builtin::TemporalZonedDateTimeToInstant => {
+            Some("Temporal.ZonedDateTime.prototype.toInstant")
+        }
+        Builtin::TemporalZonedDateTimeToPlainDateTime => {
+            Some("Temporal.ZonedDateTime.prototype.toPlainDateTime")
+        }
+        Builtin::TemporalZonedDateTimeToPlainDate => {
+            Some("Temporal.ZonedDateTime.prototype.toPlainDate")
+        }
+        Builtin::TemporalZonedDateTimeToPlainTime => {
+            Some("Temporal.ZonedDateTime.prototype.toPlainTime")
+        }
+        Builtin::TemporalZonedDateTimeEquals => Some("Temporal.ZonedDateTime.prototype.equals"),
         Builtin::TemporalNowInstant => Some("Temporal.Now.instant"),
         Builtin::TemporalNowPlainDateISO => Some("Temporal.Now.plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("Temporal.Now.plainDateTimeISO"),
@@ -251,6 +269,14 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainYearMonthEraYearGetter => Some("eraYear"),
         Builtin::TemporalZonedDateTimeFrom => Some("from"),
         Builtin::TemporalZonedDateTimeCompare => Some("compare"),
+        Builtin::TemporalZonedDateTimeToString => Some("toString"),
+        Builtin::TemporalZonedDateTimeToJSON => Some("toJSON"),
+        Builtin::TemporalZonedDateTimeToLocaleString => Some("toLocaleString"),
+        Builtin::TemporalZonedDateTimeToInstant => Some("toInstant"),
+        Builtin::TemporalZonedDateTimeToPlainDateTime => Some("toPlainDateTime"),
+        Builtin::TemporalZonedDateTimeToPlainDate => Some("toPlainDate"),
+        Builtin::TemporalZonedDateTimeToPlainTime => Some("toPlainTime"),
+        Builtin::TemporalZonedDateTimeEquals => Some("equals"),
         Builtin::TemporalNowInstant => Some("instant"),
         Builtin::TemporalNowPlainDateISO => Some("plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("plainDateTimeISO"),
@@ -403,6 +429,15 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalPlainYearMonthToPlainDate => Some(1.0),
         Builtin::TemporalZonedDateTimeFrom => Some(1.0),
         Builtin::TemporalZonedDateTimeCompare => Some(2.0),
+        Builtin::TemporalZonedDateTimeToString | Builtin::TemporalZonedDateTimeToLocaleString => {
+            Some(0.0)
+        }
+        Builtin::TemporalZonedDateTimeToJSON
+        | Builtin::TemporalZonedDateTimeToInstant
+        | Builtin::TemporalZonedDateTimeToPlainDateTime
+        | Builtin::TemporalZonedDateTimeToPlainDate
+        | Builtin::TemporalZonedDateTimeToPlainTime => Some(0.0),
+        Builtin::TemporalZonedDateTimeEquals => Some(1.0),
         Builtin::TemporalNowInstant
         | Builtin::TemporalNowPlainDateISO
         | Builtin::TemporalNowPlainDateTimeISO
