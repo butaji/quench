@@ -64,18 +64,32 @@ fn await_iterator_result(value: Value) -> Result<Value, crate::execute::VmError>
             Err(crate::execute::VmError::Thrown(reason))
         }
         crate::value::PromiseState::Pending => {
-            crate::promise::drain_microtasks_all();
-            let state = promise.state.borrow().clone();
-            match state {
-                crate::value::PromiseState::Fulfilled(value) => Ok(value),
-                crate::value::PromiseState::Rejected(reason) => {
-                    Err(crate::execute::VmError::Thrown(reason))
+            // An await may cross host jobs and promise reactions (for example
+            // nextTick -> abort -> iterator rejection). Advance one queue item
+            // at a time and re-check the awaited promise, with a bounded pump
+            // so recurring jobs cannot starve the suspension boundary.
+            for _ in 0..128 {
+                if let Some(result) = settled_promise(&promise) {
+                    return result;
                 }
-                crate::value::PromiseState::Pending => {
-                    Err(crate::execute::VmError::Suspended(promise))
+                if !crate::promise::drain_one_microtask() {
+                    break;
                 }
             }
+            Err(crate::execute::VmError::Suspended(promise))
         }
+    }
+}
+
+fn settled_promise(
+    promise: &std::rc::Rc<crate::value::PromiseData>,
+) -> Option<Result<Value, crate::execute::VmError>> {
+    match promise.state.borrow().clone() {
+        crate::value::PromiseState::Fulfilled(value) => Some(Ok(value)),
+        crate::value::PromiseState::Rejected(reason) => {
+            Some(Err(crate::execute::VmError::Thrown(reason)))
+        }
+        crate::value::PromiseState::Pending => None,
     }
 }
 
