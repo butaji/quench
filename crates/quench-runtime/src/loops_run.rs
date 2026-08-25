@@ -61,10 +61,12 @@ fn run_loop(
     let loop_shape = crate::execution_trace::loop_shape(body);
     let (post_test, dst, per_iteration, per_iteration_captured) = config;
     run_fragment(init, registers)?;
-    if label.is_none() && !post_test && per_iteration.is_empty() {
+    if label.is_none() && !post_test {
         if let Some(completion) = run_montgomery_reduce_kernel(test, body, update) {
             return Ok(completion);
         }
+    }
+    if label.is_none() && !post_test && per_iteration.is_empty() {
         if let Some(completion) = run_square_loop_kernel(test, body, update) {
             return Ok(completion);
         }
@@ -100,7 +102,7 @@ fn run_loop(
                 return Ok(completion);
             }
         } else {
-            dump_counted_rejection(loop_shape, test, body, update);
+            dump_counted_rejection(loop_shape, test, body, update, per_iteration);
         }
     }
     if label.is_none() && !post_test {
@@ -486,6 +488,7 @@ fn dump_counted_rejection(
     test: crate::machine::CodeView<'_>,
     body: crate::machine::CodeView<'_>,
     update: crate::machine::CodeView<'_>,
+    per_iteration: &[u16],
 ) {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
@@ -500,7 +503,7 @@ fn dump_counted_rejection(
         return;
     }
     eprintln!(
-        "LOOP_REJECT hash={fingerprint} test_len={} body_len={} update_len={}",
+        "LOOP_REJECT hash={fingerprint} test_len={} body_len={} update_len={} per_iteration={per_iteration:?}",
         test.len(),
         body.len(),
         update.len()
@@ -516,7 +519,13 @@ fn dump_loop_fragment(name: &str, code: crate::machine::CodeView<'_>) {
         let instruction = code.instruction(pc).unwrap();
         let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
         let operands = code.operand_window_at(pc);
-        eprintln!("  {name}[{pc}]: {instruction:?} cold={cold:?} operands={operands:?}");
+        let property = code
+            .metadata_at(pc)
+            .and_then(|metadata| metadata.name.as_deref());
+        let constant = code.constant_at(pc).map(|(_, constant)| constant);
+        eprintln!(
+            "  {name}[{pc}]: {instruction:?} cold={cold:?} name={property:?} constant={constant:?} operands={operands:?}"
+        );
     }
 }
 
@@ -526,6 +535,7 @@ fn dump_counted_rejection(
     _: crate::machine::CodeView<'_>,
     _: crate::machine::CodeView<'_>,
     _: crate::machine::CodeView<'_>,
+    _: &[u16],
 ) {
 }
 
