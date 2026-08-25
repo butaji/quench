@@ -644,7 +644,7 @@ fn descriptor_property_result(
         }
         if let Ok(index) = key.parse::<usize>() {
             return crate::strings::char_at_utf16(text, index)
-                .map(|value| Ok(Value::String(value)));
+                .map(Ok);
         }
         return None;
     }
