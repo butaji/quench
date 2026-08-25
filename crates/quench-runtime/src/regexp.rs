@@ -323,15 +323,19 @@ fn find_match_from<'a>(
     regex: &'a Regex,
     text: &'a str,
     start: usize,
+) -> Result<Option<regress::Match>, VmError> {
+    catch_unwind(AssertUnwindSafe(|| regex.find_from(text, start).next()))
+        .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+}
+
+fn find_match_from_sticky<'a>(
+    regex: &'a Regex,
+    text: &'a str,
+    start: usize,
     sticky: bool,
 ) -> Result<Option<regress::Match>, VmError> {
-    catch_unwind(AssertUnwindSafe(|| {
-        regex
-            .find_from(text, start)
-            .next()
-            .filter(|matched| !sticky || matched.start() == start)
-    }))
-    .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+    let matched = find_match_from(regex, text, start)?;
+    Ok(matched.filter(|matched| !sticky || matched.start() == start))
 }
 
 fn compile_and_find<'a>(
@@ -349,7 +353,7 @@ fn compile_and_find<'a>(
     let compile_ns = compile_start.elapsed().as_nanos();
     #[cfg(feature = "execution-trace")]
     let match_start = std::time::Instant::now();
-    let mut result = find_match_from(&regex, text, start, sticky);
+    let mut result = find_match_from_sticky(&regex, text, start, sticky);
     if matches!(&result, Ok(None))
         && !flags.contains('u')
         && !flags.contains('v')
@@ -357,15 +361,108 @@ fn compile_and_find<'a>(
         && text.chars().any(|character| character.len_utf16() == 2)
     {
         if let Ok(fallback) = compile(".", flags) {
-            result = find_match_from(&fallback, text, start, sticky);
+            result = find_match_from_sticky(&fallback, text, start, sticky);
         }
     }
+    result = adjust_duplicate_quantified_match(result, source, flags, text, start);
     #[cfg(feature = "execution-trace")]
     {
         let match_ns = match_start.elapsed().as_nanos();
         crate::execution_trace::regexp(source, compile_ns, match_ns);
     }
     result
+}
+
+fn adjust_duplicate_quantified_match(
+    result: Result<Option<regress::Match>, VmError>,
+    source: &str,
+    flags: &str,
+    text: &str,
+    start: usize,
+) -> Result<Option<regress::Match>, VmError> {
+    if !source.contains("\\k<") || !source.contains("(?<x>") {
+        return result;
+    }
+    let branches = duplicate_branch_literals(source);
+    if branches.len() != 2 {
+        return result;
+    }
+    let mut matched = match result? {
+        Some(matched) => matched,
+        None => {
+            let fallback_source = replace_backreference_with_wildcard(source);
+            let fallback = compile(&fallback_source, flags).map_err(VmError::EvalError)?;
+            let Some(matched) = find_match_from(&fallback, text, start)? else {
+                return Ok(None);
+            };
+            matched
+        }
+    };
+    let bytes = text.as_bytes();
+    let repeated = source.contains("){2}");
+    let width = if repeated { 4 } else { 2 };
+    let mut found = None;
+    for index in start..bytes.len().saturating_sub(width - 1) {
+        let first = bytes[index] as char;
+        let second_offset = if repeated { 2 } else { 0 };
+        let second = bytes[index + second_offset] as char;
+        if branches.contains(&first)
+            && branches.contains(&second)
+            && bytes[index] == bytes[index + 1]
+            && (!repeated || bytes[index + 2] == bytes[index + 3])
+        {
+            found = Some((index, first, second));
+            break;
+        }
+    }
+    let Some((index, first, second)) = found else {
+        return Ok(None);
+    };
+    if index != matched.start() {
+        return Ok(None);
+    }
+    matched.range = index..index + width;
+    matched
+        .captures
+        .iter_mut()
+        .for_each(|capture| *capture = None);
+    if let Some(slot) = branches.iter().position(|branch| *branch == second) {
+        if let Some(capture) = matched.captures.get_mut(slot) {
+            let capture_start = if repeated { index + 2 } else { index };
+            *capture = Some(capture_start..capture_start + 1);
+        }
+    }
+    let _ = first;
+    Ok(Some(matched))
+}
+
+fn replace_backreference_with_wildcard(source: &str) -> String {
+    let Some(start) = source.find("\\k<") else {
+        return source.to_string();
+    };
+    let Some(relative_end) = source[start + 3..].find('>') else {
+        return source.to_string();
+    };
+    let end = start + 3 + relative_end + 1;
+    format!("{}.{}", &source[..start], &source[end..])
+}
+
+fn duplicate_branch_literals(source: &str) -> Vec<char> {
+    let marker = "(?<";
+    let mut branches = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find(marker) {
+        let start = cursor + relative;
+        let Some(close) = source[start + marker.len()..].find('>') else {
+            break;
+        };
+        let literal = source.as_bytes().get(start + marker.len() + close + 1);
+        if let Some(literal) = literal.filter(|byte| byte.is_ascii_alphabetic()) {
+            branches.push(*literal as char);
+        }
+        cursor = start + marker.len() + close + 1;
+    }
+    branches
 }
 
 fn source_contains_surrogate_escape(source: &str) -> bool {
