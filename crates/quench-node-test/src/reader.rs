@@ -85,6 +85,11 @@ impl NodeRunner {
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
+        self.host
+            .state()
+            .borrow_mut()
+            .process
+            .unhandled_rejection_mode = rejection_mode(&fixture.source);
         let is_module = fixture
             .path
             .extension()
@@ -199,6 +204,23 @@ fn strip_v8_native_probes(source: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn rejection_mode(source: &str) -> quench_node::modules::process::UnhandledRejectionMode {
+    let mode = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("// Flags:"))
+        .and_then(|flags| {
+            flags.split_whitespace().find_map(|flag| {
+                flag.strip_prefix("--unhandled-rejections=")
+            })
+        });
+    match mode {
+        Some("none") => quench_node::modules::process::UnhandledRejectionMode::None,
+        Some("warn") => quench_node::modules::process::UnhandledRejectionMode::Warn,
+        Some("strict") => quench_node::modules::process::UnhandledRejectionMode::Strict,
+        _ => quench_node::modules::process::UnhandledRejectionMode::Throw,
+    }
 }
 
 fn reduce_fixture(
