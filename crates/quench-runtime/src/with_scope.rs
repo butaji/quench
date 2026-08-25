@@ -153,6 +153,24 @@ pub(crate) fn set_resolved(
         }
         target = updated;
     }
+    if let Some(owner) = crate::vm::resolve_global_owner(&target) {
+        if strict && !has_property(&owner, key)? {
+            return Err(crate::value::error::throw_reference_error(&format!(
+                "{key} is not defined"
+            )));
+        }
+        if !strict {
+            target = owner;
+        }
+    }
+    if strict
+        && crate::vm::is_global_object(&target)
+        && !has_property(&crate::vm::current_global_object(), key)?
+    {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{key} is not defined"
+        )));
+    }
     let value = crate::execute::read_register(registers, src)?;
     if matches!(target, Value::Undefined) {
         return set_name_value(key, value, strict);
@@ -220,10 +238,15 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
     } else {
         crate::vm::current_global_object()
     };
-    if strict && !has_property(&global, key)? {
+    let semantic_global =
+        crate::vm::resolve_global_owner(&global).unwrap_or_else(|| global.clone());
+    if strict && !has_property(&semantic_global, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
             "{key} is not defined"
         )));
+    }
+    if crate::builtins::descriptor_flag(&semantic_global, key, "writable") != Some(false) {
+        let _ = crate::global_environment::store_global_binding(key, value.clone());
     }
     let updated = crate::builtins::set_property(global.clone(), key, value);
     crate::vm::synchronize_global_object(
