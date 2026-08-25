@@ -990,7 +990,7 @@ impl ArrayData {
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
-        (0..self.length)
+        (0..self.logical_len())
             .map(|index| self.get_index(index).unwrap_or(Value::Undefined))
             .collect()
     }
