@@ -153,11 +153,13 @@ pub fn local_get_store(
     receiver: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
+    let id = local_id(receiver).unwrap_or_default();
     Ok(state
         .borrow()
         .async_hooks
-        .current_local_store
-        .clone()
+        .local_stores
+        .get(&id)
+        .cloned()
         .unwrap_or(Value::Undefined))
 }
 
@@ -166,8 +168,11 @@ pub fn local_enter_with(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    state.borrow_mut().async_hooks.current_local_store =
-        Some(args.first().cloned().unwrap_or(Value::Undefined));
+    let id = local_id(receiver).unwrap_or_default();
+    state.borrow_mut().async_hooks.local_stores.insert(
+        id,
+        args.first().cloned().unwrap_or(Value::Undefined),
+    );
     Ok(Value::Undefined)
 }
 
@@ -176,7 +181,9 @@ pub fn local_disable(
     receiver: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
-    state.borrow_mut().async_hooks.current_local_store = None;
+    if let Some(id) = local_id(receiver) {
+        state.borrow_mut().async_hooks.local_stores.remove(&id);
+    }
     Ok(Value::Undefined)
 }
 
@@ -189,13 +196,20 @@ pub fn local_run(
     if !quench_runtime::is_callable(callback) {
         return Err(VmError::Thrown(host_api::object(vec![])));
     }
-    let previous = state.borrow().async_hooks.current_local_store.clone();
-    state.borrow_mut().async_hooks.current_local_store =
-        Some(args.first().cloned().unwrap_or(Value::Undefined));
+    let id = local_id(receiver).unwrap_or_default();
+    let previous = state.borrow().async_hooks.local_stores.get(&id).cloned();
+    state.borrow_mut().async_hooks.local_stores.insert(
+        id,
+        args.first().cloned().unwrap_or(Value::Undefined),
+    );
     let result = execute::call(callback, receiver.unwrap_or(&Value::Undefined), &args[2..]);
     match previous {
-        Some(value) => state.borrow_mut().async_hooks.current_local_store = Some(value),
-        None => state.borrow_mut().async_hooks.current_local_store = None,
+        Some(value) => {
+            state.borrow_mut().async_hooks.local_stores.insert(id, value);
+        }
+        None => {
+            state.borrow_mut().async_hooks.local_stores.remove(&id);
+        }
     };
     result
 }
