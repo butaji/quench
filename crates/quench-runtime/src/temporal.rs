@@ -2,7 +2,9 @@ pub(crate) mod duration;
 pub(crate) mod instant;
 pub(crate) mod plain_date;
 pub(crate) mod plain_date_time;
+pub(crate) mod plain_month_day;
 pub(crate) mod plain_time;
+pub(crate) mod plain_year_month;
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
@@ -14,6 +16,8 @@ pub(crate) fn execute(
         .or_else(|| plain_date::execute(builtin, receiver, arguments))
         .or_else(|| plain_date_time::execute(builtin, receiver, arguments))
         .or_else(|| plain_time::execute(builtin, receiver, arguments))
+        .or_else(|| plain_month_day::execute(builtin, receiver, arguments))
+        .or_else(|| plain_year_month::execute(builtin, receiver, arguments))
         .or_else(|| stubs::execute(builtin, receiver, arguments))
 }
 
