@@ -46,34 +46,6 @@ pub(crate) fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(
     validate_program(&parsed.program)
 }
 
-struct RegexpLiteralValidator<'a> {
-    errors: Vec<String>,
-    marker: std::marker::PhantomData<&'a ()>,
-}
-
-impl<'a> oxc::ast::visit::Visit<'a> for RegexpLiteralValidator<'a> {
-    fn visit_reg_exp_literal(&mut self, literal: &oxc::ast::ast::RegExpLiteral<'a>) {
-        if let Some(raw) = literal.raw.as_ref() {
-            let text = raw.as_str();
-            if let Some(separator) = text.rfind('/') {
-                let pattern = &text[1..separator];
-                if let Err(error) = crate::regexp::validate_literal(pattern) {
-                    self.errors.push(error);
-                }
-                if let Err(error) = crate::regexp::validate_pattern(pattern) {
-                    self.errors.push(error);
-                }
-                let flags = &text[separator + 1..];
-                if flags.contains('u') {
-                    if let Err(error) = crate::regexp::validate_unicode(pattern, flags) {
-                        self.errors.push(error);
-                    }
-                }
-            }
-        }
-    }
-}
-
 struct DynamicImportValidator<'a> {
     errors: Vec<String>,
     marker: std::marker::PhantomData<&'a ()>,
@@ -115,14 +87,6 @@ impl<'a> oxc::ast::visit::Visit<'a> for DynamicImportValidator<'a> {
 }
 
 pub(crate) fn validate_program(program: &oxc::ast::ast::Program<'_>) -> Result<(), Vec<String>> {
-    let mut regexp_validator = RegexpLiteralValidator {
-        errors: Vec::new(),
-        marker: std::marker::PhantomData,
-    };
-    oxc::ast::visit::walk::walk_program(&mut regexp_validator, program);
-    if !regexp_validator.errors.is_empty() {
-        return Err(regexp_validator.errors);
-    }
     let mut import_validator = DynamicImportValidator {
         errors: Vec::new(),
         marker: std::marker::PhantomData,
