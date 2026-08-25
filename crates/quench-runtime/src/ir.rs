@@ -510,6 +510,16 @@ impl Instruction {
         }
     }
 }
+
+fn is_consecutive_argument_window(dst: Register, args: &[Register]) -> bool {
+    let Ok(argc) = u16::try_from(args.len()) else {
+        return false;
+    };
+    let Some(first) = dst.checked_sub(argc) else {
+        return false;
+    };
+    args.iter().copied().eq(first..dst)
+}
 impl Instruction {
     /// Encode the canonical instruction into its deterministic compact wire form.
     ///
@@ -651,25 +661,16 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
             args,
             spreads,
             ..
-        } if args.as_slice() == [dst.saturating_sub(1)]
-            && *dst != 0
-            && spreads.as_slice() == [false] =>
-        {
-            Some(Instruction::call_registered_one(*dst, *object, *callee))
-        }
-        Op::CallMethod {
-            dst,
-            object,
-            callee: Some(callee),
-            args,
-            spreads,
-            ..
-        } if args.as_slice() == [dst.saturating_sub(2), dst.saturating_sub(1)]
-            && *dst >= 2
-            && spreads.as_slice() == [false, false] =>
+        } if !args.is_empty()
+            && args.len() <= u8::MAX as usize
+            && spreads.iter().all(|spread| !spread)
+            && is_consecutive_argument_window(*dst, args) =>
         {
             Some(Instruction::call_registered_window(
-                *dst, *object, *callee, 2,
+                *dst,
+                *object,
+                *callee,
+                args.len() as u8,
             ))
         }
         _ => None,
@@ -984,7 +985,7 @@ impl Program {
                 _ => {
                     return Err(crate::vm::VmError::EvalError(
                         "unsupported compact instruction".into(),
-                    ))
+                    ));
                 }
             }
             pc += 1;
@@ -1147,6 +1148,21 @@ mod tests {
         assert_eq!(
             lower_compact(&op),
             Some(Instruction::call_registered_window(5, 1, 2, 2))
+        );
+    }
+    #[test]
+    fn lowers_six_argument_method_window_without_operand_storage() {
+        let op = crate::ops::Op::CallMethod {
+            dst: 10,
+            object: 1,
+            key: "method".into(),
+            callee: Some(2),
+            args: vec![4, 5, 6, 7, 8, 9],
+            spreads: vec![false; 6],
+        };
+        assert_eq!(
+            lower_compact(&op),
+            Some(Instruction::call_registered_window(10, 1, 2, 6))
         );
     }
     #[test]
