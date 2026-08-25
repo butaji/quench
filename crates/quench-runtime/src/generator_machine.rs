@@ -112,6 +112,8 @@ fn update_await_frame(
         return Ok(());
     }
     if let Some(iterator) = crate::loops::take_pending_async_for_of() {
+        let mut iterator = iterator;
+        iterator.await_dst = await_destination(generator);
         state.async_for_of = Some(iterator);
     }
     try_push_frame(

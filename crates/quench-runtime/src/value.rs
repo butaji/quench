@@ -433,6 +433,7 @@ pub(crate) struct AsyncForOfState {
     pub iteration_slots: Vec<u16>,
     pub iterator: Value,
     pub dst: u16,
+    pub await_dst: u16,
 }
 
 /// Canonical out-of-line attributes for an ordinary property.
