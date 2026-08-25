@@ -41,8 +41,12 @@ pub fn does_not_throw(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let function = arg(args, 0);
+    let (expected, custom) = match (args.get(1), args.get(2)) {
+        (Some(Value::String(message)), None) => (None, Some(message.clone())),
+        (expected, _) => (expected, custom_message(args, 2)),
+    };
     if let Err(thrown) = invoke(&function)? {
-        if let Some(expected) = args.get(1) {
+        if let Some(expected) = expected {
             if is_callable(expected)
                 && is_error_constructor(expected)
                 && name_of(expected) != name_of(&thrown)
@@ -50,10 +54,17 @@ pub fn does_not_throw(
                 return Err(VmError::Thrown(thrown));
             }
         }
-        let custom = custom_message(args, 2);
         let generated = custom.is_none();
-        let message =
-            custom.unwrap_or_else(|| format!("Got unwanted exception: {}", error_text(&thrown)));
+        let message = match custom {
+            Some(message) => format!(
+                "Got unwanted exception: {message}\nActual message: \"{}\"",
+                error_text(&thrown)
+            ),
+            None => format!(
+                "Got unwanted exception.\nActual message: \"{}\"",
+                error_text(&thrown)
+            ),
+        };
         return Err(assertion_error(
             message,
             "doesNotThrow",
@@ -205,9 +216,25 @@ fn validate_callable(
         if expected_name == "Error" && is_error_instance(error) {
             return Ok(Value::Undefined);
         }
+        if expected_name == "AssertionError"
+            && is_error_instance(error)
+            && matches!(name_of(error).as_str(), "Error" | "AssertionError")
+        {
+            return Ok(Value::Undefined);
+        }
         if !expected_name.is_empty() && expected_name == name_of(error) {
             return Ok(Value::Undefined);
         }
+        return Err(invalid_expected(
+            user_message,
+            format!(
+                "The error is expected to be an instance of \"{expected_name}\". Received \"{}\"\n\nError message:\n\n{}",
+                name_of(error),
+                error_text(error)
+            ),
+        ));
+    }
+    if matches!(expected, Value::Builtin(_)) {
         return Err(invalid_expected(
             user_message,
             format!("The error is not an instance of {expected_name}"),
@@ -289,8 +316,28 @@ fn validate_object(
     user_message: Option<String>,
 ) -> Result<Value, VmError> {
     for key in execute::own_enumerable_keys(expected) {
+        if key == "actual" || key == "expected" || key == "generatedMessage" {
+            continue;
+        }
         let expected_value = execute::get_property_result(expected, &key)?;
         let actual_value = execute::get_property_result(error, &key)?;
+        let actual_value = if key == "operator" {
+            match actual_value {
+                Value::String(value) => Value::String(
+                    match value.as_str() {
+                        "equal" => "==",
+                        "notEqual" => "!=",
+                        "strictEqual" => "===",
+                        "notStrictEqual" => "!==",
+                        _ => value.as_str(),
+                    }
+                    .to_string(),
+                ),
+                value => value,
+            }
+        } else {
+            actual_value
+        };
         if !expected_property_matches(&expected_value, &actual_value)? {
             if execute::has_own_property(expected, "message")
                 && execute::has_own_property(expected, "operator")
@@ -318,10 +365,24 @@ fn comparison_mismatch(actual: &Value, expected: &Value, user_message: Option<St
             .unwrap_or(&rendered);
         rendered.replace("\n  ", &format!("\n{marker}     "))
     };
+    let actual_operator = execute::get_property(actual, "operator");
+    let actual_operator = match actual_operator {
+        Value::String(value) => Value::String(
+            match value.as_str() {
+                "equal" => "==",
+                "notEqual" => "!=",
+                "strictEqual" => "===",
+                "notStrictEqual" => "!==",
+                _ => value.as_str(),
+            }
+            .to_string(),
+        ),
+        value => value,
+    };
     let message = format!(
         "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  Comparison {{\n+   message: {},\n+   operator: {}\n-   message: {},\n-   operator: {}\n  }}\n",
         inspect(execute::get_property(actual, "message"), "+"),
-        inspect(execute::get_property(actual, "operator"), "+"),
+        inspect(actual_operator, "+"),
         inspect(execute::get_property(expected, "message"), "-"),
         inspect(execute::get_property(expected, "operator"), "-"),
     );
@@ -329,12 +390,33 @@ fn comparison_mismatch(actual: &Value, expected: &Value, user_message: Option<St
 }
 
 fn expected_property_matches(expected: &Value, actual: &Value) -> Result<bool, VmError> {
+    if matches!(expected, Value::String(_) | Value::StringUnits(_))
+        && matches!(actual, Value::String(_) | Value::StringUnits(_))
+    {
+        return Ok(execute::to_js_string(expected)? == execute::to_js_string(actual)?);
+    }
     if is_regexp(expected) {
         let input = match actual {
             Value::String(text) => text.clone(),
             _ => crate::modules::util::inspect(actual),
         };
         return regexp_matches(expected, &input);
+    }
+    if is_error_constructor(expected) && is_callable(actual) {
+        let expected_name = name_of(expected);
+        let actual_name = name_of(actual);
+        return Ok(
+            expected_name == actual_name || (expected_name == "Error" && !actual_name.is_empty())
+        );
+    }
+    if is_error_instance(expected) && is_error_instance(actual) {
+        return Ok(execute::same_value(
+            &execute::get_property(expected, "name"),
+            &execute::get_property(actual, "name"),
+        ) && execute::same_value(
+            &execute::get_property(expected, "message"),
+            &execute::get_property(actual, "message"),
+        ));
     }
     crate::modules::deep_equal::deep_equal(expected, actual, true)
 }
