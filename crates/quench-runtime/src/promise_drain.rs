@@ -1,6 +1,8 @@
 thread_local! {
     static MICROTASK_QUEUE: RefCell<VecDeque<Rc<PromiseData>>> =
         const { RefCell::new(VecDeque::new()) };
+    static PROMISE_TRIGGER: RefCell<Option<Rc<PromiseData>>> =
+        const { RefCell::new(None) };
     static THEN_RESULTS: RefCell<HashMap<usize, VecDeque<Rc<PromiseData>>>> =
         RefCell::new(HashMap::new());
     static JOB_QUEUE: RefCell<VecDeque<Rc<dyn Fn()>>> = const { RefCell::new(VecDeque::new()) };

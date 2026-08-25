@@ -16,6 +16,18 @@ use crate::host::HostState;
 
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
+const HOOK_ID: &str = "\0quench:async_hooks:hook";
+
+#[derive(Clone, Debug, Default)]
+struct Hook {
+    id: u64,
+    enabled: bool,
+    init: Option<Value>,
+    before: Option<Value>,
+    after: Option<Value>,
+    destroy: Option<Value>,
+    resolve: Option<Value>,
+}
 
 use crate::registry::{SPEC_ASYNC_CREATE_HOOK, SPEC_ASYNC_EXECUTION_ID,
     SPEC_ASYNC_EXECUTION_RESOURCE, SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE,
@@ -26,30 +38,22 @@ use crate::registry::{SPEC_ASYNC_CREATE_HOOK, SPEC_ASYNC_EXECUTION_ID,
 #[derive(Debug)]
 pub struct AsyncHooksState {
     next_id: u64,
+    next_hook_id: u64,
     current_id: u64,
     current_resource: Option<Value>,
-    init_hooks: Vec<Value>,
-    before_hooks: Vec<Value>,
-    after_hooks: Vec<Value>,
-    destroy_hooks: Vec<Value>,
-    resolve_hooks: Vec<Value>,
+    hooks: Vec<Hook>,
     promise_resources: HashMap<usize, Value>,
-    hooks_enabled: bool,
 }
 
 impl AsyncHooksState {
     pub fn new() -> Self {
         Self {
             next_id: 2,
+            next_hook_id: 1,
             current_id: 1,
             current_resource: None,
-            init_hooks: Vec::new(),
-            before_hooks: Vec::new(),
-            after_hooks: Vec::new(),
-            destroy_hooks: Vec::new(),
-            resolve_hooks: Vec::new(),
+            hooks: Vec::new(),
             promise_resources: HashMap::new(),
-            hooks_enabled: false,
         }
     }
 
@@ -116,8 +120,7 @@ pub fn execution_resource(
 pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let trigger = args
         .first()
-        .and_then(|v| id_property(v, ASYNC_ID))
-        .and_then(number)
+        .and_then(|value| trigger_id_of(state, value))
         .unwrap_or(state.borrow().async_hooks.current_id);
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
     let resource = host_api::object(vec![
@@ -148,11 +151,7 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             crate::host::capability(SPEC_ASYNC_RESOURCE_TRIGGER),
         ),
     ]);
-    let callbacks = if state.borrow().async_hooks.hooks_enabled {
-        state.borrow().async_hooks.init_hooks.clone()
-    } else {
-        Vec::new()
-    };
+    let callbacks = active_callbacks(state, HookEvent::Init);
     let resource_type = args
         .get(1)
         .cloned()
@@ -251,27 +250,25 @@ pub fn create_hook(
     _: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(callback) = args
-        .first()
-        .and_then(|options| id_property(options, "init"))
-    {
-        if quench_runtime::is_callable(&callback) {
-            state.borrow_mut().async_hooks.init_hooks.push(callback);
-        }
-    }
-    store_hook(state, args, "before", HookKind::Before);
-    store_hook(state, args, "after", HookKind::After);
-    store_hook(state, args, "destroy", HookKind::Destroy);
-    state.borrow_mut().async_hooks.hooks_enabled = true;
-    if let Some(callback) = args
-        .first()
-        .and_then(|options| id_property(options, "promiseResolve"))
-    {
-        if quench_runtime::is_callable(&callback) {
-            state.borrow_mut().async_hooks.resolve_hooks.push(callback);
-        }
-    }
+    let options = args.first().cloned().unwrap_or(Value::Undefined);
+    let callback = |name: &str| {
+        id_property(&options, name).filter(quench_runtime::is_callable)
+    };
+    let mut host = state.borrow_mut();
+    let id = host.async_hooks.next_hook_id;
+    host.async_hooks.next_hook_id += 1;
+    host.async_hooks.hooks.push(Hook {
+        id,
+        init: callback("init"),
+        before: callback("before"),
+        after: callback("after"),
+        destroy: callback("destroy"),
+        resolve: callback("promiseResolve"),
+        ..Hook::default()
+    });
+    drop(host);
     Ok(host_api::object(vec![
+        (HOOK_ID.to_string(), Value::Number(id as f64)),
         (
             "enable".to_string(),
             crate::host::capability(SPEC_ASYNC_HOOK_ENABLE),
@@ -298,7 +295,8 @@ pub fn promise_hook(
     };
     let key = Rc::as_ptr(promise) as usize;
     if event == "init" {
-        let resource = new_resource(state, &[Value::Undefined, Value::String("PROMISE".into())])?;
+        let trigger = args.get(2).cloned().unwrap_or(Value::Undefined);
+        let resource = new_resource(state, &[trigger, Value::String("PROMISE".into())])?;
         state
             .borrow_mut()
             .async_hooks
@@ -309,11 +307,7 @@ pub fn promise_hook(
             let host = state.borrow();
             (
                 host.async_hooks.promise_resources.get(&key).cloned(),
-                if host.async_hooks.hooks_enabled {
-                    host.async_hooks.before_hooks.clone()
-                } else {
-                    Vec::new()
-                },
+                active_callbacks_from(&host.async_hooks, HookEvent::Before),
             )
         };
         if let Some(resource) = resource {
@@ -329,13 +323,19 @@ pub fn promise_hook(
             }
         }
     } else if event == "after" {
-        let callbacks = if state.borrow().async_hooks.hooks_enabled {
-            state.borrow().async_hooks.after_hooks.clone()
-        } else {
-            Vec::new()
+        let (callbacks, id) = {
+            let host = state.borrow();
+            let callbacks = active_callbacks_from(&host.async_hooks, HookEvent::After);
+            let id = host
+                .async_hooks
+                .promise_resources
+                .get(&key)
+                .and_then(|resource| id_property(resource, ASYNC_ID))
+                .unwrap_or(Value::Number(0.0));
+            (callbacks, id)
         };
         for callback in callbacks {
-            let _ = execute::call(&callback, &Value::Undefined, &[]);
+            let _ = execute::call(&callback, &Value::Undefined, &[id.clone()]);
         }
         let mut host = state.borrow_mut();
         host.async_hooks.current_id = 1;
@@ -345,11 +345,7 @@ pub fn promise_hook(
             let host = state.borrow();
             (
                 host.async_hooks.promise_resources.get(&key).cloned(),
-                if host.async_hooks.hooks_enabled {
-                    host.async_hooks.resolve_hooks.clone()
-                } else {
-                    Vec::new()
-                },
+                active_callbacks_from(&host.async_hooks, HookEvent::Resolve),
             )
         };
         if let Some(resource) = resource {
@@ -374,7 +370,7 @@ pub fn hook_enable(
     receiver: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
-    state.borrow_mut().async_hooks.hooks_enabled = true;
+    set_hook_enabled(state, receiver, true);
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
@@ -383,7 +379,7 @@ pub fn hook_disable(
     receiver: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
-    state.borrow_mut().async_hooks.hooks_enabled = false;
+    set_hook_enabled(state, receiver, false);
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
@@ -391,24 +387,63 @@ fn id_property(value: &Value, key: &str) -> Option<Value> {
     execute::get_property_result(value, key).ok()
 }
 
-enum HookKind {
+fn trigger_id_of(state: &Rc<RefCell<HostState>>, value: &Value) -> Option<u64> {
+    if let Some(id) = id_property(value, ASYNC_ID).and_then(number) {
+        return Some(id);
+    }
+    let Value::Promise(promise) = value else {
+        return None;
+    };
+    let key = Rc::as_ptr(promise) as usize;
+    state
+        .borrow()
+        .async_hooks
+        .promise_resources
+        .get(&key)
+        .and_then(|resource| id_property(resource, ASYNC_ID))
+        .and_then(number)
+}
+
+#[derive(Clone, Copy)]
+enum HookEvent {
+    Init,
     Before,
     After,
     Destroy,
+    Resolve,
 }
 
-fn store_hook(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str, kind: HookKind) {
-    let Some(callback) = args.first().and_then(|options| id_property(options, name)) else {
+fn active_callbacks(state: &Rc<RefCell<HostState>>, event: HookEvent) -> Vec<Value> {
+    active_callbacks_from(&state.borrow().async_hooks, event)
+}
+
+fn active_callbacks_from(state: &AsyncHooksState, event: HookEvent) -> Vec<Value> {
+    state
+        .hooks
+        .iter()
+        .filter(|hook| hook.enabled)
+        .filter_map(|hook| match event {
+            HookEvent::Init => hook.init.clone(),
+            HookEvent::Before => hook.before.clone(),
+            HookEvent::After => hook.after.clone(),
+            HookEvent::Destroy => hook.destroy.clone(),
+            HookEvent::Resolve => hook.resolve.clone(),
+        })
+        .collect()
+}
+
+fn set_hook_enabled(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, enabled: bool) {
+    let Some(id) = receiver.and_then(|value| id_property(value, HOOK_ID)).and_then(number) else {
         return;
     };
-    if !quench_runtime::is_callable(&callback) {
-        return;
-    }
-    let mut host = state.borrow_mut();
-    match kind {
-        HookKind::Before => host.async_hooks.before_hooks.push(callback),
-        HookKind::After => host.async_hooks.after_hooks.push(callback),
-        HookKind::Destroy => host.async_hooks.destroy_hooks.push(callback),
+    if let Some(hook) = state
+        .borrow_mut()
+        .async_hooks
+        .hooks
+        .iter_mut()
+        .find(|hook| hook.id == id)
+    {
+        hook.enabled = enabled;
     }
 }
 fn number(value: Value) -> Option<u64> {
