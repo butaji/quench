@@ -5,6 +5,13 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstant => Some("Temporal.Instant"),
         Builtin::TemporalInstantFrom => Some("Temporal.Instant.from"),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some("get epochNanoseconds"),
+        Builtin::TemporalInstantToString => Some("Temporal.Instant.prototype.toString"),
+        Builtin::TemporalInstantToJSON => Some("Temporal.Instant.prototype.toJSON"),
+        Builtin::TemporalInstantToLocaleString => Some("Temporal.Instant.prototype.toLocaleString"),
+        Builtin::TemporalInstantToZonedDateTimeISO => Some("Temporal.Instant.prototype.toZonedDateTimeISO"),
+        Builtin::TemporalInstantEquals => Some("Temporal.Instant.prototype.equals"),
+        Builtin::TemporalInstantAdd => Some("Temporal.Instant.prototype.add"),
+        Builtin::TemporalInstantSubtract => Some("Temporal.Instant.prototype.subtract"),
         Builtin::TemporalPlainDateTime => Some("Temporal.PlainDateTime"),
         Builtin::TemporalPlainDateTimeFrom => Some("Temporal.PlainDateTime.from"),
         Builtin::TemporalPlainDateTimeCompare => Some("Temporal.PlainDateTime.compare"),
@@ -96,6 +103,13 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstant => Some("Instant"),
         Builtin::TemporalInstantFrom => Some("from"),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some("epochNanoseconds"),
+        Builtin::TemporalInstantToString => Some("toString"),
+        Builtin::TemporalInstantToJSON => Some("toJSON"),
+        Builtin::TemporalInstantToLocaleString => Some("toLocaleString"),
+        Builtin::TemporalInstantToZonedDateTimeISO => Some("toZonedDateTimeISO"),
+        Builtin::TemporalInstantEquals => Some("equals"),
+        Builtin::TemporalInstantAdd => Some("add"),
+        Builtin::TemporalInstantSubtract => Some("subtract"),
         Builtin::TemporalPlainDateTime => Some("PlainDateTime"),
         Builtin::TemporalPlainDateTimeFrom => Some("from"),
         Builtin::TemporalPlainDateTimeCompare => Some("compare"),
@@ -168,6 +182,13 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalInstant => Some(1.0),
         Builtin::TemporalInstantFrom => Some(1.0),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some(0.0),
+        Builtin::TemporalInstantToString
+        | Builtin::TemporalInstantToJSON
+        | Builtin::TemporalInstantToLocaleString
+        | Builtin::TemporalInstantToZonedDateTimeISO => Some(0.0),
+        Builtin::TemporalInstantEquals
+        | Builtin::TemporalInstantAdd
+        | Builtin::TemporalInstantSubtract => Some(1.0),
         Builtin::TemporalPlainDateTime => Some(3.0),
         Builtin::TemporalPlainDateTimeFrom => Some(1.0),
         Builtin::TemporalPlainDateTimeCompare => Some(2.0),
