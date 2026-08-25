@@ -240,6 +240,10 @@ const CAP_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTI
 const CAP_DIAGNOSTICS_CHANNEL_PUBLISH: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_PUBLISH.cap;
 const CAP_DIAGNOSTICS_CHANNEL_BIND_STORE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE.cap;
 const CAP_DIAGNOSTICS_CHANNEL_UNBIND_STORE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE.cap;
+const CAP_DIAGNOSTICS_TRACING_CHANNEL: u16 = crate::registry::SPEC_DIAGNOSTICS_TRACING_CHANNEL.cap;
+const CAP_DIAGNOSTICS_TRACING_SUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_TRACING_UNSUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_TRACING_TRACE_SYNC: u16 = crate::registry::SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC.cap;
 const CAP_ZLIB_GZIP: u16 = 0x1700;
 const CAP_ZLIB_GUNZIP: u16 = 0x1701;
 const CAP_ZLIB_DEFLATE_RAW: u16 = 0x1702;
@@ -512,6 +516,10 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_DIAGNOSTICS_CHANNEL_PUBLISH => crate::modules::diagnostics_channel::publish,
         CAP_DIAGNOSTICS_CHANNEL_BIND_STORE => crate::modules::diagnostics_channel::bind_store,
         CAP_DIAGNOSTICS_CHANNEL_UNBIND_STORE => crate::modules::diagnostics_channel::unbind_store,
+        CAP_DIAGNOSTICS_TRACING_CHANNEL => crate::modules::diagnostics_channel::tracing_channel,
+        CAP_DIAGNOSTICS_TRACING_SUBSCRIBE => crate::modules::diagnostics_channel::tracing_subscribe,
+        CAP_DIAGNOSTICS_TRACING_UNSUBSCRIBE => crate::modules::diagnostics_channel::tracing_unsubscribe,
+        CAP_DIAGNOSTICS_TRACING_TRACE_SYNC => crate::modules::diagnostics_channel::trace_sync,
         _ => return os_buffer_dispatch(cap),
     })
 }
