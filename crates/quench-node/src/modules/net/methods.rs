@@ -33,6 +33,7 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     };
     let _ = stream.set_nonblocking(true);
     let (object, id) = new_net_object(state, socket_props())?;
+    let object = install_socket_counters(object)?;
     let local = stream.local_addr().ok();
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
         id,
@@ -41,6 +42,8 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         state: SocketState::Open,
         server_id: None,
         write_buf: Vec::new(),
+        bytes_read: 0,
+        bytes_written: 0,
         read_eof: false,
         close_emitted: false,
         connect_announced: false,
@@ -254,7 +257,9 @@ pub fn socket_write(
     if guard.state == SocketState::Closed {
         return Ok(Value::Boolean(false));
     }
+    guard.bytes_written = guard.bytes_written.saturating_add(bytes.len() as u64);
     guard.write_buf.extend_from_slice(&bytes);
+    update_socket_counters(&guard);
     let flushed = try_flush(&mut guard);
     Ok(Value::Boolean(flushed))
 }

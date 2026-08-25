@@ -61,6 +61,8 @@ pub struct NetSocket {
     pub state: SocketState,
     pub server_id: Option<u64>,
     pub write_buf: Vec<u8>,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
     pub read_eof: bool,
     pub close_emitted: bool,
     pub connect_announced: bool,
@@ -137,6 +139,29 @@ fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Val
         object = execute::define_property(object, &key, descriptor)?;
     }
     Ok(object)
+}
+
+pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
+    install_methods(
+        object,
+        vec![
+            ("bytesRead".to_string(), Value::Number(0.0)),
+            ("bytesWritten".to_string(), Value::Number(0.0)),
+        ],
+    )
+}
+
+pub(crate) fn update_socket_counters(socket: &NetSocket) {
+    execute::set_property_in_place(
+        &socket.js,
+        "bytesRead",
+        Value::Number(socket.bytes_read as f64),
+    );
+    execute::set_property_in_place(
+        &socket.js,
+        "bytesWritten",
+        Value::Number(socket.bytes_written as f64),
+    );
 }
 
 fn allocate_id(state: &Rc<RefCell<HostState>>) -> u64 {
