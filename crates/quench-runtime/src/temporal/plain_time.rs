@@ -53,8 +53,12 @@ pub(crate) fn execute(
             Some(accessor(builtin, _receiver))
         }
         crate::ops::Builtin::TemporalPlainTimeToString
-        | crate::ops::Builtin::TemporalPlainTimeToJSON => Some(to_string(_receiver)),
-        crate::ops::Builtin::TemporalPlainTimeToLocaleString => Some(to_string(_receiver)),
+        | crate::ops::Builtin::TemporalPlainTimeToJSON => {
+            Some(to_string(_receiver, arguments.first()))
+        }
+        crate::ops::Builtin::TemporalPlainTimeToLocaleString => {
+            Some(to_string(_receiver, arguments.first()))
+        }
         crate::ops::Builtin::TemporalPlainTimeValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert PlainTime to a number"),
         )),
@@ -89,7 +93,7 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
     crate::execute::get_property_result(receiver, names)
 }
 
-fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
     let fields = [
@@ -103,15 +107,74 @@ fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     .iter()
     .map(|name| crate::execute::get_property_result(receiver, name))
     .collect::<Result<Vec<_>, _>>()?;
-    let values = fields
+    let mut values = fields
         .iter()
         .map(|value| crate::conversion::to_number(value).map(|value| value as u32))
         .collect::<Result<Vec<_>, _>>()?;
+    let mut precision = options
+        .and_then(|value| crate::execute::get_property_result(value, "fractionalSecondDigits").ok())
+        .map(|value| match value {
+            Value::Number(value) if value.is_finite() && (0.0..=9.0).contains(&value) => {
+                value.floor() as usize
+            }
+            Value::String(value) if value == "auto" => usize::MAX,
+            Value::Undefined => usize::MAX,
+            _ => 10,
+        })
+        .unwrap_or(usize::MAX);
+    let smallest = options
+        .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
+            _ => None,
+        });
+    if let Some(unit) = smallest.as_deref() {
+        match unit {
+            "hour" => {
+                values[1] = 0;
+                values[2] = 0;
+                values[3] = 0;
+                values[4] = 0;
+                values[5] = 0;
+                precision = 0;
+            }
+            "minute" => {
+                values[2] = 0;
+                values[3] = 0;
+                values[4] = 0;
+                values[5] = 0;
+                precision = 0;
+            }
+            "second" => {
+                values[3] = 0;
+                values[4] = 0;
+                values[5] = 0;
+                precision = 0;
+            }
+            "millisecond" => {
+                values[4] = 0;
+                values[5] = 0;
+                precision = 3;
+            }
+            "microsecond" => {
+                values[5] = 0;
+                precision = 6;
+            }
+            "nanosecond" => precision = 9,
+            _ => precision = 10,
+        }
+    }
     let fraction = values[3] * 1_000_000 + values[4] * 1_000 + values[5];
-    let suffix = if fraction == 0 {
+    let suffix = if precision == 0 || (fraction == 0 && precision == usize::MAX) {
         String::new()
     } else {
-        format!(".{fraction:09}").trim_end_matches('0').to_string()
+        let mut digits = format!("{fraction:09}");
+        if precision != usize::MAX {
+            digits.truncate(precision);
+        } else {
+            digits = digits.trim_end_matches('0').into();
+        }
+        format!(".{digits}")
     };
     Ok(Value::String(format!(
         "{:02}:{:02}:{:02}{suffix}",

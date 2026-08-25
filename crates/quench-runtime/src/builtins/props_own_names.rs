@@ -153,7 +153,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
         Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalDurationPrototype => TEMPORAL_DURATION_PROTOTYPE_NAMES,
         Builtin::TemporalInstant => &["length", "name", "prototype", "from"],
-        Builtin::TemporalInstantPrototype => &["constructor", "epochNanoseconds", "toString", "toJSON", "toLocaleString", "toZonedDateTimeISO", "equals", "add", "subtract"],
+        Builtin::TemporalInstantPrototype => &["constructor", "epochNanoseconds", "toString", "toJSON", "toLocaleString", "toZonedDateTimeISO", "equals", "add", "subtract", "until", "since", "round"],
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainDatePrototype => TEMPORAL_PLAIN_DATE_PROTOTYPE_NAMES,
         Builtin::TemporalPlainDateTime => &["length", "name", "prototype", "from", "compare"],
