@@ -163,6 +163,22 @@ const __nodeAssertNormalize = (value, seen = new WeakSet(), loose = false) => {
     }
     return normalized;
   }
+  if (typeof URL === "function" && value instanceof URL) {
+    return {
+      constructor: "URL",
+      href: value.href,
+      protocol: value.protocol,
+      username: value.username,
+      password: value.password,
+      host: value.host,
+      hostname: value.hostname,
+      port: value.port,
+      pathname: value.pathname,
+      search: value.search,
+      hash: value.hash,
+      origin: value.origin
+    };
+  }
   const normalized = {};
   if (
     !globalThis.__nodeAssertSkipPrototype &&
@@ -267,10 +283,14 @@ const __nodeAssertObjectDiff = (actual, expected) => {
   return lines.join("\n");
 };
 globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
-  if (
-    JSON.stringify(__nodeAssertNormalize(actual)) !==
-    JSON.stringify(__nodeAssertNormalize(expected))
-  ) {
+  const actualNormalized = __nodeAssertNormalize(actual);
+  const expectedNormalized = __nodeAssertNormalize(expected);
+  const urlMismatch =
+    typeof URL === "function" &&
+    actual instanceof URL &&
+    expected instanceof URL &&
+    actual.href !== expected.href;
+  if (urlMismatch || JSON.stringify(actualNormalized) !== JSON.stringify(expectedNormalized)) {
     let detail = "values differ";
     if (actual instanceof Error && expected instanceof Error) {
       detail = `Expected values to be strictly deep-equal:\n+ actual - expected\n\n${__nodeAssertErrorDiff(

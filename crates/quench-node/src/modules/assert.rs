@@ -669,7 +669,7 @@ fn binary_assert(
                     rendered(&expected)
                 ),
                 _ if operator == "notDeepStrictEqual" => format!(
-                    "Expected \"actual\" not to be strictly deep-equal to:\n\n{}\n",
+                    "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
                     rendered_not_deep(&actual)
                 ),
                 _ if operator == "notStrictEqual"
@@ -1224,7 +1224,18 @@ fn diff_key(key: &str) -> String {
     }
 }
 
+fn is_url_like(value: &Value) -> bool {
+    matches!(
+        execute::get_property(value, "\0url"),
+        Value::String(_) | Value::StringUnits(_)
+    )
+}
+
 fn deep_diff(actual: &Value, expected: &Value) -> String {
+    if is_url_like(actual) || is_url_like(expected) {
+        let href = |value: &Value| execute::get_property(value, "href");
+        return format!("+ {}\n- {}", rendered(&href(actual)), rendered(&href(expected)));
+    }
     if let Some(diff) = regexp_diff(actual, expected) {
         return diff;
     }
