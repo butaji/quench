@@ -117,21 +117,44 @@ const PROMISE_METHOD_NAMES: &[&str] = &["length", "name"];
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
         Builtin::Temporal
+        | Builtin::TemporalInstant
+        | Builtin::TemporalInstantPrototype
         | Builtin::TemporalDuration
         | Builtin::TemporalDurationPrototype
         | Builtin::TemporalPlainDate
-        | Builtin::TemporalPlainDatePrototype => own_property_names_temporal(builtin),
+        | Builtin::TemporalPlainDatePrototype
+        | Builtin::TemporalPlainDateTime
+        | Builtin::TemporalPlainDateTimePrototype
+        | Builtin::TemporalPlainTime
+        | Builtin::TemporalPlainTimePrototype
+        | Builtin::TemporalPlainMonthDay
+        | Builtin::TemporalPlainMonthDayPrototype
+        | Builtin::TemporalPlainYearMonth
+        | Builtin::TemporalPlainYearMonthPrototype
+        | Builtin::TemporalZonedDateTime
+        | Builtin::TemporalZonedDateTimePrototype
+        | Builtin::TemporalNow => own_property_names_temporal(builtin),
         _ => own_property_names_standard(builtin),
     }
 }
 
 fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
-        Builtin::Temporal => &["Duration", "PlainDate", "Symbol.toStringTag"],
+        Builtin::Temporal => &["Duration", "Instant", "ZonedDateTime", "PlainDate", "PlainDateTime", "PlainTime", "PlainMonthDay", "PlainYearMonth", "Now", "Symbol.toStringTag"],
         Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalDurationPrototype => TEMPORAL_DURATION_PROTOTYPE_NAMES,
+        Builtin::TemporalInstant => &["length", "name", "prototype", "from"],
+        Builtin::TemporalInstantPrototype => &["constructor", "epochNanoseconds", "toString", "toJSON", "toLocaleString", "toZonedDateTimeISO", "equals", "add", "subtract"],
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainDatePrototype => TEMPORAL_PLAIN_DATE_PROTOTYPE_NAMES,
+        Builtin::TemporalPlainDateTime => &["length", "name", "prototype", "from", "compare"],
+        Builtin::TemporalPlainDateTimePrototype => &["constructor", "calendarId", "year", "month", "monthCode", "day", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond", "toString", "toJSON", "toLocaleString", "equals", "valueOf", "add", "subtract", "with", "round"],
+        Builtin::TemporalPlainTime => &["length", "name", "prototype", "from", "compare"],
+        Builtin::TemporalPlainTimePrototype => &["constructor", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond", "toString", "toJSON", "toLocaleString", "equals", "valueOf", "add", "subtract", "with", "round", "until", "since"],
+        Builtin::TemporalPlainMonthDay => &["length", "name", "prototype", "from", "compare"],
+        Builtin::TemporalPlainYearMonth => &["length", "name", "prototype", "from", "compare"],
+        Builtin::TemporalZonedDateTime => &["length", "name", "prototype", "from", "compare"],
+        Builtin::TemporalNow => &["instant", "plainDateISO", "plainDateTimeISO", "plainTimeISO", "timeZoneId", "zonedDateTimeISO", "Symbol.toStringTag"],
         _ => &[],
     }
 }
