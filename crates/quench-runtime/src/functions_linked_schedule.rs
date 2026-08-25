@@ -29,6 +29,19 @@ fn execute_linked_schedule(
     if !linked_schedule_chain_is_proven(&list_value, &plan)? {
         return Ok(None);
     }
+    let task_control_run = match &list_value {
+        crate::value::Value::Object(_) => {
+            let callee = linked_method(&list_value, plan.ready, plan.run_pc)?;
+            match callee {
+                crate::value::Value::Function(function) => {
+                    match_task_control_run(&function).map(|run| (function, run))
+                }
+                _ => None,
+            }
+        }
+        crate::value::Value::Null => None,
+        _ => return Ok(None),
+    };
     current.store(list_value);
 
     loop {
@@ -56,12 +69,187 @@ fn execute_linked_schedule(
                 return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
             };
             current_id.store(id.load());
-            let next = call_linked_method(&current_value, plan.ready, plan.run_pc)?;
+            let callee = linked_method(&current_value, plan.ready, plan.run_pc)?;
+            let next = match (&callee, &task_control_run) {
+                (crate::value::Value::Function(actual), Some((expected, run)))
+                    if std::rc::Rc::ptr_eq(actual, expected) =>
+                {
+                    match execute_task_control_run(&current_value, run)? {
+                        Some(value) => value,
+                        None => crate::functions::execute_target(&callee, &current_value, &[])?,
+                    }
+                }
+                _ => crate::functions::execute_target(&callee, &current_value, &[])?,
+            };
             current.store(next);
         }
         crate::execution_trace::kernel("linked_schedule_word_slots", false);
     }
     Ok(Some(crate::value::Value::Undefined))
+}
+
+#[derive(Clone, Copy)]
+struct TaskControlRunPlan {
+    suspended_runnable: f64,
+    running: f64,
+    runnable: f64,
+}
+
+fn execute_task_control_run(
+    receiver: &crate::value::Value,
+    plan: &TaskControlRunPlan,
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    let crate::value::Value::Object(tcb) = receiver else {
+        return Ok(None);
+    };
+    if tcb.has_replacement() {
+        return Ok(None);
+    }
+    let Some(state) = writable_own_word(tcb, "state") else {
+        return Ok(None);
+    };
+    let Some(state_number) = state.number() else {
+        return Ok(None);
+    };
+    let Some(queue) = writable_own_word(tcb, "queue") else {
+        return Ok(None);
+    };
+    let Some(task) = crate::vm::proven_own_word(tcb, "task") else {
+        return Ok(None);
+    };
+    let task = task.load();
+    let run = crate::execute::get_property_result(&task, "run")?;
+    if !crate::conversion::is_callable(&run) {
+        return Ok(None);
+    }
+
+    let packet = if state_number == plan.suspended_runnable {
+        let packet = queue.load();
+        let crate::value::Value::Object(packet_object) = &packet else {
+            return Ok(None);
+        };
+        if packet_object.has_replacement() {
+            return Ok(None);
+        }
+        let Some(link) = crate::vm::proven_own_word(packet_object, "link") else {
+            return Ok(None);
+        };
+        let next = link.load();
+        queue.store(next.clone());
+        state.store(crate::value::Value::Number(
+            if matches!(
+                next,
+                crate::value::Value::Null | crate::value::Value::Undefined
+            ) {
+                plan.running
+            } else {
+                plan.runnable
+            },
+        ));
+        packet
+    } else {
+        crate::value::Value::Null
+    };
+    let result = crate::functions::execute_target(&run, &task, &[packet])?;
+    crate::execution_trace::kernel("task_control_run_word_slots", false);
+    Ok(Some(result))
+}
+
+fn match_task_control_run(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+) -> Option<TaskControlRunPlan> {
+    let code = function.code.code()?;
+    if function.params != 0 || code.len() != 14 {
+        return None;
+    }
+    use crate::ir::Opcode::*;
+    let ops: [_; 14] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
+    if !is_local_load(ops[0])
+        || (ops[1].opcode, ops[1].b) != (GetN, ops[0].a)
+        || !is_local_load(ops[2])
+        || ops[3].opcode != Binary
+        || crate::ir::compact_binary_operator(ops[3].flags) != Some(crate::ops::BinaryOp::Equal)
+        || (ops[3].b, ops[3].c) != (ops[1].a, ops[2].a)
+        || ops[5].opcode != Slow
+        || !is_local_load(ops[6])
+        || (ops[7].opcode, ops[7].b) != (GetN, ops[6].a)
+        || (ops[8].opcode, ops[8].b) != (GetN, ops[7].a)
+        || !is_local_load(ops[9])
+        || (ops[10].opcode, ops[10].flags, ops[10].b, ops[10].c) != (CallN, 1, ops[7].a, ops[8].a)
+        || (ops[11].opcode, ops[11].a) != (Return, ops[10].a)
+        || code.metadata_at(1)?.name.as_deref()? != "state"
+        || code.metadata_at(7)?.name.as_deref()? != "task"
+        || code.metadata_at(8)?.name.as_deref()? != "run"
+    {
+        return None;
+    }
+    let crate::ops::Op::Branch {
+        then_ops, else_ops, ..
+    } = code.cold(ops[5])?
+    else {
+        return None;
+    };
+    let (ready, idle) = (then_ops.code()?, else_ops.code()?);
+    if ready.len() != 16 || idle.len() != 3 {
+        return None;
+    }
+    let ready_ops: [_; 16] = std::array::from_fn(|pc| ready.instruction(pc).unwrap());
+    if !is_local_load(ready_ops[0])
+        || (ready_ops[1].opcode, ready_ops[1].b) != (GetN, ready_ops[0].a)
+        || ready_ops[2].opcode != StoreLocal
+        || !is_local_load(ready_ops[3])
+        || ready_ops[4].opcode != Move
+        || ready_ops[5].opcode != Move
+        || !is_local_load(ready_ops[6])
+        || (ready_ops[7].opcode, ready_ops[7].b) != (GetN, ready_ops[6].a)
+        || (ready_ops[8].opcode, ready_ops[8].a, ready_ops[8].b)
+            != (SetN, ready_ops[5].a, ready_ops[7].a)
+        || !is_local_load(ready_ops[9])
+        || (ready_ops[10].opcode, ready_ops[10].b) != (GetN, ready_ops[9].a)
+        || ready_ops[14].opcode != Slow
+        || ready.metadata_at(1)?.name.as_deref()? != "queue"
+        || ready.metadata_at(7)?.name.as_deref()? != "link"
+        || ready.metadata_at(8)?.name.as_deref()? != "queue"
+        || ready.metadata_at(10)?.name.as_deref()? != "queue"
+    {
+        return None;
+    }
+    let (crate::ops::Op::Branch {
+        then_ops, else_ops, ..
+    }
+    | crate::ops::Op::Conditional {
+        consequent: then_ops,
+        alternate: else_ops,
+        ..
+    }) = ready.cold(ready_ops[14])?
+    else {
+        return None;
+    };
+    let (empty, nonempty) = (then_ops.code()?, else_ops.code()?);
+    if !task_state_arm(empty) || !task_state_arm(nonempty) {
+        return None;
+    }
+    let running_slot = empty.instruction(3)?.b;
+    let runnable_slot = nonempty.instruction(3)?.b;
+    Some(TaskControlRunPlan {
+        suspended_runnable: function.captures.get_number(ops[2].b)?,
+        running: function.captures.get_number(running_slot)?,
+        runnable: function.captures.get_number(runnable_slot)?,
+    })
+}
+
+fn task_state_arm(code: crate::machine::CodeView<'_>) -> bool {
+    use crate::ir::Opcode::*;
+    if code.len() != 6 {
+        return false;
+    }
+    let ops: [_; 6] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
+    is_local_load(ops[0])
+        && ops[1].opcode == Move
+        && ops[2].opcode == Move
+        && is_local_load(ops[3])
+        && (ops[4].opcode, ops[4].a, ops[4].b) == (SetN, ops[2].a, ops[3].a)
+        && code.metadata_at(4).and_then(|meta| meta.name.as_deref()) == Some("state")
 }
 
 #[cold]
