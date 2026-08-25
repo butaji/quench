@@ -212,6 +212,9 @@ fn compare(
             if !same_property(left, right, "source") || !same_property(left, right, "flags") {
                 return Ok(false);
             }
+            if !same_property(left, right, "lastIndex") {
+                return Ok(false);
+            }
             compare_objects(left, right, strict, skip_prototype, memo)
         }
         (Value::Array(_), Value::Array(_)) => {
@@ -235,8 +238,22 @@ fn compare(
             compare_typed_arrays(left, right, strict, skip_prototype, memo)
         }
         _ if strict => Ok(false),
-        _ => execute::abstract_equal(left, right),
+        _ if is_primitive(left) && is_primitive(right) => execute::abstract_equal(left, right),
+        _ => Ok(false),
     }
+}
+
+fn is_primitive(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Number(_)
+            | Value::Boolean(_)
+            | Value::String(_)
+            | Value::StringUnits(_)
+            | Value::BigInt(_)
+            | Value::Null
+            | Value::Undefined
+    )
 }
 
 fn compare_sets(
