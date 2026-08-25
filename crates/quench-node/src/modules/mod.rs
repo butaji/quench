@@ -19,6 +19,7 @@ pub mod console;
 pub mod deep_equal;
 pub mod dns;
 pub mod diagnostics_channel;
+pub mod domain;
 pub mod emitter;
 pub mod event_loop;
 pub mod event_target;
