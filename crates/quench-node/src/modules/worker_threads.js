@@ -144,6 +144,12 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
     this._peer.emit('close');
   }
 } });
+  var takePending = port._takePending;
+  port._takePending = function (name) {
+    var queue = messageQueueFor(port);
+    if (name === 'message' && queue.length > 0) return queue.shift();
+    return takePending(name);
+  };
   var onmessage = null;
   var onmessageListener = null;
   port.onmessage = null;
@@ -228,7 +234,15 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
       }
     }
     if (!this._closed && this._peer && !this._peer._closed) {
-      this._peer.emit('message', cloned, transferredPorts);
+      var peer = this._peer;
+      messageQueueFor(peer).push([cloned, transferredPorts]);
+      queueMicrotask(function () {
+        var queued = messageQueueFor(peer);
+        if (queued.length > 0 && !peer._closed) {
+          var next = queued.shift();
+          peer.emit('message', next[0], next[1]);
+        }
+      });
     }
   };
   port.start = function () { return this; };
@@ -248,6 +262,14 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
   };
   Object.setPrototypeOf(port, messagePort.prototype);
   return port;
+}
+function messageQueueFor(port) {
+  if (!port.__quench_message_queue) {
+    Object.defineProperty(port, '__quench_message_queue', {
+      configurable: true, value: []
+    });
+  }
+  return port.__quench_message_queue;
 }
 messagePort.prototype.close = function () { return this; };
 messagePort.prototype.postMessage = function () { return this; };
@@ -369,7 +391,13 @@ var api = {
       return self;
     },
   receiveMessageOnPort: function (port) {
-    if (!port || typeof port._takePending !== 'function') return undefined;
+    if (!port || typeof port._takePending !== 'function' ||
+        typeof port.postMessage !== 'function' ||
+        typeof port.close !== 'function') {
+      throw Object.assign(new TypeError('The "port" argument must be a MessagePort instance'), {
+        code: 'ERR_INVALID_ARG_TYPE'
+      });
+    }
     var args = port._takePending('message');
     return args ? { message: args[0] } : undefined;
   },
