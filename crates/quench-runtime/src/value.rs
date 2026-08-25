@@ -201,6 +201,7 @@ impl TypedArrayMeta {
     pub(crate) fn own_properties(&self) -> Vec<(String, Value)> {
         self.properties.borrow().clone()
     }
+
 }
 
 /// Heap-allocated Promise data.
@@ -211,6 +212,8 @@ pub struct PromiseData {
     pub state: RefCell<PromiseState>,
     pub result: RefCell<Option<Value>>,
     pub(crate) already_resolved: Cell<bool>,
+    pub(crate) rejection_handled: Cell<bool>,
+    pub(crate) unhandled_queued: Cell<bool>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
     pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
 }
@@ -236,6 +239,8 @@ impl PromiseData {
             state: RefCell::new(state),
             result: RefCell::new(result),
             already_resolved: Cell::new(already_resolved),
+            rejection_handled: Cell::new(false),
+            unhandled_queued: Cell::new(false),
             then_actions: RefCell::new(Vec::new()),
             continuations: RefCell::new(Vec::new()),
         }
@@ -265,6 +270,10 @@ impl PromiseData {
         } else {
             properties.push((key.to_string(), value));
         }
+    }
+
+    pub fn rejection_handled(&self) -> bool {
+        self.rejection_handled.get()
     }
 }
 

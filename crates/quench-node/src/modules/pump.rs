@@ -90,6 +90,7 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
         crate::modules::net::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
+        drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
         // Timer/immediate callbacks can queue promise jobs; drain them
@@ -134,6 +135,7 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         crate::modules::net::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
+        drain_unhandled_rejections(state)?;
         fire_due_timers(state)?;
         drain_immediates(state)?;
         if !has_pending(state) {
@@ -177,6 +179,63 @@ fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         }
         quench_runtime::drain_promise_jobs();
     }
+}
+
+fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    for (promise, reason) in quench_runtime::take_unhandled_rejections() {
+        if promise.rejection_handled() {
+            continue;
+        }
+        let has_handlers = !state.borrow().process.unhandled_rejection_handlers.is_empty();
+        if has_handlers {
+            crate::modules::process::emit(
+                state,
+                &[
+                    Value::String("unhandledRejection".into()),
+                    reason,
+                    Value::Promise(promise),
+                ],
+            )?;
+        } else if !state.borrow().process.uncaught_exception_handlers.is_empty() {
+            let error = unhandled_rejection_error(&reason);
+            crate::modules::process::emit(
+                state,
+                &[
+                    Value::String("uncaughtException".into()),
+                    error,
+                    Value::String("unhandledRejection".into()),
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn unhandled_rejection_error(reason: &Value) -> Value {
+    if !matches!(reason, Value::Null | Value::Undefined) {
+        return reason.clone();
+    }
+    let rendered = match reason {
+        Value::Null => "null",
+        _ => "undefined",
+    };
+    let message = format!(
+        "This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"{rendered}\"."
+    );
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message)],
+    );
+    let error = quench_runtime::execute::set_property(
+        error,
+        "name",
+        Value::String("UnhandledPromiseRejection".into()),
+    );
+    quench_runtime::execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_UNHANDLED_REJECTION".into()),
+    )
 }
 
 pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmError> {
