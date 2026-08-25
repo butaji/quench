@@ -48,10 +48,14 @@ fn construct_builtin_tail(
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         crate::ops::Builtin::ShadowRealm => {
             let realm = crate::vm::create_shadow_realm_value();
+            let prototype = crate::vm::realm_intrinsic_for(
+                crate::vm::current_context_or_default().realm(),
+                crate::ops::Builtin::ShadowRealmPrototype,
+            );
             Ok(crate::builtins::set_property(
                 realm,
                 "\0prototype",
-                Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype),
+                prototype,
             ))
         }
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)

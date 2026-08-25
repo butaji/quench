@@ -204,15 +204,19 @@ fn finish_bound_result(
     realm: Option<crate::ops::RealmId>,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     if realm.is_some() && crate::conversion::is_callable(&result) {
-        crate::reflect::wrap_shadow_function_with_caller(
+        crate::reflect::wrap_shadow_function_with_caller_mode(
             &result,
             realm,
             wrapper_caller_realm(bound),
+            wrapper_caller_realm_explicit(bound),
         )
     } else if let Some(realm) = realm.filter(|_| crate::value::is_object(&result)) {
-        Err(crate::reflect::shadow_wrapped_object_error(
-            wrapper_caller_realm(bound).unwrap_or(realm),
-        ))
+        let caller = wrapper_caller_realm(bound).unwrap_or(realm);
+        if wrapper_caller_realm_explicit(bound) {
+            Err(crate::reflect::shadow_wrapped_object_error_for_realm(caller))
+        } else {
+            Err(crate::reflect::shadow_wrapped_object_error(caller))
+        }
     } else {
         Ok(result)
     }
@@ -245,6 +249,17 @@ fn wrapper_caller_realm(bound: &crate::value::BoundFunctionValue) -> Option<crat
                 crate::value::Value::HostCapability(token) => token.realm(),
                 _ => crate::ops::RealmId::ROOT,
             })
+        })
+}
+
+fn wrapper_caller_realm_explicit(bound: &crate::value::BoundFunctionValue) -> bool {
+    bound
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .any(|(key, value)| {
+            key == "\0caller_realm_explicit" && *value == crate::value::Value::Boolean(true)
         })
 }
 
