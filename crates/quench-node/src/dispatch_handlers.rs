@@ -1086,10 +1086,15 @@ pub fn dns_resolve4(
 // ---- net ----
 pub fn net_connect(
     state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::net::connect(state, args)
+    match receiver {
+        Some(receiver) if crate::modules::net::net_id(receiver).is_some() => {
+            crate::modules::net::connect_existing(state, receiver, args)
+        }
+        _ => crate::modules::net::connect(state, args),
+    }
 }
 pub fn net_is_ip(
     _state: &Rc<RefCell<HostState>>,

@@ -42,6 +42,22 @@ pub fn socket_construct(
 /// Connects (bounded) on loopback and returns a socket object;
 /// `'connect'` fires on the next pump tick.
 pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    connect_with_receiver(state, None, args)
+}
+
+pub fn connect_existing(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    connect_with_receiver(state, Some(receiver), args)
+}
+
+fn connect_with_receiver(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     let (port, host) = connect_target(state, args)?;
     let addr = resolve(host.as_deref().unwrap_or(LOCAL_HOST), port);
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
@@ -49,8 +65,13 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         Err(_) => return connect_refused(state, &addr),
     };
     let _ = stream.set_nonblocking(true);
-    let (object, id) = new_net_object(state, socket_props())?;
-    let object = install_socket_counters(object)?;
+    let (object, id) = match receiver {
+        Some(object) => (object.clone(), net_id(object).unwrap_or_else(|| allocate_id(state))),
+        None => {
+            let (object, id) = new_net_object(state, socket_props())?;
+            (install_socket_counters(object)?, id)
+        }
+    };
     let local = stream.local_addr().ok();
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
         id,
