@@ -728,6 +728,15 @@ pub fn internal_binding(
     if name == "util" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
             (
+                "privateSymbols".to_string(),
+                crate::host::namespace_object_from_pairs(vec![
+                    (
+                        "arrow_message_private_symbol".to_string(),
+                        Value::String("Symbol.node:arrowMessage\0".into()),
+                    ),
+                ]),
+            ),
+            (
                 "arrayBufferViewHasBuffer".to_string(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
             ),
