@@ -70,6 +70,7 @@ fn accept_one(
     peer: SocketAddr,
 ) -> Result<(), VmError> {
     let (object, id) = new_net_object(state, socket_props())?;
+    let object = install_socket_counters(object)?;
     let local = stream.local_addr().ok();
     let object = install_methods(object, net_info_props(peer, local))?;
     let socket = Rc::new(RefCell::new(NetSocket {
@@ -79,6 +80,8 @@ fn accept_one(
         state: SocketState::Open,
         server_id: Some(server_id),
         write_buf: Vec::new(),
+        bytes_read: 0,
+        bytes_written: 0,
         read_eof: false,
         close_emitted: false,
         connect_announced: true,
@@ -169,19 +172,28 @@ fn read_available(
     guard: &mut std::cell::RefMut<'_, NetSocket>,
     datas: &mut Vec<(Rc<RefCell<NetSocket>>, Vec<u8>)>,
 ) -> bool {
-    let Some(stream) = guard.stream.as_mut() else {
+    if guard.stream.is_none() {
         return false;
-    };
+    }
     let mut had_eof = false;
     loop {
         let mut buf = [0u8; READ_CHUNK];
-        match stream.read(&mut buf) {
+        let result = guard
+            .stream
+            .as_mut()
+            .expect("stream checked above")
+            .read(&mut buf);
+        match result {
             Ok(0) => {
                 guard.read_eof = true;
                 had_eof = true;
                 break;
             }
-            Ok(n) => datas.push((sock.clone(), buf[..n].to_vec())),
+            Ok(n) => {
+                guard.bytes_read = guard.bytes_read.saturating_add(n as u64);
+                update_socket_counters(&guard);
+                datas.push((sock.clone(), buf[..n].to_vec()));
+            }
             Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(_) => {
                 guard.read_eof = true;
