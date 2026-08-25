@@ -102,6 +102,9 @@ impl NodeRunner {
         } else {
             source
         };
+        let source = format!(
+            "if (typeof globalThis.DOMException !== 'function') {{ Object.defineProperty(globalThis, 'DOMException', {{ configurable: true, enumerable: false, writable: true, value: class DOMException extends Error {{ constructor(message = '', name = 'Error') {{ super(message); this.name = name; this.code = {{ DataCloneError: 25, AbortError: 20 }}[name] || 0; }} }} }}); }}\n{source}"
+        );
         let program = match reduce_fixture(&source, is_module) {
             Ok(program) => program,
             Err(error) => {

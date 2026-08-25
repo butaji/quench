@@ -9,7 +9,8 @@ for (var wa = 0; wa < workerArgs.length; wa++) {
   if (workerArgs[wa] === '--quench-worker') workerEnv = '1';
   if (String(workerArgs[wa]).indexOf('--quench-worker-data=') === 0) workerArgData = String(workerArgs[wa]).slice(21);
 }
-var workerData = workerEnv ? JSON.parse(workerArgData || (proc.env && proc.env.QUENCH_WORKER_DATA) || 'null') : null;
+var workerDataSource = workerArgData || (proc.env && proc.env.QUENCH_WORKER_DATA) || globalThis.__quench_worker_data;
+var workerData = workerEnv ? JSON.parse(workerDataSource || 'null') : null;
 var workerMessage = (workerEnv && proc.env && proc.env.QUENCH_WORKER_MESSAGE) || globalThis.__quench_worker_message;
 var processWorkerListeners = [];
 var processOn = proc && proc.on;
@@ -148,6 +149,10 @@ function cloneMessage(value) {
     return object;
   }
   return value;
+}
+function dataCloneError(message) {
+  if (typeof DOMException === 'function') return new DOMException(message, 'DataCloneError');
+  return Object.assign(new Error(message), { name: 'DataCloneError', code: 25 });
 }
 function messagePort() {
 var port = emitter({ _queueEvents: true, _peer: null, close: function (callback) {
@@ -303,9 +308,7 @@ function encodeWorkerData(value, transferList, transferredPorts) {
       typeof value.close === 'function') {
     var index = transferList.indexOf(value);
     if (index < 0) {
-      throw Object.assign(new Error('Object that needs transfer was found in message but not listed in transferList'), {
-        name: 'DataCloneError', code: 25
-      });
+      throw dataCloneError('Object that needs transfer was found in message but not listed in transferList');
     }
     var token = transferredPorts.indexOf(value);
     if (token < 0) {
@@ -411,7 +414,7 @@ var api = {
           // killed runner may not reach the synchronous cleanup below.
           var evalDirectory = require('os').tmpdir();
           evalPath = String(evalDirectory) + '/quench-worker-' + String(Date.now()) + '-' + String(Math.random()).slice(2) + '.js';
-          var evalSource = 'globalThis.__quench_worker_mode = true;\n';
+          var evalSource = 'globalThis.__quench_worker_mode = true; globalThis.__quench_worker_data = ' + JSON.stringify(data) + ';\n';
           if (message !== undefined) evalSource += 'globalThis.__quench_worker_message = ' + JSON.stringify(message) + ';\n';
           evalSource += String(filename);
           if (message !== undefined) evalSource += '\nrequire("worker_threads").parentPort.emit("message", globalThis.__quench_worker_revive(globalThis.__quench_worker_message));\n';
