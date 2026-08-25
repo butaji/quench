@@ -379,6 +379,15 @@ pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
 }
 
 fn rendered(value: &Value) -> String {
+    if let Value::String(text) = value {
+        if text.starts_with("Symbol.") && text.contains('\0') {
+            let body = text.split('\0').next().unwrap_or_default();
+            let description = body.strip_prefix("Symbol.").unwrap_or_default();
+            if description.is_empty() || description.chars().any(char::is_control) {
+                return "Symbol()".into();
+            }
+        }
+    }
     if execute::is_symbol(value) {
         return crate::modules::util::inspect(value);
     }
@@ -507,10 +516,13 @@ fn binary_assert(
     if equal == expect_equal {
         return Ok(Value::Undefined);
     }
+    if let Some(value) = args.get(2).filter(|value| is_error_object(value)) {
+        return Err(VmError::Thrown(value.clone()));
+    }
     let relation = if expect_equal { "!==" } else { "===" };
     let custom = custom_message(args, 2);
     let generated = custom.is_none();
-    let message = custom.unwrap_or_else(|| {
+    let message = custom.map_or_else(|| {
         let label = match operator {
             "strictEqual" => "strictly equal",
             "notStrictEqual" => "strictly unequal",
@@ -520,13 +532,14 @@ fn binary_assert(
         };
         let full = receiver.is_some_and(|value| {
             matches!(execute::get_property(value, "diff"), Value::String(diff) if diff == "full")
-        });
+        }) || (operator == "strictEqual"
+            && (needs_structural_diff(&actual) || needs_structural_diff(&expected)));
         if full {
             match operator {
                 "strictEqual" => format!(
                     "Expected values to be strictly equal:\n+ actual - expected\n\n+ {}\n- {}\n",
-                    rendered(&actual),
-                    rendered(&expected)
+                    strict_operand_render(&actual),
+                    strict_operand_render(&expected)
                 ),
                 "notStrictEqual" => format!(
                     "Expected \"actual\" to be strictly unequal to:\n\n{}",
@@ -569,6 +582,13 @@ fn binary_assert(
                     "Expected \"actual\" to be strictly unequal to: {}",
                     rendered(&actual)
                 ),
+                _ if operator == "strictEqual"
+                    && is_error_object(&actual)
+                    && is_error_object(&expected) => format!(
+                    "Expected \"actual\" to be reference-equal to \"expected\":\n+ actual - expected\n\n+ {}\n- {}\n",
+                    rendered_error(&actual),
+                    rendered_error(&expected)
+                ),
                 _ if operator == "notEqual" => {
                     format!("{} != {}", rendered(&actual), rendered(&expected))
                 }
@@ -581,6 +601,12 @@ fn binary_assert(
                 ),
             }
         }
+    }, |custom| {
+        if operator == "strictEqual" {
+            format!("{custom}\n\n{} {} {}\n", rendered(&actual), relation, rendered(&expected))
+        } else {
+            custom
+        }
     });
     Err(with_instance_diff(
         assertion_error(message, operator, actual, expected, generated),
@@ -589,6 +615,15 @@ fn binary_assert(
 }
 
 fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String {
+    if operator == "strictEqual" && actual.starts_with("Symbol.") && actual.contains('\0') {
+        let description = actual.split('\0').next().unwrap_or_default().strip_prefix("Symbol.").unwrap_or_default();
+        let actual = if description.is_empty() || description.chars().any(char::is_control) {
+            "Symbol()"
+        } else {
+            actual
+        };
+        return format!("Expected values to be strictly equal:\n\n{actual} !== '{expected}'\n");
+    }
     let value = |text: &str, limit: usize| {
         if text.contains('\n') {
             simple_side(text, "", limit)
@@ -806,6 +841,57 @@ fn is_primitive_value(value: &Value) -> bool {
             | Value::Null
             | Value::Undefined
     )
+}
+
+fn needs_structural_diff(value: &Value) -> bool {
+    match value {
+        Value::Function(_) | Value::WeakFunction(_) | Value::BoundFunction(_) => true,
+        Value::Array(_) => execute::own_enumerable_keys(value)
+            .iter()
+            .any(|key| key.parse::<usize>().is_ok()),
+        Value::Object(object) => !execute::own_enumerable_keys(value).is_empty(),
+        _ => false,
+    }
+}
+
+fn strict_operand_render(value: &Value) -> String {
+    match value {
+        Value::Array(_) if needs_structural_diff(value) => {
+            let mut keys = execute::own_enumerable_keys(value).into_iter().filter_map(|key| {
+                key.parse::<usize>().ok()
+            }).collect::<Vec<_>>();
+            keys.sort_unstable();
+            let values = keys.iter().map(|key| rendered(&execute::get_property(value, &key.to_string()))).collect::<Vec<_>>();
+            format!("[\n{}\n+ ]", values.iter().enumerate()
+                .map(|(index, entry)| {
+                    let comma = if index + 1 < values.len() { "," } else { "" };
+                    format!("+   {entry}{comma}")
+                })
+                .collect::<Vec<_>>().join("\n"))
+        }
+        Value::Object(_) if !execute::own_enumerable_keys(value).is_empty() => {
+            let mut keys = execute::own_enumerable_keys(value);
+            keys.sort();
+            let circular = keys.iter().any(|key| execute::same_identity(&execute::get_property(value, key), value));
+            let lines = keys.iter().map(|key| {
+                let property = execute::get_property(value, key);
+                let render = if execute::same_identity(&property, value) {
+                    "[Circular *1]".into()
+                } else {
+                    rendered(&property)
+                };
+                format!("  {key}: {render}")
+            }).collect::<Vec<_>>();
+            let opener = if circular { "<ref *1> {" } else { "{" };
+            format!("{opener}\n{}\n+ }}", lines.iter().enumerate()
+                .map(|(index, line)| {
+                    let comma = if index + 1 < lines.len() { "," } else { "" };
+                    format!("+ {line}{comma}")
+                })
+                .collect::<Vec<_>>().join("\n"))
+        }
+        _ => rendered(value),
+    }
 }
 
 fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
@@ -1362,6 +1448,18 @@ fn is_error_object(value: &Value) -> bool {
         current = execute::get_prototype_of(&prototype).ok();
     }
     false
+}
+
+fn rendered_error(value: &Value) -> String {
+    let name = match execute::get_property(value, "name") {
+        Value::String(name) if !name.is_empty() => name,
+        _ => "Error".into(),
+    };
+    let message = match execute::get_property(value, "message") {
+        Value::String(message) if !message.is_empty() => format!(": {message}"),
+        _ => String::new(),
+    };
+    format!("[{name}{message}]")
 }
 
 fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
