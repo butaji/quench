@@ -572,6 +572,7 @@ fn iterate_loop_values(
         iteration_slots: iteration_slots.to_vec(),
         iterator: iterator.clone(),
         dst,
+        await_dst: 0,
     };
     loop {
         let value = match if await_values {

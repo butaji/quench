@@ -513,8 +513,8 @@ fn resume_suspended_contexts(
 ) -> Result<Option<Value>, VmError> {
     let mut completion = completion.clone();
     if state.async_for_of.is_some() {
-        let input = crate::execute::read_register(&registers(generator), 0)?;
         let spec = state.async_for_of.take().ok_or(VmError::MissingReturn)?;
+        let input = crate::execute::read_register(&registers(generator), spec.await_dst)?;
         let (next, pending) =
             crate::loops::resume_async_for_of(&mut registers_mut(generator), &spec, input)?;
         state.async_for_of = pending;
