@@ -614,6 +614,10 @@ fn run_counted_for(
     let environment = crate::locals::current();
     let context = crate::vm::current_context_or_default();
     let word_body = proven_word_move_body(&environment, body);
+    let word_calls = proven_word_call_body(&environment, body, dst, registers);
+    let word_call_chain = word_calls
+        .as_deref()
+        .is_some_and(crate::register_file::ImmediateNumberCallPlan::is_chain);
     if index_unused_by_body
         && fact.timing == CountedStepTiming::AfterBody
         && matches!(fact.bound, CountedBound::Constant(_))
@@ -626,6 +630,26 @@ fn run_counted_for(
         let CountedBound::Constant(bound) = fact.bound else {
             unreachable!("constant-bound admission checked above")
         };
+        if let Some(plans) = word_calls.as_deref() {
+            let Some(iterations) = counted_call_iterations(fact, index, bound) else {
+                return Ok(None);
+            };
+            #[cfg(not(feature = "execution-trace"))]
+            if crate::register_file::ImmediateNumberCallPlan::execute_chain_iterations(
+                plans, iterations,
+            ) {
+                index += fact.step * iterations as f64;
+                environment.set(fact.slot, crate::value::Value::Number(index));
+                return Ok(Some(crate::completion::Completion::Normal));
+            }
+            for _ in 0..iterations {
+                trace_counted_call_iteration(loop_shape, plans.len());
+                execute_word_call_plans(plans, word_call_chain);
+            }
+            index += fact.step * iterations as f64;
+            environment.set(fact.slot, crate::value::Value::Number(index));
+            return Ok(Some(crate::completion::Completion::Normal));
+        }
         #[cfg(not(feature = "execution-trace"))]
         if let Some(plans) = word_body.as_deref() {
             while counted_comparison(fact.comparison, index, bound) {
@@ -707,6 +731,84 @@ fn run_counted_for(
                 return Ok(None);
             };
         }
+    }
+}
+
+#[inline(always)]
+fn execute_word_call_plans(
+    plans: &[crate::register_file::ImmediateNumberCallPlan],
+    admitted_chain: bool,
+) {
+    if admitted_chain {
+        crate::register_file::ImmediateNumberCallPlan::execute_admitted_chain(plans);
+        return;
+    }
+    match plans {
+        [first] => first.execute(),
+        [first, second] => {
+            first.execute();
+            second.execute();
+        }
+        [first, second, third] => {
+            first.execute();
+            second.execute();
+            third.execute();
+        }
+        [first, second, third, fourth] => {
+            first.execute();
+            second.execute();
+            third.execute();
+            fourth.execute();
+        }
+        _ => plans.iter().for_each(|plan| plan.execute()),
+    }
+}
+
+fn counted_call_iterations(fact: CountedForFact, index: f64, bound: f64) -> Option<usize> {
+    (fact.comparison == crate::ops::BinaryOp::LessThan && fact.step == 1.0).then_some(())?;
+    unit_less_than_iterations(index, bound)
+}
+
+fn proven_word_call_body(
+    environment: &crate::environment::Environment,
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    registers: &mut crate::register_file::RegisterFile,
+) -> Option<Vec<crate::register_file::ImmediateNumberCallPlan>> {
+    (body.len() >= 5 && body.len().is_multiple_of(5)).then_some(())?;
+    (0..body.len())
+        .step_by(5)
+        .map(|pc| {
+            let function = body.instruction(pc)?;
+            let argument = body.instruction(pc + 1)?;
+            let call = body.instruction(pc + 2)?;
+            let store = body.instruction(pc + 3)?;
+            let result = body.instruction(pc + 4)?;
+            (is_local_load(function)
+                && is_local_load(argument)
+                && call.opcode == crate::ir::Opcode::Call
+                && call.flags == 1
+                && (call.b, call.c) == (function.a, argument.a)
+                && is_local_store(store)
+                && (store.a, store.b) == (argument.b, call.a)
+                && result.opcode == crate::ir::Opcode::Move
+                && (result.a, result.b) == (dst, call.a))
+                .then_some(())?;
+            environment.plan_word_add_constant(function.b, argument.b, store.a, registers, dst)
+        })
+        .collect()
+}
+
+#[inline(always)]
+fn trace_counted_call_iteration(loop_shape: u64, calls: usize) {
+    crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
+    crate::execution_trace::loop_shape_iteration(loop_shape);
+    crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
+    crate::execution_trace::kernel("counted_for", false);
+    for _ in 0..calls {
+        crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
+        crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+        crate::execution_trace::kernel("word_call_add_constant", false);
     }
 }
 
