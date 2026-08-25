@@ -1,0 +1,96 @@
+use crate::{execute::VmError, value::Value};
+
+pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
+    let epoch = arguments
+        .first()
+        .cloned()
+        .unwrap_or(Value::BigInt("0".into()));
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("epochNanoseconds".into(), epoch),
+            (
+                "\0prototype".into(),
+                Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype),
+            ),
+        ]),
+    )))
+}
+
+pub(crate) fn execute(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    match builtin {
+        crate::ops::Builtin::TemporalInstantFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalInstantEpochNanosecondsGetter => Some(get_epoch(receiver)),
+        _ => None,
+    }
+}
+
+fn from(value: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::String(text)) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid instant"));
+    };
+    let has_offset = text
+        .split_once('T')
+        .and_then(|(_, time)| time.find(['Z', '+', '-']))
+        .is_some();
+    if !has_offset {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
+    let epoch = epoch_nanos(text)?;
+    construct(&[Value::BigInt(epoch.to_string())])
+}
+
+fn get_epoch(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not an Instant"))?;
+    crate::execute::get_property_result(receiver, "epochNanoseconds")
+}
+
+fn epoch_nanos(text: &str) -> Result<i128, VmError> {
+    let main = text.split('[').next().unwrap_or(text);
+    let (date, time) = main
+        .split_once('T')
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
+    let offset = time
+        .find(['Z', '+', '-'])
+        .map(|index| &time[index..])
+        .unwrap_or("Z");
+    let time = time.split(['Z', '+', '-']).next().unwrap_or(time);
+    let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    let (clock, fraction) = time.split_once('.').map_or((time, ""), |parts| parts);
+    let clock = chrono::NaiveTime::parse_from_str(clock, "%H:%M:%S")
+        .or_else(|_| chrono::NaiveTime::parse_from_str(clock, "%H:%M"))
+        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    let base = chrono::NaiveDateTime::new(date, clock)
+        .and_utc()
+        .timestamp_nanos_opt()
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?
+        as i128;
+    let nanos = format!("{fraction:0<9}").parse::<i128>().unwrap_or(0);
+    let offset_minutes = if offset == "Z" {
+        0
+    } else {
+        parse_offset(offset)?
+    };
+    Ok(base + nanos - i128::from(offset_minutes) * 60_000_000_000)
+}
+
+fn parse_offset(offset: &str) -> Result<i64, VmError> {
+    let sign = if offset.starts_with('-') { -1 } else { 1 };
+    let value = offset.trim_start_matches(['+', '-']);
+    let parts = value.split(':').collect::<Vec<_>>();
+    if parts.len() != 2 {
+        return Err(crate::value::error::throw_range_error("Invalid offset"));
+    }
+    let hour = parts[0]
+        .parse::<i64>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?;
+    let minute = parts[1]
+        .parse::<i64>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?;
+    Ok(sign * (hour * 60 + minute))
+}
