@@ -68,6 +68,9 @@ fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value
             set_last_index(receiver, next as f64)?;
         }
     }
+    if matched.is_empty() {
+        return Ok(Value::Null);
+    }
     Ok(Value::array(matched))
 }
 
