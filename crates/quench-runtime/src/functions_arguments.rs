@@ -381,7 +381,9 @@ pub(crate) fn execute_target(
             // supplied by the caller is only relevant to an unbound method;
             // using it here made method properties (and host capabilities)
             // fail with "not callable" or an incompatible-receiver error.
-            let receiver = if crate::builtins::builtin_name(builtin).starts_with("get ") {
+            let receiver = if crate::builtins::builtin_name(builtin).starts_with("get ")
+                || matches!(builtin, crate::ops::Builtin::StringToString | crate::ops::Builtin::StringValueOf)
+            {
                 receiver
             } else {
                 &bound.receiver
