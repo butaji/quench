@@ -209,8 +209,15 @@ fn run_instruction(
         Opcode::GetProperty | Opcode::AGetI => {
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
-                let array = registers.read_array(usize::from(instruction.b));
-                if let Some((array, index)) = array.filter(|array| array.is_packed_ordinary()).zip(index) {
+                let array_value = read_register(registers, instruction.b)?;
+                let array = match &array_value {
+                    Value::Array(array) => Some(array.as_ref()),
+                    _ => None,
+                };
+                if let Some((array, index)) = array
+                    .filter(|array| array.is_packed_ordinary())
+                    .zip(index)
+                {
                     if let Some(number) = array.dense_number_at(index) {
                         crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
                         registers.write_number(usize::from(instruction.a), number);
