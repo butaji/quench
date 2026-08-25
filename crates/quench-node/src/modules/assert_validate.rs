@@ -202,6 +202,9 @@ fn validate_callable(
     // callables (including ones that happen to have a `prototype`
     // property, like common.mustCall wrappers) are validation functions.
     if is_error_constructor(expected) {
+        if expected_name == "Error" && is_error_instance(error) {
+            return Ok(Value::Undefined);
+        }
         if !expected_name.is_empty() && expected_name == name_of(error) {
             return Ok(Value::Undefined);
         }
@@ -222,6 +225,29 @@ fn validate_callable(
         )),
         Err(internal) => Err(internal),
     }
+}
+
+fn is_error_instance(value: &Value) -> bool {
+    let mut current = execute::get_prototype_of(value).ok();
+    while let Some(prototype) = current {
+        if matches!(
+            prototype,
+            Value::Builtin(
+                quench_runtime::ops::Builtin::ErrorPrototype
+                    | quench_runtime::ops::Builtin::RangeErrorPrototype
+                    | quench_runtime::ops::Builtin::TypeErrorPrototype
+                    | quench_runtime::ops::Builtin::EvalErrorPrototype
+                    | quench_runtime::ops::Builtin::ReferenceErrorPrototype
+                    | quench_runtime::ops::Builtin::SyntaxErrorPrototype
+                    | quench_runtime::ops::Builtin::URIErrorPrototype
+                    | quench_runtime::ops::Builtin::AggregateErrorPrototype
+            )
+        ) {
+            return true;
+        }
+        current = execute::get_prototype_of(&prototype).ok();
+    }
+    false
 }
 
 fn is_error_constructor(expected: &Value) -> bool {
