@@ -893,6 +893,14 @@
         encoding = undefined;
       }
       const state = this._writableState;
+      if (this.destroyed || state.destroyed) {
+        const error = state.errored || Object.assign(
+          new Error("Cannot call end after a stream was destroyed"),
+          { code: "ERR_STREAM_DESTROYED" }
+        );
+        if (callback) nextTick(() => callback(error));
+        return this;
+      }
       if (state.ended && chunk != null) {
         const error = new Error("write after end");
         error.code = "ERR_STREAM_WRITE_AFTER_END";
@@ -952,10 +960,12 @@
       this.writableErrored = error;
     }
     const stream = this;
-    const destroy = this._destroy;
-    nextTick(() => {
-      const finish = (destroyError) => {
-        if (destroyError && !stream._writableState.errorEmitted) {
+      const destroy = this._destroy;
+      nextTick(() => {
+        const finish = (destroyError) => {
+          const endError = destroyError || stream._writableState.errored;
+          if (endError) completeEndCallbacks(stream._writableState, endError);
+          if (destroyError && !stream._writableState.errorEmitted) {
           stream._writableState.errorEmitted = true;
           stream._emitter.emit("error", destroyError);
         }
