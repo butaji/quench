@@ -6,9 +6,17 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .first()
         .cloned()
         .unwrap_or(Value::BigInt("0".into()));
+    let epoch_milliseconds = match &epoch {
+        Value::BigInt(value) => (value.parse::<i128>().unwrap_or(0) as f64 / 1_000_000.0).floor(),
+        _ => 0,
+    };
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             ("epochNanoseconds".into(), epoch),
+            (
+                "epochMilliseconds".into(),
+                Value::Number(epoch_milliseconds),
+            ),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype),
@@ -155,17 +163,7 @@ fn to_zoned_date_time_iso(
         Some(Value::String(value)) => value.as_str(),
         _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
     };
-    Ok(Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(vec![
-            ("epochNanoseconds".into(), epoch),
-            ("timeZoneId".into(), Value::String(zone.into())),
-            ("calendarId".into(), Value::String("iso8601".into())),
-            (
-                "\0prototype".into(),
-                Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
-            ),
-        ]),
-    )))
+    crate::temporal::zoned_construct(&[epoch, Value::String(zone.into())])
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
