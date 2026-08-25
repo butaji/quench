@@ -278,9 +278,10 @@ fn tracing_object(channels: Vec<Value>) -> Value {
             eval_function(
                 "function(fn, position, context, thisArg) {\
                   var args = Array.prototype.slice.call(arguments, 4);\
-                  var callback = args.pop();\
+                  var index = position < 0 ? args.length + position : position;\
+                  var callback = args[index];\
                   if (typeof fn !== 'function' || typeof callback !== 'function') throw new TypeError('callback');\
-                  if (!this.hasSubscribers) return fn.apply(thisArg, args.concat(callback));\
+                  if (!this.hasSubscribers) return fn.apply(thisArg, args);\
                   this.start?.publish(context);\
                   var self = this;\
                   var done = function(error, result) {\
@@ -289,7 +290,8 @@ fn tracing_object(channels: Vec<Value>) -> Value {
                     self.asyncStart?.publish(context); self.asyncEnd?.publish(context);\
                     return callback(error, result);\
                   };\
-                  try { fn.apply(thisArg, args.concat(done)); self.end?.publish(context); }\
+                  args[index] = done;\
+                  try { fn.apply(thisArg, args); self.end?.publish(context); }\
                   catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); throw error; }\
                 }",
             )
