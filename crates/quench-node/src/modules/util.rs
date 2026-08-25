@@ -394,6 +394,13 @@ fn inspect_capability() -> Value {
     )]);
     INSPECT_DEFAULT_OPTIONS.with(|slot| *slot.borrow_mut() = Some(options.clone()));
     let _ = quench_runtime::execute::set_callable_property(&inspect, "defaultOptions", options);
+    if let Ok(custom) = quench_runtime::execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::SymbolFor),
+        &Value::Undefined,
+        &[Value::String("nodejs.util.inspect.custom".into())],
+    ) {
+        let _ = quench_runtime::execute::set_callable_property(&inspect, "custom", custom);
+    }
     inspect
 }
 
@@ -1266,6 +1273,11 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         } else {
             inspect_depth(&proxy.target, depth.saturating_sub(1))
         };
+    }
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)) {
+        if let Some(custom) = inspect_custom(value, depth) {
+            return custom;
+        }
     }
     if quench_runtime::execute::is_symbol(value) {
         return symbol_string(value);
