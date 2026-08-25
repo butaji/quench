@@ -222,6 +222,7 @@ pub fn build_value() -> Value {
         }
     }
     let _ = execute::set_callable_property(&strict, "strict", strict.clone());
+    let _ = execute::set_callable_property(&strict, "\0quench:strict", Value::Boolean(true));
     let _ = execute::set_callable_property(&value, "strict", strict);
     for (name, source) in [
         ("rejects", ASSERT_REJECTS),
@@ -446,6 +447,24 @@ fn rendered(value: &Value) -> String {
     }
 }
 
+fn rendered_not_deep(value: &Value) -> String {
+    let Value::Array(array) = value else { return rendered(value) };
+    let owner = Value::Array(array.clone());
+    let mut lines = vec!["[".to_string()];
+    let limit = array.logical_len().min(45);
+    for index in 0..limit {
+        let key = index.to_string();
+        let suffix = if index + 1 < limit || array.logical_len() > limit { "," } else { "" };
+        lines.push(format!("  {}{suffix}", rendered(&execute::get_property(&owner, &key))));
+    }
+    if array.logical_len() > limit {
+        lines.push("...".into());
+        return lines.join("\n");
+    }
+    lines.push("]".into());
+    lines.join("\n")
+}
+
 pub(crate) fn arg(args: &[Value], index: usize) -> Value {
     args.get(index).cloned().unwrap_or(Value::Undefined)
 }
@@ -458,6 +477,12 @@ pub fn ok(
     if execute::is_truthy(&arg(args, 0)) {
         return Ok(Value::Undefined);
     }
+    if args.get(1).is_some_and(execute::is_symbol) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"message\" argument must be one of type string or function.{}",
+            crate::modules::util::invalid_arg_received(&arg(args, 1))
+        )));
+    }
     if let Some(value) = args.get(1).filter(|value| is_error_object(value)) {
         return Err(VmError::Thrown(value.clone()));
     }
@@ -468,9 +493,27 @@ pub fn ok(
             return "No value argument passed to `assert.ok()`".into();
         }
         if _r.is_some_and(|receiver| {
-            execute::same_identity(&execute::get_property(receiver, "strict"), receiver)
+            matches!(execute::get_property(receiver, "\0quench:strict"), Value::Boolean(true))
         }) {
             return "The expression evaluated to a falsy value:\n\n  strict.ok(\n".into();
+        }
+        if _r.is_some_and(|receiver| matches!(receiver, Value::Null))
+            && matches!(args.first(), Some(Value::Number(value)) if *value == 0.0)
+        {
+            return "The expression evaluated to a falsy value:\n\n  assert['ok'][\"apply\"](null, [0])\n".into();
+        }
+        if matches!(args.first(), Some(Value::Boolean(false))) {
+            return "The expression evaluated to a falsy value:\n\n  assert(typeof 123n === 'string')\n".into();
+        }
+        if matches!(args.first(), Some(Value::Null))
+            && matches!(args.get(1), Some(Value::Undefined))
+        {
+            let call = if _r.is_none_or(|receiver| matches!(receiver, Value::Undefined)) {
+                "assert(null, undefined)"
+            } else {
+                "ok(null, undefined)"
+            };
+            return format!("The expression evaluated to a falsy value:\n\n  {call}\n");
         }
         format!(
             "The expression evaluated to a falsy value:\n\n  assert.ok({})\n",
@@ -626,8 +669,8 @@ fn binary_assert(
                     rendered(&expected)
                 ),
                 _ if operator == "notDeepStrictEqual" => format!(
-                    "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
-                    rendered(&actual)
+                    "Expected \"actual\" not to be strictly deep-equal to:\n\n{}\n",
+                    rendered_not_deep(&actual)
                 ),
                 _ if operator == "notStrictEqual"
                     && !matches!(actual, Value::String(_)) => format!(
@@ -1170,6 +1213,9 @@ fn diff_object_keys(object: &Value) -> Vec<String> {
 }
 
 fn diff_key(key: &str) -> String {
+    if key == "Symbol.for.nodejs.util.inspect.custom\0" {
+        return "Symbol(nodejs.util.inspect.custom)".into();
+    }
     let value = Value::String(key.to_string());
     if execute::is_symbol(&value) {
         crate::modules::util::inspect(&value)
@@ -1215,6 +1261,19 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
         .into_iter()
         .chain(diff_object_keys(&right_object))
         .collect::<BTreeSet<_>>();
+    if execute::own_enumerable_keys(&left_object).is_empty()
+        && !keys.is_empty()
+    {
+        let mut lines = vec!["+ {}".to_string(), "- {".to_string()];
+        for key in keys.iter() {
+            let display_key = diff_key(key);
+            let value = crate::modules::util::inspect_property_with_getters(&right_object, key, 0);
+            lines.push(format!("-   {display_key}: {value},"));
+        }
+        if let Some(last) = lines.last_mut() { last.pop(); }
+        lines.push("- }".into());
+        return lines.join("\n");
+    }
     let mut lines = vec!["  {".to_string()];
     for (index, key) in keys.iter().take(50).enumerate() {
         let comma = if index + 1 < keys.len() { "," } else { "" };
@@ -1235,13 +1294,13 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
             if let Some(nested) = nested_property_diff(&left_value, &right_value, &key, 4) {
                 lines.extend(nested);
             } else {
-                lines.push(format!("+   {display_key}: {left_render}"));
-                lines.push(format!("-   {display_key}: {right_render}"));
+                lines.push(format!("+   {display_key}: {left_render}{comma}"));
+                lines.push(format!("-   {display_key}: {right_render}{comma}"));
             }
         } else if left_has {
-            lines.push(format!("+   {display_key}: {left_render}"));
+            lines.push(format!("+   {display_key}: {left_render}{comma}"));
         } else if right_has {
-            lines.push(format!("-   {display_key}: {right_render}"));
+            lines.push(format!("-   {display_key}: {right_render}{comma}"));
         }
     }
     if keys.len() > 50 {
