@@ -36,14 +36,27 @@ fn compare_partial(
             if left.is_arguments_object() != right.is_arguments_object() {
                 return Ok(false);
             }
-            if a.logical_len() < b.logical_len() || seen(memo, left, right) {
-                return Ok(a.logical_len() >= b.logical_len());
+            if a.logical_len() != b.logical_len() || seen(memo, left, right) {
+                return Ok(a.logical_len() == b.logical_len());
             }
             for index in 0..b.logical_len() {
                 let key = index.to_string();
-                if !execute::has_own_property(right, &key)
-                    || !execute::has_own_property(left, &key)
-                {
+                let left_has = execute::has_own_property(left, &key);
+                let right_has = execute::has_own_property(right, &key);
+                if !left_has && !right_has {
+                    continue;
+                }
+                if !right_has || !left_has {
+                    let present = if left_has {
+                        execute::get_property_result(left, &key)?
+                    } else if right_has {
+                        execute::get_property_result(right, &key)?
+                    } else {
+                        Value::Undefined
+                    };
+                    if matches!(present, Value::Undefined) {
+                        return Ok(false);
+                    }
                     continue;
                 }
                 if !compare_partial(
