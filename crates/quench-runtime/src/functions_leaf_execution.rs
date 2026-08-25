@@ -443,8 +443,9 @@ fn run_leaf(
     registers: &mut impl LeafRegisterFile,
     locals: &mut impl LeafLocalFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    run_leaf_fragment(function, receiver, arguments, code, registers, locals)?
-        .ok_or(crate::execute::VmError::MissingReturn)
+    Ok(run_leaf_fragment(function, receiver, arguments, code, registers, locals)?.unwrap_or(
+        crate::value::Value::Undefined,
+    ))
 }
 
 fn run_leaf_fragment(
