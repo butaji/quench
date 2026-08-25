@@ -179,7 +179,11 @@ pub(crate) fn execute_set_property(
     if crate::module_bindings::is_namespace(&target) {
         return write_failure(strict);
     }
-    if rejects_new_property(&target, &key) {
+    let rejects_new = {
+        let _scope = crate::execution_trace::attribution_scope("SetN:reject_new");
+        rejects_new_property(&target, &key)
+    };
+    if rejects_new {
         return write_failure(strict);
     }
     let value = crate::execute::read_register(registers, src)?.clone();
@@ -197,6 +201,7 @@ pub(crate) fn execute_set_property(
         )?;
         return Ok(());
     }
+    let _scope = crate::execution_trace::attribution_scope("SetN:finish");
     finish_set_property(registers, object, &target, &key, value, strict)
 }
 
@@ -209,7 +214,7 @@ pub(crate) fn execute_set_named_cached(
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), crate::execute::VmError> {
     if transition_index(cache.get()).is_some()
-        && try_named_write_transition(registers, object, src, key, cache)?
+        && try_named_write_transition_attributed(registers, object, src, key, cache)?
     {
         crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
         return Ok(());
@@ -237,15 +242,18 @@ pub(crate) fn execute_set_named_cached(
         }
     }
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetMiss);
-    execute_set_property(
-        registers,
-        &Op::SetProperty {
-            object,
-            key: key.to_owned(),
-            src,
-            strict,
-        },
-    )?;
+    {
+        let _scope = crate::execution_trace::attribution_scope("SetN:slow");
+        execute_set_property(
+            registers,
+            &Op::SetProperty {
+                object,
+                key: key.to_owned(),
+                src,
+                strict,
+            },
+        )?;
+    }
     let updated = crate::execute::read_register(registers, object)?;
     if install_named_write_transition(cache, transition, &updated, key) {
         return Ok(());
@@ -259,6 +267,18 @@ pub(crate) fn execute_set_named_cached(
         }
     }
     Ok(())
+}
+
+#[inline(always)]
+fn try_named_write_transition_attributed(
+    registers: &mut crate::register_file::RegisterFile,
+    object: u16,
+    src: u16,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Result<bool, crate::execute::VmError> {
+    let _scope = crate::execution_trace::attribution_scope("SetN:transition");
+    try_named_write_transition(registers, object, src, key, cache)
 }
 
 fn cacheable_named_write_slot(data: &crate::value::ObjectData, key: &str) -> Option<u32> {
@@ -278,7 +298,11 @@ fn finish_set_property(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
-    if let Some(setter) = crate::property_define::accessor(target, key, "set") {
+    let setter = {
+        let _scope = crate::execution_trace::attribution_scope("SetN:accessor");
+        crate::property_define::accessor(target, key, "set")
+    };
+    if let Some(setter) = setter {
         if matches!(setter, crate::value::Value::Undefined) {
             return write_failure(strict);
         }
@@ -288,7 +312,11 @@ fn finish_set_property(
         }
         return Ok(());
     }
-    if inherited_write_blocked(target, key) {
+    let inherited_blocked = {
+        let _scope = crate::execution_trace::attribution_scope("SetN:inherited");
+        inherited_write_blocked(target, key)
+    };
+    if inherited_blocked {
         return write_failure(strict);
     }
     if matches!(
@@ -316,6 +344,7 @@ fn finish_set_property(
             }
         }
     }
+    let _scope = crate::execution_trace::attribution_scope("SetN:ordinary");
     ordinary_set(registers, object, target, key, value, strict)
 }
 
