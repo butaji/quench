@@ -20,13 +20,8 @@ pub(crate) fn execute_word_leaf_call(
         return None;
     }
     if let Some(argument) = argument {
-        if crate::functions::execute_cached_word_call(
-            caller,
-            destination,
-            argument,
-            function,
-        )
-        .is_some()
+        if crate::functions::execute_cached_word_call(caller, destination, argument, function)
+            .is_some()
         {
             return Some(Ok(()));
         }
@@ -167,8 +162,18 @@ impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N>
 trait LeafLocalFile {
     fn read(&self, slot: u16) -> Option<crate::value::Value>;
     fn write(&mut self, slot: u16, value: crate::value::Value) -> Option<()>;
-    fn copy_to(&self, slot: u16, registers: &mut impl LeafRegisterFile, destination: usize) -> Option<()>;
-    fn copy_from(&mut self, slot: u16, registers: &impl LeafRegisterFile, source: usize) -> Option<()>;
+    fn copy_to(
+        &self,
+        slot: u16,
+        registers: &mut impl LeafRegisterFile,
+        destination: usize,
+    ) -> Option<()>;
+    fn copy_from(
+        &mut self,
+        slot: u16,
+        registers: &impl LeafRegisterFile,
+        source: usize,
+    ) -> Option<()>;
     fn update_number(&mut self, slot: u16, delta: f64) -> Option<(f64, f64)>;
 }
 
@@ -181,11 +186,21 @@ impl LeafLocalFile for crate::register_file::LocalWordFile<LEAF_LOCAL_SLOTS> {
         self.write(slot, value)
     }
 
-    fn copy_to(&self, slot: u16, registers: &mut impl LeafRegisterFile, destination: usize) -> Option<()> {
+    fn copy_to(
+        &self,
+        slot: u16,
+        registers: &mut impl LeafRegisterFile,
+        destination: usize,
+    ) -> Option<()> {
         registers.copy_from_local(self, destination, slot)
     }
 
-    fn copy_from(&mut self, slot: u16, registers: &impl LeafRegisterFile, source: usize) -> Option<()> {
+    fn copy_from(
+        &mut self,
+        slot: u16,
+        registers: &impl LeafRegisterFile,
+        source: usize,
+    ) -> Option<()> {
         registers.copy_to_local(self, slot, source)
     }
 
@@ -204,9 +219,15 @@ impl LeafLocalFile for NoLeafLocals {
     fn write(&mut self, _: u16, _: crate::value::Value) -> Option<()> {
         None
     }
-    fn copy_to(&self, _: u16, _: &mut impl LeafRegisterFile, _: usize) -> Option<()> { None }
-    fn copy_from(&mut self, _: u16, _: &impl LeafRegisterFile, _: usize) -> Option<()> { None }
-    fn update_number(&mut self, _: u16, _: f64) -> Option<(f64, f64)> { None }
+    fn copy_to(&self, _: u16, _: &mut impl LeafRegisterFile, _: usize) -> Option<()> {
+        None
+    }
+    fn copy_from(&mut self, _: u16, _: &impl LeafRegisterFile, _: usize) -> Option<()> {
+        None
+    }
+    fn update_number(&mut self, _: u16, _: f64) -> Option<(f64, f64)> {
+        None
+    }
 }
 
 #[derive(Clone)]
@@ -285,7 +306,9 @@ pub(crate) fn execute_proven_leaf(
             locals.write(parameter_base.saturating_add(offset), value)?;
         }
         locals.write(
-            parameter_base.saturating_add(function.params).saturating_add(1),
+            parameter_base
+                .saturating_add(function.params)
+                .saturating_add(1),
             receiver.clone(),
         )?;
         return Some(run_leaf(
@@ -415,8 +438,7 @@ fn validate_leaf_depth(
         if matches!(
             op.opcode,
             crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked
-        )
-            && usize::from(op.a) >= LEAF_LOCAL_SLOTS
+        ) && usize::from(op.a) >= LEAF_LOCAL_SLOTS
         {
             return Err(LeafReject::Register);
         }
@@ -456,7 +478,9 @@ fn validate_leaf_control(
             alternate,
         } => {
             validate_leaf_depth(
-                consequent.code().ok_or(LeafReject::Control("MissingCode"))?,
+                consequent
+                    .code()
+                    .ok_or(LeafReject::Control("MissingCode"))?,
                 depth + 1,
                 max_len,
                 max_registers,
@@ -492,46 +516,7 @@ fn validate_leaf_control(
             )?;
             [*condition, 0]
         }
-        crate::ops::Op::Loop {
-            label,
-            init,
-            test,
-            body,
-            update,
-            post_test,
-            dst,
-            per_iteration,
-        } if label.is_none() && !post_test && per_iteration.is_empty() => {
-            validate_leaf_depth(
-                init.code().ok_or(LeafReject::Control("MissingCode"))?,
-                depth + 1,
-                max_len,
-                max_registers,
-                allow_locals,
-            )?;
-            validate_leaf_depth(
-                test.code().ok_or(LeafReject::Control("MissingCode"))?,
-                depth + 1,
-                max_len,
-                max_registers,
-                allow_locals,
-            )?;
-            validate_leaf_depth(
-                body.code().ok_or(LeafReject::Control("MissingCode"))?,
-                depth + 1,
-                max_len,
-                max_registers,
-                allow_locals,
-            )?;
-            validate_leaf_depth(
-                update.code().ok_or(LeafReject::Control("MissingCode"))?,
-                depth + 1,
-                max_len,
-                max_registers,
-                allow_locals,
-            )?;
-            [*dst, 0]
-        }
+        crate::ops::Op::Loop { .. } => return Err(LeafReject::Control("Loop")),
         crate::ops::Op::ResolveBindingTarget { dst, .. } if allow_locals => [*dst, 0],
         crate::ops::Op::InitializeResolvedBinding { slot, src, .. }
             if allow_locals && usize::from(*slot) < LEAF_LOCAL_SLOTS =>
@@ -638,13 +623,21 @@ fn run_leaf_op(
         LoadLocal | LoadLocalChecked if leaf_load_capture(function, code, pc, op, registers)? => {
             return Ok(None);
         }
-        LoadLocal | LoadLocalChecked if locals.copy_to(op.b, registers, usize::from(op.a)).is_some() => {
+        LoadLocal | LoadLocalChecked
+            if locals.copy_to(op.b, registers, usize::from(op.a)).is_some() =>
+        {
             return Ok(None);
         }
-        LoadLocal | LoadLocalChecked => Some(leaf_local(function, receiver, arguments, code, pc, op.b, locals)?),
+        LoadLocal | LoadLocalChecked => Some(leaf_local(
+            function, receiver, arguments, code, pc, op.b, locals,
+        )?),
         StoreLocal | StoreLocalChecked => {
             let capture_count = u16::try_from(function.captures.len()).unwrap_or(u16::MAX);
-            if op.a >= capture_count && locals.copy_from(op.a, registers, usize::from(op.b)).is_some() {
+            if op.a >= capture_count
+                && locals
+                    .copy_from(op.a, registers, usize::from(op.b))
+                    .is_some()
+            {
                 return Ok(None);
             }
             leaf_store(function, op.a, leaf_register(registers, op.b)?, locals)?;
@@ -670,20 +663,22 @@ fn run_leaf_op(
             &leaf_register(registers, op.b)?,
             &leaf_register(registers, op.c)?,
         )?),
-        Add | Sub | Mul | Div | Binary => if let Some(value) = leaf_number_binary(op, registers) {
-            registers
-                .write_number(usize::from(op.a), value)
-                .ok_or(crate::execute::VmError::MissingReturn)?;
-            return Ok(None);
-        } else {
-            let left = leaf_register(registers, op.b)?;
-            let right = leaf_register(registers, op.c)?;
-            Some(crate::vm::vm_arithmetic::evaluate_binary(
-                &left,
-                &right,
-                leaf_binary_operator(op).ok_or(crate::execute::VmError::MissingReturn)?,
-            )?)
-        },
+        Add | Sub | Mul | Div | Binary => {
+            if let Some(value) = leaf_number_binary(op, registers) {
+                registers
+                    .write_number(usize::from(op.a), value)
+                    .ok_or(crate::execute::VmError::MissingReturn)?;
+                return Ok(None);
+            } else {
+                let left = leaf_register(registers, op.b)?;
+                let right = leaf_register(registers, op.c)?;
+                Some(crate::vm::vm_arithmetic::evaluate_binary(
+                    &left,
+                    &right,
+                    leaf_binary_operator(op).ok_or(crate::execute::VmError::MissingReturn)?,
+                )?)
+            }
+        }
         CallN => Some(leaf_call(code, pc, op, registers)?),
         Slow => {
             return leaf_control(function, receiver, arguments, code, op, registers, locals);
@@ -913,12 +908,7 @@ fn leaf_control(
             Ok(None)
         }
         Some(crate::ops::Op::InitializeResolvedBinding { slot, src, .. }) => {
-            leaf_store(
-                function,
-                *slot,
-                leaf_register(registers, *src)?,
-                locals,
-            )?;
+            leaf_store(function, *slot, leaf_register(registers, *src)?, locals)?;
             Ok(None)
         }
         _ => Err(crate::execute::VmError::MissingReturn),
@@ -1035,9 +1025,7 @@ fn leaf_get_named_register(
         .metadata_at(pc)
         .ok_or(crate::execute::VmError::MissingReturn)?;
     if let Some(object) = registers.object(usize::from(register)) {
-        if let Some(value) =
-            crate::vm::get_named_cached_object(object, &metadata.named_cache)
-        {
+        if let Some(value) = crate::vm::get_named_cached_object(object, &metadata.named_cache) {
             return Ok(value);
         }
     }
@@ -1059,7 +1047,9 @@ fn leaf_get_named_word(
     let payload = registers
         .object(usize::from(op.b))
         .and_then(|object| crate::vm::get_named_cached_payload(object, &metadata.named_cache));
-    let Some(payload) = payload else { return Ok(false) };
+    let Some(payload) = payload else {
+        return Ok(false);
+    };
     match payload {
         crate::vm::NamedCachedPayload::Word(slot) => registers
             .write_slot(usize::from(op.a), unsafe { &*slot })
@@ -1158,10 +1148,9 @@ fn leaf_call(
         return crate::functions::execute_target(&callee, &receiver, &[]);
     }
     let callee = leaf_register(registers, op.c)?;
-    let first = op
-        .a
-        .checked_sub(u16::from(op.flags))
-        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let first =
+        op.a.checked_sub(u16::from(op.flags))
+            .ok_or(crate::execute::VmError::MissingReturn)?;
     let arguments = [
         leaf_register(registers, first)?,
         (op.flags == 2)
