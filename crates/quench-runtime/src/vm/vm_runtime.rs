@@ -122,6 +122,11 @@ fn run_instruction(
             crate::locals::store(registers, instruction.a, instruction.b)?;
             Ok(None)
         }
+        Opcode::InitLocal => {
+            crate::locals::store(registers, instruction.a, instruction.b)?;
+            crate::locals::initialize(instruction.a);
+            Ok(None)
+        }
         Opcode::UpdateLocal => {
             crate::locals::update(
                 registers,
