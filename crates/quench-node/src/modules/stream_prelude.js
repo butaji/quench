@@ -147,6 +147,16 @@
     stream.readableAborted = false;
     if (options.read) stream._read = options.read;
     if (options.destroy) stream._destroy = options.destroy;
+    if (options.signal?.addEventListener) {
+      const abort = () => {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        error.code = "ABORT_ERR";
+        stream.destroy(error);
+      };
+      if (options.signal.aborted) abort();
+      else options.signal.addEventListener("abort", abort, { once: true });
+    }
     if (options.autoDestroy !== false) {
       stream.on("error", () => {
         if (!stream.destroyed) stream.destroy();
@@ -526,6 +536,15 @@
     this.destroyed = true;
     this.readableAborted = this.readable !== false && !this.readableEnded;
     this.readable = false;
+    if (this._writableState?.pending?.length) {
+      const pendingError = Object.assign(
+        new Error("Cannot call write after a stream was destroyed"),
+        { code: "ERR_STREAM_DESTROYED" }
+      );
+      for (const request of this._writableState.pending.splice(0)) {
+        if (request.callback) nextTick(() => request.callback(pendingError));
+      }
+    }
     if (error) {
       this._readableState.errored = error;
     }
@@ -994,6 +1013,15 @@
     this.writableAborted = this._writableState.writable !== false && !this.writableFinished;
     if (this._writableState) this._writableState.destroyed = true;
     this.writable = false;
+    if (this._writableState?.pending?.length) {
+      const pendingError = Object.assign(
+        new Error("Cannot call write after a stream was destroyed"),
+        { code: "ERR_STREAM_DESTROYED" }
+      );
+      for (const request of this._writableState.pending.splice(0)) {
+        if (request.callback) nextTick(() => request.callback(pendingError));
+      }
+    }
     if (error) {
       if (!this._writableState.errored) this._writableState.errored = error;
       this.writableErrored = error;
@@ -1016,6 +1044,15 @@
     });
     return this;
   };
+  if (typeof Symbol === "function" && Symbol.asyncDispose) {
+    ReadableClass.prototype[Symbol.asyncDispose] = function () {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      error.code = "ABORT_ERR";
+      this.destroy(error);
+      return Promise.resolve();
+    };
+  }
 
   // ---- Duplex / Transform ----
 
