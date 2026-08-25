@@ -30,6 +30,16 @@ pub(crate) fn execute(
         registered_callee,
         call_target_name(&callee),
     );
+    if spreads.iter().all(|spread| !spread) {
+        if let Value::Function(function) = &callee {
+            if let Some(value) =
+                crate::loops::execute_crypto_integer_registers(function, &receiver, registers, args)
+            {
+                write_value(registers, *dst, value);
+                return Ok(());
+            }
+        }
+    }
     let propagates = matches!(
         callee,
         Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)
@@ -108,35 +118,72 @@ fn execute_named_word(
 pub(crate) fn execute_registered(
     registers: &mut crate::register_file::RegisterFile,
     instruction: crate::ir::Instruction,
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
 ) -> Result<(), VmError> {
-    if !(1..=2).contains(&instruction.flags) {
+    if instruction.flags == 0 {
         return Err(VmError::MissingReturn);
+    }
+    let metadata_window = code.operand_window_at(pc);
+    let first = instruction.a.saturating_sub(u16::from(instruction.flags));
+    if instruction.flags == 6 {
+        let consecutive = [first, first + 1, first + 2, first + 3, first + 4, first + 5];
+        let argument_registers = metadata_window.unwrap_or(&consecutive);
+        if let (Some(function), Some(receiver)) = (
+            registers.function_ptr(usize::from(instruction.c)),
+            registers.read_object(usize::from(instruction.b)),
+        ) {
+            if let Some(value) = crate::loops::execute_crypto_integer_words(
+                function,
+                receiver,
+                registers,
+                argument_registers,
+            ) {
+                crate::execution_trace::call_method(6, false, true, "Function");
+                registers.write_number(usize::from(instruction.a), value);
+                return Ok(());
+            }
+        }
     }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
-    let first = instruction
-        .a
-        .checked_sub(u16::from(instruction.flags))
-        .ok_or(VmError::MissingReturn)?;
-    let arguments = [
-        read_register(registers, first)?,
-        (instruction.flags == 2)
-            .then(|| read_register(registers, first + 1))
-            .transpose()?
-            .unwrap_or(Value::Undefined),
-    ];
-    let argument_registers = [first, first + 1];
     crate::execution_trace::call_method(
         usize::from(instruction.flags),
         false,
         true,
         call_target_name(&callee),
     );
+    if instruction.flags == 6 {
+        if let Value::Function(function) = &callee {
+            let consecutive = [first, first + 1, first + 2, first + 3, first + 4, first + 5];
+            let argument_registers = metadata_window.unwrap_or(&consecutive);
+            if let Some(value) = crate::loops::execute_crypto_integer_registers(
+                function,
+                &receiver,
+                registers,
+                argument_registers,
+            ) {
+                write_value(registers, instruction.a, value);
+                return Ok(());
+            }
+        }
+    }
+    let consecutive;
+    let argument_registers = if let Some(window) = metadata_window {
+        window
+    } else {
+        consecutive = (first..instruction.a).collect::<Vec<_>>();
+        consecutive.as_slice()
+    };
+    let arguments: Vec<_> = argument_registers
+        .iter()
+        .map(|register| read_register(registers, *register))
+        .collect::<Result<_, _>>()?;
     let value = execute_named_callee(
         callee,
         &receiver,
-        &arguments[..usize::from(instruction.flags)],
-        &argument_registers[..usize::from(instruction.flags)],
+        &arguments,
+        argument_registers,
         instruction.b,
         registers,
     )?;

@@ -165,6 +165,7 @@ struct Counters {
     function_call_shapes: HashMap<(u16, usize, usize), u64>,
     function_opcode_shapes: HashMap<(u64, u16, u8, [u8; 32]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
+    descriptor_views_by_op: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
     named_property_misses: HashMap<String, u64>,
     crypto_direct_iterations: u64,
@@ -262,6 +263,7 @@ fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> ser
         "l3": {"handlers": l3, "vm_share_ppm": ratio_ppm(l3, vm_total),
             "top_slow": top_map(&counters.slow, 8),
             "descriptor_objects": counters.descriptor_objects,
+            "descriptor_views_by_op": top_map(&counters.descriptor_views_by_op, 32),
             "alloc": named_buckets(&counters.allocations,
                 &["match_result", "descriptor_view", "environment", "other"]),
             "last_index": named_buckets(&counters.last_index,
@@ -701,6 +703,15 @@ pub(crate) fn descriptor_object(origin: &'static str) {
     if enabled() {
         if origin == "view" {
             allocation("descriptor_view");
+            CURRENT_OP.with(|current| {
+                COUNTERS.with(|state| {
+                    *state
+                        .borrow_mut()
+                        .descriptor_views_by_op
+                        .entry(current.get())
+                        .or_default() += 1;
+                });
+            });
         }
         COUNTERS.with(|state| {
             *state
@@ -847,6 +858,24 @@ pub(crate) fn crypto_direct_iterations(count: usize) {
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn crypto_direct_iterations(_: usize) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn crypto_kernel_iterations(count: usize) {
+    if enabled() && count != 0 {
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            if counters.events.is_empty() {
+                counters.events.resize(EVENT_NAMES.len(), 0);
+            }
+            counters.crypto_direct_iterations += count as u64;
+            counters.events[Event::CryptoKernelHit as usize] += count as u64;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn crypto_kernel_iterations(_: usize) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn loop_shape(body: crate::machine::CodeView<'_>) -> u64 {
@@ -1722,9 +1751,14 @@ mod lane_profile_tests {
             ..Counters::default()
         };
         counters.descriptor_objects.insert("view", 3);
+        counters.descriptor_views_by_op.insert("DefineProperty", 3);
         counters.allocations.insert("descriptor_view", 2);
         let profile = lane_profile(&counters, 0, 0);
         assert_eq!(profile["l3"]["descriptor_objects"]["view"], 3);
+        assert_eq!(
+            profile["l3"]["descriptor_views_by_op"][0],
+            serde_json::json!({"op": "DefineProperty", "count": 3})
+        );
         assert_eq!(profile["l3"]["alloc"]["descriptor_view"], 2);
     }
 }

@@ -1,6 +1,7 @@
 #[derive(Clone, Copy)]
 enum PackedLoopFact {
     AddFields { x: u16, source: u16, scale: u16 },
+    Fill { array: u16 },
     Fill3 { arrays: [u16; 3] },
     Boundary(BoundaryFact),
     CopyRow(CopyRowFact),
@@ -30,6 +31,7 @@ fn instruction_opcode(code: crate::machine::CodeView<'_>, pc: usize) -> Option<c
 impl PackedLoopFact {
     fn recognize(code: crate::machine::CodeView<'_>, counter: u16) -> Option<Self> {
         match code.len() {
+            7 => recognize_fill(code, counter),
             15 => recognize_add_fields(code, counter),
             17 => recognize_fill3(code, counter),
             11 | 20 => CopyRowFact::recognize(code).map(Self::CopyRow),
@@ -43,6 +45,24 @@ impl PackedLoopFact {
             _ => None,
         }
     }
+}
+
+fn recognize_fill(code: crate::machine::CodeView<'_>, counter: u16) -> Option<PackedLoopFact> {
+    compact_shape!(code;
+        0 => StaticLoad, 1 => Move, 2 => StaticLoad, 3 => Move,
+        4 => LoadConst, 5 => ASetI, 6 => Move
+    );
+    let array = recognized_static_load(code, 0)?.1;
+    (recognized_static_load(code, 2)?.1 == counter).then_some(())?;
+    matches!(code.constant_at(4), Some((_, crate::ops::Constant::Number(0.0)))).then_some(())?;
+    let set = code.instruction(5)?;
+    (code.instruction(1)?.b == code.instruction(0)?.a
+        && code.instruction(3)?.b == code.instruction(1)?.a
+        && set.a == code.instruction(3)?.a
+        && set.b == code.instruction(2)?.a
+        && set.c == code.instruction(4)?.a
+        && code.instruction(6)?.b == set.c)
+        .then_some(PackedLoopFact::Fill { array })
 }
 
 #[derive(Clone, Copy)]
@@ -397,17 +417,19 @@ fn run_packed_loop_kernel(
     body: crate::machine::CodeView<'_>,
     loop_shape: u64,
 ) -> Option<crate::completion::Completion> {
-    (loop_fact.timing == CountedStepTiming::AfterBody).then_some(())?;
     let fact = PackedLoopFact::recognize(body, loop_fact.slot)?;
     let environment = crate::locals::current();
     let counter = environment.get_number(loop_fact.slot)?;
-    let iterations = unit_iteration_count(loop_fact, counter, loop_fact.bound.number(&environment)?)?;
+    let iterations = kernel_iteration_count(loop_fact, counter, loop_fact.bound.number(&environment)?)?;
     match fact {
         PackedLoopFact::AddFields { x, source, scale } => {
             run_add_fields(&environment, x, source, scale, counter, iterations, loop_fact)?
         }
         PackedLoopFact::Fill3 { arrays } => {
             run_fill3(&environment, arrays, counter, iterations, loop_fact)?
+        }
+        PackedLoopFact::Fill { array } => {
+            run_fill(&environment, array, counter, iterations, loop_fact)?
         }
         PackedLoopFact::Boundary(boundary) => {
             run_boundary(&environment, boundary, counter, iterations, loop_fact)?
@@ -425,6 +447,7 @@ impl PackedLoopFact {
     fn trace_fact(self) -> (&'static str, usize, usize) {
         match self {
             Self::AddFields { .. } => ("counted_packed_f64_add_fields", 2, 1),
+            Self::Fill { .. } => ("counted_packed_zero_fill", 0, 1),
             Self::Fill3 { .. } => ("counted_packed_f64_fill3", 0, 3),
             Self::Boundary(_) => ("counted_packed_f64_boundary", 2, 2),
             Self::CopyRow(fact) => ("counted_packed_f64_copy", fact.pair_count, fact.pair_count),
@@ -432,6 +455,29 @@ impl PackedLoopFact {
             Self::Projection(_) => ("counted_packed_f64_projection", 6, 2),
         }
     }
+}
+
+fn run_fill(
+    environment: &crate::environment::Environment,
+    array: u16,
+    counter: f64,
+    iterations: usize,
+    loop_fact: CountedForFact,
+) -> Option<()> {
+    (loop_fact.timing == CountedStepTiming::BeforeTest
+        && loop_fact.comparison == crate::ops::BinaryOp::GreaterEqual
+        && loop_fact.step == -1.0).then_some(())?;
+    let end = kernel_index(counter)?;
+    let start = end.checked_sub(iterations)?;
+    let array = packed_array(environment, array)?;
+    if let Some(mut words) = array.limb28_kernel_words_mut() {
+        words.get_mut(start..end)?.fill(0.0);
+    } else {
+        let mut words = array.numeric_kernel_words_mut()?;
+        words.get_mut(start..end)?.fill(0.0);
+    }
+    environment.set(loop_fact.slot, Value::Number(counter - (iterations as f64 + 1.0)));
+    Some(())
 }
 
 fn run_boundary(
