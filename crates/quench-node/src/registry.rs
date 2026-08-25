@@ -97,6 +97,10 @@ node_api! {
     (SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, "diagnostics_channel:TracingChannel:subscribe", 0x1F0B),
     (SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, "diagnostics_channel:TracingChannel:unsubscribe", 0x1F0C),
     (SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC, "diagnostics_channel:TracingChannel:traceSync", 0x1F0D),
+    (SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, "diagnostics_channel:boundedChannel", 0x1F0E),
+    (SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, "diagnostics_channel:BoundedChannel:subscribe", 0x1F0F),
+    (SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE, "diagnostics_channel:BoundedChannel:unsubscribe", 0x1F10),
+    (SPEC_DIAGNOSTICS_BOUNDED_RUN, "diagnostics_channel:BoundedChannel:run", 0x1F11),
     (SPEC_ASYNC_RESOURCE, "async_hooks:AsyncResource", 0x1410),
     (SPEC_ASYNC_EXECUTION_ID, "async_hooks:executionAsyncId", 0x1411),
     (SPEC_ASYNC_TRIGGER_ID, "async_hooks:triggerAsyncId", 0x1412),
@@ -288,8 +292,7 @@ pub const SPEC_PROCESS_HRTIME_BIGINT: NodeSpec = NodeSpec::new("process:hrtime.b
 pub const SPEC_PROCESS_UMASK: NodeSpec = NodeSpec::new("process:umask", 0x0A06);
 pub const SPEC_PROCESS_ON: NodeSpec = NodeSpec::new("process:on", 0x0A07);
 pub const SPEC_PROCESS_ONCE: NodeSpec = NodeSpec::new("process:once", 0x0A08);
-pub const SPEC_PROCESS_REMOVE_LISTENER: NodeSpec =
-    NodeSpec::new("process:removeListener", 0x0A0E);
+pub const SPEC_PROCESS_REMOVE_LISTENER: NodeSpec = NodeSpec::new("process:removeListener", 0x0A0E);
 pub const SPEC_PROCESS_REMOVE_ALL_LISTENERS: NodeSpec =
     NodeSpec::new("process:removeAllListeners", 0x0A0F);
 pub const SPEC_PROCESS_EMIT: NodeSpec = NodeSpec::new("process:emit", 0x0A0C);
@@ -465,8 +468,7 @@ pub const SPEC_URL_DOMAIN_TO_UNICODE: NodeSpec = NodeSpec::new("url:domainToUnic
 pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1F20);
 pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1F21);
 pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1F22);
-pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec =
-    NodeSpec::new("AbortController.abort", 0x1F25);
+pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1F25);
 pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1F23);
 pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1F24);
 pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
@@ -610,10 +612,7 @@ pub fn namespace_bindings(
         float16_constructor.clone(),
     );
     out.push(("Float16Array".to_string(), float16_constructor));
-    out.push((
-        "require".to_string(),
-        crate::host::capability(SPEC_REQUIRE),
-    ));
+    out.push(("require".to_string(), crate::host::capability(SPEC_REQUIRE)));
     out.push((
         "__quench_cjs_wrap__".to_string(),
         crate::host::capability(crate::registry::SPEC_CJS_WRAP),

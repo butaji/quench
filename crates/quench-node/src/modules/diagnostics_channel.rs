@@ -10,6 +10,8 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 use crate::registry::{
+    SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, SPEC_DIAGNOSTICS_BOUNDED_RUN,
+    SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE,
     SPEC_DIAGNOSTICS_CHANNEL, SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE,
     SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR, SPEC_DIAGNOSTICS_CHANNEL_PUBLISH,
     SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE, SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE,
@@ -22,6 +24,7 @@ use crate::registry::{
 const ID: &str = "\0quench:diagnostics_channel:id";
 const NAME: &str = "\0quench:diagnostics_channel:name";
 const TRACE: &str = "\0quench:diagnostics_channel:tracing";
+const BOUNDED: &str = "\0quench:diagnostics_channel:bounded";
 const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
 thread_local! { static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) }; }
@@ -65,6 +68,10 @@ pub fn build() -> Value {
     constructor = execute::set_property(constructor, "prototype", prototype.clone());
     crate::host::namespace_object(vec![
         ("Channel", constructor),
+        (
+            "BoundedChannel",
+            crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_CHANNEL),
+        ),
         ("channel", crate::host::capability(SPEC_DIAGNOSTICS_CHANNEL)),
         (
             "subscribe",
@@ -83,7 +90,10 @@ pub fn build() -> Value {
             "tracingChannel",
             crate::host::capability(SPEC_DIAGNOSTICS_TRACING_CHANNEL),
         ),
-        ("boundedChannel", Value::Undefined),
+        (
+            "boundedChannel",
+            crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_CHANNEL),
+        ),
     ])
     .unwrap_or(Value::Undefined)
 }
@@ -122,6 +132,105 @@ pub fn tracing_channel(
         .map(|name| tracing_member(state, source, name))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(tracing_object(channels))
+}
+
+pub fn bounded_channel(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let source = args.first().cloned().unwrap_or(Value::Undefined);
+    let (start, end) = if let Value::String(name) = source {
+        let prefix = format!("tracing:{name}");
+        (
+            channel(state, None, &[Value::String(format!("{prefix}:start"))])?,
+            channel(state, None, &[Value::String(format!("{prefix}:end"))])?,
+        )
+    } else {
+        (
+            execute::get_property(&source, "start"),
+            execute::get_property(&source, "end"),
+        )
+    };
+    let object = host_api::object(vec![
+        (BOUNDED.into(), Value::Boolean(true)),
+        ("start".into(), start),
+        ("end".into(), end),
+        (
+            "subscribe".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE),
+        ),
+        (
+            "unsubscribe".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE),
+        ),
+        (
+            "run".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_BOUNDED_RUN),
+        ),
+    ]);
+    Ok(object)
+}
+
+pub fn bounded_subscribe(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("boundedChannel"))?;
+    let handlers = args.first().cloned().unwrap_or(Value::Undefined);
+    for name in ["start", "end"] {
+        let callback = execute::get_property(&handlers, name);
+        if !matches!(callback, Value::Undefined) {
+            subscribe_to(state, &execute::get_property(receiver, name), &callback)?;
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn bounded_unsubscribe(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("boundedChannel"))?;
+    let handlers = args.first().cloned().unwrap_or(Value::Undefined);
+    let mut removed = true;
+    for name in ["start", "end"] {
+        let callback = execute::get_property(&handlers, name);
+        if !matches!(callback, Value::Undefined) {
+            removed &= matches!(
+                unsubscribe_from(state, &execute::get_property(receiver, name), &callback)?,
+                Value::Boolean(true)
+            );
+        }
+    }
+    Ok(Value::Boolean(removed))
+}
+
+pub fn bounded_run(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("boundedChannel"))?;
+    let context = args.first().cloned().unwrap_or(Value::Undefined);
+    let callback = args.get(1).ok_or_else(|| type_error("fn"))?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(type_error("fn"));
+    }
+    let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let call_args = args.get(3..).unwrap_or(&[]);
+    let start = execute::get_property(receiver, "start");
+    let end = execute::get_property(receiver, "end");
+    if channel_has_subscribers(state, &start) {
+        publish(state, Some(&start), std::slice::from_ref(&context))?;
+    }
+    let result = execute::call(callback, &this_arg, call_args);
+    if channel_has_subscribers(state, &end) {
+        publish(state, Some(&end), std::slice::from_ref(&context))?;
+    }
+    result
 }
 
 fn tracing_member(
