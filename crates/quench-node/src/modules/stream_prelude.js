@@ -26,9 +26,11 @@
       // A stream may finish synchronously while a pipe/end callback is being
       // installed. Preserve Node's observable completion guarantee for those
       // late listeners by delivering the already-emitted terminal event.
-      if (name === "end" && this._readableState && this._readableState.endEmitted) {
+      if (name === "end" && this.readable !== false &&
+          this._readableState && this._readableState.endEmitted) {
         nextTick(() => fn.call(this));
-      } else if (name === "finish" && this._writableState && this._writableState.finished) {
+      } else if (name === "finish" && this.writable !== false &&
+                 this._writableState && this._writableState.finished) {
         nextTick(() => fn.call(this));
       }
       return this;
@@ -560,6 +562,40 @@
     }));
     return readable;
   };
+
+  if (typeof Symbol === "function" && Symbol.asyncIterator) {
+    ReadableClass.prototype[Symbol.asyncIterator] = function () {
+      const stream = this;
+      const queue = [];
+      const waiters = [];
+      let ended = stream.readable === false;
+      const finish = () => {
+        ended = true;
+        while (waiters.length) waiters.shift()({ value: undefined, done: true });
+      };
+      if (!ended) {
+        stream.on("data", (chunk) => {
+          const waiter = waiters.shift();
+          if (waiter) waiter({ value: chunk, done: false });
+          else queue.push(chunk);
+        });
+        stream.once("end", finish);
+        stream.once("error", finish);
+      }
+      return {
+        next() {
+          if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
+          if (ended) return Promise.resolve({ value: undefined, done: true });
+          return new Promise((resolve) => waiters.push(resolve));
+        },
+        return() {
+          finish();
+          return Promise.resolve({ value: undefined, done: true });
+        },
+        [Symbol.asyncIterator]() { return this; }
+      };
+    };
+  }
 
   mixEmitter(ReadableClass.prototype);
 
