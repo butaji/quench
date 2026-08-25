@@ -262,6 +262,7 @@ fn own_property_names_tail(builtin: Builtin) -> &'static [&'static str] {
             "source",
             "sticky",
             "unicode",
+            "unicodeSets",
             "test",
             "toString",
             "Symbol.match",
