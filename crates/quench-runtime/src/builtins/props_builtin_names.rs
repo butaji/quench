@@ -7,7 +7,10 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         Escape => "escape", Unescape => "unescape", EncodeURI => "encodeURI", EncodeURIComponent => "encodeURIComponent", DecodeURI => "decodeURI", DecodeURIComponent => "decodeURIComponent", Array => "Array", ArrayBuffer => "ArrayBuffer",
         ArrayBufferIsView => "isView", Object => "Object", String => "String", Symbol => "Symbol",
         Number => "Number", Date => "Date", DateGetYear => "getYear", DateSetYear => "setYear",
-        RegExp => "RegExp", RegExpTest => "test", RegExpExec => "exec", _ => "",
+        RegExp => "RegExp", RegExpTest => "test", RegExpExec => "exec",
+        FunctionPrototypeToString => "toString",
+        FunctionPrototypeValueOf => "valueOf",
+        _ => "",
     }
 }
 fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {

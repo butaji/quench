@@ -208,8 +208,15 @@ pub(crate) mod value {
             }
             Value::String(_) => "string",
             Value::StringUnits(_) => "string",
+            Value::Builtin(crate::ops::Builtin::Atomics) => "object",
             Value::Builtin(builtin) => builtin_type(*builtin),
-            Value::Function(_) | Value::BoundFunction(_) => "function",
+            Value::Function(_) => "function",
+            Value::BoundFunction(value)
+                if crate::conversion::is_callable(&Value::BoundFunction(value.clone())) =>
+            {
+                "function"
+            }
+            Value::BoundFunction(_) => "object",
             Value::BigInt(_) => "bigint",
             Value::Promise(_)
             | Value::Map(_)
@@ -225,6 +232,7 @@ pub(crate) mod value {
     fn builtin_type(builtin: crate::ops::Builtin) -> &'static str {
         match builtin {
             crate::ops::Builtin::FunctionPrototype => "function",
+            crate::ops::Builtin::FinalizationRegistryPrototype => "object",
             crate::ops::Builtin::SymbolIterator
             | crate::ops::Builtin::SymbolAsyncIterator
             | crate::ops::Builtin::SymbolDispose
@@ -507,7 +515,10 @@ fn element_to_locale_string(value: &Value) -> Result<String, VmError> {
 }
 fn locale_element_call(value: &Value) -> Result<String, VmError> {
     let mut method = crate::execute::get_property_result(value, "toLocaleString")?;
-    if matches!(method, Value::Builtin(Builtin::ObjectPrototypeToString)) {
+    if matches!(
+        method,
+        Value::Builtin(Builtin::ObjectPrototypeToString | Builtin::ObjectPrototypeToLocaleString)
+    ) {
         method = crate::execute::get_property_result(value, "toString")?;
     }
     if !matches!(method, Value::Undefined | Value::Null) {

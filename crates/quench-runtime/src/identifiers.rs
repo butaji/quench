@@ -10,7 +10,11 @@ pub(crate) fn reduce(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if !facts.has_dynamic_scope() {
+    // Direct eval can add a var binding to the current activation, including
+    // from a parameter initializer.  Keep unresolved names on the dynamic
+    // resolution path for that activation instead of baking in the realm
+    // global property before eval runs.
+    if !facts.has_dynamic_scope() && !facts.function_has_direct_eval {
         if let Some(register) = reduce_global(identifier, ops, facts, next_register, locals) {
             return Some(register);
         }

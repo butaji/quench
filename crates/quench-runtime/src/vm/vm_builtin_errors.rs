@@ -85,6 +85,7 @@ fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
     }
 }
 
+
 fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.stack")?;
     let stack = arguments.first().ok_or_else(|| {
@@ -172,13 +173,10 @@ fn set_error_stack_home() -> Option<Value> {
 
 fn has_error_slot(value: &Value) -> bool {
     match value {
-        Value::Object(value) => value
-            .iter()
-            .any(|(key, _)| key == crate::builtins::ERROR_SLOT),
+        Value::BindingCell(cell) => has_error_slot(&cell.borrow()),
+        Value::Object(value) => value.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT),
         Value::ObjectAlias(alias) => alias.0.borrow().upgrade().is_some_and(|value| {
-            value
-                .iter()
-                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
+            value.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT)
         }),
         _ => false,
     }

@@ -164,7 +164,8 @@ fn same_listener(left: &Value, right: &Value) -> bool {
 /// `{ once: true }` from the options bag; anything else is ignored.
 fn once_option(args: &[Value]) -> bool {
     matches!(
-        args.get(2).and_then(|v| execute::get_property_result(v, "once").ok()),
+        args.get(2)
+            .and_then(|v| execute::get_property_result(v, "once").ok()),
         Some(Value::Boolean(true))
     )
 }
@@ -176,7 +177,9 @@ fn passive_option(args: &[Value]) -> bool {
 }
 
 fn signal_option(args: &[Value]) -> Result<Option<Value>, VmError> {
-    let Some(options) = args.get(2) else { return Ok(None) };
+    let Some(options) = args.get(2) else {
+        return Ok(None);
+    };
     if matches!(options, Value::Null | Value::Undefined) {
         return Ok(None);
     }
@@ -185,7 +188,9 @@ fn signal_option(args: &[Value]) -> Result<Option<Value>, VmError> {
         return Ok(None);
     }
     if !matches!(signal, Value::Object(_)) || !is_abort_signal(&signal) {
-        return Err(execute::type_error("The \"signal\" option must be an AbortSignal"));
+        return Err(execute::type_error(
+            "The \"signal\" option must be an AbortSignal",
+        ));
     }
     Ok(Some(signal))
 }
@@ -196,22 +201,6 @@ fn weak_option(args: &[Value], receiver: &Value) -> bool {
     };
     let handler = execute::get_property(options, "kWeakHandler\0quench");
     matches!(handler, Value::Object(_)) && !execute::same_value(&handler, receiver)
-}
-
-fn protected_abort_listener(callback: &Value) -> bool {
-    if matches!(
-        callback,
-        Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
-                    quench_runtime::ops::HostCapabilityKind::Custom(0x0130)
-                ))
-            )
-    ) {
-        return true;
-    }
-    execute::is_truthy(&execute::get_property(callback, "\0quench:abort-listener"))
 }
 
 pub fn add_event_listener(
@@ -314,12 +303,22 @@ pub fn dispatch_event(
     }
     let snapshot: Vec<Listener> = target.borrow().listeners_of(&event_type).to_vec();
     let has_protected_listener = snapshot.iter().any(|listener| {
-        protected_abort_listener(&listener.callback)
+        execute::is_truthy(&execute::get_property(
+            &listener.callback,
+            "\0quench:abort-listener",
+        ))
     });
-    execute::set_property_in_place(event, "target", receiver.clone());
-    execute::set_property_in_place(event, "currentTarget", receiver.clone());
-    execute::set_property_in_place(event, "srcElement", receiver.clone());
-    execute::set_property_in_place(event, "eventPhase", Value::Number(2.0));
+    let active = execute::set_property(
+        execute::set_property(
+            execute::set_property(event.clone(), "target", receiver.clone()),
+            "currentTarget",
+            receiver.clone(),
+        ),
+        "srcElement",
+        receiver.clone(),
+    );
+    let active = execute::set_property(active, "eventPhase", Value::Number(2.0));
+    execute::replace_value(event, &active);
     for listener in &snapshot {
         if listener.weak {
             continue;
@@ -331,7 +330,10 @@ pub fn dispatch_event(
         {
             continue;
         }
-        let protected = protected_abort_listener(&listener.callback);
+        let protected = execute::is_truthy(&execute::get_property(
+            &listener.callback,
+            "\0quench:abort-listener",
+        ));
         let stopped = execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
             || event
                 .object_identity()
@@ -347,7 +349,9 @@ pub fn dispatch_event(
             )?;
         }
         if listener.passive {
-            execute::set_property_in_place(event, "\0event:passive", Value::Boolean(true));
+            let passive =
+                execute::set_property(event.clone(), "\0event:passive", Value::Boolean(true));
+            execute::replace_value(event, &passive);
         }
         let result = if quench_runtime::is_callable(&listener.callback) {
             execute::call(&listener.callback, receiver, std::slice::from_ref(event))
@@ -378,10 +382,11 @@ pub fn dispatch_event(
         .object_identity()
         .is_some_and(|identity| state.borrow().prevented_events.contains(&identity))
         || execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
-    execute::set_property_in_place(event, "eventPhase", Value::Number(0.0));
-    execute::set_property_in_place(event, "currentTarget", Value::Null);
-    execute::set_property_in_place(event, "srcElement", Value::Null);
-    execute::set_property_in_place(event, "target", receiver.clone());
+    let reset = execute::set_property(event.clone(), "eventPhase", Value::Number(0.0));
+    let reset = execute::set_property(reset, "currentTarget", Value::Null);
+    let reset = execute::set_property(reset, "srcElement", Value::Null);
+    let reset = execute::set_property(reset, "target", receiver.clone());
+    execute::replace_value(event, &reset);
     Ok(Value::Boolean(!prevented))
 }
 
@@ -492,16 +497,9 @@ pub fn set_max_listeners(
 ) -> Result<Value, VmError> {
     let n = match args.first() {
         Some(Value::Number(n)) if *n >= 0.0 && n.is_finite() => *n as usize,
-        Some(Value::Number(n)) => {
-            return Err(crate::modules::buffer_enc::out_of_range(
-                "n",
-                "a non-negative number",
-                &execute::number_to_js_string(*n),
-            ))
-        }
         _ => {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(
-                "The \"n\" argument must be a non-negative number".into(),
+            return Err(execute::type_error(
+                "The \"n\" argument must be a non-negative number",
             ))
         }
     };

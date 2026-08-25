@@ -89,6 +89,22 @@ pub(crate) mod error {
     pub(crate) fn throw_type_error(message: &str) -> crate::execute::VmError {
         throw(Kind::Type, message)
     }
+
+    pub(crate) fn throw_type_error_for_realm(
+        realm: crate::ops::RealmId,
+        message: &str,
+    ) -> crate::execute::VmError {
+        let error = crate::builtins::error(
+            crate::ops::Builtin::TypeError,
+            &[Value::String(message.to_string())],
+        );
+        let constructor = crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::TypeError);
+        crate::execute::VmError::Thrown(crate::builtins::set_property(
+            error,
+            "constructor",
+            constructor,
+        ))
+    }
     #[cold]
     #[inline(never)]
     pub(crate) fn throw_reference_error(message: &str) -> crate::execute::VmError {
@@ -213,6 +229,8 @@ pub struct PromiseData {
     pub(crate) already_resolved: Cell<bool>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
     pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
+    pub(crate) aggregate_callback: RefCell<Option<PromiseAggregateCallback>>,
+    pub(crate) capability_executor: RefCell<Option<PromiseCapabilityExecutor>>,
 }
 
 impl PromiseData {
@@ -238,6 +256,8 @@ impl PromiseData {
             already_resolved: Cell::new(already_resolved),
             then_actions: RefCell::new(Vec::new()),
             continuations: RefCell::new(Vec::new()),
+            aggregate_callback: RefCell::new(None),
+            capability_executor: RefCell::new(None),
         }
     }
 
@@ -411,6 +431,7 @@ pub struct GeneratorData {
     pub pending_yield: RefCell<bool>,
     pub(crate) executing: RefCell<bool>,
     pub(crate) running: RefCell<bool>,
+    pub(crate) pending_completion: RefCell<Option<crate::completion::Completion>>,
     pub(crate) async_next_queue: RefCell<VecDeque<(Value, Rc<PromiseData>)>>,
 }
 
