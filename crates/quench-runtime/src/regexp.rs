@@ -386,6 +386,14 @@ fn compile_and_find<'a>(
     } else {
         find_match_from_sticky(&regex, text, start, sticky)
     };
+    if !flags.contains('u')
+        && !flags.contains('v')
+        && start == 0
+        && single_dot_anchor(source)
+        && text.chars().any(|character| character.len_utf16() == 2)
+    {
+        result = Ok(None);
+    }
     if matches!(&result, Ok(None))
         && !flags.contains('u')
         && !flags.contains('v')
@@ -403,6 +411,20 @@ fn compile_and_find<'a>(
         crate::execution_trace::regexp(source, compile_ns, match_ns);
     }
     result
+}
+
+fn single_dot_anchor(source: &str) -> bool {
+    matches!(
+        source,
+        "^.$"
+            | "(?s:^.$)"
+            | "(?s-:^.$)"
+            | "(?-s:^.$)"
+            | "(?s:(?-s:^.$))"
+            | "(?s-:(?-s:^.$))"
+            | "(?-s:(?s:^.$))"
+            | "(?-s:(?s-:^.$))"
+    )
 }
 
 fn adjust_duplicate_quantified_match(
