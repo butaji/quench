@@ -607,7 +607,94 @@
         });
       }
     }));
+    readable.__quenchIterator = iterator;
     return readable;
+  };
+
+  const readableValues = async function* (stream) {
+    const iterator = stream.__quenchIterator;
+    if (iterator) {
+      while (true) {
+        const step = await iterator.next();
+        if (step.done) return;
+        yield step.value;
+      }
+    } else {
+      yield* stream;
+    }
+  };
+
+  function sliceCount(count) {
+    const number = Number(count);
+    if (!Number.isFinite(number) && number !== Infinity) return 0;
+    if (number < 0) {
+      const error = new RangeError("The count argument must be non-negative");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return Math.trunc(number);
+  }
+
+  function sliceAbortError() {
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    error.code = "ABORT_ERR";
+    return error;
+  }
+
+  function sliceReadable(stream, count, drop, options) {
+    const limit = sliceCount(count);
+    const signal = options?.signal;
+    const slice = {
+      readable: true,
+      destroyed: false,
+      async *[Symbol.asyncIterator]() {
+        let skipped = 0;
+        let emitted = 0;
+        if (limit === 0) return;
+        if (signal?.aborted) throw sliceAbortError();
+        for await (const value of readableValues(stream)) {
+          if (signal?.aborted) throw sliceAbortError();
+          if (skipped < drop) {
+            skipped++;
+            continue;
+          }
+          if (emitted >= limit) break;
+          emitted++;
+          yield value;
+        }
+      },
+      take(nextCount, nextOptions) {
+        return sliceReadable(this, nextCount, 0, nextOptions);
+      },
+      drop(nextCount, nextOptions) {
+        return sliceReadable(this, Infinity, nextCount, nextOptions);
+      },
+      async toArray() {
+        if (limit === 0) return [];
+        const values = [];
+        for await (const value of this) values.push(value);
+        return values;
+      },
+      destroy(error) {
+        this.destroyed = true;
+        if (typeof stream.destroy === "function") stream.destroy(error);
+        return this;
+      }
+    };
+    return slice;
+  }
+
+  ReadableClass.prototype.take = function (count, options) {
+    return sliceReadable(this, count, 0, options);
+  };
+  ReadableClass.prototype.drop = function (count, options) {
+    return sliceReadable(this, Infinity, count, options);
+  };
+  ReadableClass.prototype.toArray = async function () {
+    const values = [];
+    for await (const value of readableValues(this)) values.push(value);
+    return values;
   };
 
   if (typeof Symbol === "function" && Symbol.asyncIterator) {
