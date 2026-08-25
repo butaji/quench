@@ -1,4 +1,4 @@
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+pub(crate) fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if let Some(value) = value.filter(|value| crate::value::is_object(value)) {
         if let Value::Object(object) = value {
             let direct = ["year", "month", "day"].map(|name| {
