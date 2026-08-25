@@ -198,6 +198,22 @@ fn weak_option(args: &[Value], receiver: &Value) -> bool {
     matches!(handler, Value::Object(_)) && !execute::same_value(&handler, receiver)
 }
 
+fn protected_abort_listener(callback: &Value) -> bool {
+    if matches!(
+        callback,
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+                    quench_runtime::ops::HostCapabilityKind::Custom(0x0130)
+                ))
+            )
+    ) {
+        return true;
+    }
+    execute::is_truthy(&execute::get_property(callback, "\0quench:abort-listener"))
+}
+
 pub fn add_event_listener(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -298,10 +314,7 @@ pub fn dispatch_event(
     }
     let snapshot: Vec<Listener> = target.borrow().listeners_of(&event_type).to_vec();
     let has_protected_listener = snapshot.iter().any(|listener| {
-        execute::is_truthy(&execute::get_property(
-            &listener.callback,
-            "\0quench:abort-listener",
-        ))
+        protected_abort_listener(&listener.callback)
     });
     execute::set_property_in_place(event, "target", receiver.clone());
     execute::set_property_in_place(event, "currentTarget", receiver.clone());
@@ -318,10 +331,7 @@ pub fn dispatch_event(
         {
             continue;
         }
-        let protected = execute::is_truthy(&execute::get_property(
-            &listener.callback,
-            "\0quench:abort-listener",
-        ));
+        let protected = protected_abort_listener(&listener.callback);
         let stopped = execute::is_truthy(&execute::get_property(event, "\0event:cancelBubble"))
             || event
                 .object_identity()
