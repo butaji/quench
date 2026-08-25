@@ -503,15 +503,43 @@ fn add(
     values[1] = total.rem_euclid(12.0) + 1.0;
     let days = (number_property(&duration, "weeks") * 7.0 + number_property(&duration, "days"))
         * direction;
-    if days != 0.0 {
+    let current_time = values[3] * 3_600_000_000_000.0
+        + values[4] * 60_000_000_000.0
+        + values[5] * 1_000_000_000.0
+        + values[6] * 1_000_000.0
+        + values[7] * 1_000.0
+        + values[8];
+    let time_delta = current_time
+        + (number_property(&duration, "hours") * 3_600_000_000_000.0
+            + number_property(&duration, "minutes") * 60_000_000_000.0
+            + number_property(&duration, "seconds") * 1_000_000_000.0
+            + number_property(&duration, "milliseconds") * 1_000_000.0
+            + number_property(&duration, "microseconds") * 1_000.0
+            + number_property(&duration, "nanoseconds"))
+            * direction;
+    let day_nanos = 86_400_000_000_000.0;
+    let carry_days = (time_delta / day_nanos).floor();
+    let remainder = time_delta.rem_euclid(day_nanos);
+    let total_days = days + carry_days;
+    if total_days != 0.0 {
         let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?
-            .checked_add_signed(CalendarDuration::days(days as i64))
+            .checked_add_signed(CalendarDuration::days(total_days as i64))
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
         values[0] = date.year() as f64;
         values[1] = date.month() as f64;
         values[2] = date.day() as f64;
     }
+    values[3] = (remainder / 3_600_000_000_000.0).floor();
+    let mut remainder = remainder - values[3] * 3_600_000_000_000.0;
+    values[4] = (remainder / 60_000_000_000.0).floor();
+    remainder -= values[4] * 60_000_000_000.0;
+    values[5] = (remainder / 1_000_000_000.0).floor();
+    remainder -= values[5] * 1_000_000_000.0;
+    values[6] = (remainder / 1_000_000.0).floor();
+    remainder -= values[6] * 1_000_000.0;
+    values[7] = (remainder / 1_000.0).floor();
+    values[8] = remainder - values[7] * 1_000.0;
     construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
 
