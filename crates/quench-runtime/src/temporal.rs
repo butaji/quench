@@ -42,7 +42,10 @@ mod stubs {
                 return Some(Ok(Value::Object(std::rc::Rc::new(
                     crate::value::ObjectData::new(vec![
                         ("epochNanoseconds".to_string(), Value::BigInt("0".into())),
-                        ("\0prototype".to_string(), Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype)),
+                        (
+                            "\0prototype".to_string(),
+                            Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype),
+                        ),
                     ]),
                 ))));
             }
@@ -50,16 +53,24 @@ mod stubs {
                 return Some(Ok(Value::String("UTC".into())));
             }
             crate::ops::Builtin::TemporalNowPlainDateISO => {
-                return Some(super::construct_stub(crate::ops::Builtin::TemporalPlainDatePrototype));
+                return Some(super::construct_stub(
+                    crate::ops::Builtin::TemporalPlainDatePrototype,
+                ));
             }
             crate::ops::Builtin::TemporalNowPlainDateTimeISO => {
-                return Some(super::construct_stub(crate::ops::Builtin::TemporalPlainDateTimePrototype));
+                return Some(super::construct_stub(
+                    crate::ops::Builtin::TemporalPlainDateTimePrototype,
+                ));
             }
             crate::ops::Builtin::TemporalNowPlainTimeISO => {
-                return Some(super::construct_stub(crate::ops::Builtin::TemporalPlainTimePrototype));
+                return Some(super::construct_stub(
+                    crate::ops::Builtin::TemporalPlainTimePrototype,
+                ));
             }
             crate::ops::Builtin::TemporalNowZonedDateTimeISO => {
-                return Some(super::construct_stub(crate::ops::Builtin::TemporalZonedDateTimePrototype));
+                return Some(super::construct_stub(
+                    crate::ops::Builtin::TemporalZonedDateTimePrototype,
+                ));
             }
             _ => return None,
         };

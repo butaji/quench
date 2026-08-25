@@ -158,7 +158,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainDatePrototype => TEMPORAL_PLAIN_DATE_PROTOTYPE_NAMES,
         Builtin::TemporalPlainDateTime => &["length", "name", "prototype", "from", "compare"],
-        Builtin::TemporalPlainDateTimePrototype => &["constructor", "calendarId", "year", "month", "monthCode", "day", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond", "toString", "toJSON", "toLocaleString", "equals", "valueOf", "add", "subtract", "with", "round"],
+        Builtin::TemporalPlainDateTimePrototype => &["constructor", "calendarId", "era", "eraYear", "year", "month", "monthCode", "day", "dayOfWeek", "dayOfYear", "weekOfYear", "yearOfWeek", "daysInWeek", "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond", "toString", "toJSON", "toLocaleString", "equals", "valueOf", "add", "subtract", "with", "round", "until", "since", "toPlainDate", "toPlainTime", "toZonedDateTime", "withCalendar", "withPlainTime"],
         Builtin::TemporalPlainTime => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainTimePrototype => &["constructor", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond", "toString", "toJSON", "toLocaleString", "equals", "valueOf", "add", "subtract", "with", "round", "until", "since"],
         Builtin::TemporalPlainMonthDay => &["length", "name", "prototype", "from", "compare"],
