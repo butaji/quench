@@ -180,6 +180,12 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     if same_fields(arguments.first(), arguments.get(1)) {
         if let Some(options) = arguments.get(2) {
             validate_compare_options(Some(options))?;
+            if crate::value::is_object(options) {
+                let relative_to = crate::execute::get_property_result(options, "relativeTo")?;
+                if !matches!(relative_to, Value::Undefined) {
+                    relative_date(&relative_to)?;
+                }
+            }
         }
         return Ok(Value::Number(0.0));
     }
@@ -210,7 +216,11 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         ));
     }
     let difference = if date_units(&left) || date_units(&right) {
-        duration_difference(&left, &right, relative_to.as_ref())
+        let date = relative_to
+            .as_ref()
+            .map(|value| relative_date(value))
+            .transpose()?;
+        duration_difference(&left, &right, date)
     } else {
         exact_time_difference(&left, &right)
     };
@@ -220,29 +230,196 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Number(if difference < 0 { -1.0 } else { 1.0 }))
 }
 
-fn duration_difference(left: &Value, right: &Value, relative_to: Option<&Value>) -> i128 {
-    let scale =
-        relative_to.and_then(plain_date_month_length).unwrap_or(30) as i128 * 86_400_000_000_000;
-    duration_value_with_month(left, scale) - duration_value_with_month(right, scale)
+fn duration_difference(left: &Value, right: &Value, relative_to: Option<(i32, u32, u32)>) -> i128 {
+    let value = |duration: &Value| {
+        let (year, month, _) = relative_to.unwrap_or((1970, 1, 1));
+        let day = 86_400_000_000_000_i128;
+        let year_days = if is_leap_year(year) { 366 } else { 365 };
+        i128::from(number_property(duration, "years") as i64) * i128::from(year_days) * day
+            + i128::from(number_property(duration, "months") as i64)
+                * i128::from(calendar_days_in_month(year, month))
+                * day
+            + duration_value_without_calendar(duration)
+    };
+    value(left) - value(right)
 }
 
-fn duration_value_with_month(value: &Value, month_scale: i128) -> i128 {
-    duration_value(value) - number_property(value, "months") as i128 * 2_592_000_000_000_000
-        + number_property(value, "months") as i128 * month_scale
+fn duration_value_without_calendar(value: &Value) -> i128 {
+    [
+        ("weeks", 604_800_000_000_000_i128),
+        ("days", 86_400_000_000_000),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
+    ]
+    .iter()
+    .map(|(name, scale)| number_property(value, name) as i128 * scale)
+    .sum()
 }
 
-fn plain_date_month_length(value: &Value) -> Option<u32> {
-    let year =
-        crate::conversion::to_number(&crate::execute::get_property(value, "year")).ok()? as i32;
-    let month =
-        crate::conversion::to_number(&crate::execute::get_property(value, "month")).ok()? as u32;
-    Some(match month {
-        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
+    let date = match value {
+        Value::String(text) => {
+            validate_relative_string(text)?;
+            validate_offset_match(text)?;
+            if has_z_without_annotation(text) {
+                return Err(crate::value::error::throw_range_error("Invalid time zone"));
+            }
+            let date = text.split_once('T').map_or(text.as_str(), |(date, _)| date);
+            let date = date.split_once('[').map_or(date, |(date, _)| date);
+            crate::temporal::plain_date::from(Some(&Value::String(date.into())))?
+        }
+        _ => {
+            let date = crate::temporal::plain_date::from(Some(value))?;
+            let timezone = crate::execute::get_property_result(value, "timeZone")?;
+            if !matches!(timezone, Value::Undefined) {
+                let Value::String(timezone) = timezone else {
+                    return Err(crate::value::error::throw_type_error("Invalid time zone"));
+                };
+                validate_relative_string(&timezone)?;
+                validate_timezone_string(&timezone)?;
+            }
+            let offset = crate::execute::get_property_result(value, "offset")?;
+            if !matches!(offset, Value::Undefined) {
+                let Value::String(offset) = offset else {
+                    return Err(crate::value::error::throw_type_error("Invalid offset"));
+                };
+                if !valid_offset(&offset) {
+                    return Err(crate::value::error::throw_range_error("Invalid offset"));
+                }
+            }
+            date
+        }
+    };
+    Ok((
+        number_property(&date, "year") as i32,
+        number_property(&date, "month") as u32,
+        number_property(&date, "day") as u32,
+    ))
+}
+
+fn validate_relative_string(text: &str) -> Result<(), VmError> {
+    if text.is_empty() {
+        return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
+    }
+    if text.contains("[u-ca=") && !text.contains("[u-ca=iso8601]") {
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    }
+    if let Some((_, time)) = text.split_once(['T', 't']) {
+        let base = time.split_once('[').map_or(time, |(base, _)| base);
+        if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
+            let offset = &base[sign..];
+            if !valid_offset(offset) {
+                return Err(crate::value::error::throw_range_error("Invalid time zone"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_offset_match(text: &str) -> Result<(), VmError> {
+    let Some((_, time)) = text.split_once(['T', 't']) else {
+        return Ok(());
+    };
+    let Some((base, annotation)) = time.split_once('[') else {
+        return Ok(());
+    };
+    let annotation = annotation.strip_suffix(']').unwrap_or(annotation);
+    if let Some(base) = offset_minutes(base) {
+        if let Some(annotation) = offset_minutes(annotation) {
+            if base != annotation {
+                return Err(crate::value::error::throw_range_error(
+                    "Offset does not match time zone",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn has_z_without_annotation(text: &str) -> bool {
+    text.split_once(['T', 't'])
+        .is_some_and(|(_, time)| time.ends_with('Z') && !text.contains('['))
+}
+
+fn validate_timezone_string(text: &str) -> Result<(), VmError> {
+    if let Some(index) = text.find(['T', 't']).filter(|index| *index >= 8) {
+        let time = &text[index + 1..];
+        let base = time.split_once('[').map_or(time, |(base, _)| base);
+        let has_offset = base.ends_with('Z') || base[1..].contains(['+', '-']);
+        if !has_offset && !text.contains('[') {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
+            if base[sign..].matches(':').count() > 1 {
+                return Err(crate::value::error::throw_range_error("Invalid time zone"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn valid_offset(value: &str) -> bool {
+    if !value.starts_with(['+', '-']) {
+        return false;
+    }
+    let value = value.strip_prefix(['+', '-']).unwrap_or(value);
+    let parts = value.split(':').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [compact] => compact.len() == 4 && compact.bytes().all(|byte| byte.is_ascii_digit()),
+        [hour, minute] => {
+            hour.len() == 2
+                && minute.len() == 2
+                && hour.bytes().all(|byte| byte.is_ascii_digit())
+                && minute.bytes().all(|byte| byte.is_ascii_digit())
+        }
+        [hour, minute, second] => {
+            hour.len() == 2
+                && minute.len() == 2
+                && hour.bytes().all(|byte| byte.is_ascii_digit())
+                && minute.bytes().all(|byte| byte.is_ascii_digit())
+                && second
+                    .split_once('.')
+                    .map_or(*second == "00", |(whole, fraction)| {
+                        whole == "00" && !fraction.is_empty() && fraction.bytes().all(|b| b == b'0')
+                    })
+        }
+        _ => false,
+    }
+}
+
+fn offset_minutes(value: &str) -> Option<i32> {
+    if value == "UTC" || value == "Z" {
+        return Some(0);
+    }
+    let start = value[1..].find(['+', '-']).map_or(0, |index| index + 1);
+    let value = &value[start..];
+    let sign = match value.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let value = &value[1..];
+    let (hour, minute) = value
+        .split_once(':')
+        .map_or((value.get(..2)?, value.get(2..4)?), |(h, m)| (h, m));
+    Some(sign * (hour.parse::<i32>().ok()? * 60 + minute.parse::<i32>().ok()?))
+}
+
+fn calendar_days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        2 if is_leap_year(year) => 29,
         2 => 28,
         4 | 6 | 9 | 11 => 30,
-        _ if (1..=12).contains(&month) => 31,
-        _ => return None,
-    })
+        _ => 31,
+    }
+}
+
+fn is_leap_year(year: i32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 fn validate_compare_options(options: Option<&Value>) -> Result<(), VmError> {
