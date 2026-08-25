@@ -99,6 +99,15 @@ pub fn execute_call_continuation(
                 return Ok(());
             }
         }
+        let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
+        if let Some(result) =
+            crate::functions::execute_proven_leaf(function, &receiver, &continuation.arguments)
+        {
+            let value = result?;
+            *registers = continuation.caller_registers;
+            super::write_value(registers, continuation.destination, value);
+            return Ok(());
+        }
     }
     let mut stack: Vec<ActiveCall> = Vec::new();
     let mut current = match start(continuation.clone())? {
