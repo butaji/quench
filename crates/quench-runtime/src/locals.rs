@@ -833,6 +833,20 @@ pub(crate) fn replacement(value: &Value) -> Option<Value> {
     })
 }
 
+/// Whether an array execute word is still the current representative of its
+/// identity. The common no-replacement state is one TLS boolean read; any
+/// published successor returns to semantic resolution.
+#[inline(always)]
+pub(crate) fn array_word_is_current(array: &crate::value::ArrayData) -> bool {
+    if !REPLACEMENTS_ACTIVE.with(|active| active.get()) {
+        return true;
+    }
+    let identity = ReplacementIdentity::Array(array.identity());
+    let root = REPLACEMENT_ROOTS.with(|roots| roots.borrow().get(&identity).copied());
+    let Some(root) = root else { return true };
+    !REPLACEMENTS.with(|replacements| replacements.borrow().contains_key(&root))
+}
+
 pub(crate) fn reset_replacements() {
     REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
     REPLACEMENT_ROOTS.with(|roots| roots.borrow_mut().clear());
