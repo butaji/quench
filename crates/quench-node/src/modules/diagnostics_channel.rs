@@ -297,6 +297,23 @@ fn tracing_object(channels: Vec<Value>) -> Value {
             )
             .unwrap_or(Value::Undefined),
         ),
+        (
+            "tracePromise".into(),
+            eval_function(
+                "function(fn, context, thisArg) {\
+                  var args = Array.prototype.slice.call(arguments, 3);\
+                  if (typeof fn !== 'function') throw new TypeError('fn');\
+                  if (!this.hasSubscribers) return fn.apply(thisArg, args);\
+                  this.start?.publish(context); var self = this; var result;\
+                  try { result = fn.apply(thisArg, args); context.result = result; self.end?.publish(context); }\
+                  catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); throw error; }\
+                  if (!result || typeof result.then !== 'function') { process.emitWarning(\"tracePromise was called with the function '<anonymous>', which returned a non-thenable.\"); return result; }\
+                  result.then(function(value) { context.result = value; self.asyncStart?.publish(context); self.asyncEnd?.publish(context); }, function(error) { context.error = error; self.error?.publish(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); });\
+                  return result;\
+                }",
+            )
+            .unwrap_or(Value::Undefined),
+        ),
     ]);
     let object = host_api::object(properties);
     let descriptor = host_api::object(vec![
