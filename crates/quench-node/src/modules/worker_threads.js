@@ -305,6 +305,8 @@ var api = {
         throw new TypeError('The "filename" argument must be a string');
       }
       var self = emitter({ threadId: 1, exited: false, _queueEvents: true });
+      self.stdout = emitter({});
+      self.stderr = emitter({});
       var workerOn = self.on;
       self.on = function (name, listener) {
         if (name === 'exit' && self.exited && self._exitCode !== undefined && typeof listener === 'function') {
@@ -365,6 +367,12 @@ var api = {
         }
         var status = result && result.status === null ? 1 : (result ? result.status : 1);
         var output = result && result.stdout && typeof result.stdout.toString === 'function' ? result.stdout.toString() : String(result && result.stdout || '');
+        if (result && result.stdout && typeof self.stdout.emit === 'function') {
+          self.stdout.emit('data', result.stdout);
+        }
+        if (result && result.stderr && typeof self.stderr.emit === 'function') {
+          self.stderr.emit('data', result.stderr);
+        }
         var lines = output.split('\n');
         for (var j = 0; j < lines.length; j++) {
           var marker = '__QUENCH_WORKER_MESSAGE__';
