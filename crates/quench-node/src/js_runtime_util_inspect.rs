@@ -433,21 +433,3 @@ fn util_inspect(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
             .into(),
     ))
 }
-
-fn util_get_proxy_details(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Proxy(proxy)) = arguments.first() else {
-        return Ok(Value::Undefined);
-    };
-    if *proxy.revoked.borrow() {
-        return Ok(if matches!(arguments.get(1), Some(Value::Boolean(true))) {
-            quench_runtime::host_api::array(vec![Value::Null, Value::Null])
-        } else {
-            Value::Null
-        });
-    }
-    if matches!(arguments.get(1), Some(Value::Boolean(true))) {
-        Ok(quench_runtime::host_api::array(vec![proxy.target.clone(), proxy.handler.clone()]))
-    } else {
-        Ok(proxy.target.clone())
-    }
-}
