@@ -553,6 +553,23 @@ pub fn internal_util_sleep(
     Ok(Value::Undefined)
 }
 
+pub fn internal_util_assert_crypto(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("Crypto is not available".into())],
+    );
+    let error = quench_runtime::execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_NO_CRYPTO".into()),
+    );
+    Err(VmError::Thrown(error))
+}
+
 pub fn internal_binding(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,

@@ -244,10 +244,16 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let util = require(state, &[Value::String("util".into())]).ok()?;
             Some(quench_runtime::execute::get_property(&util, "types"))
         }
-        "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "sleep".to_string(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
-        )])),
+        "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![
+            (
+                "sleep".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
+            ),
+            (
+                "assertCrypto".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSERT_CRYPTO),
+            ),
+        ])),
         "internal/test/binding" => Some(crate::host::namespace_object_from_pairs(vec![(
             "internalBinding".to_string(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_BINDING),

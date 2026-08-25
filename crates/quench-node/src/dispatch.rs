@@ -134,6 +134,7 @@ const CAP_TIMERS_REFRESH: u16 = 0x070B;
 const CAP_RUN_LOOP: u16 = 0x070C;
 const CAP_RUN_EXIT: u16 = 0x070D;
 const CAP_INTERNAL_UTIL_SLEEP: u16 = 0x070E;
+const CAP_INTERNAL_UTIL_ASSERT_CRYPTO: u16 = 0x0721;
 const CAP_TIMERS_CLOSE: u16 = 0x070F;
 const CAP_TIMERS_GET_LIBUV_NOW: u16 = 0x0714;
 const CAP_UTIL_PROMISIFY: u16 = 0x071E;
@@ -542,6 +543,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_RUN_EXIT => timers_run_exit,
         CAP_RUN_UNCAUGHT => uncaught_dispatch,
         CAP_INTERNAL_UTIL_SLEEP => internal_util_sleep,
+        CAP_INTERNAL_UTIL_ASSERT_CRYPTO => internal_util_assert_crypto,
         CAP_TIMERS_CLOSE => timers_method_close,
         CAP_TIMERS_GET_LIBUV_NOW => timers_get_libuv_now,
         CAP_TIMERS_TO_PRIMITIVE => timers_method_to_primitive,
