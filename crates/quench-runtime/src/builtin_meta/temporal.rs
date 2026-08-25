@@ -89,6 +89,9 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstantEquals => Some("Temporal.Instant.prototype.equals"),
         Builtin::TemporalInstantAdd => Some("Temporal.Instant.prototype.add"),
         Builtin::TemporalInstantSubtract => Some("Temporal.Instant.prototype.subtract"),
+        Builtin::TemporalInstantUntil => Some("Temporal.Instant.prototype.until"),
+        Builtin::TemporalInstantSince => Some("Temporal.Instant.prototype.since"),
+        Builtin::TemporalInstantRound => Some("Temporal.Instant.prototype.round"),
         Builtin::TemporalPlainDateTime => Some("Temporal.PlainDateTime"),
         Builtin::TemporalPlainDateTimeFrom => Some("Temporal.PlainDateTime.from"),
         Builtin::TemporalPlainDateTimeCompare => Some("Temporal.PlainDateTime.compare"),
@@ -293,6 +296,9 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstantEquals => Some("equals"),
         Builtin::TemporalInstantAdd => Some("add"),
         Builtin::TemporalInstantSubtract => Some("subtract"),
+        Builtin::TemporalInstantUntil => Some("until"),
+        Builtin::TemporalInstantSince => Some("since"),
+        Builtin::TemporalInstantRound => Some("round"),
         Builtin::TemporalPlainDateTime => Some("PlainDateTime"),
         Builtin::TemporalPlainDateTimeFrom => Some("from"),
         Builtin::TemporalPlainDateTimeCompare => Some("compare"),
@@ -453,7 +459,9 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalInstantToZonedDateTimeISO => Some(0.0),
         Builtin::TemporalInstantEquals
         | Builtin::TemporalInstantAdd
-        | Builtin::TemporalInstantSubtract => Some(1.0),
+        | Builtin::TemporalInstantSubtract
+        | Builtin::TemporalInstantRound => Some(1.0),
+        Builtin::TemporalInstantUntil | Builtin::TemporalInstantSince => Some(2.0),
         Builtin::TemporalPlainDateTime => Some(3.0),
         Builtin::TemporalPlainDateTimeFrom => Some(1.0),
         Builtin::TemporalPlainDateTimeCompare => Some(2.0),
