@@ -342,7 +342,15 @@ pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
 }
 
 fn rendered(value: &Value) -> String {
-    crate::modules::util::inspect(value)
+    match value {
+        // Assertion messages contain the complete operands; object inspection
+        // may truncate embedded strings, but the observable message must not.
+        Value::String(text) => {
+            let text = text.strip_suffix('\n').unwrap_or(text);
+            format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
+        }
+        _ => crate::modules::util::inspect(value),
+    }
 }
 
 pub(crate) fn arg(args: &[Value], index: usize) -> Value {
@@ -460,13 +468,48 @@ fn binary_assert(
     let custom = custom_message(args, 2);
     let generated = custom.is_none();
     let message = custom.unwrap_or_else(|| {
-        format!(
-            "Expected values to be {}:\n\n{} {} {}\n",
-            operator,
-            rendered(&actual),
-            relation,
-            rendered(&expected)
-        )
+        let label = match operator {
+            "strictEqual" => "strictly equal",
+            "notStrictEqual" => "strictly unequal",
+            "equal" => "loosely equal",
+            "notEqual" => "loosely unequal",
+            _ => operator,
+        };
+        let full = receiver.is_some_and(|value| {
+            matches!(execute::get_property(value, "diff"), Value::String(diff) if diff == "full")
+        });
+        if full {
+            match operator {
+                "strictEqual" => format!(
+                    "Expected values to be strictly equal:\n+ actual - expected\n\n+ {}\n- {}\n",
+                    rendered(&actual),
+                    rendered(&expected)
+                ),
+                "notStrictEqual" => format!(
+                    "Expected \"actual\" to be strictly unequal to:\n\n{}",
+                    if matches!(&actual, Value::String(text) if text.ends_with('\n')) {
+                        format!("{}\n", rendered(&actual))
+                    } else {
+                        rendered(&actual)
+                    }
+                ),
+                _ => format!(
+                    "Expected values to be {}:\n\n{} {} {}\n",
+                    label,
+                    rendered(&actual),
+                    relation,
+                    rendered(&expected)
+                ),
+            }
+        } else {
+            format!(
+                "Expected values to be {}:\n\n{} {} {}\n",
+                label,
+                rendered(&actual),
+                relation,
+                rendered(&expected)
+            )
+        }
     });
     Err(with_instance_diff(
         assertion_error(
@@ -543,18 +586,36 @@ pub fn deep_strict_equal(
     }
     let custom = custom_message(args, 2);
     let generated = custom.is_none();
+    let operator = if _r.is_some_and(|receiver| {
+        matches!(execute::get_property(receiver, "strict"), Value::Boolean(false))
+    }) {
+        "deepEqual"
+    } else {
+        "deepStrictEqual"
+    };
+    let full = _r.is_some_and(|receiver| {
+        matches!(execute::get_property(receiver, "diff"), Value::String(diff) if diff == "full")
+    });
     let message = custom.map_or_else(
-        || format!(
-            "Expected values to be strictly deep-equal:\n\n{}\n",
-            deep_diff(&actual, &expected)
-        ),
+        || if full && matches!((&actual, &expected), (Value::String(_), Value::String(_))) {
+            format!(
+                "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
+                rendered(&actual),
+                rendered(&expected)
+            )
+        } else {
+            format!(
+                "Expected values to be strictly deep-equal:\n\n{}\n",
+                deep_diff(&actual, &expected)
+            )
+        },
         |message| format!(
             "{message}\n+ actual - expected\n\n{}\n",
             deep_diff(&actual, &expected)
         ),
     );
     Err(with_instance_diff(
-        assertion_error(message, "deepStrictEqual", actual, expected, generated),
+        assertion_error(message, operator, actual, expected, generated),
         _r,
     ))
 }
