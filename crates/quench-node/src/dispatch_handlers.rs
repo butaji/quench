@@ -418,6 +418,7 @@ pub fn util_exception_with_host_port(
     Ok(Value::object(properties))
 }
 
+
 fn timer_promise_alias(value: &Value) -> Option<&'static str> {
     let capability = match value {
         Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
