@@ -782,6 +782,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_TEXT_ENCODER_NEW => crate::modules::text_encoder::new_text_encoder,
         CAP_URL_SEARCH => url_search_params,
         CAP_NET_SERVER => net_create_server,
+        CAP_NET_CONNECT => crate::modules::net::socket_construct,
         CAP_HTTP_SERVER => http_create_server_construct,
         CAP_HTTP_AGENT => crate::modules::http_client::agent_construct,
         CAP_BUFFER_NEW => buffer_new_construct,
