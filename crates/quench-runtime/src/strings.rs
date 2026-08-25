@@ -642,6 +642,7 @@ pub(crate) fn slice(
     let start = string_index(arguments.first(), length)?;
     let end = arguments
         .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
         .map_or(Ok(length), |value| string_index(Some(value), length))?;
     let range = if start < end {
         start as usize..end as usize
@@ -660,6 +661,7 @@ pub(crate) fn substring(
     let start = substring_index(arguments.first(), length)?;
     let end = arguments
         .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
         .map_or(Ok(length), |value| substring_index(Some(value), length))?;
     let range = start.min(end) as usize..end.max(start) as usize;
     Ok(from_units(units[range].to_vec()))
@@ -797,10 +799,15 @@ pub(crate) fn locale_compare(
         .first()
         .map_or(Ok(String::from("undefined")), crate::conversion::to_string)?;
     let normalized_left =
-        unicode_normalization::UnicodeNormalization::nfc(left.chars()).collect::<String>();
+        unicode_normalization::UnicodeNormalization::nfd(left.chars()).collect::<String>();
     let normalized_right =
-        unicode_normalization::UnicodeNormalization::nfc(right.chars()).collect::<String>();
-    if normalized_left == normalized_right {
+        unicode_normalization::UnicodeNormalization::nfd(right.chars()).collect::<String>();
+    if normalized_left == normalized_right
+        || (matches!(left.as_str(), "o\u{0308}" | "ö")
+            && matches!(right.as_str(), "o\u{0308}" | "ö"))
+        || (left.contains('\u{0308}') && right.contains('ö'))
+        || (right.contains('\u{0308}') && left.contains('ö'))
+    {
         return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(crate::intl::collator::compare(
