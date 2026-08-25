@@ -19,6 +19,13 @@ struct AdvectFact {
     s1: u16, s0: u16, t1: u16, t0: u16, row1: u16, row2: u16,
 }
 
+#[derive(Clone, Copy)]
+struct AdvectRowsFact {
+    inner: AdvectFact,
+    outer_slot: u16,
+    inner_loop: CountedForFact,
+}
+
 impl AdvectFact {
     fn recognize(code: crate::machine::CodeView<'_>, counter: u16) -> Option<Self> {
         Self::recognize_compact(code, counter).or_else(|| Self::recognize_legacy(code, counter))
@@ -149,6 +156,9 @@ fn run_advect_kernel(
     body: crate::machine::CodeView<'_>,
     loop_shape: u64,
 ) -> Option<crate::completion::Completion> {
+    if let Some(completion) = run_advect_rows_kernel(loop_fact, body, loop_shape) {
+        return Some(completion);
+    }
     (loop_fact.comparison == crate::ops::BinaryOp::LessEqual && loop_fact.step == 1.0)
         .then_some(())?;
     let fact = AdvectFact::recognize(body, loop_fact.slot)?;
@@ -188,6 +198,107 @@ fn run_advect_kernel(
     counter = counter_end as f64;
     final_values.flush(&environment, fact, pos, counter, loop_fact.slot);
     Some(crate::completion::Completion::Normal)
+}
+
+fn run_advect_rows_kernel(
+    outer_loop: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    outer_shape: u64,
+) -> Option<crate::completion::Completion> {
+    let (fact, inner_init, inner_body) = recognize_advect_rows(outer_loop, body)?;
+    let environment = crate::locals::current();
+    let outer_start = kernel_index(environment.get_number(fact.outer_slot)?)?;
+    let rows = unit_iteration_count(
+        outer_loop, outer_start as f64, outer_loop.bound.number(&environment)?,
+    )?;
+    let inner_start = initialized_number(inner_init, fact.inner_loop.slot)?;
+    let columns = unit_iteration_count(
+        fact.inner_loop, inner_start, fact.inner_loop.bound.number(&environment)?,
+    )?;
+    (rows != 0 && columns != 0).then_some(())?;
+    let mut scalars = AdvectScalars::load(&environment, fact.inner)?;
+    let Value::Array(d) = crate::locals::resolved_replacement(environment.get(fact.inner.d)) else { return None };
+    let Value::Array(d0) = crate::locals::resolved_replacement(environment.get(fact.inner.d0)) else { return None };
+    let Value::Array(u) = crate::locals::resolved_replacement(environment.get(fact.inner.u)) else { return None };
+    let Value::Array(v) = crate::locals::resolved_replacement(environment.get(fact.inner.v)) else { return None };
+    (!std::rc::Rc::ptr_eq(&d, &d0)
+        && !std::rc::Rc::ptr_eq(&d, &u)
+        && !std::rc::Rc::ptr_eq(&d, &v)).then_some(())?;
+    validate_advect_rows(&d, &d0, &u, &v, outer_start, rows, columns, scalars)?;
+    let mut d_words = d.numeric_kernel_words_mut()?;
+    let d0_words = d0.numeric_kernel_words()?;
+    let u_words = u.numeric_kernel_words()?;
+    let v_words = v.numeric_kernel_words()?;
+    let counter_start = kernel_index(inner_start)?;
+    let mut pos = 0;
+    let mut final_values = AdvectFinal::default();
+    for row in outer_start..outer_start + rows {
+        pos = row * scalars.row_size;
+        scalars.j = row as f64;
+        final_values = execute_advect(
+            &mut d_words, &d0_words, &u_words, &v_words, &mut pos,
+            counter_start, columns, scalars,
+        );
+    }
+    final_values.flush(
+        &environment, fact.inner, pos, inner_start + columns as f64,
+        fact.inner_loop.slot,
+    );
+    environment.set(fact.outer_slot, Value::Number((outer_start + rows) as f64));
+    trace_advect_rows(outer_shape, inner_body, rows, columns);
+    Some(crate::completion::Completion::Normal)
+}
+
+fn recognize_advect_rows(
+    outer_loop: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+) -> Option<(AdvectRowsFact, crate::machine::CodeView<'_>, crate::machine::CodeView<'_>)> {
+    (body.len() == 7 && outer_loop.timing == CountedStepTiming::AfterBody
+        && outer_loop.step == 1.0).then_some(())?;
+    let (_, outer_slot) = recognized_static_load(body, 0)?;
+    let (_, row_size) = recognized_static_load(body, 1)?;
+    (outer_slot == outer_loop.slot).then_some(())?;
+    let pos = compact_initialization_slot(body, 3, result_register(body, 2)?)?;
+    let Op::Loop { init, test, body: inner, update, post_test, .. } = body.cold_at(5)? else { return None };
+    (!*post_test).then_some(())?;
+    let (init, test, inner, update) = (init.code()?, test.code()?, inner.code()?, update.code()?);
+    let inner_loop = CountedForFact::recognize(test, update)?;
+    let inner_fact = AdvectFact::recognize(inner, inner_loop.slot)?;
+    (inner_fact.j == outer_slot && inner_fact.pos == pos && inner_fact.row_size == row_size)
+        .then_some(())?;
+    Some((AdvectRowsFact { inner: inner_fact, outer_slot, inner_loop }, init, inner))
+}
+
+fn validate_advect_rows(
+    d: &crate::value::ArrayData,
+    d0: &crate::value::ArrayData,
+    u: &crate::value::ArrayData,
+    v: &crate::value::ArrayData,
+    start: usize,
+    rows: usize,
+    columns: usize,
+    scalars: AdvectScalars,
+) -> Option<()> {
+    let last_row = start.checked_add(rows)?.checked_sub(1)?;
+    let first_pos = start.checked_mul(scalars.row_size)?;
+    let last_pos = last_row.checked_mul(scalars.row_size)?.checked_add(columns)?;
+    validate_advect_arrays(
+        d, d0, u, v, first_pos, last_pos.checked_sub(first_pos)?, scalars,
+    )
+}
+
+fn trace_advect_rows(
+    outer_shape: u64,
+    inner_body: crate::machine::CodeView<'_>,
+    rows: usize,
+    columns: usize,
+) {
+    let inner_shape = crate::execution_trace::loop_shape(inner_body);
+    crate::execution_trace::loop_shape_entries(inner_shape, rows.saturating_sub(1));
+    crate::execution_trace::counted_loop_iterations(outer_shape, rows);
+    crate::execution_trace::numeric_kernel_iterations(
+        "counted_packed_f64_advect", inner_shape, rows.saturating_mul(columns), 6, 1,
+    );
 }
 
 #[derive(Clone, Copy)]
