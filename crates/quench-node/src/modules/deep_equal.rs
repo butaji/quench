@@ -38,6 +38,11 @@ fn compare_partial(
             }
             for index in 0..b.logical_len() {
                 let key = index.to_string();
+                if !execute::has_own_property(right, &key)
+                    || !execute::has_own_property(left, &key)
+                {
+                    return Ok(false);
+                }
                 if !compare_partial(
                     &execute::get_property_result(left, &key)?,
                     &execute::get_property_result(right, &key)?,
@@ -53,6 +58,9 @@ fn compare_partial(
                 return Ok(true);
             }
             for key in execute::own_enumerable_keys(right) {
+                if !execute::has_own_property(left, &key) {
+                    return Ok(false);
+                }
                 if !compare_partial(
                     &execute::get_property_result(left, &key)?,
                     &execute::get_property_result(right, &key)?,
