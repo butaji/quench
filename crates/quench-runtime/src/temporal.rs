@@ -353,7 +353,53 @@ mod stubs {
                 crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
         }
-        let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
+        let epoch = crate::execute::get_property_result(value, "epochNanoseconds");
+        if epoch.is_err() || matches!(&epoch, Ok(Value::Undefined)) {
+            let year =
+                crate::conversion::to_number(&crate::execute::get_property_result(value, "year")?)?
+                    as i32;
+            let month = crate::conversion::to_number(&crate::execute::get_property_result(
+                value, "month",
+            )?)? as u32;
+            let day =
+                crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?
+                    as u32;
+            let hour = crate::conversion::to_number(
+                &crate::execute::get_property_result(value, "hour").unwrap_or(Value::Number(0.0)),
+            )? as i128;
+            let minute = crate::conversion::to_number(
+                &crate::execute::get_property_result(value, "minute").unwrap_or(Value::Number(0.0)),
+            )? as i128;
+            let second = crate::conversion::to_number(
+                &crate::execute::get_property_result(value, "second").unwrap_or(Value::Number(0.0)),
+            )? as i128;
+            let timezone = crate::conversion::to_string(&crate::execute::get_property_result(
+                value, "timeZone",
+            )?)?;
+            let year_adjusted = i128::from(year) - i128::from(month <= 2);
+            let era = if year_adjusted >= 0 {
+                year_adjusted
+            } else {
+                year_adjusted - 399
+            } / 400;
+            let year_of_era = year_adjusted - era * 400;
+            let month_i = i128::from(month);
+            let day_of_year =
+                (153 * (month_i + if month_i > 2 { -3 } else { 9 }) + 2) / 5 + i128::from(day) - 1;
+            let days = era * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100
+                + day_of_year
+                - 719_468;
+            let epoch = days * 86_400_000_000_000
+                + hour * 3_600_000_000_000
+                + minute * 60_000_000_000
+                + second * 1_000_000_000;
+            return Ok(super::zoned_record(
+                epoch,
+                timezone,
+                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+            ));
+        }
+        let epoch = epoch?;
         let epoch = match epoch {
             Value::BigInt(value) => value.parse().unwrap_or(0),
             _ => {
@@ -430,9 +476,14 @@ mod stubs {
             let other = arguments
                 .first()
                 .ok_or_else(|| crate::value::error::throw_type_error("Missing value"))?;
+            let other = zoned_from(Some(other))?;
             return Ok(Value::Boolean(
-                property("epochNanoseconds")?
-                    == crate::execute::get_property_result(other, "epochNanoseconds")?,
+                ["epochNanoseconds", "timeZoneId", "calendarId"]
+                    .iter()
+                    .all(|name| {
+                        property(name).ok()
+                            == crate::execute::get_property_result(&other, name).ok()
+                    }),
             ));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToInstant {
