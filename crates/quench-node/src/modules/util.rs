@@ -1926,7 +1926,7 @@ fn inspect_property(value: &Value, key: &str, depth: usize) -> String {
     inspect_property_mode(value, key, depth, false)
 }
 
-fn inspect_property_with_getters(value: &Value, key: &str, depth: usize) -> String {
+pub(crate) fn inspect_property_with_getters(value: &Value, key: &str, depth: usize) -> String {
     inspect_property_mode(value, key, depth, true)
 }
 

@@ -31,18 +31,57 @@ fn compare_partial(
     if execute::same_value(left, right) {
         return Ok(true);
     }
+    if is_date_value(left) != is_date_value(right) && (is_date_value(left) || is_date_value(right))
+    {
+        return Ok(false);
+    }
+    if quench_runtime::regexp::has_regexp_internal_slot(left)
+        != quench_runtime::regexp::has_regexp_internal_slot(right)
+    {
+        return Ok(false);
+    }
+    let error_like = |value: &Value| {
+        matches!(
+            execute::get_property(value, "\0error_slot"),
+            Value::Boolean(true)
+        ) || (execute::has_own_property(value, "message")
+            && matches!(execute::get_prototype_of(value), Ok(Value::Null)))
+    };
+    if error_like(left) != error_like(right) {
+        return Ok(false);
+    }
     match (left, right) {
         (Value::Array(a), Value::Array(b)) => {
             if left.is_arguments_object() != right.is_arguments_object() {
                 return Ok(false);
             }
-            if a.logical_len() < b.logical_len() || seen(memo, left, right) {
-                return Ok(a.logical_len() >= b.logical_len());
+            if a.logical_len() < b.logical_len() {
+                return Ok(false);
+            }
+            if seen(memo, left, right) {
+                return Ok(true);
+            }
+            let expected_extra = execute::own_enumerable_keys(right)
+                .into_iter()
+                .filter(|key| {
+                    key.parse::<usize>()
+                        .map_or(true, |index| index >= b.logical_len())
+                })
+                .collect::<Vec<_>>();
+            for key in expected_extra {
+                if !execute::has_own_property(left, &key)
+                    || !compare_partial(
+                        &execute::get_property_result(left, &key)?,
+                        &execute::get_property_result(right, &key)?,
+                        memo,
+                    )?
+                {
+                    return Ok(false);
+                }
             }
             if a.logical_len() > b.logical_len()
-                && (0..b.logical_len()).all(|index| {
-                    execute::has_own_property(right, &index.to_string())
-                })
+                && (0..b.logical_len())
+                    .all(|index| execute::has_own_property(right, &index.to_string()))
             {
                 let mut cursor = 0;
                 for index in 0..b.logical_len() {
@@ -221,10 +260,10 @@ fn compare_partial_error(
     if !is_error_value(left) || !is_error_value(right) {
         return Ok(false);
     }
-    if has_own_slot(right, "name") && !same_property(left, right, "name") {
+    if !same_property(left, right, "name") {
         return Ok(false);
     }
-    if has_own_slot(right, "message") && !same_property(left, right, "message") {
+    if !same_property(left, right, "message") {
         return Ok(false);
     }
     if has_own_slot(right, "cause") {
@@ -298,8 +337,11 @@ fn partial_maps(
     right: &Rc<quench_runtime::value::MapData>,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
-    if left.is_weak() || right.is_weak() || seen(memo, &Value::Map(left.clone()), &Value::Map(right.clone())) {
+    if left.is_weak() || right.is_weak() {
         return Ok(false);
+    }
+    if seen(memo, &Value::Map(left.clone()), &Value::Map(right.clone())) {
+        return Ok(true);
     }
     let left_keys = left.keys.borrow();
     let left_values = left.values.borrow();
@@ -307,23 +349,55 @@ fn partial_maps(
     let right_values = right.values.borrow();
     let mut used = vec![false; left_keys.len()];
     for (expected_key, expected_value) in right_keys.iter().zip(right_values.iter()) {
-        let mut matched = false;
+        let mut matched_index = None;
         for index in 0..left_keys.len() {
             if used[index]
-                || !compare_partial(&left_keys[index], expected_key, memo)?
-                || !compare_partial(&left_values[index], expected_value, memo)?
+                || same_cycle_target(&left_keys[index], &Value::Map(left.clone()))
+                    != same_cycle_target(expected_key, &Value::Map(right.clone()))
+                || same_cycle_target(&left_values[index], &Value::Map(left.clone()))
+                    != same_cycle_target(expected_value, &Value::Map(right.clone()))
             {
                 continue;
             }
-            used[index] = true;
-            matched = true;
-            break;
+            let mut candidate_memo = memo.clone();
+            if compare_partial(&left_keys[index], expected_key, &mut candidate_memo)?
+                && compare_partial(&left_values[index], expected_value, &mut candidate_memo)?
+            {
+                *memo = candidate_memo;
+                matched_index = Some(index);
+                break;
+            }
         }
-        if !matched {
+        if let Some(index) = matched_index {
+            used[index] = true;
+        } else {
             return Ok(false);
         }
     }
-    Ok(true)
+    partial_collection_properties(&Value::Map(left.clone()), &Value::Map(right.clone()), memo)
+}
+
+fn partial_collection_properties(
+    left: &Value,
+    right: &Value,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    for key in execute::own_enumerable_keys(right) {
+        let left_value = execute::get_property_result(left, &key)?;
+        let right_value = execute::get_property_result(right, &key)?;
+        if key.parse::<usize>().is_ok()
+            && execute::same_value(&left_value, left)
+            && execute::same_value(&right_value, right)
+        {
+            continue;
+        }
+        if !execute::has_own_property(left, &key)
+            || !compare_partial(&left_value, &right_value, memo)?
+        {
+            return Ok(false);
+        }
+    }
+    partial_enumerable_symbols(left, right)
 }
 
 fn partial_sets(
@@ -331,33 +405,46 @@ fn partial_sets(
     right: &Rc<quench_runtime::value::SetData>,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
-    if left.is_weak() || right.is_weak() || seen(memo, &Value::Set(left.clone()), &Value::Set(right.clone())) {
+    if left.is_weak() || right.is_weak() {
         return Ok(false);
+    }
+    if seen(memo, &Value::Set(left.clone()), &Value::Set(right.clone())) {
+        return Ok(true);
     }
     let left_values = left.values.borrow();
     let right_values = right.values.borrow();
     let mut used = vec![false; left_values.len()];
     for expected in right_values.iter() {
-        let mut matched = false;
+        let mut matched_index = None;
         for index in 0..left_values.len() {
-            if used[index] || !compare_partial(&left_values[index], expected, memo)? {
+            if used[index]
+                || same_cycle_target(&left_values[index], &Value::Set(left.clone()))
+                    != same_cycle_target(expected, &Value::Set(right.clone()))
+            {
                 continue;
             }
-            used[index] = true;
-            matched = true;
-            break;
+            let mut candidate_memo = memo.clone();
+            if compare_partial(&left_values[index], expected, &mut candidate_memo)? {
+                *memo = candidate_memo;
+                matched_index = Some(index);
+                break;
+            }
         }
-        if !matched {
+        if let Some(index) = matched_index {
+            used[index] = true;
+        } else {
             return Ok(false);
         }
     }
-    Ok(true)
+    partial_collection_properties(&Value::Set(left.clone()), &Value::Set(right.clone()), memo)
 }
 
 fn is_date_value(value: &Value) -> bool {
-    matches!(value, Value::Object(_))
-        && execute::has_own_property(value, "timeValue")
-        && matches!(execute::get_prototype_of(value), Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype)))
+    matches!(execute::get_property(value, "timeValue"), Value::Number(_))
+        && matches!(
+            execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
+        )
 }
 
 fn is_url_like(value: &Value) -> bool {
@@ -369,8 +456,14 @@ fn compare_url_like(left: &Value, right: &Value) -> Result<bool, VmError> {
     if !is_url_like(left) || !is_url_like(right) {
         return Ok(false);
     }
-    for key in ["href", "protocol", "username", "password", "host", "hostname", "port", "pathname", "search", "hash", "origin"] {
-        if !execute::same_value(&execute::get_property(left, key), &execute::get_property(right, key)) {
+    for key in [
+        "href", "protocol", "username", "password", "host", "hostname", "port", "pathname",
+        "search", "hash", "origin",
+    ] {
+        if !execute::same_value(
+            &execute::get_property(left, key),
+            &execute::get_property(right, key),
+        ) {
             return Ok(false);
         }
     }
@@ -378,7 +471,10 @@ fn compare_url_like(left: &Value, right: &Value) -> Result<bool, VmError> {
 }
 
 fn same_property(left: &Value, right: &Value, key: &str) -> bool {
-    execute::same_value(&execute::get_property(left, key), &execute::get_property(right, key))
+    execute::same_value(
+        &execute::get_property(left, key),
+        &execute::get_property(right, key),
+    )
 }
 
 fn is_error_value(value: &Value) -> bool {
@@ -422,6 +518,18 @@ fn compare(
     skip_prototype: bool,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
+    if let Value::Proxy(proxy) = left {
+        if !*proxy.revoked.borrow() {
+            execute::validate_proxy(left)?;
+            return compare(&proxy.target, right, strict, skip_prototype, memo);
+        }
+    }
+    if let Value::Proxy(proxy) = right {
+        if !*proxy.revoked.borrow() {
+            execute::validate_proxy(right)?;
+            return compare(left, &proxy.target, strict, skip_prototype, memo);
+        }
+    }
     if let (Value::ObjectAlias(left_alias), Value::ObjectAlias(right_alias)) = (left, right) {
         if left_alias.0.borrow().upgrade().is_none() && right_alias.0.borrow().upgrade().is_none() {
             // Cyclic literal aliases may be unresolved after their owning
@@ -434,10 +542,27 @@ fn compare(
     if execute::same_value(left, right) {
         return Ok(true);
     }
+    if is_date_value(left) != is_date_value(right) && (is_date_value(left) || is_date_value(right))
+    {
+        return Ok(false);
+    }
+    let left_regexp = quench_runtime::regexp::has_regexp_internal_slot(left);
+    let right_regexp = quench_runtime::regexp::has_regexp_internal_slot(right);
+    if left_regexp != right_regexp {
+        return Ok(false);
+    }
+    let error_like = |value: &Value| {
+        matches!(
+            execute::get_property(value, "\0error_slot"),
+            Value::Boolean(true)
+        ) || (execute::has_own_property(value, "message")
+            && matches!(execute::get_prototype_of(value), Ok(Value::Null)))
+    };
+    if error_like(left) != error_like(right) {
+        return Ok(false);
+    }
     match (left, right) {
-        (Value::Object(_), Value::Object(_))
-            if is_date_value(left) && is_date_value(right) =>
-        {
+        (Value::Object(_), Value::Object(_)) if is_date_value(left) && is_date_value(right) => {
             if !same_property(left, right, "timeValue") {
                 return Ok(false);
             }
@@ -471,9 +596,13 @@ fn compare(
             compare_data_views(left, right, strict, skip_prototype, memo)
         }
         (Value::Map(left), Value::Map(right)) if left.is_weak() || right.is_weak() => Ok(false),
-        (Value::Map(left), Value::Map(right)) => compare_maps(left, right, strict, skip_prototype, memo),
+        (Value::Map(left), Value::Map(right)) => {
+            compare_maps(left, right, strict, skip_prototype, memo)
+        }
         (Value::Set(left), Value::Set(right)) if left.is_weak() || right.is_weak() => Ok(false),
-        (Value::Set(left), Value::Set(right)) => compare_sets(left, right, strict, skip_prototype, memo),
+        (Value::Set(left), Value::Set(right)) => {
+            compare_sets(left, right, strict, skip_prototype, memo)
+        }
         _ if is_typed_array(left) && is_typed_array(right) => {
             compare_typed_arrays(left, right, strict, skip_prototype, memo)
         }
@@ -503,11 +632,7 @@ fn compare_sets(
     skip_prototype: bool,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
-    if seen(
-        memo,
-        &Value::Set(left.clone()),
-        &Value::Set(right.clone()),
-    ) {
+    if seen(memo, &Value::Set(left.clone()), &Value::Set(right.clone())) {
         return Ok(true);
     }
     let left_values = left.values.borrow().iter().cloned().collect::<Vec<_>>();
@@ -517,16 +642,28 @@ fn compare_sets(
     }
     let mut used = vec![false; right_values.len()];
     for value in &left_values {
-        let Some(index) = right_values
-            .iter()
-            .enumerate()
-            .position(|(index, candidate)| {
-                !used[index]
-                    && same_cycle_target(value, &Value::Set(left.clone()))
-                        == same_cycle_target(candidate, &Value::Set(right.clone()))
-                    && compare(value, candidate, strict, skip_prototype, memo).unwrap_or(false)
-            })
-        else {
+        let mut matched = None;
+        for (index, candidate) in right_values.iter().enumerate() {
+            if used[index]
+                || same_cycle_target(value, &Value::Set(left.clone()))
+                    != same_cycle_target(candidate, &Value::Set(right.clone()))
+            {
+                continue;
+            }
+            let mut candidate_memo = memo.clone();
+            if compare(
+                value,
+                candidate,
+                strict,
+                skip_prototype,
+                &mut candidate_memo,
+            )? {
+                *memo = candidate_memo;
+                matched = Some(index);
+                break;
+            }
+        }
+        let Some(index) = matched else {
             return Ok(false);
         };
         used[index] = true;
@@ -547,11 +684,7 @@ fn compare_maps(
     skip_prototype: bool,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
-    if seen(
-        memo,
-        &Value::Map(left.clone()),
-        &Value::Map(right.clone()),
-    ) {
+    if seen(memo, &Value::Map(left.clone()), &Value::Map(right.clone())) {
         return Ok(true);
     }
     let left_entries = left
@@ -573,20 +706,36 @@ fn compare_maps(
     }
     let mut used = vec![false; right_entries.len()];
     for (key, value) in &left_entries {
-        let Some(index) = right_entries
-            .iter()
-            .enumerate()
-            .position(|(index, (candidate_key, candidate_value))| {
-                !used[index]
-                    && same_cycle_target(key, &Value::Map(left.clone()))
-                        == same_cycle_target(candidate_key, &Value::Map(right.clone()))
-                    && same_cycle_target(value, &Value::Map(left.clone()))
-                        == same_cycle_target(candidate_value, &Value::Map(right.clone()))
-                    && compare(key, candidate_key, strict, skip_prototype, memo).unwrap_or(false)
-                    && compare(value, candidate_value, strict, skip_prototype, memo)
-                        .unwrap_or(false)
-            })
-        else {
+        let mut matched = None;
+        for (index, (candidate_key, candidate_value)) in right_entries.iter().enumerate() {
+            if used[index]
+                || same_cycle_target(key, &Value::Map(left.clone()))
+                    != same_cycle_target(candidate_key, &Value::Map(right.clone()))
+                || same_cycle_target(value, &Value::Map(left.clone()))
+                    != same_cycle_target(candidate_value, &Value::Map(right.clone()))
+            {
+                continue;
+            }
+            let mut candidate_memo = memo.clone();
+            if compare(
+                key,
+                candidate_key,
+                strict,
+                skip_prototype,
+                &mut candidate_memo,
+            )? && compare(
+                value,
+                candidate_value,
+                strict,
+                skip_prototype,
+                &mut candidate_memo,
+            )? {
+                *memo = candidate_memo;
+                matched = Some(index);
+                break;
+            }
+        }
+        let Some(index) = matched else {
             return Ok(false);
         };
         used[index] = true;
@@ -607,9 +756,16 @@ fn compare_collection_properties(
     skip_prototype: bool,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
-    let left_keys = execute::own_enumerable_keys(left);
-    let right_keys = execute::own_enumerable_keys(right);
-    if left_keys.len() != right_keys.len() || left_keys.iter().any(|key| !right_keys.contains(key)) {
+    let left_keys = execute::own_enumerable_keys(left)
+        .into_iter()
+        .filter(|key| strict || !key.starts_with("Symbol."))
+        .collect::<Vec<_>>();
+    let right_keys = execute::own_enumerable_keys(right)
+        .into_iter()
+        .filter(|key| strict || !key.starts_with("Symbol."))
+        .collect::<Vec<_>>();
+    if left_keys.len() != right_keys.len() || left_keys.iter().any(|key| !right_keys.contains(key))
+    {
         return Ok(false);
     }
     for key in &left_keys {
@@ -736,7 +892,11 @@ fn typed_array_bytes(value: &Value) -> Option<Vec<u8>> {
         _ => return None,
     };
     let end = offset.checked_add(length.checked_mul(element_size)?)?;
-    buffer.bytes.borrow().get(offset..end).map(ToOwned::to_owned)
+    buffer
+        .bytes
+        .borrow()
+        .get(offset..end)
+        .map(ToOwned::to_owned)
 }
 
 /// Both sides must own the same enumerable symbol keys with equal values.
@@ -851,6 +1011,32 @@ fn compare_arrays(
             return Ok(false);
         }
     }
+    let extra_keys = |value: &Value, length: usize| {
+        execute::own_enumerable_keys(value)
+            .into_iter()
+            .filter(|key| key.parse::<usize>().map_or(true, |index| index >= length))
+            .collect::<Vec<_>>()
+    };
+    let left_extra = extra_keys(left, a.logical_len())
+        .into_iter()
+        .filter(|key| strict || !key.starts_with("Symbol."))
+        .collect::<Vec<_>>();
+    let right_extra = extra_keys(right, b.logical_len())
+        .into_iter()
+        .filter(|key| strict || !key.starts_with("Symbol."))
+        .collect::<Vec<_>>();
+    if left_extra.len() != right_extra.len()
+        || left_extra.iter().any(|key| !right_extra.contains(key))
+    {
+        return Ok(false);
+    }
+    for key in left_extra {
+        let la = execute::get_property_result(left, &key)?;
+        let rb = execute::get_property_result(right, &key)?;
+        if !compare(&la, &rb, strict, skip_prototype, memo)? {
+            return Ok(false);
+        }
+    }
     if strict {
         same_enumerable_symbols(left, right, strict, skip_prototype, memo)
     } else {
@@ -916,8 +1102,14 @@ fn compare_objects(
             return Ok(false);
         }
     }
-    let left_keys = execute::own_enumerable_keys(left);
-    let right_keys = execute::own_enumerable_keys(right);
+    let left_keys = execute::own_enumerable_keys(left)
+        .into_iter()
+        .filter(|key| strict || !key.starts_with("Symbol."))
+        .collect::<Vec<_>>();
+    let right_keys = execute::own_enumerable_keys(right)
+        .into_iter()
+        .filter(|key| strict || !key.starts_with("Symbol."))
+        .collect::<Vec<_>>();
     if left_keys.len() != right_keys.len() || left_keys.iter().any(|key| !right_keys.contains(key))
     {
         return Ok(false);
@@ -963,7 +1155,10 @@ fn has_own_slot(value: &Value, key: &str) -> bool {
 fn is_aggregate_error(value: &Value) -> bool {
     let mut current = execute::get_prototype_of(value).ok();
     while let Some(prototype) = current {
-        if matches!(prototype, Value::Builtin(quench_runtime::ops::Builtin::AggregateErrorPrototype)) {
+        if matches!(
+            prototype,
+            Value::Builtin(quench_runtime::ops::Builtin::AggregateErrorPrototype)
+        ) {
             return true;
         }
         current = execute::get_prototype_of(&prototype).ok();

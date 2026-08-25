@@ -292,6 +292,11 @@ fn validate_object(
         let expected_value = execute::get_property_result(expected, &key)?;
         let actual_value = execute::get_property_result(error, &key)?;
         if !expected_property_matches(&expected_value, &actual_value)? {
+            if execute::has_own_property(expected, "message")
+                && execute::has_own_property(expected, "operator")
+            {
+                return Err(comparison_mismatch(error, expected, user_message));
+            }
             return Err(invalid_expected(
                 user_message,
                 format!("The error did not match the expected object (key \"{key}\")"),
@@ -299,6 +304,28 @@ fn validate_object(
         }
     }
     Ok(Value::Undefined)
+}
+
+fn comparison_mismatch(actual: &Value, expected: &Value, user_message: Option<String>) -> VmError {
+    if let Some(message) = user_message {
+        return assertion_error(message, "throws", Value::Undefined, Value::Undefined, false);
+    }
+    let inspect = |value: Value, marker: &str| {
+        let rendered = crate::modules::util::inspect(&value);
+        let rendered = rendered
+            .strip_suffix("\n  ''")
+            .and_then(|value| value.strip_suffix(" +"))
+            .unwrap_or(&rendered);
+        rendered.replace("\n  ", &format!("\n{marker}     "))
+    };
+    let message = format!(
+        "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  Comparison {{\n+   message: {},\n+   operator: {}\n-   message: {},\n-   operator: {}\n  }}\n",
+        inspect(execute::get_property(actual, "message"), "+"),
+        inspect(execute::get_property(actual, "operator"), "+"),
+        inspect(execute::get_property(expected, "message"), "-"),
+        inspect(execute::get_property(expected, "operator"), "-"),
+    );
+    assertion_error(message, "throws", actual.clone(), expected.clone(), true)
 }
 
 fn expected_property_matches(expected: &Value, actual: &Value) -> Result<bool, VmError> {
