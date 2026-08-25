@@ -465,7 +465,10 @@ impl BindingRef {
 pub struct Environment {
     slots: RefCell<SlotRefs>,
     names: RefCell<Option<HashMap<String, BindingRef>>>,
-    eval_names: RefCell<Option<HashMap<String, BindingRef>>>,
+    // Eval var aliases are shared by an activation's captures.  A closure
+    // created before a later direct eval must observe the binding introduced
+    // into that activation, so copying this map would freeze a stale view.
+    eval_names: Rc<RefCell<Option<HashMap<String, BindingRef>>>>,
     immutable_names: RefCell<Option<HashSet<String>>>,
     immutable_slots: RefCell<Option<HashSet<u16>>>,
     uninitialized: RefCell<Option<Rc<TdzCells>>>,
@@ -517,7 +520,7 @@ impl Environment {
         Rc::new(Self {
             slots: RefCell::new(SlotRefs::from_prefix(count, refs)),
             names: RefCell::new(environment.names.borrow().clone()),
-            eval_names: RefCell::new(environment.eval_names.borrow().clone()),
+            eval_names: Rc::clone(&environment.eval_names),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(immutable_prefix(&environment.immutable_slots, count)),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
@@ -558,7 +561,7 @@ impl Environment {
         Rc::new(Self {
             slots: RefCell::new(SlotRefs::from_prefix(count_usize, refs)),
             names: RefCell::new(environment.names.borrow().clone()),
-            eval_names: RefCell::new(environment.eval_names.borrow().clone()),
+            eval_names: Rc::clone(&environment.eval_names),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(Some(
                 environment
@@ -606,7 +609,7 @@ impl Environment {
                 suffix_overrides: Vec::new(),
             }),
             names: RefCell::new(None),
-            eval_names: RefCell::new(None),
+            eval_names: Rc::new(RefCell::new(None)),
             immutable_names: RefCell::new(None),
             immutable_slots: RefCell::new(None),
             uninitialized: RefCell::new(None),
@@ -729,11 +732,12 @@ impl Environment {
         };
         let binding = self.ensure_slot(slot);
         caller.clear_deleted_cell(&binding.cell());
-        caller
-            .eval_names
-            .borrow_mut()
-            .get_or_insert_with(HashMap::new)
-            .insert(name.to_string(), binding.clone());
+        // Eval bindings are visible through every activation that can be
+        // reached by a closure created while the eval runs.  Publish the
+        // shared binding through the complete caller chain so an existing
+        // capture observes a later eval declaration without copying a stale
+        // name map.
+        caller.alias_eval_binding(name, binding.clone());
         if name == "arguments" {
             caller.alias_eval_binding(name, binding);
         }
@@ -852,9 +856,6 @@ impl Environment {
             .is_some_and(|names| names.contains_key(name))
         {
             return true;
-        }
-        if self.slot(slot).is_some() {
-            return false;
         }
         self.caller
             .as_ref()

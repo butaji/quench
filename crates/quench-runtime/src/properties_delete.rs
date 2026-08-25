@@ -64,7 +64,12 @@ pub(crate) fn execute_delete_property(
         ));
     }
     crate::locals::replace_value(&target, &result);
-    crate::vm::synchronize_global_object(registers, &raw_target, &result);
+    // Publish through the semantic receiver, not only the syntax-level
+    // alias.  A top-level `this`/global alias can retain an older COW view;
+    // resolving the owner above gives the realm object whose replacement
+    // must be visible to subsequent strict name checks.
+    crate::vm::synchronize_global_object(registers, &target, &result);
+    crate::locals::replace_value(&raw_target, &result);
     crate::execute::write_value(registers, *object, result);
     crate::execute::write_value(registers, *dst, crate::value::Value::Boolean(deleted));
     Ok(())
