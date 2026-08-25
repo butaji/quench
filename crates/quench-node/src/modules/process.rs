@@ -9,6 +9,14 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnhandledRejectionMode {
+    Throw,
+    Strict,
+    Warn,
+    None,
+}
+
 pub struct ProcessState {
     pub argv: Vec<String>,
     pub exit_handlers: Vec<Value>,
@@ -17,6 +25,7 @@ pub struct ProcessState {
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
     pub warning_handlers: Vec<(Value, bool)>,
     pub unhandled_rejection_handlers: Vec<(Value, bool)>,
+    pub unhandled_rejection_mode: UnhandledRejectionMode,
     pub other_handlers: Vec<(String, Value, bool)>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
@@ -51,6 +60,7 @@ impl ProcessState {
             uncaught_exception_handlers: Vec::new(),
             warning_handlers: Vec::new(),
             unhandled_rejection_handlers: Vec::new(),
+            unhandled_rejection_mode: UnhandledRejectionMode::Throw,
             other_handlers: Vec::new(),
             warnings_emitted: Vec::new(),
             exit_handlers_ran: false,
