@@ -85,7 +85,7 @@
       return this._emitter.emit(name, ...args);
     },
     eventNames() {
-      const names = this._emitter.eventNames();
+      const names = [...new Set((this._listenerWrappers || []).map((entry) => entry.name))];
       const internalOrder = {
         error: 0,
         data: 1,
@@ -97,7 +97,8 @@
         (internalOrder[left] ?? 100) - (internalOrder[right] ?? 100));
     },
     listenerCount(name) {
-      return this._emitter.listenerCount(name);
+      return (this._listenerWrappers || [])
+        .filter((entry) => entry.name === name).length;
     },
     listeners(name) {
       return (this._listenerWrappers || [])
@@ -184,7 +185,7 @@
       else options.signal.addEventListener("abort", abort, { once: true });
     }
     if (options.autoDestroy !== false) {
-      stream.on("error", () => {
+      stream._emitter.on("error", () => {
         if (!stream.destroyed) stream.destroy();
       });
     }
@@ -652,7 +653,7 @@
     if (options.writev) stream._writev = options.writev;
     if (options.destroy) stream._destroy = options.destroy;
     if (options.autoDestroy !== false) {
-      stream.on("error", () => {
+      stream._emitter.on("error", () => {
         if (!stream.destroyed) stream.destroy();
       });
     }
