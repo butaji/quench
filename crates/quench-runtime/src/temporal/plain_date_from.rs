@@ -1,5 +1,19 @@
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if let Some(value) = value.filter(|value| crate::value::is_object(value)) {
+        if let Value::Object(object) = value {
+            let direct = ["year", "month", "day"].map(|name| {
+                object
+                    .iter()
+                    .find(|(key, value)| {
+                        (key == name || key == &format!("\0temporal-slot:\0{name}"))
+                            && matches!(value, Value::Number(_))
+                    })
+                    .map(|(_, value)| value.clone())
+            });
+            if let [Some(year), Some(month), Some(day)] = direct {
+                return construct(&[year, month, day]);
+            }
+        }
         return from_property_bag(value);
     }
     let Some(Value::String(text)) = value else {

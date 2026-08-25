@@ -143,6 +143,7 @@ pub(crate) fn define_own_property(
         ));
     }
     validate_redefinition(&current, descriptor)?;
+    let preserved_temporal_slot = temporal_slot_value(&target, key, &current);
     let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
         .iter()
@@ -180,8 +181,33 @@ pub(crate) fn define_own_property(
         define_property_value(target.clone(), key, value)
     };
     store_descriptor_metadata(&mut result, key, &descriptor);
+    if let Some(value) = preserved_temporal_slot {
+        if let Value::Object(properties) = &mut result {
+            Rc::make_mut(properties).push((
+                format!("\0temporal-slot:\0{key}").into(),
+                value,
+            ));
+        }
+    }
     define_array_descriptor(&mut result, key, descriptor);
     Ok(result)
+}
+
+fn temporal_slot_value(target: &Value, key: &str, current: &Value) -> Option<Value> {
+    let Value::Object(object) = target else { return None };
+    let is_plain_date_time = object.iter().any(|(name, value)| {
+        name == "\0prototype"
+            && matches!(value, Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype))
+    });
+    if !is_plain_date_time || !matches!(key, "year" | "month" | "day" | "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond") {
+        return None;
+    }
+    match current {
+        Value::Object(descriptor) => descriptor.iter().find_map(|(name, value)| {
+            (name == "value" && matches!(value, Value::Number(_))).then_some(value.clone())
+        }),
+        _ => None,
+    }
 }
 
 fn ordinary_own_descriptor(
