@@ -370,6 +370,10 @@ pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
     match args.get(index) {
         Some(Value::String(message)) => Some(message.clone()),
         Some(Value::Undefined) | None => None,
+        Some(value) if is_error_object(value) => match execute::get_property(value, "message") {
+            Value::String(message) => Some(message),
+            _ => Some(crate::modules::util::inspect(value)),
+        },
         Some(value) => Some(crate::modules::util::inspect(value)),
     }
 }
@@ -400,6 +404,9 @@ pub fn ok(
 ) -> Result<Value, VmError> {
     if execute::is_truthy(&arg(args, 0)) {
         return Ok(Value::Undefined);
+    }
+    if let Some(value) = args.get(1).filter(|value| is_error_object(value)) {
+        return Err(VmError::Thrown(value.clone()));
     }
     let custom = custom_message(args, 1);
     let generated = custom.is_none();
@@ -557,6 +564,14 @@ fn binary_assert(
                     "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
                     rendered(&actual)
                 ),
+                _ if operator == "notStrictEqual"
+                    && !matches!(actual, Value::String(_)) => format!(
+                    "Expected \"actual\" to be strictly unequal to: {}",
+                    rendered(&actual)
+                ),
+                _ if operator == "notEqual" => {
+                    format!("{} != {}", rendered(&actual), rendered(&expected))
+                }
                 _ => format!(
                     "Expected values to be {}:\n\n{} {} {}\n",
                     label,
