@@ -166,7 +166,8 @@ fn add(
     if days != 0.0 {
         let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?
-            + CalendarDuration::days(days as i64);
+            .checked_add_signed(CalendarDuration::days(days as i64))
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
         values[0] = date.year() as f64;
         values[1] = date.month() as f64;
         values[2] = date.day() as f64;
