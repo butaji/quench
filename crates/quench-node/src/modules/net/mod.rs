@@ -159,6 +159,7 @@ fn net_info_props(peer: SocketAddr, local: Option<SocketAddr>) -> Vec<(String, V
             Value::String(local.ip().to_string()),
         ));
         props.push(("localPort".to_string(), Value::Number(local.port() as f64)));
+        props.push(("localFamily".to_string(), Value::String(family(local))));
     }
     props
 }
