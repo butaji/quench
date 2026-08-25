@@ -162,10 +162,16 @@ fn run_invariant_sum_kernel(
     let store_total = body.instruction(3)?;
     let move_result = body.instruction(4)?;
     let proven_shape = load_total.opcode == crate::ir::Opcode::LoadLocal
-        && load_value.opcode == crate::ir::Opcode::LoadLocalChecked
+        && matches!(
+            load_value.opcode,
+            crate::ir::Opcode::LoadLocal | crate::ir::Opcode::LoadLocalChecked
+        )
         && add.opcode == crate::ir::Opcode::Add
         && (add.b, add.c) == (load_total.a, load_value.a)
-        && store_total.opcode == crate::ir::Opcode::StoreLocalChecked
+        && matches!(
+            store_total.opcode,
+            crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked
+        )
         && (store_total.a, store_total.b) == (load_total.b, add.a)
         && move_result.opcode == crate::ir::Opcode::Move
         && (move_result.a, move_result.b) == (dst, add.a)
