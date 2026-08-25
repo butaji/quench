@@ -17,6 +17,17 @@ pub type CallHandler =
     fn(&Rc<RefCell<HostState>>, Option<&Value>, &[Value]) -> Result<Value, VmError>;
 pub type ConstructHandler = fn(&Rc<RefCell<HostState>>, &[Value]) -> Result<Value, VmError>;
 
+fn value_text(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Boolean(value) => value.to_string(),
+        Value::Null => "null".into(),
+        Value::Undefined => "undefined".into(),
+        _ => "[object Object]".into(),
+    }
+}
+
 // ---- events ----
 pub fn events_from(
     state: &Rc<RefCell<HostState>>,
@@ -333,6 +344,78 @@ pub fn util_deprecated_call(
         return Err(VmError::NotCallable);
     };
     quench_runtime::execute::call(callback, &Value::Undefined, args.get(1..).unwrap_or_default())
+}
+
+pub fn util_system_error_name(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Number(errno)) = args.first() else {
+        return Err(VmError::NotCallable);
+    };
+    let name = match *errno as i32 {
+        -2 => "ENOENT",
+        -13 => "EACCES",
+        -17 => "EEXIST",
+        -32 => "EPIPE",
+        -105 => "ENOBUFS",
+        _ => return Ok(Value::String(format!("Unknown system error {errno}"))),
+    };
+    Ok(Value::String(name.into()))
+}
+
+pub fn util_exception_with_host_port(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let errno = match args.first() {
+        Some(Value::Number(value)) => *value,
+        _ => 0.0,
+    };
+    let syscall = args.get(1).map(value_text).unwrap_or_default();
+    let address = match args.get(2) {
+        Some(Value::Null) | None => None,
+        Some(value) => Some(value_text(value)),
+    };
+    let port = match args.get(3) {
+        Some(Value::Number(value)) if *value != 0.0 => Some(*value as u32),
+        _ => None,
+    };
+    let code = match errno as i32 {
+        -2 => "ENOENT",
+        -13 => "EACCES",
+        -17 => "EEXIST",
+        _ => "UNKNOWN",
+    };
+    let mut message = format!("{syscall} {code}");
+    if let Some(address) = &address {
+        message.push_str(&format!(" {address}"));
+        if let Some(port) = port {
+            message.push_str(&format!(":{port}"));
+        }
+    }
+    if let Some(additional) = args.get(4) {
+        message.push_str(&format!(" - Local ({})", value_text(additional)));
+    }
+    let mut properties = vec![
+        ("\0prototype".into(), Value::Builtin(quench_runtime::ops::Builtin::ErrorPrototype)),
+        ("name".into(), Value::String("Error".into())),
+        ("message".into(), Value::String(message)),
+        ("stack".into(), Value::String("Error".into())),
+        ("errno".into(), Value::Number(errno)),
+        ("code".into(), Value::String(code.into())),
+        ("syscall".into(), Value::String(syscall)),
+    ];
+    properties.push((
+        "address".into(),
+        address.map_or(Value::Null, Value::String),
+    ));
+    if let Some(port) = port {
+        properties.push(("port".into(), Value::Number(port as f64)));
+    }
+    Ok(Value::object(properties))
 }
 
 fn timer_promise_alias(value: &Value) -> Option<&'static str> {
