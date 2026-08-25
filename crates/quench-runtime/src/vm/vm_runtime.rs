@@ -243,6 +243,22 @@ fn run_instruction(
         Opcode::GetN => {
             let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
             let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
+            if key == "length" {
+                if let Some(array) = registers
+                    .read_array(usize::from(instruction.b))
+                    .filter(|array| crate::locals::array_word_is_current(array))
+                {
+                    registers.write_number(
+                        usize::from(instruction.a),
+                        array.header_length() as f64,
+                    );
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedPropertyHit,
+                    );
+                    crate::execution_trace::named_property_word("own", "number");
+                    return Ok(None);
+                }
+            }
             if instruction.a != instruction.b {
                 let object = registers.read_object(usize::from(instruction.b));
                 if let Some(payload) = object.and_then(|object| {

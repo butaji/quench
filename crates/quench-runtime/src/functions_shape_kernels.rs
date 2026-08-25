@@ -104,6 +104,31 @@ pub(crate) fn execute_shape_kernel(
     }
 }
 
+/// Execute a previously admitted zero-argument shape method from canonical
+/// object and slot words. A missing fact or failed guard returns to CallN.
+pub(crate) fn execute_shape_kernel_word(
+    function: &crate::value::FunctionValue,
+    receiver: &crate::value::ObjectData,
+) -> Option<f64> {
+    let ShapeKernelPlan::NestedArrayLength(plan) = cached_shape_kernel_fact(function)? else {
+        return None;
+    };
+    let code = function.code.code()?;
+    let metadata = code.metadata_at(plan.first_pc)?;
+    let crate::vm::NamedCachedPayload::Word(word) =
+        crate::vm::get_named_cached_payload(receiver, &metadata.named_cache)?
+    else {
+        return None;
+    };
+    // SAFETY: the receiver owns its slot and the slot owns the array for the
+    // duration of this call.
+    let array = unsafe { &*(&*word).array_ptr()? };
+    crate::locals::array_word_is_current(array).then_some(())?;
+    crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
+    crate::execution_trace::kernel("shape_nested_array_length", false);
+    Some(array.header_length() as f64)
+}
+
 pub(crate) fn is_shape_kernel_candidate(function: &crate::value::FunctionValue) -> bool {
     function.code.code().is_some_and(|code| {
         matches!(code.len(), 6..=9)
@@ -222,13 +247,10 @@ fn exact_i32(value: f64) -> Option<i32> {
 fn shape_kernel_fact(
     function: &std::rc::Rc<crate::value::FunctionValue>,
 ) -> Option<ShapeKernelPlan> {
-    let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (SHAPE_KERNEL_FACT_SLOTS - 1);
-    let cached = SHAPE_KERNEL_FACTS.with(|facts| facts.borrow().get(index).and_then(Clone::clone));
-    if let Some(cached) = cached.filter(|cached| {
-        cached.function.upgrade().is_some_and(|value| std::rc::Rc::ptr_eq(&value, function))
-    }) {
-        return cached.plan;
+    if let Some(plan) = cached_shape_kernel_fact(function) {
+        return Some(plan);
     }
+    let index = (std::rc::Rc::as_ptr(function) as usize >> 4) & (SHAPE_KERNEL_FACT_SLOTS - 1);
     let plan = match_state_predicate(function)
         .map(ShapeKernelPlan::StatePredicate)
         .or_else(|| match_state_bitwise(function).map(ShapeKernelPlan::StateBitwise))
@@ -255,6 +277,16 @@ fn shape_kernel_fact(
         });
     });
     plan
+}
+
+fn cached_shape_kernel_fact(function: &crate::value::FunctionValue) -> Option<ShapeKernelPlan> {
+    let pointer = function as *const crate::value::FunctionValue;
+    let index = (pointer as usize >> 4) & (SHAPE_KERNEL_FACT_SLOTS - 1);
+    SHAPE_KERNEL_FACTS.with(|facts| {
+        let facts = facts.borrow();
+        let cached = facts.get(index)?.as_ref()?;
+        (cached.function.as_ptr() == pointer).then_some(cached.plan).flatten()
+    })
 }
 
 fn match_nested_array_index(

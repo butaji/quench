@@ -833,6 +833,7 @@ pub(crate) fn named_property_miss(_: &str) {}
 pub(crate) fn named_get_miss_reason(_: &'static str) {}
 
 #[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
 pub(crate) fn named_property_word(_: &'static str, _: &'static str) {}
 
 #[cfg(feature = "execution-trace")]

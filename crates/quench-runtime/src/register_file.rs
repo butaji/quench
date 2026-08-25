@@ -114,6 +114,22 @@ impl OwnedWord {
         }
     }
 
+    #[inline(always)]
+    fn array_ptr(&self) -> Option<*const crate::value::ArrayData> {
+        let DecodedValue::ArrayPtr(pointer) = self.0.decode() else {
+            return None;
+        };
+        Some(pointer as *const crate::value::ArrayData)
+    }
+
+    #[inline(always)]
+    fn function_ptr(&self) -> Option<*const crate::value::FunctionValue> {
+        let DecodedValue::FunctionPtr(pointer) = self.0.decode() else {
+            return None;
+        };
+        Some(pointer as *const crate::value::FunctionValue)
+    }
+
     pub(crate) fn replace(&mut self, value: Value) -> Value {
         let previous = std::mem::replace(&mut self.0, encode(value));
         let value = decode_owned(previous).expect("owned execute word must decode");
@@ -223,6 +239,16 @@ impl SlotWord {
         // SAFETY: this is a read-only tag inspection during single-threaded
         // realm execution and exposes no reference to the slot payload.
         unsafe { (&*self.0.get()).number() }
+    }
+
+    #[inline(always)]
+    pub(crate) fn array_ptr(&self) -> Option<*const crate::value::ArrayData> {
+        self.with_word(OwnedWord::array_ptr)
+    }
+
+    #[inline(always)]
+    pub(crate) fn function_ptr(&self) -> Option<*const crate::value::FunctionValue> {
+        self.with_word(OwnedWord::function_ptr)
     }
 
     #[inline(always)]
