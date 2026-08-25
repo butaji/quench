@@ -308,7 +308,13 @@ pub(crate) fn execute_target(
             )
         }
         crate::value::Value::Function(function) => {
-            execute_in_function_realm(function, receiver, arguments)
+            execute_in_function_realm(function, receiver, arguments).or_else(|error| {
+                if matches!(error, crate::execute::VmError::MissingReturn) {
+                    Ok(crate::value::Value::Undefined)
+                } else {
+                    Err(error)
+                }
+            })
         }
         crate::value::Value::BoundFunction(bound)
             if matches!(bound.target, crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
