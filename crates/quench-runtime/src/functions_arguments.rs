@@ -313,7 +313,12 @@ pub(crate) fn execute_target(
             execute_target(&value, receiver, arguments)
         }
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(target) => {
-            execute_builtin_target(*builtin, Some(receiver), arguments)
+            let receiver = if matches!(receiver, crate::value::Value::Undefined) {
+                crate::super_scope::current_receiver().unwrap_or_else(|| receiver.clone())
+            } else {
+                receiver.clone()
+            };
+            execute_builtin_target(*builtin, Some(&receiver), arguments)
         }
         crate::value::Value::HostCapability(capability) => {
             crate::vm::execute_host_capability_with_receiver(
@@ -358,7 +363,9 @@ pub(crate) fn execute_target(
             // supplied by the caller is only relevant to an unbound method;
             // using it here made method properties (and host capabilities)
             // fail with "not callable" or an incompatible-receiver error.
-            let receiver = if crate::builtins::builtin_name(builtin).starts_with("get ") {
+            let receiver = if crate::builtins::builtin_name(builtin).starts_with("get ")
+                || matches!(builtin, crate::ops::Builtin::StringToString | crate::ops::Builtin::StringValueOf)
+            {
                 receiver
             } else {
                 &bound.receiver

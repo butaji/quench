@@ -455,7 +455,12 @@ fn invoke_with_receiver(
         }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
         Value::Builtin(builtin) if crate::conversion::is_callable(callee_value) => {
-            super::execute_builtin_with_receiver(*builtin, arguments, Some(receiver))
+            let receiver = if matches!(receiver, Value::Undefined) {
+                crate::super_scope::current_receiver().unwrap_or_else(|| receiver.clone())
+            } else {
+                receiver.clone()
+            };
+            super::execute_builtin_with_receiver(*builtin, arguments, Some(&receiver))
         }
         Value::HostCapability(capability) => crate::vm::execute_host_capability_with_receiver(
             capability.descriptor.kind,

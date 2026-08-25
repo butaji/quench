@@ -32,6 +32,12 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         }
     }
     let property = builtin_property(builtin, key);
+    if builtin == Builtin::StringPrototype
+        && matches!(value, Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound))
+        && matches!(property, Value::Builtin(_))
+    {
+        return bind_method(value, property);
+    }
     if let Some(result) = constructor_property(builtin, key, property.clone()) {
         return result;
     }
@@ -276,7 +282,7 @@ fn bound_function_fallback(
         result
     }
 }
-fn bind_method(receiver: &Value, property: Value) -> Value {
+pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
