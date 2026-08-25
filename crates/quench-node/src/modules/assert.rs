@@ -1121,6 +1121,21 @@ fn receiver_skip_prototype(receiver: Option<&Value>) -> bool {
     )
 }
 
+fn diff_operand(value: &Value, marker: char) -> String {
+    let Value::Array(array) = value else {
+        return format!("{marker} {}", rendered(value));
+    };
+    let owner = Value::Array(array.clone());
+    let mut lines = vec![format!("{marker} [")];
+    for index in 0..array.logical_len() {
+        let key = index.to_string();
+        let suffix = if index + 1 < array.logical_len() { "," } else { "" };
+        lines.push(format!("{marker}   {}{suffix}", rendered(&execute::get_property(&owner, &key))));
+    }
+    lines.push(format!("{marker} ]"));
+    lines.join("\n")
+}
+
 fn deep_diff(actual: &Value, expected: &Value) -> String {
     if let Some(diff) = regexp_diff(actual, expected) {
         return diff;
@@ -1147,7 +1162,7 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
         return diff;
     }
     let (Value::Object(left), Value::Object(right)) = (actual, expected) else {
-        return format!("+ {}\n- {}", rendered(actual), rendered(expected));
+        return format!("{}\n{}", diff_operand(actual, '+'), diff_operand(expected, '-'));
     };
     let left_object = Value::Object(left.clone());
     let right_object = Value::Object(right.clone());
@@ -1568,7 +1583,11 @@ fn scalar_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<Str
     let mut ops = Vec::new(); let (mut i, mut j) = (0, 0);
     while i < a.len() || j < b.len() {
         if i < a.len() && j < b.len() && execute::same_value(&a[i], &b[j]) { ops.push((' ', a[i].clone())); i += 1; j += 1; }
-        else if j == b.len() || (i < a.len() && dp[i + 1][j] >= dp[i][j + 1]) { ops.push(('+', a[i].clone())); i += 1; }
+        else if j == b.len() || (i < a.len() && {
+            let left = dp[i + 1][j];
+            let right = dp[i][j + 1];
+            left > right || (left == right && !b[j..].iter().any(|value| execute::same_value(&a[i], value)))
+        }) { ops.push(('+', a[i].clone())); i += 1; }
         else { ops.push(('-', b[j].clone())); j += 1; }
     }
     let mut lines = vec![format!("{}[", " ".repeat(indent))];
