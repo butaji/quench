@@ -105,11 +105,49 @@ fn update_range_execution(
 
 fn update_await_frame(
     generator: &GeneratorData,
-    _state: &GeneratorState,
+    state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<(), VmError> {
     if !matches!(completion, crate::completion::Completion::Suspend(_)) {
         return Ok(());
+    }
+    if let Some(iterator) = crate::loops::take_pending_async_for_of() {
+        let for_of = (0..=machine_pc(generator).saturating_sub(1)).rev().find_map(|index| {
+            match generator
+                .function
+                .code
+                .code()
+                .and_then(|code| code.cold_at(index))
+            {
+                Some(crate::ops::Op::ForOf { r#await: true, .. }) => generator
+                    .function
+                    .code
+                    .code()
+                    .and_then(|code| code.cold_at(index)),
+                _ => None,
+            }
+        });
+        if let Some(crate::ops::Op::ForOf {
+            label,
+            slot,
+            body,
+            per_iteration,
+            iteration_slots,
+            r#await: true,
+            dst,
+            ..
+        }) = for_of
+        {
+            state.async_for_of = Some(crate::value::AsyncForOfState {
+                label: label.clone(),
+                slot: *slot,
+                body: body.clone(),
+                per_iteration: *per_iteration,
+                iteration_slots: iteration_slots.clone(),
+                iterator,
+                dst: *dst,
+            });
+        }
     }
     try_push_frame(
         &mut generator.machine.borrow_mut(),
