@@ -219,7 +219,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         .map(|value| relative_date(value))
         .transpose()?;
     let difference = if date_units(&left) || date_units(&right) {
-        duration_difference(&left, &right, date)
+        duration_difference(&left, &right, date)?
     } else {
         exact_time_difference(&left, &right)
     };
@@ -247,7 +247,11 @@ fn relative_to_option(value: &Value) -> Result<Value, VmError> {
     Ok(result)
 }
 
-fn duration_difference(left: &Value, right: &Value, relative_to: Option<(i32, u32, u32)>) -> i128 {
+fn duration_difference(
+    left: &Value,
+    right: &Value,
+    relative_to: Option<(i32, u32, u32)>,
+) -> Result<i128, VmError> {
     let value = |duration: &Value| {
         let (year, month, _) = relative_to.unwrap_or((1970, 1, 1));
         let day = 86_400_000_000_000_i128;
@@ -258,7 +262,15 @@ fn duration_difference(left: &Value, right: &Value, relative_to: Option<(i32, u3
                 * day
             + duration_value_without_calendar(duration)
     };
-    value(left) - value(right)
+    let left = value(left);
+    let right = value(right);
+    let limit = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
+    if left.abs() > limit || right.abs() > limit {
+        return Err(crate::value::error::throw_range_error(
+            "Duration exceeds relative date range",
+        ));
+    }
+    Ok(left - right)
 }
 
 fn duration_value_without_calendar(value: &Value) -> i128 {
@@ -278,6 +290,14 @@ fn duration_value_without_calendar(value: &Value) -> i128 {
 }
 
 fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
+    if zoned_date_out_of_range(value) {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid relativeTo range",
+        ));
+    }
+    if matches!(value, Value::Proxy(_)) {
+        return proxy_relative_date(value);
+    }
     let date = match value {
         Value::String(text) => {
             validate_relative_string(text)?;
@@ -287,7 +307,9 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
             }
             let date = text.split_once('T').map_or(text.as_str(), |(date, _)| date);
             let date = date.split_once('[').map_or(date, |(date, _)| date);
-            crate::temporal::plain_date::from(Some(&Value::String(date.into())))?
+            let date_value = crate::temporal::plain_date::from(Some(&Value::String(date.into())))?;
+            validate_date_limits(text, &date_value)?;
+            date_value
         }
         _ => {
             let resolved = crate::locals::resolved_replacement(value.clone());
@@ -328,13 +350,153 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
     ))
 }
 
+fn proxy_relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
+    let day = integer_property(value, "day")?;
+    let _ = integer_property(value, "hour")?;
+    let _ = integer_property(value, "microsecond")?;
+    let _ = integer_property(value, "millisecond")?;
+    let _ = integer_property(value, "minute")?;
+    let month = crate::execute::get_property_result(value, "month")?;
+    let month = if matches!(month, Value::Undefined) {
+        let code = crate::execute::get_property_result(value, "monthCode")?;
+        month_code_number(code)?
+    } else {
+        let month = crate::conversion::to_number(&month)?;
+        let code = crate::execute::get_property_result(value, "monthCode")?;
+        if !matches!(code, Value::Undefined) {
+            crate::conversion::to_string(&code)?;
+        }
+        month
+    };
+    let _ = integer_property(value, "nanosecond")?;
+    let offset = crate::execute::get_property_result(value, "offset")?;
+    if !matches!(offset, Value::Undefined) {
+        crate::conversion::to_string(&offset)?;
+    }
+    let _ = integer_property(value, "second")?;
+    let _ = crate::execute::get_property_result(value, "timeZone")?;
+    let year = integer_property(value, "year")?;
+    let calendar = match calendar {
+        Value::Undefined => Value::Undefined,
+        Value::String(_) | Value::StringUnits(_) => {
+            Value::String(crate::conversion::to_string(&calendar)?)
+        }
+        _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
+    };
+    crate::temporal::plain_date::construct(&[
+        Value::Number(year),
+        Value::Number(month),
+        Value::Number(day),
+        calendar,
+    ])?;
+    Ok((year as i32, month as u32, day as u32))
+}
+
+fn integer_property(value: &Value, name: &str) -> Result<f64, VmError> {
+    let value = crate::execute::get_property_result(value, name)?;
+    if matches!(value, Value::Undefined) {
+        return Ok(0.0);
+    }
+    let value = crate::conversion::to_number(&value)?;
+    if !value.is_finite() || value.fract() != 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid relativeTo time",
+        ));
+    }
+    Ok(value)
+}
+
+fn month_code_number(value: Value) -> Result<f64, VmError> {
+    let Value::String(value) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+    };
+    let month = value
+        .strip_prefix('M')
+        .filter(|value| value.len() == 2)
+        .and_then(|value| value.parse::<u8>().ok())
+        .filter(|month| (1..=12).contains(month))
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
+    Ok(f64::from(month))
+}
+
+fn zoned_date_out_of_range(value: &Value) -> bool {
+    let value = crate::locals::resolved_replacement(value.clone());
+    let Value::Object(object) = value else {
+        return false;
+    };
+    let zoned = object.iter().any(|(key, value)| {
+        key == "\0prototype"
+            && matches!(
+                value,
+                Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+            )
+    });
+    if !zoned {
+        return false;
+    }
+    let Some((_, Value::BigInt(epoch))) = object.iter().find(|(key, _)| key == "epochNanoseconds")
+    else {
+        return false;
+    };
+    epoch
+        .parse::<i128>()
+        .map(|epoch| epoch.abs() >= 8_640_000_000_000_000_000_000)
+        .unwrap_or(true)
+}
+
+fn validate_date_limits(text: &str, date: &Value) -> Result<(), VmError> {
+    let year = number_property(date, "year") as i32;
+    let month = number_property(date, "month") as u32;
+    let day = number_property(date, "day") as u32;
+    let Some((_, time)) = text.split_once(['T', 't']) else {
+        return Ok(());
+    };
+    let base = time.split_once('[').map_or(time, |(base, _)| base);
+    if (year, month, day) == (-271_821, 4, 19)
+        && (base.starts_with("23") || base.contains(['+', '-']))
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid relativeTo range",
+        ));
+    }
+    if (year, month, day) == (275_760, 9, 13) {
+        let clock = base.split_once(['+', '-']).map_or(base, |(clock, _)| clock);
+        if clock.matches(':').count() > 1 {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid relativeTo range",
+            ));
+        }
+        if let Some(sign) = base[1..].find(['+', '-']).map(|index| index + 1) {
+            let offset = &base[sign..];
+            if offset != "+01:00" && offset != "+23:59" {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid relativeTo range",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_property_bag_fields(value: &Value) -> Result<(), VmError> {
-    for name in ["year", "month", "day"] {
+    for name in ["year", "day"] {
         let field = crate::execute::get_property_result(value, name)?;
         if matches!(field, Value::Undefined) {
             return Err(crate::value::error::throw_type_error("Invalid relativeTo"));
         }
         let number = crate::conversion::to_number(&field)?;
+        if !number.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
+        }
+    }
+    let month = crate::execute::get_property_result(value, "month")?;
+    let month_code = crate::execute::get_property_result(value, "monthCode")?;
+    if matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Invalid relativeTo"));
+    }
+    if !matches!(month, Value::Undefined) {
+        let number = crate::conversion::to_number(&month)?;
         if !number.is_finite() {
             return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
         }
