@@ -144,7 +144,8 @@ fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
             .min((length - start) as f64) as usize
     });
     let mut updated = values.to_vec();
-    let end = start.saturating_add(delete_count).min(length);
+    let start = start.min(updated.len());
+    let end = start.saturating_add(delete_count).min(updated.len());
     let removed = updated
         .splice(
             start..end,
