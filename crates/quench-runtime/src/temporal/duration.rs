@@ -124,7 +124,7 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         "nanosecond" => 1.0,
         _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
     };
-    if duration_field(object, "years") != 0.0 || duration_field(object, "months") != 0.0 {
+    if duration_field(object, "years") != 0 || duration_field(object, "months") != 0 {
         return Err(crate::value::error::throw_range_error(
             "relativeTo required",
         ));
@@ -140,7 +140,7 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         ("nanoseconds", 1.0),
     ]
     .iter()
-    .map(|(name, factor)| duration_field(object, name) * factor)
+    .map(|(name, factor)| duration_field(object, name) as f64 * factor)
     .sum::<f64>();
     Ok(Value::Number(nanos / factor))
 }
