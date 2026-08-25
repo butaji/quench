@@ -199,14 +199,9 @@ fn intrinsic_bound_property(bound: &crate::value::BoundFunctionValue, key: &str)
     };
     if bound.realm != crate::ops::RealmId::ROOT
         && builtin == Builtin::ShadowRealmPrototype
-        && matches!(key, "evaluate" | "importValue")
+        && key == "evaluate"
     {
-        let method = if key == "evaluate" {
-            Builtin::ShadowRealmEvaluate
-        } else {
-            Builtin::ShadowRealmImportValue
-        };
-        return realm::intrinsic(bound.realm, method).unwrap_or(Value::Builtin(method));
+        crate::reflect::note_shadow_method_realm(bound.realm);
     }
     builtin_property(builtin, key)
 }
@@ -232,14 +227,9 @@ fn bound_function_fallback(
     if let Value::Builtin(builtin) = bound.target {
         if bound.realm != crate::ops::RealmId::ROOT
             && builtin == Builtin::ShadowRealmPrototype
-            && matches!(key, "evaluate" | "importValue")
+            && key == "evaluate"
         {
-            let method = if key == "evaluate" {
-                Builtin::ShadowRealmEvaluate
-            } else {
-                Builtin::ShadowRealmImportValue
-            };
-            return realm::intrinsic(bound.realm, method).unwrap_or(Value::Builtin(method));
+            crate::reflect::note_shadow_method_realm(bound.realm);
         }
         if key == "prototype" {
             if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
