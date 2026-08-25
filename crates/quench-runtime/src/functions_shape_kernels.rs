@@ -83,6 +83,12 @@ pub(crate) fn execute_shape_kernel(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Option<crate::value::Value> {
+    // Async calls must enter the generator-backed completion path so throws
+    // become Promise rejections. Shape kernels are only observationally safe
+    // for synchronous functions.
+    if function.is_async {
+        return None;
+    }
     let plan = shape_kernel_fact(function)?;
     match plan {
         ShapeKernelPlan::StatePredicate(plan) => execute_state_predicate(function, receiver, plan),
