@@ -195,7 +195,11 @@ fn regexp_source_and_flags(
     let source = crate::strings::source_text(&source_value)
         .map(Ok)
         .unwrap_or_else(|| crate::conversion::to_string(&source_value))?;
-    let observable_source = crate::strings::source_value(&source);
+    let observable_source = if source.is_empty() {
+        Value::String("(?:)".to_string())
+    } else {
+        crate::strings::source_value(&source)
+    };
     Ok((source, observable_source, flags))
 }
 
