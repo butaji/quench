@@ -522,22 +522,24 @@
     }
     const stream = this;
     const destroy = this._destroy;
-    nextTick(() => {
-      let finished = false;
-      const finish = () => {
+    let finished = false;
+    const finish = (destroyError) => {
         if (finished || stream._readableState.closeEmitted) return;
         finished = true;
         stream._readableState.closeEmitted = true;
         stream.closed = true;
-        if (error) stream._emitter.emit("error", error);
+        const endError = destroyError || error;
+        if (endError) {
+          stream._readableState.errored = endError;
+          stream._emitter.emit("error", endError);
+        }
         stream._emitter.emit("close");
-      };
-      if (destroy) {
-        destroy.call(stream, error, finish);
-      } else {
-        finish();
-      }
-    });
+    };
+    if (destroy) {
+      destroy.call(stream, error, finish);
+    } else {
+      nextTick(() => finish());
+    }
     return this;
   }
 
@@ -948,6 +950,10 @@
   }
   Writable.prototype = WritableClass.prototype;
   mixEmitter(Writable.prototype);
+  Object.defineProperty(Writable.prototype, "errored", {
+    configurable: true,
+    get() { return this._writableState.errored || null; }
+  });
   Object.defineProperty(Writable, Symbol.hasInstance, {
     value(value) {
       if (!value) return false;
