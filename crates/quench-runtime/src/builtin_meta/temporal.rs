@@ -2,6 +2,52 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
+        Builtin::TemporalInstant => Some("Temporal.Instant"),
+        Builtin::TemporalInstantFrom => Some("Temporal.Instant.from"),
+        Builtin::TemporalInstantEpochNanosecondsGetter => Some("get epochNanoseconds"),
+        Builtin::TemporalPlainDateTime => Some("Temporal.PlainDateTime"),
+        Builtin::TemporalPlainDateTimeFrom => Some("Temporal.PlainDateTime.from"),
+        Builtin::TemporalPlainDateTimeCompare => Some("Temporal.PlainDateTime.compare"),
+        Builtin::TemporalPlainDateTimeAdd => Some("Temporal.PlainDateTime.prototype.add"),
+        Builtin::TemporalPlainDateTimeSubtract => Some("Temporal.PlainDateTime.prototype.subtract"),
+        Builtin::TemporalPlainDateTimeWith => Some("Temporal.PlainDateTime.prototype.with"),
+        Builtin::TemporalPlainDateTimeRound => Some("Temporal.PlainDateTime.prototype.round"),
+        Builtin::TemporalPlainDateTimeEquals => Some("Temporal.PlainDateTime.prototype.equals"),
+        Builtin::TemporalPlainDateTimeToString => Some("Temporal.PlainDateTime.prototype.toString"),
+        Builtin::TemporalPlainDateTimeToJSON => Some("Temporal.PlainDateTime.prototype.toJSON"),
+        Builtin::TemporalPlainDateTimeToLocaleString => Some("Temporal.PlainDateTime.prototype.toLocaleString"),
+        Builtin::TemporalPlainDateTimeValueOf => Some("Temporal.PlainDateTime.prototype.valueOf"),
+        Builtin::TemporalPlainTime => Some("Temporal.PlainTime"),
+        Builtin::TemporalPlainTimeFrom => Some("Temporal.PlainTime.from"),
+        Builtin::TemporalPlainTimeCompare => Some("Temporal.PlainTime.compare"),
+        Builtin::TemporalPlainTimeAdd => Some("Temporal.PlainTime.prototype.add"),
+        Builtin::TemporalPlainTimeSubtract => Some("Temporal.PlainTime.prototype.subtract"),
+        Builtin::TemporalPlainTimeWith => Some("Temporal.PlainTime.prototype.with"),
+        Builtin::TemporalPlainTimeRound => Some("Temporal.PlainTime.prototype.round"),
+        Builtin::TemporalPlainTimeEquals => Some("Temporal.PlainTime.prototype.equals"),
+        Builtin::TemporalPlainTimeUntil => Some("Temporal.PlainTime.prototype.until"),
+        Builtin::TemporalPlainTimeSince => Some("Temporal.PlainTime.prototype.since"),
+        Builtin::TemporalPlainTimeToString => Some("Temporal.PlainTime.prototype.toString"),
+        Builtin::TemporalPlainTimeToJSON => Some("Temporal.PlainTime.prototype.toJSON"),
+        Builtin::TemporalPlainTimeToLocaleString => Some("Temporal.PlainTime.prototype.toLocaleString"),
+        Builtin::TemporalPlainTimeValueOf => Some("Temporal.PlainTime.prototype.valueOf"),
+        Builtin::TemporalPlainDateTimeCalendarIdGetter
+        | Builtin::TemporalPlainDateTimeYearGetter
+        | Builtin::TemporalPlainDateTimeMonthGetter
+        | Builtin::TemporalPlainDateTimeMonthCodeGetter
+        | Builtin::TemporalPlainDateTimeDayGetter
+        | Builtin::TemporalPlainDateTimeHourGetter
+        | Builtin::TemporalPlainDateTimeMinuteGetter
+        | Builtin::TemporalPlainDateTimeSecondGetter
+        | Builtin::TemporalPlainDateTimeMillisecondGetter
+        | Builtin::TemporalPlainDateTimeMicrosecondGetter
+        | Builtin::TemporalPlainDateTimeNanosecondGetter
+        | Builtin::TemporalPlainTimeHourGetter
+        | Builtin::TemporalPlainTimeMinuteGetter
+        | Builtin::TemporalPlainTimeSecondGetter
+        | Builtin::TemporalPlainTimeMillisecondGetter
+        | Builtin::TemporalPlainTimeMicrosecondGetter
+        | Builtin::TemporalPlainTimeNanosecondGetter => Some("get Temporal field"),
         Builtin::TemporalDuration => Some("Temporal.Duration"),
         Builtin::TemporalDurationFrom => Some("Temporal.Duration.from"),
         Builtin::TemporalDurationCompare => Some("Temporal.Duration.compare"),
@@ -47,6 +93,35 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
 
 pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
+        Builtin::TemporalInstant => Some("Instant"),
+        Builtin::TemporalInstantFrom => Some("from"),
+        Builtin::TemporalInstantEpochNanosecondsGetter => Some("epochNanoseconds"),
+        Builtin::TemporalPlainDateTime => Some("PlainDateTime"),
+        Builtin::TemporalPlainDateTimeFrom => Some("from"),
+        Builtin::TemporalPlainDateTimeCompare => Some("compare"),
+        Builtin::TemporalPlainDateTimeAdd => Some("add"),
+        Builtin::TemporalPlainDateTimeSubtract => Some("subtract"),
+        Builtin::TemporalPlainDateTimeWith => Some("with"),
+        Builtin::TemporalPlainDateTimeRound => Some("round"),
+        Builtin::TemporalPlainDateTimeEquals => Some("equals"),
+        Builtin::TemporalPlainDateTimeToString => Some("toString"),
+        Builtin::TemporalPlainDateTimeToJSON => Some("toJSON"),
+        Builtin::TemporalPlainDateTimeToLocaleString => Some("toLocaleString"),
+        Builtin::TemporalPlainDateTimeValueOf => Some("valueOf"),
+        Builtin::TemporalPlainTime => Some("PlainTime"),
+        Builtin::TemporalPlainTimeFrom => Some("from"),
+        Builtin::TemporalPlainTimeCompare => Some("compare"),
+        Builtin::TemporalPlainTimeAdd => Some("add"),
+        Builtin::TemporalPlainTimeSubtract => Some("subtract"),
+        Builtin::TemporalPlainTimeWith => Some("with"),
+        Builtin::TemporalPlainTimeRound => Some("round"),
+        Builtin::TemporalPlainTimeEquals => Some("equals"),
+        Builtin::TemporalPlainTimeUntil => Some("until"),
+        Builtin::TemporalPlainTimeSince => Some("since"),
+        Builtin::TemporalPlainTimeToString => Some("toString"),
+        Builtin::TemporalPlainTimeToJSON => Some("toJSON"),
+        Builtin::TemporalPlainTimeToLocaleString => Some("toLocaleString"),
+        Builtin::TemporalPlainTimeValueOf => Some("valueOf"),
         Builtin::TemporalDuration => Some("Duration"),
         Builtin::TemporalDurationFrom => Some("from"),
         Builtin::TemporalDurationCompare => Some("compare"),
@@ -90,6 +165,53 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
+        Builtin::TemporalInstant => Some(1.0),
+        Builtin::TemporalInstantFrom => Some(1.0),
+        Builtin::TemporalInstantEpochNanosecondsGetter => Some(0.0),
+        Builtin::TemporalPlainDateTime => Some(3.0),
+        Builtin::TemporalPlainDateTimeFrom => Some(1.0),
+        Builtin::TemporalPlainDateTimeCompare => Some(2.0),
+        Builtin::TemporalPlainDateTimeAdd => Some(1.0),
+        Builtin::TemporalPlainDateTimeSubtract => Some(1.0),
+        Builtin::TemporalPlainDateTimeWith => Some(1.0),
+        Builtin::TemporalPlainDateTimeRound => Some(1.0),
+        Builtin::TemporalPlainDateTimeEquals => Some(1.0),
+        Builtin::TemporalPlainDateTimeToString
+        | Builtin::TemporalPlainDateTimeToJSON
+        | Builtin::TemporalPlainDateTimeToLocaleString
+        | Builtin::TemporalPlainDateTimeValueOf => Some(0.0),
+        Builtin::TemporalPlainTime => Some(0.0),
+        Builtin::TemporalPlainTimeFrom => Some(1.0),
+        Builtin::TemporalPlainTimeCompare => Some(2.0),
+        Builtin::TemporalPlainTimeAdd
+        | Builtin::TemporalPlainTimeSubtract
+        | Builtin::TemporalPlainTimeWith
+        | Builtin::TemporalPlainTimeRound
+        | Builtin::TemporalPlainTimeEquals
+        | Builtin::TemporalPlainTimeUntil
+        | Builtin::TemporalPlainTimeSince => Some(1.0),
+        Builtin::TemporalPlainTimeToString
+        | Builtin::TemporalPlainTimeToJSON
+        | Builtin::TemporalPlainTimeToLocaleString
+        | Builtin::TemporalPlainTimeValueOf => Some(0.0),
+        Builtin::TemporalPlainDateTimeCalendarIdGetter
+        | Builtin::TemporalPlainDateTimeYearGetter
+        | Builtin::TemporalPlainDateTimeMonthGetter
+        | Builtin::TemporalPlainDateTimeMonthCodeGetter
+        | Builtin::TemporalPlainDateTimeDayGetter
+        | Builtin::TemporalPlainDateTimeHourGetter
+        | Builtin::TemporalPlainDateTimeMinuteGetter
+        | Builtin::TemporalPlainDateTimeSecondGetter
+        | Builtin::TemporalPlainDateTimeMillisecondGetter
+        | Builtin::TemporalPlainDateTimeMicrosecondGetter
+        | Builtin::TemporalPlainDateTimeNanosecondGetter
+        | Builtin::TemporalPlainTimeHourGetter
+        | Builtin::TemporalPlainTimeMinuteGetter
+        | Builtin::TemporalPlainTimeSecondGetter
+        | Builtin::TemporalPlainTimeMillisecondGetter
+        | Builtin::TemporalPlainTimeMicrosecondGetter
+        | Builtin::TemporalPlainTimeNanosecondGetter
+        | Builtin::TemporalInstantEpochNanosecondsGetter => Some(0.0),
         Builtin::TemporalPlainDate => Some(3.0),
         Builtin::TemporalDurationFrom => Some(1.0),
         Builtin::TemporalDurationCompare => Some(2.0),
