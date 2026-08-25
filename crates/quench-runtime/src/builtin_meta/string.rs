@@ -88,8 +88,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::StringFromCodePoint => Some(1.0),
         Builtin::StringRaw => Some(1.0),
         Builtin::StringValueOf => Some(0.0),
-        Builtin::StringRepeat
-        | Builtin::StringTrim
+        Builtin::StringRepeat => Some(1.0),
+        Builtin::StringTrim
         | Builtin::StringToLowerCase
         | Builtin::StringToUpperCase
         | Builtin::StringNormalize

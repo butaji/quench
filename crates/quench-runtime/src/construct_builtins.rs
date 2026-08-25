@@ -434,6 +434,11 @@ fn construct_boolean(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
 }
 
 fn construct_string(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    if arguments.first().is_some_and(crate::conversion::is_symbol) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert a Symbol value to a string object",
+        ));
+    }
     let value = crate::execute::execute_builtin_with_receiver(
         crate::ops::Builtin::String,
         arguments,
