@@ -197,6 +197,7 @@ const CAP_HTTP_RES_SET_ENCODING: u16 = 0x0F10;
 const CAP_HTTP_RESDATA: u16 = 0x0F0B;
 const CAP_HTTP_RESEND: u16 = 0x0F0C;
 const CAP_NET_CONNECT: u16 = 0x1000;
+const CAP_NET_SOCKET: u16 = 0x1013;
 const CAP_NET_SERVER: u16 = 0x1001;
 const CAP_NET_ISIP: u16 = 0x1002;
 const CAP_NET_ISIPV4: u16 = 0x1003;
@@ -670,6 +671,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_RESDATA => crate::modules::http_client::data_handler,
         CAP_HTTP_RESEND => crate::modules::http_client::res_end_handler,
         CAP_NET_CONNECT => net_connect,
+        CAP_NET_SOCKET => net_socket_call,
         CAP_NET_SERVER => net_create_server_call,
         CAP_NET_ISIP => net_is_ip,
         CAP_NET_ISIPV4 => net_is_ipv4,
@@ -783,6 +785,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_URL_SEARCH => url_search_params,
         CAP_NET_SERVER => net_create_server,
         CAP_NET_CONNECT => crate::modules::net::socket_construct,
+        CAP_NET_SOCKET => crate::modules::net::socket_construct,
         CAP_HTTP_SERVER => http_create_server_construct,
         CAP_HTTP_AGENT => crate::modules::http_client::agent_construct,
         CAP_BUFFER_NEW => buffer_new_construct,

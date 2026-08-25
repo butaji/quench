@@ -148,8 +148,26 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
         vec![
             ("bytesRead".to_string(), Value::Number(0.0)),
             ("bytesWritten".to_string(), Value::Number(0.0)),
+            ("pending".to_string(), Value::Boolean(true)),
+            ("connecting".to_string(), Value::Boolean(false)),
+            ("readyState".to_string(), Value::String("closed".to_string())),
         ],
     )
+}
+
+pub(crate) fn set_socket_state(
+    socket: &Value,
+    pending: bool,
+    connecting: bool,
+    ready_state: &str,
+) {
+    execute::set_property_in_place(socket, "pending", Value::Boolean(pending));
+    execute::set_property_in_place(socket, "connecting", Value::Boolean(connecting));
+    execute::set_property_in_place(
+        socket,
+        "readyState",
+        Value::String(ready_state.to_string()),
+    );
 }
 
 pub(crate) fn update_socket_counters(socket: &NetSocket) {
@@ -429,7 +447,11 @@ pub fn build() -> Value {
         ),
         (
             "Socket",
-            crate::host::capability(crate::registry::SPEC_NET_CONNECT),
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET),
+        ),
+        (
+            "Stream",
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET),
         ),
         (
             "Server",
