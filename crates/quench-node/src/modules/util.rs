@@ -978,7 +978,37 @@ pub fn inspect_with_options(
 }
 
 fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
-    let keys = quench_runtime::execute::own_enumerable_keys(value);
+    let own_keys = quench_runtime::execute::own_keys(value)
+        .into_iter()
+        .filter_map(|key| match key {
+            Value::String(key) if !key.starts_with('\0') => Some(key),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut keys = own_keys.clone();
+    let mut prototype = quench_runtime::execute::get_prototype_of(value).ok();
+    while let Some(current) = prototype {
+        for key in quench_runtime::execute::own_keys(&current).into_iter().filter_map(|key| {
+            match key {
+                Value::String(key) if !key.starts_with('\0') => Some(key),
+                _ => None,
+            }
+        }) {
+            if key != "constructor" && !keys.contains(&key)
+                && matches!(
+                    quench_runtime::execute::call(
+                        &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+                        &Value::Undefined,
+                        &[current.clone(), Value::String(key.clone())],
+                    ),
+                    Ok(Value::Object(_))
+                )
+            {
+                keys.push(key);
+            }
+        }
+        prototype = quench_runtime::execute::get_prototype_of(&current).ok();
+    }
     if keys.is_empty() {
         return "{}".into();
     }
@@ -987,13 +1017,29 @@ fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
         .map(|key| {
             format!(
                 "{}: {}",
-                if key.parse::<usize>().is_ok() { format!("'{key}'") } else { key.clone() },
+                if !own_keys.contains(key) {
+                    format!("[{key}]")
+                } else if key.parse::<usize>().is_ok() {
+                    format!("'{key}'")
+                } else {
+                    key.clone()
+                },
                 inspect_property_with_getters(value, key, depth.saturating_sub(1)),
             )
         })
         .collect::<Vec<_>>()
         .join(", ");
-    format!("{{ {body} }}")
+    let name = quench_runtime::execute::get_prototype_of(value)
+        .ok()
+        .map(|prototype| quench_runtime::execute::get_property(&prototype, "constructor"))
+        .and_then(|constructor| match quench_runtime::execute::get_property(&constructor, "name") {
+            Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+            _ => None,
+        });
+    match name {
+        Some(name) => format!("{name} {{ {body} }}"),
+        None => format!("{{ {body} }}"),
+    }
 }
 
 fn inspect_string(value: &str) -> String {
@@ -1495,12 +1541,28 @@ fn inspect_property_with_getters(value: &Value, key: &str, depth: usize) -> Stri
 }
 
 fn inspect_property_mode(value: &Value, key: &str, depth: usize, getters: bool) -> String {
-    let descriptor = quench_runtime::execute::call(
+    let mut owner = value.clone();
+    let mut descriptor = quench_runtime::execute::call(
         &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
         &Value::Undefined,
         &[value.clone(), Value::String(key.to_string())],
     )
     .ok();
+    while descriptor
+        .as_ref()
+        .is_none_or(|value| matches!(value, Value::Undefined))
+    {
+        owner = match quench_runtime::execute::get_prototype_of(&owner) {
+            Ok(Value::Null) | Err(_) => break,
+            Ok(next) => next,
+        };
+        descriptor = quench_runtime::execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+            &Value::Undefined,
+            &[owner.clone(), Value::String(key.to_string())],
+        )
+        .ok();
+    }
     if let Some(Value::Object(descriptor)) = descriptor {
         let getter = quench_runtime::execute::get_property(
             &Value::Object(descriptor.clone()),
