@@ -518,6 +518,7 @@ fn execute_loop_body_with_context(
 
 include!("loops_run.rs");
 include!("loops_pair_walk.rs");
+include!("loops_regexp_exec.rs");
 include!("loops_numeric_kernel.rs");
 include!("loops_crypto_kernel.rs");
 include!("loops_advect_kernel.rs");
