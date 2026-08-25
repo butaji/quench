@@ -633,6 +633,15 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
+    if !flags.contains('g')
+        && !flags.contains('y')
+        && source.len() <= 3
+        && simple_character_class_test(&source, &s).is_some()
+    {
+        return Ok(Value::Boolean(
+            simple_character_class_test(&source, &s).unwrap_or(false),
+        ));
+    }
     if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
         set_last_index(receiver, 0.0)?;
         return Ok(Value::Boolean(false));
@@ -661,6 +670,25 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         set_last_index(receiver, new_index as f64)?;
     }
     Ok(Value::Boolean(matched))
+}
+
+fn simple_character_class_test(source: &str, input: &str) -> Option<bool> {
+    let class = source
+        .strip_prefix("\\\\")
+        .or_else(|| source.strip_prefix('\\'))?;
+    if !matches!(class, "d" | "D" | "s" | "S" | "w" | "W") {
+        return None;
+    }
+    let matches_class = |character: char| match class {
+        "d" => character.is_ascii_digit(),
+        "D" => !character.is_ascii_digit(),
+        "s" => character.is_whitespace() || character == '\u{FEFF}',
+        "S" => !(character.is_whitespace() || character == '\u{FEFF}'),
+        "w" => character.is_ascii_alphanumeric() || character == '_',
+        "W" => !(character.is_ascii_alphanumeric() || character == '_'),
+        _ => false,
+    };
+    Some(input.chars().any(matches_class))
 }
 
 pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
