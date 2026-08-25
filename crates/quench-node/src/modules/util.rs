@@ -174,6 +174,14 @@ pub fn build() -> Vec<(String, Value)> {
             "promisify".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_PROMISIFY),
         ),
+        (
+            "deprecate".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
+        ),
+        (
+            "pendingDeprecate".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
+        ),
         ("inspect".to_string(), inspect_capability()),
         (
             "isDeepStrictEqual".to_string(),

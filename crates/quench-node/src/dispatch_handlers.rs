@@ -284,6 +284,57 @@ pub fn util_promisify(
     ))
 }
 
+pub fn util_deprecate(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(callback) = args.first().cloned() else {
+        return Err(VmError::NotCallable);
+    };
+    if !quench_runtime::is_callable(&callback) {
+        return Err(VmError::NotCallable);
+    }
+    if let Some(code) = args.get(2) {
+        if !matches!(code, Value::String(_)) {
+            let received = match code {
+                Value::Null => " Received null".to_string(),
+                Value::Boolean(value) => format!(" Received type boolean ({value})"),
+                Value::Number(value) => format!(" Received type number ({value})"),
+                Value::Object(_) | Value::ObjectAlias(_) => {
+                    " Received an instance of Object".to_string()
+                }
+                _ => " Received an unsupported value".to_string(),
+            };
+            return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("name".into(), Value::String("TypeError".into())),
+                (
+                    "message".into(),
+                    Value::String(format!(
+                        "The \"code\" argument must be of type string.{received}"
+                    )),
+                ),
+            ])));
+        }
+    }
+    Ok(bound_custom(
+        crate::registry::SPEC_UTIL_DEPRECATED_CALL.cap,
+        vec![callback],
+    ))
+}
+
+pub fn util_deprecated_call(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(callback) = args.first() else {
+        return Err(VmError::NotCallable);
+    };
+    quench_runtime::execute::call(callback, &Value::Undefined, args.get(1..).unwrap_or_default())
+}
+
 fn timer_promise_alias(value: &Value) -> Option<&'static str> {
     let capability = match value {
         Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
