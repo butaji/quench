@@ -229,7 +229,7 @@ pub(crate) fn execute_set_named_cached(
                     crate::execution_trace::Event::NamedSetLayoutMismatch,
                 );
             } else if let Some((_, crate::value::Value::BindingCell(cell))) =
-                data.hot_properties().get(slot as usize)
+                data.hot_properties().slot_entry(slot as usize)
             {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
                 cell.store(crate::execute::read_register(registers, src)?);
@@ -534,14 +534,14 @@ fn set_builtin_property(
 
 pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
     match target {
-        crate::value::Value::Object(properties) => marked_without_key(properties, key),
+        crate::value::Value::Object(properties) => marked_without_key(properties.as_ref(), key),
         crate::value::Value::Function(function) => {
             let properties = function.properties.borrow();
-            marked_without_key(&properties, key)
+            marked_without_key(&properties[..], key)
         }
         crate::value::Value::BoundFunction(bound) => {
             let properties = bound.properties.borrow();
-            marked_without_key(&properties, key)
+            marked_without_key(&properties[..], key)
         }
         crate::value::Value::Array(values) => {
             let own = key == "length"
@@ -554,11 +554,12 @@ pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> b
     }
 }
 
-fn marked_without_key<K: AsRef<str>>(properties: &[(K, crate::value::Value)], key: &str) -> bool {
-    properties
-        .iter()
-        .any(|(name, _)| name.as_ref() == NON_EXTENSIBLE)
-        && !properties.iter().any(|(name, _)| name.as_ref() == key)
+fn marked_without_key<P: crate::value::PropertyEntries + ?Sized>(
+    properties: &P,
+    key: &str,
+) -> bool {
+    properties.entries().any(|(name, _)| name == NON_EXTENSIBLE)
+        && !properties.entries().any(|(name, _)| name == key)
 }
 
 pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {

@@ -114,7 +114,7 @@ fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
                     && crate::vm::global_builtin_exists(key))))
 }
 
-fn boxed_string_owns(properties: &[(crate::value::PropertyName, Value)], key: &str) -> bool {
+fn boxed_string_owns(properties: &ObjectData, key: &str) -> bool {
     let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value")
     else {
         return false;

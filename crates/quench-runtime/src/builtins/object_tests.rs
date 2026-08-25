@@ -154,10 +154,10 @@ fn descriptor_metadata_lookup_is_cold_and_last_write_wins() {
         ),
     ];
     assert_eq!(
-        crate::builtins::descriptor_metadata(&properties, "alpha"),
+        crate::builtins::descriptor_metadata(&properties[..], "alpha"),
         Some(&Value::String("new".to_string()))
     );
-    assert_eq!(crate::builtins::descriptor_metadata(&properties, "missing"), None);
+    assert_eq!(crate::builtins::descriptor_metadata(&properties[..], "missing"), None);
 }
 
 #[test]
