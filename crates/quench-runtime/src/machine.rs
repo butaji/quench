@@ -29,6 +29,7 @@ pub struct InstructionMeta {
     pub source: Option<u32>,
     pub name: Option<Rc<str>>,
     pub flags: u16,
+    pub operand_window: u32,
     pub named_cache: std::cell::Cell<u64>,
 }
 
@@ -38,6 +39,7 @@ impl InstructionMeta {
             source: None,
             name: None,
             flags: 0,
+            operand_window: u32::MAX,
             named_cache: std::cell::Cell::new(0),
         }
     }
@@ -118,6 +120,7 @@ pub struct CodeArena {
     parameter_ends: Vec<Option<u32>>,
     constants: Vec<ConstantPool>,
     metadata: Vec<Vec<InstructionMeta>>,
+    operand_windows: Vec<Vec<Rc<[u16]>>>,
 }
 
 fn metadata_for(op: &Op, source: Option<u32>) -> InstructionMeta {
@@ -143,6 +146,7 @@ fn metadata_for(op: &Op, source: Option<u32>) -> InstructionMeta {
         source,
         name,
         flags: u16::from(matches!(op, Op::CheckInitialized { .. })),
+        operand_window: u32::MAX,
         named_cache: std::cell::Cell::new(0),
     }
 }
@@ -350,6 +354,7 @@ impl CodeArena {
         );
         let mut parameter_end = None;
         let mut metadata = Vec::with_capacity(body.len());
+        let mut operand_windows = Vec::new();
         let mut cursor = 0;
         let mut source = None;
         while cursor < body.len() {
@@ -412,11 +417,29 @@ impl CodeArena {
                 continue;
             }
             let op = &body[cursor];
+            let mut meta = metadata_for(op, source);
             let instruction = match op {
                 Op::Const { dst, value } => crate::ir::Instruction::load_const(
                     *dst,
                     constants.id(value).expect("constant was collected"),
                 ),
+                Op::CallMethod {
+                    dst,
+                    object,
+                    callee: Some(callee),
+                    args,
+                    spreads,
+                    ..
+                } if args.len() == 6 && spreads.iter().all(|spread| !spread) => {
+                    meta.operand_window = operand_windows.len() as u32;
+                    operand_windows.push(Rc::from(args.as_slice()));
+                    crate::ir::Instruction::call_registered_window(
+                        *dst,
+                        *object,
+                        *callee,
+                        args.len() as u8,
+                    )
+                }
                 _ => crate::ir::lower_compact(op).unwrap_or_else(|| {
                     let index = self.cold.len() as u32;
                     self.cold.push(op.clone());
@@ -424,10 +447,11 @@ impl CodeArena {
                 }),
             };
             self.instructions.push(instruction);
-            metadata.push(metadata_for(op, source));
+            metadata.push(meta);
             cursor += 1;
         }
         self.metadata.push(metadata);
+        self.operand_windows.push(operand_windows);
         let end = self.instructions.len() as u32;
         self.ranges.push((start, end));
         self.parameter_ends.push(parameter_end);
@@ -467,6 +491,7 @@ impl CodeArena {
             parameter_ends: self.parameter_ends.into_boxed_slice().into(),
             constants: self.constants.into_boxed_slice().into(),
             metadata: self.metadata.into_boxed_slice().into(),
+            operand_windows: self.operand_windows.into_boxed_slice().into(),
         })
     }
 }
@@ -640,6 +665,7 @@ pub struct CodeStore {
     parameter_ends: Rc<[Option<u32>]>,
     constants: Rc<[ConstantPool]>,
     metadata: Rc<[Vec<InstructionMeta>]>,
+    operand_windows: Rc<[Vec<Rc<[u16]>>]>,
 }
 
 impl CodeStore {
@@ -750,6 +776,16 @@ impl<'a> CodeView<'a> {
             .metadata
             .get(self.range.code.0 as usize)?
             .get(offset.checked_sub(range_start)?)
+    }
+
+    #[inline]
+    pub fn operand_window_at(self, pc: usize) -> Option<&'a [u16]> {
+        let meta = self.metadata_at(pc)?;
+        self.store
+            .operand_windows
+            .get(self.range.code.0 as usize)?
+            .get(meta.operand_window as usize)
+            .map(AsRef::as_ref)
     }
 
     pub fn slice(self, start: usize, end: usize) -> Option<Self> {
@@ -1631,6 +1667,29 @@ mod tests {
             Some(crate::ir::Instruction::call_registered_one(6, 2, 4))
         );
         assert!(code.cold_at(2).is_none());
+    }
+    #[test]
+    fn nonconsecutive_call_arguments_live_in_pc_metadata() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::CallMethod {
+            dst: 20,
+            object: 2,
+            key: "am".into(),
+            callee: Some(4),
+            args: vec![5, 7, 9, 11, 13, 17],
+            spreads: vec![false; 6],
+        }]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::call_registered_window(20, 2, 4, 6))
+        );
+        assert_eq!(
+            code.operand_window_at(0),
+            Some([5, 7, 9, 11, 13, 17].as_slice())
+        );
+        assert!(code.cold_at(0).is_none());
     }
     #[test]
     fn frozen_code_store_owns_metadata_after_builder_drop() {
