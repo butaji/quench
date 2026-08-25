@@ -36,8 +36,37 @@ fn compare_partial(
             if left.is_arguments_object() != right.is_arguments_object() {
                 return Ok(false);
             }
-            if a.logical_len() != b.logical_len() || seen(memo, left, right) {
-                return Ok(a.logical_len() == b.logical_len());
+            if a.logical_len() < b.logical_len() || seen(memo, left, right) {
+                return Ok(a.logical_len() >= b.logical_len());
+            }
+            if a.logical_len() > b.logical_len()
+                && (0..b.logical_len()).all(|index| {
+                    execute::has_own_property(right, &index.to_string())
+                })
+            {
+                let mut cursor = 0;
+                for index in 0..b.logical_len() {
+                    let expected = execute::get_property_result(right, &index.to_string())?;
+                    let mut matched = false;
+                    while cursor < a.logical_len() {
+                        let key = cursor.to_string();
+                        cursor += 1;
+                        if execute::has_own_property(left, &key)
+                            && compare_partial(
+                                &execute::get_property_result(left, &key)?,
+                                &expected,
+                                memo,
+                            )?
+                        {
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if !matched {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
             }
             for index in 0..b.logical_len() {
                 let key = index.to_string();
@@ -113,8 +142,22 @@ fn compare_partial(
                     return Ok(false);
                 }
             }
-            same_enumerable_symbols_shallow(left, right)
+            partial_enumerable_symbols(left, right)
         }
+        (_, _) if is_typed_array(left) && is_typed_array(right) => {
+            partial_typed_array(left, right, memo)
+        }
+        (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => {
+            if left.shared != right.shared {
+                return Ok(false);
+            }
+            let left_bytes = left.bytes.borrow();
+            let right_bytes = right.bytes.borrow();
+            Ok(left_bytes.len() >= right_bytes.len()
+                && left_bytes[..right_bytes.len()] == right_bytes[..])
+        }
+        (Value::Map(left), Value::Map(right)) => partial_maps(left, right, memo),
+        (Value::Set(left), Value::Set(right)) => partial_sets(left, right, memo),
         (Value::Object(_), Value::Object(_)) => {
             if is_url_like(left) || is_url_like(right) {
                 return compare_url_like(left, right);
@@ -136,6 +179,9 @@ fn compare_partial(
                 || (quench_runtime::regexp::has_regexp_internal_slot(left)
                     || quench_runtime::regexp::has_regexp_internal_slot(right))
             {
+                if is_error_value(left) || is_error_value(right) {
+                    return compare_partial_error(left, right, memo);
+                }
                 return compare(left, right, true, false, memo);
             }
             if seen(memo, left, right) {
@@ -158,13 +204,154 @@ fn compare_partial(
                     return Ok(false);
                 }
             }
-            if !same_enumerable_symbols(left, right, true, false, memo)? {
+            if !partial_enumerable_symbols(left, right)? {
                 return Ok(false);
             }
             Ok(true)
         }
         _ => compare(left, right, true, false, memo),
     }
+}
+
+fn compare_partial_error(
+    left: &Value,
+    right: &Value,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if !is_error_value(left) || !is_error_value(right) {
+        return Ok(false);
+    }
+    if has_own_slot(right, "name") && !same_property(left, right, "name") {
+        return Ok(false);
+    }
+    if has_own_slot(right, "message") && !same_property(left, right, "message") {
+        return Ok(false);
+    }
+    if has_own_slot(right, "cause") {
+        let left_cause = execute::get_property_result(left, "cause")?;
+        let right_cause = execute::get_property_result(right, "cause")?;
+        if !has_own_slot(left, "cause") || !compare_partial(&left_cause, &right_cause, memo)? {
+            return Ok(false);
+        }
+    }
+    if is_aggregate_error(right) {
+        let left_errors = execute::get_property_result(left, "errors")?;
+        let right_errors = execute::get_property_result(right, "errors")?;
+        if !compare_partial(&left_errors, &right_errors, memo)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn partial_typed_array(
+    left: &Value,
+    right: &Value,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if std::mem::discriminant(left) != std::mem::discriminant(right) {
+        return Ok(false);
+    }
+    let left_len = typed_array_length(left).unwrap_or(0);
+    let right_len = typed_array_length(right).unwrap_or(0);
+    if left_len < right_len || seen(memo, left, right) {
+        return Ok(left_len >= right_len);
+    }
+    let mut cursor = 0;
+    for index in 0..right_len {
+        let expected = execute::get_property_result(right, &index.to_string())?;
+        let mut matched = false;
+        while cursor < left_len {
+            let actual = execute::get_property_result(left, &cursor.to_string())?;
+            cursor += 1;
+            if compare_partial(&actual, &expected, memo)? {
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return Ok(false);
+        }
+    }
+    partial_enumerable_symbols(left, right)
+}
+
+fn typed_array_length(value: &Value) -> Option<usize> {
+    match value {
+        Value::Float64Array(v) => Some(v.logical_len()),
+        Value::Float32Array(v) => Some(v.logical_len()),
+        Value::Int8Array(v) => Some(v.logical_len()),
+        Value::Int16Array(v) => Some(v.logical_len()),
+        Value::Int32Array(v) => Some(v.logical_len()),
+        Value::BigInt64Array(v) => Some(v.logical_len()),
+        Value::BigUint64Array(v) => Some(v.logical_len()),
+        Value::Uint32Array(v) => Some(v.logical_len()),
+        Value::Uint8Array(v) => Some(v.logical_len()),
+        Value::Uint8ClampedArray(v) => Some(v.logical_len()),
+        Value::Uint16Array(v) => Some(v.logical_len()),
+        _ => None,
+    }
+}
+
+fn partial_maps(
+    left: &Rc<quench_runtime::value::MapData>,
+    right: &Rc<quench_runtime::value::MapData>,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if left.is_weak() || right.is_weak() || seen(memo, &Value::Map(left.clone()), &Value::Map(right.clone())) {
+        return Ok(false);
+    }
+    let left_keys = left.keys.borrow();
+    let left_values = left.values.borrow();
+    let right_keys = right.keys.borrow();
+    let right_values = right.values.borrow();
+    let mut used = vec![false; left_keys.len()];
+    for (expected_key, expected_value) in right_keys.iter().zip(right_values.iter()) {
+        let mut matched = false;
+        for index in 0..left_keys.len() {
+            if used[index]
+                || !compare_partial(&left_keys[index], expected_key, memo)?
+                || !compare_partial(&left_values[index], expected_value, memo)?
+            {
+                continue;
+            }
+            used[index] = true;
+            matched = true;
+            break;
+        }
+        if !matched {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn partial_sets(
+    left: &Rc<quench_runtime::value::SetData>,
+    right: &Rc<quench_runtime::value::SetData>,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if left.is_weak() || right.is_weak() || seen(memo, &Value::Set(left.clone()), &Value::Set(right.clone())) {
+        return Ok(false);
+    }
+    let left_values = left.values.borrow();
+    let right_values = right.values.borrow();
+    let mut used = vec![false; left_values.len()];
+    for expected in right_values.iter() {
+        let mut matched = false;
+        for index in 0..left_values.len() {
+            if used[index] || !compare_partial(&left_values[index], expected, memo)? {
+                continue;
+            }
+            used[index] = true;
+            matched = true;
+            break;
+        }
+        if !matched {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn is_date_value(value: &Value) -> bool {
@@ -512,6 +699,21 @@ fn same_enumerable_symbols_shallow(left: &Value, right: &Value) -> Result<bool, 
             &execute::get_property(left, key),
             &execute::get_property(right, key),
         ) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn partial_enumerable_symbols(left: &Value, right: &Value) -> Result<bool, VmError> {
+    let left_symbols = execute::own_enumerable_symbol_strings(left);
+    for key in execute::own_enumerable_symbol_strings(right) {
+        if !left_symbols.contains(&key)
+            || !execute::same_value(
+                &execute::get_property(left, &key),
+                &execute::get_property(right, &key),
+            )
+        {
             return Ok(false);
         }
     }
