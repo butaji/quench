@@ -221,7 +221,9 @@ fn run_instruction(
         Opcode::GetProperty | Opcode::AGetI => {
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
-                let array = registers.read_array(usize::from(instruction.b));
+                let array = registers
+                    .read_array(usize::from(instruction.b))
+                    .filter(|array| crate::locals::array_word_is_current(array));
                 if let Some((array, index)) =
                     array.filter(|array| array.is_packed_ordinary()).zip(index)
                 {
@@ -335,6 +337,7 @@ fn run_instruction(
             let stored = index.zip(number).is_some_and(|(index, number)| {
                 registers
                     .read_array(usize::from(instruction.a))
+                    .filter(|array| crate::locals::array_word_is_current(array))
                     .is_some_and(|array| {
                         array.set_existing_f64(index, number)
                             || array.append_preallocated_f64(index, number)

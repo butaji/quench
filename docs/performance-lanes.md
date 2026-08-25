@@ -28,7 +28,8 @@ Schema 5 `lanes` contains:
   code-id/PC/source-offset sites with a seven-opcode context window. Collection
   is exact up to 4,096 sites; `compact_site_dropped` must remain zero.
 - `l3`: handler count/share, top eight slow operations, descriptor-object
-  origins, allocation origins, and RegExp `lastIndex` access paths.
+  origins, the VM ops that materialize descriptor views, allocation origins,
+  and RegExp `lastIndex` access paths.
 - `l4`: host-call count and non-Function call targets.
 
 `loop_shapes`, `function_call_shapes`, and `heap_lifecycle` remain beside

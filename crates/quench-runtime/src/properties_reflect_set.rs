@@ -35,6 +35,23 @@ fn set_proven_own_data(
     value: &crate::value::Value,
     receiver: &crate::value::Value,
 ) -> bool {
+    if let (crate::value::Value::Array(target), crate::value::Value::Array(receiver_resolved)) = (
+        target,
+        &crate::locals::resolved_replacement(receiver.clone()),
+    ) {
+        let index = crate::arrays::array_index(key).map(|index| index as usize);
+        if std::rc::Rc::ptr_eq(target, receiver_resolved)
+            && index.is_some_and(|index| target.has_plain_dense_index(index))
+        {
+            let updated = crate::builtins::set_property(
+                crate::value::Value::Array(std::rc::Rc::clone(receiver_resolved)),
+                key,
+                value.clone(),
+            );
+            crate::locals::replace_value(receiver, &updated);
+            return true;
+        }
+    }
     let (crate::value::Value::Object(target), crate::value::Value::Object(receiver)) =
         (target, receiver)
     else {
