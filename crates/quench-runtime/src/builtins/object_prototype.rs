@@ -109,7 +109,7 @@ fn function_prototype(function: &crate::value::FunctionValue) -> Value {
             .unwrap_or_else(|| crate::vm::current_context_or_default().realm());
         return crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype);
     }
-    internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
+    internal_prototype(&function.properties.borrow()[..], Builtin::FunctionPrototype)
 }
 
 fn intrinsic_bound_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
@@ -160,7 +160,7 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             Value::Builtin(Builtin::SymbolPrototype)
         }
-        Value::Object(properties) => internal_prototype(properties, Builtin::ObjectPrototype),
+        Value::Object(properties) => internal_prototype(properties.as_ref(), Builtin::ObjectPrototype),
         _ => typed_array_prototype_for_value(value),
     }
 }
@@ -227,11 +227,11 @@ fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
     )
 }
 
-fn internal_prototype<K: AsRef<str>>(properties: &[(K, Value)], fallback: Builtin) -> Value {
+fn internal_prototype<P: crate::value::PropertyEntries + ?Sized>(properties: &P, fallback: Builtin) -> Value {
     properties
-        .iter()
+        .entries()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == "\0prototype").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
         .unwrap_or(Value::Builtin(fallback))
 }
 

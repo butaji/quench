@@ -235,6 +235,7 @@ fn validate_leaf_depth(
             op.opcode,
             crate::ir::Opcode::LoadConst
                 | crate::ir::Opcode::Move
+                | crate::ir::Opcode::LoadLocal
                 | crate::ir::Opcode::LoadLocalChecked
                 | crate::ir::Opcode::StoreLocalChecked
                 | crate::ir::Opcode::InitLocal
@@ -421,7 +422,7 @@ fn leaf_unary_name(operator: crate::ops::UnaryOp) -> &'static str {
 fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
     use crate::ir::Opcode::*;
     match op.opcode {
-        LoadConst | LoadLocalChecked | Return => [op.a, 0, 0],
+        LoadConst | LoadLocal | LoadLocalChecked | Return => [op.a, 0, 0],
         StoreLocalChecked | InitLocal => [op.b, 0, 0],
         UpdateLocal => [op.a, op.b, 0],
         Move => [op.a, op.b, 0],
@@ -487,10 +488,10 @@ fn run_leaf_op(
                 .ok_or(crate::execute::VmError::MissingReturn)?;
             return Ok(None);
         }
-        LoadLocalChecked if leaf_load_capture(function, code, pc, op, registers)? => {
+        LoadLocal | LoadLocalChecked if leaf_load_capture(function, code, pc, op, registers)? => {
             return Ok(None);
         }
-        LoadLocalChecked => Some(leaf_local(
+        LoadLocal | LoadLocalChecked => Some(leaf_local(
             function, receiver, arguments, code, pc, op.b, locals,
         )?),
         StoreLocalChecked => {
@@ -923,7 +924,7 @@ fn leaf_set_named(
             {
                 if object.semantic_layout_id() == layout {
                     if let Some((_, crate::value::Value::BindingCell(cell))) =
-                        object.hot_properties().get(slot as usize)
+                        object.hot_properties().slot_entry(slot as usize)
                     {
                         cell.store(value);
                         return Ok(());
