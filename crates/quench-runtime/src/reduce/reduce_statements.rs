@@ -6,7 +6,7 @@ use oxc::{
     allocator::Allocator,
     ast::ast::{Expression, Statement},
     parser::Parser,
-    span::SourceType,
+    span::{GetSpan, SourceType},
 };
 use std::collections::HashMap;
 const GLOBAL_THIS: &str = "globalThis";
@@ -417,6 +417,7 @@ pub fn reduce_statement(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    trace_statement_site(ops, statement.span().start);
     let last = if statement.is_module_declaration() {
         super::reduce_module::reduce_module_declaration(
             statement,
@@ -434,6 +435,15 @@ pub fn reduce_statement(
     }
     Ok(last)
 }
+
+#[cfg(feature = "execution-trace")]
+fn trace_statement_site(ops: &mut Vec<Op>, source: u32) {
+    ops.push(Op::TraceSite { source });
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn trace_statement_site(_: &mut Vec<Op>, _: u32) {}
 
 fn reduce_plain_statement(
     statement: &Statement<'_>,

@@ -9,6 +9,7 @@ use crate::{
 };
 use oxc::{
     ast::ast::{Expression, PrivateInExpression, Statement, VariableDeclarationKind},
+    span::GetSpan,
     syntax::operator::UnaryOperator,
 };
 use std::collections::HashMap;
@@ -331,6 +332,7 @@ pub fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    trace_expression_site(ops, expression.span().start);
     match expression {
         Expression::TaggedTemplateExpression(tagged) => {
             return super::tagged_template::reduce(tagged, ops, facts, next_register, locals);
@@ -353,6 +355,15 @@ pub fn reduce_expression(
         .or_else(|| reduce_binary(expression, ops, facts, next_register, locals))
         .or_else(|| reduce_private_in(expression, ops, facts, next_register, locals))
 }
+
+#[cfg(feature = "execution-trace")]
+fn trace_expression_site(ops: &mut Vec<Op>, source: u32) {
+    ops.push(Op::TraceSite { source });
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn trace_expression_site(_: &mut Vec<Op>, _: u32) {}
 
 fn reduce_private_in(
     expression: &Expression<'_>,

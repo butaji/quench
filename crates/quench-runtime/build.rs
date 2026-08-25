@@ -22,39 +22,12 @@ fn main() {
 }
 
 fn generate_op_names() {
-    const PREFIX: &str = "    ";
     let source = fs::read_to_string("src/ops_op.rs").expect("read canonical Op declaration");
-    let body = source
-        .split_once("pub enum Op {")
-        .expect("Op declaration")
-        .1;
-    let variants: Vec<_> = body
-        .lines()
-        .take_while(|line| *line != "}")
-        .filter_map(|line| {
-            let rest = line.strip_prefix(PREFIX)?;
-            if rest.starts_with(' ') {
-                return None;
-            }
-            let end = rest
-                .find(|character: char| !character.is_ascii_alphanumeric() && character != '_')?;
-            let name = &rest[..end];
-            (!name.is_empty() && name.chars().next()?.is_ascii_uppercase()).then_some((name, rest))
-        })
-        .collect();
+    let variants = extract_op_variants(&source);
     assert!(variants.len() >= 90, "incomplete Op variant extraction");
     let arms = variants
         .iter()
-        .map(|(name, declaration)| {
-            let pattern = if declaration[name.len()..].trim_start().starts_with('{') {
-                format!("Self::{name} {{ .. }}")
-            } else if declaration[name.len()..].trim_start().starts_with('(') {
-                format!("Self::{name} (..)")
-            } else {
-                format!("Self::{name}")
-            };
-            format!("            {pattern} => \"{name}\",")
-        })
+        .map(op_name_arm)
         .collect::<Vec<_>>()
         .join("\n");
     let generated = format!(
@@ -63,4 +36,54 @@ fn generate_op_names() {
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     fs::write(output.join("op_variant_name.rs"), generated).expect("write Op names");
     println!("cargo:rerun-if-changed=src/ops_op.rs");
+}
+
+fn extract_op_variants(source: &str) -> Vec<(&str, &str, Option<&str>)> {
+    const PREFIX: &str = "    ";
+    let body = source
+        .split_once("pub enum Op {")
+        .expect("Op declaration")
+        .1;
+    let mut variants = Vec::new();
+    let mut cfg = None;
+    for line in body.lines().take_while(|line| *line != "}") {
+        let Some(rest) = line.strip_prefix(PREFIX) else {
+            continue;
+        };
+        if rest.starts_with("#[cfg(") {
+            cfg = Some(rest);
+            continue;
+        }
+        if rest.starts_with(' ') {
+            continue;
+        }
+        let Some(end) =
+            rest.find(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        else {
+            continue;
+        };
+        let name = &rest[..end];
+        if !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|value| value.is_ascii_uppercase())
+        {
+            variants.push((name, rest, cfg.take()));
+        }
+    }
+    variants
+}
+
+fn op_name_arm((name, declaration, cfg): &(&str, &str, Option<&str>)) -> String {
+    let tail = declaration[name.len()..].trim_start();
+    let pattern = if tail.starts_with('{') {
+        format!("Self::{name} {{ .. }}")
+    } else if tail.starts_with('(') {
+        format!("Self::{name} (..)")
+    } else {
+        format!("Self::{name}")
+    };
+    let cfg = cfg.map_or(String::new(), |cfg| format!("            {cfg}\n"));
+    format!("{cfg}            {pattern} => \"{name}\",")
 }
