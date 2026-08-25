@@ -152,11 +152,15 @@ pub(crate) fn replace(
         .first()
         .filter(|value| crate::value::is_object(value))
     {
-        let is_regexp = if crate::regexp::has_regexp_internal_slot(pattern) {
-            let matcher = crate::execute::get_property_result(pattern, "Symbol.match")?;
-            matches!(matcher, Value::Undefined) || crate::execute::is_truthy(&matcher)
+        // IsRegExp first observes an explicit @@match property on every
+        // object, then falls back to the RegExp internal slot.  Keeping this
+        // ordering here is observable: replaceAll must validate `flags`
+        // before coercing either the receiver or replacement value.
+        let matcher = crate::execute::get_property_result(pattern, "Symbol.match")?;
+        let is_regexp = if !matches!(matcher, Value::Undefined) {
+            crate::execute::is_truthy(&matcher)
         } else {
-            false
+            crate::regexp::has_regexp_internal_slot(pattern)
         };
         if all && is_regexp {
             let flags = own_or_get(pattern, "flags")?;
@@ -170,6 +174,13 @@ pub(crate) fn replace(
             }
         }
         let matcher = own_or_get(pattern, "Symbol.replace")?;
+        if !matches!(matcher, Value::Undefined | Value::Null)
+            && !crate::conversion::is_callable(&matcher)
+        {
+            return Err(crate::value::error::throw_type_error(
+                "String.prototype.replaceAll @@replace is not callable",
+            ));
+        }
         if crate::conversion::is_callable(&matcher) {
             let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
             return crate::functions::execute_target_with_receiver(
@@ -206,8 +217,12 @@ pub(crate) fn replace(
 fn own_or_get(value: &Value, key: &str) -> Result<Value, crate::execute::VmError> {
     if let Value::Object(properties) = value {
         if let Some((_, found)) = properties.iter().rev().find(|(name, _)| name == key) {
+            let found = match found {
+                Value::BindingCell(cell) => cell.load(),
+                found => found.clone(),
+            };
             if !matches!(found, Value::Undefined) {
-                return Ok(found.clone());
+                return Ok(found);
             }
         }
     }
