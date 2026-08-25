@@ -441,6 +441,12 @@ fn inherited_function_property(
     let Value::BoundFunction(bound) = &inherited else {
         return inherited;
     };
+    if let Value::Builtin(builtin) = bound.target {
+        return bind_method(
+            &Value::Function(std::rc::Rc::new(function.clone())),
+            Value::Builtin(builtin),
+        );
+    }
     if !matches!(prototype, Value::Builtin(Builtin::Promise))
         || !matches!(bound.target, Value::Builtin(Builtin::PromiseResolve | Builtin::PromiseReject | Builtin::PromiseAll | Builtin::PromiseAllSettled | Builtin::PromiseAny | Builtin::PromiseRace | Builtin::PromiseWithResolvers | Builtin::PromiseTry))
     {
