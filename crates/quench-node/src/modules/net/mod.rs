@@ -25,7 +25,7 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    connect, create_server, server_address, server_close, server_listen, socket_address,
+    connect, connect_existing, create_server, server_address, server_close, server_listen, socket_address,
     socket_construct,
     socket_destroy, socket_end, socket_pause, socket_resume, socket_set_encoding,
     socket_set_keep_alive, socket_set_no_delay, socket_write,
