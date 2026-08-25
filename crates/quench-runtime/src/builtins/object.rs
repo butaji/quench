@@ -316,14 +316,14 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
             {
                 configurable_global_descriptor(&global, key)
             } else {
-                object_descriptor(properties, key)
+                object_descriptor(properties.as_ref(), key)
             }
         }
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
             .upgrade()
-            .and_then(|properties| object_descriptor(&properties, key)),
+            .and_then(|properties| object_descriptor(properties.as_ref(), key)),
         Value::Array(values) => array_descriptor(values, key),
         Value::String(value) => string_descriptor(value, key),
         Value::Builtin(builtin) => builtin_descriptor(*builtin, key),

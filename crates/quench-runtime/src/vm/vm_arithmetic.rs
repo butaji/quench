@@ -619,7 +619,7 @@ fn bigint_value(value: &Value) -> Option<&str> {
     }
 }
 
-fn bigint_slot((key, value): &(crate::value::PropertyName, Value)) -> Option<&str> {
+fn bigint_slot<'a>((key, value): (&'a crate::value::PropertyName, &'a Value)) -> Option<&'a str> {
     if key != "_value" {
         return None;
     }
