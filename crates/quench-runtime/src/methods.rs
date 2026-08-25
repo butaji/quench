@@ -60,31 +60,56 @@ pub(crate) fn execute_named(
         true,
         call_target_name(&callee),
     );
+    let argument_values = argument
+        .as_ref()
+        .map(std::slice::from_ref)
+        .unwrap_or_default();
+    let argument_registers = (instruction.flags == 1).then_some(instruction.c);
     let value = execute_named_callee(
         callee,
         &receiver,
-        argument.as_ref(),
-        [instruction.b, instruction.c],
+        argument_values,
+        argument_registers.as_slice(),
+        instruction.b,
         registers,
     )?;
     write_value(registers, instruction.a, value);
     Ok(())
 }
 
-pub(crate) fn execute_registered_one(
+pub(crate) fn execute_registered(
     registers: &mut crate::register_file::RegisterFile,
     instruction: crate::ir::Instruction,
 ) -> Result<(), VmError> {
+    if !(1..=2).contains(&instruction.flags) {
+        return Err(VmError::MissingReturn);
+    }
     let receiver = crate::locals::resolved_replacement(read_register(registers, instruction.b)?);
     let callee = read_register(registers, instruction.c)?;
-    let argument_register = instruction.a - 1;
-    let argument = read_register(registers, argument_register)?;
-    crate::execution_trace::call_method(1, false, true, call_target_name(&callee));
+    let first = instruction
+        .a
+        .checked_sub(u16::from(instruction.flags))
+        .ok_or(VmError::MissingReturn)?;
+    let arguments = [
+        read_register(registers, first)?,
+        (instruction.flags == 2)
+            .then(|| read_register(registers, first + 1))
+            .transpose()?
+            .unwrap_or(Value::Undefined),
+    ];
+    let argument_registers = [first, first + 1];
+    crate::execution_trace::call_method(
+        usize::from(instruction.flags),
+        false,
+        true,
+        call_target_name(&callee),
+    );
     let value = execute_named_callee(
         callee,
         &receiver,
-        Some(&argument),
-        [instruction.b, argument_register],
+        &arguments[..usize::from(instruction.flags)],
+        &argument_registers[..usize::from(instruction.flags)],
+        instruction.b,
         registers,
     )?;
     write_value(registers, instruction.a, value);
@@ -94,21 +119,20 @@ pub(crate) fn execute_registered_one(
 fn execute_named_callee(
     callee: Value,
     receiver: &Value,
-    argument: Option<&Value>,
-    call_registers: [u16; 2],
+    arguments: &[Value],
+    argument_registers: &[u16],
+    receiver_register: u16,
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<Value, VmError> {
-    let arguments = argument.map(std::slice::from_ref).unwrap_or_default();
-    let register = argument.map(|_| call_registers[1]);
     let propagates = matches!(
         callee,
         Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)
     );
-    let value = execute_callee(callee, receiver, arguments, register.as_slice(), registers)?;
+    let value = execute_callee(callee, receiver, arguments, argument_registers, registers)?;
     if propagates {
         crate::properties::propagate_updated_object(
             registers,
-            Some(call_registers[0]),
+            Some(receiver_register),
             receiver,
             &value,
         );
