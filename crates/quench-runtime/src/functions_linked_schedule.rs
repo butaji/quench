@@ -42,6 +42,9 @@ fn execute_linked_schedule(
         crate::value::Value::Null => None,
         _ => return Ok(None),
     };
+    let task_runners = task_control_run
+        .as_ref()
+        .and_then(|_| linked_task_runners(&list_value));
     current.store(list_value);
 
     loop {
@@ -74,7 +77,10 @@ fn execute_linked_schedule(
                 (crate::value::Value::Function(actual), Some((expected, run)))
                     if std::rc::Rc::ptr_eq(actual, expected) =>
                 {
-                    match execute_task_control_run(&current_value, run)? {
+                    let direct = task_runners
+                        .as_ref()
+                        .and_then(|runners| direct_task_runner(runners, id));
+                    match execute_task_control_run(&current_value, run, direct)? {
                         Some(value) => value,
                         None => crate::functions::execute_target(&callee, &current_value, &[])?,
                     }
@@ -98,6 +104,7 @@ struct TaskControlRunPlan {
 fn execute_task_control_run(
     receiver: &crate::value::Value,
     plan: &TaskControlRunPlan,
+    direct: Option<&DirectTaskRunner>,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     let crate::value::Value::Object(tcb) = receiver else {
         return Ok(None);
@@ -118,7 +125,11 @@ fn execute_task_control_run(
         return Ok(None);
     };
     let task = task.load();
-    let run = crate::execute::get_property_result(&task, "run")?;
+    let direct = direct.filter(|runner| runner.matches(&task));
+    let run = match direct {
+        Some(runner) => runner.callee(),
+        None => crate::execute::get_property_result(&task, "run")?,
+    };
     if !crate::conversion::is_callable(&run) {
         return Ok(None);
     }
@@ -150,7 +161,19 @@ fn execute_task_control_run(
     } else {
         crate::value::Value::Null
     };
-    let result = crate::functions::execute_target(&run, &task, &[packet])?;
+    let result = match direct {
+        Some(runner) => match runner.execute(&task, &packet)? {
+            Some(result) => {
+                crate::execution_trace::kernel("linked_task_direct", false);
+                result
+            }
+            None => {
+                crate::execution_trace::kernel("linked_task_direct", true);
+                crate::functions::execute_target(&run, &task, &[packet])?
+            }
+        },
+        None => crate::functions::execute_target(&run, &task, &[packet])?,
+    };
     crate::execution_trace::kernel("task_control_run_word_slots", false);
     Ok(Some(result))
 }
@@ -236,20 +259,6 @@ fn match_task_control_run(
         running: function.captures.get_number(running_slot)?,
         runnable: function.captures.get_number(runnable_slot)?,
     })
-}
-
-fn task_state_arm(code: crate::machine::CodeView<'_>) -> bool {
-    use crate::ir::Opcode::*;
-    if code.len() != 6 {
-        return false;
-    }
-    let ops: [_; 6] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
-    is_local_load(ops[0])
-        && ops[1].opcode == Move
-        && ops[2].opcode == Move
-        && is_local_load(ops[3])
-        && (ops[4].opcode, ops[4].a, ops[4].b) == (SetN, ops[2].a, ops[3].a)
-        && code.metadata_at(4).and_then(|meta| meta.name.as_deref()) == Some("state")
 }
 
 #[cold]
