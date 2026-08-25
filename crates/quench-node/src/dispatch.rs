@@ -53,6 +53,7 @@ const CAP_UTIL_DEPRECATE: u16 = 0x0730;
 const CAP_UTIL_DEPRECATED_CALL: u16 = 0x0731;
 const CAP_UTIL_SYSTEM_ERROR_NAME: u16 = 0x0733;
 const CAP_UTIL_EXCEPTION_WITH_HOST_PORT: u16 = 0x0734;
+const CAP_INTERNAL_UTIL_EMIT_WARNING: u16 = 0x0735;
 const CAP_UTIL_INSPECT: u16 = 0x0301;
 const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
 const CAP_UTIL_IS_NATIVE_ERROR: u16 = 0x030A;
@@ -419,6 +420,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_UTIL_DEPRECATED_CALL => util_deprecated_call,
         CAP_UTIL_SYSTEM_ERROR_NAME => util_system_error_name,
         CAP_UTIL_EXCEPTION_WITH_HOST_PORT => util_exception_with_host_port,
+        CAP_INTERNAL_UTIL_EMIT_WARNING => internal_util_emit_warning,
         CAP_UTIL_INSPECT => util_inspect,
         CAP_UTIL_PARSE_ENV => util_parse_env,
         CAP_UTIL_PROMISIFY => util_promisify,
