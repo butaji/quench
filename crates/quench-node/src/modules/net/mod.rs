@@ -171,6 +171,17 @@ fn server_props() -> Vec<(&'static str, Value)> {
     ]
 }
 
+pub(crate) fn set_server_listening(server: &Value, listening: bool) -> Result<(), VmError> {
+    let descriptor = host_api::object(vec![
+        ("value".to_string(), Value::Boolean(listening)),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]);
+    let _ = execute::define_property(server.clone(), "listening", descriptor)?;
+    Ok(())
+}
+
 fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
@@ -221,6 +232,7 @@ fn register_server(
             close_emitted: false,
         })),
     );
+    set_server_listening(js, is_listening)?;
     Ok(id)
 }
 

@@ -206,6 +206,7 @@ pub fn server_close(
         server.listening = false;
         server.closed = true;
     }
+    super::set_server_listening(&receiver, false)?;
     add_listener_cb(state, &receiver, args.first(), "close")?;
     Ok(receiver)
 }
