@@ -184,6 +184,16 @@ pub fn own_keys(value: &crate::value::Value) -> Vec<crate::value::Value> {
     (0..keys.len()).filter_map(|index| keys.get(index)).collect()
 }
 
+/// Validate proxy own-keys invariants before a host algorithm observes its target.
+/// Proxy transparency in a consumer must not bypass user traps or their errors.
+pub fn validate_proxy(value: &crate::value::Value) -> Result<(), VmError> {
+    if matches!(value, crate::value::Value::Proxy(_)) {
+        crate::proxy::proxy_own_keys(value).map(|_| ())
+    } else {
+        Ok(())
+    }
+}
+
 pub fn has_own_property(value: &crate::value::Value, key: &str) -> bool {
     matches!(crate::builtins::object::has_own_property(
         Some(value),
