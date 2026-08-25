@@ -44,7 +44,9 @@ fn regexp_prototype_accessor(receiver: Option<&Value>, key: &str) -> Result<Valu
             "RegExp accessor called on incompatible receiver",
         ));
     };
-    if matches!(value, Value::Builtin(Builtin::RegExpPrototype)) {
+    if matches!(value, Value::Builtin(Builtin::RegExpPrototype))
+        && crate::vm::current_context_or_default().realm() == crate::ops::RealmId::ROOT
+    {
         return Ok(match key {
             "source" => Value::String("(?:)".to_string()),
             "flags" => Value::String(String::new()),
