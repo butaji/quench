@@ -646,9 +646,10 @@ fn match_all_flags(receiver: &Value) -> Result<String, VmError> {
 
 fn match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
     if !is_regexp(receiver)? {
+        let source = crate::conversion::to_string(receiver)?;
         return crate::construct::construct_value(
             &Value::Builtin(crate::ops::Builtin::RegExp),
-            &[receiver.clone(), Value::String(flags.to_string())],
+            &[Value::String(source), Value::String(flags.to_string())],
         );
     }
     let constructor = crate::execute::get_property_result(receiver, "constructor")?;
