@@ -236,6 +236,7 @@ fn add(receiver: Option<&Value>, argument: Option<&Value>) -> Result<Value, VmEr
     let Value::Object(right) = right else {
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
+    reject_calendar_units(left, &right)?;
     let fields = balanced_sum(left, &right);
     construct(&fields)
 }
@@ -258,7 +259,23 @@ fn subtract(receiver: Option<&Value>, argument: Option<&Value>) -> Result<Value,
         .collect::<Vec<_>>();
     let negated = crate::value::ObjectData::new(negated);
     let left = duration_receiver(receiver)?;
+    reject_calendar_units(left, &negated)?;
     construct(&balanced_sum(left, &negated))
+}
+
+fn reject_calendar_units(
+    left: &crate::value::ObjectData,
+    right: &crate::value::ObjectData,
+) -> Result<(), VmError> {
+    if ["years", "months", "weeks"]
+        .iter()
+        .any(|name| duration_field(left, name) != 0 || duration_field(right, name) != 0)
+    {
+        return Err(crate::value::error::throw_range_error(
+            "relativeTo required for calendar units",
+        ));
+    }
+    Ok(())
 }
 
 fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -570,51 +587,55 @@ fn balance_time_fields(fields: &mut [Value], first: usize) {
 }
 
 fn balanced_sum(left: &crate::value::ObjectData, right: &crate::value::ObjectData) -> Vec<Value> {
-    let years = sum_field(left, right, "years");
-    let months = sum_field(left, right, "months");
-    let weeks = sum_field(left, right, "weeks");
     let days = sum_field(left, right, "days");
-    let time = [
+    let time_names = [
         "hours",
         "minutes",
         "seconds",
         "milliseconds",
         "microseconds",
         "nanoseconds",
-    ]
-    .iter()
-    .map(|name| sum_field(left, right, name))
-    .collect::<Vec<_>>();
-    let total = time[0] * 3_600_000_000_000
-        + time[1] * 60_000_000_000
-        + time[2] * 1_000_000_000
-        + time[3] * 1_000_000
-        + time[4] * 1_000
-        + time[5];
+    ];
+    let time = time_names
+        .iter()
+        .map(|name| sum_field(left, right, name))
+        .collect::<Vec<_>>();
+    let scales = [
+        3_600_000_000_000_i128,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
+    ];
+    let total = time
+        .iter()
+        .zip(scales)
+        .map(|(value, scale)| value * scale)
+        .sum::<i128>();
     let sign = total.signum();
+    let largest = if days != 0 {
+        0
+    } else {
+        time.iter().position(|value| *value != 0).unwrap_or(5)
+    };
     let mut remainder = total.abs();
-    let day_carry = remainder / 86_400_000_000_000;
-    remainder %= 86_400_000_000_000;
-    let hours = remainder / 3_600_000_000_000;
-    remainder %= 3_600_000_000_000;
-    let minutes = remainder / 60_000_000_000;
-    remainder %= 60_000_000_000;
-    let seconds = remainder / 1_000_000_000;
-    remainder %= 1_000_000_000;
-    [years, months, weeks, days + sign * day_carry]
+    let mut fields = vec![0_i128; 10];
+    if days != 0 {
+        fields[3] = days + sign * (remainder / 86_400_000_000_000);
+        remainder %= 86_400_000_000_000;
+    }
+    for index in largest..6 {
+        fields[index + 4] = remainder / scales[index];
+        remainder %= scales[index];
+    }
+    fields
         .into_iter()
-        .chain(
-            [
-                hours,
-                minutes,
-                seconds,
-                remainder / 1_000_000,
-                remainder / 1_000 % 1_000,
-                remainder % 1_000,
-            ]
-            .map(|value| value * sign),
-        )
-        .map(|value| Value::Number(value as f64))
+        .enumerate()
+        .map(|(index, value)| {
+            let value = if index >= 4 { value * sign } else { value };
+            Value::Number(value as f64)
+        })
         .collect()
 }
 
