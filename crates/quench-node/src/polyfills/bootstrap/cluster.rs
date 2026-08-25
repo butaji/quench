@@ -1421,6 +1421,7 @@ const __quenchInternalBindingModule = {
             return false;
           };
         })(),
+        getProxyDetails: globalThis.__quenchGetProxyDetails,
         previewEntries: () => []
       };
     }
