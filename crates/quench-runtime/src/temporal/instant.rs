@@ -110,7 +110,7 @@ fn to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmE
     let seconds = epoch.div_euclid(1_000_000_000) as i64;
     let nanos = epoch.rem_euclid(1_000_000_000) as u32;
     let zone = arguments.first().and_then(time_zone_option);
-    let offset = zone.and_then(time_zone_offset).unwrap_or(0);
+    let offset = zone.as_deref().and_then(time_zone_offset).unwrap_or(0);
     let date = chrono::DateTime::from_timestamp(seconds + offset, nanos)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
     let fraction = if nanos == 0 {
@@ -134,7 +134,7 @@ fn to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmE
     )))
 }
 
-fn time_zone_option(value: &Value) -> Option<&str> {
+fn time_zone_option(value: &Value) -> Option<String> {
     let Value::Object(object) = value else {
         return None;
     };
@@ -142,10 +142,10 @@ fn time_zone_option(value: &Value) -> Option<&str> {
         .iter()
         .find(|(key, _)| key == "timeZone")
         .and_then(|(_, value)| match value {
-            Value::String(value) => Some(value.as_str()),
+            Value::String(value) => Some(value.to_string()),
             _ => None,
         })
-        .or(Some("UTC"))
+        .or_else(|| Some("UTC".to_string()))
 }
 
 fn time_zone_offset(zone: &str) -> Option<i64> {
