@@ -387,6 +387,18 @@ pub struct GeneratorState {
     /// Private-name capabilities captured when a class body suspended on `yield`.
     pub private_environment: Option<crate::private_environment::PrivateEnvironment>,
     pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
+    pub(crate) async_for_of: Option<AsyncForOfState>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AsyncForOfState {
+    pub label: Option<String>,
+    pub slot: u16,
+    pub body: crate::machine::FunctionCode,
+    pub per_iteration: bool,
+    pub iteration_slots: Vec<u16>,
+    pub iterator: Value,
+    pub dst: u16,
 }
 
 /// Canonical out-of-line attributes for an ordinary property.

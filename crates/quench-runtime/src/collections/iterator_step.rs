@@ -42,6 +42,16 @@ pub(crate) fn step_value_await(value: &Value) -> Result<Option<Value>, crate::ex
     }
 }
 
+pub(crate) fn resume_async_result(
+    value: &Value,
+    result: Value,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let Value::Iterator(data) = value else {
+        return Err(not_iterable());
+    };
+    protocol_result(data, result)
+}
+
 fn await_iterator_result(value: Value) -> Result<Value, crate::execute::VmError> {
     let resolved = crate::promise::promise_resolve(std::slice::from_ref(&value));
     let Value::Promise(promise) = resolved else {
@@ -54,7 +64,7 @@ fn await_iterator_result(value: Value) -> Result<Value, crate::execute::VmError>
             Err(crate::execute::VmError::Thrown(reason))
         }
         crate::value::PromiseState::Pending => {
-            crate::promise::drain_one_microtask();
+            crate::promise::drain_microtasks_all();
             let state = promise.state.borrow().clone();
             match state {
                 crate::value::PromiseState::Fulfilled(value) => Ok(value),
@@ -719,9 +729,7 @@ fn step_target_tail(state: &mut IteratorState) -> Result<StepTarget, crate::exec
             next,
             await_value,
             ..
-        } => {
-            StepTarget::Protocol(iterator.clone(), next.clone(), *await_value)
-        }
+        } => StepTarget::Protocol(iterator.clone(), next.clone(), *await_value),
         _ => StepTarget::Value(None),
     })
 }
