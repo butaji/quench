@@ -125,7 +125,7 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn execute_proven_leaf(
+pub(crate) fn execute_proven_leaf(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
@@ -184,7 +184,14 @@ fn proven_leaf(
     }) {
         return cached.rejection.map_or(Ok(cached.extended), Err);
     }
-    let result = validate_leaf(code);
+    let arguments_slot = u16::try_from(function.captures.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(function.params);
+    let result = if function.code.uses_slot(arguments_slot) {
+        Err(LeafReject::Control("Arguments"))
+    } else {
+        validate_leaf(code)
+    };
     let rejection = result.as_ref().err().copied();
     let extended = result.as_ref().copied().unwrap_or(false);
     LEAF_FACTS.with(|facts| {
@@ -234,6 +241,10 @@ fn validate_leaf_depth(
                 | crate::ir::Opcode::GetN
                 | crate::ir::Opcode::SetN
                 | crate::ir::Opcode::AGetI
+                | crate::ir::Opcode::Add
+                | crate::ir::Opcode::Sub
+                | crate::ir::Opcode::Mul
+                | crate::ir::Opcode::Div
                 | crate::ir::Opcode::Binary
                 | crate::ir::Opcode::CallN
                 | crate::ir::Opcode::Return
@@ -412,7 +423,7 @@ fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
         UpdateLocal => [op.a, op.b, 0],
         Move => [op.a, op.b, 0],
         GetN | SetN => [op.a, op.b, 0],
-        AGetI | Binary => [op.a, op.b, op.c],
+        AGetI | Add | Sub | Mul | Div | Binary => [op.a, op.b, op.c],
         CallN if op.flags == 0 => [op.a, op.b, 0],
         CallN => [op.a, op.b, op.c],
         Slow => [0, 0, 0],
@@ -496,7 +507,7 @@ fn run_leaf_op(
             &leaf_register(registers, op.b)?,
             &leaf_register(registers, op.c)?,
         )?),
-        Binary => if let Some(value) = leaf_number_binary(op, registers) {
+        Add | Sub | Mul | Div | Binary => if let Some(value) = leaf_number_binary(op, registers) {
             Some(value)
         } else {
             let left = leaf_register(registers, op.b)?;
@@ -504,8 +515,7 @@ fn run_leaf_op(
             Some(crate::vm::vm_arithmetic::evaluate_binary(
                 &left,
                 &right,
-                crate::ir::compact_binary_operator(op.flags)
-                    .ok_or(crate::execute::VmError::MissingReturn)?,
+                leaf_binary_operator(op).ok_or(crate::execute::VmError::MissingReturn)?,
             )?)
         },
         CallN => Some(leaf_call(code, pc, op, registers)?),
@@ -564,10 +574,21 @@ fn leaf_number_binary(
     op: crate::ir::Instruction,
     registers: &impl LeafRegisterFile,
 ) -> Option<crate::value::Value> {
-    let operator = crate::ir::compact_binary_operator(op.flags)?;
+    let operator = leaf_binary_operator(op)?;
     let left = registers.number(usize::from(op.b))?;
     let right = registers.number(usize::from(op.c))?;
     crate::vm::vm_arithmetic::fast_number_binary(left, right, operator)
+}
+
+fn leaf_binary_operator(op: crate::ir::Instruction) -> Option<crate::ops::BinaryOp> {
+    Some(match op.opcode {
+        crate::ir::Opcode::Add => crate::ops::BinaryOp::Add,
+        crate::ir::Opcode::Sub => crate::ops::BinaryOp::Subtract,
+        crate::ir::Opcode::Mul => crate::ops::BinaryOp::Multiply,
+        crate::ir::Opcode::Div => crate::ops::BinaryOp::Divide,
+        crate::ir::Opcode::Binary => crate::ir::compact_binary_operator(op.flags)?,
+        _ => return None,
+    })
 }
 
 #[inline(always)]
