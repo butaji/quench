@@ -35,7 +35,7 @@ function workerPortProxy(token) {
   var port = {
     __quench_port: token,
     postMessage: function (value) {
-      proc.stdout.write('__QUENCH_WORKER_PORT__' + JSON.stringify({ token: token, value: value }) + '\n');
+      proc.stdout.write('__QUENCH_WORKER_PORT__' + JSON.stringify({ token: token, value: encodeWorkerData(value, [], []) }) + '\n');
     },
     close: function () {}
   };
@@ -45,6 +45,10 @@ function workerPortProxy(token) {
 function reviveWorkerMessage(value) {
   if (value && typeof value === 'object') {
     if (value.__quench_port !== undefined) return workerPortProxy(value.__quench_port);
+    if (value.__quench_typed_array) {
+      var TypedArray = globalThis[value.__quench_typed_array];
+      return typeof TypedArray === 'function' ? new TypedArray(value.data) : value.data;
+    }
     if (Array.isArray(value)) return value.map(reviveWorkerMessage);
     var object = {};
     var keys = Object.keys(value);
@@ -57,6 +61,7 @@ Object.defineProperty(globalThis, '__quench_worker_revive', {
   configurable: true,
   value: reviveWorkerMessage
 });
+if (workerEnv) workerData = reviveWorkerMessage(workerData);
 function emitter(target) {
   var listeners = {};
   var pending = target._queueEvents ? [] : null;
@@ -104,7 +109,7 @@ var parentPort = workerEnv ? emitter({
   _closed: false,
   postMessage: function (value) {
     if (this._closed) throw new Error('Cannot post message after closing parentPort');
-    proc.stdout.write('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(value) + '\n');
+    proc.stdout.write('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(encodeWorkerData(value, [], [])) + '\n');
   },
   close: function () {
     if (!this._closed) {
@@ -282,6 +287,47 @@ function messageQueueFor(port) {
   }
   return port.__quench_message_queue;
 }
+function encodeWorkerData(value, transferList, transferredPorts) {
+  if (value && typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(value)) {
+    var typedData = Array.from(value);
+    if (value.buffer && transferList.indexOf(value.buffer) >= 0 &&
+        typeof value.buffer.transfer === 'function') {
+      value.buffer.transfer();
+    }
+    return {
+      __quench_typed_array: value.constructor.name,
+      data: typedData
+    };
+  }
+  if (value && typeof value.postMessage === 'function' &&
+      typeof value.close === 'function') {
+    var index = transferList.indexOf(value);
+    if (index < 0) {
+      throw Object.assign(new Error('Object that needs transfer was found in message but not listed in transferList'), {
+        name: 'DataCloneError', code: 25
+      });
+    }
+    var token = transferredPorts.indexOf(value);
+    if (token < 0) {
+      transferredPorts.push(value);
+      token = transferredPorts.length - 1;
+    }
+    return { __quench_port: token };
+  }
+  if (Array.isArray(value)) {
+    return value.map(function (item) {
+      return encodeWorkerData(item, transferList, transferredPorts);
+    });
+  }
+  if (value && typeof value === 'object') {
+    var result = {};
+    Object.keys(value).forEach(function (key) {
+      result[key] = encodeWorkerData(value[key], transferList, transferredPorts);
+    });
+    return result;
+  }
+  return value;
+}
 messagePort.prototype.close = function () { return this; };
 messagePort.prototype.postMessage = function () { return this; };
 messagePort.prototype.start = function () { return this; };
@@ -351,7 +397,10 @@ var api = {
         for (var e = 0; e < keys.length; e++) env[keys[e]] = String(sourceEnv[keys[e]]);
       }
       env.QUENCH_WORKER = '1';
-      var data = options.workerData === undefined ? null : options.workerData;
+      var transferList = options.transferList || [];
+      var transferredPorts = [];
+      var data = options.workerData === undefined ? null :
+        encodeWorkerData(options.workerData, transferList, transferredPorts);
       env.QUENCH_WORKER_DATA = JSON.stringify(data);
       function runWorker(message, transferredPort) {
         if (message !== undefined) env.QUENCH_WORKER_MESSAGE = JSON.stringify(message);
@@ -389,9 +438,13 @@ var api = {
           var marker = '__QUENCH_WORKER_MESSAGE__';
           var portMarker = '__QUENCH_WORKER_PORT__';
           if (lines[j].indexOf(marker) === 0) {
-            try { self.emit('message', JSON.parse(lines[j].slice(marker.length))); } catch (_) {}
-          } else if (lines[j].indexOf(portMarker) === 0 && transferredPort) {
-            try { transferredPort.postMessage(JSON.parse(lines[j].slice(portMarker.length)).value); } catch (_) {}
+            try { self.emit('message', reviveWorkerMessage(JSON.parse(lines[j].slice(marker.length)))); } catch (_) {}
+          } else if (lines[j].indexOf(portMarker) === 0) {
+            try {
+              var portEvent = JSON.parse(lines[j].slice(portMarker.length));
+              var destination = transferredPort || transferredPorts[portEvent.token];
+              if (destination) destination.postMessage(portEvent.value);
+            } catch (_) {}
           }
         }
         self.exited = true;
