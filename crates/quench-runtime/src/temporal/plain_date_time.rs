@@ -610,6 +610,14 @@ fn with(
 ) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    if let Some(value) = options {
+        if !matches!(
+            value,
+            Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
+        ) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
+    }
     let changes = changes
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
@@ -652,11 +660,43 @@ fn with(
     let overflow = options
         .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
         .unwrap_or(Value::String("constrain".into()));
+    let overflow = match overflow {
+        Value::Undefined => "constrain".to_string(),
+        value => crate::conversion::to_string(&value)?,
+    };
+    if overflow != "constrain" && overflow != "reject" {
+        return Err(crate::value::error::throw_range_error("Invalid overflow"));
+    }
+    if !values[0].is_finite()
+        || !values[1].is_finite()
+        || !values[2].is_finite()
+        || values[1] < 1.0
+        || values[2] < 1.0
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    values[1] = values[1].min(12.0);
     if values[2] > days_in_month(values[0] as i32, values[1] as u32) as f64 {
-        if matches!(overflow, Value::String(value) if value == "constrain") {
+        if overflow == "constrain" {
             values[2] = days_in_month(values[0] as i32, values[1] as u32) as f64;
         } else {
             return Err(crate::value::error::throw_range_error("Invalid date-time"));
+        }
+    }
+    for (index, limit) in [23.0, 59.0, 59.0, 999.0, 999.0, 999.0]
+        .into_iter()
+        .enumerate()
+    {
+        let index = index + 3;
+        if !values[index].is_finite() || values[index] < 0.0 {
+            return Err(crate::value::error::throw_range_error("Invalid date-time"));
+        }
+        if values[index] > limit {
+            if overflow == "constrain" {
+                values[index] = limit;
+            } else {
+                return Err(crate::value::error::throw_range_error("Invalid date-time"));
+            }
         }
     }
     construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
