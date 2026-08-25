@@ -578,6 +578,11 @@ fn ordered<P: crate::value::PropertyEntries + ?Sized>(
         if crate::builtins::is_descriptor_key(key) || key.starts_with('\0') {
             continue;
         }
+        // Node's internal private symbols (for example `node:arrowMessage`)
+        // are private slots, not ordinary own property keys.
+        if symbols && key.starts_with("Symbol.node:") {
+            continue;
+        }
         if crate::conversion::is_symbol_string(key) != symbols {
             continue;
         }
