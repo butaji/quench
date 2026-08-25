@@ -187,6 +187,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDate => Some("Temporal.PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("Temporal.PlainDate.from"),
         Builtin::TemporalPlainDateCompare => Some("Temporal.PlainDate.compare"),
+        Builtin::TemporalPlainDateWith => Some("Temporal.PlainDate.prototype.with"),
         Builtin::TemporalPlainDateAdd => Some("Temporal.PlainDate.prototype.add"),
         Builtin::TemporalPlainDateSubtract => Some("Temporal.PlainDate.prototype.subtract"),
         Builtin::TemporalPlainDateEquals => Some("Temporal.PlainDate.prototype.equals"),
@@ -361,6 +362,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDate => Some("PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("from"),
         Builtin::TemporalPlainDateCompare => Some("compare"),
+        Builtin::TemporalPlainDateWith => Some("with"),
         Builtin::TemporalPlainDateAdd => Some("add"),
         Builtin::TemporalPlainDateSubtract => Some("subtract"),
         Builtin::TemporalPlainDateEquals => Some("equals"),
@@ -542,6 +544,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalDurationValueOf => Some(0.0),
         Builtin::TemporalPlainDateFrom => Some(1.0),
         Builtin::TemporalPlainDateCompare => Some(2.0),
+        Builtin::TemporalPlainDateWith => Some(1.0),
         Builtin::TemporalPlainDateAdd
         | Builtin::TemporalPlainDateSubtract
         | Builtin::TemporalPlainDateEquals

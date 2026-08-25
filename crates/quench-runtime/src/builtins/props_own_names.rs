@@ -45,6 +45,7 @@ const TEMPORAL_PLAIN_DATE_PROTOTYPE_NAMES: &[&str] = &[
     "toJSON",
     "toLocaleString",
     "equals",
+    "with",
     "add",
     "subtract",
     "until",

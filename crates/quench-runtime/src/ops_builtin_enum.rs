@@ -154,6 +154,7 @@ pub enum Builtin {
     TemporalDurationToLocaleString, TemporalDurationToString, TemporalDurationToJSON,
     TemporalPlainDate, TemporalPlainDatePrototype,
     TemporalPlainDateFrom, TemporalPlainDateCompare, TemporalPlainDateWithCalendar,
+    TemporalPlainDateWith,
     TemporalPlainDateAdd, TemporalPlainDateSubtract, TemporalPlainDateEquals,
     TemporalPlainDateUntil, TemporalPlainDateSince, TemporalPlainDateToLocaleString,
     TemporalPlainDateToPlainDateTime, TemporalPlainDateToPlainMonthDay,
