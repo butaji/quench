@@ -338,6 +338,34 @@ fn find_match_from_sticky<'a>(
     Ok(matched.filter(|matched| !sticky || matched.start() == start))
 }
 
+fn find_match_utf16(
+    regex: &Regex,
+    text: &str,
+    start: usize,
+    sticky: bool,
+) -> Result<Option<regress::Match>, VmError> {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let start_units = crate::strings::byte_to_utf16(text, start);
+    let mut matched = regex.find_from_utf16(&units, start_units).next();
+    if let Some(found) = &mut matched {
+        found.range = utf16_range_to_bytes(text, &found.range);
+        for capture in &mut found.captures {
+            if let Some(range) = capture {
+                *range = utf16_range_to_bytes(text, range);
+            }
+        }
+        if sticky && found.start() != start {
+            matched = None;
+        }
+    }
+    Ok(matched)
+}
+
+fn utf16_range_to_bytes(text: &str, range: &std::ops::Range<usize>) -> std::ops::Range<usize> {
+    crate::strings::utf16_byte_index(text, range.start)
+        ..crate::strings::utf16_byte_index(text, range.end)
+}
+
 fn compile_and_find<'a>(
     receiver: &Value,
     source: &str,
@@ -353,7 +381,11 @@ fn compile_and_find<'a>(
     let compile_ns = compile_start.elapsed().as_nanos();
     #[cfg(feature = "execution-trace")]
     let match_start = std::time::Instant::now();
-    let mut result = find_match_from_sticky(&regex, text, start, sticky);
+    let mut result = if flags.contains('u') || flags.contains('v') {
+        find_match_utf16(&regex, text, start, sticky)
+    } else {
+        find_match_from_sticky(&regex, text, start, sticky)
+    };
     if matches!(&result, Ok(None))
         && !flags.contains('u')
         && !flags.contains('v')
@@ -605,18 +637,25 @@ fn build_match_result(
         set_last_index(receiver, new_index as f64)?;
     }
     let unicode = flags.contains('u') || flags.contains('v');
-    let values = match_values(s, &m, search_start, unicode);
+    let split_astral = !unicode && nonunicode_code_unit_pattern(&extract_source(receiver));
+    let values = match_values(s, &m, search_start, !split_astral);
     let index = Value::Number(crate::strings::byte_to_utf16(s, m.start() + search_start) as f64);
-    let groups = named_groups(s, &m, search_start, unicode);
+    let groups = named_groups(s, &m, search_start, !split_astral);
     let mut result = match_result(values, index, s, groups);
     if flags.contains('d') {
         result = crate::builtins::set_property(
             result,
             "indices",
-            match_indices(s, &m, search_start, unicode),
+            match_indices(s, &m, search_start, !split_astral),
         );
     }
     Ok(result)
+}
+
+fn nonunicode_code_unit_pattern(source: &str) -> bool {
+    source == "."
+        || source.contains(".") && source.contains("(?<")
+        || source_contains_surrogate_escape(source)
 }
 
 fn match_indices(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Value {
