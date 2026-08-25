@@ -5,12 +5,14 @@ fn promise_method(key: &str) -> Option<Builtin> {
         "resolve" => Some(PromiseResolve),
         "reject" => Some(PromiseReject),
         "all" => Some(PromiseAll),
+        "allKeyed" => Some(PromiseAllKeyed),
         "allSettled" => Some(PromiseAllSettled),
         "allSettledKeyed" => Some(PromiseAllSettledKeyed),
         "any" => Some(PromiseAny),
         "race" => Some(PromiseRace),
         "withResolvers" => Some(PromiseWithResolvers),
         "try" => Some(PromiseTry),
+        "Symbol.species" => Some(Promise),
         _ => None,
     }
 }

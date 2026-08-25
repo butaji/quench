@@ -517,6 +517,7 @@ pub(crate) fn function_call_shape(
     }
 }
 
+#[cfg(feature = "execution-trace")]
 fn function_fingerprint(params: u16, captures: usize, code: crate::machine::CodeView<'_>) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

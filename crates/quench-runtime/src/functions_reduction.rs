@@ -427,6 +427,20 @@ pub(crate) fn reduce_expression_kind(
         facts.function_dynamic_scope_floor,
     ) = inherited;
     let (body_ops, captures) = reduced?;
+    let source = facts
+        .reduction_source
+        .get(function.span.start as usize..function.span.end as usize)
+        .map(str::to_string)
+        .map(|source| {
+            if matches!(emitted_kind, FunctionKind::Method)
+                && function.id.as_ref().is_some()
+                && source.starts_with('(')
+            {
+                format!("{}{}", function.id.as_ref().unwrap().name, source)
+            } else {
+                source
+            }
+        });
     Some(emit_function_expression(
         ops,
         next_register,
@@ -441,6 +455,7 @@ pub(crate) fn reduce_expression_kind(
             mapped_arguments: crate::function_parameters::is_simple(&function.params),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
+        source,
     ))
 }
 

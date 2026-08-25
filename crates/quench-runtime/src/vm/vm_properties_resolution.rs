@@ -1,5 +1,8 @@
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
-    let value = crate::locals::resolved_replacement(value.clone());
+    let value = match value {
+        Value::Promise(_) => value.clone(),
+        _ => crate::locals::resolved_replacement(value.clone()),
+    };
     // A materialized global binding can transiently leave the receiver nullish
     // while lowering a member assignment.  Recover only when the requested
     // property is a real Math intrinsic; this preserves ordinary nullish
@@ -12,7 +15,10 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
         value
     };
     let result = get_property_with_receiver(&value, key, &value)?;
-    Ok(crate::locals::resolved_replacement(result))
+    Ok(match result {
+        Value::Promise(_) => result,
+        result => crate::locals::resolved_replacement(result),
+    })
 }
 
 pub(crate) fn get_named_property_result(
@@ -274,6 +280,27 @@ pub(crate) fn get_property_with_receiver(
     receiver: &Value,
 ) -> Result<Value, VmError> {
     crate::module_bindings::exports(value, key)?;
+    if matches!(value, Value::Builtin(crate::ops::Builtin::Promise))
+        && key == "Symbol.species"
+    {
+        if let Some(override_value) = crate::builtins::read_descriptor_value(
+            crate::ops::Builtin::Promise,
+            key,
+        ) {
+            return Ok(override_value);
+        }
+    }
+    if matches!(value, Value::Builtin(crate::ops::Builtin::PromisePrototype))
+        && matches!(key, "then" | "catch" | "finally")
+    {
+        let property = crate::builtins::property(crate::ops::Builtin::PromisePrototype, key);
+        if !matches!(property, Value::Undefined) {
+            if matches!(receiver, Value::Builtin(crate::ops::Builtin::PromisePrototype)) {
+                return Ok(property);
+            }
+            return Ok(crate::vm::bind_receiver_property(property, receiver));
+        }
+    }
     if let Some(value) = proven_own_data(value, key) {
         return Ok(value);
     }
@@ -379,6 +406,32 @@ fn function_inherited_property_result(
             (name == "\0function_prototype" || name == "\0prototype").then(|| value.clone())
         })
         .unwrap_or_else(|| function_kind_prototype(function));
+    if matches!(prototype, Value::Builtin(crate::ops::Builtin::Promise))
+        && matches!(
+            key,
+            "resolve"
+                | "reject"
+                | "all"
+                | "allSettled"
+                | "any"
+                | "race"
+                | "withResolvers"
+                | "try"
+        )
+    {
+        let property = crate::builtins::property(crate::ops::Builtin::Promise, key);
+        if !matches!(property, Value::Undefined) {
+            return Some(Ok(crate::vm::bind_receiver_property(property, receiver)));
+        }
+    }
+    if matches!(prototype, Value::Builtin(crate::ops::Builtin::Promise))
+        && key == "Symbol.species"
+    {
+        return Some(Ok(crate::builtins::property(
+            crate::ops::Builtin::Promise,
+            key,
+        )));
+    }
     Some(get_property_with_receiver(&prototype, key, receiver))
 }
 
@@ -406,8 +459,26 @@ fn object_inherited_property_result(
     let Value::Object(properties) = value else {
         return None;
     };
+    if key == "stack" && receiver_has_error_prototype(receiver)
+    {
+        return Some(invoke_accessor(
+            &Value::Builtin(crate::ops::Builtin::ErrorPrototypeStackGetter),
+            receiver,
+        ));
+    }
     if properties.iter().any(|(name, _)| name == key) {
         return None;
+    }
+    if key == "Symbol.iterator"
+        && properties.iter().any(|(name, value)| {
+            name == "_value" && matches!(value, Value::String(_))
+        })
+    {
+        return Some(get_property_with_receiver(
+            &Value::Builtin(crate::ops::Builtin::StringPrototype),
+            key,
+            receiver,
+        ));
     }
     // Per spec §GetV for boxed primitives: an exotic String object exposes
     // its [[StringData]] as virtual indexed properties. Resolve the tag
@@ -437,6 +508,29 @@ fn object_inherited_property_result(
         return None;
     }
     Some(inherited)
+}
+
+fn receiver_has_error_prototype(receiver: &Value) -> bool {
+    let Value::Object(object) = receiver else { return false };
+    if !object.iter().any(|(name, _)| name == crate::builtins::ERROR_SLOT) {
+        return false;
+    }
+    let mut prototype = object
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value.clone()));
+    for _ in 0..8 {
+        let Some(candidate) = prototype else { return false };
+        let name = crate::execute::get_property(&candidate, "constructor");
+        if matches!(name, Value::BoundFunction(_) | Value::Builtin(_)) {
+            let name = crate::execute::get_property(&name, "name");
+            if matches!(name, Value::String(name) if matches!(name.as_str(), "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError" | "TypeError" | "URIError" | "AggregateError" | "SuppressedError")) {
+                return true;
+            }
+        }
+        prototype = crate::builtins::object::get_prototype_of(Some(&candidate)).ok();
+    }
+    false
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
@@ -584,6 +678,14 @@ fn descriptor_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     if let Value::Builtin(builtin) = value {
+        if key == "description"
+            && crate::intl::tolocale::symbol::name(*builtin).is_some()
+        {
+            return Some(invoke_accessor(
+                &Value::Builtin(crate::ops::Builtin::SymbolDescriptionGetter),
+                receiver,
+            ));
+        }
         if let Some(Value::Object(descriptor)) =
             crate::builtins::read_intrinsic_override(*builtin, key)
         {
@@ -720,6 +822,11 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 }
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
+    if matches!(value, Value::Builtin(Builtin::PromisePrototype))
+        && matches!(key, "then" | "catch" | "finally")
+    {
+        return bind_receiver_property(crate::builtins::property(Builtin::PromisePrototype, key), receiver);
+    }
     let property = get_property(value, key);
     if should_preserve_receiver_property(value, key, &property, receiver)
         || same_property_receiver(value, receiver)
@@ -806,7 +913,13 @@ pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value
             bind_method(receiver, Value::Builtin(builtin))
         }
         Value::BoundFunction(bound)
-            if receiver_bound_builtin(&bound) =>
+            if receiver_bound_builtin(&bound)
+                || matches!(
+                    bound.target,
+                    Value::Builtin(
+                        Builtin::PromiseThen | Builtin::PromiseCatch | Builtin::PromiseFinally
+                    )
+                ) =>
         {
             bind_method(receiver, bound.target.clone())
         }

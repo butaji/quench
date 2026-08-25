@@ -333,6 +333,13 @@ pub(crate) fn replace_global_object(old: &Value, new: &Value) {
     crate::locals::replace_value(old, new);
 }
 
+pub(crate) fn replace_realm_global_value(realm: RealmId, new: &Value) {
+    let Value::Object(object) = new else {
+        return;
+    };
+    replace_realm_global(realm, object.clone());
+}
+
 fn replace_register_aliases(
     registers: &mut crate::register_file::RegisterFile,
     old: &ObjectProperties,

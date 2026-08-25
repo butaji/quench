@@ -34,8 +34,7 @@ fn delete_bound_function_property(
         let mut properties = bound.properties.borrow_mut();
         let metadata = descriptor_key(key);
         properties.retain(|(name, _)| name != key && name != &metadata);
-        if bound.target == Value::Builtin(crate::ops::Builtin::AbstractModuleSource)
-            && matches!(key, "length" | "name")
+        if matches!(bound.target, Value::Builtin(_)) && matches!(key, "length" | "name")
         {
             properties.push((crate::builtins::deleted_key(key), Value::Boolean(true)));
         }

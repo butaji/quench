@@ -139,19 +139,18 @@ fn triage(filter: Option<&String>) -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    let mut entries: Vec<PathBuf> = quench_node_test::stages::discover_fixtures(
-        &PathBuf::from(PARALLEL_DIR),
-    )
-    .into_iter()
-    .filter(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                name.starts_with("test-")
-                    && filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
+    let mut entries: Vec<PathBuf> =
+        quench_node_test::stages::discover_fixtures(&PathBuf::from(PARALLEL_DIR))
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("test-")
+                            && filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
+                    })
             })
-    })
-    .collect();
+            .collect();
     entries.sort();
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;

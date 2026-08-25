@@ -63,7 +63,11 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     // Property lookup must observe the latest physical object for this
     // semantic identity. Resolving only the result reads stale scalar fields
     // after an immutable object transition (for example `this.x++`).
-    let owner = if matches!(value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+    let owner = if crate::vm::is_global_declaration_batch_active()
+        && crate::vm::is_global_object(value)
+    {
+        crate::vm::current_global_object()
+    } else if matches!(value, Value::Object(view) if view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
         || matches!(value, Value::ObjectAlias(alias) if alias
             .target()
             .is_some_and(|view| view.iter().any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)))
@@ -250,15 +254,17 @@ fn iterator_property_value(value: &Value, property: Value) -> Value {
     bind_method(value, property)
 }
 fn promise_value_property(promise: &crate::value::PromiseData, value: &Value, key: &str) -> Value {
-    promise_property_value(promise, key).unwrap_or_else(|| promise_property(value, key))
+    let result = promise_property_value(promise, key).unwrap_or_else(|| promise_property(value, key));
+    result
 }
 
 fn promise_property_value(promise: &crate::value::PromiseData, key: &str) -> Option<Value> {
-    promise.property(key).or_else(|| {
-        promise
-            .prototype()
-            .map(|prototype| get_property(&prototype, key))
-    })
+    if let Some(value) = promise.property(key) {
+        return Some(value);
+    }
+    let prototype = promise.prototype()?;
+    let value = get_property(&prototype, key);
+    (!matches!(value, Value::Undefined)).then_some(value)
 }
 fn map_property(data: &crate::value::MapData, key: &str) -> Value {
     if key == "constructor" {
@@ -422,8 +428,28 @@ fn function_inherited_property(
         })
         .map_or_else(
             || function_prototype_property(function, key),
-            |prototype| get_property(&prototype, key),
+            |prototype| inherited_function_property(function, prototype, key),
         )
+}
+
+fn inherited_function_property(
+    function: &crate::value::FunctionValue,
+    prototype: Value,
+    key: &str,
+) -> Value {
+    let inherited = get_property(&prototype, key);
+    let Value::BoundFunction(bound) = &inherited else {
+        return inherited;
+    };
+    if !matches!(prototype, Value::Builtin(Builtin::Promise))
+        || !matches!(bound.target, Value::Builtin(Builtin::PromiseResolve | Builtin::PromiseReject | Builtin::PromiseAll | Builtin::PromiseAllSettled | Builtin::PromiseAny | Builtin::PromiseRace | Builtin::PromiseWithResolvers | Builtin::PromiseTry))
+    {
+        return inherited;
+    }
+    bind_method(
+        &Value::Function(std::rc::Rc::new(function.clone())),
+        bound.target.clone(),
+    )
 }
 fn function_prototype_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     let builtin = if function.is_async {

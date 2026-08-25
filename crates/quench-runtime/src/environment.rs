@@ -483,7 +483,9 @@ impl Drop for Environment {
 }
 
 fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
-    source.as_ref().map(|cells| TdzCells::clone_prefix(cells, count))
+    source
+        .as_ref()
+        .map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
@@ -732,26 +734,15 @@ impl Environment {
         };
         let binding = self.ensure_slot(slot);
         caller.clear_deleted_cell(&binding.cell());
-        // Eval bindings are visible through every activation that can be
-        // reached by a closure created while the eval runs.  Publish the
-        // shared binding through the complete caller chain so an existing
-        // capture observes a later eval declaration without copying a stale
-        // name map.
-        caller.alias_eval_binding(name, binding.clone());
-        if name == "arguments" {
-            caller.alias_eval_binding(name, binding);
-        }
-        true
-    }
-
-    fn alias_eval_binding(&self, name: &str, binding: BindingRef) {
-        self.eval_names
+        // Publish only into the caller's var environment. Captured closures
+        // share that environment's eval-name map, while the global ancestor
+        // must not acquire a binding whose lifetime belongs to this call.
+        caller
+            .eval_names
             .borrow_mut()
             .get_or_insert_with(HashMap::new)
             .insert(name.to_string(), binding.clone());
-        if let Some(caller) = &self.caller {
-            caller.alias_eval_binding(name, binding);
-        }
+        true
     }
 
     pub(crate) fn alias_binding(&self, name: &str, binding: Rc<crate::value::BindingCell>) {

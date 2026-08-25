@@ -13,6 +13,20 @@ impl Frame {
         true
     }
 
+    pub(crate) fn set_catch_resume(&mut self, range: CodeRange, yield_dst: u16) -> bool {
+        let Self::Try {
+            phase,
+            body_resume,
+            yield_dst: dst,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        set_resume(phase, body_resume, dst, TryPhase::Catch, range, yield_dst);
+        true
+    }
+
     fn advance_resume(&mut self, range: CodeRange, yield_dst: u16) -> bool {
         match self {
             Self::Try {
@@ -21,10 +35,10 @@ impl Frame {
                 yield_dst: dst,
                 ..
             } => {
-                let next_phase = if matches!(phase, TryPhase::Finally) {
-                    TryPhase::Finally
-                } else {
-                    TryPhase::Body
+                let next_phase = match phase {
+                    TryPhase::Finally => TryPhase::Finally,
+                    TryPhase::Catch => TryPhase::Catch,
+                    _ => TryPhase::Body,
                 };
                 set_resume(phase, body_resume, dst, next_phase, range, yield_dst)
             }

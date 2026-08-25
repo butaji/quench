@@ -121,10 +121,7 @@ fn schedule(
     Ok(object)
 }
 
-fn async_resource(
-    _state: &Rc<RefCell<HostState>>,
-    kind: &TimerKind,
-) -> Result<Value, VmError> {
+fn async_resource(_state: &Rc<RefCell<HostState>>, kind: &TimerKind) -> Result<Value, VmError> {
     let resource = crate::host::namespace_object_from_pairs(Vec::new());
     let global = quench_runtime::vm::current_global_object();
     let helper = quench_runtime::execute::get_property(&global, "__quenchAsyncInit");
@@ -146,7 +143,11 @@ pub(crate) fn async_destroy(resource: &Value) {
     let global = quench_runtime::vm::current_global_object();
     let helper = quench_runtime::execute::get_property(&global, "__quenchAsyncDestroy");
     if quench_runtime::is_callable(&helper) {
-        let _ = quench_runtime::execute::call(&helper, &Value::Undefined, std::slice::from_ref(resource));
+        let _ = quench_runtime::execute::call(
+            &helper,
+            &Value::Undefined,
+            std::slice::from_ref(resource),
+        );
     }
 }
 
@@ -170,7 +171,10 @@ fn timer_object(
         ("refresh", crate::registry::SPEC_TIMERS_REFRESH),
         ("close", crate::registry::SPEC_TIMERS_CLOSE),
         ("Symbol.dispose", crate::registry::SPEC_TIMERS_CLOSE),
-        ("Symbol.toPrimitive", crate::registry::SPEC_TIMERS_TO_PRIMITIVE),
+        (
+            "Symbol.toPrimitive",
+            crate::registry::SPEC_TIMERS_TO_PRIMITIVE,
+        ),
     ];
     let mut object = object;
     for (key, spec) in methods {

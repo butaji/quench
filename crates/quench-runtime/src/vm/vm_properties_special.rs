@@ -1,4 +1,12 @@
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == crate::ops::HostCapabilityKind::Custom(111) {
+        return match key {
+            "small" => Value::Number(1.0),
+            "long" => Value::Number(10.0),
+            "huge" => Value::Number(100.0),
+            _ => Value::Undefined,
+        };
+    }
     if let Value::HostCapability(token) = value {
         if let Some((_, property)) = token
             .properties
@@ -15,12 +23,27 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     if let Value::Builtin(Builtin::AbstractModuleSource) = property {
         return crate::vm::realm_intrinsic(Builtin::AbstractModuleSource);
     }
+    if let Value::Builtin(Builtin::HostCapability(kind)) = property {
+        if matches!(kind, crate::ops::HostCapabilityKind::Custom(100 | 111)) {
+            return crate::vm::current_host_capability(kind);
+        }
+    }
     if matches!(property, Value::Builtin(_)) {
         return bind_method(value, property);
     }
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
+    if callable_builtin_value(value)
+        && key == "toString"
+        && builtin != Builtin::FunctionPrototype
+        && !crate::builtin_meta::is_prototype(builtin)
+    {
+        return bind_method(
+            value,
+            crate::builtins::property(Builtin::FunctionPrototype, "toString"),
+        );
+    }
     if callable_builtin_value(value) && key != "prototype" {
         if let Some(override_value) =
             crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
@@ -32,10 +55,29 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if let Some(result) = constructor_property(builtin, key, property.clone()) {
         return result;
     }
+    if builtin == Builtin::PromisePrototype && matches!(key, "then" | "catch" | "finally") {
+        return property;
+    }
+    if builtin == Builtin::Promise && key == "Symbol.species" {
+        return property;
+    }
     // Static Promise methods need the constructor as [[This]] when called
-    // through a property reference; prototype methods are bound below.
+    // through a property reference; do not cache this binding on the
+    // intrinsic, since subclasses must inherit the same method with their own
+    // constructor as [[This]].
     if builtin == Builtin::Promise && matches!(property, Value::Builtin(_)) {
-        return bind_method(value, property);
+        let bound = bind_method(value, property);
+        crate::builtins::write_intrinsic_override(
+            builtin,
+            key,
+            Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                ("value".to_string(), bound.clone()),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        );
+        return bound;
     }
     if !matches!(property, Value::Undefined) {
         return property;
@@ -84,6 +126,17 @@ fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
     if crate::builtin_meta::is_prototype(builtin) || builtin == Builtin::Temporal {
         return inherit_prototype_property(builtin, key);
     }
+    if callable_builtin_value(value) {
+        if let Some(override_value) =
+            crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
+        {
+            return bind_method(value, override_value);
+        }
+        let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
+        if !matches!(inherited, Value::Undefined) {
+            return bind_method(value, inherited);
+        }
+    }
     let object_prototype = crate::vm::realm_intrinsic(Builtin::ObjectPrototype);
     if let Some(getter) = crate::property_define::accessor(&object_prototype, key, "get") {
         return match getter {
@@ -94,17 +147,6 @@ fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
     if let Ok(inherited) = get_property_with_receiver(&object_prototype, key, value) {
         if !matches!(inherited, Value::Undefined) {
             return inherited;
-        }
-    }
-    if callable_builtin_value(value) {
-        if let Some(override_value) =
-            crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
-        {
-            return bind_method(value, override_value);
-        }
-        let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
-        if !matches!(inherited, Value::Undefined) {
-            return bind_method(value, inherited);
         }
     }
     bind_method(
@@ -170,7 +212,10 @@ fn bound_function_property(
             target => get_property(target, key),
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
-        Value::String(String::new())
+        match bound.target {
+            Value::Builtin(builtin) => crate::builtins::property(builtin, "name"),
+            _ => Value::String(String::new()),
+        }
     } else {
         bound_function_fallback(bound, shadow_wrapper, key)
     }
@@ -243,6 +288,16 @@ fn bound_function_fallback(
     }
     if matches!(result, Value::Undefined) {
         if bound.target != Value::Builtin(Builtin::ObjectPrototype) {
+            if bound.target != Value::Builtin(Builtin::FunctionPrototype) {
+                let function_prototype =
+                    crate::vm::realm_intrinsic_for(bound.realm, Builtin::FunctionPrototype);
+                if let Ok(inherited) = get_property_with_receiver(&function_prototype, key, &receiver)
+                {
+                    if !matches!(inherited, Value::Undefined) {
+                        return inherited;
+                    }
+                }
+            }
             let object_prototype = crate::vm::realm_intrinsic(Builtin::ObjectPrototype);
             if let Some(getter) = crate::property_define::accessor(&object_prototype, key, "get") {
                 return match getter {
@@ -274,8 +329,12 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     properties
         .borrow_mut()
         .push(("\0receiver_bound_method".to_string(), Value::Boolean(true)));
+    let realm = match receiver {
+        Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => bound.realm,
+        _ => crate::vm::current_context_or_default().realm(),
+    };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
+        realm,
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),

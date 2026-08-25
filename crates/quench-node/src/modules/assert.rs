@@ -82,14 +82,14 @@ pub fn constructor_call(
             "message".into(),
             Value::String("Class constructor Assert cannot be invoked without 'new'".into()),
         ),
-        ("code".into(), Value::String("ERR_CONSTRUCT_CALL_REQUIRED".into())),
+        (
+            "code".into(),
+            Value::String("ERR_CONSTRUCT_CALL_REQUIRED".into()),
+        ),
     ])))
 }
 
-pub fn constructor_new(
-    _state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+pub fn constructor_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let options = args.first().unwrap_or(&Value::Undefined);
     if !matches!(options, Value::Undefined | Value::Object(_)) {
         return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
@@ -101,7 +101,11 @@ pub fn constructor_new(
         quench_runtime::execute::get_property(options, "strict"),
         Value::Boolean(false)
     );
-    let equal_spec = if strict { SPEC_ASSERT_STRICT_EQUAL } else { SPEC_ASSERT_EQUAL };
+    let equal_spec = if strict {
+        SPEC_ASSERT_STRICT_EQUAL
+    } else {
+        SPEC_ASSERT_EQUAL
+    };
     let not_equal_spec = if strict {
         SPEC_ASSERT_NOT_STRICT_EQUAL
     } else {
@@ -141,9 +145,11 @@ pub fn constructor_new(
         ("match", SPEC_ASSERT_MATCH),
         ("doesNotMatch", SPEC_ASSERT_DOES_NOT_MATCH),
     ];
-    let instance = methods.into_iter().fold(instance, |instance, (name, spec)| {
-        quench_runtime::execute::set_property(instance, name, crate::host::capability(spec))
-    });
+    let instance = methods
+        .into_iter()
+        .fold(instance, |instance, (name, spec)| {
+            quench_runtime::execute::set_property(instance, name, crate::host::capability(spec))
+        });
     let instance = if strict {
         let equal = quench_runtime::execute::get_property(&instance, "strictEqual");
         let not_equal = quench_runtime::execute::get_property(&instance, "notStrictEqual");
@@ -238,10 +244,8 @@ fn pair(name: &str, spec: NodeSpec) -> (String, Value) {
 
 fn assertion_error_type() -> Value {
     let prototype = assertion_error_prototype();
-    let constructor = host_api::bound_builtin(
-        quench_runtime::ops::Builtin::Error,
-        Value::Undefined,
-    );
+    let constructor =
+        host_api::bound_builtin(quench_runtime::ops::Builtin::Error, Value::Undefined);
     let _ = execute::set_callable_property(
         &constructor,
         "name",
@@ -311,7 +315,9 @@ pub fn assertion_error(
 fn missing_args() -> VmError {
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::TypeError,
-        &[Value::String("The \"actual\" and \"expected\" arguments must be specified".into())],
+        &[Value::String(
+            "The \"actual\" and \"expected\" arguments must be specified".into(),
+        )],
     );
     VmError::Thrown(quench_runtime::execute::set_property(
         error,
@@ -457,24 +463,22 @@ fn binary_assert(
         )
     });
     Err(with_instance_diff(
-        assertion_error(
-        message, operator, actual, expected, generated,
-        ),
+        assertion_error(message, operator, actual, expected, generated),
         receiver,
     ))
 }
 
 fn with_instance_diff(error: VmError, receiver: Option<&Value>) -> VmError {
-    let Some(receiver) = receiver else { return error };
+    let Some(receiver) = receiver else {
+        return error;
+    };
     let Value::String(diff) = execute::get_property(receiver, "diff") else {
         return error;
     };
     match error {
-        VmError::Thrown(value) => VmError::Thrown(execute::set_property(
-            value,
-            "diff",
-            Value::String(diff),
-        )),
+        VmError::Thrown(value) => {
+            VmError::Thrown(execute::set_property(value, "diff", Value::String(diff)))
+        }
         error => error,
     }
 }
@@ -532,14 +536,18 @@ pub fn deep_strict_equal(
     let custom = custom_message(args, 2);
     let generated = custom.is_none();
     let message = custom.map_or_else(
-        || format!(
-            "Expected values to be strictly deep-equal:\n\n{}\n",
-            deep_diff(&actual, &expected)
-        ),
-        |message| format!(
-            "{message}\n+ actual - expected\n\n{}\n",
-            deep_diff(&actual, &expected)
-        ),
+        || {
+            format!(
+                "Expected values to be strictly deep-equal:\n\n{}\n",
+                deep_diff(&actual, &expected)
+            )
+        },
+        |message| {
+            format!(
+                "{message}\n+ actual - expected\n\n{}\n",
+                deep_diff(&actual, &expected)
+            )
+        },
     );
     Err(with_instance_diff(
         assertion_error(message, "deepStrictEqual", actual, expected, generated),

@@ -31,7 +31,10 @@ pub fn spawn_sync(
                 || value.contains("warning_node_modules/new-buffer-esm.mjs")
         })
     {
-        let stderr = if child_args.iter().any(|value| value == "--pending-deprecation") {
+        let stderr = if child_args
+            .iter()
+            .any(|value| value == "--pending-deprecation")
+        {
             "[DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.\n"
         } else {
             ""

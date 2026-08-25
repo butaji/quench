@@ -56,7 +56,11 @@ pub(crate) fn values(target: Option<&Value>, entries: bool) -> Result<Value, VmE
     let mut result = Vec::new();
     for key in keys(target, false) {
         let current = crate::locals::resolved_replacement(target.clone());
-        let descriptor = crate::proxy::proxy_get_own_property_descriptor(&current, &key)?;
+        let descriptor = if matches!(current, Value::Proxy(_)) {
+            crate::proxy::proxy_get_own_property_descriptor(&current, &key)?
+        } else {
+            crate::builtins::object::descriptor(Some(&current), Some(&Value::String(key.clone())))?
+        };
         if !descriptor_enumerable_value_opt(&descriptor) {
             continue;
         }
@@ -213,12 +217,22 @@ fn is_boxed_primitive<K: AsRef<str>>(properties: &[(K, Value)]) -> bool {
 }
 
 fn enumerable_created(data: &crate::value::ObjectData) -> Vec<String> {
-    let properties: Vec<(String, Value)> = data
-        .created
-        .iter()
-        .filter(|key| !key.starts_with('\0'))
+    let mut names: Vec<String> = data.created.iter().map(|key| key.to_string()).collect();
+    for (key, _) in data.iter() {
+        if !key.starts_with('\0') && !crate::builtins::is_descriptor_key(key) {
+            names.push(key.to_string());
+        }
+    }
+    let mut unique = Vec::with_capacity(names.len());
+    for name in names {
+        if !unique.contains(&name) {
+            unique.push(name);
+        }
+    }
+    let properties: Vec<(String, Value)> = unique
+        .into_iter()
         .filter(|key| descriptor_enumerable(data, key))
-        .map(|key| (key.as_str().to_owned(), Value::Undefined))
+        .map(|key| (key, Value::Undefined))
         .collect();
     ordered(&properties, false)
 }
@@ -338,12 +352,16 @@ fn owns_string_key(target: &Value, key: &str) -> bool {
 }
 
 fn object_keys<K: AsRef<str>>(properties: &[(K, Value)], symbols: bool) -> Vec<String> {
+    let regexp = properties
+        .iter()
+        .any(|(key, value)| key.as_ref() == "\0regexp" && matches!(value, Value::Boolean(true)));
     let Some((_, Value::String(value))) =
         properties.iter().find(|(key, _)| key.as_ref() == "_value")
     else {
         let keys = ordered(properties, symbols)
             .into_iter()
             .filter(|key| key != "_value" && key != "timeValue")
+            .filter(|key| !regexp || !regexp_virtual_key(key))
             .collect();
         return filter_namespace_symbol_name(properties, symbols, keys);
     };
@@ -358,6 +376,22 @@ fn object_keys<K: AsRef<str>>(properties: &[(K, Value)], symbols: bool) -> Vec<S
         return filter_namespace_symbol_name(properties, symbols, keys);
     }
     boxed_string_keys(properties, value, symbols)
+}
+
+fn regexp_virtual_key(key: &str) -> bool {
+    matches!(
+        key,
+        "source"
+            | "flags"
+            | "global"
+            | "ignoreCase"
+            | "multiline"
+            | "dotAll"
+            | "unicode"
+            | "unicodeSets"
+            | "sticky"
+            | "hasIndices"
+    )
 }
 
 fn filter_namespace_symbol_name<K: AsRef<str>>(
@@ -394,15 +428,24 @@ fn boxed_string_keys<K: AsRef<str>>(
     if symbols {
         return ordered(properties, true);
     }
-    let mut keys = value
-        .chars()
-        .enumerate()
-        .map(|(index, _)| index.to_string())
+    let mut keys = (0..crate::strings::utf16_len(value))
+        .map(|index| index.to_string())
         .collect::<Vec<_>>();
+    let mut property_indices = Vec::new();
     let mut string_keys: Vec<String> = ordered(properties, false)
         .into_iter()
         .filter(|key| !matches!(key.as_str(), "_value" | "constructor"))
         .collect();
+    string_keys.retain(|key| {
+        if let Some(index) = array_index(key) {
+            property_indices.push((index, key.clone()));
+            false
+        } else {
+            true
+        }
+    });
+    property_indices.sort_by_key(|(index, _)| *index);
+    keys.extend(property_indices.into_iter().map(|(_, key)| key));
     // Ensure "length" is present and appears first among the non-index
     // string keys, in creation order. `Object.defineProperty` may have
     // re-defined or removed the own `length` slot; if it is missing,
@@ -439,7 +482,10 @@ fn descriptor_enumerable_value(descriptor: Option<&Value>) -> bool {
 }
 
 fn keys(target: &Value, symbols: bool) -> Vec<String> {
-    match target {
+    if let Some(keys) = script_global_property_keys(target, symbols) {
+        return keys;
+    }
+    let mut keys = match target {
         Value::Object(properties) => object_keys(properties, symbols),
         Value::ObjectAlias(alias) => alias
             .0
@@ -457,7 +503,78 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
             .typed_array_meta()
             .map(|meta| ordered(&meta.own_properties(), symbols))
             .unwrap_or_default(),
+    };
+    if !symbols && crate::vm::is_global_object(target) {
+        for key in [
+            "NaN",
+            "Infinity",
+            "undefined",
+            "eval",
+            "parseInt",
+            "parseFloat",
+            "isNaN",
+            "isFinite",
+            "decodeURI",
+            "decodeURIComponent",
+            "encodeURI",
+            "encodeURIComponent",
+            "Math",
+        ] {
+            if !keys.iter().any(|current| current == key) {
+                keys.push(key.to_string());
+            }
+        }
     }
+    keys
+}
+
+fn script_global_property_keys(target: &Value, symbols: bool) -> Option<Vec<String>> {
+    let properties = match target {
+        Value::Object(object)
+            if object
+                .iter()
+                .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW) =>
+        {
+            std::rc::Rc::clone(object)
+        }
+        Value::ObjectAlias(alias) => alias.target().filter(|object| {
+            object
+                .iter()
+                .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)
+        })?,
+        _ => return None,
+    };
+    let mut result = object_keys(&properties, symbols);
+    if !symbols {
+        for key in [
+            "NaN",
+            "Infinity",
+            "undefined",
+            "eval",
+            "parseInt",
+            "parseFloat",
+            "isNaN",
+            "isFinite",
+            "decodeURI",
+            "decodeURIComponent",
+            "encodeURI",
+            "encodeURIComponent",
+            "Math",
+        ] {
+            if !result.iter().any(|current| current == key) {
+                result.push(key.to_string());
+            }
+        }
+    }
+    let Value::Object(live) = crate::vm::current_global_object() else {
+        return Some(result);
+    };
+    for key in object_keys(&live, symbols) {
+        if !result.iter().any(|current| current == &key) {
+            result.push(key);
+        }
+    }
+    Some(result)
 }
 
 fn builtin_keys(builtin: crate::ops::Builtin, symbols: bool) -> Vec<String> {
@@ -571,7 +688,7 @@ fn ordered<K: AsRef<str>>(properties: &[(K, Value)], symbols: bool) -> Vec<Strin
         if crate::builtins::is_descriptor_key(key) || key.starts_with('\0') {
             continue;
         }
-        if crate::conversion::is_symbol_string(key) != symbols {
+        if is_symbol_key(key) != symbols {
             continue;
         }
         match array_index(key) {
@@ -587,6 +704,28 @@ fn ordered<K: AsRef<str>>(properties: &[(K, Value)], symbols: bool) -> Vec<Strin
         }
     }
     keys
+}
+
+fn is_symbol_key(key: &str) -> bool {
+    crate::conversion::is_symbol_string(key)
+        || matches!(
+            key,
+            "Symbol.iterator"
+                | "Symbol.asyncIterator"
+                | "Symbol.dispose"
+                | "Symbol.asyncDispose"
+                | "Symbol.unscopables"
+                | "Symbol.toStringTag"
+                | "Symbol.toPrimitive"
+                | "Symbol.hasInstance"
+                | "Symbol.isConcatSpreadable"
+                | "Symbol.species"
+                | "Symbol.match"
+                | "Symbol.replace"
+                | "Symbol.search"
+                | "Symbol.split"
+                | "Symbol.matchAll"
+        )
 }
 
 fn array_index(key: &str) -> Option<u32> {

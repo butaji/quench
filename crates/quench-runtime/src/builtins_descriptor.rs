@@ -15,7 +15,11 @@ pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<
             .and_then(|properties| descriptor_flag_in(&properties, key, field)),
         Value::Array(values) => array_flag(values, key, field),
         Value::Builtin(builtin) => builtin_flag(*builtin, key, field),
-        Value::Function(_) | Value::BoundFunction(_) => {
+        Value::Function(_)
+        | Value::BoundFunction(_)
+        | Value::ArrayBuffer(_)
+        | Value::DataView(_)
+        | Value::Promise(_) => {
             descriptor_flag_via_descriptor(target, key, field)
         }
         _ => None,

@@ -5,6 +5,15 @@ fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> V
         .upgrade()
         .map_or(Value::Undefined, |object| {
             let object = crate::locals::resolved_replacement(Value::Object(object));
+            if key == "toString" {
+                if let Value::Object(properties) = &object {
+                    if properties.iter().any(|(name, value)| {
+                        name == "_value" && boxed_symbol_value(value)
+                    }) {
+                        return Value::Builtin(crate::ops::Builtin::SymbolToString);
+                    }
+                }
+            }
             get_property(&object, key)
         })
 }
@@ -65,11 +74,34 @@ pub(crate) fn object_property(
     if let Some(value) = direct_object_property(properties, key) {
         return value;
     }
+    if properties.iter().any(|(name, value)| {
+        name == "_value" && boxed_symbol_value(value)
+    }) {
+        if key == "toString" {
+            return Value::Builtin(crate::ops::Builtin::SymbolToString);
+        }
+        if key == "valueOf" {
+            return Value::Builtin(crate::ops::Builtin::SymbolValueOf);
+        }
+        let prototype = crate::vm::realm_intrinsic(crate::ops::Builtin::SymbolPrototype);
+        if let Ok(value) = get_property_with_receiver(&prototype, key, receiver) {
+            if !matches!(value, Value::Undefined) {
+                return value;
+            }
+        }
+    }
     let inherited = object_prototype_property(receiver, properties, key);
     if !matches!(inherited, Value::Undefined) {
         return inherited;
     }
     object_builtin_property(properties, key)
+}
+
+fn boxed_symbol_value(value: &Value) -> bool {
+    match value {
+        Value::BindingCell(cell) => boxed_symbol_value(&cell.borrow()),
+        value => crate::conversion::is_symbol(value),
+    }
 }
 
 fn object_builtin_property(properties: &[(crate::value::PropertyName, Value)], key: &str) -> Value {
@@ -237,7 +269,7 @@ fn global_property(
     )
 }
 
-fn current_host_capability(kind: HostCapabilityKind) -> Value {
+pub(crate) fn current_host_capability(kind: HostCapabilityKind) -> Value {
     let realm = CURRENT_CONTEXT.with(|context| {
         context
             .borrow()

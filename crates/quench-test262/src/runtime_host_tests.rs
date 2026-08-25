@@ -102,6 +102,22 @@ fn strict_non_extensible_write_throws() {
 }
 
 #[test]
+fn top_level_var_is_visible_on_global_this_during_declaration_staging() {
+    let mut host = super::RuntimeHost;
+    let source = "var x = 1;\n\nif (this.x !== 1) {\n  throw new Error('#1: variable x is a property of global object');\n}";
+    host.run_harnessed_script(&[], source, false)
+        .expect("top-level var must be visible on global this");
+}
+
+#[test]
+fn unresolved_global_updates_target_the_live_global_object() {
+    let mut host = super::RuntimeHost;
+    let source = "index6 = 0;\nfor (index6 = 0; index6 < 2; index6++) {}\nif (index6 !== 2) {\n  throw new Error('global update did not advance');\n}";
+    host.run_harnessed_script(&[], source, false)
+        .expect("unresolved global increment must update the live global object");
+}
+
+#[test]
 fn deleted_global_property_keeps_strict_reference_error_semantics() {
     let mut host = super::RuntimeHost;
     host.run_script(

@@ -186,7 +186,7 @@ pub(crate) fn execute_set_property(
     if crate::module_bindings::is_namespace(&target) {
         return write_failure(strict);
     }
-    if rejects_new_property(&target, &key) {
+    if key != "__proto__" && rejects_new_property(&target, &key) {
         return write_failure(strict);
     }
     let value = crate::execute::read_register(registers, src)?.clone();
@@ -201,6 +201,35 @@ pub(crate) fn execute_set_property(
         )?;
         return Ok(());
     }
+    if matches!(
+        target,
+        crate::value::Value::Builtin(crate::ops::Builtin::IteratorPrototype)
+    ) && matches!(key.as_str(), "constructor" | "Symbol.toStringTag")
+    {
+        return Err(crate::value::error::throw_type_error("Invalid receiver"));
+    }
+    if key == "__proto__" {
+        let own = match &target {
+            crate::value::Value::Object(data) => data.iter().any(|(name, _)| name == "__proto__"),
+            crate::value::Value::Function(function) => function
+                .properties
+                .borrow()
+                .iter()
+                .any(|(name, _)| name == "__proto__"),
+            _ => false,
+        };
+        if !own {
+            let prototype = value.clone();
+            if !matches!(prototype, crate::value::Value::Null)
+                && !crate::value::is_object(&prototype)
+            {
+                return Ok(());
+            }
+            let args = vec![target.clone(), prototype];
+            crate::builtins::object::set_prototype_of(&args)?;
+            return Ok(());
+        }
+    }
     finish_set_property(registers, object, &target, &key, value, strict)
 }
 
@@ -212,6 +241,17 @@ pub(crate) fn execute_set_named_cached(
     strict: bool,
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), crate::execute::VmError> {
+    if key == "__proto__" {
+        return execute_set_property(
+            registers,
+            &Op::SetProperty {
+                object,
+                key: key.to_owned(),
+                src,
+                strict,
+            },
+        );
+    }
     if transition_index(cache.get()).is_some()
         && try_named_write_transition(registers, object, src, key, cache)?
     {
@@ -567,7 +607,10 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
         return object_is_extensible(&cell.borrow());
     }
     match &target {
-        crate::value::Value::Builtin(crate::ops::Builtin::ThrowTypeError) => false,
+        crate::value::Value::Builtin(builtin) => {
+            *builtin != crate::ops::Builtin::ThrowTypeError
+                && crate::builtins::read_intrinsic_override(*builtin, NON_EXTENSIBLE).is_none()
+        }
         crate::value::Value::Object(properties) => {
             !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
         }
@@ -616,7 +659,13 @@ pub(crate) fn prevent_extensions(
         return Ok(target.clone());
     }
     if matches!(target, crate::value::Value::Proxy(_)) {
-        return crate::proxy::proxy_prevent_extensions(target);
+        let result = crate::proxy::proxy_prevent_extensions(target)?;
+        if !crate::execute::is_truthy(&result) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy preventExtensions returned false",
+            ));
+        }
+        return Ok(target.clone());
     }
     let result = mark_non_extensible(target);
     crate::locals::replace_value(target, &result);
@@ -648,6 +697,14 @@ fn mark_non_extensible(target: &crate::value::Value) -> crate::value::Value {
         }
         crate::value::Value::BoundFunction(bound) => {
             mark_properties(&mut bound.properties.borrow_mut());
+            target.clone()
+        }
+        crate::value::Value::Builtin(builtin) => {
+            crate::builtins::write_intrinsic_override(
+                *builtin,
+                NON_EXTENSIBLE,
+                crate::value::Value::Boolean(true),
+            );
             target.clone()
         }
         _ => target.clone(),
@@ -682,19 +739,55 @@ fn reject_restricted_property_write(
 }
 
 fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {
-    // Prototype objects do not truly own `length`/`name`; assigning them
-    // creates an own property that shadows the callable metadata.
+    let has_own = crate::builtins::object::has_own_property(
+        Some(target),
+        Some(&crate::value::Value::String(key.to_string())),
+    ) == crate::value::Value::Boolean(true);
     let prototype_meta_key = matches!(key, "length" | "name")
         && matches!(target, crate::value::Value::Builtin(builtin) if crate::builtin_meta::is_prototype(*builtin));
-    if !prototype_meta_key
+    if !(prototype_meta_key && !has_own)
         && crate::builtins::descriptor_flag(target, key, "writable") == Some(false)
     {
         return true;
     }
-    matches!(
+    if matches!(
         crate::property_define::accessor(target, key, "writable"),
         Some(crate::value::Value::Boolean(false))
-    )
+    ) {
+        return true;
+    }
+    if has_own {
+        return false;
+    }
+    let mut prototype = crate::builtins::object::get_prototype_of(Some(target)).ok();
+    let mut depth = 0;
+    while let Some(current) = prototype {
+        if matches!(current, crate::value::Value::Null) || depth >= 32 {
+            break;
+        }
+        depth += 1;
+        if let Ok(crate::value::Value::Object(descriptor)) = crate::builtins::object::descriptor(
+            Some(&current),
+            Some(&crate::value::Value::String(key.to_string())),
+        ) {
+            let has_set = descriptor.iter().any(|(name, _)| name == "set");
+            if has_set {
+                return descriptor
+                    .iter()
+                    .rev()
+                    .find(|(name, _)| name == "set")
+                    .is_some_and(|(_, value)| matches!(value, crate::value::Value::Undefined));
+            }
+            if descriptor.iter().any(|(name, value)| {
+                name == "writable" && matches!(value, crate::value::Value::Boolean(false))
+            }) {
+                return true;
+            }
+            return false;
+        }
+        prototype = crate::builtins::object::get_prototype_of(Some(&current)).ok();
+    }
+    false
 }
 fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
     if strict {
