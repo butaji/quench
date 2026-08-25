@@ -145,6 +145,11 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         return replace_with_callable(receiver, &s, &replacement);
     }
     let replacement = crate::conversion::to_string(&replacement)?;
+    if global && !replacement.contains('$') {
+        if let Some(non_whitespace) = simple_class_run(&extract_source(receiver)) {
+            return replace_simple_class_runs(&s, &replacement, non_whitespace);
+        }
+    }
     if let Some(target) = surrogate_alternative_pattern(&extract_source(receiver)) {
         if global && !unicode_mode(&flags) && !replacement.contains('$') {
             return replace_surrogate_units(&s, &replacement, target);
@@ -154,6 +159,36 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         return replace_with_exec(receiver, &s, &replacement, global);
     }
     replace_with_template(receiver, &s, &replacement)
+}
+
+fn simple_class_run(source: &str) -> Option<bool> {
+    match source {
+        "\\s+" => Some(false),
+        "\\S+" => Some(true),
+        _ => None,
+    }
+}
+
+fn replace_simple_class_runs(input: &str, replacement: &str, non_whitespace: bool) -> Result<Value, VmError> {
+    let mut output = String::with_capacity(input.len());
+    let mut run = false;
+    for character in input.chars() {
+        let matches = if non_whitespace {
+            !crate::regexp::is_ecma_whitespace(character)
+        } else {
+            crate::regexp::is_ecma_whitespace(character)
+        };
+        if matches {
+            if !run {
+                output.push_str(replacement);
+                run = true;
+            }
+        } else {
+            output.push(character);
+            run = false;
+        }
+    }
+    Ok(Value::String(output))
 }
 
 fn surrogate_alternative_pattern(source: &str) -> Option<u16> {
