@@ -1,6 +1,15 @@
-fn regex_receiver<'a>(receiver: Option<&'a Value>, method: &str) -> Result<&'a Value, VmError> {
-    match receiver {
-        Some(receiver @ Value::Object(_)) => Ok(receiver),
+fn regex_receiver(receiver: Option<&Value>, method: &str) -> Result<Value, VmError> {
+    let receiver = receiver
+        .cloned()
+        .or_else(crate::super_scope::current_receiver);
+    match receiver.as_ref() {
+        Some(Value::Object(object)) => Ok(Value::Object(object.clone())),
+        Some(Value::ObjectAlias(alias)) => alias
+            .target()
+            .map(Value::Object)
+            .ok_or_else(|| crate::value::error::throw_type_error(&format!(
+                "RegExp.prototype[{method}] called on incompatible receiver"
+            ))),
         _ => Err(crate::value::error::throw_type_error(&format!(
             "RegExp.prototype[{method}] called on incompatible receiver"
         ))),
@@ -36,22 +45,20 @@ fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
 fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@match")?;
     let input = to_string_argument(arguments)?;
-    let flags = observable_flags(receiver)?;
+    let flags = observable_flags(&receiver)?;
     if !flags.contains('g') {
-        return regexp_exec(receiver, &input);
+        return regexp_exec(&receiver, &input);
     }
     if !unicode_mode(&flags)
-        && extract_source(receiver) == "."
-        && matches!(
-            crate::execute::get_property(receiver, "exec"),
-            Value::Builtin(crate::ops::Builtin::RegExpExec)
-        )
-        && fast_set_last_index(receiver, &Value::Number(0.0))
+        && extract_source(&receiver) == "."
+        && builtin_regexp_exec_property(&receiver)
+        && (fast_set_last_index(&receiver, &Value::Number(0.0))
+            || set_last_index(&receiver, 0.0).is_ok())
     {
         let units = input.encode_utf16().map(|unit| crate::strings::from_units(vec![unit])).collect();
         return Ok(Value::array(units));
     }
-    symbol_match_global(receiver, &input, unicode_mode(&flags))
+    symbol_match_global(&receiver, &input, unicode_mode(&flags))
 }
 
 fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value, VmError> {
@@ -82,6 +89,17 @@ fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value
         return Ok(Value::Null);
     }
     Ok(Value::array(matched))
+}
+
+fn builtin_regexp_exec_property(receiver: &Value) -> bool {
+    let property = crate::execute::get_property(receiver, "exec");
+    match property {
+        Value::Builtin(crate::ops::Builtin::RegExpExec) => true,
+        Value::BoundFunction(bound) => {
+            matches!(bound.target, Value::Builtin(crate::ops::Builtin::RegExpExec))
+        }
+        _ => false,
+    }
 }
 
 fn advance_string_index(text: &str, index: usize, unicode: bool) -> usize {
@@ -117,7 +135,7 @@ pub(crate) fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmErro
 
 // RegExp.prototype[Symbol.search]
 fn symbol_search(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let receiver = regex_receiver(receiver, "@@search")?.clone();
+    let receiver = regex_receiver(receiver, "@@search")?;
     let input = to_string_argument(arguments)?;
     let previous = crate::execute::get_property_result(&receiver, "lastIndex")?;
     if !crate::builtins::same_value(Some(&previous), Some(&Value::Number(0.0))) {
@@ -147,29 +165,29 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let receiver = regex_receiver(receiver, "@@replace")?;
     let s = to_string_argument(arguments)?;
     let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    let flags = observable_flags(receiver)?;
+    let flags = observable_flags(&receiver)?;
     let global = flags.contains('g');
     if crate::conversion::is_callable(&replacement) {
-        if dynamic_exec(receiver, global) {
-            return replace_with_exec_callable(receiver, &s, &replacement, global);
+        if dynamic_exec(&receiver, global) {
+            return replace_with_exec_callable(&receiver, &s, &replacement, global);
         }
-        return replace_with_callable(receiver, &s, &replacement);
+        return replace_with_callable(&receiver, &s, &replacement);
     }
     let replacement = crate::conversion::to_string(&replacement)?;
     if global && !replacement.contains('$') {
-        if let Some(non_whitespace) = simple_class_run(&extract_source(receiver)) {
+        if let Some(non_whitespace) = simple_class_run(&extract_source(&receiver)) {
             return replace_simple_class_runs(&s, &replacement, non_whitespace);
         }
     }
-    if let Some(target) = surrogate_alternative_pattern(&extract_source(receiver)) {
+    if let Some(target) = surrogate_alternative_pattern(&extract_source(&receiver)) {
         if global && !unicode_mode(&flags) && !replacement.contains('$') {
             return replace_surrogate_units(&s, &replacement, target);
         }
     }
-    if dynamic_exec(receiver, global) {
-        return replace_with_exec(receiver, &s, &replacement, global);
+    if dynamic_exec(&receiver, global) {
+        return replace_with_exec(&receiver, &s, &replacement, global);
     }
-    replace_with_template(receiver, &s, &replacement)
+    replace_with_template(&receiver, &s, &replacement)
 }
 
 fn simple_class_run(source: &str) -> Option<bool> {
@@ -692,9 +710,9 @@ fn groups_at<'a>(m: &'a regress::Match) -> impl Iterator<Item = Option<(usize, u
 fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@matchAll")?;
     let input = to_string_argument(arguments)?;
-    let flags = match_all_flags(receiver)?;
-    let last_index = match_all_start(receiver, &input)?;
-    let matcher = match_all_matcher(receiver, &flags)?;
+    let flags = match_all_flags(&receiver)?;
+    let last_index = match_all_start(&receiver, &input)?;
+    let matcher = match_all_matcher(&receiver, &flags)?;
     let matcher = crate::builtins::set_property(
         matcher,
         "lastIndex",

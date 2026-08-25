@@ -38,6 +38,13 @@ fn group_name_at(body: &str, start: usize) -> Result<&str, String> {
 }
 
 fn validate_group_references(body: &str, seen: &[String]) -> Result<(), String> {
+    // Annex B treats an otherwise-unqualified `\k<name>` as an identity
+    // escape when the pattern has no named capture groups. Unicode-mode
+    // validation remains responsible for rejecting it where the escape is
+    // grammatical and meaningful.
+    if seen.is_empty() {
+        return Ok(());
+    }
     let mut cursor = 0;
     while let Some(found) = body[cursor..].find("\\k<") {
         let next = cursor + found + 3;
