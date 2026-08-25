@@ -165,6 +165,8 @@ struct Counters {
     loop_shapes: HashMap<u64, (u64, u64, Vec<&'static str>)>,
     value_decode_by_site: HashMap<&'static str, u64>,
     value_decode_other_by_op: HashMap<&'static str, u64>,
+    owned_word_read_by_site: HashMap<&'static str, u64>,
+    owned_word_read_by_op: HashMap<&'static str, u64>,
     packed_miss_by: HashMap<&'static str, u64>,
     allocations: HashMap<&'static str, u64>,
     last_index: HashMap<&'static str, u64>,
@@ -181,6 +183,7 @@ pub(crate) enum DecodeSite {
     Load,
     LoadChecked,
     Move,
+    Call,
     LeafGetN,
     LeafLoad,
     LeafLoadChecked,
@@ -198,6 +201,7 @@ impl DecodeSite {
             Self::Load => "load",
             Self::LoadChecked => "load_checked",
             Self::Move => "move",
+            Self::Call => "call",
             Self::LeafGetN => "leaf_getn",
             Self::LeafLoad => "leaf_load",
             Self::LeafLoadChecked => "leaf_load_checked",
@@ -290,10 +294,15 @@ fn l0_profile(counters: &Counters) -> serde_json::Value {
                 "register": event(Event::RegisterFileRead),
                 "owned": event(Event::OwnedWordRead),
             },
+            "owned_word_read_by_site": named_buckets(&counters.owned_word_read_by_site,
+                &["getn", "setn", "load", "load_checked", "move", "call", "leaf_getn",
+                  "leaf_load", "leaf_load_checked", "leaf_other",
+                  "binding_borrow", "env_load", "other"]),
+            "owned_word_read_by_op": top_map(&counters.owned_word_read_by_op, 16),
             "word_copies": event(Event::RegisterWordCopy),
             "value_decode": event(Event::ValueDecode),
             "value_decode_by_site": named_buckets(&counters.value_decode_by_site,
-                &["getn", "setn", "load", "load_checked", "move", "leaf_getn",
+                &["getn", "setn", "load", "load_checked", "move", "call", "leaf_getn",
                   "leaf_load", "leaf_load_checked", "leaf_other",
                   "binding_borrow", "env_load", "other"]),
             "value_decode_other_by_op": top_map(&counters.value_decode_other_by_op, 16),
@@ -1107,6 +1116,15 @@ pub(crate) fn event(event: Event) {
                 counters.events.resize(EVENT_NAMES.len(), 0);
             }
             counters.events[event as usize] += 1;
+            if matches!(event, Event::OwnedWordRead) {
+                let site = DECODE_SITE.with(std::cell::Cell::get);
+                let op = CURRENT_OP.with(std::cell::Cell::get);
+                *counters
+                    .owned_word_read_by_site
+                    .entry(site.name())
+                    .or_default() += 1;
+                count_named(&mut counters.owned_word_read_by_op, op);
+            }
         });
     }
 }
@@ -1158,6 +1176,7 @@ fn decode_site_for_opcode(opcode: crate::ir::Opcode, leaf: bool) -> DecodeSite {
         crate::ir::Opcode::Move => DecodeSite::Move,
         crate::ir::Opcode::LoadLocal => DecodeSite::Load,
         crate::ir::Opcode::LoadLocalChecked => DecodeSite::LoadChecked,
+        crate::ir::Opcode::CallN => DecodeSite::Call,
         _ => DecodeSite::Other,
     }
 }
@@ -1171,6 +1190,7 @@ fn decode_site_for_slow(name: &str) -> DecodeSite {
         "Move" => DecodeSite::Move,
         "GetProperty" | "GetPropertyDynamic" => DecodeSite::GetN,
         "SetProperty" | "SetPropertyDynamic" => DecodeSite::SetN,
+        "Call" | "CallMethod" | "Construct" => DecodeSite::Call,
         _ => DecodeSite::Other,
     }
 }
@@ -1475,6 +1495,31 @@ mod lane_profile_tests {
         );
         assert_eq!(counters.events[Event::ValueDecode as usize], 1);
         assert_eq!(counters.value_decode_by_site.get("getn"), Some(&1));
+    }
+
+    #[test]
+    fn attributes_owned_word_reads_to_site_and_opcode() {
+        let mut counters = Counters {
+            events: vec![0; EVENT_NAMES.len()],
+            ..Counters::default()
+        };
+        counters.events[Event::OwnedWordRead as usize] += 1;
+        *counters
+            .owned_word_read_by_site
+            .entry(DecodeSite::GetN.name())
+            .or_default() += 1;
+        count_named(&mut counters.owned_word_read_by_op, "GetN");
+        let profile = l0_profile(&counters);
+        assert_eq!(profile["owned_word_read_by_site"]["getn"], 1);
+        assert_eq!(profile["owned_word_read_by_op"][0]["op"], "GetN");
+    }
+
+    #[test]
+    fn attributes_calln_traffic_to_call_site() {
+        assert!(matches!(
+            decode_site_for_opcode(crate::ir::Opcode::CallN, false),
+            DecodeSite::Call
+        ));
     }
 
     #[test]
