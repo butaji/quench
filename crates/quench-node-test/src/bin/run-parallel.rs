@@ -193,6 +193,9 @@ impl RunResult {
 }
 
 fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
+    if !path.is_file() {
+        return RunResult::Unclassified;
+    }
     use std::io::Read;
     use std::process::{Command, Stdio};
     let Ok(mut child) = Command::new(exe)
