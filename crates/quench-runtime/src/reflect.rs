@@ -1,5 +1,18 @@
 use crate::execute::VmError;
 use crate::value::Value;
+use std::cell::Cell;
+
+thread_local! {
+    static SHADOW_METHOD_REALM: Cell<Option<crate::ops::RealmId>> = const { Cell::new(None) };
+}
+
+pub(crate) fn note_shadow_method_realm(realm: crate::ops::RealmId) {
+    SHADOW_METHOD_REALM.with(|slot| slot.set(Some(realm)));
+}
+
+fn take_shadow_method_realm() -> Option<crate::ops::RealmId> {
+    SHADOW_METHOD_REALM.with(|slot| slot.take())
+}
 
 pub(crate) fn builtin(
     builtin: crate::ops::Builtin,
@@ -52,7 +65,7 @@ fn evaluate_builtin(
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate
         && crate::conversion::is_callable(&result)
     {
-        let caller_realm = error_realm;
+        let caller_realm = take_shadow_method_realm().or(error_realm);
         return wrap_shadow_function_with_caller(&result, realm, caller_realm);
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
@@ -174,7 +187,8 @@ fn shadow_type_error(message: &str) -> VmError {
 }
 
 pub(crate) fn shadow_type_error_for_realm(receiver: Option<&Value>, message: &str) -> VmError {
-    let realm = shadow_creation_realm(receiver)
+    let realm = take_shadow_method_realm()
+        .or_else(|| shadow_creation_realm(receiver))
         .or_else(|| crate::vm::realm_id_for_intrinsic_receiver(receiver));
     let constructor = realm
         .and_then(|realm| {
