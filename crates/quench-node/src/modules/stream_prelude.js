@@ -166,7 +166,7 @@
       if (st.decoder && st.buffer.length > 0 && !st.ended && !st.reading) {
         requestRead(stream);
       }
-      if (st.decoder && st.buffer.length > 1 && typeof Buffer !== "undefined") {
+      if (!st.objectMode && st.decoder && st.buffer.length > 1 && typeof Buffer !== "undefined") {
         st.buffer = [Buffer.concat(st.buffer)];
       }
       while (st.flowing && st.buffer.length > 0) {
@@ -352,7 +352,7 @@
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
-          while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
@@ -370,7 +370,7 @@
         st.reading = st.readRequests > 0;
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
-          while (st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
+          while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         if (st.buffer.length === 0 && !st.ended && !st.reading) {
           requestRead(this);
