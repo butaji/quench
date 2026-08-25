@@ -226,6 +226,10 @@ pub fn install_with_argv(
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
+    let host_state = host.state.clone();
+    quench_runtime::install_host_job_pump(Rc::new(move || {
+        crate::modules::pump::drain_one_tick(&host_state)
+    }));
     let (argv, exec_path) = {
         let state = host.state.borrow();
         (state.process.argv.clone(), state.process.exec_path.clone())
