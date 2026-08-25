@@ -225,6 +225,10 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
 pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let rest = args.get(1..).unwrap_or(&[]).to_vec();
+    let _ = crate::modules::async_hooks::new_resource(
+        state,
+        &[Value::Undefined, Value::String("TickObject".into())],
+    );
     let global = quench_runtime::vm::current_global_object();
     if let Ok(init) = quench_runtime::execute::get_property_result(
         &global,
