@@ -173,16 +173,19 @@ pub(crate) fn split(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let input = string_receiver(receiver)?;
+    let receiver = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error("String.prototype.split called on null or undefined")
+    })?;
     let pattern = arguments.first().cloned().unwrap_or(Value::Undefined);
     let limit = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     if let Some(result) = invoke_symbol_method(
         &pattern,
         "Symbol.split",
-        &[Value::String(input.clone()), limit],
+        &[receiver.clone(), limit],
     )? {
         return Ok(result);
     }
+    let input = string_receiver(Some(receiver))?;
     let units = input.encode_utf16().collect::<Vec<_>>();
     let limit = split_limit(arguments)?;
     let pattern = match arguments.first() {
@@ -220,13 +223,18 @@ fn split_pattern(units: &[u16], pattern: &str, limit: u32) -> Value {
     }
     let mut values = Vec::new();
     let mut rest = units;
-    while values.len() + 1 < limit as usize {
-        let Some(index) = find_units(rest, &pattern) else {
+    while let Some(index) = find_units(rest, &pattern) {
+        if values.len() == limit as usize {
             break;
-        };
+        }
         values.push(from_units(rest[..index].to_vec()));
+        if values.len() == limit as usize {
+            return Value::array(values);
+        }
         rest = &rest[index + pattern.len()..];
     }
-    values.push(from_units(rest.to_vec()));
+    if values.len() < limit as usize {
+        values.push(from_units(rest.to_vec()));
+    }
     Value::array(values)
 }

@@ -51,8 +51,8 @@ fn execute_builtin_tail(
         crate::ops::Builtin::StringSmall => html_wrapper(receiver, "small"),
         crate::ops::Builtin::StringSub => html_wrapper(receiver, "sub"),
         crate::ops::Builtin::StringSup => html_wrapper(receiver, "sup"),
-        crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
-        crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
+        crate::ops::Builtin::StringSlice => slice(receiver, arguments),
+        crate::ops::Builtin::StringSubstring => substring(receiver, arguments),
         crate::ops::Builtin::StringSubstr => substr(receiver, arguments),
         crate::ops::Builtin::StringConcat => concat(receiver, arguments),
         crate::ops::Builtin::StringSplit => split(receiver, arguments),
@@ -180,6 +180,9 @@ fn string_receiver(receiver: Option<&Value>) -> Result<String, crate::execute::V
         return Err(crate::value::error::throw_type_error(
             "Cannot convert Symbol to string",
         ));
+    }
+    if matches!(value, Value::Builtin(crate::ops::Builtin::StringPrototype)) {
+        return Ok(String::new());
     }
     if let Value::BigInt(value) = value {
         return Ok(value.clone());

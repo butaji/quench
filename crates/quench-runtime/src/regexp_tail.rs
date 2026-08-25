@@ -40,6 +40,10 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     if !flags.contains('g') {
         return regexp_exec(receiver, &input);
     }
+    if !unicode_mode(&flags) && extract_source(receiver) == "." {
+        let units = input.encode_utf16().map(|unit| crate::strings::from_units(vec![unit])).collect();
+        return Ok(Value::array(units));
+    }
     symbol_match_global(receiver, &input, unicode_mode(&flags))
 }
 
@@ -613,8 +617,22 @@ fn expand_template_token(
             .collect::<String>()
             .parse::<usize>()
             .ok()?;
-        let replacement = template_group_number(m, rest, number)?;
-        out.push_str(&replacement);
+        if let Some(replacement) = template_group_number(m, rest, number) {
+            out.push_str(&replacement);
+        } else if end == index + 3 {
+            let first = chars[index + 1].to_digit(10).unwrap_or(0) as usize;
+            if let Some(replacement) = template_group_number(m, rest, first) {
+                out.push_str(&replacement);
+                out.push(chars[index + 2]);
+            } else {
+                out.push('$');
+                out.push(chars[index + 1]);
+                out.push(chars[index + 2]);
+            }
+        } else {
+            out.push('$');
+            out.push(chars[index + 1]);
+        }
         return Some(end);
     }
     let replacement = match token {
