@@ -37,6 +37,7 @@ impl CapabilityName {
     const UtilFormatWithOptions: u16 = 2040;
     const InternalUtilSleep: u16 = 2088;
     const InternalUtilEmitExperimentalWarning: u16 = 2089;
+    const InternalUtilGetProxyDetails: u16 = 2230;
     const ProcessOn: u16 = 2090;
     const ProcessEmit: u16 = 2091;
     const ProcessRemoveListener: u16 = 2092;

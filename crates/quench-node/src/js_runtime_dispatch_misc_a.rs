@@ -72,6 +72,9 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::InternalUtilEmitExperimentalWarning) => {
                 internal_util_emit_experimental_warning(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::InternalUtilGetProxyDetails) => {
+                util_get_proxy_details(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::NodeTest) => {
                 let callback = arguments.get(1).ok_or(VmError::NotCallable)?;
                 let context =
