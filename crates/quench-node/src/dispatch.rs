@@ -336,6 +336,7 @@ const CAP_URL_PATH_TO_FILE_URL: u16 = 0x0505;
 const CAP_CP_SPAWNSYNC: u16 = 0x1e00;
 const CAP_CP_EXECSYNC: u16 = 0x1e01;
 const CAP_CP_EXEC: u16 = 0x1e02;
+const CAP_CP_EXECFILE: u16 = 0x1e03;
 const CAP_CP_SPAWN: u16 = 0x1e03;
 const CAP_PROCESS_UMASK: u16 = 0x0A06;
 const CAP_PROCESS_ON: u16 = 0x0A07;
@@ -732,7 +733,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_URL_PATH_TO_FILE_URL => url_path_to_file_url,
         CAP_CP_SPAWNSYNC => cp_spawn_sync,
         CAP_CP_EXECSYNC => cp_exec_sync,
-        CAP_CP_EXEC | CAP_CP_SPAWN => cp_async,
+        CAP_CP_EXEC => cp_async,
+        CAP_CP_EXECFILE => cp_exec_file,
         CAP_TEST_RUN => test_run,
         CAP_TEST_SKIP => test_skip,
         CAP_STRUCTURED_CLONE => structured_clone,
