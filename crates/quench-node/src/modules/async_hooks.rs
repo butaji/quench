@@ -56,7 +56,10 @@ impl AsyncHooksState {
             next_id: 2,
             next_hook_id: 1,
             current_id: 1,
-            current_resource: None,
+            current_resource: Some(host_api::object(vec![
+                (ASYNC_ID.into(), Value::Number(1.0)),
+                (TRIGGER_ID.into(), Value::Number(0.0)),
+            ])),
             hooks: Vec::new(),
             promise_resources: HashMap::new(),
             local_stores: HashMap::new(),
