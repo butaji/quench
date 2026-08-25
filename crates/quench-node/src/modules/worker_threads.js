@@ -283,8 +283,18 @@ var api = {
       };
       self._refed = true;
       self._destroyed = false;
+      self._started = false;
+      self._start = function (message, transferredPort) {
+        if (self._started) return;
+        self._started = true;
+        runWorker(message, transferredPort);
+      };
       self.hasRef = function () { return self._destroyed ? undefined : self._refed; };
-      self.ref = function () { self._refed = true; return self; };
+      self.ref = function () {
+        self._refed = true;
+        if (!self._started) self._start(undefined, null);
+        return self;
+      };
       self.unref = function () { self._refed = false; return self; };
       var asyncHooks = require('async_hooks');
       asyncHooks.__quenchWorkerResource(self);
@@ -344,17 +354,18 @@ var api = {
         return status;
       }
       if (options.eval) {
-        runWorker(undefined, null);
         self.postMessage = function (message, transferList) {
           var transferredPort = message && message.port && typeof message.port.postMessage === 'function' ? message.port : null;
           var tokenized = transferredPort ? { port: { __quench_port: 0 } } : message;
-          return runWorker(tokenized, transferredPort);
+          return self._start(tokenized, transferredPort);
         };
       } else {
-        runWorker(undefined, null);
         self.postMessage = function () {};
       }
       self.terminate = function () { self.exited = true; self._destroyed = true; return Promise.resolve(0); };
+      queueMicrotask(function () {
+        if (self._refed && !self._started) self._start(undefined, null);
+      });
       return self;
     },
   receiveMessageOnPort: function (port) {
