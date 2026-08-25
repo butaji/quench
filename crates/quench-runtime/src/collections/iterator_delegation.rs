@@ -61,6 +61,7 @@ pub fn delegate_next(
             IteratorState::Take { .. } => None,
             IteratorState::Concat { .. } => None,
             IteratorState::Zip { .. } => None,
+            IteratorState::ZipKeyed { .. } => None,
         }
     };
     let Some(iterator) = protocol else {
@@ -161,6 +162,7 @@ fn delegation_target(
         IteratorState::Take { .. } => None,
         IteratorState::Concat { .. } => None,
         IteratorState::Zip { .. } => None,
+        IteratorState::ZipKeyed { .. } => None,
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }

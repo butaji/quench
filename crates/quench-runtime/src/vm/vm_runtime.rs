@@ -462,7 +462,10 @@ fn boxed_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
         crate::vm::realm_intrinsic(prototype),
     ));
     if constructor != Builtin::Number {
-        properties.push(("constructor".to_string(), Value::Builtin(constructor)));
+        properties.push((
+            "constructor".to_string(),
+            crate::vm::realm_intrinsic(constructor),
+        ));
     }
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
 }

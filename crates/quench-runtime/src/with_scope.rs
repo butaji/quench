@@ -230,14 +230,10 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
     {
         return Ok(());
     }
-    let captured_global = crate::locals::current().get(0);
-    let global = if matches!(captured_global, Value::Object(_) | Value::ObjectAlias(_))
-        && has_property(&captured_global, key)?
-    {
-        crate::vm::resolve_global_owner(&captured_global).unwrap_or(captured_global)
-    } else {
-        crate::vm::current_global_object()
-    };
+    // Unqualified global writes must target the live realm owner. A captured
+    // global view can be a stale copy-on-write object after an earlier write,
+    // which would make subsequent `index++` updates read the old value.
+    let global = crate::vm::current_global_object();
     let semantic_global =
         crate::vm::resolve_global_owner(&global).unwrap_or_else(|| global.clone());
     if strict && !has_property(&semantic_global, key)? {
@@ -328,13 +324,36 @@ pub(crate) fn resolve_name(
         || immutable.is_some()
         || host_value.is_some()
         || host_binding.is_some();
+    let host_override = (key == "$262")
+        .then(|| {
+            host_binding.map(|capability| {
+                if capability.kind == crate::ops::HostCapabilityKind::GetGlobal {
+                    Value::HostCapability(std::rc::Rc::new(crate::value::HostCapabilityValue::new(
+                        capability,
+                    )))
+                } else {
+                    crate::host_api::capability_function(capability)
+                }
+            })
+        })
+        .flatten();
     let value = match binding
         .or(eval)
         .or_else(|| crate::locals::resolve_name(key))
+        .or(host_override)
         .or(immutable)
         .or(host_value)
-        .or_else(|| host_binding.map(crate::host_api::capability_function))
-    {
+        .or_else(|| {
+            host_binding.map(|capability| {
+                if capability.kind == crate::ops::HostCapabilityKind::GetGlobal {
+                    Value::HostCapability(std::rc::Rc::new(crate::value::HostCapabilityValue::new(
+                        capability,
+                    )))
+                } else {
+                    crate::host_api::capability_function(capability)
+                }
+            })
+        }) {
         Some(value) => value,
         None => {
             let value = crate::execute::get_property_result(&global, key)?;
@@ -486,7 +505,7 @@ pub(crate) fn resolve_active_binding(key: &str) -> Result<Option<Value>, VmError
     });
     for object in objects.iter().skip(base).rev() {
         let object = live_object(object);
-        if has_property(&object, key)? && !is_unscopable(&object, key)? {
+        if binding_has_property(&object, key)? && !is_unscopable(&object, key)? {
             if matches!(object, Value::Proxy(_)) && !has_property(&object, key)? {
                 return Ok(None);
             }
@@ -500,7 +519,7 @@ pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for object in objects.iter().rev() {
         let object = live_object(object);
-        if has_property(&object, key)? && !is_unscopable(&object, key)? {
+        if binding_has_property(&object, key)? && !is_unscopable(&object, key)? {
             return Ok(Some(object));
         }
     }
@@ -516,11 +535,21 @@ pub(crate) fn active_binding_target(key: &str) -> Result<Option<Value>, VmError>
     });
     for object in objects.iter().skip(base).rev() {
         let object = live_object(object);
-        if has_property(&object, key)? && !is_unscopable(&object, key)? {
+        if binding_has_property(&object, key)? && !is_unscopable(&object, key)? {
             return Ok(Some(object));
         }
     }
     Ok(None)
+}
+
+fn binding_has_property(value: &Value, key: &str) -> Result<bool, VmError> {
+    if !matches!(
+        crate::execute::get_property_result(value, key)?,
+        Value::Undefined
+    ) {
+        return Ok(true);
+    }
+    has_property(value, key)
 }
 
 /// Copy-on-write object sets publish a replacement; `with` must see it.
@@ -554,11 +583,17 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for (index, object) in objects.iter().enumerate().rev() {
         let object = live_object(object);
-        if has_property(&object, key)? && !is_unscopable(&object, key)? {
-            let global =
-                crate::vm::is_global_object(&object).then(crate::vm::current_global_object);
+        if binding_has_property(&object, key)? && !is_unscopable(&object, key)? {
+            let global = crate::vm::resolve_global_owner(&object)
+                .or_else(|| realm_global_owner(&object))
+                .or_else(|| {
+                    crate::vm::is_global_object(&object).then(crate::vm::current_global_object)
+                });
             publish_set(&object, key, value)?;
             let updated = live_object(&object);
+            if let Value::HostCapability(token) = crate::execute::get_property(&object, "\0realm") {
+                crate::vm::replace_realm_global_value(token.realm(), &updated);
+            }
             if let Some(global) = global {
                 crate::vm::synchronize_global_object(
                     &mut crate::register_file::RegisterFile::new(),
@@ -571,6 +606,14 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
         }
     }
     Ok(false)
+}
+
+fn realm_global_owner(value: &Value) -> Option<Value> {
+    let marker = crate::execute::get_property(value, "\0realm");
+    let Value::HostCapability(token) = marker else {
+        return None;
+    };
+    crate::vm::realm_global_value(token.realm())
 }
 
 fn is_unscopable(object: &Value, key: &str) -> Result<bool, VmError> {
