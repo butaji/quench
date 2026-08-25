@@ -144,12 +144,17 @@ fn execute_nested_array_index(
     arguments: &[crate::value::Value],
     plan: NestedArrayIndexPlan,
 ) -> Option<crate::value::Value> {
-    let crate::value::Value::Object(receiver) = receiver else { return None };
+    let crate::value::Value::Object(receiver) = receiver else {
+        return None;
+    };
     let first = function.code.code()?.metadata_at(plan.first_pc)?;
-    let nested = crate::locals::resolved_replacement(
-        crate::vm::get_named_cached_object(receiver, &first.named_cache)?,
-    );
-    let crate::value::Value::Array(array) = nested else { return None };
+    let nested = crate::locals::resolved_replacement(crate::vm::get_named_cached_object(
+        receiver,
+        &first.named_cache,
+    )?);
+    let crate::value::Value::Array(array) = nested else {
+        return None;
+    };
     let index = arguments.first()?.as_number()?;
     if !array.is_packed_ordinary()
         || !index.is_finite()
@@ -174,7 +179,9 @@ fn execute_nested_array_length(
     receiver: &crate::value::Value,
     plan: NestedArrayLengthPlan,
 ) -> Option<crate::value::Value> {
-    let crate::value::Value::Object(receiver) = receiver else { return None };
+    let crate::value::Value::Object(receiver) = receiver else {
+        return None;
+    };
     let code = function.code.code()?;
     let first = code.metadata_at(plan.first_pc)?;
     let nested = crate::vm::get_named_cached_object(receiver, &first.named_cache)?;
@@ -196,7 +203,9 @@ fn execute_state_predicate(
     receiver: &crate::value::Value,
     plan: StatePredicatePlan,
 ) -> Option<crate::value::Value> {
-    let crate::value::Value::Object(object) = receiver else { return None };
+    let crate::value::Value::Object(object) = receiver else {
+        return None;
+    };
     let code = function.code.code()?;
     let metadata = code.metadata_at(plan.state_pc)?;
     let state = cached_shape_number(object, &metadata.named_cache)?;
@@ -215,7 +224,9 @@ fn execute_state_bitwise(
     receiver: &crate::value::Value,
     plan: StateBitwisePlan,
 ) -> Option<crate::value::Value> {
-    let crate::value::Value::Object(object) = receiver else { return None };
+    let crate::value::Value::Object(object) = receiver else {
+        return None;
+    };
     let metadata = function.code.code()?.metadata_at(plan.state_pc)?;
     let payload = crate::vm::get_named_cached_payload(object, &metadata.named_cache)?;
     let state = exact_i32(match &payload {
@@ -241,6 +252,34 @@ fn execute_state_bitwise(
     crate::execution_trace::event(crate::execution_trace::Event::ShapeKernelHit);
     crate::execution_trace::kernel("shape_state_bitwise", false);
     Some(crate::value::Value::Undefined)
+}
+
+fn state_bitwise_word_transition(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    object: &crate::value::ObjectData,
+    operator: crate::ops::BinaryOp,
+) -> Option<(*const crate::register_file::SlotWord, f64)> {
+    let ShapeKernelPlan::StateBitwise(plan) = shape_kernel_fact(function)? else {
+        return None;
+    };
+    if plan.operator != operator {
+        return None;
+    }
+    let name = function
+        .code
+        .code()?
+        .metadata_at(plan.state_pc)?
+        .name
+        .as_deref()?;
+    let state = writable_own_word(object, name)?;
+    let current = exact_i32(state.number()?)?;
+    let mask = exact_i32(function.captures.get_number(plan.mask_slot)?)?;
+    let next = match operator {
+        crate::ops::BinaryOp::BitwiseOr => current | mask,
+        crate::ops::BinaryOp::BitwiseAnd => current & mask,
+        _ => return None,
+    };
+    Some((std::ptr::from_ref(state), f64::from(next)))
 }
 
 #[inline(always)]
@@ -273,18 +312,12 @@ fn shape_kernel_fact(
     let plan = match_state_predicate(function)
         .map(ShapeKernelPlan::StatePredicate)
         .or_else(|| match_state_bitwise(function).map(ShapeKernelPlan::StateBitwise))
-        .or_else(|| {
-            match_nested_array_length(function).map(ShapeKernelPlan::NestedArrayLength)
-        })
-        .or_else(|| {
-            match_nested_array_index(function).map(ShapeKernelPlan::NestedArrayIndex)
-        })
+        .or_else(|| match_nested_array_length(function).map(ShapeKernelPlan::NestedArrayLength))
+        .or_else(|| match_nested_array_index(function).map(ShapeKernelPlan::NestedArrayIndex))
         .or_else(|| match_property_select(function).map(ShapeKernelPlan::PropertySelect))
         .or_else(|| match_forward_zero(function).map(ShapeKernelPlan::ForwardZero))
         .or_else(|| match_forward_one(function).map(ShapeKernelPlan::ForwardOne))
-        .or_else(|| {
-            match_copy_method_property(function).map(ShapeKernelPlan::CopyMethodProperty)
-        });
+        .or_else(|| match_copy_method_property(function).map(ShapeKernelPlan::CopyMethodProperty));
     SHAPE_KERNEL_FACTS.with(|facts| {
         let mut facts = facts.borrow_mut();
         if facts.is_empty() {
@@ -304,7 +337,9 @@ fn cached_shape_kernel_fact(function: &crate::value::FunctionValue) -> Option<Sh
     SHAPE_KERNEL_FACTS.with(|facts| {
         let facts = facts.borrow();
         let cached = facts.get(index)?.as_ref()?;
-        (cached.function.as_ptr() == pointer).then_some(cached.plan).flatten()
+        (cached.function.as_ptr() == pointer)
+            .then_some(cached.plan)
+            .flatten()
     })
 }
 
@@ -354,7 +389,10 @@ fn match_nested_array_length(
         && fallback.opcode == LoadConst
         && fallback_return.opcode == Return
         && fallback_return.a == fallback.a)
-        .then_some(NestedArrayLengthPlan { first_pc: 1, second_pc: 2 })
+        .then_some(NestedArrayLengthPlan {
+            first_pc: 1,
+            second_pc: 2,
+        })
 }
 
 fn match_state_predicate(
@@ -375,7 +413,10 @@ fn match_state_predicate(
         || bit_and.opcode != crate::ir::Opcode::Binary
         || bit_and.flags != crate::ir::compact_binary_id(crate::ops::BinaryOp::BitwiseAnd)
         || (bit_and.b, bit_and.c) != (get_state.a, load_held.a)
-        || !matches!(code.constant_at(4), Some((_, crate::ops::Constant::Number(0.0))))
+        || !matches!(
+            code.constant_at(4),
+            Some((_, crate::ops::Constant::Number(0.0)))
+        )
         || load_zero.opcode != crate::ir::Opcode::LoadConst
         || not_equal.opcode != crate::ir::Opcode::Binary
         || not_equal.flags != crate::ir::compact_binary_id(crate::ops::BinaryOp::NotEqual)
@@ -389,8 +430,9 @@ fn match_state_predicate(
             consequent,
             alternate,
             ..
-        } if *condition == not_equal.a
-            && fragment_returns(consequent.code(), not_equal.a) => alternate.code()?,
+        } if *condition == not_equal.a && fragment_returns(consequent.code(), not_equal.a) => {
+            alternate.code()?
+        }
         _ => return None,
     };
     match_state_predicate_alternate(code, load_this, load_held, alternate)
@@ -467,15 +509,19 @@ fn match_state_bitwise(
 
 fn compact_bitwise_operator(flags: u8) -> Option<crate::ops::BinaryOp> {
     let operator = crate::ir::compact_binary_operator(flags)?;
-    matches!(operator, crate::ops::BinaryOp::BitwiseOr | crate::ops::BinaryOp::BitwiseAnd)
-        .then_some(operator)
+    matches!(
+        operator,
+        crate::ops::BinaryOp::BitwiseOr | crate::ops::BinaryOp::BitwiseAnd
+    )
+    .then_some(operator)
 }
 
 fn state_bitwise_ops_match(
     code: crate::machine::CodeView<'_>,
     ops: [crate::ir::Instruction; 10],
 ) -> bool {
-    let [load_this, move_one, move_two, load_again, get_state, load_mask, bit_or, set_state, load_undefined, return_op] = ops;
+    let [load_this, move_one, move_two, load_again, get_state, load_mask, bit_or, set_state, load_undefined, return_op] =
+        ops;
     code.len() == 10
         && is_local_load(load_this)
         && (move_one.opcode, move_one.b) == (crate::ir::Opcode::Move, load_this.a)
@@ -491,16 +537,18 @@ fn state_bitwise_ops_match(
             == (crate::ir::Opcode::SetN, move_two.a, bit_or.a)
         && code.metadata_at(4).and_then(|meta| meta.name.as_deref())
             == code.metadata_at(7).and_then(|meta| meta.name.as_deref())
-        && matches!(code.constant_at(8), Some((_, crate::ops::Constant::Undefined)))
+        && matches!(
+            code.constant_at(8),
+            Some((_, crate::ops::Constant::Undefined))
+        )
         && load_undefined.opcode == crate::ir::Opcode::LoadConst
         && (return_op.opcode, return_op.a) == (crate::ir::Opcode::Return, load_undefined.a)
 }
 
 fn fragment_returns(code: Option<crate::machine::CodeView<'_>>, register: u16) -> bool {
     code.is_some_and(|code| {
-        code.instruction(code.len().saturating_sub(1)).is_some_and(|op| {
-            op.opcode == crate::ir::Opcode::Return && op.a == register
-        })
+        code.instruction(code.len().saturating_sub(1))
+            .is_some_and(|op| op.opcode == crate::ir::Opcode::Return && op.a == register)
     })
 }
 

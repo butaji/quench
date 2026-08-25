@@ -55,8 +55,9 @@ struct IncomingPacket<'a> {
 
 enum HandlerRoute<'a> {
     Suspend {
-        scheduler: crate::value::Value,
-        callee: crate::value::Value,
+        state: *const crate::register_file::SlotWord,
+        next_state: f64,
+        current: crate::value::Value,
     },
     Work {
         task_v2: &'a crate::register_file::SlotWord,
@@ -120,8 +121,14 @@ impl<'a> HandlerState<'a> {
 impl HandlerRoute<'_> {
     fn execute(self) -> Result<crate::value::Value, crate::execute::VmError> {
         match self {
-            Self::Suspend { scheduler, callee } => {
-                crate::functions::execute_target(&callee, &scheduler, &[])
+            Self::Suspend {
+                state,
+                next_state,
+                current,
+            } => {
+                unsafe { &*state }.store(crate::value::Value::Number(next_state));
+                crate::execution_trace::kernel("handler_suspend_word_transition", false);
+                Ok(current)
             }
             Self::Work {
                 task_v2,
@@ -228,10 +235,7 @@ fn handler_route<'a>(
 ) -> Option<HandlerRoute<'a>> {
     let scheduler = task_scheduler(task)?;
     if v1.is_nullish() {
-        return Some(HandlerRoute::Suspend {
-            callee: handler_suspend_callee(function, &scheduler)?,
-            scheduler,
-        });
+        return handler_suspend_transition(function, &scheduler);
     }
     let crate::value::Value::Object(work) = v1 else {
         return None;
@@ -264,10 +268,7 @@ fn handler_work_route<'a>(
     scheduler: crate::value::Value,
 ) -> Option<HandlerRoute<'a>> {
     if v2.is_nullish() {
-        return Some(HandlerRoute::Suspend {
-            callee: handler_suspend_callee(function, &scheduler)?,
-            scheduler,
-        });
+        return handler_suspend_transition(function, &scheduler);
     }
     let crate::value::Value::Object(packet) = v2 else {
         return None;
@@ -331,6 +332,60 @@ fn handler_suspend_callee(
     scheduler: &crate::value::Value,
 ) -> Option<crate::value::Value> {
     cached_shape_method(scheduler, function.code.code()?, 13)
+}
+
+fn handler_suspend_transition<'a>(
+    function: &crate::value::FunctionValue,
+    scheduler: &crate::value::Value,
+) -> Option<HandlerRoute<'a>> {
+    let callee = handler_suspend_callee(function, scheduler)?;
+    let crate::value::Value::Function(suspend) = callee else {
+        return None;
+    };
+    let code = match_scheduler_suspend(&suspend)?;
+    let current = match scheduler {
+        crate::value::Value::Object(scheduler) => {
+            crate::vm::get_named_cached_object(scheduler, &code.metadata_at(1)?.named_cache)?
+        }
+        _ => return None,
+    };
+    let crate::value::Value::Object(current_object) = &current else {
+        return None;
+    };
+    if current_object.has_replacement() {
+        return None;
+    }
+    let mark = cached_shape_method(&current, code, 2)?;
+    let crate::value::Value::Function(mark) = mark else {
+        return None;
+    };
+    let (state, next_state) =
+        state_bitwise_word_transition(&mark, current_object, crate::ops::BinaryOp::BitwiseOr)?;
+    Some(HandlerRoute::Suspend {
+        state,
+        next_state,
+        current,
+    })
+}
+
+fn match_scheduler_suspend(
+    function: &crate::value::FunctionValue,
+) -> Option<crate::machine::CodeView<'_>> {
+    let code = function.code.code()?;
+    if function.params != 0 || function.code.capture_slots().len() != 1 || code.len() != 8 {
+        return None;
+    }
+    let ops: [_; 8] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
+    (is_local_load(ops[0])
+        && (ops[1].opcode, ops[1].b) == (crate::ir::Opcode::GetN, ops[0].a)
+        && (ops[2].opcode, ops[2].flags, ops[2].b) == (crate::ir::Opcode::CallN, 0, ops[1].a)
+        && is_local_load(ops[3])
+        && (ops[4].opcode, ops[4].b) == (crate::ir::Opcode::GetN, ops[3].a)
+        && (ops[5].opcode, ops[5].a) == (crate::ir::Opcode::Return, ops[4].a)
+        && named(code, 1, "currentTcb")
+        && named(code, 2, "markAsSuspended")
+        && named(code, 4, "currentTcb"))
+    .then_some(code)
 }
 
 fn handler_queue_callee(
