@@ -194,6 +194,7 @@ enum CountedAddend {
     Local(u16),
     ArrayLength(u16),
     PackedMasked { array: u16, mask: usize },
+    WordCall { function: u16 },
 }
 
 impl CountedAddend {
@@ -204,7 +205,20 @@ impl CountedAddend {
                 crate::value::Value::Array(array) => Some(array.header_length() as f64),
                 _ => None,
             },
+            Self::WordCall { function } => match environment.get(function) {
+                crate::value::Value::Function(function) => {
+                    crate::functions::word_add_constant(&function)
+                }
+                _ => None,
+            },
             Self::PackedMasked { .. } => None,
+        }
+    }
+
+    fn kernel(self) -> &'static str {
+        match self {
+            Self::WordCall { .. } => "counted_word_call",
+            _ => "invariant_sum",
         }
     }
 }
@@ -222,7 +236,11 @@ fn run_invariant_add(
     let value = addend.number(environment)?;
     let mut iterations = 0;
     while counted_comparison(fact.comparison, index, bound) {
-        trace_counted_sum_iteration(loop_shape, "invariant_sum");
+        trace_counted_sum_iteration(loop_shape, addend.kernel());
+        if matches!(addend, CountedAddend::WordCall { .. }) {
+            crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
+            crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
+        }
         total += value;
         index += fact.step;
         iterations += 1;
@@ -289,7 +307,32 @@ fn recognize_invariant_sum(
         .then_some(())?;
     recognize_local_invariant_sum(body, dst)
         .or_else(|| recognize_array_length_sum(body, dst))
+        .or_else(|| recognize_word_call_sum(body, dst))
         .or_else(|| recognize_packed_masked_sum(body, dst, fact))
+}
+
+fn recognize_word_call_sum(
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+) -> Option<InvariantSumPlan> {
+    (body.len() == 5).then_some(())?;
+    let [function, total, call, store, result] =
+        std::array::from_fn(|pc| body.instruction(pc).unwrap());
+    (is_local_load(function)
+        && is_local_load(total)
+        && call.opcode == crate::ir::Opcode::Call
+        && call.flags == 1
+        && (call.b, call.c) == (function.a, total.a)
+        && is_local_store(store)
+        && (store.a, store.b) == (total.b, call.a)
+        && result.opcode == crate::ir::Opcode::Move
+        && (result.a, result.b) == (dst, call.a))
+    .then_some(InvariantSumPlan {
+        total: total.b,
+        addend: CountedAddend::WordCall {
+            function: function.b,
+        },
+    })
 }
 
 fn recognize_local_invariant_sum(
