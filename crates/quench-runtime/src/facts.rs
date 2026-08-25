@@ -97,6 +97,9 @@ pub struct ProgramDb {
     pub(crate) inferred_name: Option<String>,
     pub(crate) tail_calls: bool,
     pub(crate) eval_var_barrier: Vec<String>,
+    /// The reducer is compiling an eval body whose var bindings share the
+    /// caller activation and therefore cannot use static local initialization.
+    pub(crate) eval_reduction: bool,
     pub(crate) eval_formals: Vec<String>,
     pub(crate) eval_var_scope_start: u16,
     pub(crate) function_has_direct_eval: bool,

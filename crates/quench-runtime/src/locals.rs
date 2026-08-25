@@ -99,6 +99,9 @@ pub(crate) struct EnvironmentGuard {
     previous: Option<Rc<Environment>>,
     previous_global: Option<Rc<Environment>>,
     previous_global_realm: Option<crate::ops::RealmId>,
+    eval_environment: Option<Rc<Environment>>,
+    eval_names:
+        Option<Vec<Option<std::collections::HashMap<String, crate::environment::BindingRef>>>>,
 }
 
 pub(crate) struct GlobalLexicalGuard {
@@ -120,43 +123,54 @@ impl Drop for GlobalLexicalGuard {
 
 pub(crate) struct IterationBinding {
     environment: Rc<Environment>,
-    previous: Vec<(u16, Rc<crate::value::BindingCell>)>,
+    slot: u16,
+    previous: Option<Rc<crate::value::BindingCell>>,
 }
 
 impl IterationBinding {
     pub(crate) fn install(slot: u16, value: Value) -> Self {
         let environment = current();
-        environment.clear_immutable_slot(slot);
-        let previous = vec![(slot, environment.replace_slot(slot, value))];
-        Self { environment, previous }
-    }
-
-    pub(crate) fn install_many<I>(bindings: I) -> Self
-    where
-        I: IntoIterator<Item = (u16, Value)>,
-    {
-        let environment = current();
-        let previous = bindings
-            .into_iter()
-            .map(|(slot, value)| {
-                environment.clear_immutable_slot(slot);
-                (slot, environment.replace_slot(slot, value))
-            })
-            .collect();
-        Self { environment, previous }
+        let previous = Some(environment.replace_slot(slot, value));
+        Self {
+            environment,
+            slot,
+            previous,
+        }
     }
 }
 
 impl Drop for IterationBinding {
     fn drop(&mut self) {
-        for (slot, previous) in self.previous.drain(..).rev() {
-            self.environment.restore_slot(slot, previous);
+        if let Some(previous) = self.previous.take() {
+            self.environment.restore_slot(self.slot, previous);
         }
     }
 }
 
 impl EnvironmentGuard {
     pub(crate) fn install(environment: Rc<Environment>) -> Self {
+        let preserve_eval = CURRENT_ENVIRONMENT.with(|current| {
+            current
+                .borrow()
+                .as_ref()
+                .is_none_or(|installed| !Rc::ptr_eq(installed, &environment))
+        });
+        let eval_names = preserve_eval.then(|| environment.snapshot_eval_name_chain());
+        let eval_environment = preserve_eval.then(|| Rc::clone(&environment));
+        Self::install_with_snapshot(environment, eval_environment, eval_names)
+    }
+
+    pub(crate) fn install_eval(environment: Rc<Environment>) -> Self {
+        Self::install_with_snapshot(environment, None, None)
+    }
+
+    fn install_with_snapshot(
+        environment: Rc<Environment>,
+        eval_environment: Option<Rc<Environment>>,
+        eval_names: Option<
+            Vec<Option<std::collections::HashMap<String, crate::environment::BindingRef>>>,
+        >,
+    ) -> Self {
         let previous = CURRENT_ENVIRONMENT.with(|current| current.replace(Some(environment)));
         // Slot zero is the global object binding.  Install it before any
         // identifier/property resolution so host values attached to the
@@ -179,16 +193,26 @@ impl EnvironmentGuard {
             previous,
             previous_global,
             previous_global_realm,
+            eval_environment,
+            eval_names,
         }
-    }
-
-    pub(crate) fn install_eval(environment: Rc<Environment>) -> Self {
-        Self::install(environment)
     }
 }
 
 impl Drop for EnvironmentGuard {
     fn drop(&mut self) {
+        if let (Some(environment), Some(names)) =
+            (self.eval_environment.take(), self.eval_names.take())
+        {
+            // A closure may retain this activation through the environment
+            // caller chain.  In that case dynamically-created eval bindings
+            // are part of the captured activation and must remain visible to
+            // the closure after the call returns.  With no captured child,
+            // the aliases belong only to this activation and are restored.
+            if Rc::strong_count(&environment) <= 2 {
+                environment.restore_eval_name_chain(&names);
+            }
+        }
         CURRENT_ENVIRONMENT.with(|current| current.replace(self.previous.take()));
         GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(self.previous_global.take()));
         GLOBAL_LEXICAL_REALM.with(|value| value.replace(self.previous_global_realm));
@@ -208,6 +232,12 @@ pub(crate) fn global_lexical() -> Option<Rc<Environment>> {
 pub(crate) fn global_has_own_name(name: &str) -> bool {
     global_lexical().is_some_and(|environment| environment.has_own_name(name))
         || crate::vm::global_builtin_exists(name)
+        || matches!(current().get(0), Value::Object(object) if object
+            .iter()
+            .any(|(key, _)| key == name))
+        || matches!(current().get(0), Value::ObjectAlias(alias) if alias
+            .target()
+            .is_some_and(|object| object.iter().any(|(key, _)| key == name)))
         || matches!(crate::vm::current_global_object(), Value::Object(object) if object
             .iter()
             .any(|(key, _)| key == name))
@@ -256,88 +286,6 @@ pub(crate) fn store(
     Ok(())
 }
 
-/// Store to a statically resolved, initialized local. Dynamic binding state
-/// remains observable through the ordinary path; the common mutable slot
-/// copies its canonical execute word without cloning an Environment or cell.
-#[inline(always)]
-pub(crate) fn store_proven(
-    registers: &crate::register_file::RegisterFile,
-    slot: u16,
-    source: u16,
-) -> Result<(), VmError> {
-    let fast = CURRENT_ENVIRONMENT.with(|current| {
-        let current = current.borrow();
-        let environment = current.as_ref()?;
-        if environment.is_deleted_slot(slot)
-            || environment.is_immutable_slot(slot)
-            || environment.is_uninitialized(slot)
-        {
-            return None;
-        }
-        Some(environment.copy_proven_from_register(slot, registers, source))
-    });
-    if fast == Some(true) {
-        return Ok(());
-    }
-    store(registers, slot, source)
-}
-
-/// Execute the flagged compact Move over canonical lexical words. Both slot
-/// mappings remain borrowed from the one active Environment; no BindingRef or
-/// semantic Value is constructed on the admitted path.
-#[inline(always)]
-pub(crate) fn move_proven_local(
-    registers: &mut crate::register_file::RegisterFile,
-    dst: u16,
-    source: u16,
-    target: u16,
-) -> Result<(), VmError> {
-    let fast = CURRENT_ENVIRONMENT.with(|current| {
-        let current = current.borrow();
-        let environment = current.as_ref()?;
-        move_proven_local_in(environment, registers, dst, source, target).then_some(true)
-    });
-    if fast == Some(true) {
-        crate::execution_trace::event(crate::execution_trace::Event::RegisterWordCopy);
-        return Ok(());
-    }
-    load_proven(registers, dst, source)?;
-    store(registers, target, dst)
-}
-
-#[inline(always)]
-pub(crate) fn can_move_proven_local(environment: &Environment, source: u16, target: u16) -> bool {
-    environment.has_proven_slot(source)
-        && environment.has_proven_slot(target)
-        && !environment.is_deleted_slot(target)
-        && !environment.is_immutable_slot(target)
-        && !environment.is_uninitialized(target)
-}
-
-#[inline(always)]
-pub(crate) fn move_proven_local_in(
-    environment: &Environment,
-    registers: &mut crate::register_file::RegisterFile,
-    dst: u16,
-    source: u16,
-    target: u16,
-) -> bool {
-    can_move_proven_local(environment, source, target)
-        && move_admitted_local_in(environment, registers, dst, source, target)
-}
-
-#[inline(always)]
-pub(crate) fn move_admitted_local_in(
-    environment: &Environment,
-    registers: &mut crate::register_file::RegisterFile,
-    dst: u16,
-    source: u16,
-    target: u16,
-) -> bool {
-    environment.load_proven_into(registers, dst, source)
-        && environment.copy_proven_from_register(target, registers, dst)
-}
-
 pub(crate) fn store_function_name(
     _registers: &crate::register_file::RegisterFile,
     _slot: u16,
@@ -365,20 +313,30 @@ pub(crate) fn load_binding(
     }
     let environment = current();
     if dynamic {
-        if let Some(value) = crate::with_scope::resolve_binding(name)? {
+        if let Some(value) = crate::with_scope::resolve_active_binding(name)? {
             crate::execute::write_value(registers, dst, value);
             return Ok(());
         }
-        if environment.is_deleted_slot(slot) {
-            return Err(crate::value::error::throw_reference_error(&format!(
-                "Cannot access deleted binding '{name}'"
-            )));
-        }
+        // A captured slot can still be rebound by a sloppy direct eval in an
+        // enclosing activation.  Consult the shared eval-alias map before
+        // falling back to the captured slot value; otherwise closures created
+        // before eval keep reading the outer/global snapshot.
         if environment.eval_name_aliases_slot(name, slot) {
             if let Some(value) = resolve_eval_name(name) {
                 crate::execute::write_value(registers, dst, value);
                 return Ok(());
             }
+        }
+        if slot < crate::locals::current_eval_var_scope_start() {
+            if let Some(value) = crate::with_scope::resolve_binding(name)? {
+                crate::execute::write_value(registers, dst, value);
+                return Ok(());
+            }
+        }
+        if environment.is_deleted_slot(slot) {
+            return Err(crate::value::error::throw_reference_error(&format!(
+                "Cannot access deleted binding '{name}'"
+            )));
         }
     }
     if environment.is_uninitialized(slot) {
@@ -394,12 +352,26 @@ pub(crate) fn load_binding(
     Ok(())
 }
 
+pub(crate) fn current_eval_var_scope_start() -> u16 {
+    current().captured_len() as u16
+}
+
 pub(crate) fn resolve_target(
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
     name: &str,
 ) -> Result<(), VmError> {
     let target = crate::with_scope::binding_target(name)?.unwrap_or(Value::Undefined);
+    crate::execute::write_value(registers, dst, target);
+    Ok(())
+}
+
+pub(crate) fn resolve_active_target(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let target = crate::with_scope::active_binding_target(name)?.unwrap_or(Value::Undefined);
     crate::execute::write_value(registers, dst, target);
     Ok(())
 }
@@ -413,9 +385,9 @@ pub(crate) fn initialize_resolved(
 ) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, source)?;
     let target = crate::execute::read_register(registers, target)?;
-    current().set(slot, value.clone());
-    current().initialize(slot);
     if matches!(target, Value::Undefined) {
+        current().set(slot, value.clone());
+        current().initialize(slot);
         return Ok(());
     } else {
         crate::proxy::proxy_set(&target, name, &value, None)?;
@@ -446,12 +418,18 @@ pub(crate) fn set_resolved_local(
         write(slot, value);
         return Ok(());
     }
-    if strict && !crate::with_scope::has_property(&target, name)? {
-        return Err(crate::value::error::throw_reference_error(&format!(
-            "{name} is not defined"
-        )));
+    if !crate::with_scope::has_property(&target, name)? {
+        if strict {
+            return Err(crate::value::error::throw_reference_error(&format!(
+                "{name} is not defined"
+            )));
+        }
+        if crate::globals::immutable_value(name).is_some() {
+            return Ok(());
+        }
     }
     crate::proxy::proxy_set(&target, name, &value, None)?;
+    crate::with_scope::publish_active_replacement(&target);
     Ok(())
 }
 
@@ -500,16 +478,6 @@ pub(crate) fn load_resolved_binding(
     crate::execute::write_value(registers, dst, value);
     Ok(())
 }
-
-pub(crate) fn resolve_active_target(
-    registers: &mut crate::register_file::RegisterFile,
-    dst: u16,
-    name: &str,
-) -> Result<(), VmError> {
-    let target = crate::with_scope::active_binding_target(name)?.unwrap_or(Value::Undefined);
-    crate::execute::write_value(registers, dst, target);
-    Ok(())
-}
 pub(crate) fn load(
     registers: &mut crate::register_file::RegisterFile,
     dst: u16,
@@ -517,29 +485,7 @@ pub(crate) fn load(
 ) -> Result<(), VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     let environment = current();
-    environment.load_into(registers, dst, slot);
-    Ok(())
-}
-
-/// Load a statically resolved, initialized local from its canonical word.
-/// Captured/bridged slots are still handled by `SlotStore`; only the mapping
-/// ownership and thread-local Environment clone disappear.
-#[inline(always)]
-pub(crate) fn load_proven(
-    registers: &mut crate::register_file::RegisterFile,
-    dst: u16,
-    slot: u16,
-) -> Result<(), VmError> {
-    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
-    let loaded = CURRENT_ENVIRONMENT.with(|current| {
-        current
-            .borrow()
-            .as_ref()
-            .is_some_and(|environment| environment.load_proven_into(registers, dst, slot))
-    });
-    if !loaded {
-        current().load_into(registers, dst, slot);
-    }
+    load_environment_binding(&environment, registers, dst, slot)?;
     Ok(())
 }
 
@@ -557,7 +503,20 @@ pub(crate) fn load_checked(
         )));
     }
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    load_environment_binding(&environment, registers, dst, slot)?;
+    Ok(())
+}
+
+#[inline]
+fn load_environment_binding(
+    environment: &Environment,
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+) -> Result<(), VmError> {
     environment.load_into(registers, dst, slot);
+    let value = crate::execute::read_register(registers, dst)?;
+    crate::execute::write_value(registers, dst, resolved_replacement(value));
     Ok(())
 }
 
@@ -571,31 +530,37 @@ pub(crate) fn update(
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     let delta = if decrement { -1.0 } else { 1.0 };
     let environment = current();
-    if !environment.is_uninitialized(slot) {
-        if let Some((old, updated)) = environment.update_number(slot, delta) {
-            registers.write_number(usize::from(old_dst), old);
-            registers.write_number(usize::from(updated_dst), updated);
-            return Ok(());
-        }
-    }
     if environment.is_uninitialized(slot) {
         return ensure_initialized(slot, &format!("local_{slot}"));
     }
-    let old = environment.get(slot);
+    if environment.is_immutable_slot(slot) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to immutable binding",
+        ));
+    }
+    if let Some((old, updated)) = environment.update_number(slot, delta) {
+        registers.write_number(usize::from(old_dst), old);
+        registers.write_number(usize::from(updated_dst), updated);
+        return Ok(());
+    }
+    crate::execute::write_value(registers, old_dst, environment.get(slot));
+    registers.write_number(usize::from(updated_dst), 1.0);
     let operator = if decrement {
         crate::ops::BinaryOp::NumericSubtract
     } else {
         crate::ops::BinaryOp::NumericAdd
     };
-    let updated = crate::vm::vm_arithmetic::evaluate_binary(
-        &old,
-        &crate::value::Value::Number(1.0),
+    crate::vm::vm_arithmetic::execute_binary(
+        registers,
+        updated_dst,
         operator,
+        old_dst,
+        updated_dst,
     )?;
-    let numeric_old = crate::vm::vm_arithmetic::evaluate_to_numeric(&old)?;
-    crate::execute::write_value(registers, old_dst, numeric_old);
-    crate::execute::write_value(registers, updated_dst, updated.clone());
-    environment.set(slot, updated);
+    environment.set(
+        slot,
+        crate::vm::read_register_unchecked(registers, updated_dst),
+    );
     Ok(())
 }
 
@@ -707,6 +672,12 @@ pub(crate) fn resolve_name(name: &str) -> Option<Value> {
         {
             return Some(value);
         }
+        let captured_global = current().get(0);
+        if matches!(captured_global, Value::Object(_) | Value::ObjectAlias(_)) {
+            if let Ok(value) = crate::execute::get_property_result(&captured_global, name) {
+                return Some(value);
+            }
+        }
         return crate::execute::get_property_result(&crate::vm::current_global_object(), name).ok();
     }
     None
@@ -774,7 +745,22 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
         }
         replacement.value = new.clone();
     });
+    // Replacement maps cover ordinary arrays cheaply. Only arrays carrying
+    // indexed accessors need captured-slot retargeting; packed arrays stay
+    // on the allocation-free fast path.
+    if current().has_caller()
+        && (array_has_observable_owner(old) || array_has_observable_owner(new))
+    {
+        current().replace_value(old, new);
+    }
     REPLACEMENTS_ACTIVE.with(|active| active.set(true));
+}
+
+fn array_has_observable_owner(value: &Value) -> bool {
+    let Value::Array(values) = value else {
+        return false;
+    };
+    values.has_indexed_accessor()
 }
 
 fn replace_object(old: &Value, new: &Value) -> bool {
@@ -794,11 +780,37 @@ fn replace_object(old: &Value, new: &Value) -> bool {
     if Rc::ptr_eq(&old_latest, &new_latest) {
         return true;
     }
+    retarget_object_aliases(&old_latest, &new_latest);
     old_latest.replace_with(Rc::clone(&new_latest));
     if !Rc::ptr_eq(&old, &old_latest) {
         old.replace_with(new_latest);
     }
     true
+}
+
+fn retarget_object_aliases(old: &Rc<crate::value::ObjectData>, new: &Rc<crate::value::ObjectData>) {
+    for (_, value) in &old.properties {
+        retarget_alias_value(value, old, new);
+    }
+}
+
+fn retarget_alias_value(
+    value: &Value,
+    old: &Rc<crate::value::ObjectData>,
+    new: &Rc<crate::value::ObjectData>,
+) {
+    match value {
+        Value::ObjectAlias(alias) => {
+            if alias
+                .target()
+                .is_some_and(|target| Rc::ptr_eq(&target, old))
+            {
+                alias.retarget(Rc::downgrade(new));
+            }
+        }
+        Value::BindingCell(cell) => retarget_alias_value(&cell.borrow(), old, new),
+        _ => {}
+    }
 }
 
 fn latest_object(mut object: Rc<crate::value::ObjectData>) -> Rc<crate::value::ObjectData> {
@@ -833,29 +845,6 @@ pub(crate) fn replacement(value: &Value) -> Option<Value> {
     })
 }
 
-/// Whether an array execute word is still the current representative of its
-/// identity. The common no-replacement state is one TLS boolean read; any
-/// published successor returns to semantic resolution.
-#[inline(always)]
-pub(crate) fn array_word_is_current(array: &crate::value::ArrayData) -> bool {
-    if !REPLACEMENTS_ACTIVE.with(|active| active.get()) {
-        return true;
-    }
-    let identity = ReplacementIdentity::Array(array.identity());
-    let root = REPLACEMENT_ROOTS.with(|roots| roots.borrow().get(&identity).copied());
-    let Some(root) = root else { return true };
-    REPLACEMENTS.with(|replacements| {
-        let replacements = replacements.borrow();
-        let Some(replacement) = replacements.get(&root) else {
-            return true;
-        };
-        matches!(
-            &replacement.value,
-            Value::Array(current) if std::ptr::eq(current.as_ref(), array)
-        )
-    })
-}
-
 pub(crate) fn reset_replacements() {
     REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
     REPLACEMENT_ROOTS.with(|roots| roots.borrow_mut().clear());
@@ -864,6 +853,15 @@ pub(crate) fn reset_replacements() {
 
 #[inline]
 pub(crate) fn resolved_replacement(value: Value) -> Value {
+    // Script-level `this` is an owner-bearing view. Resolve it to the live
+    // realm global before property operations so copy-on-write replacements
+    // cannot leave a stale physical view behind.
+    if matches!(&value, Value::Object(object) if object
+        .iter()
+        .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW))
+    {
+        return crate::vm::current_global_object();
+    }
     if let Some(resolved) = resolved_object_replacement(&value) {
         return resolved;
     }
@@ -989,22 +987,6 @@ mod replacement_tests {
         drop(stale);
         drop(original);
         assert!(weak.upgrade().is_none());
-        super::reset_replacements();
-    }
-
-    #[test]
-    fn array_current_word_distinguishes_latest_representative_from_stale_root() {
-        super::reset_replacements();
-        let original = Rc::new(crate::value::ArrayData::new(vec![Value::Number(1.0)]));
-        let mut changed = original.as_ref().clone();
-        changed.set_index(0, Value::Number(2.0));
-        let latest = Rc::new(changed);
-        replace_value(
-            &Value::Array(Rc::clone(&original)),
-            &Value::Array(Rc::clone(&latest)),
-        );
-        assert!(!super::array_word_is_current(&original));
-        assert!(super::array_word_is_current(&latest));
         super::reset_replacements();
     }
 
