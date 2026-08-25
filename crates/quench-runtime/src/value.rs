@@ -280,6 +280,7 @@ pub struct MapData {
     pub(crate) weak: bool,
     pub keys: RefCell<VecDeque<Value>>,
     pub values: RefCell<Vec<Value>>,
+    pub(crate) properties: RefCell<Vec<(String, Value)>>,
     pub(crate) prototype: RefCell<Option<Value>>,
 }
 
@@ -293,6 +294,22 @@ impl MapData {
     pub(crate) fn set_prototype(&self, prototype: Value) {
         self.prototype.replace(Some(prototype));
     }
+    pub(crate) fn property(&self, key: &str) -> Value {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then_some(value.clone()))
+            .unwrap_or(Value::Undefined)
+    }
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
+    }
 }
 
 /// Set value storage.
@@ -300,6 +317,7 @@ impl MapData {
 pub struct SetData {
     pub(crate) weak: bool,
     pub values: RefCell<VecDeque<Value>>,
+    pub(crate) properties: RefCell<Vec<(String, Value)>>,
     pub(crate) prototype: RefCell<Option<Value>>,
 }
 
@@ -312,6 +330,22 @@ impl SetData {
     }
     pub(crate) fn set_prototype(&self, prototype: Value) {
         self.prototype.replace(Some(prototype));
+    }
+    pub(crate) fn property(&self, key: &str) -> Value {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then_some(value.clone()))
+            .unwrap_or(Value::Undefined)
+    }
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
     }
 }
 include!("value_iterator.rs");

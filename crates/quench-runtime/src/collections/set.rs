@@ -78,6 +78,7 @@ pub(crate) fn set_new(arguments: &[Value]) -> Result<Value, VmError> {
     let set = Value::Set(Rc::new(SetData {
         weak: false,
         values: std::cell::RefCell::new(VecDeque::new()),
+        properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     }));
     let Some(iterable) = arguments.first().cloned() else {
@@ -107,6 +108,7 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
         None | Some(Value::Undefined | Value::Null) => Ok(Value::Set(Rc::new(SetData {
             weak: true,
             values: std::cell::RefCell::new(VecDeque::new()),
+            properties: std::cell::RefCell::new(Vec::new()),
             prototype: std::cell::RefCell::new(None),
         }))),
         Some(Value::Array(iterable)) => weak_set_from_iterable(Value::Array(iterable.clone())),
@@ -120,6 +122,7 @@ fn weak_set_from_iterable(iterable: Value) -> Result<Value, VmError> {
     let set = Value::Set(Rc::new(SetData {
         weak: true,
         values: std::cell::RefCell::new(VecDeque::new()),
+        properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     }));
     let adder =

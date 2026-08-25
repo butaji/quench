@@ -342,6 +342,9 @@ pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
 }
 
 fn rendered(value: &Value) -> String {
+    if execute::is_symbol(value) {
+        return crate::modules::util::inspect(value);
+    }
     match value {
         // Assertion messages contain the complete operands; object inspection
         // may truncate embedded strings, but the observable message must not.
@@ -622,9 +625,86 @@ fn deep_assert(
 }
 
 fn rendered_deep(value: &Value) -> String {
-    date_lines(value)
-        .map(|lines| lines.join("\n"))
-        .unwrap_or_else(|| rendered(value))
+    match value {
+        Value::Map(map) => {
+            let mut entries = map
+                .keys
+                .borrow()
+                .iter()
+                .zip(map.values.borrow().iter())
+                .map(|(key, value)| {
+                    format!("{} => {}", collection_atom(&Value::Map(map.clone()), key), collection_atom(&Value::Map(map.clone()), value))
+                })
+                .collect::<Vec<_>>();
+            entries.sort();
+            collection_render("Map", entries)
+        }
+        Value::Set(set) => {
+            let owner = Value::Set(set.clone());
+            let mut entries = set.values.borrow().iter().map(|value| collection_atom(&owner, value)).collect::<Vec<_>>();
+            entries.sort();
+            collection_render("Set", entries)
+        }
+        _ => crate::modules::util::inspect_with_options(value, 1000, false, None, true),
+    }
+}
+
+fn collection_atom(owner: &Value, value: &Value) -> String {
+    let circular = match (owner, value) {
+        (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
+        _ => false,
+    };
+    if circular {
+        "[Circular]".into()
+    } else if let Value::Set(set) = value {
+        let owner = Value::Set(set.clone());
+        let entries = set
+            .values
+            .borrow()
+            .iter()
+            .map(|entry| collection_atom(&owner, entry))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            "Set(0) {}".into()
+        } else {
+            format!("Set({}) {{ {} }}", entries.len(), entries.join(", "))
+        }
+    } else if let Value::Map(map) = value {
+        let owner = Value::Map(map.clone());
+        let entries = map
+            .keys
+            .borrow()
+            .iter()
+            .zip(map.values.borrow().iter())
+            .map(|(key, entry)| {
+                format!("{} => {}", collection_atom(&owner, key), collection_atom(&owner, entry))
+            })
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            "Map(0) {}".into()
+        } else {
+            format!("Map({}) {{ {} }}", entries.len(), entries.join(", "))
+        }
+    } else {
+        crate::modules::util::inspect_with_options(value, 1000, false, None, true)
+    }
+}
+
+fn collection_render(name: &str, entries: Vec<String>) -> String {
+    if entries.is_empty() {
+        return format!("{name}(0) {{}}" );
+    }
+    let mut lines = vec![format!("{name}({}) {{", entries.len())];
+    for (index, entry) in entries.iter().enumerate() {
+        let comma = (index + 1 < entries.len()).then_some(',').unwrap_or(' ');
+        lines.push(format!("  {entry}{comma}"));
+    }
+    if let Some(last) = lines.last_mut() {
+        last.pop();
+    }
+    lines.push("}".into());
+    lines.join("\n")
 }
 
 pub fn deep_strict_equal(
@@ -651,10 +731,16 @@ fn typed_props_equal(actual: &Value, expected: &Value) -> bool {
 }
 
 fn deep_diff(actual: &Value, expected: &Value) -> String {
+    if let Some(diff) = regexp_diff(actual, expected) {
+        return diff;
+    }
     if let Some(diff) = date_diff(actual, expected) {
         return diff;
     }
     if let Some(diff) = typed_array_diff(actual, expected) {
+        return diff;
+    }
+    if let Some(diff) = collection_diff(actual, expected) {
         return diff;
     }
     let (Value::Object(left), Value::Object(right)) = (actual, expected) else {
@@ -680,6 +766,100 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
     }
     lines.push("  }".to_string());
     lines.join("\n")
+}
+
+fn collection_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let (name, actual_entries, expected_entries) = match (actual, expected) {
+        (Value::Set(left), Value::Set(right)) => (
+            "Set",
+            left.values
+                .borrow()
+                .iter()
+                .map(|value| collection_atom(&Value::Set(left.clone()), value))
+                .collect::<Vec<_>>(),
+            right.values
+                .borrow()
+                .iter()
+                .map(|value| collection_atom(&Value::Set(right.clone()), value))
+                .collect::<Vec<_>>(),
+        ),
+        (Value::Map(left), Value::Map(right)) => (
+            "Map",
+            left.keys
+                .borrow()
+                .iter()
+                .zip(left.values.borrow().iter())
+                .map(|(key, value)| format!("{} => {}", collection_atom(&Value::Map(left.clone()), key), collection_atom(&Value::Map(left.clone()), value)))
+                .collect::<Vec<_>>(),
+            right.keys
+                .borrow()
+                .iter()
+                .zip(right.values.borrow().iter())
+                .map(|(key, value)| format!("{} => {}", collection_atom(&Value::Map(right.clone()), key), collection_atom(&Value::Map(right.clone()), value)))
+                .collect::<Vec<_>>(),
+        ),
+        _ => return None,
+    };
+    if actual_entries == expected_entries {
+        return Some(collection_render(name, actual_entries));
+    }
+    let mut lines = vec![format!("  {name}({}) {{", actual_entries.len().max(expected_entries.len()))];
+    for entry in actual_entries {
+        lines.push(format!("+   {entry}"));
+    }
+    for entry in expected_entries {
+        lines.push(format!("-   {entry}"));
+    }
+    lines.push("  }".into());
+    Some(lines.join("\n"))
+}
+
+fn regexp_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let actual_lines = regexp_lines(actual)?;
+    let expected_lines = regexp_lines(expected)?;
+    if actual_lines == expected_lines {
+        return Some(actual_lines.join("\n"));
+    }
+    let mut lines = actual_lines
+        .into_iter()
+        .map(|line| format!("+ {line}"))
+        .collect::<Vec<_>>();
+    lines.extend(expected_lines.into_iter().map(|line| format!("- {line}")));
+    Some(lines.join("\n"))
+}
+
+fn regexp_lines(value: &Value) -> Option<Vec<String>> {
+    if !quench_runtime::regexp::has_regexp_internal_slot(value) {
+        return None;
+    }
+    let source = match execute::get_property(value, "source") {
+        Value::String(source) => source,
+        _ => "(?:)".into(),
+    };
+    let flags = match execute::get_property(value, "flags") {
+        Value::String(flags) => flags,
+        _ => String::new(),
+    };
+    let constructor = execute::get_property(value, "constructor");
+    let name = match execute::get_property(&constructor, "name") {
+        Value::String(name) if name != "RegExp" && !name.is_empty() => Some(name),
+        _ => None,
+    };
+    let literal = format!("/{source}/{flags}");
+    let props = execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .map(|key| format!("  '{key}': {}", rendered(&execute::get_property(value, &key))))
+        .collect::<Vec<_>>();
+    let prefix = name.map(|name| format!("{name} ")).unwrap_or_default();
+    if props.is_empty() {
+        Some(vec![format!("{prefix}{literal}")])
+    } else {
+        let mut lines = vec![format!("{prefix}{literal} {{")];
+        lines.extend(props);
+        lines.push("}".into());
+        Some(lines)
+    }
 }
 
 fn date_diff(actual: &Value, expected: &Value) -> Option<String> {
