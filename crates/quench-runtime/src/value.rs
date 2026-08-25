@@ -480,11 +480,17 @@ impl PartialEq<String> for PropertyName {
 pub struct ObjectProperties(Vec<(PropertyName, Value)>);
 
 impl ObjectProperties {
-    pub fn new() -> Self { Self(Vec::new()) }
-    pub fn with_capacity(capacity: usize) -> Self { Self(Vec::with_capacity(capacity)) }
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
 
     #[cold]
-    pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> { self.0.clone() }
+    pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> {
+        self.0.clone()
+    }
 
     #[inline]
     pub(crate) fn slot_value(&self, slot: usize) -> Option<&Value> {
@@ -499,15 +505,21 @@ impl ObjectProperties {
 
 impl std::ops::Deref for ObjectProperties {
     type Target = Vec<(PropertyName, Value)>;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl std::ops::DerefMut for ObjectProperties {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl From<Vec<(PropertyName, Value)>> for ObjectProperties {
-    fn from(entries: Vec<(PropertyName, Value)>) -> Self { Self(entries) }
+    fn from(entries: Vec<(PropertyName, Value)>) -> Self {
+        Self(entries)
+    }
 }
 
 impl FromIterator<(PropertyName, Value)> for ObjectProperties {
@@ -519,13 +531,66 @@ impl FromIterator<(PropertyName, Value)> for ObjectProperties {
 impl<'a> IntoIterator for &'a ObjectProperties {
     type Item = &'a (PropertyName, Value);
     type IntoIter = std::slice::Iter<'a, (PropertyName, Value)>;
-    fn into_iter(self) -> Self::IntoIter { self.0.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
 }
 
 impl<'a> IntoIterator for &'a mut ObjectProperties {
     type Item = &'a mut (PropertyName, Value);
     type IntoIter = std::slice::IterMut<'a, (PropertyName, Value)>;
-    fn into_iter(self) -> Self::IntoIter { self.0.iter_mut() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+/// Allocation-free read projection shared by ordinary object tables and the
+/// cold tuple lists used by descriptors/functions. Physical object storage can
+/// therefore change without materializing a second semantic property list.
+pub(crate) trait PropertyEntries {
+    type Iter<'a>: DoubleEndedIterator<Item = (&'a str, &'a Value)>
+    where
+        Self: 'a;
+    fn entries(&self) -> Self::Iter<'_>;
+}
+
+impl PropertyEntries for ObjectProperties {
+    type Iter<'a> = std::iter::Map<
+        std::slice::Iter<'a, (PropertyName, Value)>,
+        fn(&'a (PropertyName, Value)) -> (&'a str, &'a Value),
+    >;
+    fn entries(&self) -> Self::Iter<'_> {
+        fn split(entry: &(PropertyName, Value)) -> (&str, &Value) {
+            (entry.0.as_str(), &entry.1)
+        }
+        self.0.iter().map(split)
+    }
+}
+
+impl PropertyEntries for [(PropertyName, Value)] {
+    type Iter<'a> = std::iter::Map<
+        std::slice::Iter<'a, (PropertyName, Value)>,
+        fn(&'a (PropertyName, Value)) -> (&'a str, &'a Value),
+    >;
+    fn entries(&self) -> Self::Iter<'_> {
+        fn split(entry: &(PropertyName, Value)) -> (&str, &Value) {
+            (entry.0.as_str(), &entry.1)
+        }
+        self.iter().map(split)
+    }
+}
+
+impl PropertyEntries for [(String, Value)] {
+    type Iter<'a> = std::iter::Map<
+        std::slice::Iter<'a, (String, Value)>,
+        fn(&'a (String, Value)) -> (&'a str, &'a Value),
+    >;
+    fn entries(&self) -> Self::Iter<'_> {
+        fn split(entry: &(String, Value)) -> (&str, &Value) {
+            (entry.0.as_str(), &entry.1)
+        }
+        self.iter().map(split)
+    }
 }
 pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 
@@ -722,6 +787,13 @@ impl std::ops::DerefMut for ObjectData {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.layout_id.set(0);
         &mut self.properties
+    }
+}
+
+impl PropertyEntries for ObjectData {
+    type Iter<'a> = <ObjectProperties as PropertyEntries>::Iter<'a>;
+    fn entries(&self) -> Self::Iter<'_> {
+        self.properties.entries()
     }
 }
 
