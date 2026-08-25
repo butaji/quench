@@ -84,24 +84,20 @@ fn util_format_with_options(arguments: &[Value]) -> Result<Value, VmError> {
             "options must be an object",
         )));
     }
-    let result = format_util(
-        arguments.get(1..).unwrap_or_default(),
-        arguments.first().and_then(separator_option),
-    )?;
     let colors = arguments
         .first()
         .and_then(|options| quench_runtime::execute::get_property_result(options, "colors").ok())
         .is_some_and(|value| matches!(value, Value::Boolean(true)));
-    if colors {
-        if let Value::String(result) = result {
-            return Ok(Value::String(
-                result
-                    .replacen("true", "\u{1b}[33mtrue\u{1b}[39m", 1)
-                    .into(),
-            ));
-        }
-    }
-    Ok(result)
+    let separator = arguments.first().and_then(separator_option).unwrap_or(false);
+    let compact = arguments
+        .first()
+        .and_then(|options| quench_runtime::execute::get_property_result(options, "compact").ok())
+        .is_some_and(|value| !matches!(value, Value::Undefined));
+    let values = arguments.get(1..).unwrap_or_default();
+    crate::modules::util::validate_json_arguments(values)?;
+    Ok(Value::String(crate::modules::util::format_with_options(
+        values, separator, colors, compact,
+    )))
 }
 
 fn numeric_separator(value: &Value) -> Option<bool> {

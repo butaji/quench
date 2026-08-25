@@ -324,7 +324,7 @@ pub enum Builtin {
     RangeErrorPrototype, TypeErrorPrototype, EvalErrorPrototype,
     ReferenceErrorPrototype, SyntaxErrorPrototype, URIErrorPrototype,
     AggregateErrorPrototype,
-    ErrorIsError, ErrorPrototypeToString,
+    ErrorIsError, ErrorCaptureStackTrace, ErrorPrototypeToString,
     ErrorPrototypeNameGetter, ErrorPrototypeMessageGetter,
     ErrorPrototypeCauseGetter, ErrorPrototypeStackGetter,
     ErrorPrototypeStackSetter, RangeError,

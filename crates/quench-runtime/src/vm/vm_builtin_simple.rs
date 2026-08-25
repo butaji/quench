@@ -92,6 +92,7 @@ fn is_simple_errors(builtin: Builtin) -> bool {
             | Builtin::ThrowTypeError
             | Builtin::SuppressedError
             | Builtin::ErrorIsError
+            | Builtin::ErrorCaptureStackTrace
             | Builtin::ErrorPrototypeToString
             | Builtin::ErrorPrototypeNameGetter
             | Builtin::ErrorPrototypeMessageGetter
