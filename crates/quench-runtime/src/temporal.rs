@@ -53,19 +53,21 @@ mod stubs {
                 return Some(Ok(Value::String("UTC".into())));
             }
             crate::ops::Builtin::TemporalNowPlainDateISO => {
-                return Some(super::construct_stub(
-                    crate::ops::Builtin::TemporalPlainDatePrototype,
-                ));
+                return Some(super::plain_date::construct(&[
+                    Value::Number(1970.0),
+                    Value::Number(1.0),
+                    Value::Number(1.0),
+                ]));
             }
             crate::ops::Builtin::TemporalNowPlainDateTimeISO => {
-                return Some(super::construct_stub(
-                    crate::ops::Builtin::TemporalPlainDateTimePrototype,
-                ));
+                return Some(super::plain_date_time::construct(&[
+                    Value::Number(1970.0),
+                    Value::Number(1.0),
+                    Value::Number(1.0),
+                ]));
             }
             crate::ops::Builtin::TemporalNowPlainTimeISO => {
-                return Some(super::construct_stub(
-                    crate::ops::Builtin::TemporalPlainTimePrototype,
-                ));
+                return Some(super::plain_time::construct(&[]));
             }
             crate::ops::Builtin::TemporalNowZonedDateTimeISO => {
                 return Some(super::construct_stub(
