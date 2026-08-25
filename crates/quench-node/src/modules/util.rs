@@ -674,7 +674,7 @@ fn symbol_string(value: &Value) -> String {
         return format!("Symbol({body})");
     }
     let description = body.strip_prefix("Symbol.").unwrap_or(body);
-    if description.is_empty() || description == "\u{1}" {
+    if description.is_empty() || description == "\u{1}" || description.chars().any(char::is_control) {
         return "Symbol()".into();
     }
     format!("Symbol({description})")
@@ -1891,10 +1891,15 @@ fn inspect_object(value: &Value, depth: usize) -> String {
             let property_value = quench_runtime::execute::get_property(value, key);
             let rendered = if matches!(key.as_str(), "actual" | "expected") {
                 match property_value {
+                    Value::String(text) if text.len() > 488 => {
+                        format!("'{}...'", &text[..488])
+                    }
                     Value::String(text) if text.contains('\n') => {
-                        let mut lines = text.split('\n').take(10).collect::<Vec<_>>().join("\\n");
-                        lines.push_str("\\n...");
-                        format!("'{lines}'")
+                        let mut lines = text.split('\n').take(9)
+                            .map(|line| format!("'{line}\\n' +"))
+                            .collect::<Vec<_>>();
+                        lines.push("'...'".into());
+                        format!("{}", lines.join("\n    "))
                     }
                     _ if property_value.object_identity() == value.object_identity() => "[Circular]".into(),
                     _ => inspect_property(value, key, depth.saturating_sub(1)),
