@@ -27,9 +27,6 @@ fn load(source: &str) -> Result<Value, VmError> {
 pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("cluster.js"))
 }
-pub fn domain(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("domain.js"))
-}
 pub fn diagnostics_channel(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("diagnostics_channel.js"))
 }
