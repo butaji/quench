@@ -1,5 +1,15 @@
 const SHAPE_KERNEL_FACT_SLOTS: usize = 256;
 
+/// The matcher consumes the semantic local-load fact. TDZ proof changes the
+/// physical opcode from checked to unchecked without changing a shape plan.
+#[inline]
+fn is_local_load(instruction: crate::ir::Instruction) -> bool {
+    matches!(
+        instruction.opcode,
+        crate::ir::Opcode::LoadLocal | crate::ir::Opcode::LoadLocalChecked
+    )
+}
+
 #[derive(Clone, Copy)]
 struct StatePredicatePlan {
     state_pc: usize,
@@ -257,10 +267,10 @@ fn match_nested_array_index(
     let [receiver, first, index, get, returned, fallback, fallback_return] =
         std::array::from_fn(|pc| code.instruction(pc).unwrap());
     use crate::ir::Opcode::*;
-    (receiver.opcode == LoadLocalChecked
+    (is_local_load(receiver)
         && first.opcode == GetN
         && first.b == receiver.a
-        && index.opcode == LoadLocalChecked
+        && is_local_load(index)
         && get.opcode == AGetI
         && get.b == first.a
         && get.c == index.a
@@ -282,7 +292,7 @@ fn match_nested_array_length(
     let [receiver, first, second, returned, fallback, fallback_return] =
         std::array::from_fn(|pc| code.instruction(pc).unwrap());
     use crate::ir::Opcode::*;
-    (receiver.opcode == LoadLocalChecked
+    (is_local_load(receiver)
         && first.opcode == GetN
         && first.b == receiver.a
         && second.opcode == GetN
@@ -308,9 +318,9 @@ fn match_state_predicate(
     let not_equal = code.instruction(5)?;
     let conditional = code.instruction(6)?;
     if code.len() != 10
-        || load_this.opcode != crate::ir::Opcode::LoadLocalChecked
+        || !is_local_load(load_this)
         || get_state.opcode != crate::ir::Opcode::GetN
-        || load_held.opcode != crate::ir::Opcode::LoadLocalChecked
+        || !is_local_load(load_held)
         || bit_and.opcode != crate::ir::Opcode::Binary
         || bit_and.flags != crate::ir::compact_binary_id(crate::ops::BinaryOp::BitwiseAnd)
         || (bit_and.b, bit_and.c) != (get_state.a, load_held.a)
@@ -346,9 +356,9 @@ fn match_state_predicate_alternate(
     let load_suspended = alternate.instruction(2)?;
     let equal = alternate.instruction(3)?;
     if alternate.len() != 5
-        || load_this.opcode != crate::ir::Opcode::LoadLocalChecked
+        || !is_local_load(load_this)
         || get_again.opcode != crate::ir::Opcode::GetN
-        || load_suspended.opcode != crate::ir::Opcode::LoadLocalChecked
+        || !is_local_load(load_suspended)
         || equal.opcode != crate::ir::Opcode::Binary
         || equal.flags != crate::ir::compact_binary_id(crate::ops::BinaryOp::Equal)
         || load_this.b != main_this.b
@@ -416,12 +426,13 @@ fn state_bitwise_ops_match(
 ) -> bool {
     let [load_this, move_one, move_two, load_again, get_state, load_mask, bit_or, set_state, load_undefined, return_op] = ops;
     code.len() == 10
-        && load_this.opcode == crate::ir::Opcode::LoadLocalChecked
+        && is_local_load(load_this)
         && (move_one.opcode, move_one.b) == (crate::ir::Opcode::Move, load_this.a)
         && (move_two.opcode, move_two.b) == (crate::ir::Opcode::Move, move_one.a)
-        && (load_again.opcode, load_again.b) == (crate::ir::Opcode::LoadLocalChecked, load_this.b)
+        && is_local_load(load_again)
+        && load_again.b == load_this.b
         && (get_state.opcode, get_state.b) == (crate::ir::Opcode::GetN, load_again.a)
-        && load_mask.opcode == crate::ir::Opcode::LoadLocalChecked
+        && is_local_load(load_mask)
         && bit_or.opcode == crate::ir::Opcode::Binary
         && compact_bitwise_operator(bit_or.flags).is_some()
         && (bit_or.b, bit_or.c) == (get_state.a, load_mask.a)
