@@ -233,6 +233,8 @@ pub const SPEC_INTERNAL_BINDING: NodeSpec = NodeSpec::new("internal:test-binding
 pub const SPEC_INTERNAL_BUFFER_FILL: NodeSpec = NodeSpec::new("internal:buffer-fill", 0x0711);
 pub const SPEC_INTERNAL_VIEW_HAS_BUFFER: NodeSpec =
     NodeSpec::new("internal:view-has-buffer", 0x0712);
+pub const SPEC_INTERNAL_GET_PROXY_DETAILS: NodeSpec =
+    NodeSpec::new("internal:get-proxy-details", 0x0721);
 pub const SPEC_INTERNAL_BUFFER_ALIGNED_OFFSET: NodeSpec =
     NodeSpec::new("internal:buffer-array-buffer-aligned-offset", 0x0713);
 
