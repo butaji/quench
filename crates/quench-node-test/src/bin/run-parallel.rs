@@ -14,6 +14,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+const RESULT_MARKER: &str = "__QUENCH_RESULT__";
+
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
 const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
 
@@ -30,10 +32,14 @@ fn main() -> ExitCode {
     {
         // Child mode: run one fixture so a fatal abort (e.g. stack
         // overflow) cannot take down the parent triage sweep.
-        return match quench_node_test::NodeTestRunner::new().run_file(&PathBuf::from(path)) {
-            quench_node_test::NodeOutcome::Pass => ExitCode::SUCCESS,
-            _ => ExitCode::from(1),
+        let outcome = quench_node_test::NodeTestRunner::new().run_file(&PathBuf::from(path));
+        let (status, code) = match outcome {
+            quench_node_test::NodeOutcome::Pass => ("pass", ExitCode::SUCCESS),
+            quench_node_test::NodeOutcome::Skip { .. } => ("skip", ExitCode::SUCCESS),
+            quench_node_test::NodeOutcome::Fail { .. } => ("fail", ExitCode::from(1)),
         };
+        println!("{RESULT_MARKER} {status}");
+        return code;
     }
     if args.iter().any(|a| a == "--triage") {
         let filter = args
@@ -99,7 +105,7 @@ fn run_manifest() -> ExitCode {
         eprintln!("read {MANIFEST}: missing or empty manifest");
         return ExitCode::from(2);
     }
-    let mut failed = Vec::new();
+    let mut counts = [0usize; 6];
     // Resolve fixture paths against the startup CWD and isolate every fixture
     // in a child process. A manifest entry must not be able to retain module
     // state, change the runner's CWD, crash the gate, or hang it indefinitely.
@@ -107,24 +113,21 @@ fn run_manifest() -> ExitCode {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     for name in &names {
         let path = root.join(PARALLEL_DIR).join(name);
-        match triage_one(&exe, &path, 30) {
-            RunResult::Pass => println!("PASS  {name}"),
-            result => {
-                println!("FAIL  {name} ({})", result.label());
-                failed.push(format!("{name}: {}", result.label()));
-            }
-        }
+        let result = triage_one(&exe, &path, 30);
+        counts[result as usize] += 1;
+        println!("{}  {name}", result.label().to_uppercase());
     }
     println!(
-        "parallel: {} passed, {} failed, {} total",
-        names.len() - failed.len(),
-        failed.len(),
+        "parallel: pass={} skip={} fail={} timeout={} crash={} unclassified={} total={}",
+        counts[0],
+        counts[1],
+        counts[2],
+        counts[3],
+        counts[4],
+        counts[5],
         names.len()
     );
-    for failure in &failed {
-        println!("  - {failure}");
-    }
-    if failed.is_empty() {
+    if counts[2..].iter().all(|count| *count == 0) {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -139,19 +142,18 @@ fn triage(filter: Option<&String>) -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    let mut entries: Vec<PathBuf> = quench_node_test::stages::discover_fixtures(
-        &PathBuf::from(PARALLEL_DIR),
-    )
-    .into_iter()
-    .filter(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                name.starts_with("test-")
-                    && filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
+    let mut entries: Vec<PathBuf> =
+        quench_node_test::stages::discover_fixtures(&PathBuf::from(PARALLEL_DIR))
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("test-")
+                            && filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
+                    })
             })
-    })
-    .collect();
+            .collect();
     entries.sort();
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;
@@ -170,28 +172,33 @@ fn triage(filter: Option<&String>) -> ExitCode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RunResult {
     Pass,
+    Skip,
     Fail,
     Timeout,
     Crash,
+    Unclassified,
 }
 
 impl RunResult {
     fn label(self) -> &'static str {
         match self {
             Self::Pass => "pass",
+            Self::Skip => "skip",
             Self::Fail => "fail",
             Self::Timeout => "timeout",
             Self::Crash => "crash",
+            Self::Unclassified => "unclassified",
         }
     }
 }
 
 fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
+    use std::io::Read;
     use std::process::{Command, Stdio};
     let Ok(mut child) = Command::new(exe)
         .arg("--triage-one")
         .arg(path)
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
     else {
@@ -200,12 +207,19 @@ fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
     for _ in 0..timeout_secs.saturating_mul(20) {
         match child.try_wait() {
             Ok(Some(status)) => {
-                return if status.success() {
-                    RunResult::Pass
-                } else if status.code().is_none() {
-                    RunResult::Crash
-                } else {
-                    RunResult::Fail
+                let mut output = String::new();
+                if let Some(mut stdout) = child.stdout.take() {
+                    let _ = stdout.read_to_string(&mut output);
+                }
+                let marker = output
+                    .lines()
+                    .find_map(|line| line.strip_prefix(RESULT_MARKER).map(str::trim));
+                return match marker {
+                    Some("pass") if status.success() => RunResult::Pass,
+                    Some("skip") if status.success() => RunResult::Skip,
+                    Some("fail") if !status.success() => RunResult::Fail,
+                    Some(_) | None if status.code().is_none() => RunResult::Crash,
+                    Some(_) | None => RunResult::Unclassified,
                 };
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
@@ -231,7 +245,7 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
             })
     });
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
-    let mut counts = [0usize; 4];
+    let mut counts = [0usize; 6];
     let mut results = Vec::with_capacity(entries.len());
     for path in &entries {
         let result = triage_one(&exe, path, timeout_secs);
@@ -240,9 +254,9 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
         println!("{:?} {}", result, path.display());
     }
     let inventory_hash = inventory_hash(&entries);
-    let [passed, failed, timeout, crash] = counts;
+    let [passed, skipped, failed, timeout, crash, unclassified] = counts;
     println!(
-        "all: pass={passed} fail={failed} timeout={timeout} crash={crash} total={} inventory_hash={inventory_hash:016x}",
+        "all: pass={passed} skip={skipped} fail={failed} timeout={timeout} crash={crash} unclassified={unclassified} total={} inventory_hash={inventory_hash:016x}",
         entries.len()
     );
     if let Some(path) = results_path {
@@ -251,7 +265,7 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
             return ExitCode::from(2);
         }
     }
-    if failed == 0 && timeout == 0 && crash == 0 {
+    if failed == 0 && timeout == 0 && crash == 0 && unclassified == 0 {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -272,7 +286,7 @@ fn write_results(
     let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     writeln!(
         file,
-        "{{\"schema_version\":1,\"inventory_hash\":\"{inventory_hash:016x}\",\"timeout_secs\":{timeout_secs},\"node_version\":\"{}\",\"runtime_commit\":\"{}\",\"tests_node_commit\":\"{}\",\"platform\":\"{}\",\"results\":[",
+        "{{\"schema_version\":2,\"inventory_hash\":\"{inventory_hash:016x}\",\"timeout_secs\":{timeout_secs},\"node_version\":\"{}\",\"runtime_commit\":\"{}\",\"tests_node_commit\":\"{}\",\"platform\":\"{}\",\"results\":[",
         json_escape(&node_version),
         json_escape(&runtime_commit),
         json_escape(&tests_node_commit),
