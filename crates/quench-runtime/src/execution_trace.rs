@@ -883,6 +883,7 @@ pub(crate) fn loop_shape(_: crate::machine::CodeView<'_>) -> u64 {
 }
 
 #[cfg(feature = "execution-trace")]
+#[inline(always)]
 pub(crate) fn loop_shape_iteration(fingerprint: u64) {
     if fingerprint != 0 {
         COUNTERS.with(|counters| {
@@ -894,6 +895,7 @@ pub(crate) fn loop_shape_iteration(fingerprint: u64) {
 }
 
 #[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
 pub(crate) fn loop_shape_iteration(_: u64) {}
 
 #[cfg(feature = "execution-trace")]
