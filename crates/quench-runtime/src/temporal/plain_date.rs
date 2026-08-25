@@ -236,6 +236,18 @@ fn to_stub(receiver: Option<&Value>, prototype: crate::ops::Builtin) -> Result<V
         crate::ops::Builtin::TemporalPlainYearMonthPrototype => {
             crate::temporal::plain_year_month::construct(year, month)
         }
+        crate::ops::Builtin::TemporalZonedDateTimePrototype => {
+            let date = chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+            let epoch = date
+                .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch"))
+                .num_days() as i128
+                * 86_400_000_000_000;
+            crate::temporal::zoned_construct(&[
+                Value::BigInt(epoch.to_string()),
+                Value::String("UTC".into()),
+            ])
+        }
         _ => crate::temporal::construct_stub(prototype),
     }
 }
