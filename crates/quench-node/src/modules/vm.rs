@@ -24,10 +24,33 @@ pub fn run_in_new_context(
             context = Rc::new((*context).clone().with_host_value(key, value));
         }
     }
+    let global = quench_runtime::vm::current_global_object();
+    let filename = args.get(2).and_then(|options| {
+        execute::get_property_result(options, "filename")
+            .ok()
+            .and_then(|value| match value {
+                Value::String(value) => Some(value),
+                _ => None,
+            })
+    });
+    let has_filename = filename.is_some();
+    if let Some(filename) = filename {
+        let updated = execute::set_property(
+            global.clone(),
+            "\0quench_vm_filename",
+            Value::String(filename),
+        );
+        execute::replace_value(&global, &updated);
+    }
     let mut registers = quench_runtime::register_file::RegisterFile::new();
-    quench_runtime::vm::with_current_context(&context, || {
+    let result = quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
-    })
+    });
+    if has_filename {
+        let updated = execute::delete_property(global.clone(), "\0quench_vm_filename").0;
+        execute::replace_value(&global, &updated);
+    }
+    result
 }
 
 pub fn build() -> Value {
