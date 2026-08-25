@@ -193,6 +193,17 @@ pub(crate) fn execute_code_completion_in_current_frame(
     drive_code_completion(code, registers, &context)
 }
 
+/// Execute residual compact code with a context already owned by the caller.
+/// Structured loops use this to avoid re-reading and cloning the same TLS
+/// context for every iteration.
+pub(crate) fn execute_code_completion_with_context(
+    code: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+) -> Result<crate::completion::Completion, VmError> {
+    drive_code_completion(code, registers, context)
+}
+
 fn drive_completion(
     ops: &[Op],
     registers: &mut crate::register_file::RegisterFile,

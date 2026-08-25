@@ -336,8 +336,8 @@ fn super_own_value(holder: &Value, key: &str, receiver: &Value) -> Result<Option
     {
         if !descriptor.iter().any(|(name, _)| name == "value") {
             if let Some((_, getter)) = descriptor.iter().rev().find(|(name, _)| name == "get") {
-                if crate::conversion::is_callable(getter) {
-                    return crate::functions::execute_target(getter, receiver, &[]).map(Some);
+                if crate::conversion::is_callable(&getter) {
+                    return crate::functions::execute_target(&getter, receiver, &[]).map(Some);
                 }
             }
         }
@@ -418,7 +418,7 @@ pub(crate) fn attach_home_objects(value: &Value) {
                 object,
             )))));
             for (_, property) in object.iter() {
-                attach(property, &alias);
+                attach(&property, &alias);
             }
         }
         Value::Function(function) => {
@@ -446,7 +446,7 @@ fn attach(value: &Value, home: &Value) {
         Value::Object(properties) => {
             for (name, value) in properties.iter() {
                 if matches!(name.as_str(), "get" | "set") {
-                    attach(value, home);
+                    attach(&value, home);
                 }
             }
         }

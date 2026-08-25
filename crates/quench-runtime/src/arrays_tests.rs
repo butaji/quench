@@ -172,7 +172,7 @@ mod tests {
         let hot = data.hot_properties();
         assert_eq!(hot.len(), 1);
         assert_eq!(hot.name_at(0).unwrap(), "answer");
-        assert_eq!(hot.slot_value(0), Some(&Value::Number(42.0)));
+        assert_eq!(hot.slot_value(0), Some(&Value::Number(42.0)).cloned());
     }
 
 

@@ -287,10 +287,11 @@ fn array_prototype_override(key: &str) -> Option<Value> {
     let Value::Object(properties) = descriptor else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "value").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "value").then(|| value.clone()));
+    result
 }
 
 /// The `get` accessor of a user-defined `Array.prototype` override, e.g.
@@ -301,10 +302,11 @@ pub(crate) fn prototype_override_getter(key: &str) -> Option<Value> {
     let Value::Object(properties) = descriptor else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "get").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "get").then(|| value.clone()));
+    result
 }
 
 pub(crate) fn array_index(key: &str) -> Option<u32> {
@@ -534,17 +536,16 @@ pub(crate) fn reduce_values(
             (values[index].clone(), 1)
         }
     };
-    let mut apply =
-        |index: usize, accumulator: &mut Value| -> Result<(), crate::execute::VmError> {
-            let args = [
-                accumulator.clone(),
-                values[index].clone(),
-                Value::Number(index as f64),
-                receiver.clone(),
-            ];
-            *accumulator = crate::functions::execute_target(callback, receiver, &args)?;
-            Ok(())
-        };
+    let apply = |index: usize, accumulator: &mut Value| -> Result<(), crate::execute::VmError> {
+        let args = [
+            accumulator.clone(),
+            values[index].clone(),
+            Value::Number(index as f64),
+            receiver.clone(),
+        ];
+        *accumulator = crate::functions::execute_target(callback, receiver, &args)?;
+        Ok(())
+    };
     if reverse {
         let end = values.len().saturating_sub(start);
         for index in (0..end).rev() {

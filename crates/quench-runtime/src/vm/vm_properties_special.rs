@@ -398,10 +398,11 @@ fn array_accessor_value(values: &crate::value::ArrayData, key: &str, field: &str
     let Value::Object(descriptor) = values.descriptor(key)? else {
         return None;
     };
-    descriptor
+    let result = descriptor
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == field).then(|| value.clone()))
+        .find_map(|(name, value)| (name == field).then(|| value.clone()));
+    result
 }
 
 fn same_property_receiver(value: &Value, receiver: &Value) -> bool {

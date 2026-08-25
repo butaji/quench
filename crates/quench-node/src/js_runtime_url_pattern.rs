@@ -222,7 +222,7 @@ fn read_pairs_from_object(
         if key.starts_with('\0') {
             continue;
         }
-        let literal = value_to_literal_string(value);
+        let literal = value_to_literal_string(&value);
         pairs.push((key.as_str().to_owned(), literal));
     }
     pairs

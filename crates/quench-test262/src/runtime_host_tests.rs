@@ -185,8 +185,8 @@ fn json_module_exports_recursive_runtime_values() {
     module.execute().expect("module executes");
     let Value::Array(values) = cell.get() else { panic!("JSON default export is not an array") };
     assert_eq!(values.logical_len(), 2);
-    assert_eq!(values[0], Value::Boolean(true));
-    assert!(matches!(values[1], Value::Object(_)));
+    assert_eq!(values.get(0), Some(Value::Boolean(true)));
+    assert!(matches!(values.get(1), Some(Value::Object(_))));
 }
 
 #[test]
@@ -340,8 +340,8 @@ fn function_var_is_per_activation() {
     let Value::Array(items) = value else {
         panic!("expected array, got {value:?}");
     };
-    assert_eq!(items[0], Value::Number(0.0), "first call");
-    assert_eq!(items[1], Value::Number(0.0), "second call");
+    assert_eq!(items.get(0), Some(Value::Number(0.0)), "first call");
+    assert_eq!(items.get(1), Some(Value::Number(0.0)), "second call");
 }
 
 #[test]

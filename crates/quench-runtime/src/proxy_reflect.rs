@@ -37,10 +37,10 @@ fn define_rejected(error: &VmError) -> bool {
         return false;
     };
     let message = properties.iter().find_map(|(name, value)| match (name.as_str(), value) {
-        ("message", Value::String(text)) => Some(text.as_str()),
+        ("message", Value::String(text)) => Some(text),
         _ => None,
     });
-    match message {
+    match message.as_deref() {
         Some("Cannot define a property on a non-extensible object") => true,
         Some(text) => text.starts_with("Cannot redefine"),
         None => false,
@@ -237,7 +237,7 @@ fn validate_own_keys_result(value: &Value) -> Result<(), VmError> {
     }
     Ok(())
 }
-fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value> {
+fn descriptor_value(descriptor: &Value, field: &str) -> Option<Value> {
     let Value::Object(properties) = descriptor else {
         return None;
     };

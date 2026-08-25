@@ -10,7 +10,7 @@ fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
         return None;
     };
     let mut properties = properties.properties.clone();
-    if let Some((_, value)) = properties
+    if let Some((_, mut value)) = properties
         .iter_mut()
         .find(|(name, _)| name == "configurable")
     {
@@ -124,9 +124,9 @@ fn object_descriptor<P: crate::value::PropertyEntries + ?Sized>(
         .find_map(|(name, value)| (name == "_value").then_some(value))
     {
         if key == "length" {
-            return Some(string_length_descriptor(value));
+            return Some(string_length_descriptor(&value));
         }
-        if let Some(descriptor) = string_descriptor(value, key) {
+        if let Some(descriptor) = string_descriptor(&value, key) {
             return Some(descriptor);
         }
     }
@@ -135,8 +135,8 @@ fn object_descriptor<P: crate::value::PropertyEntries + ?Sized>(
             .entries()
             .rev()
             .find(|(name, _)| *name == key)
-            .map(|(_, value)| public_value(value));
-        return Some(live_descriptor(metadata, live));
+            .map(|(_, value)| public_value(&value));
+        return Some(live_descriptor(&metadata, live));
     }
     properties
         .entries()
@@ -146,7 +146,7 @@ fn object_descriptor<P: crate::value::PropertyEntries + ?Sized>(
             if matches!(value, Value::Builtin(_)) && crate::vm::global_builtin_exists(key) {
                 descriptor_object_with_flags(value.clone(), true, false, true)
             } else {
-                descriptor_object(value)
+                descriptor_object(&value)
             }
         })
 }

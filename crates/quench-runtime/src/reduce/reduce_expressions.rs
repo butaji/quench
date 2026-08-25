@@ -248,6 +248,11 @@ pub fn reduce_declaration(
             locals,
         );
         crate::using_scope::mark_binding_immutable(declaration.kind, &declarator.id, ops, locals);
+        if declaration.kind != VariableDeclarationKind::Var {
+            for name in crate::binding_patterns::names(&declarator.id) {
+                locals.remove(&format!("\0lexical-predeclared:{name}"));
+            }
+        }
     }
     Ok(())
 }

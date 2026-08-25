@@ -31,7 +31,7 @@ fn add_minimum_fraction(formatted: &mut String, locales: &[String], options: Opt
 }
 fn option_string(value: &Value, key: &str) -> Option<String> {
     let Value::Object(properties) = value else { return None; };
-    properties.iter().find(|(name, _)| name == key).map(|(_, value)| super::to_string_value(value))
+    properties.iter().find(|(name, _)| name == key).map(|(_, value)| super::to_string_value(&value))
 }
 fn significant_round(digits: &str, options: Option<&Value>) -> String {
     let Some(limit) = options.and_then(|value| option_string(value, "maximumSignificantDigits")).and_then(|value| value.parse::<usize>().ok()) else { return digits.to_string(); };

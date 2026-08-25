@@ -142,7 +142,7 @@ pub(crate) mod value {
         properties
             .entries()
             .find_map(|(key, value)| (key == "_value").then_some(value))
-            .map_or(f64::NAN, |value| to_number(Some(value)))
+            .map_or(f64::NAN, |value| to_number(Some(&value)))
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
         crate::conversion::to_number(value.unwrap_or(&Value::Undefined))

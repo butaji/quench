@@ -199,6 +199,7 @@ impl SlotStore {
         if let Some(value) = value.as_deref() {
             crate::execute::write_value(registers, dst, value.clone().strong_function());
         } else {
+            crate::execution_trace::event(crate::execution_trace::Event::LocalWordRead);
             let copied =
                 registers.copy_strong_function_from(usize::from(dst), self.values(), index);
             debug_assert!(copied, "ensured lexical slot must own an execute word");
@@ -215,6 +216,7 @@ impl SlotStore {
         if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
             return cell.with_word(|word| registers.write_owned(dst, word).is_some());
         }
+        crate::execution_trace::event(crate::execution_trace::Event::LocalWordRead);
         registers.copy_from(dst, self.values(), index).is_some()
     }
 
@@ -244,6 +246,18 @@ impl SlotStore {
         }
         self.values_mut()
             .copy_from(index, registers, usize::from(source))
+    }
+
+    #[inline(always)]
+    fn immediate_word_ptr(&self, index: usize) -> Option<*mut crate::tagged_value::TaggedValue> {
+        if self
+            .bridges()
+            .and_then(|bridges| bridges.get(index))
+            .is_some_and(Option::is_some)
+        {
+            return None;
+        }
+        self.values_mut().immediate_word_ptr(index)
     }
 
     fn existing_cell(&self, index: usize) -> Option<Rc<crate::value::BindingCell>> {
@@ -349,6 +363,39 @@ impl SlotRefs {
             store,
             index: index - self.prefix_len,
         })
+    }
+
+    /// Visit the canonical slot without constructing another owning binding
+    /// reference. The immutable slot map keeps both the store and index valid
+    /// for the duration of the callback.
+    #[inline(always)]
+    fn with_binding<R>(
+        &self,
+        index: usize,
+        use_binding: impl FnOnce(&SlotStore, usize) -> R,
+    ) -> Option<R> {
+        if index < self.prefix_len {
+            let found = self
+                .prefix
+                .binary_search_by_key(&index, |capture| capture.slot)
+                .ok()?;
+            let binding = &self.prefix.get(found)?.binding;
+            return Some(use_binding(binding.store.as_ref(), binding.index));
+        }
+        if index >= self.len() {
+            return None;
+        }
+        if let Ok(found) = self
+            .suffix_overrides
+            .binary_search_by_key(&index, |entry| entry.slot)
+        {
+            let binding = &self.suffix_overrides.get(found)?.binding;
+            return Some(use_binding(binding.store.as_ref(), binding.index));
+        }
+        Some(use_binding(
+            self.suffix_store.as_deref()?,
+            index - self.prefix_len,
+        ))
     }
 
     fn shared_prefix(&self) -> Rc<[CapturedRef]> {
@@ -611,11 +658,73 @@ impl Environment {
         slot: u16,
     ) {
         let slots = self.slots.borrow();
-        if let Some(binding) = slots.get(usize::from(slot)) {
-            binding.store.load_into(registers, dst, binding.index);
-        } else {
+        if slots
+            .with_binding(usize::from(slot), |store, index| {
+                store.load_into(registers, dst, index)
+            })
+            .is_none()
+        {
             crate::execute::write_value(registers, dst, Value::Undefined);
         }
+    }
+
+    /// Copy a proven lexical slot without cloning its `Rc<SlotStore>` map
+    /// entry. A missing slot is reported so the caller can retain complete
+    /// dynamic semantics through the ordinary path.
+    #[inline(always)]
+    pub(crate) fn load_proven_into(
+        &self,
+        registers: &mut crate::register_file::RegisterFile,
+        dst: u16,
+        slot: u16,
+    ) -> bool {
+        let slots = self.slots.borrow();
+        slots
+            .with_binding(usize::from(slot), |store, index| {
+                store.load_into(registers, dst, index)
+            })
+            .is_some()
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_proven_slot(&self, slot: u16) -> bool {
+        self.slots
+            .borrow()
+            .with_binding(usize::from(slot), |_, _| ())
+            .is_some()
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy_proven_from_register(
+        &self,
+        slot: u16,
+        registers: &crate::register_file::RegisterFile,
+        source: u16,
+    ) -> bool {
+        let slots = self.slots.borrow();
+        slots
+            .with_binding(usize::from(slot), |store, index| {
+                store.copy_from_register(index, registers, source)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Resolve a move-only loop site's physical word operands once. The
+    /// returned plan is valid while this Environment remains installed and no
+    /// non-Move instruction can resize the involved stores.
+    pub(crate) fn plan_immediate_move(
+        &self,
+        source: u16,
+        target: u16,
+    ) -> Option<crate::register_file::ImmediateCopyPlan> {
+        let slots = self.slots.borrow();
+        let source = slots
+            .with_binding(usize::from(source), SlotStore::immediate_word_ptr)
+            .flatten()?;
+        let target = slots
+            .with_binding(usize::from(target), SlotStore::immediate_word_ptr)
+            .flatten()?;
+        Some(crate::register_file::ImmediateCopyPlan::new(source, target))
     }
 
     pub(crate) fn load_into_fixed<const N: usize>(
@@ -626,8 +735,10 @@ impl Environment {
     ) -> bool {
         let slots = self.slots.borrow();
         slots
-            .get(usize::from(slot))
-            .is_some_and(|binding| binding.store.load_into_fixed(registers, dst, binding.index))
+            .with_binding(usize::from(slot), |store, index| {
+                store.load_into_fixed(registers, dst, index)
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) fn set(&self, slot: u16, value: Value) {
