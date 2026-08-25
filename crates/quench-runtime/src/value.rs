@@ -474,7 +474,59 @@ impl PartialEq<String> for PropertyName {
     }
 }
 
-pub type ObjectProperties = Vec<(PropertyName, Value)>;
+/// Canonical ordinary-property table. Callers use this boundary instead of
+/// depending on the eventual physical slot layout.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ObjectProperties(Vec<(PropertyName, Value)>);
+
+impl ObjectProperties {
+    pub fn new() -> Self { Self(Vec::new()) }
+    pub fn with_capacity(capacity: usize) -> Self { Self(Vec::with_capacity(capacity)) }
+
+    #[cold]
+    pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> { self.0.clone() }
+
+    #[inline]
+    pub(crate) fn slot_value(&self, slot: usize) -> Option<&Value> {
+        self.0.get(slot).map(|(_, value)| value)
+    }
+
+    #[inline]
+    pub(crate) fn slot_entry(&self, slot: usize) -> Option<(&PropertyName, &Value)> {
+        self.0.get(slot).map(|(name, value)| (name, value))
+    }
+}
+
+impl std::ops::Deref for ObjectProperties {
+    type Target = Vec<(PropertyName, Value)>;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+impl std::ops::DerefMut for ObjectProperties {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+
+impl From<Vec<(PropertyName, Value)>> for ObjectProperties {
+    fn from(entries: Vec<(PropertyName, Value)>) -> Self { Self(entries) }
+}
+
+impl FromIterator<(PropertyName, Value)> for ObjectProperties {
+    fn from_iter<T: IntoIterator<Item = (PropertyName, Value)>>(entries: T) -> Self {
+        Self(entries.into_iter().collect())
+    }
+}
+
+impl<'a> IntoIterator for &'a ObjectProperties {
+    type Item = &'a (PropertyName, Value);
+    type IntoIter = std::slice::Iter<'a, (PropertyName, Value)>;
+    fn into_iter(self) -> Self::IntoIter { self.0.iter() }
+}
+
+impl<'a> IntoIterator for &'a mut ObjectProperties {
+    type Item = &'a mut (PropertyName, Value);
+    type IntoIter = std::slice::IterMut<'a, (PropertyName, Value)>;
+    fn into_iter(self) -> Self::IntoIter { self.0.iter_mut() }
+}
 pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 
 /// Canonical ordinary-object state. `properties` is the sole semantic store
