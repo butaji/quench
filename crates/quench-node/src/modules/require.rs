@@ -22,7 +22,7 @@ use crate::host::HostState;
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
     if matches!(spec.as_str(), "async_hooks" | "node:async_hooks") {
-        let value = crate::modules::compat_extra::async_hooks(state)?;
+        let value = crate::modules::async_hooks::build();
         state.borrow_mut().module_cache.insert(spec, value.clone());
         return Ok(value);
     }
@@ -351,7 +351,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "events" => Some(crate::modules::events::build()),
         "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
-        "async_hooks" => crate::modules::compat_extra::async_hooks(state).ok(),
+        "async_hooks" => Some(crate::modules::async_hooks::build()),
         "string_decoder" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::string_decoder::build(),
         )),

@@ -29,6 +29,7 @@ pub struct NodeHost {
 }
 
 pub struct HostState {
+    pub async_hooks: crate::modules::async_hooks::AsyncHooksState,
     pub timers: crate::modules::timers::TimerRegistry,
     pub event_loop: crate::modules::event_loop::EventLoop,
     pub process: crate::modules::process::ProcessState,
@@ -73,6 +74,7 @@ pub struct PendingModule {
 impl NodeHost {
     pub fn new(realm: RealmId, argv: Vec<String>) -> Self {
         let state = HostState {
+            async_hooks: crate::modules::async_hooks::AsyncHooksState::new(),
             timers: crate::modules::timers::TimerRegistry::new(),
             event_loop: crate::modules::event_loop::EventLoop::new(),
             process: crate::modules::process::ProcessState::new(argv),
