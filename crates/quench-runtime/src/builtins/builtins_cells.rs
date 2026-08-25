@@ -7,7 +7,7 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
         .iter()
         .rev()
         .find_map(|(name, current)| (name == key).then_some(current))
-        .and_then(binding_cell)
+        .and_then(|value| binding_cell(&value))
         .or_else(|| deleted_binding_cell(&properties, key));
     let Some(cell) = cell else {
         return super::object_alias::set(properties, key, value);
@@ -15,8 +15,8 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
     if !has_binding_cell_property(&properties, key) {
         let mut values = properties.properties.clone();
         values.retain(|(name, _)| name != &crate::builtins::deleted_key(key));
-        if let Some((_, current)) = values.iter_mut().rev().find(|(name, _)| name == key) {
-            *current = Value::BindingCell(Rc::clone(&cell));
+        if let Some(slot) = values.position_rev(key) {
+            values.store_slot(slot, Value::BindingCell(Rc::clone(&cell)));
         } else {
             values.push((key.into(), Value::BindingCell(Rc::clone(&cell))));
         }
@@ -62,7 +62,7 @@ fn deleted_binding_cell(
         .iter()
         .rev()
         .find_map(|(name, value)| (name == &crate::builtins::deleted_key(key)).then_some(value))
-        .and_then(binding_cell)
+        .and_then(|value| binding_cell(&value))
 }
 
 fn has_binding_cell_property(properties: &ObjectData, key: &str) -> bool {
@@ -70,6 +70,6 @@ fn has_binding_cell_property(properties: &ObjectData, key: &str) -> bool {
         .iter()
         .rev()
         .find_map(|(name, value)| (name == key).then_some(value))
-        .and_then(binding_cell)
+        .and_then(|value| binding_cell(&value))
         .is_some()
 }

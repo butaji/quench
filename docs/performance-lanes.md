@@ -16,8 +16,10 @@ Schema 5 `lanes` contains:
 
 - `l0`: `word_reads.{fixed,local,register,owned}`, `word_copies`,
   `value_decode`, `value_decode_by_site`, property hit/miss and payload kinds,
-  and packed get/set/miss counts split by miss reason. The bounded
-  `value_decode_other_by_op` ranking resolves the residual `other` site.
+  and packed get/set/miss counts split by miss reason. Bounded
+  `owned_word_read_by_site` and `owned_word_read_by_op` rankings attribute
+  retained/cloned word materialization independently from value decoding;
+  `value_decode_other_by_op` resolves the residual decode `other` site.
 - `l1`: shape hits, crypto hits/direct iterations, counted-loop admission,
   leaf admission/rejection classes, and the top native kernel IDs with hits and
   deopts.
@@ -26,7 +28,8 @@ Schema 5 `lanes` contains:
   code-id/PC/source-offset sites with a seven-opcode context window. Collection
   is exact up to 4,096 sites; `compact_site_dropped` must remain zero.
 - `l3`: handler count/share, top eight slow operations, descriptor-object
-  origins, allocation origins, and RegExp `lastIndex` access paths.
+  origins, the VM ops that materialize descriptor views, allocation origins,
+  and RegExp `lastIndex` access paths.
 - `l4`: host-call count and non-Function call targets.
 
 `loop_shapes`, `function_call_shapes`, and `heap_lifecycle` remain beside
@@ -98,3 +101,15 @@ node tools/assert-lane-micro.cjs u64-move getn-number call-fp
 Each output line contains the measured numerator, denominator, and ratio. A
 failed assertion names exactly one `<micro>.<metric>` key. Full V8-v7 Score on
 the untraced binary remains the acceptance exam after a drill turns green.
+
+G1 drills also declare an `oracle.max_ratio`. Build the untraced Score binary,
+then compare each JS micro with the matching optimized Rust/C-fast algorithm:
+
+```sh
+cargo build --profile bench-throughput -p quench-node
+node tools/assert-l0-oracles.cjs
+```
+
+The harness reports median process time after one warm-up. This keeps startup,
+parsing, lowering, and execution in the same G1 budget while the trace binary
+continues to measure lane composition separately.

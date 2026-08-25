@@ -1,17 +1,37 @@
 {
   "schema": 1,
+  "oracle": { "max_ratio": 2 },
   "metrics": {
+    "word_call_hits_per_iteration": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "word_call_add_constant", "field": "hits" } },
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "min": 1.99,
+      "max": 2.01
+    },
+    "counted_loop_does_not_hide_calls": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "counted_word_call", "field": "hits" } },
+      "denominator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "word_call_add_constant", "field": "hits" } },
+      "min_traffic": 100000,
+      "max": 0.01
+    },
     "environment_per_call": {
       "numerator": "heap_lifecycle.environment.allocated",
-      "denominator": "events.loop_iteration",
+      "denominator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "word_call_add_constant", "field": "hits" } },
       "min_traffic": 100000,
       "max": 0.01
     },
     "slow_call_per_iteration": {
       "numerator": { "top": { "path": "lanes.l3.top_slow", "key": "op", "value": "Call" } },
-      "denominator": "events.loop_iteration",
+      "denominator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "word_call_add_constant", "field": "hits" } },
       "min_traffic": 100000,
       "max": 0.01
+    },
+    "call_decode_per_iteration": {
+      "numerator": "lanes.l0.value_decode_by_site.call",
+      "denominator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "word_call_add_constant", "field": "hits" } },
+      "min_traffic": 100000,
+      "max": 0.02
     }
   }
 }

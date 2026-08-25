@@ -168,16 +168,11 @@ pub(crate) fn function_has_instance(
 }
 
 fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
-    if let Value::BoundFunction(bound) = constructor {
-        if matches!(bound.target, Value::Function(_) | Value::BoundFunction(_)) {
-            return ordinary_instanceof(value, &bound.target);
-        }
-    }
     let prototype = crate::execute::get_property_result(constructor, "prototype")?;
     if !crate::value::is_object(&prototype) {
         return Err(type_error("Function has non-object prototype"));
     }
-    Ok(prototype_chain_contains(value, &prototype)?
+    Ok(prototype_chain_contains(value, &prototype)
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
@@ -185,13 +180,7 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
 
 fn is_shadow_realm(properties: &crate::value::ObjectData) -> bool {
     properties.iter().any(|(name, value)| {
-        name == "\0prototype"
-            && (matches!(value, Value::Builtin(Builtin::ShadowRealmPrototype))
-                || matches!(
-                    value,
-                    Value::BoundFunction(bound)
-                        if matches!(bound.target, Value::Builtin(Builtin::ShadowRealmPrototype))
-                ))
+        name == "\0prototype" && value == Value::Builtin(Builtin::ShadowRealmPrototype)
     })
 }
 
@@ -230,7 +219,7 @@ fn error_constructor_builtin(value: &Value) -> Option<Builtin> {
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
-    match intrinsic_builtin(prototype)? {
+    match intrinsic_builtin(&prototype)? {
         Builtin::ErrorPrototype => Some(Builtin::Error),
         Builtin::RangeErrorPrototype => Some(Builtin::RangeError),
         Builtin::ReferenceErrorPrototype => Some(Builtin::ReferenceError),
@@ -271,30 +260,18 @@ fn instanceof_callable(value: &Value) -> bool {
     }
 }
 
-fn prototype_chain_contains(value: &Value, expected: &Value) -> Result<bool, VmError> {
-    let mut current = if matches!(value, Value::Proxy(_)) {
-        Some(crate::proxy::proxy_get_prototype_of(value)?)
-    } else {
-        internal_prototype(value)
-    };
+fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
+    let mut current = internal_prototype(value);
     for _ in 0..1_024 {
         let Some(prototype) = current else {
-            return Ok(false);
+            return false;
         };
         if crate::builtins::same_value(Some(&prototype), Some(expected)) {
-            return Ok(true);
-        }
-        if matches!(prototype, Value::Proxy(_)) {
-            let next = crate::proxy::proxy_get_prototype_of(&prototype)?;
-            if crate::builtins::same_value(Some(&next), Some(expected)) {
-                return Ok(true);
-            }
-            current = Some(next);
-            continue;
+            return true;
         }
         current = internal_prototype(&prototype);
     }
-    Ok(false)
+    false
 }
 
 fn internal_prototype(value: &Value) -> Option<Value> {
@@ -420,7 +397,7 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
             .iter()
             .rev()
             .find(|(name, _)| name == "\0prototype" || name == "prototype")
-            .map(|(_, prototype)| dereference_binding(prototype)),
+            .map(|(_, prototype)| dereference_binding(&prototype)),
         Value::Function(function) => {
             let properties = function.properties.borrow();
             properties

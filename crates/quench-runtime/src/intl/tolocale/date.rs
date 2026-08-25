@@ -40,10 +40,11 @@ fn date_time_value(receiver: Option<&Value>) -> Option<f64> {
     else {
         return None;
     };
-    match &*cell.borrow() {
+    let result = match &*cell.borrow() {
         Value::Number(value) => Some(*value),
         _ => None,
-    }
+    };
+    result
 }
 
 fn default_components(kind: DateLocaleKind) -> &'static [&'static str] {

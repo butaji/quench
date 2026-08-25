@@ -259,7 +259,7 @@ fn same_fields(left: Option<&Value>, right: Option<&Value>) -> bool {
             .iter()
             .find(|(key, _)| key == name)
             .map(|(_, value)| value);
-        crate::builtins::same_value(left, right)
+        crate::builtins::same_value(left.as_ref(), right.as_ref())
     })
 }
 

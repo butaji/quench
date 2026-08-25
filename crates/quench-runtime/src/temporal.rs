@@ -432,7 +432,7 @@ mod stubs {
         if !matches!(receiver, Value::Object(object) if object
             .iter()
             .any(|(key, value)| key == "\0prototype"
-                && *value == Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)))
+                && value == Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)))
         {
             return Err(crate::value::error::throw_type_error(
                 "Invalid ZonedDateTime receiver",

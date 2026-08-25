@@ -114,6 +114,11 @@ fn construct_with_new_target(
             with_new_target_prototype(value, &target, &new_target)
         }
         Value::Builtin(builtin) => {
+            if *builtin == crate::ops::Builtin::Uint16Array
+                && is_float16_new_target(&new_target)
+            {
+                return construct_float16_array(arguments);
+            }
             construct_builtin_target(*builtin, &target, &new_target, arguments)
         }
         Value::Function(function) => construct_function(function, &new_target, arguments),
@@ -121,6 +126,14 @@ fn construct_with_new_target(
         Value::Proxy(_) => crate::proxy::proxy_construct(&target, arguments, Some(&new_target)),
         _ => Err(crate::vm::not_callable()),
     }
+}
+
+fn is_float16_new_target(value: &Value) -> bool {
+    let prototype = crate::execute::get_property(value, "prototype");
+    matches!(
+        crate::execute::get_property(&prototype, "\0float16_constructor"),
+        Value::Boolean(true)
+    )
 }
 
 fn construct_builtin_target(
@@ -135,11 +148,6 @@ fn construct_builtin_target(
         return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
     }
     let needs_new_target = !crate::builtins::same_value(Some(target), Some(new_target));
-    if builtin == crate::ops::Builtin::Iterator && needs_new_target {
-        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
-        let value = Value::Object(Rc::new(ObjectData::new(Vec::new())));
-        return apply_new_target_prototype(value, target, new_target, prototype);
-    }
     // Promise checks that its executor is callable before GetPrototypeFromConstructor.
     // Fetching the prototype first would incorrectly expose a prototype getter error
     // when the executor is not callable.
@@ -167,9 +175,7 @@ fn construct_builtin_target(
     let prototype = needs_new_target
         .then(|| crate::execute::get_property_result(new_target, "prototype"))
         .transpose()?;
-    let value = if builtin == crate::ops::Builtin::Object && needs_new_target {
-        Value::Object(Rc::new(ObjectData::new(Vec::new())))
-    } else if is_dynamic_function_constructor(builtin) {
+    let value = if is_dynamic_function_constructor(builtin) {
         construct_dynamic_builtin_in_realm(builtin, arguments, target)?
     } else {
         construct_builtin_in_realm(builtin, arguments, new_target)?
@@ -306,11 +312,11 @@ fn apply_new_target_prototype(
     let prototype = if crate::value::is_object(&prototype) {
         prototype
     } else {
-        get_prototype_from_constructor_strict(new_target, |realm| {
+        get_prototype_from_constructor(new_target, |realm| {
             realm_default_prototype(target, new_target).unwrap_or_else(|| {
                 crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
             })
-        })?
+        })
     };
     Ok({
         if let crate::value::Value::Array(_) = &value {
@@ -367,11 +373,16 @@ fn construct_bound(
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     let new_target = bound_construct_new_target(target, new_target);
-    let mut value = construct_bound_target(bound, &bound.target, &new_target, &combined)?;
-    if matches!(
+    let float16 = matches!(
         crate::execute::get_property_result(&bound.receiver, "\0float16_constructor"),
         Ok(Value::Boolean(true))
-    ) {
+    );
+    let mut value = if float16 {
+        construct_float16_array(&combined)?
+    } else {
+        construct_bound_target(bound, &bound.target, &new_target, &combined)?
+    };
+    if float16 {
         value.mark_float16_array();
         if let Ok(prototype) = crate::execute::get_property_result(&bound.receiver, "\0prototype") {
             value = crate::execute::set_prototype_of(&value, &prototype)?;
@@ -494,7 +505,7 @@ fn construct_function(
             return Ok(object);
         }
     }
-    let receiver = constructor_receiver(target)?;
+    let receiver = constructor_receiver(target);
     let object = initialize_instance_fields(function, receiver)?;
     let (result, final_this) =
         crate::functions::execute_construct(function, &object, target, arguments)?;

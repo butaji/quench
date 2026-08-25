@@ -43,5 +43,14 @@ assert.strictEqual(
     '  [buffer]: ArrayBuffer { [byteLength]: 8 }\n' +
     ']'
 );
+const accessors = { get readonly() { return 1; }, set writeonly(value) {} };
+assert.strictEqual(util.inspect(accessors), '{ readonly: [Getter], writeonly: [Setter] }');
+const getterValue = { get one() { return null; } };
+assert.strictEqual(util.inspect(getterValue, { getters: true }), '{ one: [Getter: null] }');
+class Foo {}
+assert.strictEqual(util.inspect(Object.setPrototypeOf(new Foo(), null)), '[Foo: null prototype] {}');
+const circular = {};
+circular.a = circular;
+assert.strictEqual(util.inspect(circular), '<ref *1> { a: [Circular *1] }');
 
 console.log('util.inspect function values: ok');

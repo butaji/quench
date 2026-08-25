@@ -105,7 +105,7 @@ pub(crate) mod value {
             Some(Value::StringUnits(value)) => {
                 super::parse_num::parse_number(&String::from_utf16_lossy(value))
             }
-            Some(Value::Object(properties)) => boxed_number(properties),
+            Some(Value::Object(properties)) => boxed_number(properties.as_ref()),
             Some(value) if is_non_numeric(value) => f64::NAN,
             Some(_) => f64::NAN,
         }
@@ -141,11 +141,11 @@ pub(crate) mod value {
                 | Value::Iterator(_)
         )
     }
-    fn boxed_number<K: AsRef<str>>(properties: &[(K, Value)]) -> f64 {
+    fn boxed_number<P: crate::value::PropertyEntries + ?Sized>(properties: &P) -> f64 {
         properties
-            .iter()
-            .find_map(|(key, value)| (key.as_ref() == "_value").then_some(value))
-            .map_or(f64::NAN, |value| to_number(Some(value)))
+            .entries()
+            .find_map(|(key, value)| (key == "_value").then_some(value))
+            .map_or(f64::NAN, |value| to_number(Some(&value)))
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
         crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
@@ -208,15 +208,8 @@ pub(crate) mod value {
             }
             Value::String(_) => "string",
             Value::StringUnits(_) => "string",
-            Value::Builtin(crate::ops::Builtin::Atomics) => "object",
             Value::Builtin(builtin) => builtin_type(*builtin),
-            Value::Function(_) => "function",
-            Value::BoundFunction(value)
-                if crate::conversion::is_callable(&Value::BoundFunction(value.clone())) =>
-            {
-                "function"
-            }
-            Value::BoundFunction(_) => "object",
+            Value::Function(_) | Value::BoundFunction(_) => "function",
             Value::BigInt(_) => "bigint",
             Value::Promise(_)
             | Value::Map(_)
@@ -232,7 +225,6 @@ pub(crate) mod value {
     fn builtin_type(builtin: crate::ops::Builtin) -> &'static str {
         match builtin {
             crate::ops::Builtin::FunctionPrototype => "function",
-            crate::ops::Builtin::FinalizationRegistryPrototype => "object",
             crate::ops::Builtin::SymbolIterator
             | crate::ops::Builtin::SymbolAsyncIterator
             | crate::ops::Builtin::SymbolDispose
@@ -311,9 +303,14 @@ pub(crate) mod value {
 pub(crate) mod symbol {
     use super::{Value, VmError};
     use crate::ops::Builtin;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SYMBOL_COUNTER: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+        static GLOBAL_SYMBOLS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    }
     pub(crate) fn dispatch(
         builtin: Builtin,
         arguments: &[Value],
@@ -392,7 +389,14 @@ pub(crate) mod symbol {
             }
         }
         let key = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
-        Ok(Value::String(format!("Symbol.for.{key}\0")))
+        let symbol = GLOBAL_SYMBOLS.with(|symbols| {
+            let mut symbols = symbols.borrow_mut();
+            symbols
+                .entry(key.clone())
+                .or_insert_with(|| format!("Symbol.for.{key}\0"))
+                .clone()
+        });
+        Ok(Value::String(symbol))
     }
 
     fn symbol_key_for(arguments: &[Value]) -> Result<Value, VmError> {
@@ -510,10 +514,7 @@ fn element_to_locale_string(value: &Value) -> Result<String, VmError> {
 }
 fn locale_element_call(value: &Value) -> Result<String, VmError> {
     let mut method = crate::execute::get_property_result(value, "toLocaleString")?;
-    if matches!(
-        method,
-        Value::Builtin(Builtin::ObjectPrototypeToString | Builtin::ObjectPrototypeToLocaleString)
-    ) {
+    if matches!(method, Value::Builtin(Builtin::ObjectPrototypeToString)) {
         method = crate::execute::get_property_result(value, "toString")?;
     }
     if !matches!(method, Value::Undefined | Value::Null) {

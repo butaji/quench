@@ -92,17 +92,11 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     }
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
     if matches!(target, Value::Proxy(_)) {
-        let result = crate::proxy::proxy_define_property(
+        return crate::proxy::proxy_define_property(
             &target,
             &key,
             arguments.get(2).unwrap_or(&Value::Undefined),
-        )?;
-        if !crate::execute::is_truthy(&result) {
-            return Err(crate::value::error::throw_type_error(
-                "Proxy defineProperty returned false",
-            ));
-        }
-        return Ok(target);
+        );
     }
     let Some(descriptor) = arguments.get(2) else {
         return Ok(target.clone());
@@ -112,35 +106,11 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
             "Property descriptor must be an object",
         ));
     }
-    reject_mixed_descriptor(descriptor)?;
     let descriptor = descriptor_fields(descriptor)?;
     let result = define_own_property(&target, &key, &descriptor)?;
     crate::locals::replace_value(&target, &result);
-    // Global objects use copy-on-write storage.  Keep the realm owner and
-    // every retained global alias on the same replacement when the public
-    // Object.defineProperty path mutates one; the VM DefineProperty op does
-    // the same publication explicitly.
-    let mut registers = crate::register_file::RegisterFile::new();
-    crate::vm::synchronize_global_object(&mut registers, &target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
-}
-
-fn reject_mixed_descriptor(descriptor: &Value) -> Result<(), crate::execute::VmError> {
-    let Value::Array(keys) = crate::own_keys::names(Some(descriptor))? else {
-        return Ok(());
-    };
-    let has = |name: &str| {
-        keys.snapshot()
-            .iter()
-            .any(|key| matches!(key, Value::String(key) if key == name))
-    };
-    if (has("get") || has("set")) && (has("value") || has("writable")) {
-        return Err(crate::value::error::throw_type_error(
-            "Invalid property descriptor",
-        ));
-    }
-    Ok(())
 }
 pub(crate) fn define_own_property(
     target: &Value,
@@ -157,14 +127,6 @@ pub(crate) fn define_own_property(
             ));
         }
         return Ok(target);
-    }
-    if crate::typed_array_ops::is_view(&target)
-        && crate::typed_array_ops::is_index_key(key)
-        && !crate::typed_array_prototype::index_exists(&target, key.parse::<usize>().unwrap_or(usize::MAX))
-    {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray index is out of bounds",
-        ));
     }
     // ArraySetLength coerces its value before reading the current length
     // descriptor; the coercion may mutate the array.

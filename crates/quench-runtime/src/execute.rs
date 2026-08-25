@@ -1,4 +1,5 @@
 //! VM helpers for executing residual operations.
+use std::rc::Rc;
 pub use crate::vm::{
     copy_register, execute as run_vm, execute_builtin_with_receiver, execute_code_with_context,
     execute_in_place, execute_with_context, execute_with_registers, get_property,
@@ -19,6 +20,23 @@ pub fn set_property(
     value: crate::value::Value,
 ) -> crate::value::Value {
     crate::builtins::set_property(target, key, value)
+}
+
+/// Mutate one existing ordinary-object slot while preserving object identity.
+/// Host state machines use this only where JavaScript observes identity.
+pub fn set_property_in_place(target: &crate::value::Value, key: &str, value: crate::value::Value) -> bool {
+    let object = match target {
+        crate::value::Value::Object(object) => Rc::clone(object),
+        crate::value::Value::ObjectAlias(alias) => match alias.target() {
+            Some(object) => object,
+            None => return false,
+        },
+        _ => return false,
+    };
+    // The host has exclusive semantic ownership of this identity-sensitive
+    // transition; the runtime's ordinary object path remains copy-on-write.
+    unsafe { (&mut *(Rc::as_ptr(&object) as *mut crate::value::ObjectData)).set_property_in_place(key, value); }
+    true
 }
 
 pub fn delete_property(target: crate::value::Value, key: &str) -> (crate::value::Value, bool) {
@@ -93,6 +111,12 @@ pub fn set_callable_property(
                 .push((key.to_owned(), value));
             Ok(())
         }
+        crate::value::Value::HostCapability(capability) => {
+            let mut properties = capability.properties.borrow_mut();
+            properties.retain(|(name, _)| name != key);
+            properties.push((key.to_owned(), value));
+            Ok(())
+        }
         _ => Err(VmError::NotCallable),
     }
 }
@@ -131,6 +155,18 @@ pub fn same_value(left: &crate::value::Value, right: &crate::value::Value) -> bo
     crate::builtins::same_value(Some(left), Some(right))
 }
 
+/// Compare object identity through copy-on-write replacements.
+pub fn same_identity(left: &crate::value::Value, right: &crate::value::Value) -> bool {
+    let left = crate::locals::resolved_replacement(left.clone());
+    let right = crate::locals::resolved_replacement(right.clone());
+    crate::builtins::same_value(Some(&left), Some(&right))
+}
+
+/// Return the live value after copy-on-write replacement resolution.
+pub fn canonical_value(value: &crate::value::Value) -> crate::value::Value {
+    crate::locals::resolved_replacement(value.clone())
+}
+
 /// Throw a canonical `TypeError` from host code.
 pub fn type_error(message: &str) -> VmError {
     crate::value::error::throw_type_error(message)
@@ -145,19 +181,24 @@ pub fn own_keys(value: &crate::value::Value) -> Vec<crate::value::Value> {
     let Ok(crate::value::Value::Array(keys)) = crate::own_keys::all(value) else {
         return Vec::new();
     };
-    (0..keys.len())
-        .filter_map(|index| keys.get(index))
-        .collect()
+    (0..keys.len()).filter_map(|index| keys.get(index)).collect()
+}
+
+/// Validate proxy own-keys invariants before a host algorithm observes its target.
+/// Proxy transparency in a consumer must not bypass user traps or their errors.
+pub fn validate_proxy(value: &crate::value::Value) -> Result<(), VmError> {
+    if matches!(value, crate::value::Value::Proxy(_)) {
+        crate::proxy::proxy_own_keys(value).map(|_| ())
+    } else {
+        Ok(())
+    }
 }
 
 pub fn has_own_property(value: &crate::value::Value, key: &str) -> bool {
-    matches!(
-        crate::builtins::object::has_own_property(
-            Some(value),
-            Some(&crate::value::Value::String(key.to_string())),
-        ),
-        crate::value::Value::Boolean(true)
-    )
+    matches!(crate::builtins::object::has_own_property(
+        Some(value),
+        Some(&crate::value::Value::String(key.to_string())),
+    ), crate::value::Value::Boolean(true))
 }
 
 /// Canonical JavaScript `ToString` (may run user `toString`/`valueOf`).

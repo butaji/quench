@@ -162,7 +162,7 @@ fn name_field_value(
     Ok(value)
 }
 
-fn constructor_receiver(target: &crate::value::Value) -> Result<crate::value::Value, crate::execute::VmError> {
+fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {
     let target = crate::construct::peel_construct_value(target);
     let target = match &target {
         crate::value::Value::BoundFunction(bound) => {
@@ -170,13 +170,15 @@ fn constructor_receiver(target: &crate::value::Value) -> Result<crate::value::Va
         }
         _ => target,
     };
-    let prototype = crate::construct::get_prototype_from_constructor_strict(&target, |realm| {
+    let prototype = crate::construct::get_prototype_from_constructor(&target, |realm| {
         crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
-    })?;
-    Ok(crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
+    });
+    let object = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
         "\0prototype".to_string(),
-        prototype,
-    )]))))
+        prototype.clone(),
+    )]));
+    object.capture_original_prototype(prototype);
+    crate::value::Value::Object(object)
 }
 
 fn builtin_default_prototype(target: &crate::value::Value) -> Option<crate::value::Value> {

@@ -29,6 +29,7 @@ pub struct NodeHost {
 }
 
 pub struct HostState {
+    pub async_hooks: crate::modules::async_hooks::AsyncHooksState,
     pub timers: crate::modules::timers::TimerRegistry,
     pub event_loop: crate::modules::event_loop::EventLoop,
     pub process: crate::modules::process::ProcessState,
@@ -37,6 +38,9 @@ pub struct HostState {
     pub http: crate::modules::http::HttpState,
     pub emitters: crate::modules::emitter::EmitterRegistry,
     pub targets: crate::modules::event_target::TargetRegistry,
+    pub diagnostics: crate::modules::diagnostics_channel::DiagnosticsState,
+    pub domain: crate::modules::domain::DomainState,
+    pub cluster: crate::modules::cluster::ClusterState,
     pub prevented_events: HashSet<u64>,
     pub stopped_events: HashSet<u64>,
     pub output: Option<OutputSink>,
@@ -61,6 +65,8 @@ pub struct HostState {
     pub string_decoder_pending: std::collections::HashMap<u64, Vec<u8>>,
     pub string_decoder_encoding: std::collections::HashMap<u64, String>,
     pub string_decoder_next_id: u64,
+    /// Canonical `internalBinding("os")` object for this realm.
+    pub os_binding: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -73,6 +79,7 @@ pub struct PendingModule {
 impl NodeHost {
     pub fn new(realm: RealmId, argv: Vec<String>) -> Self {
         let state = HostState {
+            async_hooks: crate::modules::async_hooks::AsyncHooksState::new(),
             timers: crate::modules::timers::TimerRegistry::new(),
             event_loop: crate::modules::event_loop::EventLoop::new(),
             process: crate::modules::process::ProcessState::new(argv),
@@ -81,6 +88,9 @@ impl NodeHost {
             http: crate::modules::http::HttpState::new(),
             emitters: crate::modules::emitter::EmitterRegistry::new(),
             targets: crate::modules::event_target::TargetRegistry::new(),
+            diagnostics: crate::modules::diagnostics_channel::DiagnosticsState::new(),
+            domain: crate::modules::domain::DomainState::new(),
+            cluster: crate::modules::cluster::ClusterState::new(),
             prevented_events: HashSet::new(),
             stopped_events: HashSet::new(),
             output: None,
@@ -95,6 +105,7 @@ impl NodeHost {
             string_decoder_pending: std::collections::HashMap::new(),
             string_decoder_encoding: std::collections::HashMap::new(),
             string_decoder_next_id: 1,
+            os_binding: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
@@ -130,6 +141,9 @@ impl Host for NodeHost {
     ) -> Result<Value, VmError> {
         let cap = match capability.kind {
             HostCapabilityKind::Custom(c) => c,
+            HostCapabilityKind::PromiseHook => {
+                return crate::modules::async_hooks::promise_hook(&self.state, arguments);
+            }
             _ => return Err(VmError::NotCallable),
         };
         dispatch(cap, &self.state, receiver, arguments)
@@ -200,6 +214,22 @@ pub fn install_script(
     install_with_argv(realm, sink, vec![exec_path, script.to_string()])
 }
 
+pub fn install_script_with_args(
+    realm: RealmId,
+    sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    script: &str,
+    args: &[String],
+) -> (Rc<NodeHost>, VmContext) {
+    let exec_path = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let argv = std::iter::once(exec_path)
+        .chain(std::iter::once(script.to_string()))
+        .chain(args.iter().cloned())
+        .collect();
+    install_with_argv(realm, sink, argv)
+}
+
 /// Same as `install`, but provides a host-side output sink that
 /// receives `console.log/info/...` lines.
 pub fn install_with_sink(
@@ -215,6 +245,10 @@ pub fn install_with_argv(
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
+    let host_state = host.state.clone();
+    quench_runtime::install_host_job_pump(Rc::new(move || {
+        crate::modules::pump::drain_one_tick(&host_state)
+    }));
     let (argv, exec_path) = {
         let state = host.state.borrow();
         (state.process.argv.clone(), state.process.exec_path.clone())
@@ -230,6 +264,20 @@ pub fn install_with_argv(
     context = context.with_host_value("TextDecoder".to_string(), text_decoder);
     let text_encoder = crate::host::capability(crate::registry::SPEC_TEXT_ENCODER_NEW);
     context = context.with_host_value("TextEncoder".to_string(), text_encoder);
+    context = context.with_host_value(
+        "__quenchGetProxyDetails".to_string(),
+        crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
+    );
+    let blob_prototype = host_api::object(vec![]);
+    let blob = host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+    let blob = quench_runtime::execute::set_property(blob, "prototype", blob_prototype.clone());
+    let file_prototype = host_api::object(vec![]);
+    let _ = quench_runtime::execute::set_prototype_of(&file_prototype, &blob_prototype);
+    let file = host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+    let file = quench_runtime::execute::set_property(file, "prototype", file_prototype);
+    context = context
+        .with_host_value("Blob".to_string(), blob)
+        .with_host_value("File".to_string(), file);
     let console = namespace_object_from_pairs(vec![
         (
             "log".to_string(),

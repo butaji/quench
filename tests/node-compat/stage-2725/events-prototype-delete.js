@@ -1,0 +1,65 @@
+const assert = require('assert');
+const EventEmitter = require('events');
+
+assert.strictEqual(typeof EventEmitter.prototype.prependListener, 'function');
+assert.strictEqual(delete EventEmitter.prototype.prependListener, true);
+assert.strictEqual(EventEmitter.prototype.prependListener, undefined);
+
+assert.throws(
+  () => new EventEmitter({ captureRejections: 1 }),
+  { code: 'ERR_INVALID_ARG_TYPE', name: 'TypeError' }
+);
+assert.throws(
+  () => new EventEmitter().on('foo', null),
+  { code: 'ERR_INVALID_ARG_TYPE', name: 'TypeError' }
+);
+
+const captured = new EventEmitter({ captureRejections: true });
+const error = new Error('captured');
+let seen;
+captured.on('event', () => ({ then(_resolve, reject) { reject(error); } }));
+captured.on('error', (value) => { seen = value; });
+captured.emit('event');
+assert.strictEqual(seen, error);
+
+assert.strictEqual(EventEmitter.captureRejections, false);
+EventEmitter.captureRejections = true;
+const inherited = new EventEmitter();
+assert.strictEqual(inherited.captureRejections, undefined);
+EventEmitter.captureRejections = false;
+assert.strictEqual(typeof process.removeAllListeners, 'function');
+process.removeAllListeners('unhandledRejection');
+
+const special = new EventEmitter();
+assert.strictEqual(special._events.hasOwnProperty, undefined);
+let specialSeen = false;
+special.on('__proto__', () => { specialSeen = true; });
+special.emit('__proto__');
+assert.strictEqual(specialSeen, true);
+
+const visible = new EventEmitter();
+const first = () => {};
+const second = () => {};
+visible.on('visible', first);
+assert.strictEqual(visible._events.visible, first);
+visible.on('visible', second);
+assert.deepStrictEqual(visible._events.visible, [first, second]);
+const once = () => 1;
+visible.once('once', once);
+const raw = visible.rawListeners('once');
+assert.strictEqual(raw.length, 1);
+assert.strictEqual(raw[0].listener, once);
+assert.strictEqual(raw[0](), 1);
+assert.deepStrictEqual(visible.rawListeners('once'), []);
+
+assert.strictEqual(EventEmitter.defaultMaxListeners, 10);
+assert.throws(
+  () => { EventEmitter.defaultMaxListeners = -1; },
+  { code: 'ERR_OUT_OF_RANGE', name: 'RangeError' }
+);
+assert.throws(
+  () => { EventEmitter.defaultMaxListeners = 'invalid'; },
+  { code: 'ERR_INVALID_ARG_TYPE', name: 'TypeError' }
+);
+
+console.log('EventEmitter prototype deletion: ok');

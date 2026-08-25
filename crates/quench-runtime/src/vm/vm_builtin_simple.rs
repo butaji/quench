@@ -27,17 +27,10 @@ fn is_simple_conversion(builtin: Builtin) -> bool {
             | Builtin::StringValueOf
             | Builtin::BoxedValueOf
             | Builtin::ObjectPrototypeToString
-            | Builtin::ObjectPrototypeToLocaleString
-            | Builtin::ObjectPrototypeProtoGetter
-            | Builtin::ObjectPrototypeProtoSetter
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
             | Builtin::FunctionPrototypeHasInstance
-            | Builtin::IteratorPrototypeConstructorGetter
-            | Builtin::IteratorPrototypeConstructorSetter
-            | Builtin::IteratorPrototypeToStringTagGetter
-            | Builtin::IteratorPrototypeToStringTagSetter
             | Builtin::Object
             | Builtin::Date
             | Builtin::Function
@@ -100,6 +93,7 @@ fn is_simple_errors(builtin: Builtin) -> bool {
             | Builtin::ThrowTypeError
             | Builtin::SuppressedError
             | Builtin::ErrorIsError
+            | Builtin::ErrorCaptureStackTrace
             | Builtin::ErrorPrototypeToString
             | Builtin::ErrorPrototypeNameGetter
             | Builtin::ErrorPrototypeMessageGetter
@@ -155,43 +149,9 @@ fn execute_simple_conversion(
         Builtin::SymbolToString => symbol_to_string(receiver),
         Builtin::SymbolValueOf | Builtin::SymbolPrototypeToPrimitive => symbol_value_of(receiver),
         Builtin::SymbolDescriptionGetter => symbol_description(receiver),
-        Builtin::IteratorPrototypeConstructorGetter => Ok(Value::Builtin(Builtin::Iterator)),
-        Builtin::IteratorPrototypeToStringTagGetter => Ok(Value::String("Iterator".into())),
-        Builtin::IteratorPrototypeConstructorSetter => {
-            iterator_prototype_setter(receiver, arguments, "constructor")
-        }
-        Builtin::IteratorPrototypeToStringTagSetter => {
-            iterator_prototype_setter(receiver, arguments, "Symbol.toStringTag")
-        }
         Builtin::StringToString | Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
-        Builtin::ObjectPrototypeToString => {
-            if let Some(error) = crate::builtins::prototype_to_string_error(receiver) {
-                Err(error)
-            } else {
-                Ok(crate::builtins::prototype_to_string(receiver))
-            }
-        }
-        Builtin::ObjectPrototypeProtoGetter => crate::builtins::object::get_prototype_of(receiver),
-        Builtin::ObjectPrototypeProtoSetter => object_proto_setter(receiver, arguments),
-        Builtin::ObjectPrototypeToLocaleString => {
-            let Some(value) = receiver else {
-                return Some(Err(crate::value::error::throw_type_error(
-                    "Object.prototype.toLocaleString called on null or undefined",
-                )));
-            };
-            if matches!(value, Value::Null | Value::Undefined) {
-                return Some(Err(crate::value::error::throw_type_error(
-                    "Object.prototype.toLocaleString called on null or undefined",
-                )));
-            }
-            let method = match crate::execute::get_property_result(value, "toString") {
-                Ok(method) => method,
-                Err(error) => return Some(Err(error)),
-            };
-            crate::functions::execute_target_with_receiver(&method, value, &[])
-                .map(|result| result.0)
-        }
+        Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
@@ -201,35 +161,6 @@ fn execute_simple_conversion(
         _ => return None,
     };
     Some(result)
-}
-
-fn object_proto_setter(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    let Some(receiver) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot set __proto__ on null or undefined",
-        ));
-    };
-    if matches!(receiver, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot set __proto__ on null or undefined",
-        ));
-    }
-    let prototype = arguments.first().cloned().unwrap_or(Value::Undefined);
-    if !matches!(prototype, Value::Null) && !crate::value::is_object(&prototype) {
-        return Ok(Value::Undefined);
-    }
-    if !crate::value::is_object(receiver) {
-        return Ok(Value::Undefined);
-    }
-    if matches!(receiver, Value::Builtin(Builtin::ObjectPrototype)) && !matches!(prototype, Value::Null) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot set the prototype of Object.prototype",
-        ));
-    }
-    crate::builtins::object::set_prototype_of(&[receiver.clone(), prototype]).map(|_| Value::Undefined)
 }
 
 fn execute_simple_number(
@@ -307,32 +238,4 @@ fn execute_simple_error(
         return None;
     }
     Some(error_builtin(builtin, arguments, receiver))
-}
-
-fn iterator_prototype_setter(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-    key: &str,
-) -> Result<Value, VmError> {
-    let target = receiver.cloned().unwrap_or(Value::Undefined);
-    if matches!(
-        target,
-        Value::Undefined
-            | Value::Null
-            | Value::Boolean(_)
-            | Value::Number(_)
-            | Value::BigInt(_)
-            | Value::String(_)
-            | Value::StringUnits(_)
-            | Value::Builtin(Builtin::IteratorPrototype)
-    ) {
-        return Err(crate::value::error::throw_type_error("Invalid receiver"));
-    }
-    let updated = crate::builtins::set_property(
-        target.clone(),
-        key,
-        arguments.first().cloned().unwrap_or(Value::Undefined),
-    );
-    crate::locals::replace_value(&target, &updated);
-    Ok(Value::Undefined)
 }

@@ -25,7 +25,8 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    connect, create_server, server_address, server_close, server_listen, socket_address,
+    connect, connect_existing, create_server, server_address, server_close, server_listen, socket_address,
+    socket_construct,
     socket_destroy, socket_end, socket_pause, socket_resume, socket_set_encoding,
     socket_set_keep_alive, socket_set_no_delay, socket_write,
 };
@@ -61,9 +62,13 @@ pub struct NetSocket {
     pub state: SocketState,
     pub server_id: Option<u64>,
     pub write_buf: Vec<u8>,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
     pub read_eof: bool,
     pub close_emitted: bool,
     pub connect_announced: bool,
+    pub peer: Option<SocketAddr>,
+    pub local: Option<SocketAddr>,
     pub encoding: Option<String>,
 }
 
@@ -137,6 +142,47 @@ fn install_methods(mut object: Value, props: Vec<(String, Value)>) -> Result<Val
     Ok(object)
 }
 
+pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
+    install_methods(
+        object,
+        vec![
+            ("bytesRead".to_string(), Value::Number(0.0)),
+            ("bytesWritten".to_string(), Value::Number(0.0)),
+            ("pending".to_string(), Value::Boolean(true)),
+            ("connecting".to_string(), Value::Boolean(false)),
+            ("readyState".to_string(), Value::String("closed".to_string())),
+        ],
+    )
+}
+
+pub(crate) fn set_socket_state(
+    socket: &Value,
+    pending: bool,
+    connecting: bool,
+    ready_state: &str,
+) {
+    execute::set_property_in_place(socket, "pending", Value::Boolean(pending));
+    execute::set_property_in_place(socket, "connecting", Value::Boolean(connecting));
+    execute::set_property_in_place(
+        socket,
+        "readyState",
+        Value::String(ready_state.to_string()),
+    );
+}
+
+pub(crate) fn update_socket_counters(socket: &NetSocket) {
+    execute::set_property_in_place(
+        &socket.js,
+        "bytesRead",
+        Value::Number(socket.bytes_read as f64),
+    );
+    execute::set_property_in_place(
+        &socket.js,
+        "bytesWritten",
+        Value::Number(socket.bytes_written as f64),
+    );
+}
+
 fn allocate_id(state: &Rc<RefCell<HostState>>) -> u64 {
     let id = state.borrow().net.next;
     state.borrow_mut().net.next += 1;
@@ -159,6 +205,7 @@ fn net_info_props(peer: SocketAddr, local: Option<SocketAddr>) -> Vec<(String, V
             Value::String(local.ip().to_string()),
         ));
         props.push(("localPort".to_string(), Value::Number(local.port() as f64)));
+        props.push(("localFamily".to_string(), Value::String(family(local))));
     }
     props
 }
@@ -171,8 +218,37 @@ fn server_props() -> Vec<(&'static str, Value)> {
     ]
 }
 
+pub(crate) fn set_server_listening(server: &Value, listening: bool) -> Result<(), VmError> {
+    let descriptor = host_api::object(vec![
+        ("value".to_string(), Value::Boolean(listening)),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]);
+    let _ = execute::define_property(server.clone(), "listening", descriptor)?;
+    Ok(())
+}
+
+pub(crate) fn set_server_connection_key(
+    server: &Value,
+    port: u16,
+    host: Option<&str>,
+) -> Result<(), VmError> {
+    let address = host.unwrap_or("0.0.0.0");
+    let key = format!("4:{address}:{port}");
+    let descriptor = host_api::object(vec![
+        ("value".to_string(), Value::String(key)),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]);
+    let _ = execute::define_property(server.clone(), "_connectionKey", descriptor)?;
+    Ok(())
+}
+
 fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
+        ("connect", cap(crate::registry::SPEC_NET_CONNECT)),
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
         ("destroy", cap(crate::registry::SPEC_NET_SOCKET_DESTROY)),
@@ -221,6 +297,7 @@ fn register_server(
             close_emitted: false,
         })),
     );
+    set_server_listening(js, is_listening)?;
     Ok(id)
 }
 
@@ -383,6 +460,18 @@ pub fn build() -> Value {
         ),
         (
             "createServer",
+            crate::host::capability(crate::registry::SPEC_NET_SERVER),
+        ),
+        (
+            "Socket",
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET),
+        ),
+        (
+            "Stream",
+            crate::host::capability(crate::registry::SPEC_NET_SOCKET),
+        ),
+        (
+            "Server",
             crate::host::capability(crate::registry::SPEC_NET_SERVER),
         ),
         (

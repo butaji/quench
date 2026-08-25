@@ -227,29 +227,16 @@ fn typed_array_subview(value: &Value, begin: usize, length: usize) -> Value {
         };
     }
     match value {
-        Value::Float64Array(view) => {
-            subview!(Float64Array, crate::value::Float64ArrayData, 8, view)
-        }
-        Value::Float32Array(view) => {
-            subview!(Float32Array, crate::value::Float32ArrayData, 4, view)
-        }
+        Value::Float64Array(view) => subview!(Float64Array, crate::value::Float64ArrayData, 8, view),
+        Value::Float32Array(view) => subview!(Float32Array, crate::value::Float32ArrayData, 4, view),
         Value::Int8Array(view) => subview!(Int8Array, crate::value::Int8ArrayData, 1, view),
         Value::Int16Array(view) => subview!(Int16Array, crate::value::Int16ArrayData, 2, view),
         Value::Int32Array(view) => subview!(Int32Array, crate::value::Int32ArrayData, 4, view),
-        Value::BigInt64Array(view) => {
-            subview!(BigInt64Array, crate::value::BigInt64ArrayData, 8, view)
-        }
-        Value::BigUint64Array(view) => {
-            subview!(BigUint64Array, crate::value::BigUint64ArrayData, 8, view)
-        }
+        Value::BigInt64Array(view) => subview!(BigInt64Array, crate::value::BigInt64ArrayData, 8, view),
+        Value::BigUint64Array(view) => subview!(BigUint64Array, crate::value::BigUint64ArrayData, 8, view),
         Value::Uint32Array(view) => subview!(Uint32Array, crate::value::Uint32ArrayData, 4, view),
         Value::Uint8Array(view) => subview!(Uint8Array, crate::value::Uint8ArrayData, 1, view),
-        Value::Uint8ClampedArray(view) => subview!(
-            Uint8ClampedArray,
-            crate::value::Uint8ClampedArrayData,
-            1,
-            view
-        ),
+        Value::Uint8ClampedArray(view) => subview!(Uint8ClampedArray, crate::value::Uint8ClampedArrayData, 1, view),
         Value::Uint16Array(view) => subview!(Uint16Array, crate::value::Uint16ArrayData, 2, view),
         _ => Value::Undefined,
     }

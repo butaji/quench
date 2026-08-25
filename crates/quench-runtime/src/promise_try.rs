@@ -15,9 +15,9 @@ fn promise_try(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
         ));
     }
     let promise = if matches!(constructor, Value::Builtin(Builtin::Promise)) {
-        Value::Promise(Rc::new(PromiseData::default()))
+        Value::Promise(PromiseData::allocate(PromiseState::Pending))
     } else {
-        let executor_target = Rc::new(PromiseData::default());
+        let executor_target = PromiseData::allocate(PromiseState::Pending);
         let executor = bound_settler(Builtin::PromiseResolve, &executor_target, 2.0);
         crate::construct::construct_value(constructor, &[executor])?
     };

@@ -9,7 +9,7 @@ fn reflect_define_property(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let descriptor = to_property_descriptor(&descriptor)?;
     match proxy_define_property(target, &prop, &descriptor) {
-        Ok(result) => Ok(Value::Boolean(crate::execute::is_truthy(&result))),
+        Ok(_) => Ok(Value::Boolean(true)),
         Err(error) if define_rejected(&error) => Ok(Value::Boolean(false)),
         Err(error) => Err(error),
     }
@@ -37,10 +37,10 @@ fn define_rejected(error: &VmError) -> bool {
         return false;
     };
     let message = properties.iter().find_map(|(name, value)| match (name.as_str(), value) {
-        ("message", Value::String(text)) => Some(text.as_str()),
+        ("message", Value::String(text)) => Some(text),
         _ => None,
     });
-    match message {
+    match message.as_deref() {
         Some("Cannot define a property on a non-extensible object") => true,
         Some(text) => text.starts_with("Cannot redefine"),
         None => false,
@@ -130,7 +130,7 @@ fn reflect_property(arguments: &[Value]) -> Result<String, VmError> {
 pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap_result(proxy, "ownKeys")? {
+        if let Some(trap) = get_handler_trap(proxy, "ownKeys") {
             let result = call_trap(
                 &trap,
                 std::slice::from_ref(&proxy.target),
@@ -143,13 +143,13 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
         }
     }
     let target = match target {
-        Value::Proxy(proxy) => crate::locals::resolved_replacement(proxy.target.clone()),
-        target => target.clone(),
+        Value::Proxy(proxy) => &proxy.target,
+        target => target,
     };
     if matches!(target, Value::Proxy(_)) {
-        proxy_own_keys(&target)
+        proxy_own_keys(target)
     } else {
-        crate::own_keys::all(&target)
+        crate::own_keys::all(target)
     }
 }
 
@@ -168,7 +168,7 @@ fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), Vm
         )?;
         if is_non_configurable_descriptor(&descriptor) && !returned.contains(key) {
             return Err(crate::value::error::throw_type_error(
-                "Proxy ownKeys trap omitted non-configurable property",
+                &format!("'ownKeys' on proxy: trap result did not include '{key}'"),
             ));
         }
     }
@@ -177,7 +177,7 @@ fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), Vm
             || target_keys.iter().any(|key| !returned.contains(key)))
     {
         return Err(crate::value::error::throw_type_error(
-            "Proxy ownKeys trap result does not match non-extensible target",
+            "'ownKeys' on proxy: trap result did not include all non-configurable target keys",
         ));
     }
     Ok(())
@@ -237,7 +237,7 @@ fn validate_own_keys_result(value: &Value) -> Result<(), VmError> {
     }
     Ok(())
 }
-fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value> {
+fn descriptor_value(descriptor: &Value, field: &str) -> Option<Value> {
     let Value::Object(properties) = descriptor else {
         return None;
     };

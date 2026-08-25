@@ -171,8 +171,8 @@ mod tests {
         let data = ObjectData::new(vec![("answer".into(), Value::Number(42.0))]);
         let hot = data.hot_properties();
         assert_eq!(hot.len(), 1);
-        assert_eq!(hot[0].0, "answer");
-        assert_eq!(hot[0].1, Value::Number(42.0));
+        assert_eq!(hot.name_at(0).unwrap(), "answer");
+        assert_eq!(hot.slot_value(0), Some(&Value::Number(42.0)).cloned());
     }
 
 
@@ -222,7 +222,7 @@ mod tests {
             Value::Array(Rc::new(ArrayData::new(vec![Value::Number(3.0)]))),
         ])));
         let values = Value::Array(Rc::new(ArrayData::new(vec![Value::Number(1.0), nested])));
-        let Value::Array(flattened) = super::flat(Some(&values), &[Value::Number(2.0)]).unwrap() else {
+        let Value::Array(flattened) = super::flat(Some(&values), &[Value::Number(2.0)]) else {
             panic!("flat must return an array");
         };
         assert_eq!(

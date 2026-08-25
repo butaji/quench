@@ -49,6 +49,11 @@ const CAP_FS_STAT_ISFIFO: u16 = 0x1135;
 const CAP_FS_STAT_ISSOCKET: u16 = 0x1136;
 
 const CAP_FS_REALPATH: u16 = 0x1137;
+const CAP_FS_WATCH: u16 = 0x1152;
+const CAP_FS_READSTREAM: u16 = 0x1153;
+const CAP_FS_WRITESTREAM: u16 = 0x1154;
+const CAP_FS_OPENDIR: u16 = 0x1155;
+const CAP_FS_OPENDIRSYNC: u16 = 0x1156;
 const CAP_FSP_READFILE: u16 = 0x1140;
 const CAP_FSP_WRITEFILE: u16 = 0x1141;
 const CAP_FSP_APPENDFILE: u16 = 0x1142;
@@ -83,6 +88,11 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_READDIRSYNC => fs_sync::readdir_sync,
         CAP_FS_EXISTSSYNC => fs_sync::exists_sync,
         CAP_FS_REALSYNC => fs_sync::realpath_sync,
+        CAP_FS_WATCH => crate::modules::fs::validate_watch_options,
+        CAP_FS_READSTREAM => crate::modules::fs::validate_stream_options,
+        CAP_FS_WRITESTREAM => crate::modules::fs::validate_stream_options,
+        CAP_FS_OPENDIR => crate::modules::fs::validate_directory_options,
+        CAP_FS_OPENDIRSYNC => crate::modules::fs::validate_directory_options,
         _ => return fs_dispatch_more(cap),
     })
 }

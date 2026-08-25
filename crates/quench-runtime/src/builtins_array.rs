@@ -34,7 +34,8 @@ fn delete_bound_function_property(
         let mut properties = bound.properties.borrow_mut();
         let metadata = descriptor_key(key);
         properties.retain(|(name, _)| name != key && name != &metadata);
-        if matches!(bound.target, Value::Builtin(_)) && matches!(key, "length" | "name")
+        if bound.target == Value::Builtin(crate::ops::Builtin::AbstractModuleSource)
+            && matches!(key, "length" | "name")
         {
             properties.push((crate::builtins::deleted_key(key), Value::Boolean(true)));
         }
@@ -49,13 +50,13 @@ fn delete_object_property_value(
     if global_constant(&properties, key) || boxed_string_non_configurable(&properties, key) {
         return (Value::Object(properties), false);
     }
-    if descriptor_flag_in(&properties, key, "configurable") == Some(false) {
-        return (Value::Object(properties), false);
-    }
-    if crate::vm::is_global_object(&Value::Object(properties.clone()))
+    if properties.iter().any(|(name, _)| name == "\0realm")
         && !matches!(key, "undefined" | "Infinity" | "NaN")
     {
         return (delete_object_property(properties, key), true);
+    }
+    if descriptor_flag_in(properties.as_ref(), key, "configurable") == Some(false) {
+        return (Value::Object(properties), false);
     }
     (delete_object_property(properties, key), true)
 }
@@ -95,7 +96,7 @@ fn global_constant(properties: &Rc<crate::value::ObjectData>, key: &str) -> bool
 }
 
 fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str) -> (Value, bool) {
-    let configurable = descriptor_flag_in(&function.properties.borrow(), key, "configurable");
+    let configurable = descriptor_flag_in(&function.properties.borrow()[..], key, "configurable");
     if configurable == Some(false) {
         return (Value::Function(function), false);
     }
@@ -108,29 +109,22 @@ fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str
 }
 
 fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -> Value {
-    let has_own = properties.iter().any(|(name, _)| name == key);
-    let deleted_marker = crate::builtins::deleted_key(key);
-    let already_deleted = properties.iter().any(|(name, _)| name == &deleted_marker);
-    if !has_own && !already_deleted {
-        return Value::Object(properties);
-    }
     let cell = properties
         .iter()
         .rev()
         .find_map(|(name, value)| (name == key).then_some(value))
         .and_then(|value| match value {
-            Value::BindingCell(cell) => Some(Rc::clone(cell)),
+            Value::BindingCell(cell) => Some(Rc::clone(&cell)),
             _ => None,
         });
     let mut values: crate::value::ObjectProperties = properties
         .iter()
         .filter(|(name, _)| name != key && name != &descriptor_key(key))
-        .cloned()
+        .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
-    values.push((
-        deleted_marker.into(),
-        cell.map_or(Value::Boolean(true), Value::BindingCell),
-    ));
+    if let Some(cell) = cell {
+        values.push((crate::builtins::deleted_key(key).into(), Value::BindingCell(cell)));
+    }
     if crate::vm::is_global_object(&Value::Object(Rc::clone(&properties)))
         && crate::vm::global_builtin_exists(key)
     {
@@ -176,42 +170,7 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
             Value::BoundFunction(bound)
         }
         Value::Builtin(builtin) => {
-            let mut fields = vec![("value".to_string(), value)];
-            if builtin == crate::ops::Builtin::ArrayPrototype && key == "length" {
-                fields.extend([
-                    ("writable".to_string(), Value::Boolean(true)),
-                    ("enumerable".to_string(), Value::Boolean(false)),
-                    ("configurable".to_string(), Value::Boolean(false)),
-                ]);
-            }
-            crate::builtins::write_intrinsic_override(
-                builtin,
-                key,
-                Value::Object(Rc::new(crate::value::ObjectData::new(fields))),
-            );
-            if builtin == crate::ops::Builtin::ArrayPrototype {
-                if let Some(index) = crate::arrays::array_index(key) {
-                    let length = crate::builtins::read_descriptor_value(builtin, "length")
-                        .or_else(|| crate::builtins::special_property(builtin, "length"))
-                        .and_then(|value| match value {
-                            Value::Number(length) => Some(length as u32),
-                            _ => None,
-                        })
-                        .unwrap_or(0);
-                    if index >= length {
-                        crate::builtins::write_intrinsic_override(
-                            builtin,
-                            "length",
-                            Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-                                ("value".to_string(), Value::Number(f64::from(index) + 1.0)),
-                                ("writable".to_string(), Value::Boolean(true)),
-                                ("enumerable".to_string(), Value::Boolean(false)),
-                                ("configurable".to_string(), Value::Boolean(false)),
-                            ]))),
-                        );
-                    }
-                }
-            }
+            crate::builtins::write_intrinsic_override(builtin, key, Value::Object(Rc::new(crate::value::ObjectData::new(vec![("value".to_string(), value)]))));
             target
         }
         target => set_property(target, key, value),
@@ -249,7 +208,6 @@ fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(Strin
     let ordinary_dense_index = crate::arrays::array_index(key).is_some()
         && !accessor
         && writable == Some(&Value::Boolean(true))
-        && values.descriptor(key).is_none()
         && descriptor.iter().rev().find_map(|(name, value)| (name == "enumerable").then_some(value)) == Some(&Value::Boolean(true))
         && descriptor.iter().rev().find_map(|(name, value)| (name == "configurable").then_some(value)) == Some(&Value::Boolean(true));
     // A default indexed data descriptor is the dense element itself. Keeping
@@ -333,12 +291,6 @@ fn prepare_array_length_definition(
     if key != "length" {
         return Ok(None);
     }
-    // The arguments exotic object's `length` is an ordinary writable data
-    // property, not ArraySetLength. Preserve its value without applying
-    // array-length coercion (which would incorrectly throw for strings).
-    if values.is_arguments() {
-        return Ok(None);
-    }
     let Some(value) = array_descriptor_value(descriptor, "value") else {
         return Ok(None);
     };
@@ -356,16 +308,6 @@ fn prepare_array_length_definition(
         ));
     }
     let new_length = new_length as usize;
-    // The current descriptor is read only after both coercions.  A coercion
-    // may have changed it, so validate against that post-coercion descriptor
-    // before mutating the array or committing the new length.
-    let current =
-        ordinary_own_descriptor(target, key, &Value::String(key.to_string()))?;
-    validate_redefinition(&current, descriptor)?;
-    let mut completed = complete_descriptor(descriptor, &current);
-    if let Some((_, value)) = completed.iter_mut().find(|(name, _)| name == "value") {
-        *value = Value::Number(new_length as f64);
-    }
     // Bound deletion by physically stored elements, not the logical length.
     let old_length = values.physical_len();
     if new_length >= old_length {
@@ -373,12 +315,20 @@ fn prepare_array_length_definition(
         // non-writable by verifyWritable.  The descriptor being applied is
         // authoritative here; consulting the current (temporary) metadata
         // would leave the logical length unchanged.
-        let mut values = Rc::clone(values);
-        Rc::make_mut(&mut values).set_length(new_length);
-        let mut result = Value::Array(values);
-        store_descriptor_metadata(&mut result, key, &completed);
-        define_array_descriptor(&mut result, key, completed);
-        return Ok(Some(result));
+        if array_descriptor_value(descriptor, "writable") != Some(Value::Boolean(false)) {
+            let mut values = Rc::clone(values);
+            Rc::make_mut(&mut values).set_length(new_length);
+            let mut partial = Value::Array(values);
+            store_descriptor_metadata(&mut partial, key, descriptor);
+            define_array_descriptor(&mut partial, key, descriptor.to_vec());
+            crate::locals::replace_value(target, &partial);
+        }
+        return Ok(None);
+    }
+    if array_descriptor_flag(values, key, "writable") == Some(false) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to read only array length",
+        ));
     }
     let mut values = Rc::clone(values);
     let data = Rc::make_mut(&mut values);
@@ -400,8 +350,8 @@ fn prepare_array_length_definition(
     }
     data.set_length(new_length);
     let mut result = Value::Array(values);
-    store_descriptor_metadata(&mut result, key, &completed);
-    define_array_descriptor(&mut result, key, completed);
+    store_descriptor_metadata(&mut result, key, descriptor);
+    define_array_descriptor(&mut result, key, descriptor.to_vec());
     Ok(Some(result))
 }
 
@@ -439,10 +389,11 @@ fn array_descriptor_flag(values: &crate::value::ArrayData, key: &str, flag: &str
     let Value::Object(descriptor) = values.descriptor(key)? else {
         return None;
     };
-    descriptor
+    let result = descriptor
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == flag).then_some(matches!(value, Value::Boolean(true))))
+        .find_map(|(name, value)| (name == flag).then_some(matches!(value, Value::Boolean(true))));
+    result
 }
 
 fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value: Value) -> Value {
@@ -469,10 +420,6 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         return Value::Array(values);
     };
     let index = index as usize;
-    if values.is_arguments() && index >= values.logical_len() {
-        Rc::make_mut(&mut values).set_property(key, value);
-        return Value::Array(values);
-    }
     let existing_number = values.set_existing_number(index, &value);
     let appended_number = !existing_number && values.append_preallocated_number(index, &value);
     if existing_number || appended_number {
@@ -494,122 +441,4 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
 
 fn array_length_number(value: &Value) -> f64 {
     crate::conversion::to_number(value).unwrap_or(f64::NAN)
-}
-
-pub(crate) fn array_with(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver.filter(|value| {
-        !matches!(value, Value::Null | Value::Undefined)
-    }) else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.with called on null or undefined",
-        ));
-    };
-    let length = crate::builtins::map_length(receiver)?;
-    if length >= 1usize << 32 {
-        return Err(crate::value::error::throw_range_error("Invalid array length"));
-    }
-    let number = arguments
-        .first()
-        .map(crate::conversion::to_number)
-        .transpose()?
-        .unwrap_or(0.0);
-    let integer = if number.is_nan() { 0.0 } else { number.trunc() };
-    let index = if integer < 0.0 {
-        (length as f64 + integer) as isize
-    } else {
-        integer as isize
-    };
-    if index < 0 || index as usize >= length {
-        return Err(crate::value::error::throw_range_error("Invalid index"));
-    }
-    let mut result = Vec::with_capacity(length);
-    for current in 0..length {
-        if current == index as usize {
-            result.push(arguments.get(1).cloned().unwrap_or(Value::Undefined));
-        } else {
-            result.push(crate::execute::get_property_result(
-                receiver,
-                &current.to_string(),
-            )?);
-        }
-    }
-    Ok(Value::array(result))
-}
-
-pub(crate) fn array_to_spliced(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver.filter(|value| {
-        !matches!(value, Value::Null | Value::Undefined)
-    }) else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.toSpliced called on null or undefined",
-        ));
-    };
-    let length = crate::builtins::map_length(receiver)?;
-    let start_number = arguments
-        .first()
-        .map(crate::conversion::to_number)
-        .transpose()?
-        .unwrap_or(0.0);
-    let start_number = if start_number.is_nan() {
-        0.0
-    } else {
-        start_number.trunc()
-    };
-    let start = if start_number < 0.0 {
-        (length as f64 + start_number).max(0.0) as usize
-    } else {
-        (start_number as usize).min(length)
-    };
-    // With no arguments, the method returns a shallow copy.  A present start
-    // with an omitted deleteCount instead deletes through the end.
-    let delete_count = if arguments.is_empty() {
-        0
-    } else if arguments.len() < 2 {
-        length - start
-    } else {
-        arguments
-            .get(1)
-            .map(crate::conversion::to_number)
-            .transpose()?
-            .unwrap_or(0.0)
-            .max(0.0)
-            .trunc() as usize
-    }
-    .min(length - start);
-    let insert_count = arguments.len().saturating_sub(2);
-    let new_length = length
-        .saturating_sub(delete_count)
-        .checked_add(insert_count)
-        .ok_or_else(|| crate::value::error::throw_type_error("Array length exceeds limit"))?;
-    if new_length > 9_007_199_254_740_991 {
-        return Err(crate::value::error::throw_type_error(
-            "Array length exceeds limit",
-        ));
-    }
-    if new_length > u32::MAX as usize {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid array length",
-        ));
-    }
-    let mut result = Vec::with_capacity(new_length);
-    for index in 0..start {
-        result.push(crate::execute::get_property_result(
-            receiver,
-            &index.to_string(),
-        )?);
-    }
-    result.extend(arguments.iter().skip(2).cloned());
-    for index in start + delete_count..length {
-        result.push(crate::execute::get_property_result(
-            receiver,
-            &index.to_string(),
-        )?);
-    }
-    Ok(Value::array(result))
 }

@@ -40,7 +40,15 @@ pub(crate) fn array_map(
             "Invalid array length",
         ));
     }
-    let mut mapped = array_species_create(&receiver, length)?;
+    let fast_result = default_array_map_result(&receiver)?;
+    let mut mapped_values = fast_result.then(|| Value::array(Vec::new()));
+    if let Some(Value::Array(values)) = mapped_values.as_mut() {
+        std::rc::Rc::make_mut(values).set_length(length);
+    }
+    let mut mapped = (!fast_result)
+        .then(|| array_species_create(&receiver, length))
+        .transpose()?
+        .unwrap_or(Value::Undefined);
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for index in 0..length {
         let Some(value) = map_value(&receiver, index)? else {
@@ -48,7 +56,14 @@ pub(crate) fn array_map(
         };
         let args = [value, Value::Number(index as f64), receiver.clone()];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
-        mapped = create_data_property_or_throw(mapped, &index.to_string(), result)?;
+        if let Some(Value::Array(values)) = mapped_values.as_mut() {
+            std::rc::Rc::make_mut(values).set_index(index, result);
+        } else {
+            mapped = create_data_property_or_throw(mapped, &index.to_string(), result)?;
+        }
+    }
+    if let Some(values) = mapped_values {
+        return Ok(values);
     }
     let previous = mapped.clone();
     let result = crate::builtins::set_property(
@@ -58,6 +73,21 @@ pub(crate) fn array_map(
     );
     crate::locals::replace_value(&previous, &result);
     Ok(result)
+}
+
+fn default_array_map_result(receiver: &Value) -> Result<bool, crate::execute::VmError> {
+    let Value::Array(values) = receiver else {
+        return Ok(false);
+    };
+    let packed = values.is_packed_ordinary();
+    let overrides = crate::builtins::intrinsic_override_keys(crate::ops::Builtin::ArrayPrototype);
+    let constructor = crate::execute::get_property_result(receiver, "constructor")?;
+    Ok(packed
+        && overrides.is_empty()
+        && matches!(
+            constructor,
+            Value::Undefined | Value::Builtin(crate::ops::Builtin::Array)
+        ))
 }
 
 pub(crate) fn array_species_create(
@@ -114,6 +144,13 @@ pub(crate) fn map_value(
 ) -> Result<Option<Value>, crate::execute::VmError> {
     let receiver = crate::locals::resolved_replacement(receiver.clone());
     if let Value::Array(_) = &receiver {
+        if let Value::Array(array) = &receiver {
+            if array.is_packed_ordinary()
+                && !crate::arrays::prototype_override_present(&index.to_string())
+            {
+                return Ok(array.get_index(index));
+            }
+        }
         let key = index.to_string();
         if !crate::with_scope::has_property(&receiver, &key)?
             && !crate::arrays::prototype_override_present(&key)
@@ -293,17 +330,35 @@ pub(crate) fn array_join(
     let Some(receiver) = receiver else {
         return Ok(Value::String(String::new()));
     };
-    let length = crate::builtins::map_length(receiver)?;
     let separator: Vec<u16> = match arguments.first() {
         Some(Value::Undefined) | None => ",".encode_utf16().collect(),
         Some(value) => crate::conversion::to_string(value)?.encode_utf16().collect(),
     };
     let mut result = Vec::new();
+    let receiver = crate::locals::resolved_replacement(receiver.clone());
+    if let Value::Array(array) = &receiver {
+        let length = array.logical_len();
+        for index in 0..length {
+            if index != 0 {
+                result.extend_from_slice(&separator);
+            }
+            let Some(value) = array.get_index(index) else {
+                continue;
+            };
+            if let Some(units) = crate::strings::units_of(&value) {
+                result.extend(units);
+            } else if !matches!(value, Value::Null | Value::Undefined) {
+                result.extend(crate::conversion::to_string(&value)?.encode_utf16());
+            }
+        }
+        return Ok(crate::strings::from_units(result));
+    }
+    let length = crate::builtins::map_length(&receiver)?;
     for index in 0..length {
         if index != 0 {
             result.extend_from_slice(&separator);
         }
-        let value = crate::execute::get_property_result(receiver, &index.to_string())?;
+        let value = crate::execute::get_property_result(&receiver, &index.to_string())?;
         if matches!(value, Value::Null | Value::Undefined) {
             continue;
         }
@@ -345,6 +400,12 @@ pub(crate) fn array_push(
                 .is_empty()
             && prototype_indices_clear
         {
+            if array.append_shared_numbers(arguments) {
+                return Ok(Value::Number(final_length as f64));
+            }
+            if array.append_shared_values(arguments) {
+                return Ok(Value::Number(final_length as f64));
+            }
             let (mut values, _, _) = array.hot_storage();
             values.extend(arguments.iter().cloned());
             let updated = Value::array(values);

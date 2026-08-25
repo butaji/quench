@@ -79,6 +79,14 @@ fn zip_mode(options: &Value) -> Result<u8, crate::execute::VmError> {
         Value::String(value) if value == "strict" => 2,
         _ => return Err(crate::value::error::throw_type_error("Iterator.zip mode")),
     };
+    if mode == 1 {
+        let padding = crate::execute::get_property_result(options, "padding")?;
+        if !matches!(padding, Value::Undefined) && !crate::value::is_object(&padding) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.zip padding",
+            ));
+        }
+    }
     Ok(mode)
 }
 
@@ -86,13 +94,6 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
     if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
         return Ok(value);
-    }
-    if !crate::value::is_object(&value)
-        && !matches!(value, Value::String(_) | Value::StringUnits(_))
-    {
-        return Err(crate::value::error::throw_type_error(
-            "Iterator.from requires an object or string",
-        ));
     }
     if !crate::value::is_object(&value) {
         return open(value);
@@ -107,27 +108,10 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
         };
         return Ok(make_protocol_with_next(value, next));
     }
-    let iterator = crate::functions::execute_target(&method, &value, &[])?;
-    if !crate::value::is_object(&iterator) {
-        return Err(crate::value::error::throw_type_error("Iterator.from requires an object"));
-    }
-    if matches!(iterator, Value::Iterator(_)) {
-        Ok(iterator)
-    } else {
-        Ok(make_protocol(iterator))
-    }
+    open(value)
 }
 
 fn receiver_iterator(receiver: &Value) -> Result<Value, crate::execute::VmError> {
-    if crate::value::is_object(receiver) {
-        let next = crate::execute::get_property_result(receiver, "next")?;
-        if crate::conversion::is_callable(&next) {
-            return Ok(crate::collections::iterator::make_protocol_with_next(
-                receiver.clone(),
-                next,
-            ));
-        }
-    }
     if matches!(receiver, Value::Generator(_)) {
         open(receiver.clone())
     } else {
@@ -137,9 +121,6 @@ fn receiver_iterator(receiver: &Value) -> Result<Value, crate::execute::VmError>
 
 pub(crate) fn to_array(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    if !crate::value::is_object(receiver) {
-        return Err(crate::value::error::throw_type_error("Iterator receiver is not an object"));
-    }
     let iterator = receiver_iterator(receiver)?;
     Ok(Value::array(collect_rest(&iterator)?))
 }
@@ -151,7 +132,6 @@ pub(crate) fn map(
     let receiver = receiver.ok_or_else(not_iterable)?;
     let mapper = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&mapper) {
-        let _ = close(receiver.clone(), crate::completion::Completion::Normal);
         return Err(crate::value::error::throw_type_error(
             "Iterator.prototype.map mapper is not callable",
         ));
@@ -174,7 +154,6 @@ pub(crate) fn filter(
     let receiver = receiver.ok_or_else(not_iterable)?;
     let predicate = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&predicate) {
-        let _ = close(receiver.clone(), crate::completion::Completion::Normal);
         return Err(crate::value::error::throw_type_error(
             "Iterator.prototype.filter predicate is not callable",
         ));
@@ -210,18 +189,11 @@ fn predicate_terminal(
     stop_when_truthy: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    let callback = match arguments.first() {
-        Some(callback) => callback,
-        None => {
-            let _ = close(receiver.clone(), crate::completion::Completion::Normal);
-            return Err(crate::vm::not_callable());
-        }
-    };
+    let iterator = receiver_iterator(receiver)?;
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(callback) {
-        let _ = close(receiver.clone(), crate::completion::Completion::Normal);
         return Err(crate::vm::not_callable());
     }
-    let iterator = receiver_iterator(receiver)?;
     let mut index = 0;
     loop {
         let Some(value) = step_value(&iterator)? else {
@@ -235,9 +207,9 @@ fn predicate_terminal(
         match result {
             Ok(result) if crate::execute::is_truthy(&result) == stop_when_truthy => {
                 let completion = close(iterator, crate::completion::Completion::Normal)?;
-                return match completion {
-                    crate::completion::Completion::Normal => Ok(Value::Boolean(stop_when_truthy)),
-                    completion => completion.into_vm_error().map(|_| Value::Boolean(stop_when_truthy)),
+                return match completion.into_vm_error() {
+                    Err(error) => Err(error),
+                    Ok(_) => Ok(Value::Boolean(stop_when_truthy)),
                 };
             }
             Ok(_) => index += 1,
@@ -270,37 +242,7 @@ pub(crate) fn return_iterator(
             "Iterator return called on incompatible receiver",
         ));
     };
-    let done = matches!(&*data.state.borrow(),
-        IteratorState::Zip { done: true, started: false, .. }
-            | IteratorState::ZipKeyed { done: true, started: false, .. }
-            | IteratorState::Mapped { done: true, .. }
-            | IteratorState::Filtered { done: true, .. }
-            | IteratorState::FlatMapped { done: true, .. }
-            | IteratorState::Dropped { done: true, .. }
-            | IteratorState::Take { done: true, .. });
-    if *data.in_return.borrow() && !done {
-        return Err(crate::value::error::throw_type_error(
-            "Iterator is already executing",
-        ));
-    }
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let protocol_inner = match &*data.state.borrow() {
-        IteratorState::Protocol { iterator, done, .. } => Some((iterator.clone(), *done)),
-        _ => None,
-    };
-    if let Some((iterator, done)) = protocol_inner {
-        if done {
-            return Ok(result(value, true));
-        }
-        mark_done(data);
-        *data.in_return.borrow_mut() = true;
-        let returned = match get_return_method(&iterator)? {
-            Some(method) => crate::functions::execute_target(&method, &iterator, &[]),
-            None => Ok(result(value, true)),
-        };
-        *data.in_return.borrow_mut() = false;
-        return returned;
-    }
     let (already_done, inner) = inner_iterators(data);
     if already_done {
         return Ok(result(value, true));
@@ -321,16 +263,10 @@ pub(crate) fn return_iterator(
 fn inner_iterators(data: &IteratorData) -> (bool, Vec<Value>) {
     let state = data.state.borrow();
     match &*state {
-        IteratorState::Protocol { iterator, done, .. } => {
-            ( *done, if *done { Vec::new() } else { vec![iterator.clone()] })
-        }
         IteratorState::Zip { done: true, .. } | IteratorState::Zip { .. } => {
             let iterators = zip_iterators(data).unwrap_or_default();
             let already_done = matches!(&*data.state.borrow(), IteratorState::Zip { done: true, .. });
             (already_done, iterators)
-        }
-        IteratorState::ZipKeyed { iterators, done, .. } => {
-            (*done, if *done { Vec::new() } else { iterators.clone() })
         }
         IteratorState::Concat { opened, done, .. } => {
             if *done {
@@ -341,15 +277,6 @@ fn inner_iterators(data: &IteratorData) -> (bool, Vec<Value>) {
                     .filter_map(|slot| slot.clone())
                     .collect();
                 (false, inner)
-            }
-        }
-        IteratorState::FlatMapped { inner, current, done, .. } => {
-            if *done {
-                (true, Vec::new())
-            } else {
-                let mut values = current.clone().into_iter().collect::<Vec<_>>();
-                values.push(inner.clone());
-                (false, values)
             }
         }
         _ => (false, Vec::new()),
@@ -383,12 +310,8 @@ pub(crate) fn flat_map(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    if !crate::value::is_object(receiver) {
-        return Err(crate::value::error::throw_type_error("Iterator receiver is not an object"));
-    }
     let mapper = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&mapper) {
-        let _ = close(receiver.clone(), crate::completion::Completion::Normal);
         return Err(crate::value::error::throw_type_error(
             "Iterator.prototype.flatMap mapper is not callable",
         ));
@@ -411,24 +334,19 @@ pub(crate) fn drop(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    if !crate::value::is_object(receiver) {
-        return Err(crate::value::error::throw_type_error("Iterator receiver is not an object"));
-    }
-    let limit = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let limit = match normalize_limit_now(&limit) {
-        Ok(limit) => limit,
-        Err(error) => {
-            let _ = close(receiver.clone(), crate::completion::Completion::Normal);
-            return Err(error);
-        }
-    };
+    let limit = arguments
+        .first()
+        .cloned()
+        .unwrap_or(Value::Undefined);
+    let limit = crate::conversion::to_number(&limit)?.trunc();
+    let n = if limit.is_nan() || limit < 0.0 { 0.0 } else { limit };
+    let n = n.clamp(0.0, 9_007_199_254_740_991.0) as usize;
     let inner = receiver_iterator(receiver)?;
     Ok(Value::Iterator(Rc::new(IteratorData::new(
         IteratorState::Dropped {
             inner,
             skipped: 0,
-            limit,
-            limit_value: None,
+            limit: n,
             done: false,
         },
     ))))
@@ -439,25 +357,16 @@ pub(crate) fn take(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    if !crate::value::is_object(receiver) {
-        return Err(crate::value::error::throw_type_error("Iterator receiver is not an object"));
-    }
-    let limit = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let limit = match normalize_limit_now(&limit) {
-        Ok(limit) => limit as u64,
-        Err(error) => {
-            let _ = close(receiver.clone(), crate::completion::Completion::Normal);
-            return Err(error);
-        }
-    };
+    let limit = arguments
+        .first()
+        .cloned()
+        .unwrap_or(Value::Undefined);
+    let limit = crate::conversion::to_number(&limit)?.trunc();
+    let n = if limit.is_nan() || limit < 0.0 { 0.0 } else { limit };
+    let n = n.clamp(0.0, 9_007_199_254_740_991.0) as u64;
     let inner = receiver_iterator(receiver)?;
     Ok(Value::Iterator(Rc::new(IteratorData::new(
-        IteratorState::Take {
-            inner,
-            remaining: limit,
-            limit_value: None,
-            done: false,
-        },
+        IteratorState::Take { inner, remaining: n },
     ))))
 }
 
@@ -466,19 +375,14 @@ pub(crate) fn reduce(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    let callback = match arguments.first().cloned() {
-        Some(callback) => callback,
-        None => {
-            let _ = close(receiver.clone(), crate::completion::Completion::Normal);
-            return Err(crate::vm::not_callable());
-        }
-    };
+    let callback = arguments
+        .first()
+        .cloned()
+        .ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(&callback) {
-        let _ = close(receiver.clone(), crate::completion::Completion::Normal);
         return Err(crate::vm::not_callable());
     }
     let iterator = receiver_iterator(receiver)?;
-    let has_initial = arguments.get(1).is_some();
     let mut accumulator = match arguments.get(1) {
         Some(value) => value.clone(),
         None => match step_value(&iterator)? {
@@ -490,7 +394,7 @@ pub(crate) fn reduce(
             }
         },
     };
-    let mut index = if has_initial { 0 } else { 1 };
+    let mut index = 0;
     loop {
         let value = match step_value(&iterator) {
             Ok(Some(value)) => value,
@@ -528,7 +432,6 @@ pub(crate) fn find(
         .cloned()
         .unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&callback) {
-        let _ = close(receiver.clone(), crate::completion::Completion::Normal);
         return Err(crate::value::error::throw_type_error(
             "Iterator.prototype.find predicate is not callable",
         ));
@@ -557,11 +460,8 @@ pub(crate) fn find(
             }
         };
         if matched {
-            let completion = close(iterator.clone(), crate::completion::Completion::Normal)?;
-            return match completion {
-                crate::completion::Completion::Normal => Ok(value),
-                completion => completion.into_vm_error().map(|_| value),
-            };
+            let _ = close(iterator.clone(), crate::completion::Completion::Normal);
+            return Ok(value);
         }
         index += 1;
     }
@@ -577,7 +477,6 @@ pub(crate) fn for_each(
         .cloned()
         .unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&callback) {
-        let _ = close(receiver.clone(), crate::completion::Completion::Normal);
         return Err(crate::value::error::throw_type_error(
             "Iterator.prototype.forEach callback is not callable",
         ));
@@ -606,13 +505,5 @@ pub(crate) fn for_each(
     }
 }
 
-fn normalize_limit_now(value: &Value) -> Result<usize, crate::execute::VmError> {
-    let number = crate::conversion::to_number(value)?.trunc();
-    if number.is_nan() || number < 0.0 {
-        return Err(crate::value::error::throw_range_error("Invalid iterator limit"));
-    }
-    if number.is_infinite() {
-        return Ok(9_007_199_254_740_991usize);
-    }
-    Ok(number.min(9_007_199_254_740_991.0) as usize)
-}
+
+

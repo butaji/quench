@@ -4,7 +4,6 @@ use super::{
     close, close_iterators, iterator_map, iterator_protocol, mark_done, native_step, not_iterable,
 };
 use crate::value::{IteratorData, IteratorState, Value};
-use std::rc::Rc;
 
 pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     let Value::Iterator(data) = value else {
@@ -43,6 +42,16 @@ pub(crate) fn step_value_await(value: &Value) -> Result<Option<Value>, crate::ex
     }
 }
 
+pub(crate) fn resume_async_result(
+    value: &Value,
+    result: Value,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let Value::Iterator(data) = value else {
+        return Err(not_iterable());
+    };
+    protocol_result(data, result)
+}
+
 fn await_iterator_result(value: Value) -> Result<Value, crate::execute::VmError> {
     let resolved = crate::promise::promise_resolve(std::slice::from_ref(&value));
     let Value::Promise(promise) = resolved else {
@@ -55,18 +64,35 @@ fn await_iterator_result(value: Value) -> Result<Value, crate::execute::VmError>
             Err(crate::execute::VmError::Thrown(reason))
         }
         crate::value::PromiseState::Pending => {
-            crate::promise::drain_one_microtask();
-            let state = promise.state.borrow().clone();
-            match state {
-                crate::value::PromiseState::Fulfilled(value) => Ok(value),
-                crate::value::PromiseState::Rejected(reason) => {
-                    Err(crate::execute::VmError::Thrown(reason))
+            // An await may cross host jobs and promise reactions (for example
+            // nextTick -> abort -> iterator rejection). Advance one queue item
+            // at a time and re-check the awaited promise, with a bounded pump
+            // so recurring jobs cannot starve the suspension boundary.
+            for _ in 0..128 {
+                if let Some(result) = settled_promise(&promise) {
+                    return result;
                 }
-                crate::value::PromiseState::Pending => {
-                    Err(crate::execute::VmError::Suspended(promise))
+                if crate::promise::drain_one_microtask() {
+                    continue;
+                }
+                if !crate::host_jobs::pump_host_job()? {
+                    break;
                 }
             }
+            Err(crate::execute::VmError::Suspended(promise))
         }
+    }
+}
+
+fn settled_promise(
+    promise: &std::rc::Rc<crate::value::PromiseData>,
+) -> Option<Result<Value, crate::execute::VmError>> {
+    match promise.state.borrow().clone() {
+        crate::value::PromiseState::Fulfilled(value) => Some(Ok(value)),
+        crate::value::PromiseState::Rejected(reason) => {
+            Some(Err(crate::execute::VmError::Thrown(reason)))
+        }
+        crate::value::PromiseState::Pending => None,
     }
 }
 
@@ -106,13 +132,6 @@ fn concat_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmEr
     }
     loop {
         if let Some(iterator) = current.clone() {
-            if matches!(&iterator, Value::Iterator(inner) if std::ptr::eq(Rc::as_ptr(inner), data))
-                && *data.executing.borrow()
-            {
-                return Err(crate::value::error::throw_type_error(
-                    "Iterator is already executing",
-                ));
-            }
             if let Some(value) = super::step_value(&iterator)? {
                 update_concat(data, index, current, done);
                 return Ok(StepTarget::Value(Some(value)));
@@ -189,21 +208,15 @@ enum Snapshot {
         inner: Value,
         skipped: usize,
         limit: usize,
-        limit_value: Option<Value>,
         done: bool,
     },
     Take {
         inner: Value,
         remaining: u64,
-        limit_value: Option<Value>,
-        done: bool,
     },
     Zip {
         iterators: Vec<Value>,
         mode: u8,
-        padding: Value,
-        padding_values: Vec<Value>,
-        started: bool,
         done: bool,
     },
 }
@@ -250,40 +263,24 @@ fn snapshot_reentry(data: &IteratorData) -> Option<Snapshot> {
             inner,
             skipped,
             limit,
-            limit_value,
             done,
-            ..
         } => Snapshot::Dropped {
             inner: inner.clone(),
             skipped: *skipped,
             limit: *limit,
-            limit_value: limit_value.clone(),
             done: *done,
         },
-        IteratorState::Take {
-            inner,
-            remaining,
-            limit_value,
-            done,
-        } => Snapshot::Take {
+        IteratorState::Take { inner, remaining } => Snapshot::Take {
             inner: inner.clone(),
             remaining: *remaining,
-            limit_value: limit_value.clone(),
-            done: *done,
         },
         IteratorState::Zip {
             iterators,
             mode,
-            padding,
-            padding_values,
-            started,
             done,
         } => Snapshot::Zip {
             iterators: iterators.clone(),
             mode: *mode,
-            padding: padding.clone(),
-            padding_values: padding_values.clone(),
-            started: *started,
             done: *done,
         },
         _ => return None,
@@ -336,14 +333,12 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
         Snapshot::Dropped {
             skipped,
             limit,
-            limit_value,
             done,
             ..
         } => {
             if let IteratorState::Dropped {
                 skipped: sk,
                 limit: lim,
-                limit_value: pending,
                 done: d,
                 ..
             } = &mut *state
@@ -351,43 +346,16 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
                 *sk = *skipped;
                 *lim = *limit;
                 *d = *done;
-                *pending = limit_value.clone();
             }
         }
-        Snapshot::Take {
-            remaining,
-            limit_value,
-            done,
-            ..
-        } => {
-            if let IteratorState::Take {
-                remaining: rem,
-                limit_value: pending,
-                done: d,
-                ..
-            } = &mut *state
-            {
+        Snapshot::Take { remaining, .. } => {
+            if let IteratorState::Take { remaining: rem, .. } = &mut *state {
                 *rem = *remaining;
-                *pending = limit_value.clone();
-                *d = *done;
             }
         }
-        Snapshot::Zip {
-            done,
-            padding_values,
-            started,
-            ..
-        } => {
-            if let IteratorState::Zip {
-                done: d,
-                padding_values: values,
-                started: s,
-                ..
-            } = &mut *state
-            {
+        Snapshot::Zip { done, .. } => {
+            if let IteratorState::Zip { done: d, .. } = &mut *state {
                 *d = *done;
-                *values = padding_values.clone();
-                *s = *started;
             }
         }
     }
@@ -422,63 +390,19 @@ fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::ex
             inner,
             skipped,
             limit,
-            limit_value,
             done,
-        } => {
-            if let Some(value) = limit_value.take() {
-                *limit = normalize_limit(&value)?;
-            }
-            dropped_step(inner, skipped, *limit, done).map(StepTarget::Value)?
-        }
-        Snapshot::Take {
-            inner,
-            remaining,
-            limit_value,
-            done,
-        } => {
-            if let Some(value) = limit_value.take() {
-                *remaining = normalize_limit(&value)? as u64;
-            }
-            match take_step(inner, remaining, done) {
-                Ok(value) => StepTarget::Value(value),
-                Err(error) => {
-                    if *done {
-                        if let IteratorState::Take {
-                            done: state_done, ..
-                        } = &mut *data.state.borrow_mut()
-                        {
-                            *state_done = true;
-                        }
-                    }
-                    return Err(error);
-                }
-            }
+        } => dropped_step(inner, skipped, *limit, done).map(StepTarget::Value)?,
+        Snapshot::Take { inner, remaining } => {
+            take_step(inner, remaining).map(StepTarget::Value)?
         }
         Snapshot::Zip {
             iterators,
             mode,
-            padding,
-            padding_values,
-            started,
             done,
-        } => zip_step(iterators, *mode, padding, padding_values, started, done)
-            .map(StepTarget::Value)?,
+        } => zip_step(iterators, *mode, done).map(StepTarget::Value)?,
     };
     write_snapshot(data, &owned);
     Ok(Some(result))
-}
-
-fn normalize_limit(value: &Value) -> Result<usize, crate::execute::VmError> {
-    let number = crate::conversion::to_number(value)?.trunc();
-    if number.is_nan() || number < 0.0 {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid iterator limit",
-        ));
-    }
-    if number.is_infinite() {
-        return Ok(9_007_199_254_740_991usize);
-    }
-    Ok(number.min(9_007_199_254_740_991.0) as usize)
 }
 
 fn step_target_state(
@@ -520,106 +444,18 @@ fn step_target_state(
             kind,
             done,
         } => StepTarget::Value(iterator_map::step(data, index, kind, done)),
-        IteratorState::ZipKeyed {
-            keys,
-            iterators,
-            mode,
-            padding: _,
-            padding_values,
-            started,
-            done,
-        } => StepTarget::Value(zip_keyed_step(
-            keys,
-            iterators,
-            *mode,
-            padding_values,
-            started,
-            done,
-        )?),
         state => return step_target_tail(state),
     })
-}
-
-fn zip_keyed_step(
-    keys: &[String],
-    iterators: &[Value],
-    mode: u8,
-    padding_values: &[Value],
-    started: &mut bool,
-    done: &mut bool,
-) -> Result<Option<Value>, crate::execute::VmError> {
-    if *done {
-        return Ok(None);
-    }
-    *started = true;
-    let mut values = Vec::with_capacity(iterators.len());
-    let mut ended = 0;
-    let mut open = vec![true; iterators.len()];
-    let mut saw_value = false;
-    for (index, iterator) in iterators.iter().enumerate() {
-        match super::step_value(iterator) {
-            Ok(Some(value)) => {
-                values.push(value);
-                saw_value = true;
-                if mode == 2 && ended > 0 {
-                    break;
-                }
-            }
-            Ok(None) => {
-                ended += 1;
-                open[index] = false;
-                values.push(if mode == 1 {
-                    padding_values
-                        .get(index)
-                        .cloned()
-                        .unwrap_or(Value::Undefined)
-                } else {
-                    Value::Undefined
-                });
-                if mode == 0 || (mode == 2 && index > 0 && saw_value) {
-                    break;
-                }
-            }
-            Err(error) => return Err(close_remaining(&iterators[index + 1..], error)),
-        }
-    }
-    if ended == iterators.len() {
-        *done = true;
-        return Ok(None);
-    }
-    if ended > 0 && mode != 1 {
-        *done = true;
-        if mode == 2 {
-            return Err(close_strict(iterators, &open));
-        }
-        if let Some(error) = close_shortest(iterators, &open)? {
-            return Err(error);
-        }
-        return Ok(None);
-    }
-    let properties = keys
-        .iter()
-        .zip(values)
-        .map(|(key, value)| (key.clone(), value));
-    Ok(Some(Value::Object(Rc::new(crate::value::ObjectData::new(
-        std::iter::once(("\0prototype".to_string(), Value::Null))
-            .chain(properties)
-            .collect(),
-    )))))
 }
 
 fn zip_step(
     iterators: &[Value],
     mode: u8,
-    padding: &Value,
-    padding_values: &mut Vec<Value>,
-    started: &mut bool,
     done: &mut bool,
 ) -> Result<Option<Value>, crate::execute::VmError> {
     if *done {
         return Ok(None);
     }
-    *started = true;
     let mut values = Vec::with_capacity(iterators.len());
     let mut ended = 0;
     let mut open = vec![true; iterators.len()];
@@ -636,11 +472,7 @@ fn zip_step(
             Ok(None) => {
                 ended += 1;
                 open[index] = false;
-                values.push(if mode == 1 {
-                    zip_padding_value(index, padding_values)
-                } else {
-                    Value::Undefined
-                });
+                values.push(Value::Undefined);
                 if mode == 0 || (mode == 2 && !all_done) {
                     break;
                 }
@@ -664,10 +496,6 @@ fn zip_step(
         return Ok(None);
     }
     Ok(Some(Value::array(values)))
-}
-
-fn zip_padding_value(index: usize, values: &[Value]) -> Value {
-    values.get(index).cloned().unwrap_or(Value::Undefined)
 }
 
 fn close_strict(iterators: &[Value], open: &[bool]) -> crate::execute::VmError {
@@ -820,9 +648,7 @@ fn flat_mapped_step(
             Ok(value) => value,
             Err(error) => {
                 *done = true;
-                let completion = crate::completion::Completion::from_vm_error(error)?;
-                return super::close(inner.clone(), completion)
-                    .and_then(|completion| completion.into_vm_error().map(|_| None));
+                return Err(error);
             }
         };
         *index += 1;
@@ -860,35 +686,17 @@ fn dropped_step(
         Err(error) => Err(error),
     }
 }
-fn take_step(
-    inner: &Value,
-    remaining: &mut u64,
-    done: &mut bool,
-) -> Result<Option<Value>, crate::execute::VmError> {
-    if *done {
-        return Ok(None);
-    }
+fn take_step(inner: &Value, remaining: &mut u64) -> Result<Option<Value>, crate::execute::VmError> {
     if *remaining == 0 {
-        *done = true;
-        return close_after_take(inner);
+        return Ok(None);
     }
     let value = match super::step_value(inner) {
         Ok(Some(value)) => value,
-        Ok(None) => {
-            *done = true;
-            return Ok(None);
-        }
+        Ok(None) => return Ok(None),
         Err(error) => return Err(error),
     };
     *remaining -= 1;
     Ok(Some(value))
-}
-
-fn close_after_take(inner: &Value) -> Result<Option<Value>, crate::execute::VmError> {
-    match super::close(inner.clone(), crate::completion::Completion::Normal)? {
-        crate::completion::Completion::Normal => Ok(None),
-        completion => completion.into_vm_error().map(|_| None),
-    }
 }
 
 fn open_iterator(value: Value) -> Result<Option<Value>, crate::execute::VmError> {
@@ -897,18 +705,8 @@ fn open_iterator(value: Value) -> Result<Option<Value>, crate::execute::VmError>
             "Iterator.prototype.flatMap mapper result is not iterable",
         ));
     }
-    if matches!(value, Value::Iterator(_)) {
+    if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
         return Ok(Some(value));
-    }
-    if matches!(value, Value::Generator(_)) {
-        return Ok(Some(super::open(value)?));
-    }
-    let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
-    if matches!(method, Value::Undefined | Value::Null) {
-        return Ok(Some(crate::collections::iterator::make_protocol_with_next(
-            value,
-            Value::Undefined,
-        )));
     }
     let iter = super::open(value)?;
     Ok(Some(iter))

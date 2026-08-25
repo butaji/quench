@@ -5,6 +5,7 @@ use crate::ops::Builtin;
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::ErrorIsError => Some("Error.isError"),
+        Builtin::ErrorCaptureStackTrace => Some("Error.captureStackTrace"),
         Builtin::ErrorPrototypeToString => Some("Error.prototype.toString"),
         Builtin::ErrorPrototypeNameGetter => Some("get name"),
         Builtin::ErrorPrototypeMessageGetter => Some("get message"),
@@ -18,6 +19,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::ErrorIsError => Some(1.0),
+        Builtin::ErrorCaptureStackTrace => Some(2.0),
         Builtin::ErrorPrototypeToString
         | Builtin::ErrorPrototypeNameGetter
         | Builtin::ErrorPrototypeMessageGetter
@@ -31,6 +33,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::ErrorIsError => Some("isError"),
+        Builtin::ErrorCaptureStackTrace => Some("captureStackTrace"),
         Builtin::ErrorPrototypeToString => Some("toString"),
         Builtin::ErrorPrototypeNameGetter => Some("get name"),
         Builtin::ErrorPrototypeMessageGetter => Some("get message"),

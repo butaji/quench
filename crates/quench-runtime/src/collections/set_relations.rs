@@ -328,6 +328,7 @@ fn new_set(values: Vec<Value>) -> Value {
                 })
                 .collect(),
         ),
+        properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     }))
 }

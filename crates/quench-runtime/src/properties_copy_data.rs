@@ -122,9 +122,10 @@ fn own_property_is_enumerable(
     let crate::value::Value::Object(fields) = descriptor else {
         return Ok(false);
     };
-    Ok(fields.iter().rev().any(|(name, value)| {
+    let result = fields.iter().rev().any(|(name, value)| {
         name == "enumerable" && matches!(value, crate::value::Value::Boolean(true))
-    }))
+    });
+    Ok(result)
 }
 
 fn copy_data_property(

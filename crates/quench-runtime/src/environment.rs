@@ -209,11 +209,10 @@ impl SlotStore {
             .map(|cell| cell.borrow());
         if let Some(value) = value.as_deref() {
             crate::execute::write_value(registers, dst, value.clone().strong_function());
-        } else if let Some(crate::value::Value::WeakFunction(function)) = self.values().read(index)
-        {
-            crate::execute::write_value(registers, dst, function.value());
         } else {
-            let copied = registers.copy_from(usize::from(dst), self.values(), index);
+            crate::execution_trace::event(crate::execution_trace::Event::LocalWordRead);
+            let copied =
+                registers.copy_strong_function_from(usize::from(dst), self.values(), index);
             debug_assert!(copied, "ensured lexical slot must own an execute word");
         }
     }
@@ -228,6 +227,7 @@ impl SlotStore {
         if let Some(Some(cell)) = self.bridges().and_then(|bridges| bridges.get(index)) {
             return cell.with_word(|word| registers.write_owned(dst, word).is_some());
         }
+        crate::execution_trace::event(crate::execution_trace::Event::LocalWordRead);
         registers.copy_from(dst, self.values(), index).is_some()
     }
 
@@ -257,6 +257,18 @@ impl SlotStore {
         }
         self.values_mut()
             .copy_from(index, registers, usize::from(source))
+    }
+
+    #[inline(always)]
+    fn immediate_word_ptr(&self, index: usize) -> Option<*mut crate::tagged_value::TaggedValue> {
+        if self
+            .bridges()
+            .and_then(|bridges| bridges.get(index))
+            .is_some_and(Option::is_some)
+        {
+            return None;
+        }
+        self.values_mut().immediate_word_ptr(index)
     }
 
     fn existing_cell(&self, index: usize) -> Option<Rc<crate::value::BindingCell>> {
@@ -364,6 +376,39 @@ impl SlotRefs {
         })
     }
 
+    /// Visit the canonical slot without constructing another owning binding
+    /// reference. The immutable slot map keeps both the store and index valid
+    /// for the duration of the callback.
+    #[inline(always)]
+    fn with_binding<R>(
+        &self,
+        index: usize,
+        use_binding: impl FnOnce(&SlotStore, usize) -> R,
+    ) -> Option<R> {
+        if index < self.prefix_len {
+            let found = self
+                .prefix
+                .binary_search_by_key(&index, |capture| capture.slot)
+                .ok()?;
+            let binding = &self.prefix.get(found)?.binding;
+            return Some(use_binding(binding.store.as_ref(), binding.index));
+        }
+        if index >= self.len() {
+            return None;
+        }
+        if let Ok(found) = self
+            .suffix_overrides
+            .binary_search_by_key(&index, |entry| entry.slot)
+        {
+            let binding = &self.suffix_overrides.get(found)?.binding;
+            return Some(use_binding(binding.store.as_ref(), binding.index));
+        }
+        Some(use_binding(
+            self.suffix_store.as_deref()?,
+            index - self.prefix_len,
+        ))
+    }
+
     fn shared_prefix(&self) -> Rc<[CapturedRef]> {
         if self.suffix_len == 0 {
             return Rc::clone(&self.prefix);
@@ -465,10 +510,7 @@ impl BindingRef {
 pub struct Environment {
     slots: RefCell<SlotRefs>,
     names: RefCell<Option<HashMap<String, BindingRef>>>,
-    // Eval var aliases are shared by an activation's captures.  A closure
-    // created before a later direct eval must observe the binding introduced
-    // into that activation, so copying this map would freeze a stale view.
-    eval_names: Rc<RefCell<Option<HashMap<String, BindingRef>>>>,
+    eval_names: RefCell<Option<HashMap<String, BindingRef>>>,
     immutable_names: RefCell<Option<HashSet<String>>>,
     immutable_slots: RefCell<Option<HashSet<u16>>>,
     uninitialized: RefCell<Option<Rc<TdzCells>>>,
@@ -483,9 +525,7 @@ impl Drop for Environment {
 }
 
 fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
-    source
-        .as_ref()
-        .map(|cells| TdzCells::clone_prefix(cells, count))
+    source.as_ref().map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {
@@ -522,7 +562,7 @@ impl Environment {
         Rc::new(Self {
             slots: RefCell::new(SlotRefs::from_prefix(count, refs)),
             names: RefCell::new(environment.names.borrow().clone()),
-            eval_names: Rc::clone(&environment.eval_names),
+            eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(immutable_prefix(&environment.immutable_slots, count)),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
@@ -563,7 +603,7 @@ impl Environment {
         Rc::new(Self {
             slots: RefCell::new(SlotRefs::from_prefix(count_usize, refs)),
             names: RefCell::new(environment.names.borrow().clone()),
-            eval_names: Rc::clone(&environment.eval_names),
+            eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(Some(
                 environment
@@ -611,7 +651,7 @@ impl Environment {
                 suffix_overrides: Vec::new(),
             }),
             names: RefCell::new(None),
-            eval_names: Rc::new(RefCell::new(None)),
+            eval_names: RefCell::new(None),
             immutable_names: RefCell::new(None),
             immutable_slots: RefCell::new(None),
             uninitialized: RefCell::new(None),
@@ -657,11 +697,107 @@ impl Environment {
         slot: u16,
     ) {
         let slots = self.slots.borrow();
-        if let Some(binding) = slots.get(usize::from(slot)) {
-            binding.store.load_into(registers, dst, binding.index);
-        } else {
+        if slots
+            .with_binding(usize::from(slot), |store, index| {
+                store.load_into(registers, dst, index)
+            })
+            .is_none()
+        {
             crate::execute::write_value(registers, dst, Value::Undefined);
         }
+    }
+
+    /// Copy a proven lexical slot without cloning its `Rc<SlotStore>` map
+    /// entry. A missing slot is reported so the caller can retain complete
+    /// dynamic semantics through the ordinary path.
+    #[inline(always)]
+    pub(crate) fn load_proven_into(
+        &self,
+        registers: &mut crate::register_file::RegisterFile,
+        dst: u16,
+        slot: u16,
+    ) -> bool {
+        let slots = self.slots.borrow();
+        slots
+            .with_binding(usize::from(slot), |store, index| {
+                store.load_into(registers, dst, index)
+            })
+            .is_some()
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_proven_slot(&self, slot: u16) -> bool {
+        self.slots
+            .borrow()
+            .with_binding(usize::from(slot), |_, _| ())
+            .is_some()
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy_proven_from_register(
+        &self,
+        slot: u16,
+        registers: &crate::register_file::RegisterFile,
+        source: u16,
+    ) -> bool {
+        let slots = self.slots.borrow();
+        slots
+            .with_binding(usize::from(slot), |store, index| {
+                store.copy_from_register(index, registers, source)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Resolve a move-only loop site's physical word operands once. The
+    /// returned plan is valid while this Environment remains installed and no
+    /// non-Move instruction can resize the involved stores.
+    pub(crate) fn plan_immediate_move(
+        &self,
+        source: u16,
+        target: u16,
+    ) -> Option<crate::register_file::ImmediateCopyPlan> {
+        let slots = self.slots.borrow();
+        let source = slots
+            .with_binding(usize::from(source), SlotStore::immediate_word_ptr)
+            .flatten()?;
+        let target = slots
+            .with_binding(usize::from(target), SlotStore::immediate_word_ptr)
+            .flatten()?;
+        Some(crate::register_file::ImmediateCopyPlan::new(source, target))
+    }
+
+    /// Resolve a proven one-argument numeric call to physical execute words.
+    /// Callee recognition happens once; the returned plan contains no
+    /// `Environment`, `BindingCell`, `Value`, or reference-count operation.
+    pub(crate) fn plan_word_add_constant(
+        &self,
+        function: u16,
+        argument: u16,
+        target: u16,
+        registers: &mut crate::register_file::RegisterFile,
+        result: u16,
+    ) -> Option<crate::register_file::ImmediateNumberCallPlan> {
+        let function = match self.get(function) {
+            Value::Function(function) => function,
+            _ => return None,
+        };
+        let constant = crate::functions::word_add_constant(&function)?;
+        let slots = self.slots.borrow();
+        let argument = slots
+            .with_binding(usize::from(argument), SlotStore::immediate_word_ptr)
+            .flatten()?;
+        matches!(
+            unsafe { &*argument }.decode(),
+            crate::tagged_value::DecodedValue::Number(_)
+        )
+        .then_some(())?;
+        let target = slots
+            .with_binding(usize::from(target), SlotStore::immediate_word_ptr)
+            .flatten()?;
+        let result = registers.immediate_word_ptr(usize::from(result))?;
+        Some(crate::register_file::ImmediateNumberCallPlan::new(
+            argument, target, result, constant,
+        ))
     }
 
     pub(crate) fn load_into_fixed<const N: usize>(
@@ -672,8 +808,10 @@ impl Environment {
     ) -> bool {
         let slots = self.slots.borrow();
         slots
-            .get(usize::from(slot))
-            .is_some_and(|binding| binding.store.load_into_fixed(registers, dst, binding.index))
+            .with_binding(usize::from(slot), |store, index| {
+                store.load_into_fixed(registers, dst, index)
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) fn set(&self, slot: u16, value: Value) {
@@ -734,15 +872,25 @@ impl Environment {
         };
         let binding = self.ensure_slot(slot);
         caller.clear_deleted_cell(&binding.cell());
-        // Publish only into the caller's var environment. Captured closures
-        // share that environment's eval-name map, while the global ancestor
-        // must not acquire a binding whose lifetime belongs to this call.
         caller
             .eval_names
             .borrow_mut()
             .get_or_insert_with(HashMap::new)
             .insert(name.to_string(), binding.clone());
+        if name == "arguments" {
+            caller.alias_eval_binding(name, binding);
+        }
         true
+    }
+
+    fn alias_eval_binding(&self, name: &str, binding: BindingRef) {
+        self.eval_names
+            .borrow_mut()
+            .get_or_insert_with(HashMap::new)
+            .insert(name.to_string(), binding.clone());
+        if let Some(caller) = &self.caller {
+            caller.alias_eval_binding(name, binding);
+        }
     }
 
     pub(crate) fn alias_binding(&self, name: &str, binding: Rc<crate::value::BindingCell>) {
@@ -767,6 +915,12 @@ impl Environment {
             .borrow_mut()
             .get_or_insert_with(HashSet::new)
             .insert(slot);
+    }
+
+    pub(crate) fn clear_immutable_slot(&self, slot: u16) {
+        if let Some(slots) = self.immutable_slots.borrow_mut().as_mut() {
+            slots.remove(&slot);
+        }
     }
 
     pub(crate) fn is_immutable_slot(&self, slot: u16) -> bool {
@@ -847,6 +1001,9 @@ impl Environment {
             .is_some_and(|names| names.contains_key(name))
         {
             return true;
+        }
+        if self.slot(slot).is_some() {
+            return false;
         }
         self.caller
             .as_ref()
