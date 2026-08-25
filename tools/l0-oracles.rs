@@ -64,7 +64,7 @@ fn run(id: &str) -> u64 {
         }
         "call-fp" => {
             let mut result = 0;
-            for _ in 0..DEFAULT_ITERATIONS {
+            for _ in 0..LONG_ITERATIONS {
                 result = increment(black_box(result));
             }
             result
