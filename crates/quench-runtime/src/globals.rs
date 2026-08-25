@@ -55,11 +55,12 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         .collect()
 }
 
-fn script_property_names() -> &'static [&'static str] {
+pub(crate) fn script_property_names() -> &'static [&'static str] {
     &[
         "Object",
         "Function",
         "Array",
+        "Iterator",
         "Promise",
         "RegExp",
         "Date",
@@ -67,6 +68,7 @@ fn script_property_names() -> &'static [&'static str] {
         "Set",
         "JSON",
         "Reflect",
+        "Math",
         "Proxy",
         "ArrayBuffer",
         "DataView",
@@ -74,6 +76,8 @@ fn script_property_names() -> &'static [&'static str] {
         "DisposableStack",
         "AsyncDisposableStack",
         "Error",
+        "AggregateError",
+        "SuppressedError",
         "TypeError",
         "RangeError",
         "ReferenceError",
@@ -82,16 +86,20 @@ fn script_property_names() -> &'static [&'static str] {
         "URIError",
         "escape",
         "unescape",
+        "isFinite",
+        "isNaN",
         "encodeURI",
         "encodeURIComponent",
         "decodeURI",
         "decodeURIComponent",
+        "eval",
         "parseInt",
         "parseFloat",
         "WeakMap",
         "WeakSet",
         "SharedArrayBuffer",
         "WeakRef",
+        "FinalizationRegistry",
         "BigInt",
         "Boolean",
         "Number",
