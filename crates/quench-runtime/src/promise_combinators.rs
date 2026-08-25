@@ -3,7 +3,7 @@ fn promise_combinator(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let result = Rc::new(PromiseData::default());
+    let result = PromiseData::allocate(PromiseState::Pending);
     let constructor = receiver.ok_or(VmError::NotCallable)?;
     let resolve = match get_promise_resolve(Some(constructor)) {
         Ok(resolve) => resolve,
