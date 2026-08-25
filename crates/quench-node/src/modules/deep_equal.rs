@@ -106,6 +106,28 @@ fn same_property(left: &Value, right: &Value, key: &str) -> bool {
     execute::same_value(&execute::get_property(left, key), &execute::get_property(right, key))
 }
 
+fn is_error_value(value: &Value) -> bool {
+    let mut current = execute::get_prototype_of(value).ok();
+    while let Some(prototype) = current {
+        if matches!(
+            prototype,
+            Value::Builtin(
+                quench_runtime::ops::Builtin::ErrorPrototype
+                    | quench_runtime::ops::Builtin::TypeErrorPrototype
+                    | quench_runtime::ops::Builtin::RangeErrorPrototype
+                    | quench_runtime::ops::Builtin::ReferenceErrorPrototype
+                    | quench_runtime::ops::Builtin::SyntaxErrorPrototype
+                    | quench_runtime::ops::Builtin::EvalErrorPrototype
+                    | quench_runtime::ops::Builtin::URIErrorPrototype
+            )
+        ) {
+            return true;
+        }
+        current = execute::get_prototype_of(&prototype).ok();
+    }
+    false
+}
+
 /// `util.isDeepStrictEqual(left, right, options)` — `skip_prototype`
 /// mirrors Node's `skipPrototype` option.
 pub fn deep_equal_opts(
@@ -512,6 +534,27 @@ fn compare_objects(
     if strict && !same_shape(left, right, strict, skip_prototype, memo)? {
         return Ok(false);
     }
+    if is_error_value(left) || is_error_value(right) {
+        if !same_property(left, right, "name") || !same_property(left, right, "message") {
+            return Ok(false);
+        }
+    }
+    let left_cause = execute::get_property_result(left, "cause")?;
+    let right_cause = execute::get_property_result(right, "cause")?;
+    let left_has_cause = has_own_slot(left, "cause");
+    let right_has_cause = has_own_slot(right, "cause");
+    if left_has_cause != right_has_cause {
+        return Ok(false);
+    }
+    let cause_present = left_has_cause
+        || right_has_cause
+        || !matches!(left_cause, Value::Undefined)
+        || !matches!(right_cause, Value::Undefined);
+    if cause_present {
+        if !compare(&left_cause, &right_cause, strict, skip_prototype, memo)? {
+            return Ok(false);
+        }
+    }
     let left_keys = execute::own_enumerable_keys(left);
     let right_keys = execute::own_enumerable_keys(right);
     if left_keys.len() != right_keys.len() || left_keys.iter().any(|key| !right_keys.contains(key))
@@ -535,6 +578,25 @@ fn compare_objects(
         return Ok(false);
     }
     Ok(true)
+}
+
+fn has_own_slot(value: &Value, key: &str) -> bool {
+    if let Value::Object(properties) = value {
+        if properties.iter().any(|(name, _)| name == key) {
+            return true;
+        }
+    }
+    if execute::has_own_property(value, key) {
+        return true;
+    }
+    matches!(
+        execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+            &Value::Undefined,
+            &[value.clone(), Value::String(key.to_string())],
+        ),
+        Ok(Value::Object(_))
+    )
 }
 
 fn same_cycle_target(value: &Value, target: &Value) -> bool {
