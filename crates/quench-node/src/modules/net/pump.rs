@@ -82,6 +82,8 @@ fn accept_one(
         read_eof: false,
         close_emitted: false,
         connect_announced: true,
+        peer: Some(peer),
+        local,
         encoding: None,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
@@ -107,7 +109,13 @@ struct SocketEvents {
 fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     let events = read_sockets(state);
     for sock in events.connects {
-        let js = sock.borrow().js.clone();
+        let (js, peer, local) = {
+            let guard = sock.borrow();
+            (guard.js.clone(), guard.peer, guard.local)
+        };
+        if let (Some(peer), Some(local)) = (peer, local) {
+            install_methods(js.clone(), net_info_props(peer, Some(local)))?;
+        }
         emit(state, &js, "connect", Vec::new())?;
     }
     for (sock, bytes) in events.datas {

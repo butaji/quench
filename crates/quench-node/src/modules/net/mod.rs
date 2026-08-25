@@ -64,6 +64,8 @@ pub struct NetSocket {
     pub read_eof: bool,
     pub close_emitted: bool,
     pub connect_announced: bool,
+    pub peer: Option<SocketAddr>,
+    pub local: Option<SocketAddr>,
     pub encoding: Option<String>,
 }
 
