@@ -323,9 +323,15 @@ fn find_match_from<'a>(
     regex: &'a Regex,
     text: &'a str,
     start: usize,
+    sticky: bool,
 ) -> Result<Option<regress::Match>, VmError> {
-    catch_unwind(AssertUnwindSafe(|| regex.find_from(text, start).next()))
-        .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+    catch_unwind(AssertUnwindSafe(|| {
+        regex
+            .find_from(text, start)
+            .next()
+            .filter(|matched| !sticky || matched.start() == start)
+    }))
+    .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
 }
 
 fn compile_and_find<'a>(
@@ -333,6 +339,7 @@ fn compile_and_find<'a>(
     source: &str,
     flags: &str,
     text: &'a str,
+    start: usize,
     sticky: bool,
 ) -> Result<Option<regress::Match>, VmError> {
     #[cfg(feature = "execution-trace")]
@@ -342,7 +349,7 @@ fn compile_and_find<'a>(
     let compile_ns = compile_start.elapsed().as_nanos();
     #[cfg(feature = "execution-trace")]
     let match_start = std::time::Instant::now();
-    let mut result = find_match(&regex, text, sticky);
+    let mut result = find_match_from(&regex, text, start, sticky);
     if matches!(&result, Ok(None))
         && !flags.contains('u')
         && !flags.contains('v')
@@ -350,7 +357,7 @@ fn compile_and_find<'a>(
         && text.chars().any(|character| character.len_utf16() == 2)
     {
         if let Ok(fallback) = compile(".", flags) {
-            result = find_match(&fallback, text, sticky);
+            result = find_match_from(&fallback, text, start, sticky);
         }
     }
     #[cfg(feature = "execution-trace")]
@@ -405,7 +412,7 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
-    let (search_start, search_string) = prepare_search(&s, &flags, last_index);
+    let (search_start, _) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let found = anchored_match(&source, &flags, last_index, &s)
@@ -414,7 +421,8 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
                 receiver,
                 pattern,
                 &re_flags,
-                search_string,
+                &s,
+                search_start,
                 flags.contains('y'),
             )
         })
@@ -443,7 +451,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
-    let (search_start, search_string) = prepare_search(&s, &flags, last_index);
+    let (search_start, _) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     if let Some(m) = anchored_match(&source, &flags, last_index, &s)
@@ -452,14 +460,15 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
                 receiver,
                 pattern,
                 &re_flags,
-                search_string,
+                &s,
+                search_start,
                 flags.contains('y'),
             )
         })
         .transpose()?
         .flatten()
     {
-        build_match_result(receiver, &s, m, search_start, &flags)
+        build_match_result(receiver, &s, m, 0, &flags)
     } else {
         if flags.contains('g') || flags.contains('y') {
             set_last_index(receiver, 0.0)?;
