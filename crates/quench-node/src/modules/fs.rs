@@ -75,7 +75,14 @@ fn set_encoding(options: &mut FsOptions, encoding: &str) -> Result<(), VmError> 
 fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), VmError> {
     let get = |key: &str| quench_runtime::vm::get_property(object, key);
     if let Value::String(encoding) = get("encoding") {
-        set_encoding(options, &encoding)?;
+        match crate::modules::buffer_enc::canonical_encoding(&encoding) {
+            Some(canonical) => options.encoding = Some(canonical.to_string()),
+            None => {
+                return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+                    "The argument 'encoding' is invalid encoding. Received '{encoding}'"
+                )))
+            }
+        }
     }
     if let Value::String(flag) = get("flag") {
         options.flag = Some(flag);
@@ -161,6 +168,11 @@ pub fn build() -> Value {
         ("copyFile", crate::host::capability(SPEC_FS_COPYFILE)),
         ("access", crate::host::capability(SPEC_FS_ACCESS)),
         ("mkdtemp", crate::host::capability(SPEC_FS_MKDTEMP)),
+        ("realpath", crate::host::capability(SPEC_FS_REALPATH)),
+        ("watch", crate::host::capability(SPEC_FS_WATCH)),
+        ("ReadStream", crate::host::capability(SPEC_FS_READSTREAM)),
+        ("WriteStream", crate::host::capability(SPEC_FS_WRITESTREAM)),
+        ("opendir", crate::host::capability(SPEC_FS_OPENDIR)),
         ("readlink", crate::host::capability(SPEC_FS_READLINK)),
         ("chmod", crate::host::capability(SPEC_FS_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FS_TRUNCATE)),
@@ -169,6 +181,33 @@ pub fn build() -> Value {
     props.push(("constants", constants()));
     props.push(("promises", promises()));
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
+}
+
+pub fn validate_stream_options(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    parse_options(args.get(1))?;
+    Ok(host_api::object(vec![]))
+}
+
+pub fn validate_watch_options(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    parse_options(args.get(1))?;
+    Ok(host_api::object(vec![("close".into(), Value::Undefined)]))
+}
+
+pub fn validate_directory_options(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    parse_options(args.get(1))?;
+    Ok(host_api::object(vec![]))
 }
 
 fn sync_props() -> Vec<(&'static str, Value)> {
@@ -187,6 +226,7 @@ fn sync_props() -> Vec<(&'static str, Value)> {
         ("readdirSync", crate::host::capability(SPEC_FS_READDIRSYNC)),
         ("existsSync", crate::host::capability(SPEC_FS_EXISTSSYNC)),
         ("realpathSync", crate::host::capability(SPEC_FS_REALSYNC)),
+        ("opendirSync", crate::host::capability(SPEC_FS_OPENDIRSYNC)),
         ("mkdirSync", crate::host::capability(SPEC_FS_MKDIRSYNC)),
         ("unlinkSync", crate::host::capability(SPEC_FS_UNLINKSYNC)),
         ("rmdirSync", crate::host::capability(SPEC_FS_RMDIRSYNC)),
