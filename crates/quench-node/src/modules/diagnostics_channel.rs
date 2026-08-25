@@ -14,11 +14,15 @@ use crate::registry::{
     SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR, SPEC_DIAGNOSTICS_CHANNEL_PUBLISH,
     SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE, SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE,
     SPEC_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE, SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS,
-    SPEC_DIAGNOSTICS_SUBSCRIBE, SPEC_DIAGNOSTICS_UNSUBSCRIBE,
+    SPEC_DIAGNOSTICS_SUBSCRIBE, SPEC_DIAGNOSTICS_TRACING_CHANNEL,
+    SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC,
+    SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, SPEC_DIAGNOSTICS_UNSUBSCRIBE,
 };
 
 const ID: &str = "\0quench:diagnostics_channel:id";
 const NAME: &str = "\0quench:diagnostics_channel:name";
+const TRACE: &str = "\0quench:diagnostics_channel:tracing";
+const TRACE_CHANNELS: [&str; 5] = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
 thread_local! { static CHANNEL_PROTO: RefCell<Option<Value>> = const { RefCell::new(None) }; }
 
@@ -75,7 +79,10 @@ pub fn build() -> Value {
             crate::host::capability(SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS),
         ),
         ("channelNames", Value::Undefined),
-        ("tracingChannel", Value::Undefined),
+        (
+            "tracingChannel",
+            crate::host::capability(SPEC_DIAGNOSTICS_TRACING_CHANNEL),
+        ),
         ("boundedChannel", Value::Undefined),
     ])
     .unwrap_or(Value::Undefined)
@@ -102,6 +109,158 @@ pub fn channel(
 
 pub fn new_channel(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     channel(state, None, args)
+}
+
+pub fn tracing_channel(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let source = args.first().ok_or_else(|| type_error("nameOrChannels"))?;
+    let channels = TRACE_CHANNELS
+        .iter()
+        .map(|name| tracing_member(state, source, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(tracing_object(channels))
+}
+
+fn tracing_member(
+    state: &Rc<RefCell<HostState>>,
+    source: &Value,
+    name: &str,
+) -> Result<Value, VmError> {
+    if let Value::String(base) = source {
+        return channel(
+            state,
+            None,
+            &[Value::String(format!("tracing:{base}:{name}"))],
+        );
+    }
+    let value = execute::get_property_result(source, name).unwrap_or(Value::Undefined);
+    if matches!(value, Value::Undefined) {
+        return Ok(Value::Undefined);
+    }
+    if execute::get_property_result(&value, ID).is_err() {
+        return Err(type_error("nameOrChannels"));
+    }
+    Ok(value)
+}
+
+fn tracing_object(channels: Vec<Value>) -> Value {
+    let mut properties = vec![(TRACE.into(), Value::Boolean(true))];
+    for (name, channel) in TRACE_CHANNELS.iter().zip(channels) {
+        properties.push(((*name).into(), channel));
+    }
+    properties.extend([
+        (
+            "subscribe".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE),
+        ),
+        (
+            "unsubscribe".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE),
+        ),
+        (
+            "traceSync".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC),
+        ),
+    ]);
+    let object = host_api::object(properties);
+    let descriptor = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS),
+        ),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    execute::define_property(object, "hasSubscribers", descriptor).unwrap_or(Value::Undefined)
+}
+
+pub fn tracing_subscribe(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("tracingChannel"))?;
+    let handlers = args.first().cloned().unwrap_or(Value::Undefined);
+    for name in TRACE_CHANNELS {
+        let callback = execute::get_property_result(&handlers, name).unwrap_or(Value::Undefined);
+        if !matches!(callback, Value::Undefined) {
+            let channel = execute::get_property(receiver, name);
+            subscribe_to(state, &channel, &callback)?;
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn tracing_unsubscribe(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("tracingChannel"))?;
+    let handlers = args.first().cloned().unwrap_or(Value::Undefined);
+    let mut removed = true;
+    for name in TRACE_CHANNELS {
+        let callback = execute::get_property_result(&handlers, name).unwrap_or(Value::Undefined);
+        if !matches!(callback, Value::Undefined) {
+            let channel = execute::get_property(receiver, name);
+            removed &= matches!(
+                unsubscribe_from(state, &channel, &callback)?,
+                Value::Boolean(true)
+            );
+        }
+    }
+    Ok(Value::Boolean(removed))
+}
+
+pub fn trace_sync(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| type_error("tracingChannel"))?;
+    let callback = args.first().ok_or_else(|| type_error("fn"))?;
+    if !quench_runtime::is_callable(callback) {
+        return Err(type_error("fn"));
+    }
+    let context = args
+        .get(1)
+        .filter(|value| execute::is_truthy(value))
+        .cloned()
+        .unwrap_or_else(|| host_api::object(Vec::new()));
+    let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let call_args = args.get(3..).unwrap_or(&[]);
+    let start = execute::get_property(receiver, "start");
+    let end = execute::get_property(receiver, "end");
+    let error = execute::get_property(receiver, "error");
+    if channel_has_subscribers(state, &start) {
+        publish(state, Some(&start), std::slice::from_ref(&context))?;
+    }
+    match execute::call(callback, &this_arg, call_args) {
+        Ok(result) => {
+            execute::set_property(context.clone(), "result", result.clone());
+            if channel_has_subscribers(state, &end) {
+                publish(state, Some(&end), std::slice::from_ref(&context))?;
+            }
+            Ok(result)
+        }
+        Err(thrown) => {
+            let error_value = match &thrown {
+                VmError::Thrown(value) => value.clone(),
+                _ => Value::Undefined,
+            };
+            execute::set_property(context.clone(), "error", error_value);
+            if channel_has_subscribers(state, &error) {
+                publish(state, Some(&error), std::slice::from_ref(&context))?;
+            }
+            if channel_has_subscribers(state, &end) {
+                publish(state, Some(&end), std::slice::from_ref(&context))?;
+            }
+            Err(thrown)
+        }
+    }
 }
 
 fn channel_object(id: u64, name: Value) -> Value {
@@ -173,6 +332,20 @@ pub fn has_subscribers(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if receiver.is_some_and(|value| {
+        matches!(
+            execute::get_property_result(value, TRACE),
+            Ok(Value::Boolean(true))
+        )
+    }) {
+        let tracing = receiver.unwrap();
+        return Ok(Value::Boolean(TRACE_CHANNELS.iter().any(|name| {
+            let channel = execute::get_property(tracing, name);
+            channel_data(state, &channel)
+                .map(|data| !data.borrow().subscribers.is_empty())
+                .unwrap_or(false)
+        })));
+    }
     let channel = match receiver {
         Some(value)
             if matches!(
@@ -306,6 +479,12 @@ fn channel_data(
         .get(&id)
         .cloned()
         .ok_or_else(|| type_error("channel"))
+}
+
+fn channel_has_subscribers(state: &Rc<RefCell<HostState>>, channel: &Value) -> bool {
+    channel_data(state, channel)
+        .map(|data| !data.borrow().subscribers.is_empty())
+        .unwrap_or(false)
 }
 
 fn channel_key(value: &Value) -> Result<String, VmError> {
