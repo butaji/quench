@@ -162,7 +162,6 @@ fn reduce_eval_body(
 fn eval_facts(analysis: &crate::semantic::Analysis, strict: bool) -> ProgramDb {
     ProgramDb {
         strict,
-        eval_reduction: true,
         scope_count: analysis.scope_count,
         symbol_count: analysis.symbol_count,
         private_names: analysis.private_names.iter().copied().collect(),

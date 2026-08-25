@@ -35,6 +35,8 @@ pub struct EventEmitter {
     pub max: Option<usize>,
     /// Whether the max-listeners warning already fired.
     pub warned: bool,
+    /// Route rejected promises returned by listeners to the error channel.
+    pub capture_rejections: bool,
 }
 
 impl Default for EventEmitter {
@@ -49,6 +51,7 @@ impl EventEmitter {
             events: Vec::new(),
             max: None,
             warned: false,
+            capture_rejections: false,
         }
     }
 
@@ -96,7 +99,7 @@ impl EventEmitter {
     }
 
     /// Remove the most recently added listener equal to `callback`.
-    pub fn remove(&mut self, event: &str, callback: &Value) {
+    pub fn remove(&mut self, event: &str, callback: &Value) -> bool {
         if let Some(index) = self.events.iter().position(|(key, _)| key == event) {
             let list = &mut self.events[index].1;
             if let Some(at) = list
@@ -104,11 +107,13 @@ impl EventEmitter {
                 .rposition(|listener| execute::same_value(&listener.callback, callback))
             {
                 list.remove(at);
-            }
-            if list.is_empty() {
-                self.events.remove(index);
+                if list.is_empty() {
+                    self.events.remove(index);
+                }
+                return true;
             }
         }
+        false
     }
 }
 

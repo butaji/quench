@@ -1,14 +1,21 @@
 {
   "schema": 1,
+  "oracle": { "max_ratio": 2 },
   "metrics": {
-    "shape_hit_per_iteration": {
-      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "shape_nested_array_index", "field": "hits" } },
+    "packed_sum_hit_per_iteration": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "counted_packed_sum", "field": "hits" } },
       "denominator": "events.loop_iteration",
       "min_traffic": 100000,
       "min": 0.99
     },
-    "leaf_attempt_per_iteration": {
-      "numerator": "lanes.l1.leaf.attempt",
+    "packed_get_per_iteration": {
+      "numerator": "lanes.l0.packed_get",
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "min": 0.99
+    },
+    "decode_per_iteration": {
+      "numerator": "lanes.l0.value_decode",
       "denominator": "events.loop_iteration",
       "min_traffic": 100000,
       "max": 0.02

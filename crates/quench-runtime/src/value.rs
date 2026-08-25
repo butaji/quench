@@ -89,22 +89,6 @@ pub(crate) mod error {
     pub(crate) fn throw_type_error(message: &str) -> crate::execute::VmError {
         throw(Kind::Type, message)
     }
-
-    pub(crate) fn throw_type_error_for_realm(
-        realm: crate::ops::RealmId,
-        message: &str,
-    ) -> crate::execute::VmError {
-        let error = crate::builtins::error(
-            crate::ops::Builtin::TypeError,
-            &[Value::String(message.to_string())],
-        );
-        let constructor = crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::TypeError);
-        crate::execute::VmError::Thrown(crate::builtins::set_property(
-            error,
-            "constructor",
-            constructor,
-        ))
-    }
     #[cold]
     #[inline(never)]
     pub(crate) fn throw_reference_error(message: &str) -> crate::execute::VmError {
@@ -217,6 +201,7 @@ impl TypedArrayMeta {
     pub(crate) fn own_properties(&self) -> Vec<(String, Value)> {
         self.properties.borrow().clone()
     }
+
 }
 
 /// Heap-allocated Promise data.
@@ -227,13 +212,21 @@ pub struct PromiseData {
     pub state: RefCell<PromiseState>,
     pub result: RefCell<Option<Value>>,
     pub(crate) already_resolved: Cell<bool>,
+    pub(crate) rejection_handled: Cell<bool>,
+    pub(crate) unhandled_queued: Cell<bool>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
     pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
-    pub(crate) aggregate_callback: RefCell<Option<PromiseAggregateCallback>>,
-    pub(crate) capability_executor: RefCell<Option<PromiseCapabilityExecutor>>,
 }
 
 impl PromiseData {
+    /// Allocate a promise and notify the embedding host at the engine edge.
+    /// The notification is inert when no host lifecycle observer is present.
+    pub fn allocate(state: PromiseState) -> Rc<Self> {
+        let promise = Rc::new(Self::new(state));
+        crate::promise::promise_created(&promise);
+        promise
+    }
+
     pub fn new(state: PromiseState) -> Self {
         let already_resolved = !matches!(state, PromiseState::Pending);
         let result = match &state {
@@ -246,10 +239,10 @@ impl PromiseData {
             state: RefCell::new(state),
             result: RefCell::new(result),
             already_resolved: Cell::new(already_resolved),
+            rejection_handled: Cell::new(false),
+            unhandled_queued: Cell::new(false),
             then_actions: RefCell::new(Vec::new()),
             continuations: RefCell::new(Vec::new()),
-            aggregate_callback: RefCell::new(None),
-            capability_executor: RefCell::new(None),
         }
     }
 
@@ -278,6 +271,10 @@ impl PromiseData {
             properties.push((key.to_string(), value));
         }
     }
+
+    pub fn rejection_handled(&self) -> bool {
+        self.rejection_handled.get()
+    }
 }
 
 impl Default for PromiseData {
@@ -292,6 +289,7 @@ pub struct MapData {
     pub(crate) weak: bool,
     pub keys: RefCell<VecDeque<Value>>,
     pub values: RefCell<Vec<Value>>,
+    pub(crate) properties: RefCell<Vec<(String, Value)>>,
     pub(crate) prototype: RefCell<Option<Value>>,
 }
 
@@ -305,6 +303,22 @@ impl MapData {
     pub(crate) fn set_prototype(&self, prototype: Value) {
         self.prototype.replace(Some(prototype));
     }
+    pub(crate) fn property(&self, key: &str) -> Value {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then_some(value.clone()))
+            .unwrap_or(Value::Undefined)
+    }
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
+    }
 }
 
 /// Set value storage.
@@ -312,6 +326,7 @@ impl MapData {
 pub struct SetData {
     pub(crate) weak: bool,
     pub values: RefCell<VecDeque<Value>>,
+    pub(crate) properties: RefCell<Vec<(String, Value)>>,
     pub(crate) prototype: RefCell<Option<Value>>,
 }
 
@@ -324,6 +339,22 @@ impl SetData {
     }
     pub(crate) fn set_prototype(&self, prototype: Value) {
         self.prototype.replace(Some(prototype));
+    }
+    pub(crate) fn property(&self, key: &str) -> Value {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then_some(value.clone()))
+            .unwrap_or(Value::Undefined)
+    }
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
     }
 }
 include!("value_iterator.rs");
@@ -389,7 +420,6 @@ pub struct GeneratorData {
     pub pending_yield: RefCell<bool>,
     pub(crate) executing: RefCell<bool>,
     pub(crate) running: RefCell<bool>,
-    pub(crate) pending_completion: RefCell<Option<crate::completion::Completion>>,
     pub(crate) async_next_queue: RefCell<VecDeque<(Value, Rc<PromiseData>)>>,
 }
 
@@ -400,6 +430,19 @@ pub struct GeneratorState {
     /// Private-name capabilities captured when a class body suspended on `yield`.
     pub private_environment: Option<crate::private_environment::PrivateEnvironment>,
     pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
+    pub(crate) async_for_of: Option<AsyncForOfState>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AsyncForOfState {
+    pub label: Option<String>,
+    pub slot: u16,
+    pub body: crate::machine::FunctionCode,
+    pub per_iteration: bool,
+    pub iteration_slots: Vec<u16>,
+    pub iterator: Value,
+    pub dst: u16,
+    pub await_dst: u16,
 }
 
 /// Canonical out-of-line attributes for an ordinary property.
@@ -504,7 +547,277 @@ impl PartialEq<String> for PropertyName {
     }
 }
 
-pub type ObjectProperties = Vec<(PropertyName, Value)>;
+impl PartialEq<str> for &PropertyName {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<String> for &PropertyName {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
+/// Canonical ordinary-property table. Callers use this boundary instead of
+/// depending on the eventual physical slot layout.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ObjectProperties {
+    names: Vec<PropertyName>,
+    values: Vec<crate::register_file::SlotWord>,
+}
+
+pub struct PropertyValueMut<'a> {
+    word: &'a crate::register_file::SlotWord,
+    value: Option<Value>,
+}
+
+impl std::ops::Deref for PropertyValueMut<'_> {
+    type Target = Value;
+    fn deref(&self) -> &Self::Target {
+        self.value
+            .as_ref()
+            .expect("property guard owns decoded value")
+    }
+}
+
+impl std::ops::DerefMut for PropertyValueMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value
+            .as_mut()
+            .expect("property guard owns decoded value")
+    }
+}
+
+impl Drop for PropertyValueMut<'_> {
+    fn drop(&mut self) {
+        self.word.store(
+            self.value
+                .take()
+                .expect("property guard owns decoded value"),
+        );
+    }
+}
+
+impl ObjectProperties {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            names: Vec::with_capacity(capacity),
+            values: Vec::with_capacity(capacity),
+        }
+    }
+
+    #[cold]
+    pub(crate) fn spec_snapshot(&self) -> Vec<(PropertyName, Value)> {
+        self.names
+            .iter()
+            .cloned()
+            .zip(self.values.iter().map(crate::register_file::SlotWord::load))
+            .collect()
+    }
+
+    #[inline]
+    pub(crate) fn slot_value(&self, slot: usize) -> Option<Value> {
+        self.values
+            .get(slot)
+            .map(crate::register_file::SlotWord::load)
+    }
+
+    #[inline]
+    pub(crate) fn slot_value_mut(&mut self, slot: usize) -> Option<PropertyValueMut<'_>> {
+        self.values.get(slot).map(|word| PropertyValueMut {
+            value: Some(word.load()),
+            word,
+        })
+    }
+
+    #[inline]
+    pub(crate) fn name_at(&self, slot: usize) -> Option<&PropertyName> {
+        self.names.get(slot)
+    }
+
+    #[inline]
+    pub(crate) fn slot_entry(&self, slot: usize) -> Option<(&PropertyName, Value)> {
+        self.names.get(slot).zip(self.slot_value(slot))
+    }
+
+    #[inline]
+    pub(crate) fn slot_word(&self, slot: usize) -> Option<&crate::register_file::SlotWord> {
+        self.values.get(slot)
+    }
+
+    #[inline]
+    pub(crate) fn position_rev(&self, key: &str) -> Option<usize> {
+        self.names.iter().rposition(|name| name == key)
+    }
+
+    #[inline]
+    pub(crate) fn names(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &PropertyName> + ExactSizeIterator {
+        self.names.iter()
+    }
+
+    #[inline]
+    pub(crate) fn store_slot(&self, slot: usize, value: Value) -> bool {
+        let Some(word) = self.values.get(slot) else {
+            return false;
+        };
+        word.store(value);
+        true
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    pub fn capacity(&self) -> usize {
+        debug_assert_eq!(self.names.capacity(), self.values.capacity());
+        self.names.capacity().min(self.values.capacity())
+    }
+
+    pub fn push(&mut self, (name, value): (PropertyName, Value)) {
+        self.names.push(name);
+        self.values.push(crate::register_file::SlotWord::new(value));
+    }
+
+    pub fn iter(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (&PropertyName, Value)> + ExactSizeIterator {
+        self.names
+            .iter()
+            .zip(&self.values)
+            .map(|(name, word)| (name, word.load()))
+    }
+
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl DoubleEndedIterator<Item = (&PropertyName, PropertyValueMut<'_>)> + ExactSizeIterator
+    {
+        self.names.iter().zip(&self.values).map(|(name, word)| {
+            let value = word.load();
+            (
+                name,
+                PropertyValueMut {
+                    word,
+                    value: Some(value),
+                },
+            )
+        })
+    }
+
+    pub fn get(&self, index: usize) -> Option<(&PropertyName, Value)> {
+        self.slot_entry(index)
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut((&PropertyName, &Value)) -> bool) {
+        let mut names = Vec::with_capacity(self.names.len());
+        let mut values = Vec::with_capacity(self.values.len());
+        for (name, value) in self.names.drain(..).zip(self.values.drain(..)) {
+            if keep((&name, &value.load())) {
+                names.push(name);
+                values.push(value);
+            }
+        }
+        self.names = names;
+        self.values = values;
+    }
+}
+
+impl From<Vec<(PropertyName, Value)>> for ObjectProperties {
+    fn from(entries: Vec<(PropertyName, Value)>) -> Self {
+        entries.into_iter().collect()
+    }
+}
+
+impl FromIterator<(PropertyName, Value)> for ObjectProperties {
+    fn from_iter<T: IntoIterator<Item = (PropertyName, Value)>>(entries: T) -> Self {
+        let iterator = entries.into_iter();
+        let (lower, _) = iterator.size_hint();
+        let mut properties = Self::with_capacity(lower);
+        for entry in iterator {
+            properties.push(entry);
+        }
+        properties
+    }
+}
+
+impl<'a> IntoIterator for &'a ObjectProperties {
+    type Item = (&'a PropertyName, Value);
+    type IntoIter = std::iter::Map<
+        std::iter::Zip<
+            std::slice::Iter<'a, PropertyName>,
+            std::slice::Iter<'a, crate::register_file::SlotWord>,
+        >,
+        fn((&'a PropertyName, &'a crate::register_file::SlotWord)) -> (&'a PropertyName, Value),
+    >;
+    fn into_iter(self) -> Self::IntoIter {
+        fn load<'a>(
+            (name, word): (&'a PropertyName, &'a crate::register_file::SlotWord),
+        ) -> (&'a PropertyName, Value) {
+            (name, word.load())
+        }
+        self.names.iter().zip(&self.values).map(load)
+    }
+}
+
+/// Allocation-free read projection shared by ordinary object tables and the
+/// cold tuple lists used by descriptors/functions. Physical object storage can
+/// therefore change without materializing a second semantic property list.
+pub(crate) trait PropertyEntries {
+    type Iter<'a>: DoubleEndedIterator<Item = (&'a str, Value)>
+    where
+        Self: 'a;
+    fn entries(&self) -> Self::Iter<'_>;
+}
+
+impl PropertyEntries for ObjectProperties {
+    type Iter<'a> = std::iter::Map<
+        <&'a ObjectProperties as IntoIterator>::IntoIter,
+        fn((&'a PropertyName, Value)) -> (&'a str, Value),
+    >;
+    fn entries(&self) -> Self::Iter<'_> {
+        fn split((name, value): (&PropertyName, Value)) -> (&str, Value) {
+            (name.as_str(), value)
+        }
+        self.into_iter().map(split)
+    }
+}
+
+impl PropertyEntries for [(PropertyName, Value)] {
+    type Iter<'a> = std::iter::Map<
+        std::slice::Iter<'a, (PropertyName, Value)>,
+        fn(&'a (PropertyName, Value)) -> (&'a str, Value),
+    >;
+    fn entries(&self) -> Self::Iter<'_> {
+        fn split(entry: &(PropertyName, Value)) -> (&str, Value) {
+            (entry.0.as_str(), entry.1.clone())
+        }
+        self.iter().map(split)
+    }
+}
+
+impl PropertyEntries for [(String, Value)] {
+    type Iter<'a> = std::iter::Map<
+        std::slice::Iter<'a, (String, Value)>,
+        fn(&'a (String, Value)) -> (&'a str, Value),
+    >;
+    fn entries(&self) -> Self::Iter<'_> {
+        fn split(entry: &(String, Value)) -> (&str, Value) {
+            (entry.0.as_str(), entry.1.clone())
+        }
+        self.iter().map(split)
+    }
+}
 pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 
 /// Canonical ordinary-object state. `properties` is the sole semantic store
@@ -574,6 +887,22 @@ impl Clone for ObjectData {
 }
 
 impl ObjectData {
+    /// Update an existing host-owned data slot without publishing a COW
+    /// replacement. This is reserved for identity-sensitive host state such
+    /// as the event currently being dispatched.
+    pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        let index = { self.properties.iter().rposition(|(name, _)| name == key) };
+        if let Some(index) = index {
+            if let Some((_, mut current)) = self.properties.iter_mut().nth(index) {
+                *current = value;
+            }
+        } else {
+            self.properties.push((key.into(), value));
+            self.created.push(key.into());
+        }
+        self.invalidate_layout();
+    }
+
     /// Borrow the canonical hot property storage once for dependent-load-heavy
     /// readers. Metadata remains owned by this object and is not mirrored here.
     #[inline]
@@ -653,6 +982,13 @@ impl ObjectData {
         self.original_prototype.borrow().clone()
     }
 
+    pub(crate) fn capture_original_prototype(&self, prototype: Value) {
+        let mut original = self.original_prototype.borrow_mut();
+        if original.is_none() {
+            *original = Some(prototype);
+        }
+    }
+
     pub(crate) fn with_creation_order(
         properties: ObjectProperties,
         private_slots: PrivateSlots,
@@ -713,6 +1049,13 @@ impl std::ops::DerefMut for ObjectData {
     }
 }
 
+impl PropertyEntries for ObjectData {
+    type Iter<'a> = <ObjectProperties as PropertyEntries>::Iter<'a>;
+    fn entries(&self) -> Self::Iter<'_> {
+        self.properties.entries()
+    }
+}
+
 fn intern_object_layout(properties: &ObjectProperties) -> u32 {
     thread_local! {
         static LAYOUTS: RefCell<Vec<Vec<PropertyName>>> = const { RefCell::new(Vec::new()) };
@@ -723,22 +1066,22 @@ fn intern_object_layout(properties: &ObjectProperties) -> u32 {
             layout.len() == properties.len()
                 && layout
                     .iter()
-                    .zip(properties)
-                    .all(|(left, (right, _))| left == right)
+                    .zip(properties.names())
+                    .all(|(left, right)| left == right)
         }) {
             return u32::try_from(index + 1).unwrap_or(u32::MAX);
         }
-        layouts.push(properties.iter().map(|(name, _)| name.clone()).collect());
+        layouts.push(properties.names().cloned().collect());
         u32::try_from(layouts.len()).unwrap_or(u32::MAX)
     })
 }
 
-fn creation_order(properties: &[(PropertyName, Value)]) -> Vec<PropertyName> {
+fn creation_order(properties: &ObjectProperties) -> Vec<PropertyName> {
     // Bootstrap objects commonly arrive with all properties at once. Reserve
     // the final key count so creation-order storage does not repeatedly grow
     // and retain transient allocator pages during bootstrap.
     let mut created = Vec::with_capacity(properties.len());
-    for (key, _) in properties {
+    for key in properties.names() {
         if key.starts_with('\0') || created.iter().any(|name| name == key.as_str()) {
             continue;
         }
@@ -800,7 +1143,10 @@ mod object_identity_tests {
     #[test]
     fn creation_order_shares_the_canonical_property_name() {
         let object = ObjectData::new(vec![("currentTask".into(), super::Value::Undefined)]);
-        assert!(Rc::ptr_eq(&object.properties[0].0 .0, &object.created[0].0));
+        assert!(Rc::ptr_eq(
+            &object.properties.name_at(0).unwrap().0,
+            &object.created[0].0
+        ));
     }
 }
 /// Derived layout facts for ordinary objects. These are never authoritative;
@@ -834,7 +1180,7 @@ impl ObjectData {
         // as transition-cache keys and must be reproducible across processes.
         let mut hash = 0x811c9dc5u32;
         let mut slots = 0u32;
-        for (name, _) in self.properties.iter() {
+        for name in self.properties.names() {
             if name.starts_with('\0') {
                 continue;
             }
@@ -880,9 +1226,9 @@ impl ObjectData {
             return None;
         }
         self.properties
-            .iter()
-            .filter(|(name, _)| !name.starts_with('\0'))
-            .position(|(name, _)| name == key)
+            .names()
+            .filter(|name| !name.starts_with('\0'))
+            .position(|name| name == key)
     }
     /// Check the canonical AoS projection used by shape/slot fast paths.
     ///
@@ -902,18 +1248,19 @@ impl ObjectData {
         debug_assert_eq!(self.shape().slots as usize, visible.len());
         for (slot, (name, value)) in visible.iter().enumerate() {
             debug_assert_eq!(self.slot_for(name), Some(slot));
-            debug_assert!(self
-                .value_at_slot(slot)
-                .is_some_and(|candidate| std::ptr::eq(candidate, value)));
+            debug_assert_eq!(self.value_at_slot(slot).as_ref(), Some(value));
         }
     }
 
-    pub(crate) fn value_at_slot(&self, slot: usize) -> Option<&Value> {
-        self.properties
-            .iter()
-            .filter(|(name, _)| !name.starts_with('\0'))
+    pub(crate) fn value_at_slot(&self, slot: usize) -> Option<Value> {
+        let physical_slot = self
+            .properties
+            .names()
+            .enumerate()
+            .filter(|(_, name)| !name.starts_with('\0'))
             .nth(slot)
-            .map(|(_, value)| value)
+            .map(|(physical_slot, _)| physical_slot)?;
+        self.properties.slot_value(physical_slot)
     }
 }
 impl ObjectData {
@@ -922,14 +1269,13 @@ impl ObjectData {
     /// reverse encounter order (including duplicate writes), while metadata
     /// remains visible only to the slow-path caller that interprets it.
     #[inline]
-    pub(crate) fn dictionary_value(&self, key: &str) -> Option<&Value> {
+    pub(crate) fn dictionary_value(&self, key: &str) -> Option<Value> {
         if !self.is_dictionary() || key.starts_with('\0') {
             return None;
         }
         self.properties
-            .iter()
-            .rev()
-            .find_map(|(name, value)| (name == key).then_some(value))
+            .position_rev(key)
+            .and_then(|slot| self.properties.slot_value(slot))
     }
 }
 
@@ -939,7 +1285,7 @@ impl ObjectData {
         &self,
         shape: crate::identity::ShapeId,
         slot: usize,
-    ) -> Option<&Value> {
+    ) -> Option<Value> {
         #[cfg(debug_assertions)]
         self.assert_canonical_slots();
         // Dictionary layouts deliberately have no positional slot contract;
@@ -970,9 +1316,9 @@ impl ObjectData {
         let key_id = crate::identity::property_key_id(property);
         let visible: Vec<_> = self
             .properties
-            .iter()
-            .filter(|(name, _)| !name.starts_with('\0'))
-            .map(|(name, _)| name.as_str())
+            .names()
+            .filter(|name| !name.starts_with('\0'))
+            .map(|name| name.as_str())
             .collect();
         let slot = visible
             .iter()
@@ -1565,7 +1911,7 @@ mod layout_tests {
         );
         assert_eq!(object.shape().slots, 2);
         assert_eq!(object.slot_for("second"), Some(1));
-        assert_eq!(object.value_at_slot(1), Some(&Value::Number(2.0)));
+        assert_eq!(object.value_at_slot(1), Some(&Value::Number(2.0)).cloned());
         #[cfg(debug_assertions)]
         object.assert_canonical_slots();
 
@@ -1734,7 +2080,10 @@ mod shape_tests {
         ]);
         let slot = object.slot_for("beta").expect("ordinary slot");
         assert_eq!(slot, 1);
-        assert_eq!(object.value_at_slot(slot), Some(&Value::Number(9.0)));
+        assert_eq!(
+            object.value_at_slot(slot),
+            Some(&Value::Number(9.0)).cloned()
+        );
     }
     #[test]
     fn shape_identity_includes_property_order() {
@@ -1771,8 +2120,8 @@ mod shape_tests {
         let mut object = ObjectData::new(vec![("key".into(), Value::Undefined)]);
         assert_eq!(object.properties.len(), 1);
         assert_eq!(object.slot_for("key"), Some(0));
-        object.properties[0].1 = Value::Number(7.0);
-        assert_eq!(object.value_at_slot(0), Some(&Value::Number(7.0)));
+        *object.properties.slot_value_mut(0).unwrap() = Value::Number(7.0);
+        assert_eq!(object.value_at_slot(0), Some(&Value::Number(7.0)).cloned());
         assert_eq!(object.properties.capacity(), 1);
     }
 
@@ -1818,7 +2167,7 @@ mod shape_tests {
         let shape = object.shape_id();
         assert_eq!(
             object.value_for_shape_slot(shape, 0),
-            Some(&Value::Number(7.0))
+            Some(&Value::Number(7.0)).cloned()
         );
         assert_eq!(
             object.value_for_shape_slot(crate::identity::ShapeId(shape.0.wrapping_add(1)), 0),
@@ -1838,14 +2187,14 @@ mod shape_tests {
         assert_eq!(object.slot_for("second"), Some(1));
         assert_eq!(
             object.value_for_shape_slot(initial_shape, 1),
-            Some(&Value::Number(2.0))
+            Some(&Value::Number(2.0)).cloned()
         );
 
-        object.properties[0].1 = Value::Number(9.0);
+        *object.properties.slot_value_mut(0).unwrap() = Value::Number(9.0);
         assert_eq!(object.shape().id, initial_shape);
         assert_eq!(
             object.value_for_shape_slot(initial_shape, 0),
-            Some(&Value::Number(9.0))
+            Some(&Value::Number(9.0)).cloned()
         );
         object.properties.push(("third".into(), Value::Null));
         let expanded_shape = object.shape();
@@ -1854,7 +2203,7 @@ mod shape_tests {
         assert_eq!(object.slot_for("third"), Some(2));
         assert_eq!(
             object.value_for_shape_slot(expanded_shape.id, 2),
-            Some(&Value::Null)
+            Some(&Value::Null).cloned()
         );
         assert_eq!(object.value_for_shape_slot(initial_shape, 2), None);
     }
@@ -1881,8 +2230,8 @@ mod shape_tests {
         assert_eq!(object.slot_for("\0descriptor"), None);
         assert_eq!(object.slot_for("visible"), Some(0));
         assert_eq!(object.slot_for("second"), Some(1));
-        assert_eq!(object.value_at_slot(0), Some(&Value::Null));
-        assert_eq!(object.value_at_slot(1), Some(&Value::Number(2.0)));
+        assert_eq!(object.value_at_slot(0), Some(&Value::Null).cloned());
+        assert_eq!(object.value_at_slot(1), Some(&Value::Number(2.0)).cloned());
         assert_eq!(object.value_at_slot(2), None);
     }
     #[test]

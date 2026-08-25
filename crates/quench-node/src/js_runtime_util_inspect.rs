@@ -1,12 +1,15 @@
-fn format_json_value(value: &Value) -> String {
-    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
-        if let Ok(self_value) = quench_runtime::execute::get_property_result(value, "self") {
-            if matches!(self_value, Value::Object(_) | Value::ObjectAlias(_)) {
-                return "[Circular]".into();
-            }
+fn format_json_value(value: &Value) -> Result<String, VmError> {
+    let value = match quench_runtime::execute::get_property_result(value, "toJSON") {
+        Ok(method) if matches!(method, Value::Function(_) | Value::BoundFunction(_)) => {
+            quench_runtime::execute::call(&method, value, &[])?
         }
+        _ => value.clone(),
+    };
+    match quench_runtime::execute::json_stringify(&value) {
+        Ok(Value::String(json)) => Ok(json),
+        Ok(_) => Ok("undefined".into()),
+        Err(error) => Err(error),
     }
-    "undefined".into()
 }
 
 fn format_compact_array(value: &Value) -> String {
@@ -408,20 +411,25 @@ fn format_inspected(value: &Value) -> String {
 }
 
 fn util_inspect(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(arguments.first(), Some(Value::Uint8Array(_))) {
-        return buffer_inspect(arguments.first());
-    }
-    if let Some(value) = arguments.first() {
-        if let Ok(method) = quench_runtime::execute::get_property_result(value, "toISOString") {
-            if let Ok(Value::String(result)) = quench_runtime::execute::call(&method, value, &[]) {
-                return Ok(Value::String(result.into()));
-            }
-        }
-    }
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let Some(options) = arguments.get(1) else {
+        return Ok(Value::String(crate::modules::util::inspect(&value).into()));
+    };
+    let depth = match quench_runtime::execute::get_property(options, "depth") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize + 1),
+        Value::Null => Some(usize::MAX / 2),
+        _ => None,
+    };
+    let show_hidden = matches!(
+        quench_runtime::execute::get_property(options, "showHidden"),
+        Value::Boolean(true)
+    );
+    let getters = matches!(
+        quench_runtime::execute::get_property(options, "getters"),
+        Value::Boolean(true)
+    );
     Ok(Value::String(
-        arguments
-            .first()
-            .map(safe_value_string)
-            .unwrap_or_else(|| "undefined".into()),
+        crate::modules::util::inspect_with_options(&value, depth.unwrap_or(3), show_hidden, None, getters)
+            .into(),
     ))
 }

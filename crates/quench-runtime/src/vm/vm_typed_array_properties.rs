@@ -160,7 +160,16 @@ fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value
     }
 }
 fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Value {
-    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+    let float16 = view.meta.property("\0float16_array").is_some();
+    if let Some(value) = typed_index(key, |index| {
+        view.get(index).map(|bits| {
+            if float16 {
+                float16_to_f64(bits)
+            } else {
+                f64::from(bits)
+            }
+        })
+    }) {
         return value;
     }
     let detached = typed_array_detached(
@@ -190,6 +199,18 @@ fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Val
             Value::Number(crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64)
         }
         _ => crate::builtins::property(Builtin::Uint16ArrayPrototype, key),
+    }
+}
+
+fn float16_to_f64(bits: u16) -> f64 {
+    let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exponent = (bits >> 10) & 0x1f;
+    let fraction = bits & 0x03ff;
+    match exponent {
+        0 => sign * f64::from(fraction) * 2f64.powi(-24),
+        0x1f if fraction == 0 => sign * f64::INFINITY,
+        0x1f => f64::NAN,
+        exponent => sign * (1.0 + f64::from(fraction) / 1024.0) * 2f64.powi(i32::from(exponent) - 15),
     }
 }
 fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value {

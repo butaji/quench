@@ -317,7 +317,7 @@ fn store_identifier(
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
     let slot = *locals.get(name)?;
-    if !facts.has_dynamic_scope() && !facts.eval_reduction {
+    if !facts.has_dynamic_scope() {
         ops.push(Op::StoreLocal { slot, src: source });
         ops.push(Op::InitializeLocal { slot });
         return Some(());
@@ -408,7 +408,7 @@ fn pre_resolve(
         return Some(None);
     };
     let slot = *locals.get(name)?;
-    let target = (facts.has_dynamic_scope() || facts.eval_reduction).then(|| {
+    let target = facts.has_dynamic_scope().then(|| {
         let target = take_register(next);
         ops.push(Op::ResolveActiveBindingTarget {
             dst: target,

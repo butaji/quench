@@ -50,10 +50,7 @@ pub fn custom_function(realm: crate::ops::RealmId, kind: u16) -> Value {
 
 /// Build a host capability with fixed arguments, preserving the capability
 /// token as the bound receiver while forwarding the fixed values first.
-pub fn bound_capability_with_arguments(
-    capability: HostCapabilityRef,
-    arguments: Vec<Value>,
-) -> Value {
+pub fn bound_capability_with_arguments(capability: HostCapabilityRef, arguments: Vec<Value>) -> Value {
     let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability.clone())));
     let mut bound = BoundFunctionValue::new(
         capability.realm,

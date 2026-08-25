@@ -1,14 +1,15 @@
 {
   "schema": 1,
+  "oracle": { "max_ratio": 2 },
   "metrics": {
-    "shape_hit_per_iteration": {
-      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "shape_nested_array_length", "field": "hits" } },
+    "invariant_sum_hit_per_iteration": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "invariant_sum", "field": "hits" } },
       "denominator": "events.loop_iteration",
       "min_traffic": 100000,
       "min": 0.99
     },
-    "leaf_attempt_per_iteration": {
-      "numerator": "lanes.l1.leaf.attempt",
+    "getn_decode_per_iteration": {
+      "numerator": "lanes.l0.value_decode_by_site.getn",
       "denominator": "events.loop_iteration",
       "min_traffic": 100000,
       "max": 0.02

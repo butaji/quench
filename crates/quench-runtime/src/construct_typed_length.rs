@@ -7,7 +7,7 @@ fn object_array_like(
     let Value::Number(length) = length else {
         return Ok(None);
     };
-    let length = (*length).max(0.0) as usize;
+    let length = length.max(0.0) as usize;
     let mut values = Vec::new();
     values
         .try_reserve_exact(length)

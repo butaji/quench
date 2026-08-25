@@ -1,0 +1,11 @@
+const assert = require('assert');
+const dc = require('diagnostics_channel');
+const { Channel } = dc;
+const channel = dc.channel('core');
+assert.ok(channel instanceof Channel);
+assert.strictEqual(channel.hasSubscribers, false);
+const subscriber = () => {};
+dc.subscribe('core', subscriber);
+assert.strictEqual(channel.hasSubscribers, true);
+assert.strictEqual(dc.unsubscribe('core', subscriber), true);
+assert.strictEqual(channel.hasSubscribers, false);
