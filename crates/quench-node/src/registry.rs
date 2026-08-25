@@ -462,14 +462,15 @@ pub const SPEC_URL_FILE_URL_TO_PATH: NodeSpec = NodeSpec::new("url:fileURLToPath
 pub const SPEC_URL_TO_HTTP_OPTIONS: NodeSpec = NodeSpec::new("url:urlToHttpOptions", 0x0516);
 pub const SPEC_URL_DOMAIN_TO_ASCII: NodeSpec = NodeSpec::new("url:domainToASCII", 0x0517);
 pub const SPEC_URL_DOMAIN_TO_UNICODE: NodeSpec = NodeSpec::new("url:domainToUnicode", 0x0518);
-pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1f00);
-pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1f01);
-pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1f02);
-pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1f05);
-pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1f03);
-pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1f04);
+pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1F20);
+pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1F21);
+pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1F22);
+pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec =
+    NodeSpec::new("AbortController.abort", 0x1F25);
+pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1F23);
+pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1F24);
 pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
-    NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1f06);
+    NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1F26);
 pub const SPEC_EVENT: NodeSpec = NodeSpec::new("Event", 0x0118);
 pub const SPEC_EVENT_PREVENT_DEFAULT: NodeSpec = NodeSpec::new("Event.preventDefault", 0x011a);
 pub const SPEC_EVENT_STOP_PROPAGATION: NodeSpec = NodeSpec::new("Event.stopPropagation", 0x011b);
