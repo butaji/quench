@@ -61,12 +61,23 @@ impl QuenchNodeHost {
         let callback = arguments.first().cloned().ok_or(VmError::NotCallable)?;
         if let Some(code) = arguments.get(2) {
             if !matches!(code, Value::String(_)) {
+                let received = match code {
+                    Value::Null => " Received null".to_string(),
+                    Value::Boolean(value) => format!(" Received type boolean ({value})"),
+                    Value::Number(value) => format!(" Received type number ({value})"),
+                    Value::Object(_) | Value::ObjectAlias(_) => {
+                        " Received an instance of Object".to_string()
+                    }
+                    _ => format!(" Received type {}", code.type_name()),
+                };
                 return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
                     ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
                     ("name".into(), Value::String("TypeError".into())),
                     (
                         "message".into(),
-                        Value::String("The \"code\" argument must be of type string.".into()),
+                        Value::String(format!(
+                            "The \"code\" argument must be of type string.{received}"
+                        )),
                     ),
                 ])));
             }

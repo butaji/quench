@@ -49,6 +49,8 @@ const CAP_CONSOLE_ERROR: u16 = 0x0203;
 const CAP_CONSOLE_DEBUG: u16 = 0x0204;
 const CAP_CONSOLE_TRACE: u16 = 0x0205;
 const CAP_UTIL_FORMAT: u16 = 0x0300;
+const CAP_UTIL_DEPRECATE: u16 = 0x0730;
+const CAP_UTIL_DEPRECATED_CALL: u16 = 0x0731;
 const CAP_UTIL_INSPECT: u16 = 0x0301;
 const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
 const CAP_UTIL_IS_NATIVE_ERROR: u16 = 0x030A;
@@ -411,6 +413,8 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_CONSOLE_WARN | CAP_CONSOLE_ERROR => console_warn,
         CAP_CONSOLE_TRACE => console_trace,
         CAP_UTIL_FORMAT => util_format,
+        CAP_UTIL_DEPRECATE => util_deprecate,
+        CAP_UTIL_DEPRECATED_CALL => util_deprecated_call,
         CAP_UTIL_INSPECT => util_inspect,
         CAP_UTIL_PARSE_ENV => util_parse_env,
         CAP_UTIL_PROMISIFY => util_promisify,
