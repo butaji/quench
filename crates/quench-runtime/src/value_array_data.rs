@@ -57,7 +57,7 @@ impl PartialEq for ArrayData {
 #[derive(Debug, Clone, PartialEq)]
 enum DenseElements {
     Numbers(Rc<RefCell<Vec<std::cell::Cell<f64>>>>),
-    Values(Vec<Value>),
+    Values(Rc<RefCell<Vec<Value>>>),
 }
 
 impl DenseElements {
@@ -73,34 +73,34 @@ impl DenseElements {
                     .collect(),
             )));
         }
-        Self::Values(values)
+        Self::Values(Rc::new(RefCell::new(values)))
     }
 
     fn len(&self) -> usize {
         match self {
             Self::Numbers(values) => values.borrow().len(),
-            Self::Values(values) => values.len(),
+            Self::Values(values) => values.borrow().len(),
         }
     }
 
     fn capacity(&self) -> usize {
         match self {
             Self::Numbers(values) => values.borrow().capacity(),
-            Self::Values(values) => values.capacity(),
+            Self::Values(values) => values.borrow().capacity(),
         }
     }
 
     fn truncate(&mut self, length: usize) {
         match self {
             Self::Numbers(values) => values.borrow_mut().truncate(length),
-            Self::Values(values) => values.truncate(length),
+            Self::Values(values) => values.borrow_mut().truncate(length),
         }
     }
 
     fn reserve(&mut self, additional: usize) {
         match self {
             Self::Numbers(values) => values.borrow_mut().reserve(additional),
-            Self::Values(values) => values.reserve(additional),
+            Self::Values(values) => values.borrow_mut().reserve(additional),
         }
     }
 
@@ -111,7 +111,7 @@ impl DenseElements {
     fn resize_numeric(&mut self, length: usize) {
         match self {
             Self::Numbers(values) => values.borrow_mut().resize_with(length, || std::cell::Cell::new(0.0)),
-            Self::Values(values) => values.resize(length, Value::Number(0.0)),
+            Self::Values(values) => values.borrow_mut().resize(length, Value::Number(0.0)),
         }
     }
 
@@ -150,7 +150,7 @@ impl DenseElements {
     fn number_at(&self, index: usize) -> Option<f64> {
         match self {
             Self::Numbers(values) => values.borrow().get(index).map(std::cell::Cell::get),
-            Self::Values(values) => match values.get(index)? {
+            Self::Values(values) => match values.borrow().get(index)? {
                 Value::Number(number) => Some(*number),
                 _ => None,
             },
@@ -163,7 +163,7 @@ impl DenseElements {
                 .borrow()
                 .get(index)
                 .map(|value| Value::Number(value.get())),
-            Self::Values(values) => values.get(index).cloned(),
+            Self::Values(values) => values.borrow().get(index).cloned(),
         }
     }
 
@@ -215,12 +215,15 @@ impl DenseElements {
                 .iter()
                 .map(|number| Value::Number(number.get()))
                 .collect();
-            *self = Self::Values(values);
+            *self = Self::Values(Rc::new(RefCell::new(values)));
         }
         let Self::Values(values) = self else {
             unreachable!()
         };
-        values
+        let values = values.borrow().clone();
+        *self = Self::Values(Rc::new(RefCell::new(values)));
+        let Self::Values(values) = self else { unreachable!() };
+        Rc::get_mut(values).expect("detached values").get_mut()
     }
 
     fn snapshot(&self) -> Vec<Value> {
@@ -575,9 +578,9 @@ impl ArrayData {
             DenseElements::Numbers(_) => {
                 let mut current = self.values.materialize_values().to_vec();
                 current.extend_from_slice(values);
-                self.values = DenseElements::Values(current);
+                self.values = DenseElements::Values(Rc::new(RefCell::new(current)));
             }
-            DenseElements::Values(current) => current.extend_from_slice(values),
+            DenseElements::Values(current) => current.borrow_mut().extend_from_slice(values),
         }
         self.length = self.length.saturating_add(values.len());
     }
@@ -856,6 +859,18 @@ impl ArrayData {
                     monotonic_kind(kind, number_kind(*number))
                 }),
             ));
+        true
+    }
+
+    #[inline(always)]
+    pub(crate) fn append_shared_values(&self, values: &[Value]) -> bool {
+        if !self.is_packed_ordinary() || values.is_empty() {
+            return values.is_empty() && self.is_packed_ordinary();
+        }
+        let DenseElements::Values(current) = &self.values else {
+            return false;
+        };
+        current.borrow_mut().extend_from_slice(values);
         true
     }
 
