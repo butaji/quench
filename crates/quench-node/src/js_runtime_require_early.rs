@@ -1,4 +1,15 @@
 fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
+    if matches!(name, "timers/promises" | "node:timers/promises") {
+        return crate::modules::timers::build_promises().map(Some);
+    }
+    if matches!(name, "timers" | "node:timers") {
+        let mut bindings = crate::modules::timers::build();
+        bindings.push((
+            "promises".to_string(),
+            crate::modules::timers::build_promises()?,
+        ));
+        return crate::host::namespace_object_from_pairs(bindings).map(Some);
+    }
     let value = match name {
         "path/win32" | "node:path/win32" => {
             let path = require_module(&[Value::String("path".into())])?;
@@ -14,15 +25,11 @@ fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
         "dgram" | "node:dgram" => quench_runtime::host_api::object(vec![(
             "createSocket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket)),
         )]),
-        "timers/promises" | "node:timers/promises" => timers_promises_module(),
         "worker_threads" | "node:worker_threads" => quench_runtime::host_api::object(vec![(
             "Worker".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerConstructor)),
         )]),
         "internal/dgram" | "node:internal/dgram" => quench_runtime::host_api::object(vec![(
             "kStateSymbol".into(), Value::String("__dgramState".into()),
-        )]),
-        "timers" | "node:timers" => quench_runtime::host_api::object(vec![(
-            "promises".into(), timers_promises_module(),
         )]),
         _ => return Ok(None),
     };
