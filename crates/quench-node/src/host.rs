@@ -245,6 +245,16 @@ pub fn install_with_argv(
         "__quenchGetProxyDetails".to_string(),
         crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
     );
+    let blob_prototype = host_api::object(vec![]);
+    let blob = host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+    let blob = quench_runtime::execute::set_property(blob, "prototype", blob_prototype.clone());
+    let file_prototype = host_api::object(vec![]);
+    let _ = quench_runtime::execute::set_prototype_of(&file_prototype, &blob_prototype);
+    let file = host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined);
+    let file = quench_runtime::execute::set_property(file, "prototype", file_prototype);
+    context = context
+        .with_host_value("Blob".to_string(), blob)
+        .with_host_value("File".to_string(), file);
     let console = namespace_object_from_pairs(vec![
         (
             "log".to_string(),
