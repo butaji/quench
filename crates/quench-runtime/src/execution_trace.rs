@@ -900,6 +900,40 @@ pub(crate) fn loop_shape_iteration(fingerprint: u64) {
 pub(crate) fn loop_shape_iteration(_: u64) {}
 
 #[cfg(feature = "execution-trace")]
+pub(crate) fn numeric_kernel_iterations(
+    id: &'static str,
+    fingerprint: u64,
+    iterations: usize,
+    gets_per_iteration: usize,
+    sets_per_iteration: usize,
+) {
+    if !enabled() || iterations == 0 {
+        return;
+    }
+    let iterations = iterations as u64;
+    COUNTERS.with(|counters| {
+        let mut counters = counters.borrow_mut();
+        if counters.events.is_empty() {
+            counters.events.resize(EVENT_NAMES.len(), 0);
+        }
+        counters.events[Event::LoopIteration as usize] += iterations;
+        counters.events[Event::CountedForHit as usize] += iterations;
+        counters.events[Event::PackedArrayGet as usize] +=
+            iterations.saturating_mul(gets_per_iteration as u64);
+        counters.events[Event::PackedArraySet as usize] +=
+            iterations.saturating_mul(sets_per_iteration as u64);
+        if let Some(shape) = counters.loop_shapes.get_mut(&fingerprint) {
+            shape.1 += iterations;
+        }
+        counters.kernels.entry(id).or_default().0 += iterations;
+    });
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn numeric_kernel_iterations(_: &'static str, _: u64, _: usize, _: usize, _: usize) {}
+
+#[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
 #[cfg(feature = "execution-trace")]
 thread_local! {
