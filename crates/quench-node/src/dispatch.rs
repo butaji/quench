@@ -230,6 +230,16 @@ const CAP_WASI_CONSTRUCTOR: u16 = crate::registry::SPEC_WASI_CONSTRUCTOR.cap;
 const CAP_WASI_START: u16 = crate::registry::SPEC_WASI_START.cap;
 const CAP_WASI_INITIALIZE: u16 = crate::registry::SPEC_WASI_INITIALIZE.cap;
 const CAP_WASI_IMPORT_OBJECT: u16 = crate::registry::SPEC_WASI_IMPORT_OBJECT.cap;
+const CAP_DIAGNOSTICS_CHANNEL: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL.cap;
+const CAP_DIAGNOSTICS_CHANNEL_CONSTRUCTOR: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR.cap;
+const CAP_DIAGNOSTICS_SUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_SUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_UNSUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_UNSUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_HAS_SUBSCRIBERS: u16 = crate::registry::SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS.cap;
+const CAP_DIAGNOSTICS_CHANNEL_SUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_CHANNEL_PUBLISH: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_PUBLISH.cap;
+const CAP_DIAGNOSTICS_CHANNEL_BIND_STORE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE.cap;
+const CAP_DIAGNOSTICS_CHANNEL_UNBIND_STORE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE.cap;
 const CAP_ZLIB_GZIP: u16 = 0x1700;
 const CAP_ZLIB_GUNZIP: u16 = 0x1701;
 const CAP_ZLIB_DEFLATE_RAW: u16 = 0x1702;
@@ -493,6 +503,15 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         0x0711 => internal_buffer_fill,
         0x0712 => internal_view_has_buffer,
         0x0713 => internal_buffer_aligned_offset,
+        CAP_DIAGNOSTICS_CHANNEL => crate::modules::diagnostics_channel::channel,
+        CAP_DIAGNOSTICS_SUBSCRIBE => crate::modules::diagnostics_channel::subscribe,
+        CAP_DIAGNOSTICS_UNSUBSCRIBE => crate::modules::diagnostics_channel::unsubscribe,
+        CAP_DIAGNOSTICS_HAS_SUBSCRIBERS => crate::modules::diagnostics_channel::has_subscribers,
+        CAP_DIAGNOSTICS_CHANNEL_SUBSCRIBE => crate::modules::diagnostics_channel::channel_subscribe,
+        CAP_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE => crate::modules::diagnostics_channel::channel_unsubscribe,
+        CAP_DIAGNOSTICS_CHANNEL_PUBLISH => crate::modules::diagnostics_channel::publish,
+        CAP_DIAGNOSTICS_CHANNEL_BIND_STORE => crate::modules::diagnostics_channel::bind_store,
+        CAP_DIAGNOSTICS_CHANNEL_UNBIND_STORE => crate::modules::diagnostics_channel::unbind_store,
         _ => return os_buffer_dispatch(cap),
     })
 }
@@ -686,6 +705,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_ASYNC_RESOURCE => crate::modules::async_hooks::new_resource,
         CAP_INSPECTOR_SESSION => crate::modules::inspector::new_session,
         CAP_WASI_CONSTRUCTOR => crate::modules::wasi::new_wasi,
+        CAP_DIAGNOSTICS_CHANNEL_CONSTRUCTOR => crate::modules::diagnostics_channel::new_channel,
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
         CAP_EVENT => handlers::event_new,
