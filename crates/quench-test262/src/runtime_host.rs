@@ -2,7 +2,7 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::Path,
     rc::Rc,
 };
@@ -12,7 +12,7 @@ use quench_runtime::reduce::{
     inspect_module_source, reduce_module_sequence, reduce_module_source, reduce_script_sources,
     reduce_source, ScriptSource,
 };
-use quench_runtime::vm::{execute_code_with_context, ExecutionScope, VmContext};
+use quench_runtime::vm::{execute_code_with_context, ExecutionScope, Host, VmContext};
 
 use crate::module_graph::{ModuleGraph, ModuleId, ModuleKind};
 use crate::Test262Host;
@@ -383,6 +383,18 @@ impl Test262Host for RuntimeHost {
         let program = reduce_script_sources(&scripts).map_err(|errors| errors.join("; "))?;
         execute_program(&program)
     }
+    fn run_harnessed_script_with_flags(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        strict: bool,
+        can_block: bool,
+    ) -> Result<(), String> {
+        quench_runtime::set_agent_can_block(can_block);
+        let result = self.run_harnessed_script(harness, source, strict);
+        quench_runtime::set_agent_can_block(true);
+        result
+    }
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
         // AGENTS.md: harness fidelity is absolute; compose and dispatch exact harness sources.
         let program =
@@ -403,6 +415,7 @@ impl Test262Host for RuntimeHost {
             .ok_or_else(|| "module graph missing entry".to_string())?;
         let linked =
             LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), harness)?;
+        reset_agent_state();
         quench_runtime::builtins::reset_intrinsic_prototype_state();
         quench_runtime::execute::reset_replacements();
         let context = fresh_context();
@@ -411,6 +424,7 @@ impl Test262Host for RuntimeHost {
 }
 
 include!("runtime_host_graph.rs");
+include!("runtime_host_agent.rs");
 
 fn run_source(source: &str) -> Result<(), String> {
     let program = reduce_source(source).map_err(|errors| errors.join("; "))?;
@@ -418,6 +432,7 @@ fn run_source(source: &str) -> Result<(), String> {
 }
 
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
+    reset_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
     let context = fresh_context();
@@ -442,8 +457,27 @@ fn fresh_context() -> VmContext {
             quench_runtime::ops::HostCapabilityKind::EvalScript,
             quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
             quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
+            quench_runtime::ops::HostCapabilityKind::Custom(100),
+            quench_runtime::ops::HostCapabilityKind::Custom(101),
+            quench_runtime::ops::HostCapabilityKind::Custom(102),
+            quench_runtime::ops::HostCapabilityKind::Custom(103),
+            quench_runtime::ops::HostCapabilityKind::Custom(104),
+            quench_runtime::ops::HostCapabilityKind::Custom(105),
+            quench_runtime::ops::HostCapabilityKind::Custom(106),
+            quench_runtime::ops::HostCapabilityKind::Custom(107),
+            quench_runtime::ops::HostCapabilityKind::Custom(108),
+            quench_runtime::ops::HostCapabilityKind::Custom(109),
+            quench_runtime::ops::HostCapabilityKind::Custom(110),
+            quench_runtime::ops::HostCapabilityKind::Custom(111),
+            quench_runtime::ops::HostCapabilityKind::Custom(112),
+            quench_runtime::ops::HostCapabilityKind::Custom(113),
+            quench_runtime::ops::HostCapabilityKind::Custom(114),
+            quench_runtime::ops::HostCapabilityKind::Custom(115),
+            quench_runtime::ops::HostCapabilityKind::Custom(116),
+            quench_runtime::ops::HostCapabilityKind::Custom(117),
         ],
-    );
+    )
+    .with_host(Rc::new(RuntimeHost));
     context.with_host_capability(
         "$262",
         quench_runtime::ops::HostCapabilityRef {

@@ -164,7 +164,8 @@ fn same_listener(left: &Value, right: &Value) -> bool {
 /// `{ once: true }` from the options bag; anything else is ignored.
 fn once_option(args: &[Value]) -> bool {
     matches!(
-        args.get(2).and_then(|v| execute::get_property_result(v, "once").ok()),
+        args.get(2)
+            .and_then(|v| execute::get_property_result(v, "once").ok()),
         Some(Value::Boolean(true))
     )
 }
@@ -176,7 +177,9 @@ fn passive_option(args: &[Value]) -> bool {
 }
 
 fn signal_option(args: &[Value]) -> Result<Option<Value>, VmError> {
-    let Some(options) = args.get(2) else { return Ok(None) };
+    let Some(options) = args.get(2) else {
+        return Ok(None);
+    };
     if matches!(options, Value::Null | Value::Undefined) {
         return Ok(None);
     }
@@ -185,7 +188,9 @@ fn signal_option(args: &[Value]) -> Result<Option<Value>, VmError> {
         return Ok(None);
     }
     if !matches!(signal, Value::Object(_)) || !is_abort_signal(&signal) {
-        return Err(execute::type_error("The \"signal\" option must be an AbortSignal"));
+        return Err(execute::type_error(
+            "The \"signal\" option must be an AbortSignal",
+        ));
     }
     Ok(Some(signal))
 }
@@ -344,11 +349,8 @@ pub fn dispatch_event(
             )?;
         }
         if listener.passive {
-            let passive = execute::set_property(
-                event.clone(),
-                "\0event:passive",
-                Value::Boolean(true),
-            );
+            let passive =
+                execute::set_property(event.clone(), "\0event:passive", Value::Boolean(true));
             execute::replace_value(event, &passive);
         }
         let result = if quench_runtime::is_callable(&listener.callback) {

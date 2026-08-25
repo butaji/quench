@@ -14,7 +14,7 @@ use crate::{
     conversion::to_string,
     execute::VmError,
     facts::ProgramDb,
-    ops::{FunctionKind, FunctionStrictness},
+    ops::{Builtin, FunctionKind, FunctionStrictness},
     value::Value,
 };
 
@@ -26,8 +26,8 @@ fn construct(
 ) -> Result<Value, VmError> {
     let source = function_source(arguments, kind, is_async)?;
     let realm = realm.unwrap_or_else(|| crate::vm::current_context_or_default().realm());
-    crate::vm::with_realm(realm, || reduce_dynamic(&source, kind, is_async))
-        .unwrap_or_else(|| reduce_dynamic(&source, kind, is_async))
+    crate::vm::with_realm(realm, || reduce_dynamic(&source, kind, is_async, realm))
+        .unwrap_or_else(|| reduce_dynamic(&source, kind, is_async, realm))
 }
 
 pub(crate) fn construct_builtin(
@@ -53,7 +53,12 @@ pub(crate) fn construct_builtin_in_realm(
     Some(construct(arguments, kind, is_async, realm))
 }
 
-fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Value, VmError> {
+fn reduce_dynamic(
+    source: &str,
+    kind: FunctionKind,
+    is_async: bool,
+    realm: crate::ops::RealmId,
+) -> Result<Value, VmError> {
     if source.contains("import.meta") {
         return Err(syntax_error("import.meta is only valid in modules"));
     }
@@ -144,9 +149,9 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     facts.in_function = inherited;
     let (ops, _) = reduced.ok_or_else(|| invalid("Unsupported function source"))?;
     let length = crate::function_parameters::expected_argument_count(&function.params);
-    let value = dynamic_value(ops, count, length, strictness, kind, is_async);
+    let value = dynamic_value(ops, count, length, strictness, kind, is_async, realm);
     crate::builtins::set_function_name(&value, "anonymous")?;
-    mark_dynamic(&value, source);
+    mark_dynamic(&value, source, realm);
     Ok(value)
 }
 
@@ -279,11 +284,11 @@ fn dynamic_value(
     strictness: crate::ops::FunctionStrictness,
     kind: FunctionKind,
     is_async: bool,
+    realm: crate::ops::RealmId,
 ) -> Value {
     let captures = crate::environment::Environment::new();
-    let realm = crate::vm::current_context_or_default().realm();
-    let global = crate::vm::realm_global_value(realm)
-        .unwrap_or_else(|| crate::locals::current().get(0));
+    let global =
+        crate::vm::realm_global_value(realm).unwrap_or_else(|| crate::locals::current().get(0));
     captures.set(0, global);
     let value = crate::functions::make(
         crate::machine::FunctionCode::from_ops(ops),
@@ -300,9 +305,7 @@ fn dynamic_value(
     );
     if let Value::Function(function) = &value {
         let mut properties = function.properties.borrow_mut();
-        if let Some(token) = crate::vm::realm_token(realm) {
-            properties.push(("\0realm".to_string(), token));
-        }
+        properties.push(("\0realm".to_string(), Value::Number(realm.get() as f64)));
         let prototype = match (kind, is_async) {
             (FunctionKind::Generator, true) => crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
             (FunctionKind::Generator, false) => crate::ops::Builtin::GeneratorFunctionPrototype,
@@ -312,6 +315,34 @@ fn dynamic_value(
             "\0function_prototype".to_string(),
             crate::vm::realm_intrinsic(prototype),
         ));
+        if matches!(kind, FunctionKind::Generator) || !is_async {
+            let parent = if is_async {
+                crate::builtins::async_generator_prototype_in(realm)
+            } else if matches!(kind, FunctionKind::Generator) {
+                crate::builtins::generator_prototype_in(realm)
+            } else {
+                crate::vm::realm_intrinsic_for(realm, Builtin::ObjectPrototype)
+            };
+            let mut instance = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+                vec![("\0prototype".to_string(), parent)],
+            )));
+            if let Value::Object(instance_data) = &mut instance {
+                std::rc::Rc::get_mut(instance_data)
+                    .expect("new dynamic prototype is uniquely owned")
+                    .properties
+                    .push(("constructor".to_string().into(), value.clone()));
+            }
+            properties.push(("prototype".to_string(), instance.clone()));
+            properties.push((
+                crate::builtins::descriptor_key("prototype"),
+                crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                    ("value".to_string(), instance),
+                    ("writable".to_string(), Value::Boolean(true)),
+                    ("enumerable".to_string(), Value::Boolean(false)),
+                    ("configurable".to_string(), Value::Boolean(false)),
+                ]))),
+            ));
+        }
     }
     value
 }
@@ -328,7 +359,14 @@ fn function_source(
         .map(to_string)
         .collect::<Result<Vec<_>, _>>()?
         .join(",");
-    let parameters = normalize_annex_b_comments(&parameters, false);
+    let mut parameters = normalize_annex_b_comments(&parameters, false);
+    if parameters
+        .lines()
+        .last()
+        .is_some_and(|line| line.trim_start().contains("//"))
+    {
+        parameters.push('\n');
+    }
     let body = arguments
         .last()
         .map_or_else(|| Ok(String::new()), to_string)?;
@@ -358,7 +396,7 @@ fn normalize_annex_b_comments(source: &str, allow_leading_close: bool) -> String
         .collect::<Vec<_>>()
         .join("\n")
 }
-fn mark_dynamic(value: &Value, source: &str) {
+fn mark_dynamic(value: &Value, source: &str, realm: crate::ops::RealmId) {
     if let Value::Function(function) = value {
         let mut properties = function.properties.borrow_mut();
         properties.push(("\0dynamic_function".to_string(), Value::Boolean(true)));
@@ -366,10 +404,7 @@ fn mark_dynamic(value: &Value, source: &str) {
             "\0dynamic_source".to_string(),
             Value::String(source.to_string()),
         ));
-        if let Some(token) = crate::vm::realm_token(crate::vm::current_context_or_default().realm())
-        {
-            properties.push(("\0realm".to_string(), token));
-        }
+        properties.push(("\0realm".to_string(), Value::Number(realm.get() as f64)));
     }
 }
 

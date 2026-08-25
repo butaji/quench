@@ -150,9 +150,6 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
 }
 
 fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
-    if generator.machine.borrow().frame_count() != 0 {
-        return Ok(());
-    }
     let Some(Op::Conditional {
         dst,
         condition,
@@ -209,14 +206,13 @@ fn push_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(
             body,
             handler,
             finalizer,
-            catch_slot,
-            ..
-        },
+        catch_slot,
+        ..
+    },
         Op::Yield { src },
         suffix,
-    )) = suspended_try(generator, state)
-    else {
-        return Ok(());
+    )) = suspended_try(generator, state) else {
+        return push_outer_nested_try_frame(generator, state);
     };
     let body_resume = range_after(body.range, suffix.len());
     let resume = parent_resume_range(generator, state);
@@ -233,6 +229,86 @@ fn push_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(
             catch_slot: *catch_slot,
         },
     )
+}
+
+fn push_outer_nested_try_frame(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+) -> Result<(), VmError> {
+    let Some(Op::Try {
+        body,
+        handler,
+        finalizer,
+        catch_slot,
+        ..
+    }) = generator
+        .function
+        .code
+        .code()
+        .and_then(|code| code.cold_at(machine_pc(generator).wrapping_sub(1)))
+    else {
+        return Ok(());
+    };
+    let Some((child_index, yield_dst)) = nested_try_yield(body) else {
+        return Ok(());
+    };
+    let body_resume = crate::machine::CodeRange {
+        code: body.range.code,
+        start: body.range.start.saturating_add(child_index as u32 + 1),
+        end: body.range.end,
+    };
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Try {
+            phase: crate::machine::TryPhase::Body,
+            body: body.range,
+            handler: handler.as_ref().map(|body| body.range),
+            finalizer: finalizer.as_ref().map(|body| body.range),
+            body_resume,
+            resume: parent_resume_range(generator, state),
+            yield_dst,
+            catch_slot: *catch_slot,
+        },
+    )
+}
+
+fn nested_try_yield(body: &crate::machine::FunctionCode) -> Option<(usize, u16)> {
+    let code = body.code()?;
+    for (index, op) in code.cold_ops() {
+        if let Op::Yield { src } = op {
+            return Some((index, *src));
+        }
+        if let Op::Try { .. } = op {
+            if let Some(src) = try_op_yield(op) {
+                return Some((index, src));
+            }
+        }
+    }
+    None
+}
+
+fn try_op_yield(op: &Op) -> Option<u16> {
+    let Op::Try {
+        body,
+        handler,
+        finalizer,
+        ..
+    } = op
+    else {
+        return None;
+    };
+    nested_block_yield(body)
+        .or_else(|| handler.as_ref().and_then(nested_block_yield))
+        .or_else(|| finalizer.as_ref().and_then(nested_block_yield))
+}
+
+fn nested_block_yield(body: &crate::machine::FunctionCode) -> Option<u16> {
+    let code = body.code()?;
+    code.cold_ops().find_map(|(_, op)| match op {
+        Op::Yield { src } => Some(*src),
+        Op::Try { .. } => try_op_yield(op),
+        _ => None,
+    })
 }
 
 fn push_private_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {

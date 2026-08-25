@@ -530,13 +530,6 @@ pub(crate) fn update(
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     let delta = if decrement { -1.0 } else { 1.0 };
     let environment = current();
-    if !environment.is_uninitialized(slot) {
-        if let Some((old, updated)) = environment.update_number(slot, delta) {
-            registers.write_number(usize::from(old_dst), old);
-            registers.write_number(usize::from(updated_dst), updated);
-            return Ok(());
-        }
-    }
     if environment.is_uninitialized(slot) {
         return ensure_initialized(slot, &format!("local_{slot}"));
     }
@@ -544,6 +537,11 @@ pub(crate) fn update(
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to immutable binding",
         ));
+    }
+    if let Some((old, updated)) = environment.update_number(slot, delta) {
+        registers.write_number(usize::from(old_dst), old);
+        registers.write_number(usize::from(updated_dst), updated);
+        return Ok(());
     }
     crate::execute::write_value(registers, old_dst, environment.get(slot));
     registers.write_number(usize::from(updated_dst), 1.0);

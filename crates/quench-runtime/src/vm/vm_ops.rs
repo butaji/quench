@@ -71,7 +71,8 @@ pub fn execute_call_continuation(
             return Ok(None);
         };
         if crate::functions::is_class_constructor(function) {
-            return Err(crate::value::error::throw_type_error(
+            return Err(crate::value::error::throw_type_error_for_realm(
+                crate::construct::function_realm_id(function),
                 "Class constructor cannot be invoked without 'new'",
             ));
         }
@@ -104,7 +105,9 @@ pub fn execute_call_continuation(
         }))
     }
     if let Value::Function(function) = &continuation.callee {
-        if crate::functions::is_shape_kernel_candidate(function) {
+        if !crate::functions::is_class_constructor(function)
+            && crate::functions::is_shape_kernel_candidate(function)
+        {
             let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
             if let Some(value) =
                 crate::functions::execute_shape_kernel(function, &receiver, &continuation.arguments)
@@ -115,7 +118,10 @@ pub fn execute_call_continuation(
             }
         }
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
-        if !function.is_async && !matches!(function.kind, crate::ops::FunctionKind::Generator) {
+        if !crate::functions::is_class_constructor(function)
+            && !function.is_async
+            && !matches!(function.kind, crate::ops::FunctionKind::Generator)
+        {
             if let Some(result) =
                 crate::functions::execute_proven_leaf(function, &receiver, &continuation.arguments)
             {
@@ -438,6 +444,12 @@ fn invoke_with_receiver(
     match callee_value {
         Value::Function(_) => crate::functions::execute_target(callee_value, receiver, arguments),
         Value::BoundFunction(bound)
+            if matches!(bound.target, Value::Builtin(_))
+                && !crate::conversion::is_callable(&bound.target) =>
+        {
+            Err(super::not_callable())
+        }
+        Value::BoundFunction(bound)
             if matches!(
                 bound.target,
                 Value::Builtin(crate::ops::Builtin::HostCapability(_))
@@ -519,10 +531,14 @@ fn tail_object_dispatch(
 ) -> Option<Result<Value, VmError>> {
     use crate::ops::Builtin;
     let result = match builtin {
-        Builtin::ObjectIs => Ok(Value::Boolean(crate::builtins::same_value(
-            arguments.first(),
-            arguments.get(1),
-        ))),
+        Builtin::ObjectIs => {
+            let left = arguments.first().cloned().unwrap_or(Value::Undefined);
+            let right = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+            Ok(Value::Boolean(crate::builtins::same_value(
+                Some(&left),
+                Some(&right),
+            )))
+        }
         Builtin::ObjectIsExtensible => crate::properties::is_extensible_value(arguments.first()),
         Builtin::ObjectIsFrozen => crate::properties::integrity_level(arguments.first(), true),
         Builtin::ObjectIsSealed => crate::properties::integrity_level(arguments.first(), false),
@@ -532,7 +548,39 @@ fn tail_object_dispatch(
             crate::properties::prevent_extensions(arguments.first())
         }
         Builtin::ObjectGetPrototypeOf => {
-            crate::builtins::object::get_prototype_of(arguments.first())
+            if let Some(receiver) = receiver.filter(|value| {
+                arguments.is_empty() && !matches!(value, Value::Builtin(Builtin::Object))
+            }) {
+                crate::builtins::object::get_prototype_of(Some(receiver))
+            } else {
+                crate::builtins::object::get_prototype_of(arguments.first())
+            }
+        }
+        Builtin::ObjectSetPrototypeOf => {
+            if let Some(receiver) =
+                receiver.filter(|value| !matches!(value, Value::Builtin(Builtin::Object)))
+            {
+                if matches!(receiver, Value::Null | Value::Undefined) {
+                    return Some(Err(crate::value::error::throw_type_error(
+                        "Cannot set __proto__ on null or undefined",
+                    )));
+                }
+                let prototype = arguments.first().cloned().unwrap_or(Value::Undefined);
+                if !matches!(prototype, Value::Null) && !crate::value::is_object(&prototype) {
+                    return Some(Ok(Value::Undefined));
+                }
+                if !crate::value::is_object(receiver) {
+                    return Some(Ok(Value::Undefined));
+                }
+                let mut args = Vec::with_capacity(arguments.len() + 1);
+                args.push(receiver.clone());
+                args.extend_from_slice(arguments);
+                return Some(
+                    crate::builtins::object::set_prototype_of(&args).map(|_| Value::Undefined),
+                );
+            } else {
+                crate::builtins::object::set_prototype_of(arguments)
+            }
         }
         Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor => Ok(
             crate::builtins::object::object_special(builtin, receiver, arguments),

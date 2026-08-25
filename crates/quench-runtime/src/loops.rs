@@ -212,11 +212,13 @@ pub(crate) fn reduce_for_of(
             .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
     let dst = crate::switch::take_completion_register(ops, next_register);
     let mut body_locals = locals.clone();
-    let slot = if per_iteration {
+    let has_pattern = pattern.is_some();
+    let binding_slot = if per_iteration {
         refresh_iteration_locals(&statement.left, next_slot, &mut body_locals)
     } else {
         slot
     };
+    let iteration_slot = if has_pattern { slot } else { binding_slot };
     let (mut body, _) = crate::switch::with_completion(dst, || {
         let mut body = Vec::new();
         let last = crate::loops::reduce_loop_body(
@@ -231,16 +233,23 @@ pub(crate) fn reduce_for_of(
         Ok::<_, Vec<String>>((body, last))
     })?;
     if let Some(pattern) = pattern {
-        prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
+        prepend_for_of_binding(
+            pattern,
+            iteration_slot,
+            &mut body,
+            facts,
+            next_register,
+            &body_locals,
+        )?;
     }
-    if for_left_immutable(&statement.left) {
-        body.insert(0, Op::MarkImmutable { slot });
+    if for_left_immutable(&statement.left) && !has_pattern {
+        body.insert(0, Op::MarkImmutable { slot: binding_slot });
     }
     *locals = outer_locals;
     ops.push(Op::ForOf {
         label: None,
         iterable,
-        slot,
+        slot: iteration_slot,
         body: crate::machine::FunctionCode::pending(body),
         per_iteration,
         r#await: statement.r#await,
@@ -489,10 +498,9 @@ fn iterate_loop_values(
         } {
             Ok(value) => value,
             Err(crate::execute::VmError::Thrown(reason)) => {
-                return crate::collections::iterator::close(
-                    iterator.clone(),
-                    crate::completion::Completion::Throw(reason),
-                );
+                // IteratorClose applies to abrupt completion from the loop
+                // body, not to an abrupt IteratorStep/IteratorValue.
+                return Ok(crate::completion::Completion::Throw(reason));
             }
             Err(error) => return Err(error),
         };

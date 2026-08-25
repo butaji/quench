@@ -192,6 +192,7 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (Atomics, "waitAsync") => Some(Value::Builtin(AtomicsWaitAsync)),
         (Atomics, "pause") => Some(Value::Builtin(AtomicsPause)),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
+        (PromisePrototype, "Symbol.toStringTag") => Some(Value::String("Promise".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
