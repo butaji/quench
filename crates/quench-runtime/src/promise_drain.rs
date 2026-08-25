@@ -26,6 +26,12 @@ pub fn clear_jobs() {
     JOB_QUEUE.with(|queue| queue.borrow_mut().clear());
 }
 
+/// Whether a promise reaction or host job is waiting to run.
+pub fn has_pending_jobs() -> bool {
+    MICROTASK_QUEUE.with(|queue| !queue.borrow().is_empty())
+        || JOB_QUEUE.with(|queue| !queue.borrow().is_empty())
+}
+
 /// Drains all queued microtasks.
 pub fn drain_microtasks() {
     while let Some(promise) = MICROTASK_QUEUE.with(|q| q.borrow_mut().pop_front()) {
