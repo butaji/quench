@@ -601,8 +601,8 @@ fn deep_assert(
         || if !strict {
             format!(
                 "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
-                rendered(&actual),
-                rendered(&expected)
+                rendered_deep(&actual),
+                rendered_deep(&expected)
             )
         } else {
             format!(
@@ -619,6 +619,12 @@ fn deep_assert(
         assertion_error(message, operator, actual, expected, generated),
         _r,
     ))
+}
+
+fn rendered_deep(value: &Value) -> String {
+    date_lines(value)
+        .map(|lines| lines.join("\n"))
+        .unwrap_or_else(|| rendered(value))
 }
 
 pub fn deep_strict_equal(
@@ -645,6 +651,9 @@ fn typed_props_equal(actual: &Value, expected: &Value) -> bool {
 }
 
 fn deep_diff(actual: &Value, expected: &Value) -> String {
+    if let Some(diff) = date_diff(actual, expected) {
+        return diff;
+    }
     if let Some(diff) = typed_array_diff(actual, expected) {
         return diff;
     }
@@ -671,6 +680,69 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
     }
     lines.push("  }".to_string());
     lines.join("\n")
+}
+
+fn date_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let actual_lines = date_lines(actual)?;
+    let expected_lines = date_lines(expected)?;
+    if actual_lines == expected_lines {
+        return Some(actual_lines.join("\n"));
+    }
+    let mut lines = actual_lines
+        .into_iter()
+        .map(|line| format!("+ {line}"))
+        .collect::<Vec<_>>();
+    lines.extend(expected_lines.into_iter().map(|line| format!("- {line}")));
+    Some(lines.join("\n"))
+}
+
+fn date_lines(value: &Value) -> Option<Vec<String>> {
+    if !execute::has_own_property(value, "timeValue") {
+        return None;
+    }
+    let mut prototype = execute::get_prototype_of(value).ok()?;
+    let mut is_date = false;
+    for _ in 0..8 {
+        if matches!(prototype, Value::Builtin(quench_runtime::ops::Builtin::DatePrototype)) {
+            is_date = true;
+            break;
+        }
+        prototype = execute::get_prototype_of(&prototype).ok()?;
+    }
+    if !is_date {
+        return None;
+    }
+    let iso = execute::call(
+        &execute::get_property(value, "toISOString"),
+        value,
+        &[],
+    )
+    .ok()
+    .and_then(|value| match value {
+        Value::String(value) => Some(value),
+        _ => None,
+    })?;
+    let constructor = execute::get_property(value, "constructor");
+    let name = match execute::get_property(&constructor, "name") {
+        Value::String(name) if name != "Date" => Some(name),
+        _ => None,
+    };
+    let props = execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .map(|key| format!("  '{key}': {}", rendered(&execute::get_property(value, &key))))
+        .collect::<Vec<_>>();
+    if props.is_empty() {
+        return Some(vec![format!("{}{}", name.as_deref().map(|name| format!("{name} ")).unwrap_or_default(), iso)]);
+    }
+    let prefix = name
+        .as_deref()
+        .map(|name| format!("{name} "))
+        .unwrap_or_default();
+    let mut lines = vec![format!("{prefix}{iso} {{")];
+    lines.extend(props);
+    lines.push("}".into());
+    Some(lines)
 }
 
 fn typed_array_kind(value: &Value) -> Option<(&'static str, usize)> {
