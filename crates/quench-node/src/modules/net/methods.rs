@@ -73,6 +73,7 @@ fn connect_with_receiver(
         }
     };
     let local = stream.local_addr().ok();
+    set_socket_state(&object, true, true, "opening");
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
         id,
         stream: Some(stream),

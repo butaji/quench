@@ -73,6 +73,7 @@ fn accept_one(
     let object = install_socket_counters(object)?;
     let local = stream.local_addr().ok();
     let object = install_methods(object, net_info_props(peer, local))?;
+    set_socket_state(&object, false, false, "open");
     let socket = Rc::new(RefCell::new(NetSocket {
         id,
         stream: Some(stream),
@@ -119,6 +120,7 @@ fn poll_sockets(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         if let (Some(peer), Some(local)) = (peer, local) {
             install_methods(js.clone(), net_info_props(peer, Some(local)))?;
         }
+        set_socket_state(&js, false, false, "open");
         emit(state, &js, "connect", Vec::new())?;
     }
     for (sock, bytes) in events.datas {
@@ -284,6 +286,7 @@ pub fn finalize(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     drop(host);
     for sock in to_close {
         let js = sock.borrow().js.clone();
+        set_socket_state(&js, true, false, "closed");
         emit(state, &js, "close", Vec::new())?;
     }
     Ok(())
