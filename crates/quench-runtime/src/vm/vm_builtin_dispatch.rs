@@ -87,6 +87,11 @@ pub(crate) fn create_list_from_array_like(value: Option<&Value>) -> Result<Vec<V
     }
     let length = crate::execute::get_property_result(value, "length")?;
     let length = array_like_length(&length)?;
+    if let Value::Array(array) = value {
+        if array.is_packed_ordinary() && length == array.logical_len() {
+            return Ok(array.hot_storage().0);
+        }
+    }
     (0..length)
         .map(|index| crate::execute::get_property_result(value, &index.to_string()))
         .collect()

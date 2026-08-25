@@ -127,6 +127,7 @@ fn realm_global_object(
         ("Function", Builtin::Function),
         ("Number", Builtin::Number),
         ("String", Builtin::String),
+        ("RegExp", Builtin::RegExp),
         ("Boolean", Builtin::Boolean),
         ("Symbol", Builtin::Symbol),
         ("ArrayBuffer", Builtin::ArrayBuffer),

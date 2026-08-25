@@ -73,6 +73,11 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
                     Some(Builtin::ErrorPrototypeStackSetter),
                 ));
             }
+            if builtin == Builtin::RegExpPrototype {
+                if let Some(getter) = intrinsic_getter(builtin, key) {
+                    return Some(realm_accessor_descriptor(function.realm, getter, None));
+                }
+            }
             if let Some(descriptor) = builtin_descriptor(builtin, key) {
                 return Some(descriptor);
             }
