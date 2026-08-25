@@ -386,7 +386,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         )])),
         "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "cluster" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "inspector" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "inspector" => Some(crate::modules::inspector::build()),
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),

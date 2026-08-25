@@ -96,6 +96,14 @@ node_api! {
     (SPEC_ASYNC_RESOURCE_TRIGGER, "async_hooks:resource:triggerAsyncId", 0x140A),
     (SPEC_ASYNC_HOOK_ENABLE, "async_hooks:hook:enable", 0x140B),
     (SPEC_ASYNC_HOOK_DISABLE, "async_hooks:hook:disable", 0x140C),
+    (SPEC_INSPECTOR_SESSION, "inspector:Session", 0x1500),
+    (SPEC_INSPECTOR_CONNECT, "inspector:Session:connect", 0x1501),
+    (SPEC_INSPECTOR_CONNECT_MAIN, "inspector:Session:connectToMainThread", 0x1502),
+    (SPEC_INSPECTOR_DISCONNECT, "inspector:Session:disconnect", 0x1503),
+    (SPEC_INSPECTOR_POST, "inspector:Session:post", 0x1504),
+    (SPEC_INSPECTOR_OPEN, "inspector:open", 0x1505),
+    (SPEC_INSPECTOR_CLOSE, "inspector:close", 0x1506),
+    (SPEC_INSPECTOR_WAIT, "inspector:waitForDebugger", 0x1507),
 }
 
 pub const SPEC_PATH_JOIN: NodeSpec = NodeSpec::new("path:join", 0x0400);
