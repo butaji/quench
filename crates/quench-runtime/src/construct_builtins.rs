@@ -45,6 +45,20 @@ fn construct_builtin_tail(
             "AbstractModuleSource cannot be constructed",
         )),
         crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
+        crate::ops::Builtin::TemporalInstant => crate::temporal::instant::construct(arguments),
+        crate::ops::Builtin::TemporalPlainTime => crate::temporal::plain_time::construct(arguments),
+        crate::ops::Builtin::TemporalPlainDateTime => {
+            crate::temporal::plain_date_time::construct(arguments)
+        }
+        crate::ops::Builtin::TemporalPlainMonthDay => {
+            crate::temporal::construct_stub(crate::ops::Builtin::TemporalPlainMonthDayPrototype)
+        }
+        crate::ops::Builtin::TemporalPlainYearMonth => {
+            crate::temporal::construct_stub(crate::ops::Builtin::TemporalPlainYearMonthPrototype)
+        }
+        crate::ops::Builtin::TemporalZonedDateTime => {
+            crate::temporal::construct_stub(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+        }
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         crate::ops::Builtin::ShadowRealm => {
             let realm = crate::vm::create_shadow_realm_value();
