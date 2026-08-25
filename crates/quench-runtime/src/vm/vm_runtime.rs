@@ -155,6 +155,26 @@ fn run_instruction(
             )?;
             Ok(None)
         }
+        Opcode::Call => {
+            let argument = [instruction.c];
+            let spreads = [false];
+            let (arguments, spreads) = if instruction.flags == 0 {
+                (&[][..], &[][..])
+            } else if instruction.flags == 1 {
+                (&argument[..], &spreads[..])
+            } else {
+                return Err(VmError::EvalError("invalid compact call arity".into()));
+            };
+            crate::vm::vm_ops::execute_call(
+                registers,
+                instruction.a,
+                instruction.b,
+                None,
+                arguments,
+                spreads,
+            )
+            .map(Some)
+        }
         Opcode::GetProperty | Opcode::AGetI => {
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
