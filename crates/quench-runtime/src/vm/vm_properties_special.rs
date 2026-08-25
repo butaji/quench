@@ -501,11 +501,6 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
     if let Some(accessor) = array_accessor_value(values, key, field) {
         return Some(accessor);
     }
-    if field == "set" {
-        if let Some(setter) = crate::arrays::prototype_override_setter(key) {
-            return Some(setter);
-        }
-    }
     let own_index = key
         .parse::<usize>()
         .ok()
@@ -516,6 +511,11 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         || values.descriptor(key).is_some()
     {
         return None;
+    }
+    if field == "set" {
+        if let Some(setter) = crate::arrays::prototype_override_setter(key) {
+            return Some(setter);
+        }
     }
     let prototype = values
         .prototype()
