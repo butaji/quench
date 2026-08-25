@@ -61,7 +61,7 @@ fn construct_builtin_tail(
             crate::temporal::plain_year_month::construct(year, month)
         }
         crate::ops::Builtin::TemporalZonedDateTime => {
-            crate::temporal::construct_stub(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+            crate::temporal::zoned_construct(arguments)
         }
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         crate::ops::Builtin::ShadowRealm => {
