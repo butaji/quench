@@ -216,7 +216,7 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
     let global = if matches!(captured_global, Value::Object(_) | Value::ObjectAlias(_))
         && has_property(&captured_global, key)?
     {
-        captured_global
+        crate::vm::resolve_global_owner(&captured_global).unwrap_or(captured_global)
     } else {
         crate::vm::current_global_object()
     };
