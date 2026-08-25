@@ -96,7 +96,7 @@ fn run_loop(
             if let Some(completion) = run_advect_kernel(fact, body, loop_shape) {
                 return Ok(completion);
             }
-            if let Some(completion) = run_packed_loop_kernel(fact, body) {
+            if let Some(completion) = run_packed_loop_kernel(fact, body, loop_shape) {
                 return Ok(completion);
             }
         } else {

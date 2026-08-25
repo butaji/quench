@@ -8,8 +8,17 @@ enum PackedLoopFact {
 
 macro_rules! compact_shape {
     ($code:ident; $($pc:literal => $opcode:ident),+ $(,)?) => {{
-        $((instruction_opcode($code, $pc)? == crate::ir::Opcode::$opcode).then_some(())?;)+
+        $(compact_fact_opcode!($code, $pc, $opcode);)+
     }};
+}
+
+macro_rules! compact_fact_opcode {
+    ($code:ident, $pc:literal, StaticLoad) => {
+        recognized_static_load($code, $pc).map(|_| ())?
+    };
+    ($code:ident, $pc:literal, $opcode:ident) => {
+        (instruction_opcode($code, $pc)? == crate::ir::Opcode::$opcode).then_some(())?
+    };
 }
 
 fn instruction_opcode(code: crate::machine::CodeView<'_>, pc: usize) -> Option<crate::ir::Opcode> {
@@ -49,11 +58,16 @@ impl CopyRowFact {
 }
 
 fn recognize_copy_pair(code: crate::machine::CodeView<'_>, pc: usize) -> Option<(u16, u16, u16)> {
-    let opcodes = [crate::ir::Opcode::LoadLocalChecked, crate::ir::Opcode::Move,
-        crate::ir::Opcode::LoadLocalChecked, crate::ir::Opcode::Move,
-        crate::ir::Opcode::LoadLocalChecked, crate::ir::Opcode::LoadLocalChecked,
-        crate::ir::Opcode::AGetI, crate::ir::Opcode::ASetI, crate::ir::Opcode::Move];
-    opcodes.into_iter().enumerate().all(|(offset, opcode)| instruction_opcode(code, pc + offset) == Some(opcode)).then_some(())?;
+    [0, 2, 4, 5]
+        .into_iter()
+        .all(|offset| recognized_static_load(code, pc + offset).is_some())
+        .then_some(())?;
+    [(1, crate::ir::Opcode::Move), (3, crate::ir::Opcode::Move),
+        (6, crate::ir::Opcode::AGetI), (7, crate::ir::Opcode::ASetI),
+        (8, crate::ir::Opcode::Move)]
+        .into_iter()
+        .all(|(offset, opcode)| instruction_opcode(code, pc + offset) == Some(opcode))
+        .then_some(())?;
     let (_, destination) = recognized_static_load(code, pc)?;
     let (_, destination_index) = recognized_static_load(code, pc + 2)?;
     let (_, source) = recognized_static_load(code, pc + 4)?;
@@ -69,9 +83,9 @@ fn recognize_copy_pair(code: crate::machine::CodeView<'_>, pc: usize) -> Option<
 
 fn recognize_add_fields(code: crate::machine::CodeView<'_>, counter: u16) -> Option<PackedLoopFact> {
     compact_shape!(code;
-        0 => LoadLocalChecked, 2 => LoadLocalChecked, 4 => Slow, 5 => Slow,
-        6 => AGetI, 7 => LoadLocalChecked, 8 => LoadLocalChecked,
-        9 => LoadLocalChecked, 10 => AGetI, 11 => Mul, 12 => Add, 13 => ASetI
+        0 => StaticLoad, 2 => StaticLoad, 4 => Slow, 5 => Slow,
+        6 => AGetI, 7 => StaticLoad, 8 => StaticLoad,
+        9 => StaticLoad, 10 => AGetI, 11 => Mul, 12 => Add, 13 => ASetI
     );
     let (_, x) = recognized_static_load(code, 0)?;
     let (_, index) = recognized_static_load(code, 2)?;
@@ -102,12 +116,12 @@ struct DivergenceFact {
 impl DivergenceFact {
     fn recognize(code: crate::machine::CodeView<'_>) -> Option<Self> {
         compact_shape!(code;
-            0 => LoadLocalChecked, 2 => UpdateLocal, 5 => LoadLocalChecked,
-            6 => UpdateLocal, 7 => AGetI, 8 => LoadLocalChecked, 9 => UpdateLocal,
-            10 => AGetI, 11 => Sub, 12 => LoadLocalChecked, 13 => UpdateLocal,
-            14 => AGetI, 15 => Add, 16 => LoadLocalChecked, 17 => UpdateLocal,
+            0 => StaticLoad, 2 => UpdateLocal, 5 => StaticLoad,
+            6 => UpdateLocal, 7 => AGetI, 8 => StaticLoad, 9 => UpdateLocal,
+            10 => AGetI, 11 => Sub, 12 => StaticLoad, 13 => UpdateLocal,
+            14 => AGetI, 15 => Add, 16 => StaticLoad, 17 => UpdateLocal,
             18 => AGetI, 19 => Sub, 20 => Mul, 21 => ASetI,
-            23 => LoadLocalChecked, 25 => LoadLocalChecked, 27 => LoadConst, 28 => ASetI
+            23 => StaticLoad, 25 => StaticLoad, 27 => LoadConst, 28 => ASetI
         );
         let (_, div) = recognized_static_load(code, 0)?;
         let (_, h) = recognized_static_load(code, 4)?;
@@ -143,13 +157,13 @@ struct ProjectionFact {
 impl ProjectionFact {
     fn recognize(code: crate::machine::CodeView<'_>) -> Option<Self> {
         compact_shape!(code;
-            0 => LoadLocalChecked, 2 => UpdateLocal, 6 => AGetI,
-            7 => LoadLocalChecked, 8 => LoadLocalChecked, 9 => UpdateLocal,
-            10 => AGetI, 11 => LoadLocalChecked, 12 => UpdateLocal, 13 => AGetI,
+            0 => StaticLoad, 2 => UpdateLocal, 6 => AGetI,
+            7 => StaticLoad, 8 => StaticLoad, 9 => UpdateLocal,
+            10 => AGetI, 11 => StaticLoad, 12 => UpdateLocal, 13 => AGetI,
             14 => Sub, 15 => Mul, 16 => Sub, 17 => ASetI,
-            19 => LoadLocalChecked, 21 => LoadLocalChecked, 25 => AGetI,
-            26 => LoadLocalChecked, 27 => LoadLocalChecked, 28 => UpdateLocal,
-            29 => AGetI, 30 => LoadLocalChecked, 31 => UpdateLocal, 32 => AGetI,
+            19 => StaticLoad, 21 => StaticLoad, 25 => AGetI,
+            26 => StaticLoad, 27 => StaticLoad, 28 => UpdateLocal,
+            29 => AGetI, 30 => StaticLoad, 31 => UpdateLocal, 32 => AGetI,
             33 => Sub, 34 => Mul, 35 => Sub, 36 => ASetI
         );
         let (_, u) = recognized_static_load(code, 0)?;
@@ -208,12 +222,13 @@ fn validate_projection_graph(code: crate::machine::CodeView<'_>) -> Option<()> {
 fn run_packed_loop_kernel(
     loop_fact: CountedForFact,
     body: crate::machine::CodeView<'_>,
+    loop_shape: u64,
 ) -> Option<crate::completion::Completion> {
     (loop_fact.timing == CountedStepTiming::AfterBody).then_some(())?;
     let fact = PackedLoopFact::recognize(body, loop_fact.slot)?;
     let environment = crate::locals::current();
     let counter = environment.get_number(loop_fact.slot)?;
-    let iterations = kernel_iteration_count(loop_fact, counter, loop_fact.bound.number(&environment)?)?;
+    let iterations = unit_iteration_count(loop_fact, counter, loop_fact.bound.number(&environment)?)?;
     match fact {
         PackedLoopFact::AddFields { x, source, scale } => {
             run_add_fields(&environment, x, source, scale, counter, iterations, loop_fact)?
@@ -222,7 +237,20 @@ fn run_packed_loop_kernel(
         PackedLoopFact::Divergence(fact) => run_divergence(&environment, fact, counter, iterations, loop_fact)?,
         PackedLoopFact::Projection(fact) => run_projection(&environment, fact, counter, iterations, loop_fact)?,
     }
+    let (id, gets, sets) = fact.trace_fact();
+    crate::execution_trace::numeric_kernel_iterations(id, loop_shape, iterations, gets, sets);
     Some(crate::completion::Completion::Normal)
+}
+
+impl PackedLoopFact {
+    fn trace_fact(self) -> (&'static str, usize, usize) {
+        match self {
+            Self::AddFields { .. } => ("counted_packed_f64_add_fields", 2, 1),
+            Self::CopyRow(fact) => ("counted_packed_f64_copy", fact.pair_count, fact.pair_count),
+            Self::Divergence(_) => ("counted_packed_f64_divergence", 4, 2),
+            Self::Projection(_) => ("counted_packed_f64_projection", 6, 2),
+        }
+    }
 }
 
 fn run_copy_row(
@@ -254,7 +282,7 @@ fn arrays2(
 }
 
 fn packed_array(environment: &crate::environment::Environment, slot: u16) -> Option<std::rc::Rc<crate::value::ArrayData>> {
-    let Value::Array(array) = environment.get(slot) else { return None };
+    let Value::Array(array) = crate::locals::resolved_replacement(environment.get(slot)) else { return None };
     array.is_packed_ordinary().then_some(array)
 }
 
@@ -269,11 +297,19 @@ fn run_add_fields(
     let scale = environment.get_number(scale_slot)?;
     let x = packed_array(environment, x_slot)?;
     let source = packed_array(environment, source_slot)?;
-    let x_words = x.numeric_cells()?;
-    let source_words = source.numeric_cells()?;
-    (end <= x_words.len() && end <= source_words.len()).then_some(())?;
-    for index in start..end {
-        x_words[index].set(x_words[index].get() + scale * source_words[index].get());
+    if std::rc::Rc::ptr_eq(&x, &source) {
+        let mut words = x.numeric_kernel_words_mut()?;
+        (end <= words.len()).then_some(())?;
+        for value in &mut words[start..end] {
+            *value += scale * *value;
+        }
+    } else {
+        let mut x_words = x.numeric_kernel_words_mut()?;
+        let source_words = source.numeric_kernel_words()?;
+        (end <= x_words.len() && end <= source_words.len()).then_some(())?;
+        for (value, source) in x_words[start..end].iter_mut().zip(&source_words[start..end]) {
+            *value += scale * source;
+        }
     }
     environment.set(loop_fact.slot, Value::Number(counter + iterations as f64));
     Some(())
