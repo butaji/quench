@@ -27,5 +27,7 @@ EventEmitter.captureRejections = true;
 const inherited = new EventEmitter();
 assert.strictEqual(inherited.captureRejections, undefined);
 EventEmitter.captureRejections = false;
+assert.strictEqual(typeof process.removeAllListeners, 'function');
+process.removeAllListeners('unhandledRejection');
 
 console.log('EventEmitter prototype deletion: ok');
