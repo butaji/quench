@@ -157,42 +157,46 @@ fn run_invariant_sum_kernel(
 ) -> Option<crate::completion::Completion> {
     let plan = recognize_invariant_sum(body, dst, fact, per_iteration)?;
     let environment = crate::locals::current();
-    let mut index = environment.get_number(fact.slot)?;
+    let index = environment.get_number(fact.slot)?;
     let bound = fact.bound.number(&environment)?;
-    let mut total = environment.get_number(plan.total)?;
-    let value = plan.addend.number(&environment)?;
-    let mut iterations = 0_u64;
     crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
-    while counted_comparison(fact.comparison, index, bound) {
-        crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
-        crate::execution_trace::loop_shape_iteration(loop_shape);
-        crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
-        crate::execution_trace::kernel("invariant_sum", false);
-        total += value;
-        index += fact.step;
-        iterations += 1;
-    }
-    environment.set(plan.total, crate::value::Value::Number(total));
-    environment.set(fact.slot, crate::value::Value::Number(index));
-    if iterations != 0 {
-        registers.write_number(usize::from(dst), total);
+    let result = match plan.addend {
+        CountedAddend::PackedMasked { array, mask } => run_packed_masked_sum(
+            &environment, fact, index, bound, plan.total, array, mask, loop_shape,
+        )?,
+        addend => run_invariant_add(
+            &environment, fact, index, bound, plan.total, addend, loop_shape,
+        )?,
+    };
+    environment.set(plan.total, crate::value::Value::Number(result.total));
+    environment.set(fact.slot, crate::value::Value::Number(result.index));
+    if result.iterations != 0 {
+        registers.write_number(usize::from(dst), result.total);
     }
     Some(crate::completion::Completion::Normal)
 }
 
 #[derive(Clone, Copy)]
-struct InvariantSumPlan {
-    total: u16,
-    addend: InvariantAddend,
+struct CountedSumResult {
+    index: f64,
+    total: f64,
+    iterations: usize,
 }
 
 #[derive(Clone, Copy)]
-enum InvariantAddend {
-    Local(u16),
-    ArrayLength(u16),
+struct InvariantSumPlan {
+    total: u16,
+    addend: CountedAddend,
 }
 
-impl InvariantAddend {
+#[derive(Clone, Copy)]
+enum CountedAddend {
+    Local(u16),
+    ArrayLength(u16),
+    PackedMasked { array: u16, mask: usize },
+}
+
+impl CountedAddend {
     fn number(self, environment: &crate::environment::Environment) -> Option<f64> {
         match self {
             Self::Local(slot) => environment.get_number(slot),
@@ -200,8 +204,79 @@ impl InvariantAddend {
                 crate::value::Value::Array(array) => Some(array.header_length() as f64),
                 _ => None,
             },
+            Self::PackedMasked { .. } => None,
         }
     }
+}
+
+fn run_invariant_add(
+    environment: &crate::environment::Environment,
+    fact: CountedForFact,
+    mut index: f64,
+    bound: f64,
+    total_slot: u16,
+    addend: CountedAddend,
+    loop_shape: u64,
+) -> Option<CountedSumResult> {
+    let mut total = environment.get_number(total_slot)?;
+    let value = addend.number(environment)?;
+    let mut iterations = 0;
+    while counted_comparison(fact.comparison, index, bound) {
+        trace_counted_sum_iteration(loop_shape, "invariant_sum");
+        total += value;
+        index += fact.step;
+        iterations += 1;
+    }
+    Some(CountedSumResult { index, total, iterations })
+}
+
+fn run_packed_masked_sum(
+    environment: &crate::environment::Environment,
+    fact: CountedForFact,
+    index: f64,
+    bound: f64,
+    total_slot: u16,
+    array_slot: u16,
+    mask: usize,
+    loop_shape: u64,
+) -> Option<CountedSumResult> {
+    (fact.comparison == crate::ops::BinaryOp::LessThan && fact.step == 1.0)
+        .then_some(())?;
+    let start = kernel_index(index)?;
+    let iterations = unit_less_than_iterations(index, bound)?;
+    let end = start.checked_add(iterations)?;
+    (end <= i32::MAX as usize).then_some(())?;
+    let value = crate::locals::resolved_replacement(environment.get(array_slot));
+    let crate::value::Value::Array(array) = value else { return None };
+    let cells = array.is_packed_ordinary().then(|| array.numeric_cells())??;
+    (mask < cells.len()).then_some(())?;
+    let cells = cells.as_ptr();
+    let mut total = environment.get_number(total_slot)?;
+    for counter in start..end {
+        trace_counted_sum_iteration(loop_shape, "counted_packed_sum");
+        crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
+        // SAFETY: admission proves `mask < len`, and bitwise masking cannot
+        // produce an index larger than `mask`.
+        total += unsafe { (*cells.add(counter & mask)).get() };
+    }
+    Some(CountedSumResult { index: end as f64, total, iterations })
+}
+
+fn unit_less_than_iterations(index: f64, bound: f64) -> Option<usize> {
+    (index.is_finite() && bound.is_finite()).then_some(())?;
+    if bound <= index {
+        return Some(0);
+    }
+    let iterations = (bound - index).ceil();
+    (iterations <= usize::MAX as f64).then(|| iterations as usize)
+}
+
+#[inline(always)]
+fn trace_counted_sum_iteration(loop_shape: u64, kernel: &'static str) {
+    crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
+    crate::execution_trace::loop_shape_iteration(loop_shape);
+    crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
+    crate::execution_trace::kernel(kernel, false);
 }
 
 fn recognize_invariant_sum(
@@ -214,6 +289,7 @@ fn recognize_invariant_sum(
         .then_some(())?;
     recognize_local_invariant_sum(body, dst)
         .or_else(|| recognize_array_length_sum(body, dst))
+        .or_else(|| recognize_packed_masked_sum(body, dst, fact))
 }
 
 fn recognize_local_invariant_sum(
@@ -226,7 +302,7 @@ fn recognize_local_invariant_sum(
     invariant_sum_tail(total, value.a, add, store, result, dst)?;
     is_local_load(value).then_some(InvariantSumPlan {
         total: total.b,
-        addend: InvariantAddend::Local(value.b),
+        addend: CountedAddend::Local(value.b),
     })
 }
 
@@ -245,7 +321,36 @@ fn recognize_array_length_sum(
     invariant_sum_tail(total, length.a, add, store, result, dst)?;
     Some(InvariantSumPlan {
         total: total.b,
-        addend: InvariantAddend::ArrayLength(array.b),
+        addend: CountedAddend::ArrayLength(array.b),
+    })
+}
+
+fn recognize_packed_masked_sum(
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    fact: CountedForFact,
+) -> Option<InvariantSumPlan> {
+    (body.len() == 9).then_some(())?;
+    let [total, array, index, constant, masked, get, add, store, result] =
+        std::array::from_fn(|pc| body.instruction(pc).unwrap());
+    let (_, crate::ops::Constant::Number(mask)) = body.constant_at(3)? else { return None };
+    let mask = kernel_index(*mask)?;
+    (mask <= i32::MAX as usize
+        && is_local_load(array)
+        && is_local_load(index)
+        && index.b == fact.slot
+        && constant.opcode == crate::ir::Opcode::LoadConst
+        && masked.opcode == crate::ir::Opcode::Binary
+        && crate::ir::compact_binary_operator(masked.flags)
+            == Some(crate::ops::BinaryOp::BitwiseAnd)
+        && (masked.b, masked.c) == (index.a, constant.a)
+        && get.opcode == crate::ir::Opcode::AGetI
+        && (get.b, get.c) == (array.a, masked.a))
+    .then_some(())?;
+    invariant_sum_tail(total, get.a, add, store, result, dst)?;
+    Some(InvariantSumPlan {
+        total: total.b,
+        addend: CountedAddend::PackedMasked { array: array.b, mask },
     })
 }
 
