@@ -398,6 +398,10 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_NET_SERVER),
         ),
         (
+            "Server",
+            crate::host::capability(crate::registry::SPEC_NET_SERVER),
+        ),
+        (
             "isIP",
             crate::host::capability(crate::registry::SPEC_NET_ISIP),
         ),
