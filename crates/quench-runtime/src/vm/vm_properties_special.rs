@@ -332,7 +332,7 @@ fn bound_function_fallback(
         result
     }
 }
-fn bind_method(receiver: &Value, property: Value) -> Value {
+pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };

@@ -334,7 +334,12 @@ pub(crate) fn execute_target(
             execute_target(&value, receiver, arguments)
         }
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(target) => {
-            execute_builtin_target(*builtin, Some(receiver), arguments)
+            let receiver = if matches!(receiver, crate::value::Value::Undefined) {
+                crate::super_scope::current_receiver().unwrap_or_else(|| receiver.clone())
+            } else {
+                receiver.clone()
+            };
+            execute_builtin_target(*builtin, Some(&receiver), arguments)
         }
         crate::value::Value::Function(function) => {
             execute_in_function_realm(function, receiver, arguments)
