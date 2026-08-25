@@ -99,8 +99,331 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeRound => {
             Some(round(_receiver, arguments.first()))
         }
+        crate::ops::Builtin::TemporalPlainDateTimeUntil => Some(difference(
+            _receiver,
+            arguments.first(),
+            1.0,
+            arguments.get(1),
+        )),
+        crate::ops::Builtin::TemporalPlainDateTimeSince => Some(difference(
+            _receiver,
+            arguments.first(),
+            -1.0,
+            arguments.get(1),
+        )),
+        crate::ops::Builtin::TemporalPlainDateTimeToPlainDate => Some(to_plain_date(_receiver)),
+        crate::ops::Builtin::TemporalPlainDateTimeToPlainTime => Some(to_plain_time(_receiver)),
+        crate::ops::Builtin::TemporalPlainDateTimeToZonedDateTime => {
+            Some(to_zoned_date_time(_receiver, arguments.first()))
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeWithCalendar => {
+            Some(with_calendar(_receiver, arguments.first()))
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeWithPlainTime => {
+            Some(with_plain_time(_receiver, arguments.first()))
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeDayOfWeekGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeDayOfYearGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeDaysInMonthGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeDaysInWeekGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeDaysInYearGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeMonthsInYearGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeInLeapYearGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeEraGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeEraYearGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeWeekOfYearGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeYearOfWeekGetter => {
+            Some(calendar_getter(builtin, _receiver))
+        }
         _ => None,
     }
+}
+
+fn difference(
+    receiver: Option<&Value>,
+    other: Option<&Value>,
+    direction: f64,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
+    let left = fields(
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
+    )?;
+    let right = fields(&from(other)?)?;
+    let largest = options
+        .and_then(|value| crate::execute::get_property_result(value, "largestUnit").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "day".into());
+    if matches!(largest.as_str(), "year" | "month" | "week") {
+        return calendar_difference(&left, &right, direction, &largest);
+    }
+    let left_total = date_time_total(&left);
+    let right_total = date_time_total(&right);
+    let delta = (right_total - left_total) * direction;
+    crate::temporal::duration::construct(&[
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number((delta / 86_400_000_000_000.0).trunc()),
+        Value::Number((delta % 86_400_000_000_000.0) / 3_600_000_000_000.0),
+    ])
+}
+
+fn calendar_difference(
+    left: &[f64],
+    right: &[f64],
+    direction: f64,
+    largest: &str,
+) -> Result<Value, VmError> {
+    let (start, end) = if direction > 0.0 {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    let start_date = NaiveDate::from_ymd_opt(start[0] as i32, start[1] as u32, start[2] as u32)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+    let end_date = NaiveDate::from_ymd_opt(end[0] as i32, end[1] as u32, end[2] as u32)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+    let mut years = 0i64;
+    let mut months = 0i64;
+    if largest == "year" {
+        years = end[0] as i64 - start[0] as i64;
+        let candidate = add_months(start_date, years * 12);
+        if candidate > end_date {
+            years -= 1;
+        }
+        months = (end[0] as i64 - (start[0] as i64 + years)) * 12 + end[1] as i64 - start[1] as i64;
+    } else if largest == "month" {
+        months = (end[0] as i64 - start[0] as i64) * 12 + end[1] as i64 - start[1] as i64;
+    }
+    let anchor = add_months(
+        start_date,
+        years * 12 + months * if largest == "week" { 0 } else { 1 },
+    );
+    let mut days = (end_date - anchor).num_days();
+    if largest == "week" {
+        months = 0;
+        days = (end_date - start_date).num_days();
+    }
+    let weeks = if largest == "week" { days / 7 } else { 0 };
+    if largest == "week" {
+        days %= 7;
+    }
+    let sign = direction as i64;
+    crate::temporal::duration::construct(&[
+        Value::Number((years * sign) as f64),
+        Value::Number((months * sign) as f64),
+        Value::Number((weeks * sign) as f64),
+        Value::Number((days * sign) as f64),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+    ])
+}
+
+fn add_months(date: NaiveDate, months: i64) -> NaiveDate {
+    let total = date.year() as i64 * 12 + date.month0() as i64 + months;
+    let year = (total.div_euclid(12)) as i32;
+    let month = total.rem_euclid(12) as u32 + 1;
+    let day = date.day().min(days_in_month(year, month));
+    NaiveDate::from_ymd_opt(year, month, day).unwrap_or(date)
+}
+
+fn date_time_total(values: &[f64]) -> f64 {
+    let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
+        .unwrap_or(NaiveDate::MIN);
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("valid epoch");
+    let date_days = date.signed_duration_since(epoch).num_days() as f64;
+    date_days * 86_400_000_000_000.0
+        + values[3] * 3_600_000_000_000.0
+        + values[4] * 60_000_000_000.0
+        + values[5] * 1_000_000_000.0
+        + values[6] * 1_000_000.0
+        + values[7] * 1_000.0
+        + values[8]
+}
+
+fn to_plain_date(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let values = fields(
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
+    )?;
+    crate::temporal::plain_date::construct(
+        &values[..3]
+            .iter()
+            .copied()
+            .map(Value::Number)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn to_plain_time(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let values = fields(
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
+    )?;
+    crate::temporal::plain_time::construct(
+        &values[3..]
+            .iter()
+            .copied()
+            .map(Value::Number)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn to_zoned_date_time(
+    receiver: Option<&Value>,
+    time_zone: Option<&Value>,
+) -> Result<Value, VmError> {
+    let values = fields(
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
+    )?;
+    let Value::String(time_zone) =
+        time_zone.ok_or_else(|| crate::value::error::throw_type_error("Missing time zone"))?
+    else {
+        return Err(crate::value::error::throw_type_error("Invalid time zone"));
+    };
+    if time_zone.is_empty() {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            (
+                "epochNanoseconds".into(),
+                Value::BigInt(epoch_nanos(&values).to_string()),
+            ),
+            ("calendarId".into(), Value::String("iso8601".into())),
+            ("timeZoneId".into(), Value::String(time_zone.clone())),
+            (
+                "\0prototype".into(),
+                Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
+            ),
+        ]),
+    )))
+}
+
+fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let Value::String(calendar) =
+        calendar.ok_or_else(|| crate::value::error::throw_type_error("Missing calendar"))?
+    else {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    };
+    if !calendar.eq_ignore_ascii_case("iso8601") {
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    }
+    let values = fields(receiver)?;
+    let month_code = format!("M{:02}", values[1] as u32);
+    let properties = NAMES
+        .iter()
+        .copied()
+        .zip(values)
+        .map(|(name, value)| (name.into(), Value::Number(value)))
+        .chain([
+            ("monthCode".into(), Value::String(month_code)),
+            ("calendarId".into(), Value::String(calendar.clone())),
+            (
+                "\0prototype".into(),
+                Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
+            ),
+        ])
+        .collect();
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(properties),
+    )))
+}
+
+fn epoch_nanos(values: &[f64]) -> i128 {
+    let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
+        .unwrap_or(NaiveDate::MIN);
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("valid epoch");
+    let days = date.signed_duration_since(epoch).num_days() as i128;
+    days * 86_400_000_000_000
+        + values[3] as i128 * 3_600_000_000_000
+        + values[4] as i128 * 60_000_000_000
+        + values[5] as i128 * 1_000_000_000
+        + values[6] as i128 * 1_000_000
+        + values[7] as i128 * 1_000
+        + values[8] as i128
+}
+
+fn with_plain_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Value, VmError> {
+    let mut values = fields(
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
+    )?;
+    if let Some(time) = time.filter(|value| !matches!(value, Value::Undefined)) {
+        let time = crate::temporal::plain_time::execute(
+            crate::ops::Builtin::TemporalPlainTimeFrom,
+            None,
+            std::slice::from_ref(time),
+        )
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainTime"))??;
+        let time = [
+            "hour",
+            "minute",
+            "second",
+            "millisecond",
+            "microsecond",
+            "nanosecond",
+        ]
+        .iter()
+        .map(|name| crate::execute::get_property_result(&time, name))
+        .map(|value| value.and_then(|value| crate::conversion::to_number(&value)))
+        .collect::<Result<Vec<_>, _>>()?;
+        values[3..].copy_from_slice(&time);
+    } else {
+        values[3..].fill(0.0);
+    }
+    construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
+}
+
+fn calendar_getter(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let values = fields(
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
+    )?;
+    let year = values[0] as i32;
+    let month = values[1] as u32;
+    let day = values[2] as u32;
+    Ok(match builtin {
+        crate::ops::Builtin::TemporalPlainDateTimeDayOfWeekGetter => {
+            Value::Number(proleptic_weekday(year, month, day) as f64)
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeDayOfYearGetter => Value::Number(
+            (1..month).map(|m| days_in_month(year, m)).sum::<u32>() as f64 + day as f64,
+        ),
+        crate::ops::Builtin::TemporalPlainDateTimeDaysInMonthGetter => {
+            Value::Number(days_in_month(year, month) as f64)
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeDaysInWeekGetter => Value::Number(7.0),
+        crate::ops::Builtin::TemporalPlainDateTimeDaysInYearGetter => {
+            Value::Number(if chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some() {
+                366.0
+            } else {
+                365.0
+            })
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeMonthsInYearGetter => Value::Number(12.0),
+        crate::ops::Builtin::TemporalPlainDateTimeInLeapYearGetter => {
+            Value::Boolean(chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some())
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeEraGetter => Value::Undefined,
+        crate::ops::Builtin::TemporalPlainDateTimeEraYearGetter => Value::Undefined,
+        crate::ops::Builtin::TemporalPlainDateTimeWeekOfYearGetter => Value::Undefined,
+        crate::ops::Builtin::TemporalPlainDateTimeYearOfWeekGetter => Value::Undefined,
+        _ => Value::Undefined,
+    })
+}
+
+fn proleptic_weekday(year: i32, month: u32, day: u32) -> u32 {
+    let date = NaiveDate::from_ymd_opt(year, month, day).unwrap_or(NaiveDate::MIN);
+    date.weekday().number_from_monday()
 }
 
 fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {

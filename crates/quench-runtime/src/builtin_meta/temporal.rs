@@ -22,7 +22,9 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstantToString => Some("Temporal.Instant.prototype.toString"),
         Builtin::TemporalInstantToJSON => Some("Temporal.Instant.prototype.toJSON"),
         Builtin::TemporalInstantToLocaleString => Some("Temporal.Instant.prototype.toLocaleString"),
-        Builtin::TemporalInstantToZonedDateTimeISO => Some("Temporal.Instant.prototype.toZonedDateTimeISO"),
+        Builtin::TemporalInstantToZonedDateTimeISO => {
+            Some("Temporal.Instant.prototype.toZonedDateTimeISO")
+        }
         Builtin::TemporalInstantEquals => Some("Temporal.Instant.prototype.equals"),
         Builtin::TemporalInstantAdd => Some("Temporal.Instant.prototype.add"),
         Builtin::TemporalInstantSubtract => Some("Temporal.Instant.prototype.subtract"),
@@ -36,8 +38,38 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateTimeEquals => Some("Temporal.PlainDateTime.prototype.equals"),
         Builtin::TemporalPlainDateTimeToString => Some("Temporal.PlainDateTime.prototype.toString"),
         Builtin::TemporalPlainDateTimeToJSON => Some("Temporal.PlainDateTime.prototype.toJSON"),
-        Builtin::TemporalPlainDateTimeToLocaleString => Some("Temporal.PlainDateTime.prototype.toLocaleString"),
+        Builtin::TemporalPlainDateTimeToLocaleString => {
+            Some("Temporal.PlainDateTime.prototype.toLocaleString")
+        }
         Builtin::TemporalPlainDateTimeValueOf => Some("Temporal.PlainDateTime.prototype.valueOf"),
+        Builtin::TemporalPlainDateTimeUntil => Some("Temporal.PlainDateTime.prototype.until"),
+        Builtin::TemporalPlainDateTimeSince => Some("Temporal.PlainDateTime.prototype.since"),
+        Builtin::TemporalPlainDateTimeToPlainDate => {
+            Some("Temporal.PlainDateTime.prototype.toPlainDate")
+        }
+        Builtin::TemporalPlainDateTimeToPlainTime => {
+            Some("Temporal.PlainDateTime.prototype.toPlainTime")
+        }
+        Builtin::TemporalPlainDateTimeToZonedDateTime => {
+            Some("Temporal.PlainDateTime.prototype.toZonedDateTime")
+        }
+        Builtin::TemporalPlainDateTimeWithCalendar => {
+            Some("Temporal.PlainDateTime.prototype.withCalendar")
+        }
+        Builtin::TemporalPlainDateTimeWithPlainTime => {
+            Some("Temporal.PlainDateTime.prototype.withPlainTime")
+        }
+        Builtin::TemporalPlainDateTimeDayOfWeekGetter => Some("get dayOfWeek"),
+        Builtin::TemporalPlainDateTimeDayOfYearGetter => Some("get dayOfYear"),
+        Builtin::TemporalPlainDateTimeDaysInMonthGetter => Some("get daysInMonth"),
+        Builtin::TemporalPlainDateTimeDaysInWeekGetter => Some("get daysInWeek"),
+        Builtin::TemporalPlainDateTimeDaysInYearGetter => Some("get daysInYear"),
+        Builtin::TemporalPlainDateTimeMonthsInYearGetter => Some("get monthsInYear"),
+        Builtin::TemporalPlainDateTimeInLeapYearGetter => Some("get inLeapYear"),
+        Builtin::TemporalPlainDateTimeEraGetter => Some("get era"),
+        Builtin::TemporalPlainDateTimeEraYearGetter => Some("get eraYear"),
+        Builtin::TemporalPlainDateTimeWeekOfYearGetter => Some("get weekOfYear"),
+        Builtin::TemporalPlainDateTimeYearOfWeekGetter => Some("get yearOfWeek"),
         Builtin::TemporalPlainTime => Some("Temporal.PlainTime"),
         Builtin::TemporalPlainTimeFrom => Some("Temporal.PlainTime.from"),
         Builtin::TemporalPlainTimeCompare => Some("Temporal.PlainTime.compare"),
@@ -50,7 +82,9 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeSince => Some("Temporal.PlainTime.prototype.since"),
         Builtin::TemporalPlainTimeToString => Some("Temporal.PlainTime.prototype.toString"),
         Builtin::TemporalPlainTimeToJSON => Some("Temporal.PlainTime.prototype.toJSON"),
-        Builtin::TemporalPlainTimeToLocaleString => Some("Temporal.PlainTime.prototype.toLocaleString"),
+        Builtin::TemporalPlainTimeToLocaleString => {
+            Some("Temporal.PlainTime.prototype.toLocaleString")
+        }
         Builtin::TemporalPlainTimeValueOf => Some("Temporal.PlainTime.prototype.valueOf"),
         Builtin::TemporalPlainDateTimeCalendarIdGetter
         | Builtin::TemporalPlainDateTimeYearGetter
@@ -93,11 +127,21 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateEquals => Some("Temporal.PlainDate.prototype.equals"),
         Builtin::TemporalPlainDateUntil => Some("Temporal.PlainDate.prototype.until"),
         Builtin::TemporalPlainDateSince => Some("Temporal.PlainDate.prototype.since"),
-        Builtin::TemporalPlainDateToLocaleString => Some("Temporal.PlainDate.prototype.toLocaleString"),
-        Builtin::TemporalPlainDateToPlainDateTime => Some("Temporal.PlainDate.prototype.toPlainDateTime"),
-        Builtin::TemporalPlainDateToPlainMonthDay => Some("Temporal.PlainDate.prototype.toPlainMonthDay"),
-        Builtin::TemporalPlainDateToPlainYearMonth => Some("Temporal.PlainDate.prototype.toPlainYearMonth"),
-        Builtin::TemporalPlainDateToZonedDateTime => Some("Temporal.PlainDate.prototype.toZonedDateTime"),
+        Builtin::TemporalPlainDateToLocaleString => {
+            Some("Temporal.PlainDate.prototype.toLocaleString")
+        }
+        Builtin::TemporalPlainDateToPlainDateTime => {
+            Some("Temporal.PlainDate.prototype.toPlainDateTime")
+        }
+        Builtin::TemporalPlainDateToPlainMonthDay => {
+            Some("Temporal.PlainDate.prototype.toPlainMonthDay")
+        }
+        Builtin::TemporalPlainDateToPlainYearMonth => {
+            Some("Temporal.PlainDate.prototype.toPlainYearMonth")
+        }
+        Builtin::TemporalPlainDateToZonedDateTime => {
+            Some("Temporal.PlainDate.prototype.toZonedDateTime")
+        }
         Builtin::TemporalPlainDateWithCalendar => Some("Temporal.PlainDate.prototype.withCalendar"),
         Builtin::TemporalPlainDateToString => Some("Temporal.PlainDate.prototype.toString"),
         Builtin::TemporalPlainDateToJSON => Some("Temporal.PlainDate.prototype.toJSON"),
@@ -160,6 +204,24 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateTimeToJSON => Some("toJSON"),
         Builtin::TemporalPlainDateTimeToLocaleString => Some("toLocaleString"),
         Builtin::TemporalPlainDateTimeValueOf => Some("valueOf"),
+        Builtin::TemporalPlainDateTimeUntil => Some("until"),
+        Builtin::TemporalPlainDateTimeSince => Some("since"),
+        Builtin::TemporalPlainDateTimeToPlainDate => Some("toPlainDate"),
+        Builtin::TemporalPlainDateTimeToPlainTime => Some("toPlainTime"),
+        Builtin::TemporalPlainDateTimeToZonedDateTime => Some("toZonedDateTime"),
+        Builtin::TemporalPlainDateTimeWithCalendar => Some("withCalendar"),
+        Builtin::TemporalPlainDateTimeWithPlainTime => Some("withPlainTime"),
+        Builtin::TemporalPlainDateTimeDayOfWeekGetter => Some("dayOfWeek"),
+        Builtin::TemporalPlainDateTimeDayOfYearGetter => Some("dayOfYear"),
+        Builtin::TemporalPlainDateTimeDaysInMonthGetter => Some("daysInMonth"),
+        Builtin::TemporalPlainDateTimeDaysInWeekGetter => Some("daysInWeek"),
+        Builtin::TemporalPlainDateTimeDaysInYearGetter => Some("daysInYear"),
+        Builtin::TemporalPlainDateTimeMonthsInYearGetter => Some("monthsInYear"),
+        Builtin::TemporalPlainDateTimeInLeapYearGetter => Some("inLeapYear"),
+        Builtin::TemporalPlainDateTimeEraGetter => Some("era"),
+        Builtin::TemporalPlainDateTimeEraYearGetter => Some("eraYear"),
+        Builtin::TemporalPlainDateTimeWeekOfYearGetter => Some("weekOfYear"),
+        Builtin::TemporalPlainDateTimeYearOfWeekGetter => Some("yearOfWeek"),
         Builtin::TemporalPlainTime => Some("PlainTime"),
         Builtin::TemporalPlainTimeFrom => Some("from"),
         Builtin::TemporalPlainTimeCompare => Some("compare"),
@@ -263,6 +325,25 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalPlainDateTimeToJSON
         | Builtin::TemporalPlainDateTimeToLocaleString
         | Builtin::TemporalPlainDateTimeValueOf => Some(0.0),
+        Builtin::TemporalPlainDateTimeUntil => Some(2.0),
+        Builtin::TemporalPlainDateTimeSince => Some(2.0),
+        Builtin::TemporalPlainDateTimeToPlainDate | Builtin::TemporalPlainDateTimeToPlainTime => {
+            Some(0.0)
+        }
+        Builtin::TemporalPlainDateTimeToZonedDateTime
+        | Builtin::TemporalPlainDateTimeWithCalendar
+        | Builtin::TemporalPlainDateTimeWithPlainTime => Some(1.0),
+        Builtin::TemporalPlainDateTimeDayOfWeekGetter
+        | Builtin::TemporalPlainDateTimeDayOfYearGetter
+        | Builtin::TemporalPlainDateTimeDaysInMonthGetter
+        | Builtin::TemporalPlainDateTimeDaysInWeekGetter
+        | Builtin::TemporalPlainDateTimeDaysInYearGetter
+        | Builtin::TemporalPlainDateTimeMonthsInYearGetter
+        | Builtin::TemporalPlainDateTimeInLeapYearGetter
+        | Builtin::TemporalPlainDateTimeEraGetter
+        | Builtin::TemporalPlainDateTimeEraYearGetter
+        | Builtin::TemporalPlainDateTimeWeekOfYearGetter
+        | Builtin::TemporalPlainDateTimeYearOfWeekGetter => Some(0.0),
         Builtin::TemporalPlainTime => Some(0.0),
         Builtin::TemporalPlainTimeFrom => Some(1.0),
         Builtin::TemporalPlainTimeCompare => Some(2.0),
