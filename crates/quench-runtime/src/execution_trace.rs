@@ -126,6 +126,17 @@ struct OperandKey {
 }
 
 #[cfg(feature = "execution-trace")]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct CompactSiteKey {
+    store: usize,
+    code: u32,
+    pc: u32,
+    opcode: u8,
+    window_len: u8,
+    window: [u8; 7],
+}
+
+#[cfg(feature = "execution-trace")]
 #[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
@@ -157,6 +168,8 @@ struct Counters {
     allocations: HashMap<&'static str, u64>,
     last_index: HashMap<&'static str, u64>,
     kernels: HashMap<&'static str, (u64, u64)>,
+    compact_sites: HashMap<CompactSiteKey, u64>,
+    compact_site_dropped: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -225,6 +238,8 @@ fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> ser
         "l2": {"handlers": l2, "vm_share_ppm": ratio_ppm(l2, vm_total),
             "slow_gateways": {"main": compact_slow, "leaf": leaf_slow},
             "top_compact": top_opcodes(&counters.compact, false),
+            "top_compact_sites": top_compact_sites(&counters.compact_sites),
+            "compact_site_dropped": counters.compact_site_dropped,
             "top_leaf_compact": top_opcodes(&counters.leaf_compact, false)},
         "l3": {"handlers": l3, "vm_share_ppm": ratio_ppm(l3, vm_total),
             "top_slow": top_map(&counters.slow, 8),
@@ -235,6 +250,32 @@ fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> ser
                 &["header", "getn", "binding_cell"])},
         "l4": host_profile(counters),
     })
+}
+
+#[cfg(feature = "execution-trace")]
+fn top_compact_sites(values: &HashMap<CompactSiteKey, u64>) -> Vec<serde_json::Value> {
+    let mut values = values.iter().collect::<Vec<_>>();
+    values.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
+    values
+        .into_iter()
+        .take(64)
+        .map(|(site, count)| {
+            let window = site.window[..usize::from(site.window_len)]
+                .iter()
+                .filter_map(|opcode| {
+                    crate::ir::Opcode::from_u8(*opcode).map(crate::ir::Opcode::name)
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "store": format!("{:x}", site.store),
+                "code": site.code,
+                "pc": site.pc,
+                "opcode": crate::ir::Opcode::from_u8(site.opcode).map(crate::ir::Opcode::name),
+                "window": window,
+                "count": count,
+            })
+        })
+        .collect()
 }
 
 #[cfg(feature = "execution-trace")]
@@ -493,8 +534,9 @@ fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeV
     {
         return;
     }
+    let (store, code_id) = code.trace_identity();
     eprintln!(
-        "FUNCTION_SHAPE params={params} captures={captures} len={} hash={fingerprint}",
+        "FUNCTION_SHAPE store={store:x} code={code_id} params={params} captures={captures} len={} hash={fingerprint}",
         code.len()
     );
     for pc in 0..code.len() {
@@ -865,6 +907,50 @@ pub(crate) fn operands(instruction: crate::ir::Instruction) {
 #[inline(always)]
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn operands(_: crate::ir::Instruction) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
+pub(crate) fn compact_site(code: crate::machine::CodeView<'_>, pc: usize) {
+    if !enabled() {
+        return;
+    }
+    let Some(instruction) = code.instruction(pc) else {
+        return;
+    };
+    let start = pc.saturating_sub(3);
+    let end = code.len().min(pc.saturating_add(4));
+    let mut window = [0; 7];
+    for (index, offset) in (start..end).enumerate() {
+        window[index] = code.instruction(offset).map_or(0, |op| op.opcode as u8);
+    }
+    let (store, code_id) = code.trace_identity();
+    let key = CompactSiteKey {
+        store,
+        code: code_id,
+        pc: pc as u32,
+        opcode: instruction.opcode as u8,
+        window_len: (end - start) as u8,
+        window,
+    };
+    COUNTERS.with(|counters| record_compact_site(&mut counters.borrow_mut(), key));
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn compact_site(_: crate::machine::CodeView<'_>, _: usize) {}
+
+#[cfg(feature = "execution-trace")]
+fn record_compact_site(counters: &mut Counters, key: CompactSiteKey) {
+    if let Some(count) = counters.compact_sites.get_mut(&key) {
+        *count += 1;
+        return;
+    }
+    if counters.compact_sites.len() < 4096 {
+        counters.compact_sites.insert(key, 1);
+        return;
+    }
+    counters.compact_site_dropped += 1;
+}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
@@ -1383,6 +1469,35 @@ mod lane_profile_tests {
         );
         assert_eq!(counters.events[Event::ValueDecode as usize], 1);
         assert_eq!(counters.value_decode_by_site.get("getn"), Some(&1));
+    }
+
+    #[test]
+    fn ranks_compact_sites_with_patchable_context() {
+        let mut counters = Counters {
+            events: vec![0; EVENT_NAMES.len()],
+            ..Counters::default()
+        };
+        counters.compact_sites.insert(
+            CompactSiteKey {
+                store: 1,
+                code: 7,
+                pc: 2,
+                opcode: crate::ir::Opcode::LoadLocalChecked as u8,
+                window_len: 3,
+                window: [8, 24, 20, 0, 0, 0, 0],
+            },
+            99,
+        );
+        let profile = lane_profile(&counters, 0, 0);
+        let site = &profile["l2"]["top_compact_sites"][0];
+        assert_eq!(site["code"], 7);
+        assert_eq!(site["pc"], 2);
+        assert_eq!(site["opcode"], "LoadLocalChecked");
+        assert_eq!(
+            site["window"],
+            serde_json::json!(["LoadLocal", "LoadLocalChecked", "GetN"])
+        );
+        assert_eq!(site["count"], 99);
     }
 
     #[test]
