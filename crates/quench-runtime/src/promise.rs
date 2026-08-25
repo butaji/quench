@@ -374,6 +374,13 @@ pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
     set_promise_state(promise, PromiseState::Rejected(reason));
     promise_resolved(promise);
     queue_promise(promise);
+    if !promise.rejection_handled.get() && !promise.unhandled_queued.replace(true) {
+        crate::promise::queue_unhandled_rejection(Rc::clone(promise), promise
+            .result
+            .borrow()
+            .clone()
+            .unwrap_or(Value::Undefined));
+    }
 }
 
 /// Execute Promise.resolve using the single canonical promise-resolution path.
@@ -525,7 +532,9 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
 /// Execute Promise.reject.
 pub fn promise_reject(_arguments: &[Value]) -> Value {
     let reason = _arguments.first().cloned().unwrap_or(Value::Undefined);
-    Value::Promise(Rc::new(PromiseData::new(PromiseState::Rejected(reason))))
+    let promise = PromiseData::allocate(PromiseState::Pending);
+    reject_promise(&promise, reason);
+    Value::Promise(promise)
 }
 
 fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -571,6 +580,12 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         .then_actions
         .borrow_mut()
         .push((maybe_handler(arguments, 0), maybe_handler(arguments, 1)));
+    if arguments
+        .get(1)
+        .is_some_and(|handler| !matches!(handler, Value::Undefined))
+    {
+        promise.rejection_handled.set(true);
+    }
     let promise_key = Rc::as_ptr(promise) as usize;
     THEN_RESULTS.with(|results| {
         results
