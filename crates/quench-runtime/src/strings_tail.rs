@@ -156,7 +156,13 @@ pub(crate) fn replace(
         .first()
         .filter(|value| crate::value::is_object(value))
     {
-        if all && crate::regexp::has_regexp_internal_slot(pattern) {
+        let is_regexp = if crate::regexp::has_regexp_internal_slot(pattern) {
+            let matcher = crate::execute::get_property_result(pattern, "Symbol.match")?;
+            matches!(matcher, Value::Undefined) || crate::execute::is_truthy(&matcher)
+        } else {
+            false
+        };
+        if all && is_regexp {
             let flags = own_or_get(pattern, "flags")?;
             if matches!(flags, Value::Undefined | Value::Null) {
                 return Err(crate::value::error::throw_type_error("RegExp flags must be coercible"));
