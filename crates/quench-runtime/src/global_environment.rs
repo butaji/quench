@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{execute::VmError, ops::Op, value::Value};
 
@@ -8,6 +8,22 @@ struct Descriptor {
     enumerable: bool,
     configurable: bool,
     data: bool,
+}
+
+thread_local! {
+    static GLOBAL_BINDINGS: RefCell<HashMap<(crate::ops::RealmId, String), Rc<crate::value::BindingCell>>> =
+        RefCell::new(HashMap::new());
+}
+
+pub(crate) fn store_global_binding(name: &str, value: Value) -> bool {
+    let realm = crate::vm::current_context_or_default().realm();
+    GLOBAL_BINDINGS.with(|bindings| {
+        let Some(cell) = bindings.borrow().get(&(realm, name.to_string())).cloned() else {
+            return false;
+        };
+        cell.store(value);
+        true
+    })
 }
 
 pub(crate) fn execute(
@@ -184,11 +200,20 @@ fn create_function(
 }
 
 fn binding_cell(name: &str, slot: u16, value: Option<&Value>) -> Rc<crate::value::BindingCell> {
-    let cell = raw_binding_cell(name).unwrap_or_else(|| crate::locals::slot_cell(slot));
+    let slot_cell = crate::locals::slot_cell(slot);
+    let cell = raw_binding_cell(name).unwrap_or_else(|| Rc::clone(&slot_cell));
     if let Some(value) = value {
-        cell.store(value.clone());
+        if matches!(*slot_cell.borrow(), Value::Undefined) {
+            cell.store(value.clone());
+        }
     }
     crate::locals::install_slot_cell(slot, Rc::clone(&cell));
+    let realm = crate::vm::current_context_or_default().realm();
+    GLOBAL_BINDINGS.with(|bindings| {
+        bindings
+            .borrow_mut()
+            .insert((realm, name.to_string()), Rc::clone(&cell));
+    });
     cell
 }
 
