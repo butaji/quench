@@ -171,24 +171,21 @@ fn run_handlers(handlers: &[Value], code: i32) -> Result<(), VmError> {
 
 fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
-        let snapshot: Vec<(Value, Vec<Value>)> = state
-            .borrow()
-            .event_loop
-            .microtasks
-            .borrow_mut()
-            .drain(..)
-            .collect();
-        if snapshot.is_empty() {
-            // No nextTick work: still drain promise jobs queued by
-            // callbacks (timers, immediates) since the last drain.
+        if !drain_one_tick(state)? {
             quench_runtime::drain_promise_jobs();
             return Ok(());
         }
-        for (cb, args) in snapshot {
-            call_guarded(state, &cb, &Value::Undefined, &args)?;
-        }
         quench_runtime::drain_promise_jobs();
     }
+}
+
+pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmError> {
+    let item = state.borrow().event_loop.microtasks.borrow_mut().pop_front();
+    let Some((callback, args)) = item else {
+        return Ok(false);
+    };
+    call_guarded(state, &callback, &Value::Undefined, &args)?;
+    Ok(true)
 }
 
 fn fire_due_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {

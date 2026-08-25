@@ -16,6 +16,8 @@
 //! `Fact`, and `Continuation`) before adding breadth.
 
 pub mod build_profile;
+mod host_jobs;
+pub use host_jobs::install_host_job_pump;
 
 mod arrays;
 mod atomics;

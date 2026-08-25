@@ -72,7 +72,10 @@ fn await_iterator_result(value: Value) -> Result<Value, crate::execute::VmError>
                 if let Some(result) = settled_promise(&promise) {
                     return result;
                 }
-                if !crate::promise::drain_one_microtask() {
+                if crate::promise::drain_one_microtask() {
+                    continue;
+                }
+                if !crate::host_jobs::pump_host_job()? {
                     break;
                 }
             }
