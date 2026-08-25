@@ -388,7 +388,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "cluster" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "inspector" => Some(crate::modules::inspector::build()),
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "repl" => Some(crate::modules::repl::build()),
         "wasi" => Some(crate::modules::wasi::build()),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
