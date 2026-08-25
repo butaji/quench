@@ -546,7 +546,7 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
                 .find(|(key, _)| key == "largestUnit")
                 .and_then(|(_, value)| match value {
                     Value::String(unit)
-                        if unit_index(unit).ok().is_some_and(|index| index <= 2) =>
+                        if unit_index(&unit).ok().is_some_and(|index| index <= 2) =>
                     {
                         Some(unit.clone())
                     }
