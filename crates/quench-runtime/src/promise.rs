@@ -497,6 +497,10 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                     return Ok(Value::Undefined);
                 }
             }
+            if !crate::value::is_object(&value) {
+                resolve_promise(promise, value);
+                return Ok(Value::Undefined);
+            }
             let resolved = resolve_value(value);
             let resolve = bound_settler(Builtin::PromiseAdoptResolve, promise, 1.0);
             let reject = bound_settler(Builtin::PromiseAdoptReject, promise, 1.0);
