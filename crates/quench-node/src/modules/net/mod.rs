@@ -213,6 +213,7 @@ pub(crate) fn set_server_listening(server: &Value, listening: bool) -> Result<()
 
 fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
+        ("connect", cap(crate::registry::SPEC_NET_CONNECT)),
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
         ("destroy", cap(crate::registry::SPEC_NET_SOCKET_DESTROY)),
