@@ -265,6 +265,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "toPlainDate") => Some(Value::Builtin(TemporalZonedDateTimeToPlainDate)),
         (TemporalZonedDateTimePrototype, "toPlainTime") => Some(Value::Builtin(TemporalZonedDateTimeToPlainTime)),
         (TemporalZonedDateTimePrototype, "equals") => Some(Value::Builtin(TemporalZonedDateTimeEquals)),
+        (TemporalZonedDateTimePrototype, "valueOf") => Some(Value::Builtin(TemporalDurationValueOf)),
         (TemporalZonedDateTimePrototype, "epochMilliseconds") => {
             Some(Value::Builtin(TemporalZonedDateTimeEpochMillisecondsGetter))
         },
