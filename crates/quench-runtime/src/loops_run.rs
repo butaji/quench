@@ -78,6 +78,11 @@ fn run_loop(
                 return Ok(completion);
             }
             if let Some(completion) =
+                run_regexp_exec_loop(fact, body, dst, per_iteration, registers, loop_shape)
+            {
+                return Ok(completion);
+            }
+            if let Some(completion) =
                 run_invariant_sum_kernel(fact, body, dst, per_iteration, registers, loop_shape)
             {
                 return Ok(completion);

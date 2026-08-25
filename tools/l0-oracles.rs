@@ -83,7 +83,7 @@ fn run(id: &str) -> u64 {
             let haystack = black_box(b"x");
             let mut last_index = 0;
             let mut matches = 0;
-            for _ in 0..DEFAULT_ITERATIONS {
+            for _ in 0..LONG_ITERATIONS {
                 last_index = 0;
                 if black_box(haystack).get(last_index) == Some(&b'x') {
                     last_index += 1;
