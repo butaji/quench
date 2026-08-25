@@ -271,22 +271,7 @@ fn runnable_state_transition(
     let crate::value::Value::Function(mark) = mark else {
         return None;
     };
-    let ShapeKernelPlan::StateBitwise(plan) = shape_kernel_fact(&mark)? else {
-        return None;
-    };
-    if plan.operator != crate::ops::BinaryOp::BitwiseOr {
-        return None;
-    }
-    let state_name = mark
-        .code
-        .code()?
-        .metadata_at(plan.state_pc)?
-        .name
-        .as_deref()?;
-    let state = writable_own_word(target, state_name)?;
-    let state_number = exact_i32(state.number()?)?;
-    let mask = exact_i32(mark.captures.get_number(plan.mask_slot)?)?;
-    Some((std::ptr::from_ref(state), f64::from(state_number | mask)))
+    state_bitwise_word_transition(&mark, target, crate::ops::BinaryOp::BitwiseOr)
 }
 
 fn match_check_priority_add(
