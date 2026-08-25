@@ -36,14 +36,11 @@ fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
 fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@match")?;
     let input = to_string_argument(arguments)?;
-    let unicode = crate::execute::is_truthy(
-        &crate::execute::get_property_result(receiver, "unicode")?,
-    );
-    let global = crate::execute::get_property_result(receiver, "global")?;
-    if !crate::execute::is_truthy(&global) {
+    let flags = observable_flags(receiver)?;
+    if !flags.contains('g') {
         return regexp_exec(receiver, &input);
     }
-    symbol_match_global(receiver, &input, unicode)
+    symbol_match_global(receiver, &input, unicode_mode(&flags))
 }
 
 fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value, VmError> {
@@ -139,7 +136,8 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let receiver = regex_receiver(receiver, "@@replace")?;
     let s = to_string_argument(arguments)?;
     let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    let global = crate::execute::is_truthy(&crate::execute::get_property_result(receiver, "global")?);
+    let flags = observable_flags(receiver)?;
+    let global = flags.contains('g');
     if crate::conversion::is_callable(&replacement) {
         if dynamic_exec(receiver, global) {
             return replace_with_exec_callable(receiver, &s, &replacement, global);
@@ -153,11 +151,16 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     replace_with_template(receiver, &s, &replacement)
 }
 
+fn observable_flags(receiver: &Value) -> Result<String, VmError> {
+    crate::conversion::to_string(&crate::execute::get_property_result(receiver, "flags")?)
+}
+
 fn dynamic_exec(receiver: &Value, global: bool) -> bool {
     let flags_global = extract_flags(receiver).contains('g');
     let sticky = extract_flags(receiver).contains('y');
     let exec = crate::execute::get_property(receiver, "exec");
-    sticky
+    global
+        || sticky
         || global != flags_global
         || !matches!(exec, Value::Builtin(crate::ops::Builtin::RegExpExec))
 }
