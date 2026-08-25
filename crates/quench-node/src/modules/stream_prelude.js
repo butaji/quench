@@ -648,6 +648,11 @@
     let ended = false;
     let pending = [];
     let sourceDone = false;
+    let operatorError;
+    output.on("error", (error) => {
+      operatorError = error;
+      ended = true;
+    });
     const pull = async () => {
       if (sourceDone) return null;
       const step = await source.next();
@@ -678,6 +683,7 @@
       }
     };
     const next = async () => {
+      if (operatorError) throw operatorError;
       if (ended) return { value: undefined, done: true };
       if (signal?.aborted) throw sliceAbortError();
       await fill();
@@ -694,7 +700,7 @@
         ended = true;
         return { value: undefined, done: true };
       }
-      await fill();
+      if (pending.length === 0 && !sourceDone) await enqueue();
       const value = task.value;
       if (filtering && !value.keep) return next();
       return { value: filtering ? value.value : value, done: false };
@@ -708,13 +714,12 @@
         yield step.value;
       }
     };
-    output.toArray = async function () {
-      const values = [];
-      while (true) {
-        const step = await output.__quenchIterator.next();
+    output.toArray = function () {
+      const collect = (values) => output.__quenchIterator.next().then((step) => {
         if (step.done) return values;
-        values.push(step.value);
-      }
+        return collect(values.concat([step.value]));
+      });
+      return collect([]);
     };
     return output;
   }
