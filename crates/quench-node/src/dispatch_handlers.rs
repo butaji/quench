@@ -1096,6 +1096,14 @@ pub fn net_connect(
         _ => crate::modules::net::connect(state, args),
     }
 }
+
+pub fn net_socket_call(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::net::socket_construct(state, args)
+}
 pub fn net_is_ip(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
