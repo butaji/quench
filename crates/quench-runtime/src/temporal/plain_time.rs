@@ -148,7 +148,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         "nanosecond",
     ]
     .iter()
-    .map(|name| crate::execute::get_property_result(value, name))
+    .map(|name| temporal_field(value, name))
     .collect::<Result<Vec<_>, _>>()?;
     if values.iter().all(|value| matches!(value, Value::Undefined)) {
         return Err(crate::value::error::throw_type_error("Missing hour"));
@@ -649,7 +649,7 @@ fn time_fields(value: &Value) -> Result<i64, VmError> {
     ];
     let values = names
         .iter()
-        .map(|name| crate::execute::get_property_result(value, name))
+        .map(|name| temporal_field(value, name))
         .collect::<Result<Vec<_>, _>>()?;
     let values = values
         .iter()
@@ -661,6 +661,18 @@ fn time_fields(value: &Value) -> Result<i64, VmError> {
         + values[3] * 1_000_000
         + values[4] * 1_000
         + values[5])
+}
+
+fn temporal_field(value: &Value, name: &str) -> Result<Value, VmError> {
+    if let Value::Object(object) = value {
+        if let Some((_, value)) = object.iter().find(|(key, value)| {
+            (key == name || key == &format!("\0temporal-slot:\0{name}"))
+                && matches!(value, Value::Number(_))
+        }) {
+            return Ok(value.clone());
+        }
+    }
+    crate::execute::get_property_result(value, name)
 }
 
 fn number(value: Option<&Value>) -> Result<f64, VmError> {
