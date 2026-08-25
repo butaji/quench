@@ -272,6 +272,7 @@ pub(crate) fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::RegExpPrototype, "multiline") => Builtin::RegExpMultilineGetter,
         (Builtin::RegExpPrototype, "dotAll") => Builtin::RegExpDotAllGetter,
         (Builtin::RegExpPrototype, "unicode") => Builtin::RegExpUnicodeGetter,
+        (Builtin::RegExpPrototype, "unicodeSets") => Builtin::RegExpUnicodeSetsGetter,
         (Builtin::RegExpPrototype, "sticky") => Builtin::RegExpStickyGetter,
         (Builtin::RegExpPrototype, "hasIndices") => Builtin::RegExpHasIndicesGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
