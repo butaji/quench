@@ -353,7 +353,6 @@ fn replacer_args(
 ) -> Vec<Value> {
     let mut args = vec![
         Value::String(rest[m.start()..end].to_string()),
-        Value::Number((s.len() - rest.len() + m.start()) as f64),
     ];
     for group in groups_at(m) {
         let value = match group {
@@ -362,7 +361,20 @@ fn replacer_args(
         };
         args.push(value);
     }
+    args.push(Value::Number((s.len() - rest.len() + m.start()) as f64));
     args.push(Value::String(s.to_string()));
+    if m.named_groups().next().is_some() {
+        let mut groups = vec![("\0prototype".to_string(), Value::Null)];
+        groups.extend(m.named_groups().map(|(name, range)| {
+            let value = range.map_or(Value::Undefined, |range| {
+                Value::String(rest[range.start..range.end].to_string())
+            });
+            (name.to_string(), value)
+        }));
+        args.push(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(groups),
+        )));
+    }
     args
 }
 
