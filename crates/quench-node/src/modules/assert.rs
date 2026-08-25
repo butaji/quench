@@ -1136,6 +1136,48 @@ fn diff_operand(value: &Value, marker: char) -> String {
     lines.join("\n")
 }
 
+fn diff_object_keys(object: &Value) -> Vec<String> {
+    let mut keys = execute::own_enumerable_keys(object);
+    for key in execute::own_keys(object).into_iter().filter_map(|key| match key {
+        Value::String(key) if !key.starts_with('\0') => Some(key),
+        _ => None,
+    }) {
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    let symbol_result = execute::execute_builtin_with_receiver(
+        quench_runtime::ops::Builtin::ObjectGetOwnPropertySymbols,
+        std::slice::from_ref(object),
+        None,
+    );
+    if let Ok(Value::Array(symbols)) = symbol_result {
+        for index in 0..symbols.logical_len() {
+            let key = execute::get_property(&Value::Array(symbols.clone()), &index.to_string());
+            if let Value::String(key) = key {
+                let key = key.to_string();
+                if !keys.contains(&key) { keys.push(key); }
+            }
+        }
+    }
+    for key in ["Symbol.for.nodejs.util.inspect.custom\0"] {
+        if execute::has_own_property(object, key) && !keys.contains(&key.to_string()) {
+            keys.push(key.to_string());
+        }
+    }
+    keys.retain(|key| !key.starts_with('\0'));
+    keys
+}
+
+fn diff_key(key: &str) -> String {
+    let value = Value::String(key.to_string());
+    if execute::is_symbol(&value) {
+        crate::modules::util::inspect(&value)
+    } else {
+        key.to_string()
+    }
+}
+
 fn deep_diff(actual: &Value, expected: &Value) -> String {
     if let Some(diff) = regexp_diff(actual, expected) {
         return diff;
@@ -1169,10 +1211,9 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
     let property_render = |object: &Value, key: &str| {
         crate::modules::util::inspect_property_with_getters(object, key, 0)
     };
-    let keys = execute::own_enumerable_keys(&left_object)
+    let keys = diff_object_keys(&left_object)
         .into_iter()
-        .chain(execute::own_enumerable_keys(&right_object))
-        .filter(|key| !key.starts_with('\0'))
+        .chain(diff_object_keys(&right_object))
         .collect::<BTreeSet<_>>();
     let mut lines = vec!["  {".to_string()];
     for (index, key) in keys.iter().take(50).enumerate() {
@@ -1183,23 +1224,24 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
         let right_value = execute::get_property(&right_object, &key);
         let left_render = property_render(&left_object, &key);
         let right_render = property_render(&right_object, &key);
+        let display_key = diff_key(&key);
         if left_has
             && right_has
             && execute::same_value(&left_value, &right_value)
             && left_render == right_render
         {
-            lines.push(format!("    {key}: {left_render}{comma}"));
+            lines.push(format!("    {display_key}: {left_render}{comma}"));
         } else if left_has && right_has {
             if let Some(nested) = nested_property_diff(&left_value, &right_value, &key, 4) {
                 lines.extend(nested);
             } else {
-                lines.push(format!("+   {key}: {left_render}"));
-                lines.push(format!("-   {key}: {right_render}"));
+                lines.push(format!("+   {display_key}: {left_render}"));
+                lines.push(format!("-   {display_key}: {right_render}"));
             }
         } else if left_has {
-            lines.push(format!("+   {key}: {left_render}"));
+            lines.push(format!("+   {display_key}: {left_render}"));
         } else if right_has {
-            lines.push(format!("-   {key}: {right_render}"));
+            lines.push(format!("-   {display_key}: {right_render}"));
         }
     }
     if keys.len() > 50 {
@@ -1571,6 +1613,22 @@ fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
     Some(if skipped { format!("... Skipped lines\n\n{body}") } else { body })
 }
 
+fn scalar_block_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<String> {
+    let Value::Array(left) = actual else { return vec![] };
+    let Value::Array(right) = expected else { return vec![] };
+    let mut lines = vec![format!("{}[", " ".repeat(indent))];
+    for (marker, array) in [('+', left), ('-', right)] {
+        let owner = Value::Array(array.clone());
+        for index in 0..array.logical_len() {
+            let key = index.to_string();
+            let suffix = if index + 1 < array.logical_len() { "," } else { "" };
+            lines.push(format!("{marker}{}{}{suffix}", " ".repeat(indent + 1), rendered(&execute::get_property(&owner, &key))));
+        }
+    }
+    lines.push(format!("{}]", " ".repeat(indent)));
+    lines
+}
+
 fn scalar_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<String> {
     let Value::Array(left) = actual else { return vec![] };
     let Value::Array(right) = expected else { return vec![] };
@@ -1618,6 +1676,9 @@ fn recursive_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<
             .into_iter()
             .all(|value| !matches!(value, Value::Array(_)))
     });
+    if scalar_values && length > 12 {
+        return scalar_block_diff(&left_value, &right_value, indent);
+    }
     let first_diff = (0..length).find(|index| {
         let key = index.to_string();
         let left_has = execute::has_own_property(&left_value, &key);
