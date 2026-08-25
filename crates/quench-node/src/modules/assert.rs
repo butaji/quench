@@ -1537,77 +1537,43 @@ fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
     };
     let left_value = Value::Array(left.clone());
     let right_value = Value::Array(right.clone());
-    let mut lines = vec!["  [".to_string()];
+    Some(recursive_array_diff(&left_value, &right_value, 2).join("\n"))
+}
+
+fn recursive_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<String> {
+    let (Value::Array(left), Value::Array(right)) = (actual, expected) else {
+        return vec![format!("{}{}", " ".repeat(indent), rendered(actual))];
+    };
+    let left_value = Value::Array(left.clone());
+    let right_value = Value::Array(right.clone());
     let length = left.logical_len().max(right.logical_len());
+    let mut lines = vec![format!("{}[", " ".repeat(indent))];
     for index in 0..length {
         let key = index.to_string();
         let left_has = index < left.logical_len() && execute::has_own_property(&left_value, &key);
-        let right_has =
-            index < right.logical_len() && execute::has_own_property(&right_value, &key);
-        let suffix = if index + 1 < left.logical_len().max(1) {
-            ","
-        } else {
-            ""
-        };
+        let right_has = index < right.logical_len() && execute::has_own_property(&right_value, &key);
+        let suffix = if index + 1 < length { "," } else { "" };
         match (left_has, right_has) {
             (true, true) => {
                 let left_item = execute::get_property(&left_value, &key);
                 let right_item = execute::get_property(&right_value, &key);
                 if execute::same_value(&left_item, &right_item) {
-                    lines.push(format!("    {}{suffix}", rendered(&left_item)));
+                    lines.push(format!("{}{}{suffix}", " ".repeat(indent + 2), rendered(&left_item)));
+                } else if matches!((&left_item, &right_item), (Value::Array(_), Value::Array(_))) {
+                    let mut nested = recursive_array_diff(&left_item, &right_item, indent + 2);
+                    if let Some(last) = nested.last_mut() { last.push_str(suffix); }
+                    for line in nested { lines.push(line); }
                 } else {
-                    lines.extend(diff_array_item("+", &left_item, suffix));
-                    lines.extend(diff_array_item("-", &right_item, suffix));
+                    lines.push(format!("+{}{}{suffix}", " ".repeat(indent + 1), rendered(&left_item)));
+                    lines.push(format!("-{}{}{suffix}", " ".repeat(indent + 1), rendered(&right_item)));
                 }
             }
-            (true, false) => lines.push(format!(
-                "+   {}{suffix}",
-                rendered(&execute::get_property(&left_value, &key))
-            )),
-            (false, true) => lines.push(format!(
-                "-   {}",
-                rendered(&execute::get_property(&right_value, &key))
-            )),
+            (true, false) => lines.push(format!("+{}{}{suffix}", " ".repeat(indent + 1), rendered(&execute::get_property(&left_value, &key)))),
+            (false, true) => lines.push(format!("-{}{}", " ".repeat(indent + 1), rendered(&execute::get_property(&right_value, &key)))),
             (false, false) => {}
         }
     }
-    lines.push("  ]".into());
-    Some(lines.join("\n"))
-}
-
-fn diff_array_item(marker: &str, value: &Value, suffix: &str) -> Vec<String> {
-    let rendered = pretty_array_value(value);
-    let rendered_len = rendered.len();
-    rendered
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| {
-            let tail = if index + 1 == rendered_len { suffix } else { "" };
-            format!("{marker}   {line}{tail}")
-        })
-        .collect()
-}
-
-fn pretty_array_value(value: &Value) -> Vec<String> {
-    let Value::Array(array) = value else {
-        return vec![rendered(value)];
-    };
-    let owner = Value::Array(array.clone());
-    let length = array.logical_len();
-    let mut lines = vec!["[".to_string()];
-    for index in 0..length {
-        let key = index.to_string();
-        if !execute::has_own_property(&owner, &key) {
-            continue;
-        }
-        let child = pretty_array_value(&execute::get_property(&owner, &key));
-        let child_len = child.len();
-        for (line_index, line) in child.into_iter().enumerate() {
-            let comma = line_index + 1 == child_len && index + 1 < length;
-            lines.push(format!("  {}{}", line, if comma { "," } else { "" }));
-        }
-    }
-    lines.push("]".into());
+    lines.push(format!("{}]", " ".repeat(indent)));
     lines
 }
 
