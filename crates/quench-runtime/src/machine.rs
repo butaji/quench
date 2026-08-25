@@ -120,7 +120,7 @@ pub struct CodeArena {
     metadata: Vec<Vec<InstructionMeta>>,
 }
 
-fn metadata_for(op: &Op) -> InstructionMeta {
+fn metadata_for(op: &Op, source: Option<u32>) -> InstructionMeta {
     let name = match op {
         Op::CheckInitialized { name, .. }
         | Op::DeclareEvalBinding { name, .. }
@@ -143,7 +143,7 @@ fn metadata_for(op: &Op) -> InstructionMeta {
         _ => None,
     };
     InstructionMeta {
-        source: None,
+        source,
         name,
         flags: u16::from(matches!(op, Op::CheckInitialized { .. })),
         named_cache: std::cell::Cell::new(0),
@@ -354,7 +354,13 @@ impl CodeArena {
         let mut parameter_end = None;
         let mut metadata = Vec::with_capacity(body.len());
         let mut cursor = 0;
+        let mut source = None;
         while cursor < body.len() {
+            if let Some(next_source) = trace_source(&body[cursor]) {
+                source = Some(next_source);
+                cursor += 1;
+                continue;
+            }
             if matches!(body[cursor], Op::ParameterEnd) {
                 parameter_end.get_or_insert(self.instructions.len() as u32 - start);
                 cursor += 1;
@@ -362,25 +368,31 @@ impl CodeArena {
             }
             if let Some(instruction) = lower_checked_local_load(&body[cursor..]) {
                 self.instructions.push(instruction);
-                metadata.push(metadata_for(&body[cursor]));
+                metadata.push(metadata_for(&body[cursor], source));
                 cursor += 2;
                 continue;
             }
             if let Some(instruction) = lower_checked_local_store(&body[cursor..]) {
                 self.instructions.push(instruction);
-                metadata.push(metadata_for(&body[cursor]));
+                metadata.push(metadata_for(&body[cursor], source));
+                cursor += 2;
+                continue;
+            }
+            if let Some(instruction) = lower_local_initialization(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor + 1], source));
                 cursor += 2;
                 continue;
             }
             if let Some(instruction) = lower_named_call(&body[cursor..]) {
                 self.instructions.push(instruction);
-                metadata.push(metadata_for(&body[cursor]));
+                metadata.push(metadata_for(&body[cursor], source));
                 cursor += 2;
                 continue;
             }
             if let Some(instruction) = lower_local_update(&body[cursor..]) {
                 self.instructions.push(instruction);
-                metadata.push(metadata_for(&body[cursor + 3]));
+                metadata.push(metadata_for(&body[cursor + 3], source));
                 cursor += 5;
                 continue;
             }
@@ -397,7 +409,7 @@ impl CodeArena {
                 }),
             };
             self.instructions.push(instruction);
-            metadata.push(metadata_for(op));
+            metadata.push(metadata_for(op, source));
             cursor += 1;
         }
         self.metadata.push(metadata);
@@ -444,6 +456,20 @@ impl CodeArena {
     }
 }
 
+#[cfg(feature = "execution-trace")]
+fn trace_source(op: &Op) -> Option<u32> {
+    match op {
+        Op::TraceSite { source } => Some(*source),
+        _ => None,
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+fn trace_source(_: &Op) -> Option<u32> {
+    None
+}
+
 fn lower_checked_local_load(ops: &[Op]) -> Option<crate::ir::Instruction> {
     let [Op::CheckInitialized { slot: checked, .. }, Op::LoadLocal { dst, slot }, ..] = ops else {
         return None;
@@ -456,6 +482,13 @@ fn lower_checked_local_store(ops: &[Op]) -> Option<crate::ir::Instruction> {
         return None;
     };
     (checked == slot).then(|| crate::ir::Instruction::store_local_checked(*slot, *src))
+}
+
+fn lower_local_initialization(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::StoreLocal { slot, src }, Op::InitializeLocal { slot: initialized }, ..] = ops else {
+        return None;
+    };
+    (slot == initialized).then(|| crate::ir::Instruction::init_local(*slot, *src))
 }
 
 fn lower_named_call(ops: &[Op]) -> Option<crate::ir::Instruction> {
@@ -550,6 +583,12 @@ pub struct CodeView<'a> {
 }
 
 impl<'a> CodeView<'a> {
+    #[inline]
+    #[cfg(feature = "execution-trace")]
+    pub(crate) fn trace_identity(self) -> (usize, u32) {
+        (self.store as *const CodeStore as usize, self.range.code.0)
+    }
+
     pub fn len(self) -> usize {
         self.range.end.saturating_sub(self.range.start) as usize
     }
@@ -1280,6 +1319,22 @@ mod tests {
         );
         assert!(code.cold_at(0).is_none());
     }
+
+    #[cfg(feature = "execution-trace")]
+    #[test]
+    fn trace_site_is_metadata_not_an_instruction() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::TraceSite { source: 41 },
+            super::Op::Move { dst: 1, src: 2 },
+            super::Op::Move { dst: 3, src: 4 },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 2);
+        assert_eq!(code.metadata_at(0).and_then(|meta| meta.source), Some(41));
+        assert_eq!(code.metadata_at(1).and_then(|meta| meta.source), Some(41));
+    }
     #[test]
     fn constant_instruction_uses_canonical_pool_without_cold_operation() {
         let mut arena = super::CodeArena::new();
@@ -1378,6 +1433,22 @@ mod tests {
         assert_eq!(
             code.instruction(0),
             Some(crate::ir::Instruction::store_local_checked(7, 2))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn static_binding_initialization_lowers_as_one_instruction() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::StoreLocal { slot: 7, src: 2 },
+            super::Op::InitializeLocal { slot: 7 },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::init_local(7, 2))
         );
         assert!(code.cold_at(0).is_none());
     }
