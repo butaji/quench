@@ -81,6 +81,12 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::ProcessOn) => process_on(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessEmit) => process_emit(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessRemoveListener) => {
+                process_remove_listener(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::ProcessRemoveAllListeners) => {
+                process_remove_all_listeners(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage) => {
                 process_cpu_usage(arguments)
             }

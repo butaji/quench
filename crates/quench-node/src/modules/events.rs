@@ -125,9 +125,20 @@ fn add_listener(
     let Some(emitter) = state.borrow().emitters.get(id) else {
         return Err(execute::type_error("receiver is not an EventEmitter"));
     };
+    if event != "newListener" {
+        let _ = method_emit(
+            state,
+            receiver,
+            &[
+                Value::String("newListener".into()),
+                Value::String(event.clone()),
+                callback.clone(),
+            ],
+        )?;
+    }
     let (count, max, already_warned) = {
         let mut guard = emitter.borrow_mut();
-        let count = guard.add(&event, callback, once, prepend);
+        let count = guard.add(&event, callback.clone(), once, prepend);
         (count, guard.max, guard.warned)
     };
     let limit = max.unwrap_or(state.borrow().emitters.default_max);
@@ -230,7 +241,18 @@ pub fn method_emit(
     let rest: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
     for listener in &snapshot {
         if listener.once {
-            emitter.borrow_mut().remove(&event, &listener.callback);
+            let removed = emitter.borrow_mut().remove(&event, &listener.callback);
+            if removed && event != "removeListener" {
+                let _ = method_emit(
+                    state,
+                    Some(receiver),
+                    &[
+                        Value::String("removeListener".into()),
+                        Value::String(event.clone()),
+                        listener.callback.clone(),
+                    ],
+                )?;
+            }
         }
         let result = execute::call(&listener.callback, receiver, &rest)?;
         if capture_rejections
@@ -289,14 +311,25 @@ fn attach_rejection_handler(
         return Ok(());
     }
     let result = execute::call(&then, promise, &[Value::Undefined, bound]);
-    if let Err(error) = result {
-        if let VmError::Thrown(reason) = error {
+    match result {
+        Ok(Value::Promise(child)) => attach_unhandled_rejection(&Value::Promise(child))?,
+        Err(VmError::Thrown(reason)) => {
             let _ = method_emit(
                 state,
                 Some(receiver),
                 &[Value::String("error".into()), reason],
             )?;
         }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn attach_unhandled_rejection(promise: &Value) -> Result<(), VmError> {
+    let handler = eval_function("(error) => process.emit('unhandledRejection', error)")?;
+    let then = execute::get_property_result(promise, "then")?;
+    if quench_runtime::is_callable(&then) {
+        let _ = execute::call(&then, promise, &[Value::Undefined, handler])?;
     }
     Ok(())
 }
@@ -358,7 +391,18 @@ pub fn method_remove_listener(
     let callback = expect_listener(args)?;
     if let Some(id) = expect_emitter(state, receiver) {
         if let Some(emitter) = state.borrow().emitters.get(id) {
-            emitter.borrow_mut().remove(&event, &callback);
+            let removed = emitter.borrow_mut().remove(&event, &callback);
+            if removed && event != "removeListener" {
+                let _ = method_emit(
+                    state,
+                    receiver,
+                    &[
+                        Value::String("removeListener".into()),
+                        Value::String(event.clone()),
+                        callback.clone(),
+                    ],
+                )?;
+            }
         }
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -488,6 +532,8 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
     let id_value = Value::Number(id.0 as f64);
     let mut object =
         crate::host::namespace_object_from_pairs(vec![(EMITTER_ID_PROP.to_string(), id_value)]);
+    object = execute::set_property(object, "_events", host_api::object(Vec::new()));
+    object = execute::set_property(object, "_eventsCount", Value::Number(0.0));
     let capture = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
@@ -541,13 +587,15 @@ pub fn emitter_prototype() -> Result<Value, VmError> {
 }
 
 fn emitter_props() -> Vec<(&'static str, Value)> {
+    let on = cap("events:on", 0x0102);
+    let remove_listener = cap("events:removeListener", 0x0106);
     vec![
-        ("on", cap("events:on", 0x0102)),
-        ("addListener", cap("events:on", 0x0102)),
+        ("on", on.clone()),
+        ("addListener", on),
         ("once", cap("events:once", 0x0105)),
         ("emit", cap("events:emit", 0x0103)),
-        ("removeListener", cap("events:removeListener", 0x0106)),
-        ("off", cap("events:removeListener", 0x0106)),
+        ("removeListener", remove_listener.clone()),
+        ("off", remove_listener),
         (
             "removeAllListeners",
             cap("events:removeAllListeners", 0x0107),

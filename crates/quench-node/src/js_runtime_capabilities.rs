@@ -39,6 +39,8 @@ impl CapabilityName {
     const InternalUtilEmitExperimentalWarning: u16 = 2089;
     const ProcessOn: u16 = 2090;
     const ProcessEmit: u16 = 2091;
+    const ProcessRemoveListener: u16 = 2092;
+    const ProcessRemoveAllListeners: u16 = 2093;
     const ProcessCpuUsage: u16 = 2110;
     const ProcessHrtime: u16 = 2111;
     const ProcessHrtimeBigint: u16 = 2125;
