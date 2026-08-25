@@ -198,11 +198,9 @@ impl SlotStore {
             .map(|cell| cell.borrow());
         if let Some(value) = value.as_deref() {
             crate::execute::write_value(registers, dst, value.clone().strong_function());
-        } else if let Some(crate::value::Value::WeakFunction(function)) = self.values().read(index)
-        {
-            crate::execute::write_value(registers, dst, function.value());
         } else {
-            let copied = registers.copy_from(usize::from(dst), self.values(), index);
+            let copied =
+                registers.copy_strong_function_from(usize::from(dst), self.values(), index);
             debug_assert!(copied, "ensured lexical slot must own an execute word");
         }
     }

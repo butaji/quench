@@ -446,6 +446,31 @@ impl RegisterFile {
         release(std::mem::replace(&mut self.words[index], word));
     }
 
+    /// Copy a lexical word while preserving the one exceptional weak-function
+    /// projection. Ordinary immediates and direct object/array/function words
+    /// never materialize `Value` merely to prove they are not weak functions.
+    #[inline(always)]
+    pub(crate) fn copy_strong_function_from(
+        &mut self,
+        destination: usize,
+        source: &RegisterFile,
+        index: usize,
+    ) -> bool {
+        let Some(&word) = source.words.get(index) else {
+            return false;
+        };
+        if let DecodedValue::HeapPtr(pointer) = word.decode() {
+            // SAFETY: `HeapPtr` is created only from `Rc<AlignedValue>` in
+            // `encode`, and `source` owns that allocation for this inspection.
+            let value = unsafe { &*(pointer as *const AlignedValue) };
+            if let Value::WeakFunction(function) = &value.0 {
+                self.write(destination, function.value());
+                return true;
+            }
+        }
+        self.copy_from(destination, source, index)
+    }
+
     #[inline(always)]
     pub fn write_number(&mut self, index: usize, value: f64) {
         self.resize_undefined(index + 1);
@@ -641,6 +666,17 @@ mod tests {
         assert!(destination.copy_from(0, &source, 0));
         assert_eq!(destination.read_number(0), Some(42.0));
         assert_eq!(source.read_number(0), Some(42.0));
+    }
+
+    #[test]
+    fn lexical_projection_copies_non_weak_words_without_materializing_values() {
+        let source =
+            RegisterFile::from_values(vec![Value::Number(42.0), Value::String("payload".into())]);
+        let mut destination = RegisterFile::with_undefined(2);
+        assert!(destination.copy_strong_function_from(0, &source, 0));
+        assert!(destination.copy_strong_function_from(1, &source, 1));
+        assert_eq!(destination.word(0), source.word(0));
+        assert_eq!(destination.word(1), source.word(1));
     }
 
     #[test]

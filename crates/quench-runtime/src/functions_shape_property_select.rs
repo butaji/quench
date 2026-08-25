@@ -81,9 +81,9 @@ fn property_select_shape(
     alternate: crate::machine::CodeView<'_>,
 ) -> bool {
     use crate::ir::Opcode::*;
-    receiver.opcode == LoadLocalChecked
+    is_local_load(receiver)
         && (state.opcode, state.b) == (GetN, receiver.a)
-        && expected_object.opcode == LoadLocalChecked
+        && is_local_load(expected_object)
         && (expected.opcode, expected.b) == (GetN, expected_object.a)
         && equal.opcode == Binary
         && equal.flags == crate::ir::compact_binary_id(crate::ops::BinaryOp::Equal)
@@ -102,7 +102,7 @@ fn branch_property_shape(branch: crate::machine::CodeView<'_>) -> bool {
         return false;
     }
     let [load, get, returned] = std::array::from_fn(|pc| branch.instruction(pc).unwrap());
-    load.opcode == crate::ir::Opcode::LoadLocalChecked
+    is_local_load(load)
         && (get.opcode, get.b) == (crate::ir::Opcode::GetN, load.a)
         && (returned.opcode, returned.a) == (crate::ir::Opcode::Return, get.a)
 }
