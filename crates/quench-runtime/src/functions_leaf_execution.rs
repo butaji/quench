@@ -919,7 +919,7 @@ fn leaf_set_named(
             {
                 if object.semantic_layout_id() == layout {
                     if let Some((_, crate::value::Value::BindingCell(cell))) =
-                        object.hot_properties().get(slot as usize)
+                        object.hot_properties().slot_entry(slot as usize)
                     {
                         cell.store(value);
                         return Ok(());
