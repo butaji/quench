@@ -239,6 +239,7 @@ fn finish_bound_result(
     }
 }
 
+
 fn execute_bound_function_in_realm(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     bound: &crate::value::BoundFunctionValue,
