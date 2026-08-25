@@ -633,6 +633,10 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
+    if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
+        set_last_index(receiver, 0.0)?;
+        return Ok(Value::Boolean(false));
+    }
     let (search_start, _) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
@@ -672,6 +676,10 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
+    if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
+        set_last_index(receiver, 0.0)?;
+        return Ok(Value::Null);
+    }
     let (search_start, _) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
