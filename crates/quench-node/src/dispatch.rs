@@ -264,6 +264,16 @@ const CAP_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE: u16 =
     crate::registry::SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE.cap;
 const CAP_DIAGNOSTICS_BOUNDED_RUN: u16 = crate::registry::SPEC_DIAGNOSTICS_BOUNDED_RUN.cap;
 const CAP_DIAGNOSTICS_CHANNEL_SCOPE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_SCOPE.cap;
+const CAP_DOMAIN_CREATE: u16 = crate::registry::SPEC_DOMAIN_CREATE.cap;
+const CAP_DOMAIN_CONSTRUCTOR: u16 = crate::registry::SPEC_DOMAIN_CONSTRUCTOR.cap;
+const CAP_DOMAIN_ENTER: u16 = crate::registry::SPEC_DOMAIN_ENTER.cap;
+const CAP_DOMAIN_EXIT: u16 = crate::registry::SPEC_DOMAIN_EXIT.cap;
+const CAP_DOMAIN_ADD: u16 = crate::registry::SPEC_DOMAIN_ADD.cap;
+const CAP_DOMAIN_REMOVE: u16 = crate::registry::SPEC_DOMAIN_REMOVE.cap;
+const CAP_DOMAIN_RUN: u16 = crate::registry::SPEC_DOMAIN_RUN.cap;
+const CAP_DOMAIN_DISPOSE: u16 = crate::registry::SPEC_DOMAIN_DISPOSE.cap;
+const CAP_DOMAIN_ON: u16 = crate::registry::SPEC_DOMAIN_ON.cap;
+const CAP_DOMAIN_ADD_EMITTER: u16 = crate::registry::SPEC_DOMAIN_ADD_EMITTER.cap;
 const CAP_DIAGNOSTICS_SCOPE_DISPOSE: u16 = crate::registry::SPEC_DIAGNOSTICS_SCOPE_DISPOSE.cap;
 const CAP_ZLIB_GZIP: u16 = 0x1700;
 const CAP_ZLIB_GUNZIP: u16 = 0x1701;
@@ -552,6 +562,15 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
             crate::modules::diagnostics_channel::bounded_unsubscribe
         }
         CAP_DIAGNOSTICS_BOUNDED_RUN => crate::modules::diagnostics_channel::bounded_run,
+        CAP_DOMAIN_CREATE => crate::modules::domain::create,
+        CAP_DOMAIN_ENTER => crate::modules::domain::enter,
+        CAP_DOMAIN_EXIT => crate::modules::domain::exit,
+        CAP_DOMAIN_ADD => crate::modules::domain::add,
+        CAP_DOMAIN_REMOVE => crate::modules::domain::remove,
+        CAP_DOMAIN_RUN => crate::modules::domain::run,
+        CAP_DOMAIN_DISPOSE => crate::modules::domain::dispose,
+        CAP_DOMAIN_ON => crate::modules::domain::on,
+        CAP_DOMAIN_ADD_EMITTER => crate::modules::domain::add_emitter,
         CAP_DIAGNOSTICS_CHANNEL_SCOPE => crate::modules::diagnostics_channel::with_store_scope,
         CAP_DIAGNOSTICS_SCOPE_DISPOSE => crate::modules::diagnostics_channel::dispose_store_scope,
         _ => return os_buffer_dispatch(cap),
@@ -754,6 +773,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_INSPECTOR_SESSION => crate::modules::inspector::new_session,
         CAP_WASI_CONSTRUCTOR => crate::modules::wasi::new_wasi,
         CAP_DIAGNOSTICS_CHANNEL_CONSTRUCTOR => crate::modules::diagnostics_channel::new_channel,
+        CAP_DOMAIN_CONSTRUCTOR => crate::modules::domain::new_domain,
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
         CAP_EVENT => handlers::event_new,
