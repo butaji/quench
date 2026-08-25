@@ -293,17 +293,35 @@ pub(crate) fn array_join(
     let Some(receiver) = receiver else {
         return Ok(Value::String(String::new()));
     };
-    let length = crate::builtins::map_length(receiver)?;
     let separator: Vec<u16> = match arguments.first() {
         Some(Value::Undefined) | None => ",".encode_utf16().collect(),
         Some(value) => crate::conversion::to_string(value)?.encode_utf16().collect(),
     };
     let mut result = Vec::new();
+    let receiver = crate::locals::resolved_replacement(receiver.clone());
+    if let Value::Array(array) = &receiver {
+        let length = array.logical_len();
+        for index in 0..length {
+            if index != 0 {
+                result.extend_from_slice(&separator);
+            }
+            let Some(value) = array.get_index(index) else {
+                continue;
+            };
+            if let Some(units) = crate::strings::units_of(&value) {
+                result.extend(units);
+            } else if !matches!(value, Value::Null | Value::Undefined) {
+                result.extend(crate::conversion::to_string(&value)?.encode_utf16());
+            }
+        }
+        return Ok(crate::strings::from_units(result));
+    }
+    let length = crate::builtins::map_length(&receiver)?;
     for index in 0..length {
         if index != 0 {
             result.extend_from_slice(&separator);
         }
-        let value = crate::execute::get_property_result(receiver, &index.to_string())?;
+        let value = crate::execute::get_property_result(&receiver, &index.to_string())?;
         if matches!(value, Value::Null | Value::Undefined) {
             continue;
         }
