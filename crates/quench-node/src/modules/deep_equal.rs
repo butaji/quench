@@ -50,6 +50,9 @@ fn compare_partial(
     if error_like(left) != error_like(right) {
         return Ok(false);
     }
+    if is_url_like(left) || is_url_like(right) {
+        return compare_url_like(left, right);
+    }
     match (left, right) {
         (Value::Array(a), Value::Array(b)) => {
             if left.is_arguments_object() != right.is_arguments_object() {
@@ -448,8 +451,16 @@ fn is_date_value(value: &Value) -> bool {
 }
 
 fn is_url_like(value: &Value) -> bool {
-    matches!(execute::get_property(value, "href"), Value::String(_))
-        && matches!(execute::get_property(value, "protocol"), Value::String(_))
+    matches!(
+        execute::get_property(value, "\0url"),
+        Value::String(_) | Value::StringUnits(_)
+    ) || (matches!(
+        execute::get_property(value, "href"),
+        Value::String(_) | Value::StringUnits(_)
+    ) && matches!(
+        execute::get_property(value, "protocol"),
+        Value::String(_) | Value::StringUnits(_)
+    ))
 }
 
 fn compare_url_like(left: &Value, right: &Value) -> Result<bool, VmError> {
@@ -560,6 +571,9 @@ fn compare(
     };
     if error_like(left) != error_like(right) {
         return Ok(false);
+    }
+    if is_url_like(left) || is_url_like(right) {
+        return compare_url_like(left, right);
     }
     match (left, right) {
         (Value::Object(_), Value::Object(_)) if is_date_value(left) && is_date_value(right) => {
