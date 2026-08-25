@@ -651,7 +651,7 @@
     const pull = async () => {
       if (sourceDone) return null;
       const step = await source.next();
-      if (step.done) sourceDone = true;
+      if (!step || step.done) sourceDone = true;
       return step;
     };
     const enqueue = async () => {
@@ -685,11 +685,15 @@
         ended = true;
         return { value: undefined, done: true };
       }
-      while (!pending[0].done) {
+      while (pending[0] && !pending[0].done) {
         await Promise.race(pending.filter((task) => !task.done).map((task) => task.promise));
         await fill();
       }
       const task = pending.shift();
+      if (!task) {
+        ended = true;
+        return { value: undefined, done: true };
+      }
       await fill();
       const value = task.value;
       if (filtering && !value.keep) return next();
