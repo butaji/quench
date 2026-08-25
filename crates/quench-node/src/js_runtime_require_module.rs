@@ -434,10 +434,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(os_module());
         }
         if name == "repl" || name == "node:repl" {
-            return Ok(quench_runtime::host_api::object(vec![(
-                "REPLServer".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::ReplServer)),
-            )]));
+            return Ok(crate::modules::repl::build());
         }
         if name == "module" || name == "node:module" {
             return Ok(module_api());
