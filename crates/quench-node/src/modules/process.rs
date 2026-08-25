@@ -235,10 +235,11 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
 pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let rest = args.get(1..).unwrap_or(&[]).to_vec();
-    let _ = crate::modules::async_hooks::new_resource(
+    let resource = crate::modules::async_hooks::new_resource(
         state,
         &[Value::Undefined, Value::String("TickObject".into())],
-    );
+    )
+    .ok();
     let global = quench_runtime::vm::current_global_object();
     if let Ok(init) = quench_runtime::execute::get_property_result(
         &global,
@@ -248,7 +249,10 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
             let _ = quench_runtime::vm::call_value(&init, &Value::Undefined, &[]);
         }
     }
-    state.borrow_mut().event_loop.queue_microtask(cb, rest);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask_with_resource(cb, rest, resource);
     Ok(Value::Undefined)
 }
 

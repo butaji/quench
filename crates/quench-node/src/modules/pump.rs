@@ -284,11 +284,17 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
         let mut queue = host.event_loop.microtasks.borrow_mut();
         (!queue.is_empty()).then(|| queue.remove(0))
     };
-    let Some((callback, args)) = item else {
+    let Some(task) = item else {
         return Ok(false);
     };
-    call_guarded(state, &callback, &Value::Undefined, &args)?;
-    Ok(true)
+    if let Some(resource) = &task.resource {
+        crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
+    }
+    let result = call_guarded(state, &task.callback, &Value::Undefined, &task.args);
+    if task.resource.is_some() {
+        crate::modules::async_hooks::resource_after(state, None, &[])?;
+    }
+    result.map(|()| true)
 }
 
 fn fire_due_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
