@@ -291,6 +291,7 @@ messagePort.prototype.hasRef = function () { return true; };
 Object.defineProperty(messagePort.prototype, 'onmessage', { configurable: true });
 Object.defineProperty(messagePort.prototype, 'onmessageerror', { configurable: true });
 var environmentData = {};
+var SHARE_ENV = {};
 function MessageChannel() {
   this.port1 = messagePort();
   this.port2 = messagePort();
@@ -335,10 +336,20 @@ var api = {
       asyncHooks.__quenchWorkerResource(self);
       if (proc && typeof proc.emit === 'function') proc.emit('worker', { threadId: self.threadId });
       options = options || {};
+      if (options.env !== undefined && options.env !== null &&
+          options.env !== SHARE_ENV && typeof options.env !== 'object') {
+        throw Object.assign(new TypeError('The "options.env" property must be of type object or one of undefined, null, or worker_threads.SHARE_ENV. Received type ' + typeof options.env + ' (' + String(options.env) + ')'), {
+          code: 'ERR_INVALID_ARG_TYPE'
+        });
+      }
       var cp = require('child_process');
       var env = {};
-      var keys = Object.keys(proc.env || {});
+      var sourceEnv = options.env && options.env !== SHARE_ENV ? options.env : proc.env || {};
+      var keys = Object.keys(sourceEnv);
       for (var i = 0; i < keys.length; i++) env[keys[i]] = proc.env[keys[i]];
+      if (sourceEnv !== proc.env) {
+        for (var e = 0; e < keys.length; e++) env[keys[e]] = String(sourceEnv[keys[e]]);
+      }
       env.QUENCH_WORKER = '1';
       var data = options.workerData === undefined ? null : options.workerData;
       env.QUENCH_WORKER_DATA = JSON.stringify(data);
@@ -420,6 +431,7 @@ var api = {
     var args = port._takePending('message');
     return args ? { message: args[0] } : undefined;
   },
+  SHARE_ENV: SHARE_ENV,
   markAsUncloneable: function () {}, markAsUntransferable: function () {},
   setEnvironmentData: function (key, value) { environmentData[String(key)] = value; },
   getEnvironmentData: function (key) {
