@@ -303,9 +303,14 @@ pub(crate) mod value {
 pub(crate) mod symbol {
     use super::{Value, VmError};
     use crate::ops::Builtin;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SYMBOL_COUNTER: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+        static GLOBAL_SYMBOLS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    }
     pub(crate) fn dispatch(
         builtin: Builtin,
         arguments: &[Value],
@@ -384,7 +389,14 @@ pub(crate) mod symbol {
             }
         }
         let key = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
-        Ok(Value::String(format!("Symbol.for.{key}\0")))
+        let symbol = GLOBAL_SYMBOLS.with(|symbols| {
+            let mut symbols = symbols.borrow_mut();
+            symbols
+                .entry(key.clone())
+                .or_insert_with(|| format!("Symbol.for.{key}\0"))
+                .clone()
+        });
+        Ok(Value::String(symbol))
     }
 
     fn symbol_key_for(arguments: &[Value]) -> Result<Value, VmError> {
