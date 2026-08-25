@@ -114,6 +114,9 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstant => "Temporal.Instant",
         Builtin::TemporalPlainDateTime => "Temporal.PlainDateTime",
         Builtin::TemporalPlainTime => "Temporal.PlainTime",
+        Builtin::TemporalPlainMonthDay => "Temporal.PlainMonthDay",
+        Builtin::TemporalPlainYearMonth => "Temporal.PlainYearMonth",
+        Builtin::TemporalZonedDateTime => "Temporal.ZonedDateTime",
         Builtin::TemporalPlainDate => "Temporal.PlainDate",
         Builtin::ShadowRealm => "ShadowRealm",
         _ => return None,
@@ -161,6 +164,8 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::TemporalZonedDateTime => Some(Builtin::TemporalZonedDateTimePrototype),
         Builtin::TemporalPlainDateTime => Some(Builtin::TemporalPlainDateTimePrototype),
         Builtin::TemporalPlainTime => Some(Builtin::TemporalPlainTimePrototype),
+        Builtin::TemporalPlainMonthDay => Some(Builtin::TemporalPlainMonthDayPrototype),
+        Builtin::TemporalPlainYearMonth => Some(Builtin::TemporalPlainYearMonthPrototype),
         Builtin::TemporalPlainDate => Some(Builtin::TemporalPlainDatePrototype),
         Builtin::AbstractModuleSource => Some(Builtin::AbstractModuleSourcePrototype),
         Builtin::ShadowRealm => Some(Builtin::ShadowRealmPrototype),
@@ -275,6 +280,9 @@ fn is_runtime_prototype_tail(builtin: Builtin) -> bool {
             | Builtin::TemporalPlainDatePrototype
             | Builtin::TemporalPlainDateTimePrototype
             | Builtin::TemporalPlainTimePrototype
+            | Builtin::TemporalPlainMonthDayPrototype
+            | Builtin::TemporalPlainYearMonthPrototype
+            | Builtin::TemporalZonedDateTimePrototype
             | Builtin::AbstractModuleSourcePrototype
             | Builtin::ShadowRealmPrototype
     )
@@ -331,6 +339,9 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalInstant => Some(1.0),
         Builtin::TemporalPlainDateTime => Some(3.0),
         Builtin::TemporalPlainTime => Some(0.0),
+        Builtin::TemporalPlainMonthDay => Some(2.0),
+        Builtin::TemporalPlainYearMonth => Some(2.0),
+        Builtin::TemporalZonedDateTime => Some(3.0),
         Builtin::TemporalPlainDate => Some(3.0),
         Builtin::AbstractModuleSource | Builtin::ShadowRealm => Some(0.0),
         Builtin::DisposableStack => Some(0.0),

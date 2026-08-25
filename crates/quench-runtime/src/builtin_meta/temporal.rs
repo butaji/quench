@@ -2,6 +2,18 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
+        Builtin::TemporalPlainMonthDay => Some("Temporal.PlainMonthDay"),
+        Builtin::TemporalPlainMonthDayFrom => Some("Temporal.PlainMonthDay.from"),
+        Builtin::TemporalPlainMonthDayCompare => Some("Temporal.PlainMonthDay.compare"),
+        Builtin::TemporalPlainYearMonth => Some("Temporal.PlainYearMonth"),
+        Builtin::TemporalPlainYearMonthFrom => Some("Temporal.PlainYearMonth.from"),
+        Builtin::TemporalPlainYearMonthCompare => Some("Temporal.PlainYearMonth.compare"),
+        Builtin::TemporalNowInstant => Some("Temporal.Now.instant"),
+        Builtin::TemporalNowPlainDateISO => Some("Temporal.Now.plainDateISO"),
+        Builtin::TemporalNowPlainDateTimeISO => Some("Temporal.Now.plainDateTimeISO"),
+        Builtin::TemporalNowPlainTimeISO => Some("Temporal.Now.plainTimeISO"),
+        Builtin::TemporalNowTimeZoneId => Some("Temporal.Now.timeZoneId"),
+        Builtin::TemporalNowZonedDateTimeISO => Some("Temporal.Now.zonedDateTimeISO"),
         Builtin::TemporalInstant => Some("Temporal.Instant"),
         Builtin::TemporalInstantFrom => Some("Temporal.Instant.from"),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some("get epochNanoseconds"),
@@ -100,6 +112,18 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
 
 pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
+        Builtin::TemporalPlainMonthDay => Some("PlainMonthDay"),
+        Builtin::TemporalPlainMonthDayFrom => Some("from"),
+        Builtin::TemporalPlainMonthDayCompare => Some("compare"),
+        Builtin::TemporalPlainYearMonth => Some("PlainYearMonth"),
+        Builtin::TemporalPlainYearMonthFrom => Some("from"),
+        Builtin::TemporalPlainYearMonthCompare => Some("compare"),
+        Builtin::TemporalNowInstant => Some("instant"),
+        Builtin::TemporalNowPlainDateISO => Some("plainDateISO"),
+        Builtin::TemporalNowPlainDateTimeISO => Some("plainDateTimeISO"),
+        Builtin::TemporalNowPlainTimeISO => Some("plainTimeISO"),
+        Builtin::TemporalNowTimeZoneId => Some("timeZoneId"),
+        Builtin::TemporalNowZonedDateTimeISO => Some("zonedDateTimeISO"),
         Builtin::TemporalInstant => Some("Instant"),
         Builtin::TemporalInstantFrom => Some("from"),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some("epochNanoseconds"),
@@ -179,6 +203,18 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
+        Builtin::TemporalPlainMonthDay => Some(2.0),
+        Builtin::TemporalPlainMonthDayFrom => Some(1.0),
+        Builtin::TemporalPlainMonthDayCompare => Some(2.0),
+        Builtin::TemporalPlainYearMonth => Some(2.0),
+        Builtin::TemporalPlainYearMonthFrom => Some(1.0),
+        Builtin::TemporalPlainYearMonthCompare => Some(2.0),
+        Builtin::TemporalNowInstant
+        | Builtin::TemporalNowPlainDateISO
+        | Builtin::TemporalNowPlainDateTimeISO
+        | Builtin::TemporalNowPlainTimeISO
+        | Builtin::TemporalNowTimeZoneId
+        | Builtin::TemporalNowZonedDateTimeISO => Some(0.0),
         Builtin::TemporalInstant => Some(1.0),
         Builtin::TemporalInstantFrom => Some(1.0),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some(0.0),
