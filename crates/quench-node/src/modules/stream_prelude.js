@@ -145,6 +145,41 @@
     return name;
   }
 
+  // All stream families share Node's one-shot construction barrier.
+  function initConstruct(stream, options) {
+    const construct = options && options.construct;
+    if (typeof construct !== "function") return;
+    let completed = false;
+    stream._constructing = true;
+    const complete = (error) => {
+      if (completed) {
+        const multiple = new Error("Callback called multiple times");
+        multiple.code = "ERR_MULTIPLE_CALLBACK";
+        nextTick(() => stream._emitter.emit("error", multiple));
+        return;
+      }
+      completed = true;
+      stream._constructing = false;
+      if (error) {
+        if (stream._readableState) stream._readableState.errored = error;
+        if (stream._writableState) stream._writableState.errored = error;
+        nextTick(() => stream._emitter.emit("error", error));
+        return;
+      }
+      if (stream._readableState?.flowing) scheduleFlow(stream);
+      if (stream._writableState) {
+        flushCorked(stream);
+        finishWritable(stream);
+      }
+      if (stream._pendingDestroy) {
+        const pending = stream._pendingDestroy;
+        stream._pendingDestroy = null;
+        stream.destroy(pending.error, pending.callback);
+      }
+    };
+    try { construct.call(stream, complete); } catch (error) { complete(error); }
+  }
+
   // ---- Readable ----
 
   function initReadable(stream, options) {
@@ -288,6 +323,7 @@
   class ReadableClass {
     constructor(options) {
       initReadable(this, options || {});
+      if (!(options && options.__quenchCompatConstruct)) initConstruct(this, options || {});
     }
 
     _read() {}
@@ -599,7 +635,11 @@
 
   mixEmitter(ReadableClass.prototype);
 
-  ReadableClass.prototype.destroy = function (error) {
+  ReadableClass.prototype.destroy = function (error, callback) {
+    if (this._constructing) {
+      this._pendingDestroy = { error, callback };
+      return this;
+    }
     if (this.destroyed) return this;
     this.destroyed = true;
     this.readableAborted = this.readable !== false && !this.readableEnded;
@@ -630,6 +670,7 @@
           stream._emitter.emit("error", endError);
         }
         stream._emitter.emit("close");
+        if (callback) callback(endError);
     };
     if (destroy) {
       destroy.call(stream, error ?? null, finish);
@@ -644,6 +685,7 @@
   function Readable(options) {
     if (!(this instanceof ReadableClass)) return new ReadableClass(options || {});
     initReadable(this, options || {});
+    if (!(options && options.__quenchCompatConstruct)) initConstruct(this, options || {});
   }
   Readable.prototype = ReadableClass.prototype;
   Readable.prototype.constructor = Readable;
@@ -803,6 +845,7 @@
   class WritableClass {
     constructor(options) {
       initWritable(this, options || {});
+      if (!(options && options.__quenchCompatConstruct)) initConstruct(this, options || {});
     }
 
     _write(chunk, encoding, callback) {
@@ -1053,6 +1096,7 @@
   function Writable(options) {
     if (!(this instanceof WritableClass)) return new WritableClass(options || {});
     initWritable(this, options || {});
+    if (!(options && options.__quenchCompatConstruct)) initConstruct(this, options || {});
   }
   Writable.prototype = WritableClass.prototype;
   mixEmitter(Writable.prototype);
@@ -1073,6 +1117,10 @@
   });
 
   Writable.prototype.destroy = function (error, callback) {
+    if (this._constructing) {
+      this._pendingDestroy = { error, callback };
+      return this;
+    }
     if (this.destroyed) {
       if (callback) nextTick(() => callback());
       return this;
@@ -1105,6 +1153,7 @@
           stream._emitter.emit("error", destroyError);
         }
         stream._emitter.emit("close");
+        if (callback) callback(endError);
       };
       if (destroy) {
         destroy.call(stream, error, finish);
@@ -1137,9 +1186,10 @@
 
   class Duplex extends Readable {
     constructor(options) {
-      super(options || {});
+      super(Object.assign({}, options || {}, { __quenchCompatConstruct: true }));
       this._isDuplex = true;
       initWritable(this, options || {});
+      initConstruct(this, options || {});
       this.allowHalfOpen = !options || options.allowHalfOpen !== false;
       if (options?.readable === false) {
         this.readable = false;
