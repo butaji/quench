@@ -418,6 +418,25 @@ pub fn util_exception_with_host_port(
     Ok(Value::object(properties))
 }
 
+pub fn internal_util_emit_warning(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(feature)) = args.first() else {
+        return Err(VmError::NotCallable);
+    };
+    let message = format!("{feature} is an experimental feature");
+    crate::modules::process::emit_warning(
+        state,
+        "ExperimentalWarning",
+        &message,
+        None,
+        true,
+    );
+    Ok(Value::Undefined)
+}
+
 
 fn timer_promise_alias(value: &Value) -> Option<&'static str> {
     let capability = match value {
