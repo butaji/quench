@@ -55,9 +55,9 @@ fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value
         if matches!(result, Value::Null) {
             break;
         }
-        let full = crate::execute::get_property_result(&result, "0")?;
-        matched.push(full.clone());
-        let empty = matches!(&full, Value::String(value) if value.is_empty());
+        let full = crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
+        matched.push(Value::String(full.clone()));
+        let empty = full.is_empty();
         if empty {
             let current = extract_last_index(receiver)?;
             if previous.is_some_and(|previous| current > previous) {
