@@ -186,33 +186,67 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
         if promise.rejection_handled() {
             continue;
         }
+        let mode = state.borrow().process.unhandled_rejection_mode;
         let has_handlers = !state.borrow().process.unhandled_rejection_handlers.is_empty();
-        let has_warning_handlers = !state.borrow().process.warning_handlers.is_empty();
-        if has_handlers {
-            crate::modules::process::emit(
-                state,
-                &[
-                    Value::String("unhandledRejection".into()),
-                    reason.clone(),
-                    Value::Promise(promise),
-                ],
-            )?;
-            if has_warning_handlers {
-                crate::modules::process::emit_unhandled_rejection_warnings(state, &reason);
+        if matches!(mode, crate::modules::process::UnhandledRejectionMode::None) {
+            if has_handlers {
+                emit_unhandled_event(state, &promise, &reason)?;
             }
-        } else if has_warning_handlers {
+        } else if matches!(mode, crate::modules::process::UnhandledRejectionMode::Warn) {
             crate::modules::process::emit_unhandled_rejection_warnings(state, &reason);
+            emit_unhandled_event(state, &promise, &reason)?;
+        } else if has_handlers {
+            emit_unhandled_event(state, &promise, &reason)?;
+            if matches!(mode, crate::modules::process::UnhandledRejectionMode::Throw) {
+                continue;
+            }
+            emit_uncaught_rejection(state, &reason)?;
         } else if !state.borrow().process.uncaught_exception_handlers.is_empty() {
-            let error = unhandled_rejection_error(&reason);
-            crate::modules::process::emit(
-                state,
-                &[
-                    Value::String("uncaughtException".into()),
-                    error,
-                    Value::String("unhandledRejection".into()),
-                ],
-            )?;
+            emit_uncaught_rejection(state, &reason)?;
         }
+    }
+    Ok(())
+}
+
+fn emit_unhandled_event(
+    state: &Rc<RefCell<HostState>>,
+    promise: &Rc<quench_runtime::value::PromiseData>,
+    reason: &Value,
+) -> Result<(), VmError> {
+    crate::modules::process::emit(
+        state,
+        &[
+            Value::String("unhandledRejection".into()),
+            reason.clone(),
+            Value::Promise(promise.clone()),
+        ],
+    )?;
+    if promise.rejection_handled() {
+        crate::modules::process::emit(
+            state,
+            &[
+                Value::String("rejectionHandled".into()),
+                Value::Promise(promise.clone()),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_uncaught_rejection(
+    state: &Rc<RefCell<HostState>>,
+    reason: &Value,
+) -> Result<(), VmError> {
+    if !state.borrow().process.uncaught_exception_handlers.is_empty() {
+        let error = unhandled_rejection_error(reason);
+        crate::modules::process::emit(
+            state,
+            &[
+                Value::String("uncaughtException".into()),
+                error,
+                Value::String("unhandledRejection".into()),
+            ],
+        )?;
     }
     Ok(())
 }
