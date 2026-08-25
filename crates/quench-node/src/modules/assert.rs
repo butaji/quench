@@ -516,6 +516,16 @@ fn binary_assert(
                 {
                     simple_binary_message(operator, actual, expected)
                 }
+                _ if operator == "notDeepEqual" && execute::same_value(&actual, &expected) =>
+                    format!(
+                        "Expected \"actual\" not to be loosely deep-equal to:\n\n{}",
+                        rendered(&actual)
+                    ),
+                _ if operator == "notDeepEqual" => format!(
+                    "Expected values to be loosely deep-equal:\n\n{}\n\nshould not loosely deep-equal\n\n{}",
+                    rendered(&actual),
+                    rendered(&expected)
+                ),
                 _ => format!(
                     "Expected values to be {}:\n\n{} {} {}\n",
                     label,
@@ -671,7 +681,7 @@ fn deep_assert(
     let strict = strict_override.unwrap_or(operator == "deepStrictEqual");
     let skip_prototype = receiver_skip_prototype(_r);
     if crate::modules::deep_equal::deep_equal_opts(&actual, &expected, strict, skip_prototype)?
-        && typed_props_equal(&actual, &expected)
+        && typed_props_equal(&actual, &expected, strict)
     {
         return Ok(Value::Undefined);
     }
@@ -831,7 +841,10 @@ pub fn deep_equal(
     deep_assert(state, receiver, args, Some(false))
 }
 
-fn typed_props_equal(actual: &Value, expected: &Value) -> bool {
+fn typed_props_equal(actual: &Value, expected: &Value, strict: bool) -> bool {
+    if !strict {
+        return true;
+    }
     match (typed_array_kind(actual), typed_array_kind(expected)) {
         (Some(_), Some(_)) => typed_array_props(actual) == typed_array_props(expected),
         _ => true,
@@ -1292,7 +1305,7 @@ pub fn not_deep_strict_equal(
     let skip_prototype = receiver_skip_prototype(_r);
     binary_assert(_r, args, "notDeepStrictEqual", false, |a, b| {
         Ok(crate::modules::deep_equal::deep_equal_opts(a, b, true, skip_prototype)?
-            && typed_props_equal(a, b))
+            && typed_props_equal(a, b, true))
     })
 }
 
@@ -1307,7 +1320,7 @@ pub fn not_deep_equal(
     let skip_prototype = receiver_skip_prototype(_r);
     binary_assert(_r, args, "notDeepEqual", false, |a, b| {
         Ok(crate::modules::deep_equal::deep_equal_opts(a, b, false, skip_prototype)?
-            && typed_props_equal(a, b))
+            && typed_props_equal(a, b, true))
     })
 }
 

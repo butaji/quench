@@ -268,7 +268,7 @@ fn dense_enumerable_indices(values: &crate::value::ArrayData) -> Vec<(u32, Strin
 fn array_extra_keys(values: &crate::value::ArrayData) -> Vec<String> {
     let mut extra = values.property_keys();
     extra.extend(values.descriptor_keys());
-    extra.retain(|key| key != "length" && !key.contains('\0'));
+    extra.retain(|key| key != "length" && !crate::builtins::is_descriptor_key(key));
     extra.dedup();
     extra
 }
