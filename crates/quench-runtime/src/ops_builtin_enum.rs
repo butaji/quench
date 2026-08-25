@@ -150,6 +150,7 @@ pub enum Builtin {
     TemporalZonedDateTimeHoursInDayGetter,
     TemporalDuration, TemporalDurationPrototype,
     TemporalDurationFrom, TemporalDurationCompare, TemporalDurationAdd, TemporalDurationSubtract,
+    TemporalDurationWith,
     TemporalDurationAbs, TemporalDurationNegated, TemporalDurationRound, TemporalDurationTotal,
     TemporalDurationYearsGetter, TemporalDurationMonthsGetter, TemporalDurationWeeksGetter,
     TemporalDurationDaysGetter, TemporalDurationHoursGetter, TemporalDurationMinutesGetter,
