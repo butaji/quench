@@ -188,10 +188,11 @@ pub fn util_inspect(
             )
         });
     let show_proxy = args.get(1).is_some_and(|options| {
-        matches!(
-            execute::get_property(options, "showProxy"),
-            Value::Boolean(true)
-        )
+        match execute::get_property(options, "showProxy") {
+            Value::Boolean(value) => value,
+            Value::Number(value) => value != 0.0 && !value.is_nan(),
+            _ => false,
+        }
     });
     if let Some(rendered) = crate::modules::util::inspect_proxy(&arg, depth.unwrap_or(3), show_proxy) {
         return Ok(Value::String(rendered));
