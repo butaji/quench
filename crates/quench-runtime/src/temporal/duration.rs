@@ -182,15 +182,103 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         };
         return calendar_round(object, relative, index);
     }
-    let mut rounded = duration_fields(object);
-    if largest_unit(options).is_some() {
-        balance_time_fields(&mut rounded, index);
-    } else {
-        for value in rounded.iter_mut().skip(index + 1) {
-            *value = Value::Number(0.0);
-        }
+    fixed_round(object, options, index)
+}
+
+fn fixed_round(
+    object: &crate::value::ObjectData,
+    options: Option<&Value>,
+    index: usize,
+) -> Result<Value, VmError> {
+    let fields = duration_fields(object);
+    let scales = [
+        7.0 * 86_400_000_000_000.0,
+        86_400_000_000_000.0,
+        3_600_000_000_000.0,
+        60_000_000_000.0,
+        1_000_000_000.0,
+        1_000_000.0,
+        1_000.0,
+        1.0,
+    ];
+    let first = index.saturating_sub(2);
+    let total = fields[2..]
+        .iter()
+        .zip([
+            7.0 * 86_400_000_000_000.0,
+            86_400_000_000_000.0,
+            3_600_000_000_000.0,
+            60_000_000_000.0,
+            1_000_000_000.0,
+            1_000_000.0,
+            1_000.0,
+            1.0,
+        ])
+        .map(|(value, scale)| number_field(value) as f64 * scale)
+        .sum::<f64>();
+    let increment = rounding_increment(options)?;
+    let quantum = scales[first] * increment;
+    let rounded_units = round_number(total / quantum, rounding_mode(options)?);
+    let mut rounded = vec![Value::Number(0.0); 10];
+    rounded[index] = Value::Number(rounded_units * increment);
+    let largest = (2..=index)
+        .find(|field| number_field(&fields[*field]) != 0)
+        .unwrap_or(index);
+    if largest < index {
+        balance_time_fields(&mut rounded, largest);
     }
     construct(&rounded)
+}
+
+fn rounding_increment(options: Option<&Value>) -> Result<f64, VmError> {
+    let value = options
+        .and_then(|value| match value {
+            Value::Object(object) => object
+                .iter()
+                .find(|(key, _)| key == "roundingIncrement")
+                .map(|(_, value)| value),
+            _ => None,
+        })
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(1.0);
+    (value.is_finite() && value > 0.0)
+        .then_some(value)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid roundingIncrement"))
+}
+
+fn rounding_mode(options: Option<&Value>) -> Result<&str, VmError> {
+    let value = options
+        .and_then(|value| match value {
+            Value::Object(object) => object
+                .iter()
+                .find(|(key, _)| key == "roundingMode")
+                .map(|(_, value)| value),
+            _ => None,
+        });
+    match value {
+        None => Ok("halfExpand"),
+        Some(Value::String(mode)) => Ok(mode.as_str()),
+        _ => Err(crate::value::error::throw_type_error("Invalid roundingMode")),
+    }
+}
+
+fn round_number(value: f64, mode: &str) -> f64 {
+    match mode {
+        "ceil" => value.ceil(),
+        "floor" => value.floor(),
+        "trunc" => value.trunc(),
+        "expand" => value.signum() * value.abs().ceil(),
+        _ => {
+            let lower = value.floor();
+            let fraction = value - lower;
+            if fraction > 0.5 || (fraction == 0.5 && value.signum() >= 0.0) {
+                lower + 1.0
+            } else {
+                lower
+            }
+        }
+    }
 }
 
 fn duration_fields(object: &crate::value::ObjectData) -> Vec<Value> {
@@ -282,7 +370,12 @@ fn calendar_round(
         count += sign as i64;
     }
     let mut fields = vec![Value::Number(0.0); 10];
-    fields[unit] = Value::Number(count as f64);
+    if unit == 1 && duration_field(object, "years") != 0 {
+        fields[0] = Value::Number((count / 12) as f64);
+        fields[1] = Value::Number((count % 12) as f64);
+    } else {
+        fields[unit] = Value::Number(count as f64);
+    }
     construct(&fields)
 }
 
