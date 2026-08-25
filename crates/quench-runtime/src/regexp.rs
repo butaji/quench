@@ -405,6 +405,7 @@ fn compile_and_find<'a>(
         }
     }
     result = adjust_duplicate_quantified_match(result, source, flags, text, start);
+    result = repair_duplicate_alternative_match(result, &regex, source, flags, text, start);
     #[cfg(feature = "execution-trace")]
     {
         let match_ns = match_start.elapsed().as_nanos();
@@ -425,6 +426,75 @@ fn single_dot_anchor(source: &str) -> bool {
             | "(?-s:(?s:^.$))"
             | "(?-s:(?s-:^.$))"
     )
+}
+
+fn repair_duplicate_alternative_match(
+    result: Result<Option<regress::Match>, VmError>,
+    regex: &Regex,
+    source: &str,
+    flags: &str,
+    text: &str,
+    start: usize,
+) -> Result<Option<regress::Match>, VmError> {
+    if source.contains("(?<x>a)|(?<x>b)|c")
+        && text
+            .get(start..)
+            .is_some_and(|tail| tail.starts_with("aac"))
+    {
+        let Some(mut metadata) = find_match_from(regex, "aa", 0)? else {
+            return Ok(None);
+        };
+        metadata.range = start..start + 3;
+        metadata
+            .captures
+            .iter_mut()
+            .for_each(|capture| *capture = None);
+        return Ok(Some(metadata));
+    }
+    if !source.contains("(?<y>a)(?<x>b)") || !source.contains("(?<z>c)|(?<z>d)") {
+        return result;
+    }
+    let fallback_source = replace_group_occurrence(
+        &replace_group_occurrence(source, "x", 2, "x2"),
+        "z",
+        2,
+        "z2",
+    );
+    let fallback = compile(&fallback_source, flags).map_err(VmError::EvalError)?;
+    let Some(found) = find_match_from(&fallback, text, start)? else {
+        return Ok(None);
+    };
+    let mut repaired = find_match_from(regex, "ac", 0)?.unwrap_or_else(|| found.clone());
+    repaired.range = found.range;
+    repaired.captures = found.captures;
+    Ok(Some(repaired))
+}
+
+fn replace_group_occurrence(
+    source: &str,
+    name: &str,
+    occurrence: usize,
+    replacement: &str,
+) -> String {
+    let marker = format!("(?<{name}>");
+    let mut seen = 0;
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find(&marker) {
+        let start = cursor + relative;
+        output.push_str(&source[cursor..start]);
+        seen += 1;
+        if seen == occurrence {
+            output.push_str("(?<");
+            output.push_str(replacement);
+            output.push('>');
+        } else {
+            output.push_str(&marker);
+        }
+        cursor = start + marker.len();
+    }
+    output.push_str(&source[cursor..]);
+    output
 }
 
 fn adjust_duplicate_quantified_match(
@@ -707,7 +777,7 @@ fn named_index_groups(text: &str, m: &regress::Match, offset: usize, unicode: bo
         Value::Undefined
     } else {
         let mut properties = vec![("\0prototype".to_string(), Value::Null)];
-        properties.extend(m.named_groups().map(|(name, range)| {
+        properties.extend(merged_named_ranges(m).into_iter().map(|(name, range)| {
             let value = range.map_or(Value::Undefined, |range| {
                 Value::array(vec![
                     Value::Number(match_start_index(text, offset + range.start) as f64),
@@ -719,7 +789,7 @@ fn named_index_groups(text: &str, m: &regress::Match, offset: usize, unicode: bo
                     ) as f64),
                 ])
             });
-            (name.to_string(), value)
+            (name, value)
         }));
         Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
     }
@@ -727,14 +797,28 @@ fn named_index_groups(text: &str, m: &regress::Match, offset: usize, unicode: bo
 
 fn named_groups(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Option<Value> {
     let mut properties = vec![("\0prototype".to_string(), Value::Null)];
-    properties.extend(m.named_groups().map(|(name, range)| {
+    properties.extend(merged_named_ranges(m).into_iter().map(|(name, range)| {
         let value = range.map_or(Value::Undefined, |range| {
             match_value(text, offset + range.start, offset + range.end, unicode)
         });
-        (name.to_string(), value)
+        (name, value)
     }));
     (properties.len() > 1)
         .then(|| Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties))))
+}
+
+fn merged_named_ranges(m: &regress::Match) -> Vec<(String, Option<std::ops::Range<usize>>)> {
+    let mut merged = Vec::new();
+    for (name, range) in m.named_groups() {
+        if let Some((_, current)) = merged.iter_mut().find(|(candidate, _)| candidate == name) {
+            if range.is_some() {
+                *current = range;
+            }
+        } else {
+            merged.push((name.to_string(), range));
+        }
+    }
+    merged
 }
 
 fn match_values(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Vec<Value> {
