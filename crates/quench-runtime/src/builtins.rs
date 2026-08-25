@@ -485,7 +485,7 @@ fn set_function_property(
     key: &str,
     value: Value,
 ) -> Value {
-    if descriptor_flag_in(&function.properties.borrow(), key, "writable") == Some(false) {
+    if descriptor_flag_in(&function.properties.borrow()[..], key, "writable") == Some(false) {
         return Value::Function(function);
     }
     {

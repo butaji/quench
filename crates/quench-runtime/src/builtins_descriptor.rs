@@ -6,13 +6,13 @@ pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<
         return Some(false);
     }
     match target {
-        Value::Object(properties) => descriptor_flag_in(properties, key, field)
+        Value::Object(properties) => descriptor_flag_in(properties.as_ref(), key, field)
             .or_else(|| descriptor_flag_via_descriptor(target, key, field)),
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
             .upgrade()
-            .and_then(|properties| descriptor_flag_in(&properties, key, field)),
+            .and_then(|properties| descriptor_flag_in(properties.as_ref(), key, field)),
         Value::Array(values) => array_flag(values, key, field),
         Value::Builtin(builtin) => builtin_flag(*builtin, key, field),
         Value::Function(_) | Value::BoundFunction(_) => {
@@ -88,11 +88,15 @@ fn argument_property_flag(
     })
 }
 
-fn descriptor_flag_in<K: AsRef<str>>(properties: &[(K, Value)], key: &str, field: &str) -> Option<bool> {
+fn descriptor_flag_in<P: crate::value::PropertyEntries + ?Sized>(
+    properties: &P,
+    key: &str,
+    field: &str,
+) -> Option<bool> {
     let (_, Value::Object(descriptor)) = properties
-        .iter()
+        .entries()
         .rev()
-        .find(|(name, _)| crate::builtins::is_descriptor_key_for(name.as_ref(), key))?
+        .find(|(name, _)| crate::builtins::is_descriptor_key_for(name, key))?
     else {
         return None;
     };
