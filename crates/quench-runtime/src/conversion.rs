@@ -95,6 +95,9 @@ pub(crate) fn to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> 
     if matches!(value, Value::Builtin(crate::ops::Builtin::StringPrototype)) {
         return Ok(Value::String(String::new()));
     }
+    if matches!(value, Value::Builtin(crate::ops::Builtin::Math)) {
+        return Ok(Value::String("[object Math]".to_string()));
+    }
     if matches!(value, Value::Builtin(_)) && !is_symbol(value) {
         return Ok(crate::builtins::function_prototype_to_string(Some(value)));
     }
@@ -127,6 +130,13 @@ pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
     if let Some(value) = crate::strings::materialize(&primitive) {
         return Ok(value);
     }
+    match &primitive {
+        Value::Undefined => return Ok("undefined".to_string()),
+        Value::Null => return Ok("null".to_string()),
+        Value::Boolean(value) => return Ok(value.to_string()),
+        Value::Number(value) => return Ok(number_to_string(*value)),
+        _ => {}
+    }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
 
@@ -156,6 +166,13 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
     }
     if let Some(value) = crate::strings::materialize(&primitive) {
         return Ok(value);
+    }
+    match &primitive {
+        Value::Undefined => return Ok("undefined".to_string()),
+        Value::Null => return Ok("null".to_string()),
+        Value::Boolean(value) => return Ok(value.to_string()),
+        Value::Number(value) => return Ok(number_to_string(*value)),
+        _ => {}
     }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
