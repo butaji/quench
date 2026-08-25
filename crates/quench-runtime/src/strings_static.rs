@@ -1,7 +1,10 @@
 fn from_code_point(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let mut units: Vec<u16> = Vec::new();
     for value in arguments {
-        let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
+        let number = match value {
+            crate::value::Value::Number(number) => *number,
+            _ => crate::intl::tolocale::value::to_number_result(Some(value))?,
+        };
         if !number.is_finite()
             || number.fract() != 0.0
             || !(0.0..=0x10ffff as f64).contains(&number)
