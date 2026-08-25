@@ -341,6 +341,33 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             "largestUnit must not be smaller than smallestUnit",
         ));
     }
+    let no_smallest = options.is_some_and(|value| match value {
+        Value::Object(object) => object
+            .iter()
+            .all(|(key, value)| key != "smallestUnit" || matches!(value, Value::Undefined)),
+        _ => false,
+    });
+    if has_calendar && no_smallest && largest_unit(options).is_some_and(|unit| unit <= 3) {
+        let relative = options.and_then(|value| match value {
+            Value::Object(object) => object
+                .iter()
+                .find(|(key, _)| key == "relativeTo")
+                .map(|(_, value)| value),
+            _ => None,
+        });
+        let Some(relative) = relative else {
+            return Err(crate::value::error::throw_range_error(
+                "relativeTo is required for calendar rounding",
+            ));
+        };
+        return calendar_round(
+            object,
+            &relative,
+            options,
+            largest_unit(options).unwrap_or(3),
+            false,
+        );
+    }
     if index >= 4 && has_calendar {
         let relative = options.and_then(|value| match value {
             Value::Object(object) => object
@@ -356,7 +383,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         };
         return calendar_time_round(object, &relative, options, index);
     }
-    if index <= 3 {
+    if index <= 3 && (index <= 2 || has_calendar) {
         if index == 2
             && largest_unit(options).is_none()
             && duration_field(object, "months") != 0
@@ -647,7 +674,11 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
                 .iter()
                 .find(|(key, _)| key == "largestUnit")
                 .and_then(|(_, value)| match value {
-                    Value::String(unit) if unit_index(&unit).is_ok() => Some(unit.clone()),
+                    Value::String(unit)
+                        if unit_index(&unit).ok().is_some_and(|index| index <= 2) =>
+                    {
+                        Some(unit.clone())
+                    }
                     _ => None,
                 })
                 .map_or_else(|| Ok("nanosecond".into()), Ok),
