@@ -369,7 +369,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         };
         return calendar_round(object, &relative, index);
     }
-    fixed_round(object, options, largest.max(3), index)
+    fixed_round(object, options, largest, index)
 }
 
 fn duration_field_value(object: &crate::value::ObjectData, name: &str) -> Value {
@@ -414,10 +414,15 @@ fn fixed_round(
     let mut remainder = (rounded_units * quantum).abs();
     let mut rounded = vec![Value::Number(0.0); 10];
     let sign = rounded_units.signum();
-    for unit in largest..=index {
+    for unit in largest.max(3)..=index {
         let component = remainder / scales[unit - 3];
         rounded[unit] = Value::Number((component * sign) as f64);
         remainder %= scales[unit - 3];
+    }
+    if largest == 2 {
+        let days = rounded[3].as_number().unwrap_or(0.0) as i128;
+        rounded[2] = Value::Number((days / 7) as f64);
+        rounded[3] = Value::Number((days % 7) as f64);
     }
     construct(&rounded)
 }
