@@ -250,6 +250,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
             ),
             (
+                "emitExperimentalWarning".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_EMIT_WARNING),
+            ),
+            (
                 "sleep".to_string(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
             ),
