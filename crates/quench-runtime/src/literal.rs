@@ -78,6 +78,19 @@ fn decode_unicode_escapes(value: &str, raw: &str) -> Option<Vec<u16>> {
         }
         if chars.next_if_eq(&'u').is_none() {
             let escaped = chars.next()?;
+            if escaped == '\n' {
+                continue;
+            }
+            if escaped == '\r' {
+                chars.next_if_eq(&'\n');
+                continue;
+            }
+            if escaped == 'x' {
+                let digits: String = chars.by_ref().take(2).collect();
+                let unit = u8::from_str_radix(&digits, 16).ok()?;
+                units.push(u16::from(unit));
+                continue;
+            }
             let decoded = match escaped {
                 'n' => '\n',
                 'r' => '\r',

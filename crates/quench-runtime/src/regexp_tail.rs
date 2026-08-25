@@ -686,6 +686,11 @@ fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let receiver = regex_receiver(receiver, "@@matchAll")?;
     let input = to_string_argument(arguments)?;
     let flags = match_all_flags(receiver)?;
+    if !flags.contains('g') {
+        return Err(crate::value::error::throw_type_error(
+            "String.prototype.matchAll requires a 'g' flag",
+        ));
+    }
     let last_index = match_all_start(receiver, &input)?;
     let matcher = match_all_matcher(receiver, &flags)?;
     let matcher = crate::builtins::set_property(
@@ -730,7 +735,13 @@ pub(crate) fn iterator_step(
 }
 
 fn match_all_flags(receiver: &Value) -> Result<String, VmError> {
-    crate::conversion::to_string(&crate::execute::get_property_result(receiver, "flags")?)
+    let value = crate::execute::get_property_result(receiver, "flags")?;
+    if matches!(value, Value::Undefined | Value::Null) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp flags must be coercible",
+        ));
+    }
+    crate::conversion::to_string(&value)
 }
 
 fn match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
