@@ -29,7 +29,11 @@ fn compiled_regex(receiver: &Value) -> Result<(regress::Regex, String), VmError>
 /// Copy capture-group byte ranges out of a match so the borrow can end before
 /// a String is rebound.
 fn group_ranges(m: &regress::Match, passes: &mut Vec<Option<(usize, usize)>>) {
-    passes.extend(m.groups().map(|group| group.map(|range| (range.start, range.end))));
+    passes.extend(
+        m.groups()
+            .skip(1)
+            .map(|group| group.map(|range| (range.start, range.end))),
+    );
 }
 
 fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {

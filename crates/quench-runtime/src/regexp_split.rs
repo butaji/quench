@@ -127,6 +127,9 @@ fn split_push(values: &mut Vec<Value>, input: &str, start: usize, end: usize, re
 
 fn split_limit(arguments: &[Value]) -> Result<usize, VmError> {
     let Some(value) = arguments.get(1) else { return Ok(usize::MAX) };
+    if matches!(value, Value::Undefined) {
+        return Ok(usize::MAX);
+    }
     let number = crate::conversion::to_number(value)?;
     if number.is_nan() || number == 0.0 || !number.is_finite() { return Ok(0) }
     Ok(number.trunc().rem_euclid(4_294_967_296.0) as usize)
