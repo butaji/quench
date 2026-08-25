@@ -2,9 +2,9 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"class NodeDuplex extends NodeReadable {
   constructor(options = {}) {
-    super(options);
+    super({ ...options, __quenchCompatConstruct: true });
     this.__nodeDuplex = true;
-    const writable = new NodeWritable(options);
+    const writable = new NodeWritable({ ...options, __quenchSkipConstruct: true });
     for (const name of "closed readableAborted writableAborted writable writableObjectMode writableHighWaterMark writableLength writableNeedDrain _writableState writableEnded writableFinished writableCorked _autoDestroy _corkedChunks _writeQueue _write _final _destroy writableDefaultEncoding".split(
       " "
     )) {
@@ -24,6 +24,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"class NodeDuplex extends No
       this._writableState.ended = true;
       this._writableState.finished = true;
     }
+    __nodeRunConstruct(this, options);
   }
   destroy(error, callback) {
     this.writable = false;
