@@ -43,7 +43,17 @@ fn compare_partial(
                 let key = index.to_string();
                 let left_has = execute::has_own_property(left, &key);
                 let right_has = execute::has_own_property(right, &key);
-                if left_has == right_has {
+                if !left_has && !right_has {
+                    continue;
+                }
+                if left_has && right_has {
+                    if !compare_partial(
+                        &execute::get_property_result(left, &key)?,
+                        &execute::get_property_result(right, &key)?,
+                        memo,
+                    )? {
+                        return Ok(false);
+                    }
                     continue;
                 }
                 if left_has {
@@ -51,6 +61,13 @@ fn compare_partial(
                 }
                 let present = execute::get_property_result(right, &key)?;
                 if matches!(present, Value::Undefined) {
+                    return Ok(false);
+                }
+                let prior_overlap = (0..index).any(|prior| {
+                    let key = prior.to_string();
+                    execute::has_own_property(left, &key) && execute::has_own_property(right, &key)
+                });
+                if prior_overlap {
                     return Ok(false);
                 }
                 let later_left_extra = ((index + 1)..b.logical_len()).any(|later| {
@@ -79,6 +96,20 @@ fn compare_partial(
                     &execute::get_property_result(right, &key)?,
                     memo,
                 )? {
+                    return Ok(false);
+                }
+            }
+            for key in execute::own_enumerable_keys(right) {
+                if key.parse::<usize>().is_ok() {
+                    continue;
+                }
+                if !execute::own_enumerable_keys(left).contains(&key)
+                    || !compare_partial(
+                        &execute::get_property_result(left, &key)?,
+                        &execute::get_property_result(right, &key)?,
+                        memo,
+                    )?
+                {
                     return Ok(false);
                 }
             }
@@ -232,7 +263,9 @@ fn compare(
         (Value::DataView(_), Value::DataView(_)) => {
             compare_data_views(left, right, strict, skip_prototype, memo)
         }
+        (Value::Map(left), Value::Map(right)) if left.is_weak() || right.is_weak() => Ok(false),
         (Value::Map(left), Value::Map(right)) => compare_maps(left, right, strict, skip_prototype, memo),
+        (Value::Set(left), Value::Set(right)) if left.is_weak() || right.is_weak() => Ok(false),
         (Value::Set(left), Value::Set(right)) => compare_sets(left, right, strict, skip_prototype, memo),
         _ if is_typed_array(left) && is_typed_array(right) => {
             compare_typed_arrays(left, right, strict, skip_prototype, memo)
@@ -632,6 +665,18 @@ fn compare_objects(
         if !same_property(left, right, "name") || !same_property(left, right, "message") {
             return Ok(false);
         }
+        let left_aggregate = is_aggregate_error(left);
+        let right_aggregate = is_aggregate_error(right);
+        if left_aggregate != right_aggregate {
+            return Ok(false);
+        }
+        if left_aggregate {
+            let left_errors = execute::get_property_result(left, "errors")?;
+            let right_errors = execute::get_property_result(right, "errors")?;
+            if !compare(&left_errors, &right_errors, strict, skip_prototype, memo)? {
+                return Ok(false);
+            }
+        }
     }
     let left_cause = execute::get_property_result(left, "cause")?;
     let right_cause = execute::get_property_result(right, "cause")?;
@@ -691,6 +736,17 @@ fn has_own_slot(value: &Value, key: &str) -> bool {
         ),
         Ok(Value::Object(_))
     )
+}
+
+fn is_aggregate_error(value: &Value) -> bool {
+    let mut current = execute::get_prototype_of(value).ok();
+    while let Some(prototype) = current {
+        if matches!(prototype, Value::Builtin(quench_runtime::ops::Builtin::AggregateErrorPrototype)) {
+            return true;
+        }
+        current = execute::get_prototype_of(&prototype).ok();
+    }
+    false
 }
 
 fn same_cycle_target(value: &Value, target: &Value) -> bool {
