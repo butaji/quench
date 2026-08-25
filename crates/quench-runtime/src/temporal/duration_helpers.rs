@@ -183,6 +183,15 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let left = from(arguments.first())?;
     let right = from(arguments.get(1))?;
+    for value in [&left, &right] {
+        let calendar_days = number_property(value, "weeks") * 7.0
+            + number_property(value, "days");
+        if !calendar_days.is_finite() || calendar_days.abs() > 104_249_991_374.0 {
+            return Err(crate::value::error::throw_range_error(
+                "Duration exceeds relative date range",
+            ));
+        }
+    }
     let relative_to_missing = match arguments.get(2) {
         Some(Value::Object(options)) => matches!(
             crate::execute::get_property_result(&Value::Object(options.clone()), "relativeTo")?,
