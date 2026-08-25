@@ -219,6 +219,8 @@ pub const SPEC_TIMERS_GET_LIBUV_NOW: NodeSpec = NodeSpec::new("timers:getLibuvNo
 pub const SPEC_UTIL_PROMISIFY: NodeSpec = NodeSpec::new("util:promisify", 0x071E);
 pub const SPEC_UTIL_DEPRECATE: NodeSpec = NodeSpec::new("util:deprecate", 0x0730);
 pub const SPEC_UTIL_DEPRECATED_CALL: NodeSpec = NodeSpec::new("util:deprecatedCall", 0x0731);
+pub const SPEC_UTIL_SYSTEM_ERROR_NAME: NodeSpec = NodeSpec::new("util:getSystemErrorName", 0x0733);
+pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec = NodeSpec::new("util:exceptionWithHostPort", 0x0734);
 pub const SPEC_UTIL_PROMISIFIED_CALL: NodeSpec = NodeSpec::new("util:promisifiedCall", 0x071F);
 pub const SPEC_UTIL_PROMISIFIED_CALLBACK: NodeSpec =
     NodeSpec::new("util:promisifiedCallback", 0x0720);

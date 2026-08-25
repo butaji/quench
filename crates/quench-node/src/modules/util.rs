@@ -182,6 +182,14 @@ pub fn build() -> Vec<(String, Value)> {
             "pendingDeprecate".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
         ),
+        (
+            "getSystemErrorName".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_SYSTEM_ERROR_NAME),
+        ),
+        (
+            "_exceptionWithHostPort".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_EXCEPTION_WITH_HOST_PORT),
+        ),
         ("inspect".to_string(), inspect_capability()),
         (
             "isDeepStrictEqual".to_string(),
