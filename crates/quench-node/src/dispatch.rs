@@ -231,19 +231,33 @@ const CAP_WASI_START: u16 = crate::registry::SPEC_WASI_START.cap;
 const CAP_WASI_INITIALIZE: u16 = crate::registry::SPEC_WASI_INITIALIZE.cap;
 const CAP_WASI_IMPORT_OBJECT: u16 = crate::registry::SPEC_WASI_IMPORT_OBJECT.cap;
 const CAP_DIAGNOSTICS_CHANNEL: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL.cap;
-const CAP_DIAGNOSTICS_CHANNEL_CONSTRUCTOR: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR.cap;
+const CAP_DIAGNOSTICS_CHANNEL_CONSTRUCTOR: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR.cap;
 const CAP_DIAGNOSTICS_SUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_SUBSCRIBE.cap;
 const CAP_DIAGNOSTICS_UNSUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_UNSUBSCRIBE.cap;
 const CAP_DIAGNOSTICS_HAS_SUBSCRIBERS: u16 = crate::registry::SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS.cap;
-const CAP_DIAGNOSTICS_CHANNEL_SUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE.cap;
-const CAP_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_CHANNEL_SUBSCRIBE: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE.cap;
 const CAP_DIAGNOSTICS_CHANNEL_PUBLISH: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_PUBLISH.cap;
-const CAP_DIAGNOSTICS_CHANNEL_BIND_STORE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE.cap;
-const CAP_DIAGNOSTICS_CHANNEL_UNBIND_STORE: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE.cap;
+const CAP_DIAGNOSTICS_CHANNEL_BIND_STORE: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE.cap;
+const CAP_DIAGNOSTICS_CHANNEL_UNBIND_STORE: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE.cap;
 const CAP_DIAGNOSTICS_TRACING_CHANNEL: u16 = crate::registry::SPEC_DIAGNOSTICS_TRACING_CHANNEL.cap;
-const CAP_DIAGNOSTICS_TRACING_SUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE.cap;
-const CAP_DIAGNOSTICS_TRACING_UNSUBSCRIBE: u16 = crate::registry::SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE.cap;
-const CAP_DIAGNOSTICS_TRACING_TRACE_SYNC: u16 = crate::registry::SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC.cap;
+const CAP_DIAGNOSTICS_TRACING_SUBSCRIBE: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_TRACING_UNSUBSCRIBE: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_TRACING_TRACE_SYNC: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC.cap;
+const CAP_DIAGNOSTICS_BOUNDED_CHANNEL: u16 = crate::registry::SPEC_DIAGNOSTICS_BOUNDED_CHANNEL.cap;
+const CAP_DIAGNOSTICS_BOUNDED_SUBSCRIBE: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE: u16 =
+    crate::registry::SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE.cap;
+const CAP_DIAGNOSTICS_BOUNDED_RUN: u16 = crate::registry::SPEC_DIAGNOSTICS_BOUNDED_RUN.cap;
 const CAP_ZLIB_GZIP: u16 = 0x1700;
 const CAP_ZLIB_GUNZIP: u16 = 0x1701;
 const CAP_ZLIB_DEFLATE_RAW: u16 = 0x1702;
@@ -513,14 +527,24 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_DIAGNOSTICS_UNSUBSCRIBE => crate::modules::diagnostics_channel::unsubscribe,
         CAP_DIAGNOSTICS_HAS_SUBSCRIBERS => crate::modules::diagnostics_channel::has_subscribers,
         CAP_DIAGNOSTICS_CHANNEL_SUBSCRIBE => crate::modules::diagnostics_channel::channel_subscribe,
-        CAP_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE => crate::modules::diagnostics_channel::channel_unsubscribe,
+        CAP_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE => {
+            crate::modules::diagnostics_channel::channel_unsubscribe
+        }
         CAP_DIAGNOSTICS_CHANNEL_PUBLISH => crate::modules::diagnostics_channel::publish,
         CAP_DIAGNOSTICS_CHANNEL_BIND_STORE => crate::modules::diagnostics_channel::bind_store,
         CAP_DIAGNOSTICS_CHANNEL_UNBIND_STORE => crate::modules::diagnostics_channel::unbind_store,
         CAP_DIAGNOSTICS_TRACING_CHANNEL => crate::modules::diagnostics_channel::tracing_channel,
         CAP_DIAGNOSTICS_TRACING_SUBSCRIBE => crate::modules::diagnostics_channel::tracing_subscribe,
-        CAP_DIAGNOSTICS_TRACING_UNSUBSCRIBE => crate::modules::diagnostics_channel::tracing_unsubscribe,
+        CAP_DIAGNOSTICS_TRACING_UNSUBSCRIBE => {
+            crate::modules::diagnostics_channel::tracing_unsubscribe
+        }
         CAP_DIAGNOSTICS_TRACING_TRACE_SYNC => crate::modules::diagnostics_channel::trace_sync,
+        CAP_DIAGNOSTICS_BOUNDED_CHANNEL => crate::modules::diagnostics_channel::bounded_channel,
+        CAP_DIAGNOSTICS_BOUNDED_SUBSCRIBE => crate::modules::diagnostics_channel::bounded_subscribe,
+        CAP_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE => {
+            crate::modules::diagnostics_channel::bounded_unsubscribe
+        }
+        CAP_DIAGNOSTICS_BOUNDED_RUN => crate::modules::diagnostics_channel::bounded_run,
         _ => return os_buffer_dispatch(cap),
     })
 }
