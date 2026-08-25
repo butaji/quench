@@ -20,12 +20,18 @@ pub fn validate_literal(body: &str) -> Result<(), String> {
             return Ok(());
         }
         let head = bytes[next];
-        if matches!(head, b'=' | b'!' | b':' | b'>') {
+        if matches!(head, b'=' | b'!') {
+            index = next + 1;
+            continue;
+        }
+        if matches!(head, b':' | b'>') {
             index = next;
             continue;
         }
         if head == b'<' {
-            index = next;
+            index = body[next..]
+                .find('>')
+                .map_or(next + 1, |close| next + close + 1);
             continue;
         }
         validate_modifier_group(body, next)?;
