@@ -1893,7 +1893,7 @@ fn inspect_object(value: &Value, depth: usize) -> String {
                 match property_value {
                     Value::String(text) if text.contains('\n') => {
                         let mut lines = text.split('\n').take(10).collect::<Vec<_>>().join("\\n");
-                        lines.push_str("...");
+                        lines.push_str("\\n...");
                         format!("'{lines}'")
                     }
                     _ if property_value.object_identity() == value.object_identity() => "[Circular]".into(),
