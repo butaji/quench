@@ -180,7 +180,11 @@ fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 }
 
 pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmError> {
-    let item = state.borrow().event_loop.microtasks.borrow_mut().pop_front();
+    let item = {
+        let host = state.borrow();
+        let mut queue = host.event_loop.microtasks.borrow_mut();
+        (!queue.is_empty()).then(|| queue.remove(0))
+    };
     let Some((callback, args)) = item else {
         return Ok(false);
     };
