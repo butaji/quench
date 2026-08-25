@@ -17,13 +17,24 @@ thread_local! {
     static INSPECT_DEFAULT_OPTIONS: RefCell<Option<Value>> = const { RefCell::new(None) };
     /// Per-call override set by `util.formatWithOptions`.
     static SEPARATOR_OVERRIDE: RefCell<Option<bool>> = const { RefCell::new(None) };
+    static COLORS_OVERRIDE: RefCell<Option<bool>> = const { RefCell::new(None) };
+    static COMPACT_OVERRIDE: RefCell<Option<bool>> = const { RefCell::new(None) };
 }
 
 /// `util.formatWithOptions(options, ...args)`.
-pub fn format_with_options(args: &[Value], numeric_separator: bool) -> String {
+pub fn format_with_options(
+    args: &[Value],
+    numeric_separator: bool,
+    colors: bool,
+    compact: bool,
+) -> String {
     SEPARATOR_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(numeric_separator));
+    COLORS_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(colors));
+    COMPACT_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(compact));
     let result = format(args);
     SEPARATOR_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
+    COLORS_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
+    COMPACT_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
     result
 }
 
@@ -496,9 +507,29 @@ pub fn format_template(template: &str, args: &[Value]) -> String {
     // by spaces, mirroring console.log's behavior.
     for arg in args.iter().skip(index) {
         out.push(' ');
-        out.push_str(&format_extra(arg));
+        let rendered = format_extra(arg);
+        out.push_str(&colorize(arg, rendered));
     }
     out
+}
+
+fn colorize(value: &Value, rendered: String) -> String {
+    let enabled = COLORS_OVERRIDE.with(|slot| slot.borrow().unwrap_or(false));
+    if !enabled {
+        return rendered;
+    }
+    let (start, end) = if matches!(value, Value::Null) {
+        ("\x1b[1m", "\x1b[22m")
+    } else if matches!(value, Value::Undefined) {
+        ("\x1b[90m", "\x1b[39m")
+    } else if quench_runtime::execute::is_symbol(value) {
+        ("\x1b[32m", "\x1b[39m")
+    } else if matches!(value, Value::Boolean(_) | Value::Number(_) | Value::BigInt(_)) {
+        ("\x1b[33m", "\x1b[39m")
+    } else {
+        return rendered;
+    };
+    format!("{start}{rendered}{end}")
 }
 
 fn format_varargs(args: &[Value]) -> String {
@@ -507,7 +538,8 @@ fn format_varargs(args: &[Value]) -> String {
         if i > 0 {
             out.push(' ');
         }
-        out.push_str(&inspect(arg));
+        let rendered = format_extra(arg);
+        out.push_str(&colorize(arg, rendered));
     }
     out
 }
@@ -530,6 +562,9 @@ fn format_spec(spec: char, arg: &Value) -> String {
 }
 
 fn format_extra(value: &Value) -> String {
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) && is_error_value(value) {
+        return inspect_depth(value, 3);
+    }
     match value {
         Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
         Value::String(value)
@@ -583,7 +618,12 @@ fn value_to_string(value: &Value) -> String {
                 }
             }
         },
-        Value::Array(_) => inspect_array(value, 3),
+        Value::Array(_) => {
+            let depth = COMPACT_OVERRIDE.with(|slot| slot.borrow().is_some_and(|value| value));
+            inspect_array(value, if depth { 1 } else { 3 })
+        }
+        Value::ArrayBuffer(buffer) => inspect_array_buffer(value, buffer),
+        Value::DataView(view) => inspect_data_view(value, view),
         _ => "<unknown>".into(),
     }
 }
@@ -779,24 +819,26 @@ pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
             }
         }
     }
-    let canonical = quench_runtime::execute::canonical_value(value);
-    for key in quench_runtime::execute::own_enumerable_keys(&canonical) {
-        let mut current = canonical.clone();
-        let mut repeated = true;
-        for _ in 0..4 {
-            let keys = quench_runtime::execute::own_enumerable_keys(&current);
-            if keys.len() != 1 || keys[0] != key {
-                repeated = false;
-                break;
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)) {
+        let canonical = quench_runtime::execute::canonical_value(value);
+        for key in quench_runtime::execute::own_enumerable_keys(&canonical) {
+            let mut current = canonical.clone();
+            let mut repeated = true;
+            for _ in 0..4 {
+                let keys = quench_runtime::execute::own_enumerable_keys(&current);
+                if keys.len() != 1 || keys[0] != key {
+                    repeated = false;
+                    break;
+                }
+                current = quench_runtime::execute::canonical_value(
+                    &quench_runtime::execute::get_property(&current, &key),
+                );
             }
-            current = quench_runtime::execute::canonical_value(
-                &quench_runtime::execute::get_property(&current, &key),
-            );
-        }
-        if repeated
-            && quench_runtime::execute::own_enumerable_keys(&current) == vec![key.clone()]
-        {
-            return format!("<ref *1> {{ {key}: [Circular *1] }}");
+            if repeated
+                && quench_runtime::execute::own_enumerable_keys(&current) == vec![key.clone()]
+            {
+                return format!("<ref *1> {{ {key}: [Circular *1] }}");
+            }
         }
     }
     if depth > 100 && matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -1010,6 +1052,24 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
     ) {
         return "[External: 0]".into();
     }
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) && is_error_value(value) {
+        if let Value::String(stack) = quench_runtime::execute::get_property(value, "stack") {
+            return stack;
+        }
+        let name = match quench_runtime::execute::get_property(value, "name") {
+            Value::String(name) if !name.is_empty() => name,
+            _ => "Error".into(),
+        };
+        let message = match quench_runtime::execute::get_property(value, "message") {
+            Value::String(message) => message,
+            _ => String::new(),
+        };
+        return if message.is_empty() {
+            format!("[{name}]")
+        } else {
+            format!("[{name}: {message}]")
+        };
+    }
     if matches!(
         quench_runtime::execute::get_property_result(value, "\0regexp"),
         Ok(Value::Boolean(true))
@@ -1050,6 +1110,26 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         Value::BigInt(digits) => format!("{digits}n"),
         _ => "<unknown>".into(),
     }
+}
+
+fn is_error_value(value: &Value) -> bool {
+    let mut prototype = quench_runtime::execute::get_prototype_of(value).ok();
+    while let Some(current) = prototype {
+        match current {
+            Value::Builtin(
+                quench_runtime::ops::Builtin::ErrorPrototype
+                | quench_runtime::ops::Builtin::RangeErrorPrototype
+                | quench_runtime::ops::Builtin::ReferenceErrorPrototype
+                | quench_runtime::ops::Builtin::SyntaxErrorPrototype
+                | quench_runtime::ops::Builtin::EvalErrorPrototype
+                | quench_runtime::ops::Builtin::URIErrorPrototype
+                | quench_runtime::ops::Builtin::TypeErrorPrototype
+                | quench_runtime::ops::Builtin::AggregateErrorPrototype,
+            ) => return true,
+            _ => prototype = quench_runtime::execute::get_prototype_of(&current).ok(),
+        }
+    }
+    false
 }
 
 fn inspect_regexp(value: &Value) -> String {
@@ -1507,10 +1587,11 @@ fn inspect_array_buffer_with_limit(
             format!("<{} ... {suffix} more {plural}>", shown.join(" "))
         }
     };
+    let label = if buffer.shared { "SharedArrayBuffer" } else { "ArrayBuffer" };
     let mut result = if *buffer.detached.borrow() {
-        format!("ArrayBuffer {{ (detached), [byteLength]: {length}")
+        format!("{label} {{ (detached), [byteLength]: {length}")
     } else {
-        format!("ArrayBuffer {{ [Uint8Contents]: {contents}, [byteLength]: {length}")
+        format!("{label} {{ [Uint8Contents]: {contents}, [byteLength]: {length}")
     };
     for key in quench_runtime::execute::own_enumerable_keys(value) {
         result.push_str(&format!(

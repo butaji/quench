@@ -1915,14 +1915,29 @@ pub fn util_format_with_options(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let options = args.first().unwrap_or(&Value::Undefined);
+    if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"inspectOptions\" argument must be an object".into(),
+        ));
+    }
     let separator = quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
         options,
         "numericSeparator",
     ));
+    let colors = quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
+        options,
+        "colors",
+    ));
+    let compact = !matches!(
+        quench_runtime::execute::get_property(options, "compact"),
+        Value::Undefined
+    );
     crate::modules::util::validate_json_arguments(&args[1..])?;
     Ok(Value::String(crate::modules::util::format_with_options(
         &args[1..],
         separator,
+        colors,
+        compact,
     )))
 }
 
