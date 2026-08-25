@@ -137,6 +137,16 @@ fn fixed_offset_nanos(timezone: &str) -> i128 {
     sign * (hour * 3_600_000_000_000 + minute * 60_000_000_000)
 }
 
+fn parse_date_parts(date: &str) -> Option<(i32, u32, u32)> {
+    let day_sep = date.rfind('-')?;
+    let month_sep = date[..day_sep].rfind('-')?;
+    Some((
+        date[..month_sep].parse().ok()?,
+        date[month_sep + 1..day_sep].parse().ok()?,
+        date[day_sep + 1..].parse().ok()?,
+    ))
+}
+
 fn format_offset(offset: i128) -> String {
     let sign = if offset < 0 { '-' } else { '+' };
     let minutes = offset.unsigned_abs() / 60_000_000_000;
@@ -269,10 +279,8 @@ mod stubs {
             let (date, time) = date_time
                 .split_once('T')
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
-            let date_parts = date
-                .split('-')
-                .map(|part| part.parse::<i32>().unwrap_or(0))
-                .collect::<Vec<_>>();
+            let (parsed_year, parsed_month, parsed_day) = super::parse_date_parts(date)
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
             let offset_start = time[1..].find(['+', '-']).map(|index| index + 1);
             let (clock, offset_text) = offset_start
                 .map(|index| (&time[..index], &time[index..]))
@@ -304,20 +312,26 @@ mod stubs {
                     time_parts[2] = second;
                 }
             }
-            if date_parts.len() < 3 {
+            let year = parsed_year;
+            let month = parsed_month;
+            let day = parsed_day;
+            if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid ZonedDateTime",
                 ));
             }
-            let date = chrono::NaiveDate::from_ymd_opt(
-                date_parts[0],
-                date_parts[1] as u32,
-                date_parts[2] as u32,
-            )
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
-            let days = date
-                .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch"))
-                .num_days() as i128;
+            let year_adjusted = i128::from(year) - i128::from(month <= 2);
+            let era = if year_adjusted >= 0 {
+                year_adjusted
+            } else {
+                year_adjusted - 399
+            } / 400;
+            let year_of_era = year_adjusted - era * 400;
+            let month = i128::from(month);
+            let day_of_year =
+                (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + i128::from(day) - 1;
+            let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+            let days = era * 146_097 + day_of_era - 719_468;
             let local_epoch = days * 86_400_000_000_000
                 + time_parts.get(0).copied().unwrap_or(0) as i128 * 3_600_000_000_000
                 + time_parts.get(1).copied().unwrap_or(0) as i128 * 60_000_000_000
