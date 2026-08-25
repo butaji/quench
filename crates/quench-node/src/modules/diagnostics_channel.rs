@@ -307,7 +307,7 @@ fn tracing_object(channels: Vec<Value>) -> Value {
                   var args = Array.prototype.slice.call(arguments, 4);\
                   var index = position < 0 ? args.length + position : position;\
                   var callback = args[index];\
-                  if (typeof fn !== 'function' || typeof callback !== 'function') throw new TypeError('callback');\
+                  if (typeof fn !== 'function' || typeof callback !== 'function') throw Object.assign(new TypeError('The \\\"callback\\\" argument must be of type function'), { code: 'ERR_INVALID_ARG_TYPE' });\
                   if (!this.hasSubscribers) return fn.apply(thisArg, args);\
                   var startScope = this.start?.withStoreScope(context); this.start?.publish(context);\
                   var self = this;\
