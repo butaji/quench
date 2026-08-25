@@ -541,7 +541,18 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
         Some(Value::String(unit)) => Ok(unit.clone()),
         Some(Value::Object(object)) => match object.iter().find(|(key, _)| key == "smallestUnit") {
             Some((_, Value::String(unit))) => Ok(unit.clone()),
-            Some((_, Value::Undefined)) | None => Ok("nanosecond".into()),
+            Some((_, Value::Undefined)) | None => object
+                .iter()
+                .find(|(key, _)| key == "largestUnit")
+                .and_then(|(_, value)| match value {
+                    Value::String(unit)
+                        if unit_index(unit).ok().is_some_and(|index| index <= 2) =>
+                    {
+                        Some(unit.clone())
+                    }
+                    _ => None,
+                })
+                .map_or_else(|| Ok("nanosecond".into()), Ok),
             Some(_) => Err(crate::value::error::throw_range_error(
                 "Invalid smallestUnit",
             )),
