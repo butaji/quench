@@ -186,7 +186,10 @@ fn prepend_iteration_immutability(
         body.insert(0, Op::MarkImmutable { slot });
         return;
     }
-    for name in crate::binding_patterns::names(&declarator.id).into_iter().rev() {
+    for name in crate::binding_patterns::names(&declarator.id)
+        .into_iter()
+        .rev()
+    {
         if let Some(&name_slot) = locals.get(&name) {
             body.insert(0, Op::MarkImmutable { slot: name_slot });
         }
@@ -388,6 +391,7 @@ impl LiveForOf {
 
 thread_local! {
     static LIVE_FOR_OF: LiveForOf = const { LiveForOf::new() };
+    static PENDING_ASYNC_FOR_OF: LiveForOf = const { LiveForOf::new() };
 }
 
 fn remember_for_of(iterator: crate::value::Value) {
@@ -400,6 +404,14 @@ pub(crate) fn live_for_of() -> Option<crate::value::Value> {
 
 pub(crate) fn take_live_for_of() -> Option<crate::value::Value> {
     LIVE_FOR_OF.with(LiveForOf::pop)
+}
+
+fn remember_pending_async_for_of(iterator: crate::value::Value) {
+    PENDING_ASYNC_FOR_OF.with(|pending| pending.push(iterator));
+}
+
+pub(crate) fn take_pending_async_for_of() -> Option<crate::value::Value> {
+    PENDING_ASYNC_FOR_OF.with(LiveForOf::pop)
 }
 
 type ForInLoopData<'a> = (
@@ -441,7 +453,16 @@ fn unpack_for_in<'a>(
     };
     let value = crate::execute::read_register(registers, *object)?;
     let keys = for_in_keys(&value);
-    Ok((label, *slot, body, *per_iteration, iteration_slots, keys, *dst, value))
+    Ok((
+        label,
+        *slot,
+        body,
+        *per_iteration,
+        iteration_slots,
+        keys,
+        *dst,
+        value,
+    ))
 }
 
 fn for_in_keys(value: &crate::value::Value) -> Vec<String> {
@@ -515,7 +536,16 @@ fn unpack_for_of<'a>(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let iterable = crate::execute::read_register(registers, *iterable)?;
-    Ok((label, *slot, body, *per_iteration, iteration_slots, *r#await, iterable, *dst))
+    Ok((
+        label,
+        *slot,
+        body,
+        *per_iteration,
+        iteration_slots,
+        *r#await,
+        iterable,
+        *dst,
+    ))
 }
 
 fn iterate_loop_values(
@@ -545,6 +575,10 @@ fn iterate_loop_values(
                     crate::completion::Completion::Throw(reason),
                 );
             }
+            Err(crate::execute::VmError::Suspended(promise)) if await_values => {
+                remember_pending_async_for_of(iterator);
+                return Err(crate::execute::VmError::Suspended(promise));
+            }
             Err(error) => return Err(error),
         };
         let Some(value) = value else {
@@ -568,6 +602,59 @@ fn iterate_loop_values(
                 return crate::collections::iterator::close(iterator, completion);
             }
         }
+    }
+}
+
+pub(crate) fn resume_async_for_of(
+    registers: &mut crate::register_file::RegisterFile,
+    spec: &crate::value::AsyncForOfState,
+    input: crate::value::Value,
+) -> Result<
+    (
+        crate::completion::Completion,
+        Option<crate::value::AsyncForOfState>,
+    ),
+    crate::execute::VmError,
+> {
+    let Some(body) = spec.body.code() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let mut next_value = crate::collections::iterator::resume_async_result(&spec.iterator, input)?;
+    loop {
+        let Some(value) = next_value else {
+            return Ok((crate::completion::Completion::Normal, None));
+        };
+        let _binding = bind_iteration(spec.slot, value, spec.per_iteration, &spec.iteration_slots);
+        match execute_loop_body(registers, &spec.label, body)? {
+            crate::completion::LoopTransition::Continue(_) => {}
+            crate::completion::LoopTransition::Break(_) => {
+                return crate::collections::iterator::close(
+                    spec.iterator.clone(),
+                    crate::completion::Completion::Normal,
+                )
+                .map(|completion| (completion, None));
+            }
+            crate::completion::LoopTransition::Propagate(completion) => {
+                if completion.is_suspension() {
+                    remember_for_of(spec.iterator.clone());
+                    return Ok((completion, None));
+                }
+                let completion = attach_loop_completion(registers, spec.dst, completion)?;
+                return crate::collections::iterator::close(spec.iterator.clone(), completion)
+                    .map(|completion| (completion, None));
+            }
+        }
+        next_value = match crate::collections::iterator::step_value_await(&spec.iterator) {
+            Ok(value) => value,
+            Err(crate::execute::VmError::Suspended(promise)) => {
+                remember_pending_async_for_of(spec.iterator.clone());
+                return Ok((
+                    crate::completion::Completion::Suspend(promise),
+                    Some(spec.clone()),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
     }
 }
 

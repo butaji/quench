@@ -92,6 +92,7 @@ fn initialize_parameters(
             nested: 0,
             private_environment: None,
             suspension: None,
+            async_for_of: None,
         }),
         registers,
         marker as u32,
@@ -320,7 +321,7 @@ fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmEr
     state.suspension = step.suspension;
     capture_suspended_private_environment(generator, &mut state, &step.completion);
     update_machine_frame(generator, &state)?;
-    update_await_frame(generator, &state, &step.completion)?;
+    update_await_frame(generator, &mut state, &step.completion)?;
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
     result
@@ -511,6 +512,14 @@ fn resume_suspended_contexts(
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
     let mut completion = completion.clone();
+    if state.async_for_of.is_some() {
+        let input = crate::execute::read_register(&registers(generator), 0)?;
+        let spec = state.async_for_of.take().ok_or(VmError::MissingReturn)?;
+        let (next, pending) =
+            crate::loops::resume_async_for_of(&mut registers_mut(generator), &spec, input)?;
+        state.async_for_of = pending;
+        return resume_machine_frame(generator, state, next).map(Some);
+    }
     if let Some(resumed) = resume_delegate_frame(generator, &completion)? {
         if resumed.is_suspension() {
             return resume_machine_frame(generator, state, resumed).map(Some);
@@ -642,5 +651,6 @@ fn initialize_state(generator: &GeneratorData) {
         nested: 0,
         private_environment: None,
         suspension: None,
+        async_for_of: None,
     });
 }
