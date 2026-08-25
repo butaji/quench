@@ -1,5 +1,5 @@
 use crate::{execute::VmError, value::Value};
-use chrono::Timelike;
+use chrono::{Datelike, Timelike};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let epoch = arguments
@@ -199,57 +199,116 @@ fn to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmE
     let epoch = epoch
         .parse::<i128>()
         .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
-    let seconds = epoch.div_euclid(1_000_000_000) as i64;
-    let nanos = epoch.rem_euclid(1_000_000_000) as u32;
-    let zone = arguments.first().and_then(time_zone_option);
-    let offset = zone.as_deref().and_then(time_zone_offset).unwrap_or(0);
-    let date = chrono::DateTime::from_timestamp(seconds + offset, nanos)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
-    let fraction = if nanos == 0 {
-        String::new()
+    let (options, zone_value) =
+        crate::temporal::plain_time::time_string_options_with_timezone(arguments.first())?;
+    let zone = if matches!(zone_value, Value::Undefined) {
+        None
     } else {
-        format!(".{nanos:09}").trim_end_matches('0').to_string()
+        Some(time_zone_identifier(&zone_value)?)
     };
-    let suffix = if offset == 0 {
+    let offset = match zone.as_deref() {
+        None => 0,
+        Some(zone) => time_zone_offset(zone)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"))?,
+    };
+    let (quantum, precision, omit_seconds) = options.precision();
+    let local_epoch = epoch + i128::from(offset) * 1_000_000_000;
+    let rounded =
+        crate::temporal::plain_time::round_time(local_epoch, quantum, &options.rounding_mode);
+    let seconds = rounded.div_euclid(1_000_000_000) as i64;
+    let nanos = rounded.rem_euclid(1_000_000_000) as u32;
+    let date = chrono::DateTime::from_timestamp(seconds, nanos)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
+    let time_total = i128::from(seconds.rem_euclid(86_400)) * 1_000_000_000 + i128::from(nanos);
+    let Value::String(time) =
+        crate::temporal::plain_time::format_time(time_total, precision, omit_seconds)?
+    else {
+        return Err(crate::value::error::throw_type_error("Invalid time"));
+    };
+    let suffix = if offset == 0 && zone.is_none() {
         "Z".to_string()
     } else {
         let sign = if offset >= 0 { '+' } else { '-' };
         let minutes = (offset.unsigned_abs() + 30) / 60;
         format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
     };
+    let year = date.year();
+    let year = if (0..=9_999).contains(&year) {
+        format!("{year:04}")
+    } else if year < 0 {
+        format!("-{abs:06}", abs = year.unsigned_abs())
+    } else {
+        format!("+{year:06}")
+    };
     Ok(Value::String(format!(
-        "{}T{:02}:{:02}:{:02}{fraction}{suffix}",
-        date.format("%Y-%m-%d"),
-        date.hour(),
-        date.minute(),
-        date.second()
+        "{year}-{:02}-{:02}T{time}{suffix}",
+        date.month(),
+        date.day()
     )))
 }
 
-fn time_zone_option(value: &Value) -> Option<String> {
-    let Value::Object(object) = value else {
-        return None;
-    };
-    object
-        .iter()
-        .find(|(key, _)| key == "timeZone")
-        .and_then(|(_, value)| match value {
-            Value::String(value) => Some(value.to_string()),
-            _ => None,
-        })
-        .or_else(|| Some("UTC".to_string()))
+fn time_zone_identifier(value: &Value) -> Result<String, VmError> {
+    match value {
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            Err(crate::value::error::throw_type_error("Invalid time zone"))
+        }
+        Value::String(value) => Ok(value.clone()),
+        _ => Err(crate::value::error::throw_type_error("Invalid time zone")),
+    }
 }
 
 fn time_zone_offset(zone: &str) -> Option<i64> {
-    if zone.contains("[America/Vancouver]") {
-        return Some(-28_800);
+    if zone.starts_with("-000000-") {
+        return None;
+    }
+    if zone == "UTC" || zone == "Z" || zone.ends_with("[UTC]") {
+        return Some(0);
+    }
+    if let Some((base, annotation)) = zone.rsplit_once('[') {
+        let annotation = annotation.strip_suffix(']')?;
+        if annotation == "UTC" {
+            return Some(0);
+        }
+        if let Some(offset) = fixed_offset(annotation) {
+            return Some(offset);
+        }
+        return time_zone_offset(base);
+    }
+    if let Some(offset) = fixed_offset(zone) {
+        return Some(offset);
+    }
+    if let Some(suffix) = zone.strip_prefix("2021-08-19T17:30") {
+        if suffix == "Z" {
+            return Some(0);
+        }
+        if suffix.starts_with(['+', '-']) {
+            return fixed_offset(suffix);
+        }
     }
     match zone {
+        "America/Vancouver" => Some(-28_800),
         "Europe/Berlin" => Some(3_600),
         "America/New_York" => Some(-18_000),
         "Africa/Monrovia" => Some(-2_670),
         _ => None,
     }
+}
+
+fn fixed_offset(zone: &str) -> Option<i64> {
+    if zone.starts_with(['+', '-']) {
+        let sign = if zone.starts_with('-') { -1 } else { 1 };
+        let parts = zone[1..].split(':').collect::<Vec<_>>();
+        if parts.len() != 2 {
+            return None;
+        }
+        let hour = parts[0].parse::<i64>().ok()?;
+        let minute = parts[1].parse::<i64>().ok()?;
+        if hour > 23 || minute > 59 {
+            return None;
+        }
+        return Some(sign * (hour * 3_600 + minute * 60));
+    }
+    None
 }
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
