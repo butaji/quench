@@ -42,7 +42,7 @@ fn execute_idle_task(
     let Some(count_value) = count.number() else {
         return Ok(None);
     };
-    let Some(scheduler) = idle_scheduler(task) else {
+    let Some(scheduler) = task_scheduler(task) else {
         return Ok(None);
     };
     let next_count = count_value - 1.0;
@@ -77,7 +77,7 @@ struct IdleCall<'a> {
     next_v1: Option<(&'a crate::register_file::SlotWord, i32)>,
 }
 
-fn idle_scheduler(task: &crate::value::ObjectData) -> Option<crate::value::Value> {
+fn task_scheduler(task: &crate::value::ObjectData) -> Option<crate::value::Value> {
     let scheduler = crate::vm::proven_own_word(task, "scheduler")?.load();
     let crate::value::Value::Object(object) = &scheduler else {
         return None;
@@ -94,7 +94,7 @@ fn idle_hold_call(
         return None;
     };
     let branch = then_ops.code()?;
-    let callee = idle_cached_method(scheduler, branch, 2)?;
+    let callee = cached_shape_method(scheduler, branch, 2)?;
     Some(IdleCall {
         callee,
         argument: None,
@@ -120,7 +120,7 @@ fn idle_release_call<'a>(
     };
     let argument = crate::value::Value::Number(function.captures.get_number(slot)?);
     let branch = idle_release_branch(function, even)?;
-    let callee = idle_cached_method(scheduler, branch, if even { 10 } else { 12 })?;
+    let callee = cached_shape_method(scheduler, branch, if even { 10 } else { 12 })?;
     Some(IdleCall {
         callee,
         argument: Some(argument),
@@ -146,7 +146,7 @@ fn idle_release_branch(
     }
 }
 
-fn idle_cached_method(
+fn cached_shape_method(
     scheduler: &crate::value::Value,
     code: crate::machine::CodeView<'_>,
     pc: usize,
