@@ -619,6 +619,11 @@ pub fn namespace_bindings(
     // use the engine's canonical Uint16 constructor until native Float16
     // element conversion is available.
     let float16_prototype = quench_runtime::host_api::object(vec![]);
+    let _ = quench_runtime::execute::set_property(
+        float16_prototype.clone(),
+        "\0float16_constructor",
+        quench_runtime::value::Value::Boolean(true),
+    );
     let float16_receiver = quench_runtime::host_api::object(vec![
         (
             "\0float16_constructor".into(),
