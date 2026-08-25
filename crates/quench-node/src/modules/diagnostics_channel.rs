@@ -366,14 +366,17 @@ pub fn trace_sync(
     let start = execute::get_property(receiver, "start");
     let end = execute::get_property(receiver, "end");
     let error = execute::get_property(receiver, "error");
-    if channel_has_subscribers(state, &start) {
+    let tracing = TRACE_CHANNELS.iter().any(|name| {
+        channel_has_subscribers(state, &execute::get_property(receiver, name))
+    });
+    if tracing && channel_has_subscribers(state, &start) {
         publish(state, Some(&start), std::slice::from_ref(&context))?;
     }
     match execute::call(callback, &this_arg, call_args) {
         Ok(result) => {
             execute::set_property_in_place(&context, "result", result.clone());
             let completion = context.clone();
-            if channel_has_subscribers(state, &end) {
+            if tracing && channel_has_subscribers(state, &end) {
                 publish(state, Some(&end), std::slice::from_ref(&completion))?;
             }
             Ok(result)
@@ -385,10 +388,10 @@ pub fn trace_sync(
             };
             execute::set_property_in_place(&context, "error", error_value);
             let completion = context.clone();
-            if channel_has_subscribers(state, &error) {
+            if tracing && channel_has_subscribers(state, &error) {
                 publish(state, Some(&error), std::slice::from_ref(&completion))?;
             }
-            if channel_has_subscribers(state, &end) {
+            if tracing && channel_has_subscribers(state, &end) {
                 publish(state, Some(&end), std::slice::from_ref(&completion))?;
             }
             Err(thrown)
