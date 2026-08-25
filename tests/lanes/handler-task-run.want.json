@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "metrics": {
+    "kernel_hits": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "handler_task_run_word_slots", "field": "hits" } },
+      "min": 19000
+    },
+    "kernel_deopts": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "handler_task_run_word_slots", "field": "deopts" } },
+      "max": 0
+    }
+  }
+}
