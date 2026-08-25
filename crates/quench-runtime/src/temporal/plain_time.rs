@@ -474,19 +474,17 @@ fn add(
     .iter()
     .map(|(name, scale)| {
         duration_number(&duration, name).and_then(|value| {
-            value.checked_mul(*scale).ok_or_else(|| {
-                crate::value::error::throw_range_error("Invalid duration")
-            })
+            value
+                .checked_mul(*scale)
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))
         })
     })
     .collect::<Result<Vec<_>, _>>()?
     .into_iter()
     .try_fold(0_i64, |sum, value| {
-        sum.checked_add(value).ok_or_else(|| {
-            crate::value::error::throw_range_error("Invalid duration")
-        })
-    })?
-        * direction;
+        sum.checked_add(value)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))
+    })? * direction;
     let total = (time_fields(receiver)? + delta).rem_euclid(86_400_000_000_000);
     let hour = total / 3_600_000_000_000;
     let remainder = total % 3_600_000_000_000;
