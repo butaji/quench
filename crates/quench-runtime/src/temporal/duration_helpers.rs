@@ -1,4 +1,9 @@
 pub(crate) fn from(value: Option<&Value>) -> Result<Value, VmError> {
+    if value.is_some_and(crate::conversion::is_symbol) {
+        return Err(crate::value::error::throw_type_error(
+            "Duration string must not be a Symbol",
+        ));
+    }
     if let Some(Value::String(text)) = value {
         return from_string(text);
     }
@@ -779,13 +784,13 @@ fn date_fields_out_of_range(values: &[f64]) -> bool {
 
 fn time_fields_out_of_range(values: &[f64]) -> bool {
     let limits = [
-        104_249_991_375.0,
-        2_501_999_792_984.0,
-        150_119_987_579_017.0,
+        104_249_991_374.0,
+        2_501_999_792_983.0,
+        150_119_987_579_016.0,
         9_007_199_254_740_991.0,
-        9_007_199_254_740_991.0,
-        9_007_199_254_740_991.0,
-        9_007_199_254_740_991.0,
+        9_007_199_254_740_991_000.0,
+        9_007_199_254_740_991_000_000.0,
+        9_007_199_254_740_991_000_000_000.0,
     ];
     values
         .iter()
