@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "oracle": { "max_ratio": 2 },
   "metrics": {
     "shape_hit_per_iteration": {
       "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "shape_nested_array_length", "field": "hits" } },

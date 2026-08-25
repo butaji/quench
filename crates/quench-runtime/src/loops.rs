@@ -604,6 +604,18 @@ fn execute_loop_body(
     ))
 }
 
+fn execute_loop_body_with_context(
+    registers: &mut crate::register_file::RegisterFile,
+    label: &Option<String>,
+    body: crate::machine::CodeView<'_>,
+    context: &crate::vm::VmContext,
+) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
+    Ok(crate::completion::Completion::into_loop_transition(
+        crate::vm::execute_code_completion_with_context(body, registers, context)?,
+        label,
+    ))
+}
+
 include!("loops_run.rs");
 include!("loops_numeric_kernel.rs");
 include!("loops_crypto_kernel.rs");

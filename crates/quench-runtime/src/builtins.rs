@@ -273,10 +273,10 @@ pub(crate) fn is_descriptor_key(key: &str) -> bool {
 /// Look up cold descriptor metadata without exposing the storage key to
 /// ordinary property-slot callers. The metadata vector is authoritative;
 /// this helper is deliberately a projection, not a second semantic record.
-pub(crate) fn descriptor_metadata<'a, P: crate::value::PropertyEntries + ?Sized>(
-    properties: &'a P,
+pub(crate) fn descriptor_metadata<P: crate::value::PropertyEntries + ?Sized>(
+    properties: &P,
     key: &str,
-) -> Option<&'a Value> {
+) -> Option<Value> {
     properties
         .entries()
         .rev()
@@ -302,11 +302,12 @@ pub(crate) fn read_descriptor_value(builtin: Builtin, key: &str) -> Option<Value
     let Value::Object(properties) = read_intrinsic_override(builtin, key)? else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
         .find(|(name, _)| name == "value")
-        .map(|(_, value)| value.clone())
+        .map(|(_, value)| value.clone());
+    result
 }
 
 pub(crate) fn write_intrinsic_override(builtin: Builtin, key: &str, descriptor: Value) {

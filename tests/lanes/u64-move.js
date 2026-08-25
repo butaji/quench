@@ -1,6 +1,6 @@
 let x = 1;
 let y = 0;
-for (let i = 0; i < 250000; i++) {
+for (let i = 0; i < 25000000; i++) {
   y = x;
   x = y;
 }

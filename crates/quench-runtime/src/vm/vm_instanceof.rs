@@ -180,7 +180,7 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
 
 fn is_shadow_realm(properties: &crate::value::ObjectData) -> bool {
     properties.iter().any(|(name, value)| {
-        name == "\0prototype" && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
+        name == "\0prototype" && value == Value::Builtin(Builtin::ShadowRealmPrototype)
     })
 }
 
@@ -219,7 +219,7 @@ fn error_constructor_builtin(value: &Value) -> Option<Builtin> {
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
-    match intrinsic_builtin(prototype)? {
+    match intrinsic_builtin(&prototype)? {
         Builtin::ErrorPrototype => Some(Builtin::Error),
         Builtin::RangeErrorPrototype => Some(Builtin::RangeError),
         Builtin::ReferenceErrorPrototype => Some(Builtin::ReferenceError),
@@ -397,7 +397,7 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
             .iter()
             .rev()
             .find(|(name, _)| name == "\0prototype" || name == "prototype")
-            .map(|(_, prototype)| dereference_binding(prototype)),
+            .map(|(_, prototype)| dereference_binding(&prototype)),
         Value::Function(function) => {
             let properties = function.properties.borrow();
             properties

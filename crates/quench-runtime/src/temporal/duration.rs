@@ -214,7 +214,7 @@ fn duration_field(object: &crate::value::ObjectData, name: &str) -> i128 {
     object
         .iter()
         .find(|(key, _)| key == name)
-        .map_or(0, |(_, value)| number_field(value))
+        .map_or(0, |(_, value)| number_field(&value))
 }
 
 fn number_field(value: &Value) -> i128 {

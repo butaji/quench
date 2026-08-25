@@ -66,7 +66,7 @@ fn reduce_local(
 /// initialized before their body executes. Lexical declarations retain their
 /// predeclaration marker and therefore require the TDZ-aware load. Dynamic
 /// scope always remains on the complete binding path.
-fn proven_initialized_local(
+pub(crate) fn proven_initialized_local(
     name: &str,
     slot: u16,
     facts: &ProgramDb,

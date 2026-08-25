@@ -312,5 +312,7 @@ fn accessor_field<P: crate::value::PropertyEntries + ?Sized>(
         .entries()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value));
-    prototype.and_then(|prototype| accessor_value(prototype, key, field))
+    prototype
+        .as_ref()
+        .and_then(|prototype| accessor_value(prototype, key, field))
 }

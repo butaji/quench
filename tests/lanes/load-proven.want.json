@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "oracle": { "max_ratio": 2 },
   "metrics": {
     "checked_load_per_handler": {
       "numerator": { "top": { "path": "lanes.l2.top_compact", "key": "opcode", "value": "LoadLocalChecked" } },

@@ -40,7 +40,7 @@ pub enum DecodedValue {
 }
 
 macro_rules! value_tag_facts {
-    ($( $name:ident = $tag:literal => $accessor:ident($decoded:pat); )+) => {
+    ($( $name:ident = $tag:literal, rc = $owns_rc:literal => $accessor:ident($decoded:pat); )+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u8)]
         enum ValueTag { $( $name = $tag, )+ }
@@ -48,6 +48,10 @@ macro_rules! value_tag_facts {
         impl ValueTag {
             const fn decode(value: u8) -> Option<Self> {
                 match value { $( $tag => Some(Self::$name), )+ _ => None }
+            }
+
+            const fn owns_rc(self) -> bool {
+                match self { $( Self::$name => $owns_rc, )+ }
             }
         }
 
@@ -60,18 +64,27 @@ macro_rules! value_tag_facts {
                     matches!(self.decode(), $decoded)
                 }
             )+
+
+            #[inline(always)]
+            pub(crate) fn owns_rc(self) -> bool {
+                if self.0 & TAG_PREFIX != TAG_PREFIX {
+                    return false;
+                }
+                let tag = ((self.0 & TAG_MASK) >> TAG_SHIFT) as u8;
+                ValueTag::decode(tag).is_some_and(ValueTag::owns_rc)
+            }
         }
     };
 }
 
 value_tag_facts! {
-    I31 = 1 => is_i31(DecodedValue::I31(_));
-    Primitive = 2 => is_primitive(DecodedValue::Bool(_) | DecodedValue::Null | DecodedValue::Undefined);
-    ObjectPtr = 3 => is_object_ptr(DecodedValue::ObjectPtr(_));
-    ArrayPtr = 4 => is_array_ptr(DecodedValue::ArrayPtr(_));
-    FunctionPtr = 5 => is_function_ptr(DecodedValue::FunctionPtr(_));
-    HeapPtr = 6 => is_heap_ptr(DecodedValue::HeapPtr(_));
-    HeapRef = 7 => is_heap_ref(DecodedValue::HeapRef(_));
+    I31 = 1, rc = false => is_i31(DecodedValue::I31(_));
+    Primitive = 2, rc = false => is_primitive(DecodedValue::Bool(_) | DecodedValue::Null | DecodedValue::Undefined);
+    ObjectPtr = 3, rc = true => is_object_ptr(DecodedValue::ObjectPtr(_));
+    ArrayPtr = 4, rc = true => is_array_ptr(DecodedValue::ArrayPtr(_));
+    FunctionPtr = 5, rc = true => is_function_ptr(DecodedValue::FunctionPtr(_));
+    HeapPtr = 6, rc = true => is_heap_ptr(DecodedValue::HeapPtr(_));
+    HeapRef = 7, rc = false => is_heap_ref(DecodedValue::HeapRef(_));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

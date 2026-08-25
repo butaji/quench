@@ -119,13 +119,13 @@ fn boxed_string_owns(properties: &ObjectData, key: &str) -> bool {
     else {
         return false;
     };
-    if crate::conversion::is_symbol_string(value) {
+    if crate::conversion::is_symbol_string(&value) {
         return false;
     }
     key == "length"
         || key
             .parse::<usize>()
-            .is_ok_and(|index| index < crate::strings::utf16_len(value))
+            .is_ok_and(|index| index < crate::strings::utf16_len(&value))
 }
 
 fn array_owns(values: &crate::value::ArrayData, key: &str) -> bool {

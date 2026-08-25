@@ -27,7 +27,7 @@ fn live_descriptor(descriptor: &Value, live: Option<Value>) -> Value {
         return Value::Object(properties);
     };
     let mut properties = properties.properties.clone();
-    if let Some((_, value)) = properties.iter_mut().find(|(name, _)| name == "value") {
+    if let Some((_, mut value)) = properties.iter_mut().find(|(name, _)| name == "value") {
         *value = live;
     }
     Value::Object(Rc::new(ObjectData::from_shared_properties(properties)))
@@ -38,8 +38,8 @@ fn public_descriptor(descriptor: &Value) -> Value {
         return descriptor.clone();
     };
     let mut properties = properties.properties.clone();
-    if let Some((_, value)) = properties.iter_mut().find(|(name, _)| name == "value") {
-        *value = public_value(value);
+    if let Some((_, mut value)) = properties.iter_mut().find(|(name, _)| name == "value") {
+        *value = public_value(&value);
     }
     Value::Object(Rc::new(ObjectData::from_shared_properties(properties)))
 }

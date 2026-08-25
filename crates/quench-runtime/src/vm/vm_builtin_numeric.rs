@@ -73,7 +73,7 @@ fn boolean_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
             .rev()
             .find_map(|(name, value)| (name == "_value").then_some(value))
         {
-            Some(Value::Boolean(value)) => *value,
+            Some(Value::Boolean(value)) => value,
             _ => return Err(boolean_receiver_error()),
         },
         _ => return Err(boolean_receiver_error()),
@@ -104,7 +104,7 @@ pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Optio
         Some(Value::HostCapability(token)) => realm::id_for_token(token),
         Some(Value::Object(properties)) => properties.iter().find_map(|(key, value)| {
             (key == "\0realm").then(|| match value {
-                Value::HostCapability(token) => realm::id_for_token(token),
+                Value::HostCapability(token) => realm::id_for_token(&token),
                 _ => None,
             })?
         }),

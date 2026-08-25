@@ -221,15 +221,16 @@ fn raw_binding_cell(name: &str) -> Option<Rc<crate::value::BindingCell>> {
     let Value::Object(properties) = crate::vm::current_global_object() else {
         return None;
     };
-    properties.iter().rev().find_map(|(key, value)| {
+    let result = properties.iter().rev().find_map(|(key, value)| {
         if key != name {
             return None;
         }
         match value {
-            Value::BindingCell(cell) => Some(Rc::clone(cell)),
+            Value::BindingCell(cell) => Some(Rc::clone(&cell)),
             _ => None,
         }
-    })
+    });
+    result
 }
 
 fn own_descriptor(name: &str) -> Option<Descriptor> {
