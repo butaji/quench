@@ -331,11 +331,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         Value::String(_) => true,
         _ => false,
     });
-    if !explicit_unit
-        && ["years", "months", "weeks"]
-            .iter()
-            .any(|name| duration_field(object, name) != 0)
-    {
+    if !explicit_unit {
         return Err(crate::value::error::throw_range_error(
             "smallestUnit or largestUnit is required for calendar rounding",
         ));
@@ -345,7 +341,22 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             "largestUnit must not be smaller than smallestUnit",
         ));
     }
-    if index <= 2 {
+    if index >= 4 && has_calendar {
+        let relative = options.and_then(|value| match value {
+            Value::Object(object) => object
+                .iter()
+                .find(|(key, _)| key == "relativeTo")
+                .map(|(_, value)| value),
+            _ => None,
+        });
+        let Some(relative) = relative else {
+            return Err(crate::value::error::throw_range_error(
+                "relativeTo is required for calendar rounding",
+            ));
+        };
+        return calendar_time_round(object, &relative, options, index);
+    }
+    if index <= 3 {
         if index == 2
             && largest_unit(options).is_none()
             && duration_field(object, "months") != 0
@@ -367,9 +378,95 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                 "relativeTo is required for calendar rounding",
             ));
         };
-        return calendar_round(object, &relative, index);
+        return calendar_round(
+            object,
+            &relative,
+            options,
+            index,
+            largest_unit(options).is_none(),
+        );
     }
     fixed_round(object, options, largest, index)
+}
+
+fn calendar_time_round(
+    object: &crate::value::ObjectData,
+    relative: &Value,
+    options: Option<&Value>,
+    index: usize,
+) -> Result<Value, VmError> {
+    let year = number_property(relative, "year") as i32;
+    let month = number_property(relative, "month") as u32;
+    let day = number_property(relative, "day") as u32;
+    let start = NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
+    let sign = if duration_field(object, "years") < 0
+        || duration_field(object, "months") < 0
+        || duration_field(object, "weeks") < 0
+        || duration_field(object, "days") < 0
+    {
+        -1.0
+    } else {
+        1.0
+    };
+    let mut target = shift_calendar_by(start, 0, duration_field(object, "years"))?;
+    target = shift_calendar_by(target, 1, duration_field(object, "months"))?;
+    target = shift_calendar_by(target, 2, duration_field(object, "weeks"))?;
+    target = shift_calendar_by(target, 3, duration_field(object, "days"))?;
+    let subday = duration_field(object, "hours") as f64 / 24.0
+        + duration_field(object, "minutes") as f64 / 1_440.0
+        + duration_field(object, "seconds") as f64 / 86_400.0
+        + duration_field(object, "milliseconds") as f64 / 86_400_000.0
+        + duration_field(object, "microseconds") as f64 / 86_400_000_000.0
+        + duration_field(object, "nanoseconds") as f64 / 86_400_000_000_000.0;
+    let mut cursor = start;
+    let mut fields = vec![Value::Number(0.0); 10];
+    let preserve = largest_unit(options).is_none();
+    if preserve {
+        for unit in 0..2 {
+            let mut count = 0_i64;
+            loop {
+                let next = shift_calendar(cursor, unit, sign as i32)?;
+                let reached = if sign >= 0.0 {
+                    next <= target
+                } else {
+                    next >= target
+                };
+                if !reached {
+                    break;
+                }
+                cursor = next;
+                count += sign as i64;
+            }
+            fields[unit] = Value::Number(count as f64);
+        }
+    }
+    let remaining_days = (target - cursor).num_days() as f64 + subday;
+    let total_nanos = (remaining_days * 86_400_000_000_000.0) as i128;
+    let scales = [
+        86_400_000_000_000_i128,
+        3_600_000_000_000,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
+    ];
+    let increment = rounding_increment(options, index)? as i128;
+    let rounded = round_integer(
+        total_nanos,
+        scales[index - 3] * increment,
+        &rounding_mode(options)?,
+    ) * scales[index - 3]
+        * increment;
+    let mut remainder = rounded.abs();
+    let sign = rounded.signum();
+    for unit in 3..=index {
+        let value = remainder / scales[unit - 3];
+        fields[unit] = Value::Number((value * sign) as f64);
+        remainder %= scales[unit - 3];
+    }
+    construct(&fields)
 }
 
 fn duration_field_value(object: &crate::value::ObjectData, name: &str) -> Value {
@@ -550,11 +647,7 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
                 .iter()
                 .find(|(key, _)| key == "largestUnit")
                 .and_then(|(_, value)| match value {
-                    Value::String(unit)
-                        if unit_index(&unit).ok().is_some_and(|index| index <= 2) =>
-                    {
-                        Some(unit.clone())
-                    }
+                    Value::String(unit) if unit_index(&unit).is_ok() => Some(unit.clone()),
                     _ => None,
                 })
                 .map_or_else(|| Ok("nanosecond".into()), Ok),
@@ -591,23 +684,61 @@ fn unit_index(unit: &str) -> Result<usize, VmError> {
 fn calendar_round(
     object: &crate::value::ObjectData,
     relative: &Value,
+    options: Option<&Value>,
     unit: usize,
+    preserve_larger: bool,
 ) -> Result<Value, VmError> {
     let year = number_property(relative, "year") as i32;
     let month = number_property(relative, "month") as u32;
     let day = number_property(relative, "day") as u32;
     let start = NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
-    let total = duration_field(object, "years") as f64 * 365.0
-        + duration_field(object, "months") as f64 * 30.0
-        + duration_field(object, "weeks") as f64 * 7.0
-        + duration_field(object, "days") as f64
-        + duration_field(object, "hours") as f64 / 24.0;
-    let sign = total.signum();
-    let target = start
-        .checked_add_signed(chrono::Duration::days(total as i64))
+    let sign = if duration_field(object, "years") < 0
+        || duration_field(object, "months") < 0
+        || duration_field(object, "weeks") < 0
+        || duration_field(object, "days") < 0
+        || duration_field(object, "hours") < 0
+    {
+        -1.0
+    } else {
+        1.0
+    };
+    let mut target = shift_calendar_by(start, 0, duration_field(object, "years"))?;
+    target = shift_calendar_by(target, 1, duration_field(object, "months"))?;
+    target = shift_calendar_by(target, 2, duration_field(object, "weeks"))?;
+    target = shift_calendar_by(target, 3, duration_field(object, "days"))?;
+    let subday = duration_field(object, "hours") as f64 / 24.0
+        + duration_field(object, "minutes") as f64 / 1_440.0
+        + duration_field(object, "seconds") as f64 / 86_400.0
+        + duration_field(object, "milliseconds") as f64 / 86_400_000.0
+        + duration_field(object, "microseconds") as f64 / 86_400_000_000.0
+        + duration_field(object, "nanoseconds") as f64 / 86_400_000_000_000.0;
+    let whole_subday = subday.trunc() as i64;
+    target = target
+        .checked_add_signed(chrono::Duration::days(whole_subday))
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
+    let target_distance = (target - start).num_days() as f64 + subday.fract();
+    let total = target_distance * sign;
     let mut cursor = start;
+    if preserve_larger {
+        for larger_unit in 0..unit {
+            if larger_unit == 2 && unit >= 3 {
+                continue;
+            }
+            loop {
+                let next = shift_calendar(cursor, larger_unit, sign as i32)?;
+                let reached = if sign >= 0.0 {
+                    next <= target
+                } else {
+                    next >= target
+                };
+                if !reached {
+                    break;
+                }
+                cursor = next;
+            }
+        }
+    }
     let mut count = 0_i64;
     let limit = 10_000;
     for _ in 0..limit {
@@ -624,26 +755,66 @@ fn calendar_round(
         count += sign as i64;
     }
     let next = shift_calendar(cursor, unit, sign as i32)?;
-    let elapsed = if sign >= 0.0 {
-        (cursor - start).num_days() as f64
-    } else {
-        (start - cursor).num_days() as f64
-    };
+    let elapsed = (cursor - start).num_days().unsigned_abs() as f64;
     let remainder = (total.abs() - elapsed).max(0.0);
     let span = (next - cursor).num_days().abs() as f64;
+    let unrounded_count = count;
     if span > 0.0 && remainder * 2.0 >= span {
         count += sign as i64;
     }
+    let increment = rounding_increment(options, unit)? as i128;
+    count = (round_integer(count as i128, increment, &rounding_mode(options)?) * increment) as i64;
     let mut fields = vec![Value::Number(0.0); 10];
-    let names = ["years", "months", "weeks"];
-    for (index, name) in names.iter().enumerate().take(unit) {
-        fields[index] = Value::Number(duration_field(object, name) as f64);
+    if preserve_larger {
+        let mut larger_cursor = start;
+        for index in 0..unit {
+            if index == 2 && unit >= 3 {
+                continue;
+            }
+            let mut larger_count = 0_i64;
+            loop {
+                let next = shift_calendar(larger_cursor, index, sign as i32)?;
+                let reached = if sign >= 0.0 {
+                    next <= target
+                } else {
+                    next >= target
+                };
+                if !reached {
+                    break;
+                }
+                larger_cursor = next;
+                larger_count += sign as i64;
+            }
+            fields[index] = Value::Number(larger_count as f64);
+        }
     }
-    if unit == 1 && duration_field(object, "years") != 0 {
-        fields[0] = Value::Number((count / 12) as f64);
-        fields[1] = Value::Number((count % 12) as f64);
+    if unit == 1 && preserve_larger {
+        fields[1] = Value::Number(count as f64);
     } else {
         fields[unit] = Value::Number(count as f64);
+    }
+    if count == unrounded_count {
+        let mut lower_cursor = cursor;
+        for lower_unit in (unit + 1)..=3 {
+            if lower_unit == 2 && unit < 2 {
+                continue;
+            }
+            let mut lower_count = 0_i64;
+            loop {
+                let next = shift_calendar(lower_cursor, lower_unit, sign as i32)?;
+                let reached = if sign >= 0.0 {
+                    next <= target
+                } else {
+                    next >= target
+                };
+                if !reached {
+                    break;
+                }
+                lower_cursor = next;
+                lower_count += sign as i64;
+            }
+            fields[lower_unit] = Value::Number(lower_count as f64);
+        }
     }
     construct(&fields)
 }
@@ -665,6 +836,22 @@ fn shift_calendar(date: NaiveDate, unit: usize, direction: i32) -> Result<NaiveD
     let month = months.rem_euclid(12) as u32 + 1;
     let day = date.day().min(days_in_month(year, month));
     NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))
+}
+
+fn shift_calendar_by(date: NaiveDate, unit: usize, amount: i128) -> Result<NaiveDate, VmError> {
+    if unit >= 2 {
+        let days = if unit == 2 { amount * 7 } else { amount };
+        return date
+            .checked_add_signed(chrono::Duration::days(days as i64))
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"));
+    }
+    let delta = amount * if unit == 0 { 12 } else { 1 };
+    let months = i128::from(date.year()) * 12 + i128::from(date.month0()) + delta;
+    let year = months.div_euclid(12);
+    let month = months.rem_euclid(12) as u32 + 1;
+    let day = date.day().min(days_in_month(year as i32, month));
+    NaiveDate::from_ymd_opt(year as i32, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))
 }
 
