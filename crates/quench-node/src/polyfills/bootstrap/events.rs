@@ -63,6 +63,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"class NodeReadable extends 
       autoDestroyErrorListener.__quenchInternal = true;
       this.on("error", autoDestroyErrorListener);
     }
+    if (!options.__quenchSkipConstruct) __nodeRunConstruct(this, options);
   }
   once(event, listener) {
     let called = false;
@@ -484,4 +485,39 @@ Object.defineProperty(NodeReadable.prototype, "readableDidRead", {
   }
 });
 NodeReadable.prototype.destroyed = false;
+const __nodeRunConstruct = (stream, options) => {
+  const construct = options?.construct;
+  if (typeof construct !== "function") return;
+  let completed = false;
+  stream._constructing = true;
+  const complete = (error) => {
+    if (completed) {
+      const duplicate = new Error("Callback called multiple times");
+      duplicate.code = "ERR_MULTIPLE_CALLBACK";
+      queueMicrotask(() => stream.emit("error", duplicate));
+      return;
+    }
+    completed = true;
+    stream._constructing = false;
+    if (error) {
+      stream._readableState.errored = error;
+      stream.errored = error;
+      if (stream._writableState) stream._writableState.errored = error;
+      queueMicrotask(() => stream.emit("error", error));
+      return;
+    }
+    if (stream.readableFlowing) queueMicrotask(() => {
+      if (!stream.destroyed && !stream._chunks?.length && !stream._ended) {
+        __nodeReadableStart(stream);
+      }
+    });
+    stream.__nodeMaybeFinish?.();
+  };
+  try {
+    construct.call(stream, complete);
+  } catch (error) {
+    complete(error);
+  }
+};
+globalThis.__nodeRunConstruct = __nodeRunConstruct;
 "#);
