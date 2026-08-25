@@ -179,6 +179,16 @@ fn replace_with_exec(
     loop {
         let result = regexp_exec(receiver, input)?;
         let Some(exec) = exec_match(&result)? else { break };
+        for capture in &exec.captures {
+            if !matches!(capture, Value::Undefined) {
+                let _ = crate::conversion::to_string(capture)?;
+            }
+        }
+        if matches!(exec.groups, Value::Null) {
+            return Err(crate::value::error::throw_type_error(
+                "RegExp exec groups must be object or undefined",
+            ));
+        }
         // The exec result's `index` is a UTF-16 code-unit count; convert to
         // a byte offset before slicing `input`.
         let index = exec_position(input, exec.position);
