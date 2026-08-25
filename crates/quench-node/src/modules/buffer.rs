@@ -71,6 +71,11 @@ pub fn buffer_constructor() -> Value {
     for (key, value) in static_pairs() {
         quench_runtime::execute::set_property(constructor.clone(), &key, value);
     }
+    let _ = quench_runtime::execute::set_callable_property(
+        &constructor,
+        "Symbol.hasInstance",
+        crate::host::capability(crate::registry::SPEC_BUFFER_ISBUFFER),
+    );
     constructor
 }
 
