@@ -243,21 +243,6 @@ pub fn own_enumerable_symbol_strings(value: &crate::value::Value) -> Vec<String>
     let crate::value::Value::Array(symbols) = symbols else {
         return Vec::new();
     };
-    let array_like = matches!(
-        value,
-        crate::value::Value::Array(_)
-            | crate::value::Value::Float64Array(_)
-            | crate::value::Value::Float32Array(_)
-            | crate::value::Value::Int8Array(_)
-            | crate::value::Value::Int16Array(_)
-            | crate::value::Value::Int32Array(_)
-            | crate::value::Value::BigInt64Array(_)
-            | crate::value::Value::BigUint64Array(_)
-            | crate::value::Value::Uint32Array(_)
-            | crate::value::Value::Uint8Array(_)
-            | crate::value::Value::Uint8ClampedArray(_)
-            | crate::value::Value::Uint16Array(_)
-    );
     symbols
         .snapshot()
         .into_iter()
@@ -267,7 +252,7 @@ pub fn own_enumerable_symbol_strings(value: &crate::value::Value) -> Vec<String>
             }
             _ => None,
         })
-        .filter(|key| array_like || {
+        .filter(|key| {
             let descriptor = crate::builtins::object::descriptor(
                 Some(value),
                 Some(&crate::value::Value::String(key.clone())),
