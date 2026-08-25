@@ -3,6 +3,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::{mpsc, Arc},
 };
 
 use quench_test262::{
@@ -299,11 +300,11 @@ fn run_single_stage(
         );
         return Ok(StageReport::default());
     }
+    let results = run_stage_files(root, files)?;
     let mut report = StageReport::default();
-    for path in files {
+    for (_, path, outcome) in results {
         report.total += 1;
-        let outcome = run_isolated_file(root, &path)?;
-        match outcome {
+        match outcome? {
             TestOutcome::Pass => report.passed += 1,
             TestOutcome::Fail { reason } => {
                 report.failed += 1;
@@ -318,6 +319,49 @@ fn run_single_stage(
         stage.id, stage.path, report.passed
     );
     Ok(report)
+}
+
+fn run_stage_files(
+    root: &Path,
+    files: Vec<PathBuf>,
+) -> Result<Vec<(usize, PathBuf, Result<TestOutcome, String>)>, String> {
+    let worker_count = env::var("QUENCH_STAGE_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or(4)
+        .min(files.len());
+    let files = Arc::new(files);
+    let (sender, receiver) = mpsc::channel();
+    let mut workers = Vec::with_capacity(worker_count);
+    for worker in 0..worker_count {
+        let files = Arc::clone(&files);
+        let root = root.to_path_buf();
+        let sender = sender.clone();
+        workers.push(
+            std::thread::Builder::new()
+                .name(format!("stage-files-{worker}"))
+                .spawn(move || {
+                    for index in (worker..files.len()).step_by(worker_count) {
+                        let path = files[index].clone();
+                        let outcome = run_isolated_file(&root, &path);
+                        if sender.send((index, path, outcome)).is_err() {
+                            break;
+                        }
+                    }
+                })
+                .map_err(|error| format!("stage worker spawn failed: {error}"))?,
+        );
+    }
+    drop(sender);
+    let mut results: Vec<_> = receiver.into_iter().collect();
+    for worker in workers {
+        worker
+            .join()
+            .map_err(|_| "stage worker panicked".to_string())?;
+    }
+    results.sort_by_key(|(index, _, _)| *index);
+    Ok(results)
 }
 
 fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
