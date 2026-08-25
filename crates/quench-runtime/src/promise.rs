@@ -26,7 +26,6 @@ include!("promise_with_resolvers.rs");
 include!("promise_try.rs");
 
 fn process_promise(promise: &Rc<PromiseData>) {
-    promise_phase(promise, "before");
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
     let promise_key = Rc::as_ptr(promise) as usize;
@@ -35,7 +34,13 @@ fn process_promise(promise: &Rc<PromiseData>) {
     for continuation in continuations {
         process_continuation(continuation, &state);
     }
-    promise_phase(promise, "after");
+}
+
+fn with_promise_trigger<T>(trigger: &Rc<PromiseData>, f: impl FnOnce() -> T) -> T {
+    let previous = PROMISE_TRIGGER.with(|slot| slot.replace(Some(Rc::clone(trigger))));
+    let result = f();
+    PROMISE_TRIGGER.with(|slot| slot.replace(previous));
+    result
 }
 
 fn process_then_actions(
@@ -72,12 +77,15 @@ fn process_then_actions(
             propagate_default(&result_promise, state, value);
             continue;
         };
-        match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {
+        promise_phase(&result_promise, "before");
+        let completion = match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {
             Ok(Value::Promise(next)) => adopt_promise(&result_promise, &next),
             Ok(value) => resolve_promise(&result_promise, value),
             Err(VmError::Thrown(reason)) => reject_promise(&result_promise, reason),
             Err(_) => reject_promise(&result_promise, Value::Undefined),
-        }
+        };
+        let _ = completion;
+        promise_phase(&result_promise, "after");
     }
 }
 
@@ -297,10 +305,15 @@ pub(crate) fn promise_created(promise: &Rc<PromiseData>) {
         realm: context.realm(),
         kind: crate::ops::HostCapabilityKind::PromiseHook,
     };
+    let trigger = PROMISE_TRIGGER.with(|slot| slot.borrow().clone());
+    let mut args = vec![Value::String("init".into()), Value::Promise(Rc::clone(promise))];
+    if let Some(trigger) = trigger {
+        args.push(Value::Promise(trigger));
+    }
     let _ = host.call(
         descriptor,
         None,
-        &[Value::String("init".into()), Value::Promise(Rc::clone(promise))],
+        &args,
     );
 }
 
@@ -538,7 +551,7 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     };
     let promise_value = Value::Promise(Rc::clone(promise));
     let constructor = then_species_constructor(&promise_value)?;
-    let result = construct_then_result(&constructor)?;
+    let result = with_promise_trigger(promise, || construct_then_result(&constructor))?;
     let result_promise = match &result {
         Value::Promise(promise) => Rc::clone(promise),
         _ => return Err(VmError::NotCallable),
