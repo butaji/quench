@@ -991,13 +991,31 @@ pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<St
     if *proxy.revoked.borrow() {
         return Some("<Revoked Proxy>".into());
     }
-    let target = inspect_custom(&proxy.target, depth)
-        .unwrap_or_else(|| inspect_depth(&proxy.target, depth.saturating_sub(1)));
+    let depth = depth.min(32);
+    let custom = inspect_custom(&proxy.target, depth);
+    let target = custom.clone().unwrap_or_else(|| {
+        if matches!(proxy.target, Value::Proxy(_)) {
+            inspect_proxy(&proxy.target, depth.saturating_sub(1), show_proxy)
+                .unwrap_or_else(|| "<unknown>".into())
+        } else {
+            inspect_depth(&proxy.target, depth.saturating_sub(1))
+        }
+    });
     if !show_proxy {
-        return Some(target);
+        return Some(custom.unwrap_or_else(|| format!("Proxy({target})")));
     }
-    let handler = inspect_depth(&proxy.handler, depth.saturating_sub(1));
-    Some(format!("Proxy [\n  {target},\n  {handler}\n]"))
+    let handler = if matches!(proxy.handler, Value::Proxy(_)) {
+        inspect_proxy(&proxy.handler, depth.saturating_sub(1), true)
+            .unwrap_or_else(|| "<unknown>".into())
+    } else {
+        inspect_depth(&proxy.handler, depth.saturating_sub(1))
+    };
+    let inline = format!("Proxy [ {target}, {handler} ]");
+    Some(if inline.len() <= 80 {
+        inline
+    } else {
+        format!("Proxy [\n  {target},\n  {handler}\n]")
+    })
 }
 
 fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
@@ -1796,7 +1814,44 @@ fn inspect_custom(value: &Value, depth: usize) -> Option<String> {
     )
     .ok()
     .filter(quench_runtime::is_callable)
-    .or_else(|| quench_runtime::execute::get_property_result(value, "undefined").ok())?;
+    .or_else(|| {
+        quench_runtime::execute::get_property_result(value, "undefined")
+            .ok()
+            .filter(quench_runtime::is_callable)
+    })
+    .or_else(|| {
+        quench_runtime::execute::own_keys(value)
+            .into_iter()
+            .filter_map(|key| match key {
+                Value::String(key) if key == "undefined" || key.contains("inspect.custom") => {
+                    quench_runtime::execute::get_property_result(value, &key).ok()
+                }
+                _ => None,
+            })
+            .find(quench_runtime::is_callable)
+    })
+    .or_else(|| {
+        let symbols = quench_runtime::execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertySymbols),
+            &Value::Undefined,
+            &[value.clone()],
+        )
+        .ok()?;
+        let length = match quench_runtime::execute::get_property(&symbols, "length") {
+            Value::Number(length) => length as usize,
+            _ => return None,
+        };
+        (0..length).find_map(|index| {
+            let symbol = quench_runtime::execute::get_property(&symbols, &index.to_string());
+            let method = quench_runtime::execute::call(
+                &Value::Builtin(quench_runtime::ops::Builtin::ReflectGet),
+                &Value::Undefined,
+                &[value.clone(), symbol, value.clone()],
+            )
+            .ok()?;
+            quench_runtime::is_callable(&method).then_some(method)
+        })
+    })?;
     if !quench_runtime::is_callable(&method) {
         return None;
     }
