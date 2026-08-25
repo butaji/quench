@@ -266,7 +266,7 @@ fn compare_partial_error(
     if !same_property(left, right, "name") {
         return Ok(false);
     }
-    if !same_property(left, right, "message") {
+    if has_own_slot(right, "message") && !same_property(left, right, "message") {
         return Ok(false);
     }
     if has_own_slot(right, "cause") {
