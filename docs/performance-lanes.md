@@ -23,8 +23,8 @@ Schema 5 `lanes` contains:
   deopts.
 - `l2`: handler count/share, main and leaf `Slow` gateways, the top eight
   compact opcodes for both dispatch paths, and `top_compact_sites`, the top 64
-  code-id/PC sites with a seven-opcode context window. Collection is exact up
-  to 4,096 sites; `compact_site_dropped` must remain zero.
+  code-id/PC/source-offset sites with a seven-opcode context window. Collection
+  is exact up to 4,096 sites; `compact_site_dropped` must remain zero.
 - `l3`: handler count/share, top eight slow operations, descriptor-object
   origins, allocation origins, and RegExp `lastIndex` access paths.
 - `l4`: host-call count and non-Function call targets.
