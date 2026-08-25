@@ -6,7 +6,7 @@ pub(crate) fn proxy_set(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "set") {
+        if let Some(trap) = get_handler_trap_result(proxy, "set")? {
             let receiver = receiver.unwrap_or(target);
             let result = call_trap(
                 &trap,
@@ -44,10 +44,10 @@ pub(crate) fn proxy_set(
                                 ));
                             }
                         } else {
-                            let getter_undefined = properties.iter().any(|(name, v)| {
-                                name == "get" && matches!(v, Value::Undefined)
+                            let setter_undefined = properties.iter().any(|(name, v)| {
+                                name == "set" && matches!(v, Value::Undefined)
                             });
-                            if getter_undefined && !matches!(value, Value::Undefined) {
+                            if setter_undefined && !matches!(value, Value::Undefined) {
                                 return Err(crate::value::error::throw_type_error(
                                     "Proxy set invariant violated",
                                 ));

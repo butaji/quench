@@ -609,12 +609,9 @@ pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
         return has_property(&object, key);
     }
     if let Value::Proxy(proxy) = value {
-        let trapped = crate::proxy::get_handler_trap(proxy, "has").is_some();
-        if trapped {
-            let result = crate::proxy::proxy_has(value, key)?;
-            return Ok(crate::execute::is_truthy(&result));
-        }
-        return has_property(&proxy.target, key);
+        let _ = proxy;
+        let result = crate::proxy::proxy_has(value, key)?;
+        return Ok(crate::execute::is_truthy(&result));
     }
     let key_value = Value::String(key.to_string());
     let own = crate::builtins::object::has_own_property(Some(value), Some(&key_value));
