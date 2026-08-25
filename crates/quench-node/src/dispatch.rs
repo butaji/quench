@@ -16,6 +16,8 @@ const CAP_EVENTS_ON: u16 = 0x0102;
 const CAP_EVENTS_EMIT: u16 = 0x0103;
 const CAP_EVENTS_CAPTURE_GET: u16 = 0x0104;
 const CAP_EVENTS_CAPTURE_SET: u16 = 0x0119;
+const CAP_EVENTS_DEFAULT_MAX_GET: u16 = 0x0125;
+const CAP_EVENTS_DEFAULT_MAX_SET: u16 = 0x0126;
 const CAP_EVENTS_ONCE: u16 = 0x0105;
 const CAP_EVENTS_REMOVE_LISTENER: u16 = 0x0106;
 const CAP_EVENTS_REMOVE_ALL: u16 = 0x0107;
@@ -303,6 +305,8 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_EVENTS_EMIT => events_method_emit,
         CAP_EVENTS_CAPTURE_GET => handlers::events_capture_get,
         CAP_EVENTS_CAPTURE_SET => handlers::events_capture_set,
+        CAP_EVENTS_DEFAULT_MAX_GET => handlers::events_default_max_get,
+        CAP_EVENTS_DEFAULT_MAX_SET => handlers::events_default_max_set,
         CAP_CONSOLE_LOG | CAP_CONSOLE_INFO | CAP_CONSOLE_DEBUG => console_log,
         CAP_CONSOLE_WARN | CAP_CONSOLE_ERROR => console_warn,
         CAP_CONSOLE_TRACE => console_trace,

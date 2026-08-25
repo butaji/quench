@@ -53,6 +53,20 @@ pub fn events_capture_set(
 ) -> Result<Value, VmError> {
     crate::modules::events::capture_rejections_set(state, args)
 }
+pub fn events_default_max_get(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::events::default_max_get(state, args)
+}
+pub fn events_default_max_set(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::events::default_max_set(state, args)
+}
 pub fn events_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::events::new_emitter(state, args)
 }

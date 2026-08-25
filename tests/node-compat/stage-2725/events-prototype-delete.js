@@ -37,4 +37,14 @@ special.on('__proto__', () => { specialSeen = true; });
 special.emit('__proto__');
 assert.strictEqual(specialSeen, true);
 
+assert.strictEqual(EventEmitter.defaultMaxListeners, 10);
+assert.throws(
+  () => { EventEmitter.defaultMaxListeners = -1; },
+  { code: 'ERR_OUT_OF_RANGE', name: 'RangeError' }
+);
+assert.throws(
+  () => { EventEmitter.defaultMaxListeners = 'invalid'; },
+  { code: 'ERR_INVALID_ARG_TYPE', name: 'TypeError' }
+);
+
 console.log('EventEmitter prototype deletion: ok');

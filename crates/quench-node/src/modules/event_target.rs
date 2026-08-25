@@ -495,9 +495,16 @@ pub fn set_max_listeners(
 ) -> Result<Value, VmError> {
     let n = match args.first() {
         Some(Value::Number(n)) if *n >= 0.0 && n.is_finite() => *n as usize,
+        Some(Value::Number(n)) => {
+            return Err(crate::modules::buffer_enc::out_of_range(
+                "n",
+                "a non-negative number",
+                &execute::number_to_js_string(*n),
+            ))
+        }
         _ => {
-            return Err(execute::type_error(
-                "The \"n\" argument must be a non-negative number",
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"n\" argument must be a non-negative number".into(),
             ))
         }
     };
