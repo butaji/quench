@@ -223,15 +223,14 @@ fn regexp_constructor_flags(arguments: &[Value]) -> Result<String, crate::execut
 }
 
 fn is_regexp_pattern(value: &Value) -> Result<bool, crate::execute::VmError> {
-    if crate::regexp::has_regexp_internal_slot(value) {
-        return Ok(true);
-    }
     if !crate::value::is_object(value) {
         return Ok(false);
     }
-    Ok(crate::execute::is_truthy(
-        &crate::execute::get_property_result(value, "Symbol.match")?,
-    ))
+    let matcher = crate::execute::get_property_result(value, "Symbol.match")?;
+    if !matches!(matcher, Value::Undefined) {
+        return Ok(crate::execute::is_truthy(&matcher));
+    }
+    Ok(crate::regexp::has_regexp_internal_slot(value))
 }
 
 fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
