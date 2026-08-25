@@ -1001,7 +1001,8 @@ fn leaf_update_local(
     locals: &mut impl LeafLocalFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let capture_count = u16::try_from(function.captures.len()).unwrap_or(u16::MAX);
-    let delta = if op.flags == 0 { 1.0 } else { -1.0 };
+    let decrement = op.flags != 0;
+    let delta = 1.0;
     if op.c >= capture_count {
         if let Some((old, updated)) = locals.update_number(op.c, delta) {
             registers
@@ -1012,8 +1013,12 @@ fn leaf_update_local(
     }
     let old = leaf_local(function, receiver, arguments, code, pc, op.c, locals)?;
     let delta = crate::value::Value::Number(delta);
-    let updated =
-        crate::vm::vm_arithmetic::evaluate_binary(&old, &delta, crate::ops::BinaryOp::NumericAdd)?;
+    let operator = if decrement {
+        crate::ops::BinaryOp::NumericSubtract
+    } else {
+        crate::ops::BinaryOp::NumericAdd
+    };
+    let updated = crate::vm::vm_arithmetic::evaluate_binary(&old, &delta, operator)?;
     registers
         .write(usize::from(op.b), updated.clone())
         .ok_or(crate::execute::VmError::MissingReturn)?;
