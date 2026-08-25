@@ -453,6 +453,7 @@ pub fn trace_sync(
 fn channel_object(id: u64, name: Value) -> Value {
     let mut properties = vec![
         (ID.into(), Value::Number(id as f64)),
+        ("_index".into(), Value::Number(id as f64)),
         (NAME.into(), name.clone()),
         ("name".into(), name),
         (
