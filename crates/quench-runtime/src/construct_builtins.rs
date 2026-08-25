@@ -48,10 +48,14 @@ fn construct_builtin_tail(
             crate::temporal::plain_date_time::construct(arguments)
         }
         crate::ops::Builtin::TemporalPlainMonthDay => {
-            crate::temporal::construct_stub(crate::ops::Builtin::TemporalPlainMonthDayPrototype)
+            let month = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+            let day = crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+            crate::temporal::plain_month_day::construct(month, day)
         }
         crate::ops::Builtin::TemporalPlainYearMonth => {
-            crate::temporal::construct_stub(crate::ops::Builtin::TemporalPlainYearMonthPrototype)
+            let year = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+            let month = crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+            crate::temporal::plain_year_month::construct(year, month)
         }
         crate::ops::Builtin::TemporalZonedDateTime => {
             crate::temporal::construct_stub(crate::ops::Builtin::TemporalZonedDateTimePrototype)
