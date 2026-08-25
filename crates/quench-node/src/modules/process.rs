@@ -17,6 +17,7 @@ pub struct ProcessState {
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
     pub warning_handlers: Vec<(Value, bool)>,
     pub unhandled_rejection_handlers: Vec<(Value, bool)>,
+    pub other_handlers: Vec<(String, Value, bool)>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
     pub exit_handlers_ran: bool,
@@ -50,6 +51,7 @@ impl ProcessState {
             uncaught_exception_handlers: Vec::new(),
             warning_handlers: Vec::new(),
             unhandled_rejection_handlers: Vec::new(),
+            other_handlers: Vec::new(),
             warnings_emitted: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
@@ -290,7 +292,11 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
             "uncaughtException" | "warning" | "unhandledRejection" => {
                 push_handler(state, handler, event.as_str(), true)
             }
-            _ => {}
+            _ => state
+                .borrow_mut()
+                .process
+                .other_handlers
+                .push((event.clone(), handler.clone(), true)),
         }
     }
     Ok(Value::Undefined)
@@ -367,7 +373,11 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
                 push_handler(state, handler, event, false)
             }
             "warning" => push_handler(state, handler, "warning", false),
-            _ => {}
+            _ => state
+                .borrow_mut()
+                .process
+                .other_handlers
+                .push((event.clone(), handler.clone(), false)),
         }
     }
     Ok(Value::Undefined)
@@ -385,7 +395,23 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
             "warning" => &guard.process.warning_handlers,
             "uncaughtException" => &guard.process.uncaught_exception_handlers,
             "unhandledRejection" => &guard.process.unhandled_rejection_handlers,
-            _ => return Ok(Value::Boolean(false)),
+            _ => {
+                let callbacks = guard
+                    .process
+                    .other_handlers
+                    .iter()
+                    .filter(|(name, _, _)| name == event)
+                    .map(|(_, handler, once)| (handler.clone(), *once))
+                    .collect::<Vec<_>>();
+                drop(guard);
+                for (handler, once) in callbacks {
+                    if once {
+                        remove_other_handler(state, event, &handler);
+                    }
+                    quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
+                }
+                return Ok(Value::Boolean(true));
+            }
         };
         (
             handlers
@@ -448,7 +474,22 @@ pub fn remove_all_listeners(
     if event.is_none() || event == Some("unhandledRejection") {
         process.unhandled_rejection_handlers.clear();
     }
+    process.other_handlers.retain(|(name, _, _)| {
+        event.is_some_and(|target| target != name)
+    });
     Ok(Value::Undefined)
+}
+
+fn remove_other_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {
+    let mut guard = state.borrow_mut();
+    if let Some(index) = guard
+        .process
+        .other_handlers
+        .iter()
+        .position(|(name, handler, once)| name == event && *once && handler == target)
+    {
+        guard.process.other_handlers.remove(index);
+    }
 }
 
 fn remove_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {

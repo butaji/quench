@@ -574,7 +574,8 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
     let id_value = Value::Number(id.0 as f64);
     let mut object =
         crate::host::namespace_object_from_pairs(vec![(EMITTER_ID_PROP.to_string(), id_value)]);
-    object = execute::set_property(object, "_events", host_api::object(Vec::new()));
+    let events = execute::set_property(host_api::object(Vec::new()), "\0prototype", Value::Null);
+    object = execute::set_property(object, "_events", events);
     object = execute::set_property(object, "_eventsCount", Value::Number(0.0));
     let capture = args
         .first()
