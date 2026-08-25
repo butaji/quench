@@ -169,6 +169,7 @@ fn callable_builtin_value(value: &Value) -> bool {
         Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => {
             crate::conversion::is_callable(&bound.target)
         }
+        Value::Builtin(builtin) if crate::builtin_meta::is_prototype(*builtin) => false,
         _ => crate::conversion::is_callable(value),
     }
 }
