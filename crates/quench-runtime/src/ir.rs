@@ -51,7 +51,7 @@ instruction_set! {
     Mul = 10 / 3,
     Div = 11 / 3,
     GetProperty = 12 / 3,
-    Call = 13 / 2,
+    Call = 13 / 3,
     Jump = 14 / 1,
     IncI = 15 / 2,
     ForI = 16 / 3,
@@ -437,6 +437,15 @@ impl Instruction {
             c: 0,
         }
     }
+    pub const fn call_one_arg(dst: Register, callee: Register, argument: Register) -> Self {
+        Self {
+            opcode: Opcode::Call,
+            flags: 1,
+            a: dst,
+            b: callee,
+            c: argument,
+        }
+    }
     pub const fn call_named(dst: Register, object: Register, argument: Option<Register>) -> Self {
         let (flags, argument) = match argument {
             Some(argument) => (1, argument),
@@ -581,6 +590,17 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
             src,
             strict,
         } => Some(Instruction::array_set(*object, *key, *src, *strict)),
+        Op::Call {
+            dst,
+            callee,
+            receiver: None,
+            args,
+            spreads,
+        } if spreads.iter().all(|spread| !spread) && args.len() <= 1 => match args.as_slice() {
+            [] => Some(Instruction::call_zero_args(*dst, *callee)),
+            [argument] => Some(Instruction::call_one_arg(*dst, *callee, *argument)),
+            _ => None,
+        },
         Op::Return { src } => Some(Instruction::ret(*src)),
         Op::CallMethod {
             dst,
@@ -1044,16 +1064,18 @@ mod tests {
                 args: vec![],
                 spreads: vec![]
             }),
-            None
+            Some(Instruction::call_zero_args(0, 4))
         );
-        assert!(lower_compact(&Op::Call {
-            dst: 0,
-            callee: 4,
-            receiver: None,
-            args: vec![1],
-            spreads: vec![false]
-        })
-        .is_none());
+        assert_eq!(
+            lower_compact(&Op::Call {
+                dst: 0,
+                callee: 4,
+                receiver: None,
+                args: vec![1],
+                spreads: vec![false]
+            }),
+            Some(Instruction::call_one_arg(0, 4, 1))
+        );
     }
     #[test]
     fn lowering_and_encoding_selection_share_operand_widths() {
