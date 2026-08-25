@@ -225,7 +225,7 @@ pub(crate) fn execute_set_named_cached(
                     crate::execution_trace::Event::NamedSetLayoutMismatch,
                 );
             } else if let Some((_, crate::value::Value::BindingCell(cell))) =
-                data.hot_properties().get(slot as usize)
+                data.hot_properties().slot_entry(slot as usize)
             {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
                 cell.store(crate::execute::read_register(registers, src)?);
