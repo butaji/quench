@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "metrics": {
+    "slow_method_per_iteration": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l3.top_slow",
+          "key": "op",
+          "value": "CallMethod"
+        }
+      },
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "max": 0.01
+    },
+    "environment_per_iteration": {
+      "numerator": "heap_lifecycle.environment.allocated",
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "max": 0.01
+    },
+    "leaf_hit_per_iteration": {
+      "numerator": "lanes.l1.leaf.hit",
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "min": 0.99
+    }
+  }
+}
