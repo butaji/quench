@@ -609,7 +609,7 @@ pub fn namespace_bindings(
     out.push(("Float16Array".to_string(), float16_constructor));
     out.push((
         "require".to_string(),
-        crate::host::capability(crate::registry::NodeSpec::new("require", 0x1200)),
+        crate::host::capability(SPEC_REQUIRE),
     ));
     out.push((
         "__quench_cjs_wrap__".to_string(),
