@@ -60,6 +60,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
         crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
         crate::ops::Builtin::TemporalDurationRound => Some(round(receiver, arguments.first())),
+        crate::ops::Builtin::TemporalDurationTotal => Some(total(receiver, arguments.first())),
         crate::ops::Builtin::TemporalDurationToLocaleString => Some(
             crate::intl::duration::format_temporal_duration(receiver, arguments),
         ),
@@ -96,6 +97,52 @@ pub(crate) fn execute(
         }
         _ => None,
     }
+}
+
+fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    let unit = match options {
+        Some(Value::String(unit)) => unit.clone(),
+        Some(value) => match crate::execute::get_property_result(value, "unit")? {
+            Value::String(unit) => unit,
+            _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
+        },
+        None => {
+            return Err(crate::value::error::throw_type_error(
+                "Options must be an object",
+            ))
+        }
+    };
+    let unit = unit.strip_suffix('s').unwrap_or(&unit);
+    let factor = match unit {
+        "day" => 86_400_000_000_000.0,
+        "hour" => 3_600_000_000_000.0,
+        "minute" => 60_000_000_000.0,
+        "second" => 1_000_000_000.0,
+        "millisecond" => 1_000_000.0,
+        "microsecond" => 1_000.0,
+        "nanosecond" => 1.0,
+        _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
+    };
+    if duration_field(object, "years") != 0.0 || duration_field(object, "months") != 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "relativeTo required",
+        ));
+    }
+    let nanos = [
+        ("weeks", 7.0 * 86_400_000_000_000.0),
+        ("days", 86_400_000_000_000.0),
+        ("hours", 3_600_000_000_000.0),
+        ("minutes", 60_000_000_000.0),
+        ("seconds", 1_000_000_000.0),
+        ("milliseconds", 1_000_000.0),
+        ("microseconds", 1_000.0),
+        ("nanoseconds", 1.0),
+    ]
+    .iter()
+    .map(|(name, factor)| duration_field(object, name) * factor)
+    .sum::<f64>();
+    Ok(Value::Number(nanos / factor))
 }
 
 fn field_getter(receiver: Option<&Value>, field: &str) -> Result<Value, VmError> {

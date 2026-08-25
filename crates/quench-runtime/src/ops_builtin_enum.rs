@@ -139,7 +139,7 @@ pub enum Builtin {
     TemporalZonedDateTimeFrom, TemporalZonedDateTimeCompare,
     TemporalDuration, TemporalDurationPrototype,
     TemporalDurationFrom, TemporalDurationCompare, TemporalDurationAdd, TemporalDurationSubtract,
-    TemporalDurationAbs, TemporalDurationNegated, TemporalDurationRound,
+    TemporalDurationAbs, TemporalDurationNegated, TemporalDurationRound, TemporalDurationTotal,
     TemporalDurationYearsGetter, TemporalDurationMonthsGetter, TemporalDurationWeeksGetter,
     TemporalDurationDaysGetter, TemporalDurationHoursGetter, TemporalDurationMinutesGetter,
     TemporalDurationSecondsGetter, TemporalDurationMillisecondsGetter,
