@@ -92,6 +92,9 @@ pub(crate) fn to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> 
     if matches!(value, Value::Builtin(crate::ops::Builtin::NumberPrototype)) {
         return Ok(Value::Number(0.0));
     }
+    if matches!(value, Value::Builtin(crate::ops::Builtin::StringPrototype)) {
+        return Ok(Value::String(String::new()));
+    }
     if matches!(value, Value::Builtin(_)) && !is_symbol(value) {
         return Ok(crate::builtins::function_prototype_to_string(Some(value)));
     }
