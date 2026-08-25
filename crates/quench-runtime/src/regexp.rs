@@ -5,7 +5,8 @@ include!("regexp_cache.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
-    let rewritten = split_surrogate_classes(pattern);
+    let normalized = normalize_named_group_escapes(pattern);
+    let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| {
         Regex::with_flags(&rewritten, reg_flags)
@@ -25,10 +26,73 @@ pub(crate) fn ensure_compiled(pattern: &str, flags: &str) -> Result<(), String> 
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
     let reg_flags: Flags = flags.into();
-    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
-        .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
-        .map(|_| ())
-        .map_err(|error| format!("SyntaxError: {error}"))
+    let normalized = normalize_named_group_escapes(pattern);
+    catch_unwind(AssertUnwindSafe(|| {
+        Regex::with_flags(&normalized, reg_flags)
+    }))
+    .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
+    .map(|_| ())
+    .map_err(|error| format!("SyntaxError: {error}"))
+}
+
+fn normalize_named_group_escapes(pattern: &str) -> String {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    let mut in_class = false;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            if !in_class && chars.get(index + 1) == Some(&'k') && chars.get(index + 2) == Some(&'<')
+            {
+                if let Some(close) = chars[index + 3..].iter().position(|ch| *ch == '>') {
+                    let close = index + 3 + close;
+                    output.push_str("\\k<");
+                    append_decoded_group_name(&mut output, &chars[index + 3..close]);
+                    output.push('>');
+                    index = close + 1;
+                    continue;
+                }
+            }
+            output.push(chars[index]);
+            if let Some(next) = chars.get(index + 1) {
+                output.push(*next);
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if chars[index] == '[' {
+            in_class = true;
+        } else if chars[index] == ']' {
+            in_class = false;
+        }
+        if !in_class
+            && chars.get(index..index + 3) == Some(&['(', '?', '<'])
+            && !matches!(chars.get(index + 3), Some('=' | '!'))
+        {
+            if let Some(close) = chars[index + 3..].iter().position(|ch| *ch == '>') {
+                let close = index + 3 + close;
+                output.push_str("(?<");
+                append_decoded_group_name(&mut output, &chars[index + 3..close]);
+                output.push('>');
+                index = close + 1;
+                continue;
+            }
+        }
+        output.push(chars[index]);
+        index += 1;
+    }
+    output
+}
+
+fn append_decoded_group_name(output: &mut String, name: &[char]) {
+    let spelling: String = name.iter().collect();
+    let Some(decoded) = decode_identifier_escapes(&spelling) else {
+        output.extend(name.iter());
+        return;
+    };
+    output.push_str(&decoded);
 }
 
 pub fn execute_builtin(
@@ -248,7 +312,8 @@ fn find_match<'a>(
 ) -> Result<Option<regress::Match>, VmError> {
     catch_unwind(AssertUnwindSafe(|| {
         regex
-            .find(text)
+            .find_from(text, 0)
+            .next()
             .filter(|matched| !sticky || matched.start() == 0)
     }))
     .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
