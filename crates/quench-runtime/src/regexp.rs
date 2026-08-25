@@ -675,27 +675,6 @@ fn simple_character_class_test(source: &str, input: &str) -> Option<bool> {
     if !matches!(class, "d" | "D" | "s" | "S" | "w" | "W") {
         return None;
     }
-    let is_ecma_whitespace = |character: char| {
-        matches!(
-            character,
-            '\u{0009}'
-                | '\u{000A}'
-                | '\u{000B}'
-                | '\u{000C}'
-                | '\u{000D}'
-                | '\u{0020}'
-                | '\u{00A0}'
-                | '\u{1680}'
-                | '\u{2000}'
-                ..='\u{200A}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-                    | '\u{202F}'
-                    | '\u{205F}'
-                    | '\u{3000}'
-                    | '\u{FEFF}'
-        )
-    };
     let matches_class = |character: char| match class {
         "d" => character.is_ascii_digit(),
         "D" => !character.is_ascii_digit(),
@@ -706,6 +685,28 @@ fn simple_character_class_test(source: &str, input: &str) -> Option<bool> {
         _ => false,
     };
     Some(input.chars().any(matches_class))
+}
+
+pub(crate) fn is_ecma_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'
+            | '\u{000A}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000D}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
 }
 
 pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
