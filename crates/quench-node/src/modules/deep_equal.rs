@@ -96,6 +96,16 @@ fn compare_partial(
     }
 }
 
+fn is_date_value(value: &Value) -> bool {
+    matches!(value, Value::Object(_))
+        && execute::has_own_property(value, "timeValue")
+        && matches!(execute::get_prototype_of(value), Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype)))
+}
+
+fn same_property(left: &Value, right: &Value, key: &str) -> bool {
+    execute::same_value(&execute::get_property(left, key), &execute::get_property(right, key))
+}
+
 /// `util.isDeepStrictEqual(left, right, options)` — `skip_prototype`
 /// mirrors Node's `skipPrototype` option.
 pub fn deep_equal_opts(
@@ -128,6 +138,23 @@ fn compare(
         return Ok(true);
     }
     match (left, right) {
+        (Value::Object(_), Value::Object(_))
+            if is_date_value(left) && is_date_value(right) =>
+        {
+            if !same_property(left, right, "timeValue") {
+                return Ok(false);
+            }
+            compare_objects(left, right, strict, skip_prototype, memo)
+        }
+        (Value::Object(_), Value::Object(_))
+            if quench_runtime::regexp::has_regexp_internal_slot(left)
+                && quench_runtime::regexp::has_regexp_internal_slot(right) =>
+        {
+            if !same_property(left, right, "source") || !same_property(left, right, "flags") {
+                return Ok(false);
+            }
+            compare_objects(left, right, strict, skip_prototype, memo)
+        }
         (Value::Array(_), Value::Array(_)) => {
             compare_arrays(left, right, strict, skip_prototype, memo)
         }
