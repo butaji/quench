@@ -264,6 +264,51 @@ fn run(id: &str) -> u64 {
             }
             black_box(output[0] as u64 ^ (output[2 * LIMBS - 2] as u64).rotate_left(17))
         }
+        "packed-smi-montgomery" => {
+            const LIMBS: usize = 128;
+            let modulus = (0..LIMBS)
+                .map(|i| (1_234_567 + i as i32 * 101) & 0x0fff_ffff)
+                .collect::<Vec<_>>();
+            let mut values = (0..2 * LIMBS + 2)
+                .map(|i| (7_654_321 + i as i32 * 17) & 0x0fff_ffff)
+                .collect::<Vec<_>>();
+            let (mpl, mph, um) = (12_345_i32, 2_345_i32, 0x3fff_i32);
+            for _ in 0..2_000 {
+                for i in 0..LIMBS {
+                    let source = values[i];
+                    let j = source & 0x7fff;
+                    let high = source >> 15;
+                    let mixed = (j * mph + high * mpl) & um;
+                    let u0 = (j * mpl + mixed.wrapping_shl(15)) & 0x0fff_ffff;
+                    let (x_low, x_high) = (u0 & 0x3fff, u0 >> 14);
+                    let mut carry = 0_i32;
+                    for offset in 0..LIMBS {
+                        let input = modulus[offset];
+                        let (low, high) = (input & 0x3fff, input >> 14);
+                        let product = x_high * low + high * x_low;
+                        let index = i + offset;
+                        let value = x_low * low
+                            + ((product & 0x3fff) << 14)
+                            + values[index]
+                            + carry;
+                        carry = (value >> 28) + (product >> 14) + x_high * high;
+                        values[index] = value & 0x0fff_ffff;
+                    }
+                    let mut index = i + LIMBS;
+                    values[index] += carry;
+                    while values[index] >= 0x10000000 {
+                        values[index] -= 0x10000000;
+                        index += 1;
+                        values[index] += 1;
+                    }
+                }
+            }
+            black_box(
+                values[0] as u64
+                    ^ (values[LIMBS] as u64).rotate_left(17)
+                    ^ (values[2 * LIMBS - 1] as u64).rotate_left(31),
+            )
+        }
         _ => panic!("unknown L0 oracle: {id}"),
     }
 }

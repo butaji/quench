@@ -22,6 +22,14 @@ struct SquareLoopFact {
     carry: u16,
 }
 
+#[derive(Clone, Copy)]
+struct MontgomeryLoopFact {
+    receiver: u16,
+    value: u16,
+    value_array: u16,
+    index: u16,
+}
+
 thread_local! {
     static INTEGER_FUNCTION: std::cell::RefCell<Option<std::rc::Weak<crate::value::FunctionValue>>> =
         const { std::cell::RefCell::new(None) };
@@ -32,35 +40,62 @@ pub(crate) fn run_montgomery_reduce_kernel(
     body: crate::machine::CodeView<'_>,
     update: crate::machine::CodeView<'_>,
 ) -> Option<crate::completion::Completion> {
-    recognize_montgomery_loop(test, body, update)?;
-    let environment = crate::locals::current();
-    let receiver = environment.get(184);
-    let x = environment.get(182);
-    let Value::Array(x_array) = crate::locals::resolved_replacement(environment.get(187)) else {
-        return None;
-    };
-    let m = crate::vm::proven_own_data(&receiver, "m")?;
-    let m_t = kernel_index(crate::vm::proven_own_data(&m, "t")?.as_number()?)?;
-    let mpl = crate::vm::proven_own_data(&receiver, "mpl")?.as_number()?;
-    let mph = crate::vm::proven_own_data(&receiver, "mph")?.as_number()?;
-    let um = crate::vm::proven_own_data(&receiver, "um")?.as_number()?;
-    let Value::Array(m_array) =
-        crate::locals::resolved_replacement(crate::vm::proven_own_data(&m, "array")?)
-    else {
-        return None;
-    };
-    let Value::Array(actual_x_array) =
-        crate::locals::resolved_replacement(crate::vm::proven_own_data(&x, "array")?)
-    else {
-        return None;
-    };
-    std::rc::Rc::ptr_eq(&x_array, &actual_x_array).then_some(())?;
-    proven_integer_method(&m, "am")?;
-    let x_array = packed_numeric_array(x_array)?;
-    let m_array = packed_numeric_array(m_array)?;
-    execute_montgomery_loop(&x_array, &m_array, m_t, [mpl, mph, um])?;
-    environment.set(188, Value::Number(m_t as f64));
-    Some(crate::completion::Completion::Normal)
+    let fact = recognize_montgomery_loop(test, body, update)?;
+    let result: Result<crate::completion::Completion, &'static str> = (|| {
+        let environment = crate::locals::current();
+        let receiver = environment.get(fact.receiver);
+        let x = environment.get(fact.value);
+        let Value::Array(x_array) =
+            crate::locals::resolved_replacement(environment.get(fact.value_array))
+        else {
+            return Err("crypto_montgomery_x_array_local");
+        };
+        let m = crate::vm::proven_own_data(&receiver, "m").ok_or("crypto_montgomery_receiver")?;
+        let m_t = crate::vm::proven_own_data(&m, "t")
+            .and_then(|value| value.as_number())
+            .and_then(kernel_index)
+            .ok_or("crypto_montgomery_length")?;
+        let mpl = crate::vm::proven_own_data(&receiver, "mpl")
+            .and_then(|value| value.as_number())
+            .ok_or("crypto_montgomery_mpl")?;
+        let mph = crate::vm::proven_own_data(&receiver, "mph")
+            .and_then(|value| value.as_number())
+            .ok_or("crypto_montgomery_mph")?;
+        let um = crate::vm::proven_own_data(&receiver, "um")
+            .and_then(|value| value.as_number())
+            .ok_or("crypto_montgomery_um")?;
+        let Value::Array(m_array) = crate::locals::resolved_replacement(
+            crate::vm::proven_own_data(&m, "array")
+                .ok_or("crypto_montgomery_modulus_array_property")?,
+        ) else {
+            return Err("crypto_montgomery_modulus_array");
+        };
+        let Value::Array(actual_x_array) = crate::locals::resolved_replacement(
+            crate::vm::proven_own_data(&x, "array").ok_or("crypto_montgomery_x_array_property")?,
+        ) else {
+            return Err("crypto_montgomery_x_array");
+        };
+        std::rc::Rc::ptr_eq(&x_array, &actual_x_array)
+            .then_some(())
+            .ok_or("crypto_montgomery_x_identity")?;
+        proven_integer_method(&m, "am").ok_or("crypto_montgomery_method")?;
+        let x_array = packed_numeric_array(x_array).ok_or("crypto_montgomery_x_kind")?;
+        let m_array = packed_numeric_array(m_array).ok_or("crypto_montgomery_modulus_kind")?;
+        execute_montgomery_loop(&x_array, &m_array, m_t, [mpl, mph, um])
+            .ok_or("crypto_montgomery_bounds")?;
+        environment.set(fact.index, Value::Number(m_t as f64));
+        Ok(crate::completion::Completion::Normal)
+    })();
+    match result {
+        Ok(completion) => {
+            crate::execution_trace::kernel("crypto_montgomery_reduce", false);
+            Some(completion)
+        }
+        Err(reason) => {
+            crate::execution_trace::kernel(reason, true);
+            None
+        }
+    }
 }
 
 pub(crate) fn run_square_loop_kernel(
@@ -188,44 +223,34 @@ fn execute_montgomery_loop(
     constants: [f64; 3],
 ) -> Option<()> {
     let [mpl, mph, um] = constants;
-    let values = x.numeric_cells()?;
-    (length <= m.logical_len() && length.checked_mul(2)? <= values.len()).then_some(())?;
+    let (mpl, mph, um) = (exact_i32(mpl)?, exact_i32(mph)?, exact_i32(um)?);
+    let modulus = m.limb28_kernel_words()?;
+    let mut values = x.limb28_kernel_words_mut()?;
+    (length <= modulus.len() && length.checked_mul(2)? <= values.len()).then_some(())?;
     for i in 0..length {
-        let source = values.get(i)?.get();
-        let j = crate::vm::vm_arithmetic::numeric_to_int32(source) & 0x7fff;
-        let high = crate::vm::vm_arithmetic::numeric_to_int32(source) >> 15;
-        let mixed =
-            crate::vm::vm_arithmetic::numeric_to_int32(f64::from(j) * mph + f64::from(high) * mpl)
-                & crate::vm::vm_arithmetic::numeric_to_int32(um);
+        let source = *values.get(i)? as i32;
+        let j = source & 0x7fff;
+        let high = source >> 15;
+        let mixed = (j * mph + high * mpl) & um;
         let shifted = mixed.wrapping_shl(15);
-        let u0 =
-            crate::vm::vm_arithmetic::numeric_to_int32(f64::from(j) * mpl + f64::from(shifted))
-                & 0x0fff_ffff;
-        let (low, high) = split_integer_word(u0);
-        let (_, _, carry, _, _, _) =
-            multiply_integer_cells(m, x, [0.0, i as f64, 0.0, low, high, length as f64], length)?;
-        propagate_montgomery_carry(&values, i.checked_add(length)?, carry)?;
+        let u0 = (j * mpl + shifted) & 0x0fff_ffff;
+        let carry = multiply_limb28_words(&modulus, &mut values, 0, i, 0, u0, length)?;
+        propagate_montgomery_carry_words(&mut values, i.checked_add(length)?, carry)?;
     }
+    crate::execution_trace::crypto_kernel_iterations(length.checked_mul(length)?);
     Some(())
 }
 
-fn split_integer_word(value: i32) -> (f64, f64) {
-    (f64::from(value & 0x3fff), f64::from(value >> 14))
-}
-
-fn propagate_montgomery_carry(
-    values: &[std::cell::Cell<f64>],
+fn propagate_montgomery_carry_words(
+    values: &mut [f64],
     mut index: usize,
-    carry: f64,
+    carry: i32,
 ) -> Option<()> {
-    let slot = values.get(index)?;
-    slot.set(slot.get() + carry);
-    while values.get(index)?.get() >= 268_435_456.0 {
-        let slot = values.get(index)?;
-        slot.set(slot.get() - 268_435_456.0);
+    *values.get_mut(index)? += f64::from(carry);
+    while *values.get(index)? >= 268_435_456.0 {
+        *values.get_mut(index)? -= 268_435_456.0;
         index = index.checked_add(1)?;
-        let next = values.get(index)?;
-        next.set(next.get() + 1.0);
+        *values.get_mut(index)? += 1.0;
     }
     Some(())
 }
@@ -245,35 +270,27 @@ fn recognize_montgomery_loop(
     test: crate::machine::CodeView<'_>,
     body: crate::machine::CodeView<'_>,
     update: crate::machine::CodeView<'_>,
-) -> Option<()> {
+) -> Option<MontgomeryLoopFact> {
     use crate::ir::Opcode::*;
-    const TEST: [crate::ir::Opcode; 6] = [
-        LoadLocalChecked,
-        LoadLocalChecked,
-        GetN,
-        GetN,
-        Binary,
-        Return,
-    ];
+    const TEST: [crate::ir::Opcode; 6] = [LoadLocal, LoadLocalChecked, GetN, GetN, Binary, Return];
     const UPDATE: [crate::ir::Opcode; 2] = [UpdateLocal, Return];
-    const BODY: [crate::ir::Opcode; 66] = [
-        LoadLocalChecked,
-        LoadLocalChecked,
+    const BODY: [crate::ir::Opcode; 64] = [
+        LoadLocal,
+        LoadLocal,
         AGetI,
         LoadConst,
         Binary,
-        Slow,
-        Slow,
-        LoadLocalChecked,
-        LoadLocalChecked,
-        GetN,
-        Mul,
-        LoadLocalChecked,
+        InitLocal,
+        LoadLocal,
         LoadLocalChecked,
         GetN,
         Mul,
+        LoadLocal,
         LoadLocalChecked,
-        LoadLocalChecked,
+        GetN,
+        Mul,
+        LoadLocal,
+        LoadLocal,
         AGetI,
         LoadConst,
         Binary,
@@ -287,20 +304,19 @@ fn recognize_montgomery_loop(
         LoadConst,
         Binary,
         Add,
-        LoadLocalChecked,
+        LoadLocal,
         Binary,
-        Slow,
-        Slow,
-        LoadLocalChecked,
+        InitLocal,
+        LoadLocal,
         LoadLocalChecked,
         GetN,
         GetN,
         Add,
-        StoreLocalChecked,
+        StoreLocal,
         Move,
-        LoadLocalChecked,
+        LoadLocal,
         Move,
-        LoadLocalChecked,
+        LoadLocal,
         Move,
         Slow,
         Slow,
@@ -309,14 +325,14 @@ fn recognize_montgomery_loop(
         GetN,
         GetN,
         LoadConst,
-        LoadLocalChecked,
-        LoadLocalChecked,
-        LoadLocalChecked,
+        LoadLocal,
+        LoadLocal,
+        LoadLocal,
         LoadConst,
         LoadLocalChecked,
         GetN,
         GetN,
-        Slow,
+        CallN,
         Add,
         ASetI,
         Move,
@@ -328,27 +344,44 @@ fn recognize_montgomery_loop(
     code_has_shape(body, &BODY)?;
     code_has_shape(update, &UPDATE)?;
     for (pc, name) in [
-        (9, "mpl"),
-        (13, "mph"),
-        (21, "mpl"),
-        (25, "um"),
-        (36, "m"),
-        (37, "t"),
-        (49, "m"),
-        (50, "am"),
-        (57, "m"),
-        (58, "t"),
+        (8, "mpl"),
+        (12, "mph"),
+        (20, "mpl"),
+        (24, "um"),
+        (34, "m"),
+        (35, "t"),
+        (47, "m"),
+        (48, "am"),
+        (55, "m"),
+        (56, "t"),
     ] {
         named_is(body, pc, name)?;
     }
     constant_number(body, 3, 0x7fff as f64)?;
-    constant_number(body, 18, 15.0)?;
-    constant_number(body, 27, 15.0)?;
-    (test.instruction(0)?.b == 188
-        && body.instruction(0)?.b == 187
-        && body.instruction(8)?.b == 184
-        && update.instruction(0)?.c == 188)
-        .then_some(())
+    constant_number(body, 17, 15.0)?;
+    constant_number(body, 26, 15.0)?;
+    let index = test.instruction(0)?.b;
+    let receiver = test.instruction(1)?.b;
+    let value_array = body.instruction(0)?.b;
+    let value = body.instruction(51)?.b;
+    (body.instruction(1)?.b == index
+        && body.instruction(7)?.b == receiver
+        && body.instruction(11)?.b == receiver
+        && body.instruction(19)?.b == receiver
+        && body.instruction(23)?.b == receiver
+        && body.instruction(33)?.b == receiver
+        && body.instruction(46)?.b == receiver
+        && body.instruction(54)?.b == receiver
+        && body.instruction(14)?.b == value_array
+        && body.instruction(39)?.b == value_array
+        && update.instruction(0)?.c == index
+        && body.operand_window_at(57)?.len() == 6)
+        .then_some(MontgomeryLoopFact {
+            receiver,
+            value,
+            value_array,
+            index,
+        })
 }
 
 fn recognize_square_loop(
