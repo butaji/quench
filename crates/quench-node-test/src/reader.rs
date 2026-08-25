@@ -18,6 +18,7 @@ pub enum NodeOutcome {
 pub struct NodeFixture {
     pub path: PathBuf,
     pub source: String,
+    pub argv: Vec<String>,
 }
 
 impl NodeFixture {
@@ -25,11 +26,19 @@ impl NodeFixture {
         let source =
             std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         let path = path.canonicalize().unwrap_or(path);
-        Ok(Self { path, source })
+        Ok(Self {
+            path,
+            source,
+            argv: Vec::new(),
+        })
     }
 
     pub fn from_source(path: PathBuf, source: String) -> Self {
-        Self { path, source }
+        Self {
+            path,
+            source,
+            argv: Vec::new(),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -78,8 +87,12 @@ impl NodeRunner {
     pub fn run(&mut self, fixture: &NodeFixture) -> NodeOutcome {
         // Fresh host per fixture with `node <file>` argv semantics.
         let script = fixture.path.to_string_lossy().into_owned();
-        let (host, context) =
-            quench_node::host::install_script(RealmId::ROOT, self.sink.clone(), &script);
+        let (host, context) = quench_node::host::install_script_with_args(
+            RealmId::ROOT,
+            self.sink.clone(),
+            &script,
+            &fixture.argv,
+        );
         self.host = host;
         self.context = context;
         if let Some(dir) = fixture.path.parent() {
@@ -211,9 +224,9 @@ fn rejection_mode(source: &str) -> quench_node::modules::process::UnhandledRejec
         .lines()
         .find_map(|line| line.trim().strip_prefix("// Flags:"))
         .and_then(|flags| {
-            flags.split_whitespace().find_map(|flag| {
-                flag.strip_prefix("--unhandled-rejections=")
-            })
+            flags
+                .split_whitespace()
+                .find_map(|flag| flag.strip_prefix("--unhandled-rejections="))
         });
     match mode {
         Some("none") => quench_node::modules::process::UnhandledRejectionMode::None,
@@ -238,7 +251,8 @@ mod tests {
 
     #[test]
     fn strips_only_requested_v8_probe_statements() {
-        let source = "// Flags: --allow-natives-syntax\neval('%PrepareFunctionForOptimization(f)');\nf();\n";
+        let source =
+            "// Flags: --allow-natives-syntax\neval('%PrepareFunctionForOptimization(f)');\nf();\n";
         let normalized = strip_v8_native_probes(source);
         assert!(!normalized.contains("PrepareFunctionForOptimization"));
         assert!(normalized.contains("f();"));
