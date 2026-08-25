@@ -780,6 +780,7 @@ pub fn assert_dispatch(cap: u16) -> Option<CallHandler> {
 pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
     use handlers::*;
     Some(match cap {
+        CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm::construct_run_in_new_context,
         CAP_INTERNAL_JS_STREAM => internal_js_stream_construct,
         CAP_VM_SOURCE_TEXT_MODULE => vm_source_text_module_construct,
         CAP_EVENTS_NEW => events_new,
