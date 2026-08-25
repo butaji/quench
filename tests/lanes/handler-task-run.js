@@ -1,10 +1,19 @@
 var KIND_WORK = 1;
 var DATA_SIZE = 4;
+var STATE_SUSPENDED = 2;
 var calls = 0;
-var scheduler = {
-  queue: function (packet) { calls++; return packet; },
-  suspendCurrent: function () { calls++; return null; },
+function TaskControlBlock() { this.state = 0; }
+TaskControlBlock.prototype.markAsSuspended = function () {
+  this.state = this.state | STATE_SUSPENDED;
 };
+var currentTcb = new TaskControlBlock();
+function Scheduler(current) { this.currentTcb = current; }
+Scheduler.prototype.queue = function (packet) { calls++; return packet; };
+Scheduler.prototype.suspendCurrent = function () {
+  this.currentTcb.markAsSuspended();
+  return this.currentTcb;
+};
+var scheduler = new Scheduler(currentTcb);
 function Packet(kind) { this.link = null; this.kind = kind; this.a1 = 0; this.a2 = new Array(DATA_SIZE); }
 Packet.prototype.addTo = function (queue) {
   this.link = null;
@@ -44,7 +53,10 @@ var checksum = 0;
 for (var i = 0; i < 20000; i++) {
   var device = new Packet(0);
   var result = task.run(device);
-  checksum += result == null ? 0 : result.a1;
+  checksum += result == null || result === currentTcb ? 0 : result.a1;
   if (task.v1 == null) { work = new Packet(KIND_WORK); for (var k = 0; k < DATA_SIZE; k++) work.a2[k] = k + 3; task.run(work); }
 }
-console.log(checksum + calls);
+task.v1 = null;
+task.v2 = null;
+for (var s = 0; s < 20000; s++) task.run(null);
+console.log(checksum + calls + currentTcb.state);
