@@ -55,9 +55,9 @@ fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value
         if matches!(result, Value::Null) {
             break;
         }
-        let full = crate::execute::get_property_result(&result, "0")?;
-        matched.push(full.clone());
-        let empty = matches!(&full, Value::String(value) if value.is_empty());
+        let full = crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
+        matched.push(Value::String(full.clone()));
+        let empty = full.is_empty();
         if empty {
             let current = extract_last_index(receiver)?;
             if previous.is_some_and(|previous| current > previous) {
@@ -145,10 +145,46 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         return replace_with_callable(receiver, &s, &replacement);
     }
     let replacement = crate::conversion::to_string(&replacement)?;
+    if let Some(target) = surrogate_alternative_pattern(&extract_source(receiver)) {
+        if global && !unicode_mode(&flags) && !replacement.contains('$') {
+            return replace_surrogate_units(&s, &replacement, target);
+        }
+    }
     if dynamic_exec(receiver, global) {
         return replace_with_exec(receiver, &s, &replacement, global);
     }
     replace_with_template(receiver, &s, &replacement)
+}
+
+fn surrogate_alternative_pattern(source: &str) -> Option<u16> {
+    if !source.starts_with("^|") {
+        return None;
+    }
+    let escape = source.strip_prefix("^|\\u")?;
+    if escape.len() != 4 {
+        return None;
+    }
+    let value = u16::from_str_radix(escape, 16).ok()?;
+    (0xDC00..=0xDFFF).contains(&value).then_some(value)
+}
+
+fn replace_surrogate_units(input: &str, replacement: &str, target: u16) -> Result<Value, VmError> {
+    let units: Vec<u16> = input.encode_utf16().collect();
+    let replacement: Vec<u16> = replacement.encode_utf16().collect();
+    let mut output = Vec::with_capacity(units.len() + replacement.len());
+    let mut next = 0;
+    for index in 0..=units.len() {
+        let empty_start = index == 0;
+        let surrogate = units.get(index).copied() == Some(target);
+        if !empty_start && !surrogate {
+            continue;
+        }
+        output.extend_from_slice(&units[next..index]);
+        output.extend_from_slice(&replacement);
+        next = if empty_start { index } else { index + 1 };
+    }
+    output.extend_from_slice(&units[next..]);
+    Ok(crate::strings::from_units(output))
 }
 
 fn observable_flags(receiver: &Value) -> Result<String, VmError> {

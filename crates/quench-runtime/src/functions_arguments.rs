@@ -342,8 +342,13 @@ pub(crate) fn execute_target(
             // supplied by the caller is only relevant to an unbound method;
             // using it here made method properties (and host capabilities)
             // fail with "not callable" or an incompatible-receiver error.
+            let receiver = if crate::builtins::builtin_name(builtin).starts_with("get ") {
+                receiver
+            } else {
+                &bound.receiver
+            };
             crate::vm::with_realm(bound.realm, || {
-                execute_builtin_target(builtin, Some(&bound.receiver), arguments)
+                execute_builtin_target(builtin, Some(receiver), arguments)
             })
             .unwrap_or_else(|| execute_builtin_target(builtin, Some(&bound.receiver), arguments))
         }
