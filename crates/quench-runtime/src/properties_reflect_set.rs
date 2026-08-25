@@ -7,28 +7,6 @@ pub(crate) fn set_with_receiver(
     if !crate::value::is_object(receiver) {
         return Ok(false);
     }
-    if let crate::value::Value::BoundFunction(bound) = target {
-        if matches!(bound.target, crate::value::Value::Builtin(_))
-            && (matches!(key, "length" | "name")
-                || crate::builtins::descriptor_flag(target, key, "writable") == Some(false))
-        {
-            return Ok(false);
-        }
-    }
-    if let crate::value::Value::Builtin(builtin) = target {
-        if crate::builtins::object::is_intrinsic_prototype(*builtin)
-            && (matches!(key, "length" | "name")
-                || crate::builtins::descriptor_flag(target, key, "writable") == Some(false))
-        {
-            return Ok(false);
-        }
-    }
-    if matches!(target, crate::value::Value::Proxy(_)) {
-        return Ok(matches!(
-            crate::proxy::proxy_set(target, key, value, Some(receiver))?,
-            crate::value::Value::Boolean(true)
-        ));
-    }
     if crate::module_bindings::is_namespace(target)
         || crate::module_bindings::is_namespace(receiver)
     {

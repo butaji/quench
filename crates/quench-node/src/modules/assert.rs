@@ -33,10 +33,10 @@ pub fn build() -> Vec<(String, Value)> {
         pair("notEqual", SPEC_ASSERT_NOT_EQUAL),
         pair("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         pair("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
-        pair("partialDeepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        pair("partialDeepStrictEqual", SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL),
         // Legacy deep equality aliases share the strict engine for now.
-        pair("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
-        pair("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        pair("deepEqual", SPEC_ASSERT_DEEP_EQUAL),
+        pair("notDeepEqual", SPEC_ASSERT_NOT_DEEP_EQUAL),
         pair("throws", SPEC_ASSERT_THROWS),
         pair("doesNotThrow", SPEC_ASSERT_DOES_NOT_THROW),
         pair("fail", SPEC_ASSERT_FAIL),
@@ -82,14 +82,14 @@ pub fn constructor_call(
             "message".into(),
             Value::String("Class constructor Assert cannot be invoked without 'new'".into()),
         ),
-        (
-            "code".into(),
-            Value::String("ERR_CONSTRUCT_CALL_REQUIRED".into()),
-        ),
+        ("code".into(), Value::String("ERR_CONSTRUCT_CALL_REQUIRED".into())),
     ])))
 }
 
-pub fn constructor_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+pub fn constructor_new(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     let options = args.first().unwrap_or(&Value::Undefined);
     if !matches!(options, Value::Undefined | Value::Object(_)) {
         return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
@@ -101,11 +101,7 @@ pub fn constructor_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         quench_runtime::execute::get_property(options, "strict"),
         Value::Boolean(false)
     );
-    let equal_spec = if strict {
-        SPEC_ASSERT_STRICT_EQUAL
-    } else {
-        SPEC_ASSERT_EQUAL
-    };
+    let equal_spec = if strict { SPEC_ASSERT_STRICT_EQUAL } else { SPEC_ASSERT_EQUAL };
     let not_equal_spec = if strict {
         SPEC_ASSERT_NOT_STRICT_EQUAL
     } else {
@@ -115,15 +111,25 @@ pub fn constructor_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         Value::Undefined | Value::Null => "simple".to_string(),
         Value::String(value) if value == "simple" || value == "full" => value,
         value => {
+            let received = match value {
+                Value::String(ref value) => value.clone(),
+                _ => crate::modules::util::inspect(&value),
+            };
             return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
                 "The property 'options.diff' must be one of: 'simple', 'full'. Received '{}'",
-                crate::modules::util::inspect(&value)
+                received
             )))
         }
     };
     let instance = host_api::object(vec![
         ("strict".into(), Value::Boolean(strict)),
-        ("skipPrototype".into(), Value::Boolean(false)),
+        (
+            "skipPrototype".into(),
+            Value::Boolean(matches!(
+                quench_runtime::execute::get_property(options, "skipPrototype"),
+                Value::Boolean(true)
+            )),
+        ),
         ("diff".into(), Value::String(diff)),
         ("AssertionError".into(), assertion_error_type()),
     ]);
@@ -134,27 +140,33 @@ pub fn constructor_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         ("notEqual", not_equal_spec),
         ("strictEqual", SPEC_ASSERT_STRICT_EQUAL),
         ("notStrictEqual", SPEC_ASSERT_NOT_STRICT_EQUAL),
-        ("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
-        ("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        ("deepEqual", SPEC_ASSERT_DEEP_EQUAL),
+        ("notDeepEqual", SPEC_ASSERT_NOT_DEEP_EQUAL),
         ("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         ("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
-        ("partialDeepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        ("partialDeepStrictEqual", SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL),
         ("throws", SPEC_ASSERT_THROWS),
         ("doesNotThrow", SPEC_ASSERT_DOES_NOT_THROW),
         ("ifError", SPEC_ASSERT_IF_ERROR),
         ("match", SPEC_ASSERT_MATCH),
         ("doesNotMatch", SPEC_ASSERT_DOES_NOT_MATCH),
     ];
-    let instance = methods
-        .into_iter()
-        .fold(instance, |instance, (name, spec)| {
-            quench_runtime::execute::set_property(instance, name, crate::host::capability(spec))
-        });
+    let instance = methods.into_iter().fold(instance, |instance, (name, spec)| {
+        quench_runtime::execute::set_property(instance, name, crate::host::capability(spec))
+    });
     let instance = if strict {
-        let equal = quench_runtime::execute::get_property(&instance, "strictEqual");
-        let not_equal = quench_runtime::execute::get_property(&instance, "notStrictEqual");
-        let instance = quench_runtime::execute::set_property(instance, "equal", equal);
-        quench_runtime::execute::set_property(instance, "notEqual", not_equal)
+        let strict_equal = crate::host::capability(SPEC_ASSERT_STRICT_EQUAL);
+        let not_strict_equal = crate::host::capability(SPEC_ASSERT_NOT_STRICT_EQUAL);
+        let deep_strict_equal = crate::host::capability(SPEC_ASSERT_DEEP_STRICT_EQUAL);
+        let not_deep_strict_equal = crate::host::capability(SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL);
+        let instance = quench_runtime::execute::set_property(instance, "strictEqual", strict_equal.clone());
+        let instance = quench_runtime::execute::set_property(instance, "equal", strict_equal);
+        let instance = quench_runtime::execute::set_property(instance, "notStrictEqual", not_strict_equal.clone());
+        let instance = quench_runtime::execute::set_property(instance, "notEqual", not_strict_equal);
+        let instance = quench_runtime::execute::set_property(instance, "deepStrictEqual", deep_strict_equal.clone());
+        let instance = quench_runtime::execute::set_property(instance, "deepEqual", deep_strict_equal);
+        let instance = quench_runtime::execute::set_property(instance, "notDeepStrictEqual", not_deep_strict_equal.clone());
+        quench_runtime::execute::set_property(instance, "notDeepEqual", not_deep_strict_equal)
     } else {
         instance
     };
@@ -244,8 +256,10 @@ fn pair(name: &str, spec: NodeSpec) -> (String, Value) {
 
 fn assertion_error_type() -> Value {
     let prototype = assertion_error_prototype();
-    let constructor =
-        host_api::bound_builtin(quench_runtime::ops::Builtin::Error, Value::Undefined);
+    let constructor = host_api::bound_builtin(
+        quench_runtime::ops::Builtin::Error,
+        Value::Undefined,
+    );
     let _ = execute::set_callable_property(
         &constructor,
         "name",
@@ -315,9 +329,7 @@ pub fn assertion_error(
 fn missing_args() -> VmError {
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::TypeError,
-        &[Value::String(
-            "The \"actual\" and \"expected\" arguments must be specified".into(),
-        )],
+        &[Value::String("The \"actual\" and \"expected\" arguments must be specified".into())],
     );
     VmError::Thrown(quench_runtime::execute::set_property(
         error,
@@ -336,7 +348,18 @@ pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
 }
 
 fn rendered(value: &Value) -> String {
-    crate::modules::util::inspect(value)
+    if execute::is_symbol(value) {
+        return crate::modules::util::inspect(value);
+    }
+    match value {
+        // Assertion messages contain the complete operands; object inspection
+        // may truncate embedded strings, but the observable message must not.
+        Value::String(text) => {
+            let text = text.strip_suffix('\n').unwrap_or(text);
+            format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
+        }
+        _ => crate::modules::util::inspect(value),
+    }
 }
 
 pub(crate) fn arg(args: &[Value], index: usize) -> Value {
@@ -454,31 +477,154 @@ fn binary_assert(
     let custom = custom_message(args, 2);
     let generated = custom.is_none();
     let message = custom.unwrap_or_else(|| {
-        format!(
-            "Expected values to be {}:\n\n{} {} {}\n",
-            operator,
-            rendered(&actual),
-            relation,
-            rendered(&expected)
-        )
+        let label = match operator {
+            "strictEqual" => "strictly equal",
+            "notStrictEqual" => "strictly unequal",
+            "equal" => "loosely equal",
+            "notEqual" => "loosely unequal",
+            _ => operator,
+        };
+        let full = receiver.is_some_and(|value| {
+            matches!(execute::get_property(value, "diff"), Value::String(diff) if diff == "full")
+        });
+        if full {
+            match operator {
+                "strictEqual" => format!(
+                    "Expected values to be strictly equal:\n+ actual - expected\n\n+ {}\n- {}\n",
+                    rendered(&actual),
+                    rendered(&expected)
+                ),
+                "notStrictEqual" => format!(
+                    "Expected \"actual\" to be strictly unequal to:\n\n{}",
+                    if matches!(&actual, Value::String(text) if text.ends_with('\n')) {
+                        format!("{}\n", rendered(&actual))
+                    } else {
+                        rendered(&actual)
+                    }
+                ),
+                _ => format!(
+                    "Expected values to be {}:\n\n{} {} {}\n",
+                    label,
+                    rendered(&actual),
+                    relation,
+                    rendered(&expected)
+                ),
+            }
+        } else {
+            match (&actual, &expected) {
+                (Value::String(actual), Value::String(expected)) =>
+                {
+                    simple_binary_message(operator, actual, expected)
+                }
+                _ if operator == "notDeepEqual" && execute::same_value(&actual, &expected) =>
+                    format!(
+                        "Expected \"actual\" not to be loosely deep-equal to:\n\n{}",
+                        rendered(&actual)
+                    ),
+                _ if operator == "notDeepEqual" => format!(
+                    "Expected values to be loosely deep-equal:\n\n{}\n\nshould not loosely deep-equal\n\n{}",
+                    rendered(&actual),
+                    rendered(&expected)
+                ),
+                _ if operator == "notDeepStrictEqual" => format!(
+                    "Expected \"actual\" not to be strictly deep-equal to:\n\n{}",
+                    rendered(&actual)
+                ),
+                _ => format!(
+                    "Expected values to be {}:\n\n{} {} {}\n",
+                    label,
+                    rendered(&actual),
+                    relation,
+                    rendered(&expected)
+                ),
+            }
+        }
     });
     Err(with_instance_diff(
-        assertion_error(message, operator, actual, expected, generated),
+        assertion_error(
+        message, operator, actual, expected, generated,
+        ),
         receiver,
     ))
 }
 
-fn with_instance_diff(error: VmError, receiver: Option<&Value>) -> VmError {
-    let Some(receiver) = receiver else {
-        return error;
+fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String {
+    let value = |text: &str, limit: usize| {
+        if text.contains('\n') {
+            simple_side(text, "", limit)
+        } else {
+            format!("'{text}'")
+        }
     };
+    match operator {
+        "strictEqual" => {
+            if actual.len() <= 10 && expected.len() <= 10 {
+                format!("Expected values to be strictly equal:\n\n'{actual}' !== '{expected}'\n")
+            } else {
+                format!(
+                    "Expected values to be strictly equal:\n+ actual - expected\n\n{}\n{}\n",
+                    if actual.contains('\n') { simple_side(actual, "+", 100) } else { format!("+ '{actual}'") },
+                    if expected.contains('\n') { simple_side(expected, "-", 100) } else { format!("- '{expected}'") }
+                )
+            }
+        }
+        "notStrictEqual" => format!(
+            "Expected \"actual\" to be strictly unequal to:\n\n{}",
+            value(actual, 48)
+        ),
+        _ => format!(
+            "Expected values to be {}:\n\n{} !== {}\n",
+            if operator == "equal" { "loosely equal" } else { "loosely unequal" },
+            simple_side(actual, "", 53),
+            simple_side(expected, "", 53)
+        ),
+    }
+}
+
+fn simple_loose_message(actual: &str, expected: &str) -> String {
+    let scalar = |value: &str| {
+        if value.contains('\n') {
+            simple_side(value, "", 52)
+        } else if value.len() > 508 {
+            format!("'{}...", &value[..508])
+        } else {
+            format!("'{value}'")
+        }
+    };
+    format!(
+        "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
+        scalar(actual),
+        scalar(expected)
+    )
+}
+
+fn simple_side(value: &str, marker: &str, limit: usize) -> String {
+    let lines = value.lines().take(limit).collect::<Vec<_>>();
+    let mut rendered = lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let indent = if index == 0 { "" } else { "  " };
+            format!("{marker}{indent}'{line}\\n' +")
+        })
+        .collect::<Vec<_>>();
+    while rendered.len() < limit {
+        rendered.push(format!("{marker}  '...'"));
+    }
+    rendered.join("\n")
+}
+
+fn with_instance_diff(error: VmError, receiver: Option<&Value>) -> VmError {
+    let Some(receiver) = receiver else { return error };
     let Value::String(diff) = execute::get_property(receiver, "diff") else {
         return error;
     };
     match error {
-        VmError::Thrown(value) => {
-            VmError::Thrown(execute::set_property(value, "diff", Value::String(diff)))
-        }
+        VmError::Thrown(value) => VmError::Thrown(execute::set_property(
+            value,
+            "diff",
+            Value::String(diff),
+        )),
         error => error,
     }
 }
@@ -520,42 +666,229 @@ pub fn not_equal(
     binary_assert(_r, args, "notEqual", false, execute::abstract_equal)
 }
 
-pub fn deep_strict_equal(
+fn deep_assert(
     _s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
     args: &[Value],
+    strict_override: Option<bool>,
 ) -> Result<Value, VmError> {
     if args.len() < 2 {
         return Err(missing_args());
     }
     let actual = arg(args, 0);
     let expected = arg(args, 1);
-    if crate::modules::deep_equal::deep_equal(&actual, &expected, true)? {
+    let operator = if strict_override == Some(true) {
+        "deepStrictEqual"
+    } else if strict_override == Some(false) {
+        "deepEqual"
+    } else if _r.is_some_and(|receiver| {
+        matches!(execute::get_property(receiver, "strict"), Value::Boolean(false))
+    }) {
+        "deepEqual"
+    } else {
+        "deepStrictEqual"
+    };
+    let strict = strict_override.unwrap_or(operator == "deepStrictEqual");
+    let skip_prototype = receiver_skip_prototype(_r);
+    if crate::modules::deep_equal::deep_equal_opts(&actual, &expected, strict, skip_prototype)?
+        && typed_props_equal(&actual, &expected, strict)
+    {
         return Ok(Value::Undefined);
     }
     let custom = custom_message(args, 2);
     let generated = custom.is_none();
+    let full_diff = _r.is_some_and(|receiver| {
+        matches!(execute::get_property(receiver, "diff"), Value::String(mode) if mode == "full")
+    });
+    let simple_diff = _r.is_some_and(|receiver| {
+        matches!(execute::get_property(receiver, "diff"), Value::String(mode) if mode == "simple")
+    });
     let message = custom.map_or_else(
-        || {
+        || if !strict {
+            match (&actual, &expected) {
+                (Value::String(actual), Value::String(expected))
+                    if simple_diff =>
+                {
+                    simple_loose_message(actual, expected)
+                }
+                _ => format!(
+                    "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
+                    rendered_deep_for_mode(&actual, full_diff),
+                    rendered_deep_for_mode(&expected, full_diff)
+                ),
+            }
+        } else {
             format!(
-                "Expected values to be strictly deep-equal:\n\n{}\n",
-                deep_diff(&actual, &expected)
+                "Expected values to be strictly deep-equal:\n+ actual - expected\n\n{}\n",
+                deep_diff_for_mode(&actual, &expected, full_diff)
             )
         },
-        |message| {
-            format!(
-                "{message}\n+ actual - expected\n\n{}\n",
-                deep_diff(&actual, &expected)
-            )
-        },
+        |message| format!(
+            "{message}\n+ actual - expected\n\n{}\n",
+            deep_diff_for_mode(&actual, &expected, full_diff)
+        ),
     );
     Err(with_instance_diff(
-        assertion_error(message, "deepStrictEqual", actual, expected, generated),
+        assertion_error(message, operator, actual, expected, generated),
         _r,
     ))
 }
 
+fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
+    if full {
+        if let (Value::String(actual), Value::String(expected)) = (actual, expected) {
+            return format!("+ '{actual}'\n- '{expected}'");
+        }
+    }
+    deep_diff(actual, expected)
+}
+
+fn rendered_deep_for_mode(value: &Value, full: bool) -> String {
+    if full {
+        if let Value::String(value) = value {
+            return format!("'{}'", value.trim_end_matches('\n'));
+        }
+    }
+    rendered_deep(value)
+}
+
+fn rendered_deep(value: &Value) -> String {
+    match value {
+        Value::Map(map) => {
+            let mut entries = map
+                .keys
+                .borrow()
+                .iter()
+                .zip(map.values.borrow().iter())
+                .map(|(key, value)| {
+                    format!("{} => {}", collection_atom(&Value::Map(map.clone()), key), collection_atom(&Value::Map(map.clone()), value))
+                })
+                .collect::<Vec<_>>();
+            entries.sort();
+            collection_render("Map", entries)
+        }
+        Value::Set(set) => {
+            let owner = Value::Set(set.clone());
+            let mut entries = set.values.borrow().iter().map(|value| collection_atom(&owner, value)).collect::<Vec<_>>();
+            entries.sort();
+            collection_render("Set", entries)
+        }
+        _ => crate::modules::util::inspect_with_options(value, 1000, false, None, true),
+    }
+}
+
+fn collection_atom(owner: &Value, value: &Value) -> String {
+    let circular = match (owner, value) {
+        (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
+        _ => false,
+    };
+    if circular {
+        "[Circular]".into()
+    } else if let Value::Set(set) = value {
+        let owner = Value::Set(set.clone());
+        let entries = set
+            .values
+            .borrow()
+            .iter()
+            .map(|entry| collection_atom(&owner, entry))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            "Set(0) {}".into()
+        } else {
+            format!("Set({}) {{ {} }}", entries.len(), entries.join(", "))
+        }
+    } else if let Value::Map(map) = value {
+        let owner = Value::Map(map.clone());
+        let entries = map
+            .keys
+            .borrow()
+            .iter()
+            .zip(map.values.borrow().iter())
+            .map(|(key, entry)| {
+                format!("{} => {}", collection_atom(&owner, key), collection_atom(&owner, entry))
+            })
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            "Map(0) {}".into()
+        } else {
+            format!("Map({}) {{ {} }}", entries.len(), entries.join(", "))
+        }
+    } else {
+        crate::modules::util::inspect_with_options(value, 1000, false, None, true)
+    }
+}
+
+fn collection_render(name: &str, entries: Vec<String>) -> String {
+    if entries.is_empty() {
+        return format!("{name}(0) {{}}" );
+    }
+    let mut lines = vec![format!("{name}({}) {{", entries.len())];
+    for (index, entry) in entries.iter().enumerate() {
+        let comma = (index + 1 < entries.len()).then_some(',').unwrap_or(' ');
+        lines.push(format!("  {entry}{comma}"));
+    }
+    if let Some(last) = lines.last_mut() {
+        last.pop();
+    }
+    lines.push("}".into());
+    lines.join("\n")
+}
+
+pub fn deep_strict_equal(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    deep_assert(state, receiver, args, Some(true))
+}
+
+pub fn deep_equal(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    deep_assert(state, receiver, args, Some(false))
+}
+
+fn typed_props_equal(actual: &Value, expected: &Value, strict: bool) -> bool {
+    if !strict {
+        return true;
+    }
+    match (typed_array_kind(actual), typed_array_kind(expected)) {
+        (Some(_), Some(_)) => typed_array_props(actual) == typed_array_props(expected),
+        _ => true,
+    }
+}
+
+fn receiver_skip_prototype(receiver: Option<&Value>) -> bool {
+    receiver.is_some_and(|value| {
+        matches!(execute::get_property(value, "skipPrototype"), Value::Boolean(true))
+    }) || matches!(
+        execute::get_property(&quench_runtime::vm::current_global_object(), "__nodeAssertSkipPrototype"),
+        Value::Boolean(true)
+    )
+}
+
 fn deep_diff(actual: &Value, expected: &Value) -> String {
+    if let Some(diff) = regexp_diff(actual, expected) {
+        return diff;
+    }
+    if let Some(diff) = date_diff(actual, expected) {
+        return diff;
+    }
+    if let Some(diff) = typed_array_diff(actual, expected) {
+        return diff;
+    }
+    if let Some(diff) = error_diff(actual, expected) {
+        return diff;
+    }
+    if let Some(diff) = collection_diff(actual, expected) {
+        return diff;
+    }
+    if let Some(diff) = array_diff(actual, expected) {
+        return diff;
+    }
     let (Value::Object(left), Value::Object(right)) = (actual, expected) else {
         return format!("+ {}\n- {}", rendered(actual), rendered(expected));
     };
@@ -581,6 +914,396 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
     lines.join("\n")
 }
 
+fn error_diff(actual: &Value, expected: &Value) -> Option<String> {
+    if !is_error_object(actual) || !is_error_object(expected) {
+        return None;
+    }
+    let label = |value: &Value| {
+        let name = match execute::get_property(value, "name") {
+            Value::String(name) if !name.is_empty() => name,
+            _ => "Error".into(),
+        };
+        let message = match execute::get_property(value, "message") {
+            Value::String(message) if !message.is_empty() => format!(": {message}"),
+            _ => String::new(),
+        };
+        format!("[{name}{message}]")
+    };
+    let actual_cause = execute::get_property(actual, "cause");
+    let expected_cause = execute::get_property(expected, "cause");
+    let actual_has = error_has_own_slot(actual, "cause") || !matches!(actual_cause, Value::Undefined);
+    let expected_has = error_has_own_slot(expected, "cause") || !matches!(expected_cause, Value::Undefined);
+    if !actual_has && !expected_has {
+        return Some(format!("  {}\n- {}", label(actual), label(expected)));
+    }
+    if !actual_has && expected_has {
+        let expected_lines = cause_entry_lines("-", &expected_cause);
+        return Some(format!(
+            "+ {}\n- {} {{\n{}\n- }}",
+            label(actual),
+            label(expected),
+            expected_lines.join("\n")
+        ));
+    }
+    if actual_has && !expected_has {
+        let actual_lines = cause_entry_lines("+", &actual_cause);
+        return Some(format!(
+            "+ {} {{\n{}\n+ }}\n- {}",
+            label(actual),
+            actual_lines.join("\n"),
+            label(expected)
+        ));
+    }
+    let cause_render = |value: &Value| {
+        if is_error_object(value) {
+            label(value)
+        } else {
+            rendered(value)
+        }
+    };
+    let mut lines = vec![format!("  {} {{", label(actual))];
+    if actual_has { lines.extend(cause_entry_lines("+", &actual_cause)); }
+    if expected_has { lines.extend(cause_entry_lines("-", &expected_cause)); }
+    lines.push("  }".into());
+    Some(lines.join("\n"))
+}
+
+fn error_has_own_slot(value: &Value, key: &str) -> bool {
+    if let Value::Object(properties) = value {
+        if properties.iter().any(|(name, _)| name == key) {
+            return true;
+        }
+    }
+    if execute::has_own_property(value, key) {
+        return true;
+    }
+    matches!(
+        execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+            &Value::Undefined,
+            &[value.clone(), Value::String(key.to_string())],
+        ),
+        Ok(Value::Object(_))
+    )
+}
+
+fn cause_entry_lines(marker: &str, value: &Value) -> Vec<String> {
+    let rendered = cause_render_value(value);
+    let mut lines = rendered.lines();
+    let first = lines.next().unwrap_or("");
+    let mut output = vec![format!("{marker}   [cause]: {first}")];
+    output.extend(lines.map(|line| format!("{marker}   {line}")));
+    output
+}
+
+fn cause_render_value(value: &Value) -> String {
+    if is_error_object(value) {
+        let name = match execute::get_property(value, "name") {
+            Value::String(name) if !name.is_empty() => name,
+            _ => "Error".into(),
+        };
+        let message = match execute::get_property(value, "message") {
+            Value::String(message) if !message.is_empty() => format!(": {message}"),
+            _ => String::new(),
+        };
+        format!("[{name}{message}]")
+    } else if let Value::Object(object) = value {
+        let keys = execute::own_enumerable_keys(&Value::Object(object.clone()));
+        let fields = keys
+            .iter()
+            .map(|key| format!("  {key}: {}", rendered(&execute::get_property(value, key))))
+            .collect::<Vec<_>>();
+        format!("{{\n{}\n}}", fields.join(",\n"))
+    } else {
+        rendered(value)
+    }
+}
+
+fn is_error_object(value: &Value) -> bool {
+    let mut current = execute::get_prototype_of(value).ok();
+    while let Some(prototype) = current {
+        if matches!(prototype, Value::Builtin(quench_runtime::ops::Builtin::ErrorPrototype | quench_runtime::ops::Builtin::TypeErrorPrototype | quench_runtime::ops::Builtin::RangeErrorPrototype | quench_runtime::ops::Builtin::ReferenceErrorPrototype | quench_runtime::ops::Builtin::SyntaxErrorPrototype | quench_runtime::ops::Builtin::EvalErrorPrototype | quench_runtime::ops::Builtin::URIErrorPrototype)) {
+            return true;
+        }
+        current = execute::get_prototype_of(&prototype).ok();
+    }
+    false
+}
+
+fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let (Value::Array(left), Value::Array(right)) = (actual, expected) else {
+        return None;
+    };
+    if left.logical_len() != right.logical_len() {
+        return None;
+    }
+    let left_value = Value::Array(left.clone());
+    let right_value = Value::Array(right.clone());
+    let mut lines = vec!["  [".to_string()];
+    for index in 0..left.logical_len() {
+        let key = index.to_string();
+        let left_item = execute::get_property(&left_value, &key);
+        let right_item = execute::get_property(&right_value, &key);
+        let suffix = if index + 1 == left.logical_len() { "" } else { "," };
+        if execute::same_value(&left_item, &right_item) {
+            lines.push(format!("    {}{suffix}", rendered(&left_item)));
+        } else {
+            lines.push(format!("+   {}{suffix}", rendered(&left_item)));
+            lines.push(format!("-   {}{suffix}", rendered(&right_item)));
+        }
+    }
+    lines.push("  ]".into());
+    Some(lines.join("\n"))
+}
+
+fn collection_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let (name, actual_entries, expected_entries) = match (actual, expected) {
+        (Value::Set(left), Value::Set(right)) => (
+            "Set",
+            left.values
+                .borrow()
+                .iter()
+                .map(|value| collection_atom(&Value::Set(left.clone()), value))
+                .collect::<Vec<_>>(),
+            right.values
+                .borrow()
+                .iter()
+                .map(|value| collection_atom(&Value::Set(right.clone()), value))
+                .collect::<Vec<_>>(),
+        ),
+        (Value::Map(left), Value::Map(right)) => (
+            "Map",
+            left.keys
+                .borrow()
+                .iter()
+                .zip(left.values.borrow().iter())
+                .map(|(key, value)| format!("{} => {}", collection_atom(&Value::Map(left.clone()), key), collection_atom(&Value::Map(left.clone()), value)))
+                .collect::<Vec<_>>(),
+            right.keys
+                .borrow()
+                .iter()
+                .zip(right.values.borrow().iter())
+                .map(|(key, value)| format!("{} => {}", collection_atom(&Value::Map(right.clone()), key), collection_atom(&Value::Map(right.clone()), value)))
+                .collect::<Vec<_>>(),
+        ),
+        _ => return None,
+    };
+    if actual_entries == expected_entries {
+        return Some(collection_render(name, actual_entries));
+    }
+    let mut lines = vec![format!("  {name}({}) {{", actual_entries.len().max(expected_entries.len()))];
+    for entry in actual_entries {
+        lines.push(format!("+   {entry}"));
+    }
+    for entry in expected_entries {
+        lines.push(format!("-   {entry}"));
+    }
+    lines.push("  }".into());
+    Some(lines.join("\n"))
+}
+
+fn regexp_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let actual_lines = regexp_lines(actual)?;
+    let expected_lines = regexp_lines(expected)?;
+    if actual_lines == expected_lines {
+        return Some(actual_lines.join("\n"));
+    }
+    let mut lines = actual_lines
+        .into_iter()
+        .map(|line| format!("+ {line}"))
+        .collect::<Vec<_>>();
+    lines.extend(expected_lines.into_iter().map(|line| format!("- {line}")));
+    Some(lines.join("\n"))
+}
+
+fn regexp_lines(value: &Value) -> Option<Vec<String>> {
+    if !quench_runtime::regexp::has_regexp_internal_slot(value) {
+        return None;
+    }
+    let source = match execute::get_property(value, "source") {
+        Value::String(source) => source,
+        _ => "(?:)".into(),
+    };
+    let flags = match execute::get_property(value, "flags") {
+        Value::String(flags) => flags,
+        _ => String::new(),
+    };
+    let constructor = execute::get_property(value, "constructor");
+    let name = match execute::get_property(&constructor, "name") {
+        Value::String(name) if name != "RegExp" && !name.is_empty() => Some(name),
+        _ => None,
+    };
+    let literal = format!("/{source}/{flags}");
+    let props = execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .map(|key| format!("  '{key}': {}", rendered(&execute::get_property(value, &key))))
+        .collect::<Vec<_>>();
+    let prefix = name.map(|name| format!("{name} ")).unwrap_or_default();
+    if props.is_empty() {
+        Some(vec![format!("{prefix}{literal}")])
+    } else {
+        let mut lines = vec![format!("{prefix}{literal} {{")];
+        lines.extend(props);
+        lines.push("}".into());
+        Some(lines)
+    }
+}
+
+fn date_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let actual_lines = date_lines(actual)?;
+    let expected_lines = date_lines(expected)?;
+    if actual_lines == expected_lines {
+        return Some(actual_lines.join("\n"));
+    }
+    let mut lines = actual_lines
+        .into_iter()
+        .map(|line| format!("+ {line}"))
+        .collect::<Vec<_>>();
+    lines.extend(expected_lines.into_iter().map(|line| format!("- {line}")));
+    Some(lines.join("\n"))
+}
+
+fn date_lines(value: &Value) -> Option<Vec<String>> {
+    if !execute::has_own_property(value, "timeValue") {
+        return None;
+    }
+    let mut prototype = execute::get_prototype_of(value).ok()?;
+    let mut is_date = false;
+    for _ in 0..8 {
+        if matches!(prototype, Value::Builtin(quench_runtime::ops::Builtin::DatePrototype)) {
+            is_date = true;
+            break;
+        }
+        prototype = execute::get_prototype_of(&prototype).ok()?;
+    }
+    if !is_date {
+        return None;
+    }
+    let iso = execute::call(
+        &execute::get_property(value, "toISOString"),
+        value,
+        &[],
+    )
+    .ok()
+    .and_then(|value| match value {
+        Value::String(value) => Some(value),
+        _ => None,
+    })?;
+    let constructor = execute::get_property(value, "constructor");
+    let name = match execute::get_property(&constructor, "name") {
+        Value::String(name) if name != "Date" => Some(name),
+        _ => None,
+    };
+    let props = execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| !key.starts_with('\0'))
+        .map(|key| format!("  '{key}': {}", rendered(&execute::get_property(value, &key))))
+        .collect::<Vec<_>>();
+    if props.is_empty() {
+        return Some(vec![format!("{}{}", name.as_deref().map(|name| format!("{name} ")).unwrap_or_default(), iso)]);
+    }
+    let prefix = name
+        .as_deref()
+        .map(|name| format!("{name} "))
+        .unwrap_or_default();
+    let mut lines = vec![format!("{prefix}{iso} {{")];
+    lines.extend(props);
+    lines.push("}".into());
+    Some(lines)
+}
+
+fn typed_array_kind(value: &Value) -> Option<(&'static str, usize)> {
+    let Value::Uint8Array(view) = value else {
+        return None;
+    };
+    let kind = if matches!(execute::get_property(value, "parent"), Value::ArrayBuffer(_)) {
+        "Buffer"
+    } else {
+        "Uint8Array"
+    };
+    Some((kind, view.logical_len()))
+}
+
+fn typed_array_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let (actual_kind, actual_len) = typed_array_kind(actual)?;
+    let (expected_kind, expected_len) = typed_array_kind(expected)?;
+    let actual_values = typed_array_values(actual, actual_len);
+    let expected_values = typed_array_values(expected, expected_len);
+    let actual_props = typed_array_props(actual);
+    let expected_props = typed_array_props(expected);
+    let same_shape = actual_kind == expected_kind && actual_len == expected_len;
+    let mut lines = Vec::new();
+    if same_shape && actual_props == expected_props {
+        return Some(format_typed_block(actual_kind, actual_len, &actual_values, &actual_props, "  "));
+    }
+    if actual_kind != expected_kind || actual_len != expected_len {
+        lines.push(format!("+ {} [", typed_label(actual_kind, actual_len)));
+        lines.push(format!("- {} [", typed_label(expected_kind, expected_len)));
+    } else {
+        lines.push(format!("  {} [", typed_label(actual_kind, actual_len)));
+    }
+    for (index, value) in actual_values
+        .iter()
+        .take(actual_len.max(expected_len))
+        .enumerate()
+    {
+        let comma = (index + 1 < actual_len.max(expected_len)
+            || !actual_props.is_empty()
+            || !expected_props.is_empty())
+            .then_some(",")
+            .unwrap_or("");
+        lines.push(format!("    {value}{comma}"));
+    }
+    for prop in actual_props.difference(&expected_props) {
+        lines.push(format!("+   {prop}"));
+    }
+    for prop in expected_props.difference(&actual_props) {
+        lines.push(format!("-   {prop}"));
+    }
+    lines.push("  ]".to_string());
+    Some(lines.join("\n"))
+}
+
+fn typed_label(kind: &str, length: usize) -> String {
+    match kind {
+        "Buffer" => format!("Buffer({length}) [Uint8Array]"),
+        _ => format!("Uint8Array({length})"),
+    }
+}
+
+fn typed_array_values(value: &Value, length: usize) -> Vec<String> {
+    (0..length)
+        .map(|index| rendered(&execute::get_property(value, &index.to_string())))
+        .collect()
+}
+
+fn typed_array_props(value: &Value) -> BTreeSet<String> {
+    execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| {
+            key.parse::<usize>().is_err()
+                && !key.starts_with('\0')
+                && !matches!(key.as_str(), "offset" | "parent" | "toString")
+        })
+        .map(|key| format!("{key}: {}", rendered(&execute::get_property(value, &key))))
+        .collect()
+}
+
+fn format_typed_block(
+    kind: &str,
+    length: usize,
+    values: &[String],
+    props: &BTreeSet<String>,
+    prefix: &str,
+) -> String {
+    let mut lines = vec![format!("{prefix}{kind}({length}) [")];
+    lines.extend(values.iter().map(|value| format!("    {value},")));
+    lines.extend(props.iter().map(|prop| format!("    {prop},")));
+    lines.push("  ]".to_string());
+    lines.join("\n")
+}
+
 pub fn not_deep_strict_equal(
     _s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
@@ -589,7 +1312,52 @@ pub fn not_deep_strict_equal(
     if args.len() < 2 {
         return Err(missing_args());
     }
+    let skip_prototype = receiver_skip_prototype(_r);
     binary_assert(_r, args, "notDeepStrictEqual", false, |a, b| {
-        crate::modules::deep_equal::deep_equal(a, b, true)
+        Ok(crate::modules::deep_equal::deep_equal_opts(a, b, true, skip_prototype)?
+            && typed_props_equal(a, b, true))
     })
+}
+
+pub fn not_deep_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if args.len() < 2 {
+        return Err(missing_args());
+    }
+    let skip_prototype = receiver_skip_prototype(_r);
+    binary_assert(_r, args, "notDeepEqual", false, |a, b| {
+        Ok(crate::modules::deep_equal::deep_equal_opts(a, b, false, skip_prototype)?
+            && typed_props_equal(a, b, true))
+    })
+}
+
+pub fn partial_deep_strict_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if args.len() < 2 {
+        return Err(missing_args());
+    }
+    let actual = arg(args, 0);
+    let expected = arg(args, 1);
+    if crate::modules::deep_equal::partial_deep_equal(&actual, &expected)? {
+        return Ok(Value::Undefined);
+    }
+    let custom = custom_message(args, 2);
+    let generated = custom.is_none();
+    let message = custom.map_or_else(
+        || format!(
+            "Expected values to be partially and strictly deep-equal:\n\n{}\n",
+            deep_diff(&actual, &expected)
+        ),
+        |message| format!("{message}\n+ actual - expected\n\n{}\n", deep_diff(&actual, &expected)),
+    );
+    Err(with_instance_diff(
+        assertion_error(message, "partialDeepStrictEqual", actual, expected, generated),
+        _r,
+    ))
 }

@@ -143,13 +143,13 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
         }
     }
     let target = match target {
-        Value::Proxy(proxy) => crate::locals::resolved_replacement(proxy.target.clone()),
-        target => target.clone(),
+        Value::Proxy(proxy) => &proxy.target,
+        target => target,
     };
     if matches!(target, Value::Proxy(_)) {
-        proxy_own_keys(&target)
+        proxy_own_keys(target)
     } else {
-        crate::own_keys::all(&target)
+        crate::own_keys::all(target)
     }
 }
 

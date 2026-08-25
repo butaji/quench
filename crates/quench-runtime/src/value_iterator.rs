@@ -27,18 +27,6 @@ pub enum IteratorState {
     Zip {
         iterators: Vec<Value>,
         mode: u8,
-        padding: Value,
-        padding_values: Vec<Value>,
-        started: bool,
-        done: bool,
-    },
-    ZipKeyed {
-        keys: Vec<String>,
-        iterators: Vec<Value>,
-        mode: u8,
-        padding: Value,
-        padding_values: Vec<Value>,
-        started: bool,
         done: bool,
     },
     Mapped {
@@ -64,14 +52,11 @@ pub enum IteratorState {
         inner: Value,
         skipped: usize,
         limit: usize,
-        limit_value: Option<Value>,
         done: bool,
     },
     Take {
         inner: Value,
         remaining: u64,
-        limit_value: Option<Value>,
-        done: bool,
     },
     Native {
         values: Vec<Value>,
