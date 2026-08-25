@@ -900,6 +900,44 @@ pub(crate) fn loop_shape_iteration(fingerprint: u64) {
 pub(crate) fn loop_shape_iteration(_: u64) {}
 
 #[cfg(feature = "execution-trace")]
+pub(crate) fn loop_shape_entries(fingerprint: u64, entries: usize) {
+    if fingerprint != 0 && entries != 0 {
+        COUNTERS.with(|counters| {
+            if let Some(shape) = counters.borrow_mut().loop_shapes.get_mut(&fingerprint) {
+                shape.0 += entries as u64;
+            }
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn loop_shape_entries(_: u64, _: usize) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn counted_loop_iterations(fingerprint: u64, iterations: usize) {
+    if !enabled() || iterations == 0 {
+        return;
+    }
+    let iterations = iterations as u64;
+    COUNTERS.with(|counters| {
+        let mut counters = counters.borrow_mut();
+        if counters.events.is_empty() {
+            counters.events.resize(EVENT_NAMES.len(), 0);
+        }
+        counters.events[Event::LoopIteration as usize] += iterations;
+        counters.events[Event::CountedForHit as usize] += iterations;
+        if let Some(shape) = counters.loop_shapes.get_mut(&fingerprint) {
+            shape.1 += iterations;
+        }
+    });
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn counted_loop_iterations(_: u64, _: usize) {}
+
+#[cfg(feature = "execution-trace")]
 pub(crate) fn numeric_kernel_iterations(
     id: &'static str,
     fingerprint: u64,
