@@ -299,6 +299,14 @@ pub(crate) fn execute_target(
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(target) => {
             execute_builtin_target(*builtin, Some(receiver), arguments)
         }
+        crate::value::Value::HostCapability(capability) => {
+            crate::vm::execute_host_capability_with_receiver(
+                capability.descriptor.kind,
+                Some(target),
+                Some(receiver),
+                arguments,
+            )
+        }
         crate::value::Value::Function(function) => {
             execute_in_function_realm(function, receiver, arguments)
         }

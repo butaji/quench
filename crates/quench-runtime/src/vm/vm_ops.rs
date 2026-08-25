@@ -457,6 +457,12 @@ fn invoke_with_receiver(
         Value::Builtin(builtin) if crate::conversion::is_callable(callee_value) => {
             super::execute_builtin_with_receiver(*builtin, arguments, Some(receiver))
         }
+        Value::HostCapability(capability) => crate::vm::execute_host_capability_with_receiver(
+            capability.descriptor.kind,
+            Some(callee_value),
+            Some(receiver),
+            arguments,
+        ),
         Value::Proxy(proxy) if crate::conversion::is_callable(callee_value) => {
             crate::proxy::proxy_apply(callee_value, receiver, arguments)
         }
