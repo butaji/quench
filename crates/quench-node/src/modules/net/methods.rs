@@ -127,9 +127,7 @@ fn connect_target(
             if matches!(port_value, Value::Undefined | Value::Null) {
                 return Err(missing_connect_args());
             }
-            let port = execute::to_js_string(&port_value)?
-                .parse::<u16>()
-                .map_err(|_| execute::type_error("port must be a number"))?;
+            let port = parse_port(&port_value)?;
             let host = execute::get_property_result(&options, "host")
                 .ok()
                 .and_then(|v| execute::to_js_string(&v).ok());
@@ -143,10 +141,11 @@ fn connect_target(
             if matches!(value, Value::Undefined | Value::Null) {
                 return Err(missing_connect_args());
             }
-            let port = execute::to_js_string(value)?
-                .parse::<u16>()
-                .map_err(|_| execute::type_error("port must be a number"))?;
-            let host = args.get(1).and_then(|v| execute::to_js_string(v).ok());
+            let port = parse_port(value)?;
+            let host = args.get(1).and_then(|v| match v {
+                Value::String(_) => execute::to_js_string(v).ok(),
+                _ => None,
+            });
             Ok((port, host))
         }
     }
@@ -166,6 +165,38 @@ fn missing_connect_args() -> VmError {
     ]))
 }
 
+fn parse_port(value: &Value) -> Result<u16, VmError> {
+    let text = execute::to_js_string(value)?;
+    let Ok(port) = text.parse::<i64>() else {
+        return Err(execute::type_error("port must be a number"));
+    };
+    if !(0..=u16::MAX as i64).contains(&port) {
+        return Err(bad_port(value, &text));
+    }
+    Ok(port as u16)
+}
+
+fn bad_port(value: &Value, text: &str) -> VmError {
+    let kind = match value {
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        _ => "object",
+    };
+    VmError::Thrown(host_api::object(vec![
+        ("name".to_string(), Value::String("RangeError".to_string())),
+        (
+            "code".to_string(),
+            Value::String("ERR_SOCKET_BAD_PORT".to_string()),
+        ),
+        (
+            "message".to_string(),
+            Value::String(format!(
+                "options.port should be >= 0 and < 65536. Received type {kind} ({text})."
+            )),
+        ),
+    ]))
+}
+
 /// `server.listen(port[, host][, cb])` (or `listen(options, cb)`).
 /// Binds a non-blocking listener; `'listening'` fires next pump tick.
 pub fn server_listen(
@@ -180,6 +211,7 @@ pub fn server_listen(
         Err(error) => return Err(server_bind_error(&error)),
     };
     register_server(state, &receiver, Some(listener))?;
+    super::set_server_connection_key(&receiver, port, host.as_deref())?;
     add_listener_cb(state, &receiver, args.last(), "listening")?;
     Ok(receiver.clone())
 }
@@ -192,14 +224,12 @@ fn listen_target(
     if matches!(args.first(), Some(Value::Object(_))) {
         return connect_target(state, args);
     }
-    let port = args
-        .first()
-        .map(execute::to_js_string)
-        .transpose()?
-        .unwrap_or_default()
-        .parse::<u16>()
-        .map_err(|_| execute::type_error("port must be a number"))?;
-    let host = args.get(1).and_then(|v| execute::to_js_string(v).ok());
+    let value = args.first().cloned().unwrap_or(Value::Number(0.0));
+    let port = parse_port(&value)?;
+    let host = args.get(1).and_then(|v| match v {
+        Value::String(_) => execute::to_js_string(v).ok(),
+        _ => None,
+    });
     Ok((port, host))
 }
 
