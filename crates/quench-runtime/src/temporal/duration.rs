@@ -52,11 +52,17 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalDurationAdd => Some(add(receiver, arguments.first())),
+        crate::ops::Builtin::TemporalDurationSubtract => {
+            Some(subtract(receiver, arguments.first()))
+        }
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
+        crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
+        crate::ops::Builtin::TemporalDurationRound => Some(round(receiver, arguments.first())),
         crate::ops::Builtin::TemporalDurationToLocaleString => Some(
             crate::intl::duration::format_temporal_duration(receiver, arguments),
         ),
         crate::ops::Builtin::TemporalDurationToJSON => Some(to_json(receiver)),
+        crate::ops::Builtin::TemporalDurationToString => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalDurationYearsGetter => Some(field_getter(receiver, "years")),
         crate::ops::Builtin::TemporalDurationMonthsGetter => Some(field_getter(receiver, "months")),
         crate::ops::Builtin::TemporalDurationWeeksGetter => Some(field_getter(receiver, "weeks")),
@@ -120,6 +126,71 @@ fn add(receiver: Option<&Value>, argument: Option<&Value>) -> Result<Value, VmEr
     };
     let fields = balanced_sum(left, &right);
     construct(&fields)
+}
+
+fn subtract(receiver: Option<&Value>, argument: Option<&Value>) -> Result<Value, VmError> {
+    let right = from(argument)?;
+    let Value::Object(right) = right else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let negated = right
+        .iter()
+        .filter(|(key, _)| !key.starts_with('\0'))
+        .map(|(key, value)| {
+            let value = match value {
+                Value::Number(value) => Value::Number(-value),
+                value => value.clone(),
+            };
+            (key.as_str().to_string(), value)
+        })
+        .collect::<Vec<_>>();
+    let negated = crate::value::ObjectData::new(negated);
+    let left = duration_receiver(receiver)?;
+    construct(&balanced_sum(left, &negated))
+}
+
+fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    let fields = [
+        "years", "months", "weeks", "days", "hours", "minutes", "seconds",
+        "milliseconds", "microseconds", "nanoseconds",
+    ]
+    .iter()
+    .map(|name| Value::Number(-duration_field(object, name) as f64))
+    .collect::<Vec<_>>();
+    construct(&fields)
+}
+
+fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    let fields = absolute_fields(object);
+    let unit = options
+        .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        });
+    let Some(unit) = unit else {
+        return construct(&fields);
+    };
+    let index = match unit.as_str() {
+        "year" => 0,
+        "month" => 1,
+        "week" => 2,
+        "day" => 3,
+        "hour" => 4,
+        "minute" => 5,
+        "second" => 6,
+        "millisecond" => 7,
+        "microsecond" => 8,
+        "nanosecond" => 9,
+        _ => return Err(crate::value::error::throw_range_error("Invalid smallestUnit")),
+    };
+    let mut rounded = fields;
+    for value in rounded.iter_mut().skip(index + 1) {
+        *value = Value::Number(0.0);
+    }
+    construct(&rounded)
 }
 
 fn balanced_sum(left: &crate::value::ObjectData, right: &crate::value::ObjectData) -> Vec<Value> {
