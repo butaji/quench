@@ -138,7 +138,11 @@ fn split_limit(arguments: &[Value]) -> Result<usize, VmError> {
 fn split_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
     let flags = if flags.contains('y') { flags.to_string() } else { format!("{flags}y") };
     let constructor = regexp_species_constructor(receiver)?;
-    if matches!(constructor, Value::Builtin(crate::ops::Builtin::RegExp)) { return Ok(receiver.clone()) }
+    if matches!(constructor, Value::Builtin(crate::ops::Builtin::RegExp))
+        && crate::regexp::has_regexp_internal_slot(receiver)
+    {
+        return Ok(receiver.clone());
+    }
     crate::construct::construct_value(&constructor, &[receiver.clone(), Value::String(flags)])
 }
 
@@ -147,6 +151,9 @@ fn regexp_species_constructor(receiver: &Value) -> Result<Value, VmError> {
     if matches!(constructor, Value::Undefined) { return Ok(Value::Builtin(crate::ops::Builtin::RegExp)) }
     if !crate::value::is_object(&constructor) {
         return Err(crate::value::error::throw_type_error("RegExp constructor must be an object"));
+    }
+    if matches!(constructor, Value::Builtin(crate::ops::Builtin::SymbolSplit)) {
+        return Err(crate::value::error::throw_type_error("RegExp constructor is not constructible"));
     }
     let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
     if matches!(species, Value::Undefined | Value::Null) { return Ok(Value::Builtin(crate::ops::Builtin::RegExp)) }
