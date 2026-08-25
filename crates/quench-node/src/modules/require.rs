@@ -351,9 +351,16 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "path" => Some(crate::modules::path::build()),
         "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),
-        "os" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::os::build(),
-        )),
+        "os" => {
+            let object = crate::host::namespace_object_from_pairs(crate::modules::os::build());
+            let descriptor = host_api::object(vec![
+                ("value".into(), quench_runtime::execute::get_property(&object, "EOL")),
+                ("writable".into(), Value::Boolean(false)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]);
+            Some(quench_runtime::execute::define_property(object, "EOL", descriptor).unwrap_or(Value::Undefined))
+        }
         "events" => Some(crate::modules::events::build()),
         "diagnostics_channel" => Some(crate::modules::diagnostics_channel::build()),
         "domain" => Some(crate::modules::domain::build(state)),
