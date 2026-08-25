@@ -753,6 +753,24 @@ impl Clone for ObjectData {
 }
 
 impl ObjectData {
+    /// Update an existing host-owned data slot without publishing a COW
+    /// replacement. This is reserved for identity-sensitive host state such
+    /// as the event currently being dispatched.
+    pub(crate) fn set_property_in_place(&mut self, key: &str, value: Value) {
+        if let Some((_, current)) = self
+            .properties
+            .iter_mut()
+            .rev()
+            .find(|(name, _)| name == key)
+        {
+            *current = value;
+        } else {
+            self.properties.push((key.into(), value));
+            self.created.push(key.into());
+        }
+        self.invalidate_layout();
+    }
+
     /// Borrow the canonical hot property storage once for dependent-load-heavy
     /// readers. Metadata remains owned by this object and is not mirrored here.
     #[inline]

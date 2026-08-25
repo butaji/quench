@@ -1,4 +1,5 @@
 //! VM helpers for executing residual operations.
+use std::rc::Rc;
 pub use crate::vm::{
     copy_register, execute as run_vm, execute_builtin_with_receiver, execute_code_with_context,
     execute_in_place, execute_with_context, execute_with_registers, get_property,
@@ -19,6 +20,18 @@ pub fn set_property(
     value: crate::value::Value,
 ) -> crate::value::Value {
     crate::builtins::set_property(target, key, value)
+}
+
+/// Mutate one existing ordinary-object slot while preserving object identity.
+/// Host state machines use this only where JavaScript observes identity.
+pub fn set_property_in_place(target: &crate::value::Value, key: &str, value: crate::value::Value) -> bool {
+    let crate::value::Value::Object(object) = target else {
+        return false;
+    };
+    // The host has exclusive semantic ownership of this identity-sensitive
+    // transition; the runtime's ordinary object path remains copy-on-write.
+    unsafe { (&mut *(Rc::as_ptr(object) as *mut crate::value::ObjectData)).set_property_in_place(key, value); }
+    true
 }
 
 pub fn delete_property(target: crate::value::Value, key: &str) -> (crate::value::Value, bool) {

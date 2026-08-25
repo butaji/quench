@@ -303,17 +303,10 @@ pub fn dispatch_event(
             "\0quench:abort-listener",
         ))
     });
-    let active = execute::set_property(
-        execute::set_property(
-            execute::set_property(event.clone(), "target", receiver.clone()),
-            "currentTarget",
-            receiver.clone(),
-        ),
-        "srcElement",
-        receiver.clone(),
-    );
-    let active = execute::set_property(active, "eventPhase", Value::Number(2.0));
-    execute::replace_value(event, &active);
+    execute::set_property_in_place(event, "target", receiver.clone());
+    execute::set_property_in_place(event, "currentTarget", receiver.clone());
+    execute::set_property_in_place(event, "srcElement", receiver.clone());
+    execute::set_property_in_place(event, "eventPhase", Value::Number(2.0));
     for listener in &snapshot {
         if listener.weak {
             continue;
@@ -344,12 +337,7 @@ pub fn dispatch_event(
             )?;
         }
         if listener.passive {
-            let passive = execute::set_property(
-                event.clone(),
-                "\0event:passive",
-                Value::Boolean(true),
-            );
-            execute::replace_value(event, &passive);
+            execute::set_property_in_place(event, "\0event:passive", Value::Boolean(true));
         }
         let result = if quench_runtime::is_callable(&listener.callback) {
             execute::call(&listener.callback, receiver, std::slice::from_ref(event))
@@ -380,11 +368,10 @@ pub fn dispatch_event(
         .object_identity()
         .is_some_and(|identity| state.borrow().prevented_events.contains(&identity))
         || execute::is_truthy(&execute::get_property(event, "defaultPrevented"));
-    let reset = execute::set_property(event.clone(), "eventPhase", Value::Number(0.0));
-    let reset = execute::set_property(reset, "currentTarget", Value::Null);
-    let reset = execute::set_property(reset, "srcElement", Value::Null);
-    let reset = execute::set_property(reset, "target", receiver.clone());
-    execute::replace_value(event, &reset);
+    execute::set_property_in_place(event, "eventPhase", Value::Number(0.0));
+    execute::set_property_in_place(event, "currentTarget", Value::Null);
+    execute::set_property_in_place(event, "srcElement", Value::Null);
+    execute::set_property_in_place(event, "target", receiver.clone());
     Ok(Value::Boolean(!prevented))
 }
 
