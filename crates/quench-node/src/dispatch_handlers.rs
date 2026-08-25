@@ -810,7 +810,7 @@ pub fn internal_util_assert_crypto(
 }
 
 pub fn internal_binding(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -828,6 +828,17 @@ pub fn internal_binding(
                 crate::host::capability(crate::registry::SPEC_INTERNAL_BUFFER_ALIGNED_OFFSET),
             ),
         ]));
+    }
+    if name == "os" {
+        if let Some(binding) = state.borrow().os_binding.clone() {
+            return Ok(binding);
+        }
+        let binding = crate::host::namespace_object_from_pairs(vec![(
+            "getHomeDirectory".to_string(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_OS_GET_HOME_DIRECTORY),
+        )]);
+        state.borrow_mut().os_binding = Some(binding.clone());
+        return Ok(binding);
     }
     if name == "util" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
@@ -1372,7 +1383,50 @@ pub fn os_homedir(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(binding) = state.borrow().os_binding.clone() {
+        let context = host_api::object(Vec::new());
+        if let Ok(get_home) = quench_runtime::execute::get_property_result(&binding, "getHomeDirectory") {
+            let _ = quench_runtime::execute::call(
+                &get_home,
+                &Value::Undefined,
+                std::slice::from_ref(&context),
+            );
+            if let Ok(Value::String(syscall)) =
+                quench_runtime::execute::get_property_result(&context, "syscall")
+            {
+                let code = quench_runtime::execute::get_property_result(&context, "code")
+                    .unwrap_or(Value::Undefined);
+                let message = quench_runtime::execute::get_property_result(&context, "message")
+                    .unwrap_or(Value::Undefined);
+                let text = |value: &Value| match value {
+                    Value::String(value) => value.to_string(),
+                    Value::Undefined => "undefined".to_string(),
+                    value => format!("{value:?}"),
+                };
+                return Err(VmError::Thrown(host_api::object(vec![(
+                    "message".into(),
+                    Value::String(
+                        format!(
+                            "A system error occurred: {} returned {} ({})",
+                            syscall,
+                            text(&code),
+                            text(&message)
+                        )
+                        .into(),
+                    ),
+                )])));
+            }
+        }
+    }
     crate::modules::os::homedir(state, args)
+}
+
+pub fn internal_os_get_home_directory(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
 }
 pub fn os_eol(
     _state: &Rc<RefCell<HostState>>,

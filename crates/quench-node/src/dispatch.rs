@@ -56,6 +56,7 @@ const CAP_UTIL_EXCEPTION_WITH_HOST_PORT: u16 = 0x0734;
 const CAP_INTERNAL_UTIL_EMIT_WARNING: u16 = 0x0735;
 const CAP_OS_GET_PRIORITY: u16 = 0x0736;
 const CAP_OS_SET_PRIORITY: u16 = 0x0737;
+const CAP_INTERNAL_OS_GET_HOME_DIRECTORY: u16 = 0x0738;
 const CAP_UTIL_INSPECT: u16 = 0x0301;
 const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
 const CAP_UTIL_IS_NATIVE_ERROR: u16 = 0x030A;
@@ -425,6 +426,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_UTIL_EMIT_WARNING => internal_util_emit_warning,
         CAP_OS_GET_PRIORITY => os_get_priority,
         CAP_OS_SET_PRIORITY => os_set_priority,
+        CAP_INTERNAL_OS_GET_HOME_DIRECTORY => internal_os_get_home_directory,
         CAP_UTIL_INSPECT => util_inspect,
         CAP_UTIL_PARSE_ENV => util_parse_env,
         CAP_UTIL_PROMISIFY => util_promisify,

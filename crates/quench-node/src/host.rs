@@ -65,6 +65,8 @@ pub struct HostState {
     pub string_decoder_pending: std::collections::HashMap<u64, Vec<u8>>,
     pub string_decoder_encoding: std::collections::HashMap<u64, String>,
     pub string_decoder_next_id: u64,
+    /// Canonical `internalBinding("os")` object for this realm.
+    pub os_binding: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -103,6 +105,7 @@ impl NodeHost {
             string_decoder_pending: std::collections::HashMap::new(),
             string_decoder_encoding: std::collections::HashMap::new(),
             string_decoder_next_id: 1,
+            os_binding: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
