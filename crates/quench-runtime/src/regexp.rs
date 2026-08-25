@@ -528,7 +528,7 @@ fn regexp_slot<'a>(receiver: &'a Value, slot: usize, key: &str) -> Option<&'a Va
     let Value::Object(object) = receiver else {
         return None;
     };
-    let (name, value) = object.hot_properties().get(slot)?;
+    let (name, value) = object.hot_properties().slot_entry(slot)?;
     (name == key).then_some(value)
 }
 
