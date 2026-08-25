@@ -108,6 +108,7 @@ fn regexp_flags(value: &Value) -> Result<Value, VmError> {
         ("multiline", 'm'),
         ("dotAll", 's'),
         ("unicode", 'u'),
+        ("unicodeSets", 'v'),
         ("sticky", 'y'),
     ];
     let mut flags = String::new();
