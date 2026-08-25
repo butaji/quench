@@ -67,11 +67,12 @@ fn copy_method_property_shape(code: crate::machine::CodeView<'_>, params: u16) -
     let [receiver, output, move_one, move_two, receiver_again, input, get, set, undefined, returned] =
         std::array::from_fn(|pc| code.instruction(pc).unwrap());
     use crate::ir::Opcode::*;
-    receiver.opcode == LoadLocalChecked
+    is_local_load(receiver)
         && (output.opcode, output.flags, output.b) == (CallN, 0, receiver.a)
         && (move_one.opcode, move_one.b) == (Move, output.a)
         && (move_two.opcode, move_two.b) == (Move, move_one.a)
-        && (receiver_again.opcode, receiver_again.b) == (LoadLocalChecked, receiver.b)
+        && is_local_load(receiver_again)
+        && receiver_again.b == receiver.b
         && (input.opcode, input.flags, input.b) == (CallN, 0, receiver_again.a)
         && (get.opcode, get.b) == (GetN, input.a)
         && (set.opcode, set.a, set.b) == (SetN, move_two.a, get.a)

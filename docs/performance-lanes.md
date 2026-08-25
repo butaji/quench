@@ -16,8 +16,10 @@ Schema 5 `lanes` contains:
 
 - `l0`: `word_reads.{fixed,local,register,owned}`, `word_copies`,
   `value_decode`, `value_decode_by_site`, property hit/miss and payload kinds,
-  and packed get/set/miss counts split by miss reason. The bounded
-  `value_decode_other_by_op` ranking resolves the residual `other` site.
+  and packed get/set/miss counts split by miss reason. Bounded
+  `owned_word_read_by_site` and `owned_word_read_by_op` rankings attribute
+  retained/cloned word materialization independently from value decoding;
+  `value_decode_other_by_op` resolves the residual decode `other` site.
 - `l1`: shape hits, crypto hits/direct iterations, counted-loop admission,
   leaf admission/rejection classes, and the top native kernel IDs with hits and
   deopts.
