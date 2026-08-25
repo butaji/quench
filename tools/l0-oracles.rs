@@ -1,7 +1,7 @@
 use std::{env, hint::black_box};
 
 const DEFAULT_ITERATIONS: usize = 250_000;
-const MOVE_ITERATIONS: usize = 25_000_000;
+const LONG_ITERATIONS: usize = 25_000_000;
 
 #[derive(Clone, Copy)]
 struct Collection {
@@ -25,7 +25,7 @@ fn run(id: &str) -> u64 {
         "u64-move" => {
             let mut x = black_box(1_u64);
             let mut y = 0;
-            for _ in 0..MOVE_ITERATIONS {
+            for _ in 0..LONG_ITERATIONS {
                 y = black_box(x);
                 x = black_box(y);
             }
@@ -34,7 +34,7 @@ fn run(id: &str) -> u64 {
         "load-proven" => {
             let value = black_box(1_u64);
             let mut total = 0_u64;
-            for _ in 0..DEFAULT_ITERATIONS {
+            for _ in 0..LONG_ITERATIONS {
                 total = black_box(total).wrapping_add(black_box(value));
             }
             total
