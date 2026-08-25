@@ -246,6 +246,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         }
         "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![
             (
+                "pendingDeprecate".to_string(),
+                crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
+            ),
+            (
                 "sleep".to_string(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
             ),
