@@ -1023,7 +1023,7 @@ pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<St
             .unwrap_or_else(|| "<unknown>".into())
         }
     } else {
-        inspect_proxy_handler(&proxy.handler)
+        inspect_proxy_handler(&proxy.handler, depth)
     };
     let target_block = indent_proxy_child(&target);
     let handler_block = indent_proxy_child(&handler);
@@ -1059,7 +1059,7 @@ fn indent_proxy_child(value: &str) -> String {
     value.replace('\n', "\n  ")
 }
 
-fn inspect_proxy_handler(value: &Value) -> String {
+fn inspect_proxy_handler(value: &Value, depth: usize) -> String {
     if matches!(value, Value::Array(_)) {
         return inspect_array(value, 1);
     }
@@ -1069,6 +1069,9 @@ fn inspect_proxy_handler(value: &Value) -> String {
     let keys = quench_runtime::execute::own_enumerable_keys(value);
     if keys.is_empty() {
         return "{}".into();
+    }
+    if depth <= 1 {
+        return "[Object]".into();
     }
     let body = keys
         .iter()
