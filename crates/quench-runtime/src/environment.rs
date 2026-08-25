@@ -727,6 +727,40 @@ impl Environment {
         Some(crate::register_file::ImmediateCopyPlan::new(source, target))
     }
 
+    /// Resolve a proven one-argument numeric call to physical execute words.
+    /// Callee recognition happens once; the returned plan contains no
+    /// `Environment`, `BindingCell`, `Value`, or reference-count operation.
+    pub(crate) fn plan_word_add_constant(
+        &self,
+        function: u16,
+        argument: u16,
+        target: u16,
+        registers: &mut crate::register_file::RegisterFile,
+        result: u16,
+    ) -> Option<crate::register_file::ImmediateNumberCallPlan> {
+        let function = match self.get(function) {
+            Value::Function(function) => function,
+            _ => return None,
+        };
+        let constant = crate::functions::word_add_constant(&function)?;
+        let slots = self.slots.borrow();
+        let argument = slots
+            .with_binding(usize::from(argument), SlotStore::immediate_word_ptr)
+            .flatten()?;
+        matches!(
+            unsafe { &*argument }.decode(),
+            crate::tagged_value::DecodedValue::Number(_)
+        )
+        .then_some(())?;
+        let target = slots
+            .with_binding(usize::from(target), SlotStore::immediate_word_ptr)
+            .flatten()?;
+        let result = registers.immediate_word_ptr(usize::from(result))?;
+        Some(crate::register_file::ImmediateNumberCallPlan::new(
+            argument, target, result, constant,
+        ))
+    }
+
     pub(crate) fn load_into_fixed<const N: usize>(
         &self,
         registers: &mut crate::register_file::FixedWordFile<N>,
