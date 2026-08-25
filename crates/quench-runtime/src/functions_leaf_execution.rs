@@ -85,6 +85,7 @@ trait LeafRegisterFile {
     fn object(&self, index: usize) -> Option<&crate::value::ObjectData>;
     fn write_slot(&mut self, index: usize, slot: &crate::register_file::SlotWord) -> Option<()>;
     fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()>;
+    fn store_slot(&self, source: usize, slot: &crate::register_file::SlotWord) -> Option<()>;
     fn load_environment(
         &mut self,
         environment: &crate::environment::Environment,
@@ -132,6 +133,9 @@ impl<const N: usize> LeafRegisterFile for crate::register_file::FixedWordFile<N>
     }
     fn write_cell(&mut self, index: usize, cell: &crate::value::BindingCell) -> Option<()> {
         cell.with_word(|word| self.write_owned(index, word))
+    }
+    fn store_slot(&self, source: usize, slot: &crate::register_file::SlotWord) -> Option<()> {
+        slot.store_from_fixed(self, source)
     }
     fn load_environment(
         &mut self,
@@ -1077,24 +1081,27 @@ fn leaf_set_named(
         .name
         .as_deref()
         .ok_or(crate::execute::VmError::MissingReturn)?;
-    let target = leaf_register(registers, op.a)?;
-    let value = leaf_register(registers, op.b)?;
-    if let crate::value::Value::Object(object) = &target {
+    if let Some(object) = registers.object(usize::from(op.a)) {
         if !object.has_replacement() {
             if let Some((layout, slot)) =
                 crate::machine::unpack_named_cache(metadata.named_cache.get())
             {
                 if object.semantic_layout_id() == layout {
-                    if let Some((_, crate::value::Value::BindingCell(cell))) =
-                        object.hot_properties().slot_entry(slot as usize)
-                    {
-                        cell.store(value);
+                    if let Some(word) = object.hot_properties().slot_word(slot as usize) {
+                        registers
+                            .store_slot(usize::from(op.b), word)
+                            .ok_or(crate::execute::VmError::MissingReturn)?;
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::NamedPropertySetHit,
+                        );
                         return Ok(());
                     }
                 }
             }
         }
     }
+    let target = leaf_register(registers, op.a)?;
+    let value = leaf_register(registers, op.b)?;
     let mut temporary = crate::register_file::RegisterFile::from_values(vec![target, value]);
     crate::properties::execute_set_named_cached(
         &mut temporary,
