@@ -279,6 +279,7 @@ pub fn realpath_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
+    super::fs::parse_options(args.get(1))?;
     let canon = std::fs::canonicalize(Path::new(&path))
         .map_err(|e| super::fs_error::fs_error("realpath", Some(&path), &e))?;
     Ok(Value::String(canon.to_string_lossy().into_owned()))
@@ -416,6 +417,7 @@ pub fn mkdtemp_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let prefix = path_arg(args.first())?;
+    super::fs::parse_options(args.get(1))?;
     for attempt in 0..100u32 {
         let candidate = format!("{prefix}{:06x}", random_suffix(attempt));
         match std::fs::create_dir(Path::new(&candidate)) {
