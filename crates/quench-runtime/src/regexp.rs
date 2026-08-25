@@ -633,14 +633,10 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
-    if !flags.contains('g')
-        && !flags.contains('y')
-        && source.len() <= 3
-        && simple_character_class_test(&source, &s).is_some()
-    {
-        return Ok(Value::Boolean(
-            simple_character_class_test(&source, &s).unwrap_or(false),
-        ));
+    if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
+        if let Some(matched) = simple_character_class_test(&source, &s) {
+            return Ok(Value::Boolean(matched));
+        }
     }
     if (flags.contains('g') || flags.contains('y')) && last_index > crate::strings::utf16_len(&s) {
         set_last_index(receiver, 0.0)?;
