@@ -90,6 +90,7 @@ fn run_instruction(
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::ir::Opcode;
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
+    crate::execution_trace::compact_site(code, pc);
     crate::execution_trace::operands(instruction);
     match instruction.opcode {
         Opcode::LoadConst => {
@@ -120,6 +121,11 @@ fn run_instruction(
                 .unwrap_or("binding");
             crate::locals::check_initialized(instruction.a, name)?;
             crate::locals::store(registers, instruction.a, instruction.b)?;
+            Ok(None)
+        }
+        Opcode::InitLocal => {
+            crate::locals::store(registers, instruction.a, instruction.b)?;
+            crate::locals::initialize(instruction.a);
             Ok(None)
         }
         Opcode::UpdateLocal => {
@@ -255,8 +261,8 @@ fn run_instruction(
             Ok(None)
         }
         Opcode::CallN => {
-            if instruction.flags == 1 {
-                crate::methods::execute_registered_one(registers, instruction)?;
+            if instruction.flags != 0 {
+                crate::methods::execute_registered(registers, instruction)?;
             } else {
                 let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
                 let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
