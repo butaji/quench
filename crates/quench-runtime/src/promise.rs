@@ -204,12 +204,12 @@ fn adopt_promise(result: &Rc<PromiseData>, next: &Rc<PromiseData>) {
 
 /// Create a new pending Promise.
 pub fn new_promise() -> Value {
-    Value::Promise(Rc::new(PromiseData::default()))
+    Value::Promise(PromiseData::allocate(PromiseState::Pending))
 }
 
 /// Convert an async function's completion into its result Promise.
 pub(crate) fn from_async_completion(completion: Result<Value, VmError>) -> Value {
-    let promise = Rc::new(PromiseData::default());
+    let promise = PromiseData::allocate(PromiseState::Pending);
     match completion {
         Ok(value) => resolve_promise(&promise, value),
         Err(VmError::Thrown(reason)) => reject_promise(&promise, reason),
@@ -223,7 +223,7 @@ pub(crate) fn from_async_generator_completion(
     completion: Result<Value, VmError>,
     generator: Rc<crate::value::GeneratorData>,
 ) -> Value {
-    let promise = Rc::new(PromiseData::default());
+    let promise = PromiseData::allocate(PromiseState::Pending);
     settle_async_generator_completion(completion, generator, Rc::clone(&promise), false);
     Value::Promise(promise)
 }
@@ -232,7 +232,7 @@ pub(crate) fn from_async_function_completion(
     completion: Result<Value, VmError>,
     generator: Rc<crate::value::GeneratorData>,
 ) -> Value {
-    let promise = Rc::new(PromiseData::default());
+    let promise = PromiseData::allocate(PromiseState::Pending);
     settle_async_generator_completion(completion, generator, Rc::clone(&promise), true);
     Value::Promise(promise)
 }
@@ -288,12 +288,43 @@ fn queue_promise(promise: &Rc<PromiseData>) {
     MICROTASK_QUEUE.with(|queue| queue.borrow_mut().push_back(Rc::clone(promise)));
 }
 
+pub(crate) fn promise_created(promise: &Rc<PromiseData>) {
+    let context = crate::vm::current_context();
+    let Some(host) = context.host_handle() else { return; };
+    let descriptor = crate::ops::HostCapabilityRef {
+        realm: context.realm(),
+        kind: crate::ops::HostCapabilityKind::PromiseHook,
+    };
+    let _ = host.call(
+        descriptor,
+        None,
+        &[Value::String("init".into()), Value::Promise(Rc::clone(promise))],
+    );
+}
+
+pub(crate) fn promise_resolved(promise: &Rc<PromiseData>) {
+    let context = crate::vm::current_context();
+    let Some(host) = context.host_handle() else {
+        return;
+    };
+    let descriptor = crate::ops::HostCapabilityRef {
+        realm: context.realm(),
+        kind: crate::ops::HostCapabilityKind::PromiseHook,
+    };
+    let _ = host.call(
+        descriptor,
+        None,
+        &[Value::String("resolve".into()), Value::Promise(Rc::clone(promise))],
+    );
+}
+
 /// Resolve a Promise with a value.
 pub fn resolve_promise(promise: &Rc<PromiseData>, value: Value) {
     if !claim_promise(promise) || !matches!(*promise.state.borrow(), PromiseState::Pending) {
         return;
     }
     set_promise_state(promise, PromiseState::Fulfilled(value));
+    promise_resolved(promise);
     queue_promise(promise);
 }
 
@@ -303,6 +334,7 @@ pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
         return;
     }
     set_promise_state(promise, PromiseState::Rejected(reason));
+    promise_resolved(promise);
     queue_promise(promise);
 }
 
@@ -316,7 +348,7 @@ fn resolve_value(value: Value) -> Value {
     if matches!(value, Value::Promise(_)) {
         return value;
     }
-    let promise = Rc::new(PromiseData::default());
+    let promise = PromiseData::allocate(PromiseState::Pending);
     if !crate::value::is_object(&value) {
         resolve_promise(&promise, value);
         return Value::Promise(promise);

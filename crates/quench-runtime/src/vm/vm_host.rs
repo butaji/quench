@@ -54,6 +54,7 @@ fn dispatch_host_capability(
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         HostCapabilityKind::EvalScript => run_eval_in_capability_realm(capability, arguments),
         HostCapabilityKind::IsHTMLDDA => Ok(Value::Null),
+        HostCapabilityKind::PromiseHook => Err(VmError::NotCallable),
         HostCapabilityKind::Custom(_) => host_custom_call(descriptor, receiver, arguments),
     }
 }

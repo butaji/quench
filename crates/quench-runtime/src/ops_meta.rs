@@ -47,6 +47,9 @@ pub enum HostCapabilityKind {
     DetachArrayBuffer,
     /// Host-only callable object with an [[IsHTMLDDA]] slot.
     IsHTMLDDA,
+    /// Engine lifecycle notification consumed by an embedding host.
+    /// This is not exposed as a JavaScript capability.
+    PromiseHook,
     /// Capability-owned operation implemented by the embedding host.
     Custom(u16),
 }

@@ -22,6 +22,15 @@ pub struct NodeSpec {
     pub cap: CapId,
 }
 
+/// Declare a family of host facts once. The same `NodeSpec` values feed
+/// namespace construction, capability dispatch, and future generated
+/// evidence tables; mechanical registrations should not repeat ids inline.
+macro_rules! node_api {
+    ($(($name:ident, $label:literal, $cap:expr)),* $(,)?) => {
+        $(pub const $name: NodeSpec = NodeSpec::new($label, $cap);)*
+    };
+}
+
 impl NodeSpec {
     pub const fn new(name: &'static str, cap: CapId) -> Self {
         Self { name, cap }
@@ -72,6 +81,22 @@ pub const SPEC_TEXT_ENCODER_ENCODE: NodeSpec = NodeSpec::new("TextEncoder:encode
 pub const SPEC_TEXT_ENCODER_ENCODE_INTO: NodeSpec = NodeSpec::new("TextEncoder:encodeInto", 0x084E);
 pub const SPEC_TEST: NodeSpec = NodeSpec::new("test:test", 0x1b00);
 pub const SPEC_TEST_SKIP: NodeSpec = NodeSpec::new("test:skip", 0x1b01);
+
+node_api! {
+    (SPEC_ASYNC_RESOURCE, "async_hooks:AsyncResource", 0x1400),
+    (SPEC_ASYNC_EXECUTION_ID, "async_hooks:executionAsyncId", 0x1401),
+    (SPEC_ASYNC_TRIGGER_ID, "async_hooks:triggerAsyncId", 0x1402),
+    (SPEC_ASYNC_EXECUTION_RESOURCE, "async_hooks:executionAsyncResource", 0x1403),
+    (SPEC_ASYNC_CREATE_HOOK, "async_hooks:createHook", 0x1404),
+    (SPEC_ASYNC_RESOURCE_RUN, "async_hooks:resource:runInAsyncScope", 0x1405),
+    (SPEC_ASYNC_RESOURCE_BEFORE, "async_hooks:resource:emitBefore", 0x1406),
+    (SPEC_ASYNC_RESOURCE_AFTER, "async_hooks:resource:emitAfter", 0x1407),
+    (SPEC_ASYNC_RESOURCE_DESTROY, "async_hooks:resource:emitDestroy", 0x1408),
+    (SPEC_ASYNC_RESOURCE_ID, "async_hooks:resource:asyncId", 0x1409),
+    (SPEC_ASYNC_RESOURCE_TRIGGER, "async_hooks:resource:triggerAsyncId", 0x140A),
+    (SPEC_ASYNC_HOOK_ENABLE, "async_hooks:hook:enable", 0x140B),
+    (SPEC_ASYNC_HOOK_DISABLE, "async_hooks:hook:disable", 0x140C),
+}
 
 pub const SPEC_PATH_JOIN: NodeSpec = NodeSpec::new("path:join", 0x0400);
 pub const SPEC_PATH_RESOLVE: NodeSpec = NodeSpec::new("path:resolve", 0x0401);
