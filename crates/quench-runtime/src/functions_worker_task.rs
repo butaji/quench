@@ -63,8 +63,10 @@ fn worker_suspend(
     let Some(scheduler) = task_scheduler(task) else {
         return Ok(None);
     };
-    let code = function.code.code().unwrap();
-    let crate::ops::Op::Branch { then_ops, .. } = code.cold_at(4).unwrap() else {
+    let Some(code) = function.code.code() else {
+        return Ok(None);
+    };
+    let Some(crate::ops::Op::Branch { then_ops, .. }) = code.cold_at(4) else {
         return Ok(None);
     };
     let Some(callee) = then_ops
@@ -73,7 +75,11 @@ fn worker_suspend(
     else {
         return Ok(None);
     };
-    let result = crate::functions::execute_target(&callee, &scheduler, &[])?;
+    let Some(transition) = scheduler_suspend_word_transition(&callee, &scheduler) else {
+        return Ok(None);
+    };
+    let result = transition.execute();
+    crate::execution_trace::kernel("worker_suspend_word_transition", false);
     crate::execution_trace::kernel("worker_task_run_word_slots", false);
     Ok(Some(result))
 }
