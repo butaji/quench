@@ -130,7 +130,7 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             Value::Object(properties)
         }
         Value::Object(properties)
-            if descriptor_flag_in(&properties, key, "writable") == Some(false) =>
+            if descriptor_flag_in(properties.as_ref(), key, "writable") == Some(false) =>
         {
             Value::Object(properties)
         }
@@ -144,5 +144,4 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         _ => set_property_tail(target, key, value),
     }
 }
-
 
