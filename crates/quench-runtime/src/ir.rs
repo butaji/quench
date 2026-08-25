@@ -65,6 +65,7 @@ instruction_set! {
     LoadLocalChecked = 24 / 2,
     Binary = 25 / 3,
     StoreLocalChecked = 26 / 2,
+    InitLocal = 27 / 2,
 }
 
 macro_rules! compact_binary_operators {
@@ -289,6 +290,15 @@ impl Instruction {
     pub const fn store_local_checked(slot: u16, src: Register) -> Self {
         Self {
             opcode: Opcode::StoreLocalChecked,
+            flags: 0,
+            a: slot,
+            b: src,
+            c: 0,
+        }
+    }
+    pub const fn init_local(slot: u16, src: Register) -> Self {
+        Self {
+            opcode: Opcode::InitLocal,
             flags: 0,
             a: slot,
             b: src,
@@ -1005,7 +1015,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::StoreLocalChecked as u8);
+        assert_eq!(Opcode::COUNT, Opcode::InitLocal as u8);
         assert!(Opcode::Slow.is_compact());
     }
 
