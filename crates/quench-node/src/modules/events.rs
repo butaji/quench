@@ -350,7 +350,7 @@ pub fn method_emit(
                     | Value::BoundFunction(_)
             )
         {
-            attach_rejection_handler(state, receiver, &event, &result)?;
+            attach_rejection_handler(state, receiver, &event, &rest, &result)?;
         }
     }
     Ok(Value::Boolean(true))
@@ -360,12 +360,13 @@ fn attach_rejection_handler(
     state: &Rc<RefCell<HostState>>,
     receiver: &Value,
     event: &str,
+    arguments: &[Value],
     promise: &Value,
 ) -> Result<(), VmError> {
     let handler = eval_function(
-        r#"(emitter, event, error) => {
+        r#"(emitter, event, arguments, error) => {
           const rejection = emitter[Symbol.for('nodejs.rejection')];
-          if (typeof rejection === 'function') rejection.call(emitter, error, event);
+          if (typeof rejection === 'function') rejection.call(emitter, error, event, ...arguments);
           else emitter.emit('error', error);
         }"#,
     )?;
@@ -377,6 +378,7 @@ fn attach_rejection_handler(
             Value::Undefined,
             receiver.clone(),
             Value::String(event.to_string()),
+            host_api::array(arguments.to_vec()),
         ],
     )?;
     let then = match execute::get_property_result(promise, "then") {
@@ -1024,6 +1026,10 @@ pub fn build() -> Value {
         (
             "errorMonitor".to_string(),
             Value::String("Symbol.for.events.errorMonitor\0".into()),
+        ),
+        (
+            "captureRejectionSymbol".to_string(),
+            Value::String("Symbol.for.nodejs.rejection\0".into()),
         ),
         ("once".to_string(), once),
         ("on".to_string(), on),
