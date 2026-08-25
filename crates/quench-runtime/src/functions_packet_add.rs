@@ -12,7 +12,9 @@ thread_local! {
 
 #[inline]
 fn is_packet_add_candidate(function: &crate::value::FunctionValue) -> bool {
-    function.params == 1 && function.code.code().is_some_and(|code| code.len() == 23)
+    function.params == 1
+        && function.code.capture_slots().len() == 4
+        && function.code.code().is_some_and(|code| code.len() == 23)
 }
 
 fn execute_packet_add(
