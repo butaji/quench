@@ -109,6 +109,31 @@ fn construct_typed_builtin(
     })
 }
 
+pub(crate) fn construct_float16_array(
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = construct_uint16_array(arguments)?;
+    let Some(source) = arguments.first() else {
+        return Ok(value);
+    };
+    let Value::Array(source) = source else {
+        return Ok(value);
+    };
+    let Value::Uint16Array(target) = &value else {
+        return Ok(value);
+    };
+    for index in 0..source.logical_len() {
+        let item = crate::execute::get_property(
+            &Value::Array(source.clone()),
+            &index.to_string(),
+        );
+        if matches!(item, Value::Number(number) if number == 0.0 && number.is_sign_negative()) {
+            target.set(index, 0x8000);
+        }
+    }
+    Ok(value)
+}
+
 fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
     use crate::ops::Builtin;
     matches!(
