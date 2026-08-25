@@ -345,20 +345,45 @@ fn unit_iteration_count(fact: CountedForFact, index: f64, bound: f64) -> Option<
     (count <= u32::MAX as f64).then(|| count as usize)
 }
 
-fn kernel_iteration_count(fact: CountedForFact, mut index: f64, bound: f64) -> Option<usize> {
-    let mut count = 0usize;
-    loop {
-        if fact.timing == CountedStepTiming::BeforeTest {
-            index += fact.step;
-        }
-        if !counted_comparison(fact.comparison, index, bound) {
-            break;
-        }
-        count = count.checked_add(1)?;
-        (count <= u32::MAX as usize).then_some(())?;
-        if fact.timing == CountedStepTiming::AfterBody {
-            index += fact.step;
-        }
+fn kernel_iteration_count(fact: CountedForFact, index: f64, bound: f64) -> Option<usize> {
+    if let Some(count) = unit_iteration_count(fact, index, bound) { return Some(count); }
+    (fact.step == -1.0 && index.is_finite() && bound.is_finite()).then_some(())?;
+    let distance = index - bound;
+    let count = match (fact.timing, fact.comparison) {
+        (CountedStepTiming::BeforeTest, crate::ops::BinaryOp::GreaterEqual)
+            if distance > 0.0 => distance.floor(),
+        (CountedStepTiming::BeforeTest, crate::ops::BinaryOp::GreaterThan)
+            if distance > 1.0 => (distance - 1.0).ceil(),
+        (CountedStepTiming::AfterBody, crate::ops::BinaryOp::GreaterEqual)
+            if distance >= 0.0 => distance.floor() + 1.0,
+        (CountedStepTiming::AfterBody, crate::ops::BinaryOp::GreaterThan)
+            if distance > 0.0 => distance.ceil(),
+        (_, crate::ops::BinaryOp::GreaterEqual | crate::ops::BinaryOp::GreaterThan) => 0.0,
+        _ => return None,
+    };
+    (count <= u32::MAX as f64).then(|| count as usize)
+}
+
+#[cfg(test)]
+mod iteration_count_tests {
+    use super::*;
+
+    fn fact(comparison: crate::ops::BinaryOp, step: f64, timing: CountedStepTiming) -> CountedForFact {
+        CountedForFact { slot: 0, bound: CountedBound::Constant(0.0), comparison, step, timing }
     }
-    Some(count)
+
+    #[test]
+    fn ascending_unit_ranges_are_constant_time_facts() {
+        let less = fact(crate::ops::BinaryOp::LessThan, 1.0, CountedStepTiming::AfterBody);
+        let less_equal = fact(crate::ops::BinaryOp::LessEqual, 1.0, CountedStepTiming::AfterBody);
+        assert_eq!(kernel_iteration_count(less, 0.0, 262_144.0), Some(262_144));
+        assert_eq!(kernel_iteration_count(less_equal, 1.0, 128.0), Some(128));
+    }
+
+    #[test]
+    fn descending_pretest_range_matches_limb_and_fill_loops() {
+        let fact = fact(crate::ops::BinaryOp::GreaterEqual, -1.0, CountedStepTiming::BeforeTest);
+        assert_eq!(kernel_iteration_count(fact, 262_144.0, 0.0), Some(262_144));
+        assert_eq!(kernel_iteration_count(fact, 0.0, 0.0), Some(0));
+    }
 }
