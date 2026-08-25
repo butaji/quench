@@ -857,6 +857,9 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
     if let Some(diff) = typed_array_diff(actual, expected) {
         return diff;
     }
+    if let Some(diff) = error_diff(actual, expected) {
+        return diff;
+    }
     if let Some(diff) = collection_diff(actual, expected) {
         return diff;
     }
@@ -886,6 +889,122 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
     }
     lines.push("  }".to_string());
     lines.join("\n")
+}
+
+fn error_diff(actual: &Value, expected: &Value) -> Option<String> {
+    if !is_error_object(actual) || !is_error_object(expected) {
+        return None;
+    }
+    let label = |value: &Value| {
+        let name = match execute::get_property(value, "name") {
+            Value::String(name) if !name.is_empty() => name,
+            _ => "Error".into(),
+        };
+        let message = match execute::get_property(value, "message") {
+            Value::String(message) if !message.is_empty() => format!(": {message}"),
+            _ => String::new(),
+        };
+        format!("[{name}{message}]")
+    };
+    let actual_cause = execute::get_property(actual, "cause");
+    let expected_cause = execute::get_property(expected, "cause");
+    let actual_has = error_has_own_slot(actual, "cause") || !matches!(actual_cause, Value::Undefined);
+    let expected_has = error_has_own_slot(expected, "cause") || !matches!(expected_cause, Value::Undefined);
+    if !actual_has && !expected_has {
+        return Some(format!("  {}\n- {}", label(actual), label(expected)));
+    }
+    if !actual_has && expected_has {
+        let expected_lines = cause_entry_lines("-", &expected_cause);
+        return Some(format!(
+            "+ {}\n- {} {{\n{}\n- }}",
+            label(actual),
+            label(expected),
+            expected_lines.join("\n")
+        ));
+    }
+    if actual_has && !expected_has {
+        let actual_lines = cause_entry_lines("+", &actual_cause);
+        return Some(format!(
+            "+ {} {{\n{}\n+ }}\n- {}",
+            label(actual),
+            actual_lines.join("\n"),
+            label(expected)
+        ));
+    }
+    let cause_render = |value: &Value| {
+        if is_error_object(value) {
+            label(value)
+        } else {
+            rendered(value)
+        }
+    };
+    let mut lines = vec![format!("  {} {{", label(actual))];
+    if actual_has { lines.extend(cause_entry_lines("+", &actual_cause)); }
+    if expected_has { lines.extend(cause_entry_lines("-", &expected_cause)); }
+    lines.push("  }".into());
+    Some(lines.join("\n"))
+}
+
+fn error_has_own_slot(value: &Value, key: &str) -> bool {
+    if let Value::Object(properties) = value {
+        if properties.iter().any(|(name, _)| name == key) {
+            return true;
+        }
+    }
+    if execute::has_own_property(value, key) {
+        return true;
+    }
+    matches!(
+        execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor),
+            &Value::Undefined,
+            &[value.clone(), Value::String(key.to_string())],
+        ),
+        Ok(Value::Object(_))
+    )
+}
+
+fn cause_entry_lines(marker: &str, value: &Value) -> Vec<String> {
+    let rendered = cause_render_value(value);
+    let mut lines = rendered.lines();
+    let first = lines.next().unwrap_or("");
+    let mut output = vec![format!("{marker}   [cause]: {first}")];
+    output.extend(lines.map(|line| format!("{marker}   {line}")));
+    output
+}
+
+fn cause_render_value(value: &Value) -> String {
+    if is_error_object(value) {
+        let name = match execute::get_property(value, "name") {
+            Value::String(name) if !name.is_empty() => name,
+            _ => "Error".into(),
+        };
+        let message = match execute::get_property(value, "message") {
+            Value::String(message) if !message.is_empty() => format!(": {message}"),
+            _ => String::new(),
+        };
+        format!("[{name}{message}]")
+    } else if let Value::Object(object) = value {
+        let keys = execute::own_enumerable_keys(&Value::Object(object.clone()));
+        let fields = keys
+            .iter()
+            .map(|key| format!("  {key}: {}", rendered(&execute::get_property(value, key))))
+            .collect::<Vec<_>>();
+        format!("{{\n{}\n}}", fields.join(",\n"))
+    } else {
+        rendered(value)
+    }
+}
+
+fn is_error_object(value: &Value) -> bool {
+    let mut current = execute::get_prototype_of(value).ok();
+    while let Some(prototype) = current {
+        if matches!(prototype, Value::Builtin(quench_runtime::ops::Builtin::ErrorPrototype | quench_runtime::ops::Builtin::TypeErrorPrototype | quench_runtime::ops::Builtin::RangeErrorPrototype | quench_runtime::ops::Builtin::ReferenceErrorPrototype | quench_runtime::ops::Builtin::SyntaxErrorPrototype | quench_runtime::ops::Builtin::EvalErrorPrototype | quench_runtime::ops::Builtin::URIErrorPrototype)) {
+            return true;
+        }
+        current = execute::get_prototype_of(&prototype).ok();
+    }
+    false
 }
 
 fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
