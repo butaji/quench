@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "metrics": {
+    "counted_hits": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "counted_for",
+          "field": "hits"
+        }
+      },
+      "min": 4096
+    },
+    "counted_deopts": {
+      "numerator": "lanes.l1.counted.deopts",
+      "max": 0
+    }
+  }
+}

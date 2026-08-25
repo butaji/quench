@@ -24,7 +24,7 @@ pub(crate) fn execute(
         ),
         _ => return Err(crate::execute::VmError::MissingReturn),
     };
-    let per_iteration_captured = per_iteration.iter().any(|slot| body.uses_slot(*slot));
+    let body_capture_slots = body.capture_slots();
     let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
@@ -43,7 +43,7 @@ pub(crate) fn execute(
         test,
         body,
         update,
-        (*post_test, dst, per_iteration, per_iteration_captured),
+        (*post_test, dst, per_iteration, body_capture_slots),
         registers,
     )
 }
@@ -54,12 +54,12 @@ fn run_loop(
     test: crate::machine::CodeView<'_>,
     body: crate::machine::CodeView<'_>,
     update: crate::machine::CodeView<'_>,
-    config: (bool, u16, &[u16], bool),
+    config: (bool, u16, &[u16], &[u16]),
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::LoopEntry);
     let loop_shape = crate::execution_trace::loop_shape(body);
-    let (post_test, dst, per_iteration, per_iteration_captured) = config;
+    let (post_test, dst, per_iteration, body_capture_slots) = config;
     run_fragment(init, registers)?;
     if label.is_none() && !post_test {
         if let Some(completion) = run_montgomery_reduce_kernel(test, body, update) {
@@ -122,7 +122,7 @@ fn run_loop(
                     dst,
                     registers,
                     loop_shape,
-                    !per_iteration_captured,
+                    !capture_slots_use(body_capture_slots, fact.slot),
                 )? {
                     return Ok(completion);
                 }
@@ -156,6 +156,11 @@ fn run_loop(
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+#[inline]
+fn capture_slots_use(slots: &[u16], slot: u16) -> bool {
+    slots.binary_search(&u16::MAX).is_ok() || slots.binary_search(&slot).is_ok()
 }
 
 fn run_invariant_sum_kernel(
