@@ -71,6 +71,11 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
             Some("Temporal.ZonedDateTime.prototype.toPlainTime")
         }
         Builtin::TemporalZonedDateTimeEquals => Some("Temporal.ZonedDateTime.prototype.equals"),
+        Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => Some("get epochMilliseconds"),
+        Builtin::TemporalZonedDateTimeTimeZoneIdGetter => Some("get timeZoneId"),
+        Builtin::TemporalZonedDateTimeOffsetGetter => Some("get offset"),
+        Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter => Some("get offsetNanoseconds"),
+        Builtin::TemporalZonedDateTimeHoursInDayGetter => Some("get hoursInDay"),
         Builtin::TemporalNowInstant => Some("Temporal.Now.instant"),
         Builtin::TemporalNowPlainDateISO => Some("Temporal.Now.plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("Temporal.Now.plainDateTimeISO"),
@@ -80,6 +85,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstant => Some("Temporal.Instant"),
         Builtin::TemporalInstantFrom => Some("Temporal.Instant.from"),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some("get epochNanoseconds"),
+        Builtin::TemporalInstantEpochMillisecondsGetter => Some("get epochMilliseconds"),
         Builtin::TemporalInstantToString => Some("Temporal.Instant.prototype.toString"),
         Builtin::TemporalInstantToJSON => Some("Temporal.Instant.prototype.toJSON"),
         Builtin::TemporalInstantToLocaleString => Some("Temporal.Instant.prototype.toLocaleString"),
@@ -281,6 +287,11 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalZonedDateTimeToPlainDate => Some("toPlainDate"),
         Builtin::TemporalZonedDateTimeToPlainTime => Some("toPlainTime"),
         Builtin::TemporalZonedDateTimeEquals => Some("equals"),
+        Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => Some("epochMilliseconds"),
+        Builtin::TemporalZonedDateTimeTimeZoneIdGetter => Some("timeZoneId"),
+        Builtin::TemporalZonedDateTimeOffsetGetter => Some("offset"),
+        Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter => Some("offsetNanoseconds"),
+        Builtin::TemporalZonedDateTimeHoursInDayGetter => Some("hoursInDay"),
         Builtin::TemporalNowInstant => Some("instant"),
         Builtin::TemporalNowPlainDateISO => Some("plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("plainDateTimeISO"),
@@ -290,6 +301,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstant => Some("Instant"),
         Builtin::TemporalInstantFrom => Some("from"),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some("epochNanoseconds"),
+        Builtin::TemporalInstantEpochMillisecondsGetter => Some("epochMilliseconds"),
         Builtin::TemporalInstantToString => Some("toString"),
         Builtin::TemporalInstantToJSON => Some("toJSON"),
         Builtin::TemporalInstantToLocaleString => Some("toLocaleString"),
@@ -446,6 +458,11 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalZonedDateTimeToPlainDate
         | Builtin::TemporalZonedDateTimeToPlainTime => Some(0.0),
         Builtin::TemporalZonedDateTimeEquals => Some(1.0),
+        Builtin::TemporalZonedDateTimeEpochMillisecondsGetter
+        | Builtin::TemporalZonedDateTimeTimeZoneIdGetter
+        | Builtin::TemporalZonedDateTimeOffsetGetter
+        | Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter
+        | Builtin::TemporalZonedDateTimeHoursInDayGetter => Some(0.0),
         Builtin::TemporalNowInstant
         | Builtin::TemporalNowPlainDateISO
         | Builtin::TemporalNowPlainDateTimeISO
@@ -454,7 +471,8 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalNowZonedDateTimeISO => Some(0.0),
         Builtin::TemporalInstant => Some(1.0),
         Builtin::TemporalInstantFrom => Some(1.0),
-        Builtin::TemporalInstantEpochNanosecondsGetter => Some(0.0),
+        Builtin::TemporalInstantEpochNanosecondsGetter
+        | Builtin::TemporalInstantEpochMillisecondsGetter => Some(0.0),
         Builtin::TemporalInstantToString
         | Builtin::TemporalInstantToJSON
         | Builtin::TemporalInstantToLocaleString
@@ -526,7 +544,8 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalPlainTimeMillisecondGetter
         | Builtin::TemporalPlainTimeMicrosecondGetter
         | Builtin::TemporalPlainTimeNanosecondGetter
-        | Builtin::TemporalInstantEpochNanosecondsGetter => Some(0.0),
+        | Builtin::TemporalInstantEpochNanosecondsGetter
+        | Builtin::TemporalInstantEpochMillisecondsGetter => Some(0.0),
         Builtin::TemporalPlainDate => Some(3.0),
         Builtin::TemporalDurationFrom => Some(1.0),
         Builtin::TemporalDurationCompare => Some(2.0),
