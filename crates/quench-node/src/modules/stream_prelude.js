@@ -130,6 +130,7 @@
       readRequests: 0,
       ended: false,
       endEmitted: false,
+      endScheduled: false,
       emittedReadable: false,
       errored: null,
       closeEmitted: false,
@@ -191,9 +192,16 @@
       if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
-        (st.flowing || stream.listenerCount("readable") === 0)) {
-      st.endEmitted = true;
-      stream._emitter.emit("end");
+        !st.endScheduled && (st.flowing || stream.listenerCount("readable") === 0)) {
+      st.endScheduled = true;
+      nextTick(() => nextTick(() => {
+        st.endScheduled = false;
+        if (st.buffer.length === 0 && st.ended && !st.endEmitted &&
+            (st.flowing || stream.listenerCount("readable") === 0)) {
+          st.endEmitted = true;
+          stream._emitter.emit("end");
+        }
+      }));
     }
   }
 
@@ -432,6 +440,7 @@
       if (!options || options.end !== false) {
         source.on("end", () => dest.end());
       }
+      dest.once("end", () => source.pause());
       dest.emit("pipe", source);
       return dest;
     }
@@ -1023,7 +1032,8 @@
     _write(chunk, encoding, callback) {
       this._transform(chunk, encoding, (error, data) => {
         if (!error && data != null) this.push(data);
-        callback(error);
+        if (!error && this._readableState.ended) nextTick(() => callback());
+        else callback(error);
       });
     }
   }
