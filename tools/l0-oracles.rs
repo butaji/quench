@@ -57,7 +57,7 @@ fn run(id: &str) -> u64 {
                 length: 0,
             });
             let mut total = 0_usize;
-            for _ in 0..DEFAULT_ITERATIONS {
+            for _ in 0..LONG_ITERATIONS {
                 total = black_box(total).wrapping_add(black_box(collection.length));
             }
             total as u64
