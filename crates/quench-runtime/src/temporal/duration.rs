@@ -154,8 +154,16 @@ fn subtract(receiver: Option<&Value>, argument: Option<&Value>) -> Result<Value,
 fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
     let fields = [
-        "years", "months", "weeks", "days", "hours", "minutes", "seconds",
-        "milliseconds", "microseconds", "nanoseconds",
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
     ]
     .iter()
     .map(|name| Value::Number(-duration_field(object, name) as f64))
@@ -248,18 +256,19 @@ fn rounding_increment(options: Option<&Value>) -> Result<f64, VmError> {
 }
 
 fn rounding_mode(options: Option<&Value>) -> Result<&str, VmError> {
-    let value = options
-        .and_then(|value| match value {
-            Value::Object(object) => object
-                .iter()
-                .find(|(key, _)| key == "roundingMode")
-                .map(|(_, value)| value),
-            _ => None,
-        });
+    let value = options.and_then(|value| match value {
+        Value::Object(object) => object
+            .iter()
+            .find(|(key, _)| key == "roundingMode")
+            .map(|(_, value)| value),
+        _ => None,
+    });
     match value {
         None => Ok("halfExpand"),
         Some(Value::String(mode)) => Ok(mode.as_str()),
-        _ => Err(crate::value::error::throw_type_error("Invalid roundingMode")),
+        _ => Err(crate::value::error::throw_type_error(
+            "Invalid roundingMode",
+        )),
     }
 }
 
@@ -283,8 +292,16 @@ fn round_number(value: f64, mode: &str) -> f64 {
 
 fn duration_fields(object: &crate::value::ObjectData) -> Vec<Value> {
     [
-        "years", "months", "weeks", "days", "hours", "minutes", "seconds",
-        "milliseconds", "microseconds", "nanoseconds",
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
     ]
     .iter()
     .map(|name| {
@@ -298,7 +315,9 @@ fn duration_fields(object: &crate::value::ObjectData) -> Vec<Value> {
 
 fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
     if value.is_none() || value.is_some_and(crate::conversion::is_symbol) {
-        return Err(crate::value::error::throw_type_error("Options must be an object"));
+        return Err(crate::value::error::throw_type_error(
+            "Options must be an object",
+        ));
     }
     match value {
         Some(Value::String(unit)) => Ok(unit.as_str()),
@@ -310,15 +329,24 @@ fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
                 _ => None,
             })
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit")),
-        _ => Err(crate::value::error::throw_type_error("Options must be an object")),
+        _ => Err(crate::value::error::throw_type_error(
+            "Options must be an object",
+        )),
     }
 }
 
 fn unit_index(unit: &str) -> Result<usize, VmError> {
     let unit = unit.strip_suffix('s').unwrap_or(unit);
     [
-        ("year", 0), ("month", 1), ("week", 2), ("day", 3), ("hour", 4), ("minute", 5),
-        ("second", 6), ("millisecond", 7), ("microsecond", 8),
+        ("year", 0),
+        ("month", 1),
+        ("week", 2),
+        ("day", 3),
+        ("hour", 4),
+        ("minute", 5),
+        ("second", 6),
+        ("millisecond", 7),
+        ("microsecond", 8),
         ("nanosecond", 9),
     ]
     .iter()
@@ -351,7 +379,11 @@ fn calendar_round(
     let limit = 10_000;
     for _ in 0..limit {
         let next = shift_calendar(cursor, unit, sign as i32)?;
-        let reached = if sign >= 0.0 { next <= target } else { next >= target };
+        let reached = if sign >= 0.0 {
+            next <= target
+        } else {
+            next >= target
+        };
         if !reached {
             break;
         }
@@ -399,7 +431,9 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 }
 
 fn largest_unit(value: Option<&Value>) -> Option<usize> {
-    let Some(Value::Object(object)) = value else { return None };
+    let Some(Value::Object(object)) = value else {
+        return None;
+    };
     object
         .iter()
         .find(|(key, _)| key == "largestUnit")
