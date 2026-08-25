@@ -14,9 +14,27 @@ pub(crate) fn integrity_level(
     if object_is_extensible(target) {
         return Ok(crate::value::Value::Boolean(false));
     }
+    if matches!(
+        target,
+        crate::value::Value::Function(_) | crate::value::Value::BoundFunction(_)
+    ) {
+        return Ok(crate::value::Value::Boolean(true));
+    }
+    if is_boxed_string(target) {
+        return Ok(crate::value::Value::Boolean(true));
+    }
     Ok(crate::value::Value::Boolean(integrity_props(
         target, frozen,
     )))
+}
+
+fn is_boxed_string(target: &crate::value::Value) -> bool {
+    let crate::value::Value::Object(properties) = target else {
+        return false;
+    };
+    properties
+        .iter()
+        .any(|(name, value)| name == "_value" && matches!(value, crate::value::Value::String(_)))
 }
 
 fn integrity_props(target: &crate::value::Value, frozen: bool) -> bool {

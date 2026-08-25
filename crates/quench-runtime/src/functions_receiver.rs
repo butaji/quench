@@ -10,21 +10,6 @@ pub(crate) fn execute_target_with_receiver(
         let result = execute_target(target, receiver, arguments)?;
         return Ok((result, receiver.clone()));
     };
-    if crate::functions::is_class_constructor(function) {
-        return Err(crate::value::error::throw_type_error_for_realm(
-            crate::construct::function_realm_id(function),
-            "Class constructor cannot be invoked without 'new'",
-        ));
-    }
-    if function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| matches!(name.as_str(), "\0dynamic_function" | "\0dynamic_source"))
-    {
-        let result = crate::functions::execute_target(target, receiver, arguments)?;
-        return Ok((result, receiver.clone()));
-    }
     let frame = CallFrame::new(std::rc::Rc::clone(function), receiver.clone(), arguments.to_vec());
     if matches!(function.kind, FunctionKind::Generator) || function.is_async {
         // If the receiver is already an existing generator, resume it instead

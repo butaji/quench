@@ -6,9 +6,8 @@ fn emit_function_expression(
     captures: u16,
     metadata: FunctionMetadata,
     declared_name: Option<&str>,
-    source: Option<String>,
 ) -> u16 {
-    let function = emit_function_op(ops, next, body, params, captures, metadata, source);
+    let function = emit_function_op(ops, next, body, params, captures, metadata, None);
     if let Some(name) = declared_name {
         ops.push(Op::SetFunctionName {
             function,
@@ -84,19 +83,6 @@ pub(crate) fn build_registers(
     )
 }
 
-pub(crate) fn scope_captures(function: &crate::value::FunctionValue) -> Vec<crate::value::Value> {
-    if function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| matches!(name.as_str(), "\0dynamic_function" | "\0dynamic_source"))
-    {
-        vec![function.captures.get(0)]
-    } else {
-        function.with_captures.clone()
-    }
-}
-
 fn mark_arguments_immutable(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     environment: &std::rc::Rc<crate::environment::Environment>,
@@ -134,13 +120,8 @@ pub(crate) fn execute_construct(
         function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(function, this_value);
-    let scope_captures = crate::functions::scope_captures(function);
-    let _with_scope = crate::with_scope::FunctionGuard::install(&scope_captures);
     let result = crate::vm::execute_code_in_environment(
-        function
-            .code
-            .code()
-            .ok_or(crate::execute::VmError::MissingReturn)?,
+        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
         &mut registers,
         // Keep the active context so host-provided globals (console,
         // timers, capabilities) stay visible inside constructor bodies.
@@ -175,7 +156,9 @@ pub(crate) fn execute_bound(
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(&bound.target) => {
             execute_bound_builtin(*builtin, bound, &combined)
         }
-        crate::value::Value::Function(function) => execute_bound_function(function, bound, &combined),
+        crate::value::Value::Function(function) => {
+            execute_bound_function(function, bound, &combined)
+        }
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
         crate::value::Value::Proxy(_) => {
             crate::proxy::proxy_apply(&bound.target, &bound.receiver, &combined)
@@ -205,7 +188,7 @@ fn execute_bound_function(
     let result = execute_bound_function_in_realm(function, bound, &call_arguments, realm);
     let result = match result {
         Ok(result) => result,
-        Err(error) if realm.is_some() && !bound_target_is_class(bound) => {
+        Err(_) if realm.is_some() => {
             return Err(crate::reflect::shadow_wrapped_exception_error_for_realm(
                 wrapper_caller_realm(bound).unwrap_or(crate::ops::RealmId::ROOT),
             ))
@@ -213,10 +196,6 @@ fn execute_bound_function(
         Err(error) => return Err(error),
     };
     finish_bound_result(result, bound, realm)
-}
-
-fn bound_target_is_class(bound: &crate::value::BoundFunctionValue) -> bool {
-    matches!(&bound.target, crate::value::Value::Function(function) if crate::functions::is_class_constructor(function))
 }
 
 fn finish_bound_result(
@@ -338,14 +317,9 @@ pub(crate) fn execute_target(
             })
         }
         crate::value::Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))
-            ) =>
+            if matches!(bound.target, crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
         {
-            let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) =
-                bound.target
-            else {
+            let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
                 unreachable!()
             };
             let mut combined = bound.arguments.clone();
@@ -356,12 +330,6 @@ pub(crate) fn execute_target(
                 Some(receiver),
                 &combined,
             )
-        }
-        crate::value::Value::BoundFunction(bound)
-            if matches!(bound.target, crate::value::Value::Builtin(_))
-                && !crate::conversion::is_callable(&bound.target) =>
-        {
-            Err(crate::execute::VmError::NotCallable)
         }
         crate::value::Value::BoundFunction(bound)
             if crate::vm::is_intrinsic_bound(bound)
@@ -405,9 +373,6 @@ fn execute_builtin_target(
     receiver: Option<&crate::value::Value>,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    if crate::builtins::object::is_intrinsic_prototype(builtin) {
-        return Err(crate::execute::VmError::NotCallable);
-    }
     if let crate::ops::Builtin::HostCapability(kind) = builtin {
         return crate::vm::execute_host_capability(kind, receiver, arguments);
     }
@@ -427,10 +392,8 @@ fn execute_function_call(
         _ => None,
     };
     if let Some(realm) = realm {
-        return crate::vm::with_realm(realm, || {
-            execute_function_call_in_realm(receiver, arguments)
-        })
-        .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
+        return crate::vm::with_realm(realm, || execute_function_call_in_realm(receiver, arguments))
+            .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
     }
     execute_function_call_in_realm(receiver, arguments)
 }
@@ -444,28 +407,20 @@ fn execute_function_call_in_realm(
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
     if let crate::value::Value::BoundFunction(bound) = receiver {
-        if matches!(
-            bound.target,
-            crate::value::Value::Builtin(
-                crate::ops::Builtin::ErrorPrototypeNameGetter
-                    | crate::ops::Builtin::ErrorPrototypeMessageGetter
-                    | crate::ops::Builtin::ErrorPrototypeCauseGetter
-                    | crate::ops::Builtin::ErrorPrototypeStackGetter
-                    | crate::ops::Builtin::ErrorPrototypeStackSetter
-            )
-        ) {
-            return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
-        }
-        let receiver_bound = bound.properties.borrow().iter().any(|(key, value)| {
-            key == "\0receiver_bound_method" && *value == crate::value::Value::Boolean(true)
-        });
+        let receiver_bound = bound
+            .properties
+            .borrow()
+            .iter()
+            .any(|(key, value)| {
+                key == "\0receiver_bound_method"
+                    && *value == crate::value::Value::Boolean(true)
+            });
         if receiver_bound {
             return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
         }
     }
     if let crate::value::Value::BoundFunction(bound) = receiver {
-        if let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) =
-            bound.target
+        if let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target
         {
             let capability = match &bound.receiver {
                 crate::value::Value::HostCapability(capability) => {

@@ -26,23 +26,6 @@ fn has_own_property_result(
     crate::module_bindings::exports(&receiver, &key)?;
     Ok(Value::Boolean(owns_property(&receiver, &key)?))
 }
-
-pub(crate) fn has_own_property_result_property(
-    receiver: Option<&Value>,
-    key: Option<&Value>,
-) -> Result<Value, VmError> {
-    let key = key
-        .map(crate::properties::dynamic_property_key)
-        .transpose()?;
-    let receiver = require_object_coercible(receiver)?;
-    let receiver = crate::vm::resolve_global_owner(receiver)
-        .unwrap_or_else(|| crate::locals::resolved_replacement(receiver.clone()));
-    let Some(key) = key else {
-        return Ok(Value::Boolean(false));
-    };
-    crate::module_bindings::exports(&receiver, &key)?;
-    Ok(Value::Boolean(owns_property(&receiver, &key)?))
-}
 fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError> {
     match receiver {
         Some(Value::Null) | Some(Value::Undefined) | None => {
@@ -91,17 +74,9 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
 }
 
 fn bound_function_owns_property(bound: &crate::value::BoundFunctionValue, key: &str) -> bool {
-    let deleted = crate::builtins::deleted_key(key);
-    if bound
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == &deleted)
-    {
-        return false;
-    }
     if bound.target == Value::Builtin(Builtin::AbstractModuleSource) {
         let properties = bound.properties.borrow();
+        let deleted = crate::builtins::deleted_key(key);
         return !properties.iter().any(|(name, _)| name == &deleted)
             && builtin_owns_property(Builtin::AbstractModuleSource, key);
     }
@@ -111,8 +86,6 @@ fn bound_function_owns_property(bound: &crate::value::BoundFunctionValue, key: &
         .iter()
         .rev()
         .any(|(name, _)| name == key)
-        || (matches!(bound.target, Value::Builtin(_))
-            && matches!(key, "length" | "name"))
         || (crate::vm::is_intrinsic_bound(bound)
             && matches!(bound.target, Value::Builtin(builtin) if builtin_owns_property(builtin, key)))
 }

@@ -216,8 +216,7 @@ mod tests {
 
     #[test]
     fn strips_only_requested_v8_probe_statements() {
-        let source =
-            "// Flags: --allow-natives-syntax\neval('%PrepareFunctionForOptimization(f)');\nf();\n";
+        let source = "// Flags: --allow-natives-syntax\neval('%PrepareFunctionForOptimization(f)');\nf();\n";
         let normalized = strip_v8_native_probes(source);
         assert!(!normalized.contains("PrepareFunctionForOptimization"));
         assert!(normalized.contains("f();"));

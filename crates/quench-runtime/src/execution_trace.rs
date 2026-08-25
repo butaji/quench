@@ -94,6 +94,11 @@ execution_events! {
     PackedArrayMiss => "packed_array_miss",
     NamedPropertyHit => "named_property_hit",
     NamedPropertyMiss => "named_property_miss",
+    NamedGetReplacement => "named_get_replacement",
+    NamedGetCacheEmpty => "named_get_cache_empty",
+    NamedGetLayoutMismatch => "named_get_layout_mismatch",
+    NamedGetPrototypeMiss => "named_get_prototype_miss",
+    NamedGetSlotMissing => "named_get_slot_missing",
     EqualityWordHit => "equality_word_hit",
     EqualityWordMiss => "equality_word_miss",
     NamedPropertySetHit => "named_property_set_hit",
@@ -160,17 +165,28 @@ struct Counters {
     function_call_shapes: HashMap<(u16, usize, usize), u64>,
     function_opcode_shapes: HashMap<(u64, u16, u8, [u8; 32]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
+    descriptor_views_by_op: HashMap<&'static str, u64>,
     named_property_results: HashMap<&'static str, u64>,
+    named_property_misses: HashMap<String, u64>,
     crypto_direct_iterations: u64,
     loop_shapes: HashMap<u64, (u64, u64, Vec<&'static str>)>,
     value_decode_by_site: HashMap<&'static str, u64>,
     value_decode_other_by_op: HashMap<&'static str, u64>,
+    owned_word_read_by_site: HashMap<&'static str, u64>,
+    owned_word_read_by_op: HashMap<&'static str, u64>,
     packed_miss_by: HashMap<&'static str, u64>,
     allocations: HashMap<&'static str, u64>,
     last_index: HashMap<&'static str, u64>,
     kernels: HashMap<&'static str, (u64, u64)>,
     compact_sites: HashMap<CompactSiteKey, u64>,
     compact_site_dropped: u64,
+}
+
+#[cfg(feature = "execution-trace")]
+thread_local! {
+    static NAMED_GET_MISS_REASON: std::cell::Cell<&'static str> = const {
+        std::cell::Cell::new("unknown")
+    };
 }
 
 #[derive(Clone, Copy)]
@@ -181,6 +197,7 @@ pub(crate) enum DecodeSite {
     Load,
     LoadChecked,
     Move,
+    Call,
     LeafGetN,
     LeafLoad,
     LeafLoadChecked,
@@ -198,6 +215,7 @@ impl DecodeSite {
             Self::Load => "load",
             Self::LoadChecked => "load_checked",
             Self::Move => "move",
+            Self::Call => "call",
             Self::LeafGetN => "leaf_getn",
             Self::LeafLoad => "leaf_load",
             Self::LeafLoadChecked => "leaf_load_checked",
@@ -245,6 +263,7 @@ fn lane_profile(counters: &Counters, compact_total: u64, slow_total: u64) -> ser
         "l3": {"handlers": l3, "vm_share_ppm": ratio_ppm(l3, vm_total),
             "top_slow": top_map(&counters.slow, 8),
             "descriptor_objects": counters.descriptor_objects,
+            "descriptor_views_by_op": top_map(&counters.descriptor_views_by_op, 32),
             "alloc": named_buckets(&counters.allocations,
                 &["match_result", "descriptor_view", "environment", "other"]),
             "last_index": named_buckets(&counters.last_index,
@@ -290,10 +309,15 @@ fn l0_profile(counters: &Counters) -> serde_json::Value {
                 "register": event(Event::RegisterFileRead),
                 "owned": event(Event::OwnedWordRead),
             },
+            "owned_word_read_by_site": named_buckets(&counters.owned_word_read_by_site,
+                &["getn", "setn", "load", "load_checked", "move", "call", "leaf_getn",
+                  "leaf_load", "leaf_load_checked", "leaf_other",
+                  "binding_borrow", "env_load", "other"]),
+            "owned_word_read_by_op": top_map(&counters.owned_word_read_by_op, 16),
             "word_copies": event(Event::RegisterWordCopy),
             "value_decode": event(Event::ValueDecode),
             "value_decode_by_site": named_buckets(&counters.value_decode_by_site,
-                &["getn", "setn", "load", "load_checked", "move", "leaf_getn",
+                &["getn", "setn", "load", "load_checked", "move", "call", "leaf_getn",
                   "leaf_load", "leaf_load_checked", "leaf_other",
                   "binding_borrow", "env_load", "other"]),
             "value_decode_other_by_op": top_map(&counters.value_decode_other_by_op, 16),
@@ -367,6 +391,16 @@ fn top_map(map: &HashMap<&'static str, u64>, limit: usize) -> Vec<serde_json::Va
     rows.into_iter()
         .take(limit)
         .map(|(name, count)| serde_json::json!({"op": name, "count": count}))
+        .collect()
+}
+
+#[cfg(feature = "execution-trace")]
+fn top_string_map(map: &HashMap<String, u64>, limit: usize) -> Vec<serde_json::Value> {
+    let mut rows = map.iter().collect::<Vec<_>>();
+    rows.sort_unstable_by_key(|row| std::cmp::Reverse(*row.1));
+    rows.into_iter()
+        .take(limit)
+        .map(|(name, count)| serde_json::json!({"name": name, "count": count}))
         .collect()
 }
 
@@ -492,6 +526,9 @@ pub(crate) fn function_call_shape(
     code: Option<crate::machine::CodeView<'_>>,
 ) {
     if enabled() {
+        if let Some(code) = code {
+            dump_function_shape(params, captures, code);
+        }
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
             let code_len = code.map_or(0, crate::machine::CodeView::len);
@@ -514,6 +551,63 @@ pub(crate) fn function_call_shape(
                 .entry((fingerprint, params, code.len() as u8, opcodes))
                 .or_default() += 1;
         });
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_function_shape(params: u16, captures: usize, code: crate::machine::CodeView<'_>) {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    static SEEN: OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> = OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_FUNCTION_SHAPES").is_some()) {
+        return;
+    }
+    let fingerprint = function_fingerprint(params, captures, code);
+    if !SEEN
+        .get_or_init(Default::default)
+        .lock()
+        .expect("function shape trace lock")
+        .insert(fingerprint)
+    {
+        return;
+    }
+    let (store, code_id) = code.trace_identity();
+    eprintln!(
+        "FUNCTION_SHAPE store={store:x} code={code_id} params={params} captures={captures} len={} hash={fingerprint}",
+        code.len()
+    );
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).expect("valid function instruction");
+        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
+        eprintln!("  {pc}: {instruction:?} cold={cold:?}");
+        if let Some(crate::ops::Op::Loop {
+            init,
+            test,
+            body,
+            update,
+            ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("init", init.code());
+            dump_function_fragment("test", test.code());
+            dump_function_fragment("body", body.code());
+            dump_function_fragment("update", update.code());
+        }
+        if let Some(crate::ops::Op::Branch {
+            then_ops, else_ops, ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("then", then_ops.code());
+            dump_function_fragment("else", else_ops.code());
+        }
+        if let Some(crate::ops::Op::Conditional {
+            consequent,
+            alternate,
+            ..
+        }) = code.cold_at(pc)
+        {
+            dump_function_fragment("consequent", consequent.code());
+            dump_function_fragment("alternate", alternate.code());
+        }
     }
 }
 
@@ -580,6 +674,27 @@ fn hash_nested_code(op: Option<&crate::ops::Op>, hasher: &mut impl std::hash::Ha
     }
 }
 
+#[cfg(feature = "execution-trace")]
+fn dump_function_fragment(label: &str, code: Option<crate::machine::CodeView<'_>>) {
+    let Some(code) = code else { return };
+    eprintln!("    {label} len={}", code.len());
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).expect("valid function fragment");
+        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
+        let name = code
+            .metadata_at(pc)
+            .and_then(|metadata| metadata.name.as_deref());
+        eprintln!("      {pc}: {instruction:?} cold={cold:?} name={name:?}");
+        if let Some(crate::ops::Op::Branch {
+            then_ops, else_ops, ..
+        }) = code.cold(instruction)
+        {
+            dump_function_fragment("then", then_ops.code());
+            dump_function_fragment("else", else_ops.code());
+        }
+    }
+}
+
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn function_call_shape(_: u16, _: usize, _: Option<crate::machine::CodeView<'_>>) {}
 
@@ -588,6 +703,15 @@ pub(crate) fn descriptor_object(origin: &'static str) {
     if enabled() {
         if origin == "view" {
             allocation("descriptor_view");
+            CURRENT_OP.with(|current| {
+                COUNTERS.with(|state| {
+                    *state
+                        .borrow_mut()
+                        .descriptor_views_by_op
+                        .entry(current.get())
+                        .or_default() += 1;
+                });
+            });
         }
         COUNTERS.with(|state| {
             *state
@@ -656,8 +780,72 @@ pub(crate) fn named_property_result(tier: &'static str, value: &crate::value::Va
     }
 }
 
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_property_miss(key: &str) {
+    if enabled() {
+        let reason = NAMED_GET_MISS_REASON.with(std::cell::Cell::get);
+        let key = format!("{reason}:{key}");
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            if let Some(count) = counters.named_property_misses.get_mut(&key) {
+                *count += 1;
+            } else if counters.named_property_misses.len() < 64 {
+                counters.named_property_misses.insert(key, 1);
+            } else {
+                *counters
+                    .named_property_misses
+                    .entry("other".into())
+                    .or_default() += 1;
+            }
+        });
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_get_miss_reason(reason: &'static str) {
+    if enabled() {
+        NAMED_GET_MISS_REASON.with(|current| current.set(reason));
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_property_word(tier: &'static str, payload: &'static str) {
+    if enabled() {
+        let kind = match (tier, payload) {
+            ("own", "number") => "own:number",
+            ("own", "object") => "own:object",
+            ("own", "function") => "own:function",
+            ("own", "binding_cell") => "own:binding_cell:other",
+            ("own", _) => "own:other",
+            ("prototype", "number") => "prototype:number",
+            ("prototype", "object") => "prototype:object",
+            ("prototype", "function") => "prototype:function",
+            ("prototype", "binding_cell") => "prototype:binding_cell:other",
+            ("prototype", _) => "prototype:other",
+            _ => "unknown",
+        };
+        COUNTERS.with(|counters| {
+            *counters
+                .borrow_mut()
+                .named_property_results
+                .entry(kind)
+                .or_default() += 1;
+        });
+    }
+}
+
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn named_property_result(_: &'static str, _: &crate::value::Value) {}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_property_miss(_: &str) {}
+
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_get_miss_reason(_: &'static str) {}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn named_property_word(_: &'static str, _: &'static str) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn crypto_direct_iterations(count: usize) {
@@ -670,6 +858,24 @@ pub(crate) fn crypto_direct_iterations(count: usize) {
 
 #[cfg(not(feature = "execution-trace"))]
 pub(crate) fn crypto_direct_iterations(_: usize) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn crypto_kernel_iterations(count: usize) {
+    if enabled() && count != 0 {
+        COUNTERS.with(|counters| {
+            let mut counters = counters.borrow_mut();
+            if counters.events.is_empty() {
+                counters.events.resize(EVENT_NAMES.len(), 0);
+            }
+            counters.crypto_direct_iterations += count as u64;
+            counters.events[Event::CryptoKernelHit as usize] += count as u64;
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn crypto_kernel_iterations(_: usize) {}
 
 #[cfg(feature = "execution-trace")]
 pub(crate) fn loop_shape(body: crate::machine::CodeView<'_>) -> u64 {
@@ -707,6 +913,7 @@ pub(crate) fn loop_shape(_: crate::machine::CodeView<'_>) -> u64 {
 }
 
 #[cfg(feature = "execution-trace")]
+#[inline(always)]
 pub(crate) fn loop_shape_iteration(fingerprint: u64) {
     if fingerprint != 0 {
         COUNTERS.with(|counters| {
@@ -718,7 +925,80 @@ pub(crate) fn loop_shape_iteration(fingerprint: u64) {
 }
 
 #[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
 pub(crate) fn loop_shape_iteration(_: u64) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn loop_shape_entries(fingerprint: u64, entries: usize) {
+    if fingerprint != 0 && entries != 0 {
+        COUNTERS.with(|counters| {
+            if let Some(shape) = counters.borrow_mut().loop_shapes.get_mut(&fingerprint) {
+                shape.0 += entries as u64;
+            }
+        });
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn loop_shape_entries(_: u64, _: usize) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn counted_loop_iterations(fingerprint: u64, iterations: usize) {
+    if !enabled() || iterations == 0 {
+        return;
+    }
+    let iterations = iterations as u64;
+    COUNTERS.with(|counters| {
+        let mut counters = counters.borrow_mut();
+        if counters.events.is_empty() {
+            counters.events.resize(EVENT_NAMES.len(), 0);
+        }
+        counters.events[Event::LoopIteration as usize] += iterations;
+        counters.events[Event::CountedForHit as usize] += iterations;
+        if let Some(shape) = counters.loop_shapes.get_mut(&fingerprint) {
+            shape.1 += iterations;
+        }
+    });
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn counted_loop_iterations(_: u64, _: usize) {}
+
+#[cfg(feature = "execution-trace")]
+pub(crate) fn numeric_kernel_iterations(
+    id: &'static str,
+    fingerprint: u64,
+    iterations: usize,
+    gets_per_iteration: usize,
+    sets_per_iteration: usize,
+) {
+    if !enabled() || iterations == 0 {
+        return;
+    }
+    let iterations = iterations as u64;
+    COUNTERS.with(|counters| {
+        let mut counters = counters.borrow_mut();
+        if counters.events.is_empty() {
+            counters.events.resize(EVENT_NAMES.len(), 0);
+        }
+        counters.events[Event::LoopIteration as usize] += iterations;
+        counters.events[Event::CountedForHit as usize] += iterations;
+        counters.events[Event::PackedArrayGet as usize] +=
+            iterations.saturating_mul(gets_per_iteration as u64);
+        counters.events[Event::PackedArraySet as usize] +=
+            iterations.saturating_mul(sets_per_iteration as u64);
+        if let Some(shape) = counters.loop_shapes.get_mut(&fingerprint) {
+            shape.1 += iterations;
+        }
+        counters.kernels.entry(id).or_default().0 += iterations;
+    });
+}
+
+#[cfg(not(feature = "execution-trace"))]
+#[inline(always)]
+pub(crate) fn numeric_kernel_iterations(_: &'static str, _: u64, _: usize, _: usize, _: usize) {}
 
 #[cfg(feature = "execution-trace")]
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -1026,6 +1306,15 @@ pub(crate) fn event(event: Event) {
                 counters.events.resize(EVENT_NAMES.len(), 0);
             }
             counters.events[event as usize] += 1;
+            if matches!(event, Event::OwnedWordRead) {
+                let site = DECODE_SITE.with(std::cell::Cell::get);
+                let op = CURRENT_OP.with(std::cell::Cell::get);
+                *counters
+                    .owned_word_read_by_site
+                    .entry(site.name())
+                    .or_default() += 1;
+                count_named(&mut counters.owned_word_read_by_op, op);
+            }
         });
     }
 }
@@ -1077,6 +1366,7 @@ fn decode_site_for_opcode(opcode: crate::ir::Opcode, leaf: bool) -> DecodeSite {
         crate::ir::Opcode::Move => DecodeSite::Move,
         crate::ir::Opcode::LoadLocal => DecodeSite::Load,
         crate::ir::Opcode::LoadLocalChecked => DecodeSite::LoadChecked,
+        crate::ir::Opcode::CallN => DecodeSite::Call,
         _ => DecodeSite::Other,
     }
 }
@@ -1090,6 +1380,7 @@ fn decode_site_for_slow(name: &str) -> DecodeSite {
         "Move" => DecodeSite::Move,
         "GetProperty" | "GetPropertyDynamic" => DecodeSite::GetN,
         "SetProperty" | "SetPropertyDynamic" => DecodeSite::SetN,
+        "Call" | "CallMethod" | "Construct" => DecodeSite::Call,
         _ => DecodeSite::Other,
     }
 }
@@ -1341,6 +1632,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "function_opcode_shapes": function_opcode_shapes,
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
+                "named_property_misses": top_string_map(&counters.named_property_misses, 32),
                 "crypto_direct_iterations": counters.crypto_direct_iterations,
                 "loop_shapes": loop_shapes,
                 "lanes": lanes,
@@ -1357,7 +1649,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 
 #[cfg(feature = "execution-trace")]
 pub fn emit() {
-    let _ = snapshot();
+    if let Some(snapshot) = snapshot() {
+        eprintln!("QUENCH_EXEC_TRACE {snapshot}");
+    }
 }
 
 #[cfg(all(test, feature = "execution-trace"))]
@@ -1392,6 +1686,31 @@ mod lane_profile_tests {
         );
         assert_eq!(counters.events[Event::ValueDecode as usize], 1);
         assert_eq!(counters.value_decode_by_site.get("getn"), Some(&1));
+    }
+
+    #[test]
+    fn attributes_owned_word_reads_to_site_and_opcode() {
+        let mut counters = Counters {
+            events: vec![0; EVENT_NAMES.len()],
+            ..Counters::default()
+        };
+        counters.events[Event::OwnedWordRead as usize] += 1;
+        *counters
+            .owned_word_read_by_site
+            .entry(DecodeSite::GetN.name())
+            .or_default() += 1;
+        count_named(&mut counters.owned_word_read_by_op, "GetN");
+        let profile = l0_profile(&counters);
+        assert_eq!(profile["owned_word_read_by_site"]["getn"], 1);
+        assert_eq!(profile["owned_word_read_by_op"][0]["op"], "GetN");
+    }
+
+    #[test]
+    fn attributes_calln_traffic_to_call_site() {
+        assert!(matches!(
+            decode_site_for_opcode(crate::ir::Opcode::CallN, false),
+            DecodeSite::Call
+        ));
     }
 
     #[test]
@@ -1432,9 +1751,14 @@ mod lane_profile_tests {
             ..Counters::default()
         };
         counters.descriptor_objects.insert("view", 3);
+        counters.descriptor_views_by_op.insert("DefineProperty", 3);
         counters.allocations.insert("descriptor_view", 2);
         let profile = lane_profile(&counters, 0, 0);
         assert_eq!(profile["l3"]["descriptor_objects"]["view"], 3);
+        assert_eq!(
+            profile["l3"]["descriptor_views_by_op"][0],
+            serde_json::json!({"op": "DefineProperty", "count": 3})
+        );
         assert_eq!(profile["l3"]["alloc"]["descriptor_view"], 2);
     }
 }

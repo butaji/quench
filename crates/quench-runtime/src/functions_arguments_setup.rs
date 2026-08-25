@@ -47,8 +47,7 @@ fn map_arguments(
 }
 
 pub(crate) fn is_class_constructor(function: &crate::value::FunctionValue) -> bool {
-    matches!(function.kind, FunctionKind::ClassConstructor)
-        || function
+    function
         .properties
         .borrow()
         .iter()

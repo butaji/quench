@@ -6,11 +6,6 @@ fn function_prototype_builtin(
     builtin: Builtin,
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    if !receiver.is_some_and(crate::conversion::is_callable) {
-        return Err(crate::value::error::throw_type_error(
-            "Function.prototype method called on incompatible receiver",
-        ));
-    }
     match builtin {
         Builtin::FunctionPrototypeToString => {
             Ok(crate::builtins::function_prototype_to_string(receiver))

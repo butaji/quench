@@ -16,53 +16,8 @@ pub(crate) fn function_builtin(
             crate::vm::execute_function_apply(receiver, arguments)
         }
         crate::ops::Builtin::FunctionBind => bind_function_target(receiver, arguments),
-        crate::ops::Builtin::ArrayJoin => crate::builtins::array_join(receiver, arguments),
-        crate::ops::Builtin::ArrayToString => {
-            let this_value = receiver.unwrap_or(&crate::value::Value::Undefined);
-            if let crate::value::Value::Proxy(proxy) = this_value {
-                if crate::proxy::is_revoked(proxy) {
-                    return Err(crate::value::error::throw_type_error(
-                        "Cannot perform operation on a revoked proxy",
-                    ));
-                }
-            }
-            let object = crate::construct::to_object(this_value)?;
-            let join = crate::execute::get_property_result(&object, "join")?;
-            if let crate::value::Value::Proxy(proxy) = this_value {
-                if crate::proxy::is_revoked(proxy) {
-                    return Err(crate::value::error::throw_type_error(
-                        "Cannot perform operation on a revoked proxy",
-                    ));
-                }
-            }
-            if crate::conversion::is_callable(&join) {
-                crate::functions::execute_target_with_receiver(&join, this_value, arguments)
-                    .map(|result| result.0)
-            } else {
-                let tag = match this_value {
-                    crate::value::Value::Proxy(proxy) => match &proxy.target {
-                        crate::value::Value::Array(values) if values.is_arguments() => "Arguments",
-                        crate::value::Value::Array(_) => "Array",
-                        crate::value::Value::Function(_)
-                        | crate::value::Value::BoundFunction(_)
-                        | crate::value::Value::Builtin(_) => "Function",
-                        crate::value::Value::Map(_) => "Map",
-                        _ => "Object",
-                    },
-                    crate::value::Value::Map(_) => "Map",
-                    _ => {
-                        let tag =
-                            crate::execute::get_property_result(this_value, "Symbol.toStringTag")?;
-                        if let crate::value::Value::String(tag) = tag {
-                            if !crate::conversion::is_symbol_string(&tag) {
-                                return Ok(crate::value::Value::String(format!("[object {tag}]")));
-                            }
-                        }
-                        return Ok(crate::builtins::prototype_to_string(receiver));
-                    }
-                };
-                Ok(crate::value::Value::String(format!("[object {tag}]")))
-            }
+        crate::ops::Builtin::ArrayJoin | crate::ops::Builtin::ArrayToString => {
+            crate::builtins::array_join(receiver, arguments)
         }
         crate::ops::Builtin::ArrayPush => crate::builtins::array_push(receiver, arguments),
         crate::ops::Builtin::ArrayShift => crate::builtins::array_shift(receiver),
@@ -78,14 +33,16 @@ pub(crate) fn function_builtin(
             crate::builtins::array_find_last_index(receiver, arguments)
         }
         crate::ops::Builtin::ArrayFindIndex => crate::arrays::find_index(receiver, arguments),
-        crate::ops::Builtin::ArrayToSorted => crate::builtins::array_to_sorted(receiver, arguments),
+        crate::ops::Builtin::ArrayToSorted => {
+            crate::builtins::array_to_sorted(receiver, arguments)
+        }
         crate::ops::Builtin::ArrayToSpliced => {
             crate::builtins::array_to_spliced(receiver, arguments)
         }
         crate::ops::Builtin::ArrayWith => crate::builtins::array_with(receiver, arguments),
-        crate::ops::Builtin::ObjectPropertyIsEnumerable => {
-            crate::builtins::object::object_property_is_enumerable(receiver, arguments)
-        }
+        crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
+            crate::builtins::object::object_property_is_enumerable(receiver, arguments),
+        ),
         _ => Err(crate::execute::VmError::NotCallable),
     }
 }
@@ -101,8 +58,7 @@ pub(crate) fn execute(
         function.code.code(),
     );
     if is_class_constructor(function) {
-        return Err(crate::value::error::throw_type_error_for_realm(
-            crate::construct::function_realm_id(function),
+        return Err(crate::value::error::throw_type_error(
             "Class constructor cannot be invoked without 'new'",
         ));
     }
@@ -144,10 +100,8 @@ pub(crate) fn execute(
             completion, generator,
         ));
     }
-    if !is_dynamic_function(function) {
-        if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
-            return result;
-        }
+    if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
+        return result;
     }
 
     // The packed continuation path intentionally omits dynamic object-scope
@@ -171,8 +125,7 @@ pub(crate) fn execute(
             function.private_environment.clone(),
         );
         let _home = crate::super_scope::Guard::install(&function, &receiver);
-        let scope_captures = crate::functions::scope_captures(&function);
-        let _with_scope = crate::with_scope::FunctionGuard::install(&scope_captures);
+        let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
         let completion = crate::vm::execute_code_frame_completion(
             function
                 .code
@@ -198,15 +151,6 @@ pub(crate) fn execute(
     }
 }
 
-fn is_dynamic_function(function: &crate::value::FunctionValue) -> bool {
-    let dynamic = function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| matches!(name.as_str(), "\0dynamic_function" | "\0dynamic_source"));
-    dynamic
-}
-
 fn execute_with_dynamic_scope(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: crate::value::Value,
@@ -222,8 +166,7 @@ fn execute_with_dynamic_scope(
             function.private_environment.clone(),
         );
         let _home = crate::super_scope::Guard::install(&function, &receiver);
-        let scope_captures = crate::functions::scope_captures(&function);
-        let _with_scope = crate::with_scope::FunctionGuard::install(&scope_captures);
+        let _with_scope = crate::with_scope::FunctionGuard::install(&function.with_captures);
         let mut registers = registers;
         let completion = crate::vm::execute_code_frame_completion(
             function

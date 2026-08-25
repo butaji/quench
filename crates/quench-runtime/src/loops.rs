@@ -133,11 +133,9 @@ pub(crate) fn reduce_for_in(
         )?;
         Ok::<_, Vec<String>>((body, last))
     })?;
+    prepend_iteration_immutability(&statement.left, slot, &body_locals, &mut body);
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
-    }
-    if for_left_immutable(&statement.left) {
-        body.insert(0, Op::MarkImmutable { slot });
     }
     *locals = outer_locals;
     ops.push(Op::ForIn {
@@ -146,6 +144,7 @@ pub(crate) fn reduce_for_in(
         slot,
         body: crate::machine::FunctionCode::pending(body),
         per_iteration,
+        iteration_slots: iteration_binding_slots(&statement.left, &body_locals),
         dst,
     });
     Ok(Some(dst))
@@ -161,6 +160,56 @@ fn for_left_immutable(left: &oxc::ast::ast::ForStatementLeft<'_>) -> bool {
             | oxc::ast::ast::VariableDeclarationKind::Using
             | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
     )
+}
+
+fn prepend_iteration_immutability(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    slot: u16,
+    locals: &HashMap<String, u16>,
+    body: &mut Vec<Op>,
+) {
+    if !for_left_immutable(left) {
+        return;
+    }
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        body.insert(0, Op::MarkImmutable { slot });
+        return;
+    };
+    let Some(declarator) = declaration.declarations.first() else {
+        body.insert(0, Op::MarkImmutable { slot });
+        return;
+    };
+    if matches!(
+        declarator.id.kind,
+        oxc::ast::ast::BindingPatternKind::BindingIdentifier(_)
+    ) {
+        body.insert(0, Op::MarkImmutable { slot });
+        return;
+    }
+    for name in crate::binding_patterns::names(&declarator.id)
+        .into_iter()
+        .rev()
+    {
+        if let Some(&name_slot) = locals.get(&name) {
+            body.insert(0, Op::MarkImmutable { slot: name_slot });
+        }
+    }
+}
+
+fn iteration_binding_slots(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    locals: &HashMap<String, u16>,
+) -> Vec<u16> {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return Vec::new();
+    };
+    let Some(declarator) = declaration.declarations.first() else {
+        return Vec::new();
+    };
+    crate::binding_patterns::names(&declarator.id)
+        .into_iter()
+        .filter_map(|name| locals.get(&name).copied())
+        .collect()
 }
 
 fn emit_for_in_initializer(
@@ -212,13 +261,11 @@ pub(crate) fn reduce_for_of(
             .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
     let dst = crate::switch::take_completion_register(ops, next_register);
     let mut body_locals = locals.clone();
-    let has_pattern = pattern.is_some();
-    let binding_slot = if per_iteration {
+    let slot = if per_iteration {
         refresh_iteration_locals(&statement.left, next_slot, &mut body_locals)
     } else {
         slot
     };
-    let iteration_slot = if has_pattern { slot } else { binding_slot };
     let (mut body, _) = crate::switch::with_completion(dst, || {
         let mut body = Vec::new();
         let last = crate::loops::reduce_loop_body(
@@ -232,26 +279,18 @@ pub(crate) fn reduce_for_of(
         )?;
         Ok::<_, Vec<String>>((body, last))
     })?;
+    prepend_iteration_immutability(&statement.left, slot, &body_locals, &mut body);
     if let Some(pattern) = pattern {
-        prepend_for_of_binding(
-            pattern,
-            iteration_slot,
-            &mut body,
-            facts,
-            next_register,
-            &body_locals,
-        )?;
-    }
-    if for_left_immutable(&statement.left) && !has_pattern {
-        body.insert(0, Op::MarkImmutable { slot: binding_slot });
+        prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
     }
     *locals = outer_locals;
     ops.push(Op::ForOf {
         label: None,
         iterable,
-        slot: iteration_slot,
+        slot,
         body: crate::machine::FunctionCode::pending(body),
         per_iteration,
+        iteration_slots: iteration_binding_slots(&statement.left, &body_locals),
         r#await: statement.r#await,
         dst,
     });
@@ -304,7 +343,7 @@ pub(crate) fn execute_for_of(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, await_values, iterable, dst) =
+    let (label, slot, body, per_iteration, iteration_slots, await_values, iterable, dst) =
         unpack_for_of(registers, op)?;
     let iterator = if await_values {
         crate::collections::iterator::open_async(iterable)?
@@ -319,6 +358,7 @@ pub(crate) fn execute_for_of(
         per_iteration,
         await_values,
         iterator,
+        iteration_slots,
         dst,
     )
 }
@@ -351,6 +391,8 @@ impl LiveForOf {
 
 thread_local! {
     static LIVE_FOR_OF: LiveForOf = const { LiveForOf::new() };
+    static PENDING_ASYNC_FOR_OF: std::cell::UnsafeCell<Vec<crate::value::AsyncForOfState>> =
+        const { std::cell::UnsafeCell::new(Vec::new()) };
 }
 
 fn remember_for_of(iterator: crate::value::Value) {
@@ -365,11 +407,20 @@ pub(crate) fn take_live_for_of() -> Option<crate::value::Value> {
     LIVE_FOR_OF.with(LiveForOf::pop)
 }
 
+fn remember_pending_async_for_of(state: crate::value::AsyncForOfState) {
+    PENDING_ASYNC_FOR_OF.with(|pending| unsafe { (&mut *pending.get()).push(state) });
+}
+
+pub(crate) fn take_pending_async_for_of() -> Option<crate::value::AsyncForOfState> {
+    PENDING_ASYNC_FOR_OF.with(|pending| unsafe { (&mut *pending.get()).pop() })
+}
+
 type ForInLoopData<'a> = (
     &'a Option<String>,
     u16,
     &'a crate::machine::FunctionCode,
     bool,
+    &'a [u16],
     Vec<String>,
     u16,
     crate::value::Value,
@@ -379,6 +430,7 @@ type ForOfLoopData<'a> = (
     u16,
     &'a crate::machine::FunctionCode,
     bool,
+    &'a [u16],
     bool,
     crate::value::Value,
     u16,
@@ -394,6 +446,7 @@ fn unpack_for_in<'a>(
         slot,
         body,
         per_iteration,
+        iteration_slots,
         dst,
     } = op
     else {
@@ -401,7 +454,16 @@ fn unpack_for_in<'a>(
     };
     let value = crate::execute::read_register(registers, *object)?;
     let keys = for_in_keys(&value);
-    Ok((label, *slot, body, *per_iteration, keys, *dst, value))
+    Ok((
+        label,
+        *slot,
+        body,
+        *per_iteration,
+        iteration_slots,
+        keys,
+        *dst,
+        value,
+    ))
 }
 
 fn for_in_keys(value: &crate::value::Value) -> Vec<String> {
@@ -418,7 +480,7 @@ fn iterate_loop_keys(
     registers: &mut crate::register_file::RegisterFile,
     data: ForInLoopData<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, keys, dst, object) = data;
+    let (label, slot, body, per_iteration, iteration_slots, keys, dst, object) = data;
     let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
@@ -428,7 +490,7 @@ fn iterate_loop_keys(
             continue;
         }
         let value = crate::value::Value::String(key);
-        let _binding = bind_iteration(slot, value, per_iteration);
+        let _binding = bind_iteration(slot, value, per_iteration, iteration_slots);
         match execute_loop_body(registers, label, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(value) => {
@@ -467,6 +529,7 @@ fn unpack_for_of<'a>(
         slot,
         body,
         per_iteration,
+        iteration_slots,
         r#await,
         dst,
     } = op
@@ -474,7 +537,16 @@ fn unpack_for_of<'a>(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let iterable = crate::execute::read_register(registers, *iterable)?;
-    Ok((label, *slot, body, *per_iteration, *r#await, iterable, *dst))
+    Ok((
+        label,
+        *slot,
+        body,
+        *per_iteration,
+        iteration_slots,
+        *r#await,
+        iterable,
+        *dst,
+    ))
 }
 
 fn iterate_loop_values(
@@ -485,10 +557,21 @@ fn iterate_loop_values(
     per_iteration: bool,
     await_values: bool,
     iterator: crate::value::Value,
+    iteration_slots: &[u16],
     dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let body_code = body.clone();
     let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
+    };
+    let pending = crate::value::AsyncForOfState {
+        label: label.clone(),
+        slot,
+        body: body_code,
+        per_iteration,
+        iteration_slots: iteration_slots.to_vec(),
+        iterator: iterator.clone(),
+        dst,
     };
     loop {
         let value = match if await_values {
@@ -498,16 +581,21 @@ fn iterate_loop_values(
         } {
             Ok(value) => value,
             Err(crate::execute::VmError::Thrown(reason)) => {
-                // IteratorClose applies to abrupt completion from the loop
-                // body, not to an abrupt IteratorStep/IteratorValue.
-                return Ok(crate::completion::Completion::Throw(reason));
+                return crate::collections::iterator::close(
+                    iterator.clone(),
+                    crate::completion::Completion::Throw(reason),
+                );
+            }
+            Err(crate::execute::VmError::Suspended(promise)) if await_values => {
+                remember_pending_async_for_of(pending);
+                return Err(crate::execute::VmError::Suspended(promise));
             }
             Err(error) => return Err(error),
         };
         let Some(value) = value else {
             return Ok(crate::completion::Completion::Normal);
         };
-        let _binding = bind_iteration(slot, value, per_iteration);
+        let _binding = bind_iteration(slot, value, per_iteration, iteration_slots);
         match execute_loop_body(registers, label, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
@@ -528,13 +616,75 @@ fn iterate_loop_values(
     }
 }
 
+pub(crate) fn resume_async_for_of(
+    registers: &mut crate::register_file::RegisterFile,
+    spec: &crate::value::AsyncForOfState,
+    input: crate::value::Value,
+) -> Result<
+    (
+        crate::completion::Completion,
+        Option<crate::value::AsyncForOfState>,
+    ),
+    crate::execute::VmError,
+> {
+    let Some(body) = spec.body.code() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let mut next_value = crate::collections::iterator::resume_async_result(&spec.iterator, input)?;
+    loop {
+        let Some(value) = next_value else {
+            return Ok((crate::completion::Completion::Normal, None));
+        };
+        let _binding = bind_iteration(spec.slot, value, spec.per_iteration, &spec.iteration_slots);
+        match execute_loop_body(registers, &spec.label, body)? {
+            crate::completion::LoopTransition::Continue(_) => {}
+            crate::completion::LoopTransition::Break(_) => {
+                return crate::collections::iterator::close(
+                    spec.iterator.clone(),
+                    crate::completion::Completion::Normal,
+                )
+                .map(|completion| (completion, None));
+            }
+            crate::completion::LoopTransition::Propagate(completion) => {
+                if completion.is_suspension() {
+                    remember_for_of(spec.iterator.clone());
+                    return Ok((completion, None));
+                }
+                let completion = attach_loop_completion(registers, spec.dst, completion)?;
+                return crate::collections::iterator::close(spec.iterator.clone(), completion)
+                    .map(|completion| (completion, None));
+            }
+        }
+        next_value = match crate::collections::iterator::step_value_await(&spec.iterator) {
+            Ok(value) => value,
+            Err(crate::execute::VmError::Suspended(promise)) => {
+                remember_pending_async_for_of(spec.clone());
+                return Ok((
+                    crate::completion::Completion::Suspend(promise),
+                    Some(spec.clone()),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+    }
+}
+
 fn bind_iteration(
     slot: u16,
     value: crate::value::Value,
     per_iteration: bool,
+    iteration_slots: &[u16],
 ) -> Option<crate::locals::IterationBinding> {
     if per_iteration {
-        Some(crate::locals::IterationBinding::install(slot, value))
+        Some(crate::locals::IterationBinding::install_many(
+            std::iter::once((slot, value)).chain(
+                iteration_slots
+                    .iter()
+                    .copied()
+                    .filter(|candidate| *candidate != slot)
+                    .map(|candidate| (candidate, crate::value::Value::Undefined)),
+            ),
+        ))
     } else {
         crate::locals::write(slot, value);
         None
@@ -552,7 +702,21 @@ fn execute_loop_body(
     ))
 }
 
+fn execute_loop_body_with_context(
+    registers: &mut crate::register_file::RegisterFile,
+    label: &Option<String>,
+    body: crate::machine::CodeView<'_>,
+    context: &crate::vm::VmContext,
+) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
+    Ok(crate::completion::Completion::into_loop_transition(
+        crate::vm::execute_code_completion_with_context(body, registers, context)?,
+        label,
+    ))
+}
+
 include!("loops_run.rs");
+include!("loops_pair_walk.rs");
+include!("loops_regexp_exec.rs");
 include!("loops_numeric_kernel.rs");
 include!("loops_crypto_kernel.rs");
 include!("loops_advect_kernel.rs");
