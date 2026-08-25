@@ -52,7 +52,8 @@ fn evaluate_builtin(
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate
         && crate::conversion::is_callable(&result)
     {
-        return wrap_shadow_function_with_caller(&result, realm, error_realm);
+        let caller_realm = error_realm;
+        return wrap_shadow_function_with_caller(&result, realm, caller_realm);
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
         return Err(shadow_type_error_for_realm(
@@ -111,6 +112,11 @@ pub(crate) fn wrap_shadow_function_with_caller(
         _ => 0.0,
     };
     let mut properties = shadow_function_properties(target, &name, length);
+    let prototype_realm = caller.or(realm).unwrap_or(crate::ops::RealmId::ROOT);
+    properties.push((
+        "\0function_prototype".to_string(),
+        crate::vm::realm_intrinsic_for(prototype_realm, crate::ops::Builtin::FunctionPrototype),
+    ));
     if let Some(realm) = realm.and_then(crate::vm::realm_token) {
         properties.push(("\0realm".to_string(), realm));
     }
@@ -177,7 +183,21 @@ pub(crate) fn shadow_type_error_for_realm(receiver: Option<&Value>, message: &st
             })
         })
         .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeError));
-    shadow_type_error_with_constructor(message, constructor)
+    let VmError::Thrown(error) = shadow_type_error_with_constructor(message, constructor) else {
+        unreachable!()
+    };
+    let prototype = realm
+        .and_then(|realm| {
+            crate::vm::with_realm(realm, || {
+                crate::vm::realm_intrinsic(crate::ops::Builtin::TypeErrorPrototype)
+            })
+        })
+        .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeErrorPrototype));
+    VmError::Thrown(crate::builtins::set_property(
+        error,
+        "\0prototype",
+        prototype,
+    ))
 }
 
 fn shadow_creation_realm(receiver: Option<&Value>) -> Option<crate::ops::RealmId> {
@@ -260,7 +280,14 @@ pub(crate) fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
         Some(Value::Object(properties))
             if properties.iter().any(|(key, value)| {
                 key == "\0prototype"
-                    && *value == Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
+                    && (matches!(
+                        value,
+                        Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
+                    ) || matches!(
+                        value,
+                        Value::BoundFunction(bound)
+                            if matches!(bound.target, Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype))
+                    ))
             })
     )
 }
