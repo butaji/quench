@@ -530,13 +530,22 @@ pub(crate) fn repeat(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = string_receiver(receiver)?;
-    let count_value = arguments.first().and_then(number).unwrap_or(0.0);
-    if count_value.is_infinite() || count_value.is_nan() {
+    let count_value = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    if count_value.is_infinite() {
         return Err(crate::value::error::throw_range_error(
             "String.prototype.repeat: count must be finite",
         ));
     }
-    let count = count_value.max(0.0) as usize;
+    if count_value < 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "String.prototype.repeat: count must be non-negative",
+        ));
+    }
+    let count = count_value as usize;
     let source = receiver
         .and_then(units_of)
         .unwrap_or_else(|| value.encode_utf16().collect());
@@ -580,7 +589,7 @@ pub(crate) fn char_at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let text = string_receiver(receiver)?;
+    let units = receiver_units(receiver)?;
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
@@ -589,12 +598,15 @@ pub(crate) fn char_at(
         return Ok(Value::String(String::new()));
     }
     let index = index as usize;
-    let mut units = text.encode_utf16().skip(index);
-    let Some(first) = units.next() else {
+    let Some(first) = units.get(index).copied() else {
         return Ok(Value::String(String::new()));
     };
     let value = if is_high_surrogate(first) {
-        if let Some(second) = units.next().filter(|unit| is_low_surrogate(*unit)) {
+        if let Some(second) = units
+            .get(index + 1)
+            .copied()
+            .filter(|unit| is_low_surrogate(*unit))
+        {
             from_units(vec![first, second])
         } else {
             from_units(vec![first])
@@ -609,7 +621,7 @@ pub(crate) fn char_code_at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let text = string_receiver(receiver)?;
+    let units = receiver_units(receiver)?;
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
@@ -617,34 +629,40 @@ pub(crate) fn char_code_at(
     if index < 0.0 {
         return Ok(Value::Number(f64::NAN));
     }
-    let unit = text.encode_utf16().nth(index as usize);
+    let unit = units.get(index as usize).copied();
     Ok(unit.map_or(Value::Number(f64::NAN), |unit| Value::Number(unit as f64)))
 }
 
-pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(units) = receiver.and_then(units_of) else {
-        return Value::String(String::new());
-    };
+pub(crate) fn slice(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let units = receiver_units(receiver)?;
     let length = units.len() as isize;
-    let start = string_index(arguments.first(), length);
+    let start = string_index(arguments.first(), length)?;
     let end = arguments
         .get(1)
-        .map_or(length, |value| string_index(Some(value), length));
-    let range = start.min(end) as usize..end.max(start) as usize;
-    from_units(units[range].to_vec())
+        .map_or(Ok(length), |value| string_index(Some(value), length))?;
+    let range = if start < end {
+        start as usize..end as usize
+    } else {
+        0..0
+    };
+    Ok(from_units(units[range].to_vec()))
 }
 
-pub(crate) fn substring(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(units) = receiver.and_then(units_of) else {
-        return Value::String(String::new());
-    };
+pub(crate) fn substring(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let units = receiver_units(receiver)?;
     let length = units.len() as isize;
-    let start = substring_index(arguments.first(), length);
+    let start = substring_index(arguments.first(), length)?;
     let end = arguments
         .get(1)
-        .map_or(length, |value| substring_index(Some(value), length));
+        .map_or(Ok(length), |value| substring_index(Some(value), length))?;
     let range = start.min(end) as usize..end.max(start) as usize;
-    from_units(units[range].to_vec())
+    Ok(from_units(units[range].to_vec()))
 }
 
 pub(crate) fn substr(
@@ -695,18 +713,26 @@ fn substr_length(value: Option<&Value>) -> Result<f64, crate::execute::VmError> 
     }
 }
 
-fn string_index(value: Option<&Value>, length: isize) -> isize {
-    let number = value.and_then(number).unwrap_or(0.0).trunc() as isize;
+fn string_index(value: Option<&Value>, length: isize) -> Result<isize, crate::execute::VmError> {
+    let number = value
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let number = if number.is_nan() { 0.0 } else { number.trunc() } as isize;
     if number < 0 {
-        (length + number).max(0)
+        Ok((length + number).max(0))
     } else {
-        number.min(length)
+        Ok(number.min(length))
     }
 }
 
-fn substring_index(value: Option<&Value>, length: isize) -> isize {
-    let number = value.and_then(number).unwrap_or(0.0).trunc() as isize;
-    number.clamp(0, length)
+fn substring_index(value: Option<&Value>, length: isize) -> Result<isize, crate::execute::VmError> {
+    let number = value
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let number = if number.is_nan() { 0.0 } else { number.trunc() } as isize;
+    Ok(number.clamp(0, length))
 }
 
 /// Flatten a concatenation into one owned UTF-16 buffer.
@@ -770,8 +796,13 @@ pub(crate) fn locale_compare(
     let right = arguments
         .first()
         .map_or(Ok(String::from("undefined")), crate::conversion::to_string)?;
-    let left = unicode_normalization::UnicodeNormalization::nfc(left.chars()).collect::<String>();
-    let right = unicode_normalization::UnicodeNormalization::nfc(right.chars()).collect::<String>();
+    let normalized_left =
+        unicode_normalization::UnicodeNormalization::nfc(left.chars()).collect::<String>();
+    let normalized_right =
+        unicode_normalization::UnicodeNormalization::nfc(right.chars()).collect::<String>();
+    if normalized_left == normalized_right {
+        return Ok(Value::Number(0.0));
+    }
     Ok(Value::Number(crate::intl::collator::compare(
         &left,
         &right,
@@ -800,14 +831,26 @@ fn pad(
     arguments: &[Value],
     start: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(value) = string_receiver(receiver).ok() else {
-        return Err(crate::value::error::throw_type_error(
-            "String.prototype.padStart/padEnd called on null or undefined",
+    let value = string_receiver(receiver)?;
+    let target = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let target = if target.is_nan() || target <= 0.0 {
+        0
+    } else if target.is_infinite() {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid string length",
         ));
+    } else {
+        target.trunc() as usize
     };
-    let target = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    let value_units = utf16_len(&value);
-    let result_units = value_units.max(target);
+    let value_units = receiver
+        .and_then(units_of)
+        .unwrap_or_else(|| value.encode_utf16().collect());
+    let value_len = value_units.len();
+    let result_units = value_len.max(target);
     if !units_fit_limit(result_units) {
         return Err(crate::value::error::throw_range_error(
             "String.prototype.padStart/padEnd: result is too large",
@@ -817,35 +860,37 @@ fn pad(
         None | Some(Value::Undefined) => " ".to_string(),
         Some(value) => crate::conversion::to_string(value)?,
     };
-    let count = target.saturating_sub(value_units);
+    let count = target.saturating_sub(value_len);
     let padding_units: Vec<u16> = fill.encode_utf16().cycle().take(count).collect();
-    let padding = String::from_utf16_lossy(&padding_units);
     if count == 0 {
         return Ok(Value::String(value));
     }
-    let result = if start {
-        format!("{padding}{value}")
+    let mut result_units = Vec::with_capacity(result_units);
+    if start {
+        result_units.extend(padding_units);
+        result_units.extend(value_units.iter().copied());
     } else {
-        format!("{value}{padding}")
-    };
-    Ok(Value::String(result))
+        result_units.extend(value_units.iter().copied());
+        result_units.extend(padding_units);
+    }
+    Ok(from_units(result_units))
 }
 pub(crate) fn code_point_at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let units = match receiver {
-        Some(Value::StringUnits(units)) => (**units).to_vec(),
-        _ => string_receiver(receiver)?.encode_utf16().collect(),
-    };
-    let position = match arguments.first() {
+    let units = receiver_units(receiver)?;
+    let mut position = match arguments.first() {
         None => 0.0,
         Some(value) => {
             let number = crate::conversion::to_number(value)?;
             number.trunc()
         }
     };
-    if position < 0.0 || position.is_nan() || position >= units.len() as f64 {
+    if position.is_nan() {
+        position = 0.0;
+    }
+    if position < 0.0 || position >= units.len() as f64 {
         return Ok(Value::Undefined);
     }
     let code = code_point(&units, position as usize);
