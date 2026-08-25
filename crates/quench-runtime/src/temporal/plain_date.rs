@@ -62,6 +62,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateWithCalendar => {
             Some(with_calendar(receiver, arguments.first()))
         }
+        crate::ops::Builtin::TemporalPlainDateWith => {
+            Some(with(receiver, arguments.first(), arguments.get(1)))
+        }
         crate::ops::Builtin::TemporalPlainDateAdd => Some(add(receiver, arguments.first(), 1.0)),
         crate::ops::Builtin::TemporalPlainDateSubtract => {
             Some(add(receiver, arguments.first(), -1.0))
@@ -554,6 +557,100 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         field(object, "day"),
         calendar.clone(),
     ])
+}
+
+fn with(
+    receiver: Option<&Value>,
+    changes: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
+    let branded = matches!(receiver, Some(Value::Object(object)) if object.iter().any(|(key, value)|
+        key == "\0prototype" && *value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype)));
+    if !branded {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainDate receiver",
+        ));
+    }
+    if let Some(value) = options {
+        if !matches!(
+            value,
+            Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
+        ) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
+    }
+    let (year, month, day) = date_parts(receiver)?;
+    let changes = changes
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
+    let year = number_or_field(changes, "year", year)?;
+    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    let explicit_month = number_or_field(changes, "month", month)?;
+    let month = if matches!(month_code, Value::Undefined) {
+        explicit_month
+    } else {
+        let month = month_code_number(&month_code)?;
+        if explicit_month != month
+            && !matches!(
+                crate::execute::get_property_result(changes, "month")?,
+                Value::Undefined
+            )
+        {
+            return Err(crate::value::error::throw_range_error(
+                "month and monthCode conflict",
+            ));
+        }
+        month
+    };
+    let mut day = number_or_field(changes, "day", day)?;
+    let overflow = options
+        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
+        .unwrap_or(Value::String("constrain".into()));
+    let overflow = match overflow {
+        Value::Undefined => "constrain".to_string(),
+        value => crate::conversion::to_string(&value)?,
+    };
+    if overflow != "constrain" && overflow != "reject" {
+        return Err(crate::value::error::throw_range_error("Invalid overflow"));
+    }
+    if !year.is_finite()
+        || !month.is_finite()
+        || !day.is_finite()
+        || month < 1.0
+        || (month > 12.0 && overflow == "reject")
+        || day < 1.0
+    {
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+    }
+    let month = month.min(12.0);
+    let max_day = days_in_month(year, month);
+    if day > max_day {
+        if overflow == "constrain" {
+            day = max_day;
+        } else {
+            return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+        }
+    }
+    construct(&[
+        Value::Number(year),
+        Value::Number(month),
+        Value::Number(day),
+    ])
+}
+
+fn number_or_field(object: &Value, name: &str, default: f64) -> Result<f64, VmError> {
+    match crate::execute::get_property_result(object, name)? {
+        Value::Undefined => Ok(default),
+        value => crate::conversion::to_number(&value),
+    }
+}
+
+fn month_code_number(value: &Value) -> Result<f64, VmError> {
+    let code = crate::conversion::to_string(value)?;
+    code.strip_prefix('M')
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| (1.0..=12.0).contains(value))
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
 }
 
 fn invalid_receiver() -> VmError {

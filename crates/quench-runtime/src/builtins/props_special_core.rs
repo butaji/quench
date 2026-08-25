@@ -64,7 +64,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalInstantPrototype, "constructor") => Some(Value::Builtin(TemporalInstant)),
         (TemporalInstantPrototype, "epochNanoseconds") => {
             Some(Value::Builtin(TemporalInstantEpochNanosecondsGetter))
-        }
+        },
+        (TemporalInstantPrototype, "epochMilliseconds") => {
+            Some(Value::Builtin(TemporalInstantEpochMillisecondsGetter))
+        },
         (TemporalInstantPrototype, "toString") => Some(Value::Builtin(TemporalInstantToString)),
         (TemporalInstantPrototype, "toJSON") => Some(Value::Builtin(TemporalInstantToJSON)),
         (TemporalInstantPrototype, "toLocaleString") => {
@@ -109,6 +112,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "withCalendar") => {
             Some(Value::Builtin(TemporalPlainDateWithCalendar))
         }
+        (TemporalPlainDatePrototype, "with") => Some(Value::Builtin(TemporalPlainDateWith)),
         (TemporalPlainDatePrototype, "add") => Some(Value::Builtin(TemporalPlainDateAdd)),
         (TemporalPlainDatePrototype, "subtract") => Some(Value::Builtin(TemporalPlainDateSubtract)),
         (TemporalPlainDatePrototype, "equals") => Some(Value::Builtin(TemporalPlainDateEquals)),
@@ -261,6 +265,21 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "toPlainDate") => Some(Value::Builtin(TemporalZonedDateTimeToPlainDate)),
         (TemporalZonedDateTimePrototype, "toPlainTime") => Some(Value::Builtin(TemporalZonedDateTimeToPlainTime)),
         (TemporalZonedDateTimePrototype, "equals") => Some(Value::Builtin(TemporalZonedDateTimeEquals)),
+        (TemporalZonedDateTimePrototype, "epochMilliseconds") => {
+            Some(Value::Builtin(TemporalZonedDateTimeEpochMillisecondsGetter))
+        },
+        (TemporalZonedDateTimePrototype, "timeZoneId") => {
+            Some(Value::Builtin(TemporalZonedDateTimeTimeZoneIdGetter))
+        },
+        (TemporalZonedDateTimePrototype, "offset") => {
+            Some(Value::Builtin(TemporalZonedDateTimeOffsetGetter))
+        },
+        (TemporalZonedDateTimePrototype, "offsetNanoseconds") => {
+            Some(Value::Builtin(TemporalZonedDateTimeOffsetNanosecondsGetter))
+        },
+        (TemporalZonedDateTimePrototype, "hoursInDay") => {
+            Some(Value::Builtin(TemporalZonedDateTimeHoursInDayGetter))
+        },
         (TemporalPlainTimePrototype, "toString") => Some(Value::Builtin(TemporalPlainTimeToString)),
         (TemporalPlainTimePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainTimeToJSON)),
         (TemporalPlainTimePrototype, "toLocaleString") => {
