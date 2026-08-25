@@ -55,14 +55,11 @@ fn view_bytes(
             "The \"data\" argument contains an invalid view".to_string(),
         )
     })?;
-    bytes
-        .get(offset..end)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| {
-            crate::modules::buffer_enc::invalid_arg_type(
-                "The \"data\" argument contains an invalid view".to_string(),
-            )
-        })
+    bytes.get(offset..end).map(ToOwned::to_owned).ok_or_else(|| {
+        crate::modules::buffer_enc::invalid_arg_type(
+            "The \"data\" argument contains an invalid view".to_string(),
+        )
+    })
 }
 
 fn write_open(path: &str, flag: Option<&str>, syscall: &str) -> Result<std::fs::File, VmError> {

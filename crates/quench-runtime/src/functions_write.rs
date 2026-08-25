@@ -34,18 +34,13 @@ pub(crate) fn write_op(registers: &mut crate::register_file::RegisterFile, op: &
             source,
         } => {
             write_non_ordinary(
-                registers,
-                (*dst, body, *params, *captures),
-                (*kind, *length, *strictness, *is_async, *mapped_arguments),
+            registers,
+            (*dst, body, *params, *captures),
+            (*kind, *length, *strictness, *is_async, *mapped_arguments),
             );
             if let Some(source) = source {
-                if let Ok(crate::value::Value::Function(function)) =
-                    crate::execute::read_register(registers, *dst)
-                {
-                    function.properties.borrow_mut().push((
-                        "\0dynamic_source".into(),
-                        crate::value::Value::String(source.clone()),
-                    ));
+                if let Ok(crate::value::Value::Function(function)) = crate::execute::read_register(registers, *dst) {
+                    function.properties.borrow_mut().push(("\0dynamic_source".into(), crate::value::Value::String(source.clone())));
                 }
             }
         }

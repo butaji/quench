@@ -230,9 +230,10 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
         &[Value::Undefined, Value::String("TickObject".into())],
     );
     let global = quench_runtime::vm::current_global_object();
-    if let Ok(init) =
-        quench_runtime::execute::get_property_result(&global, "\0quench:process_next_tick_init")
-    {
+    if let Ok(init) = quench_runtime::execute::get_property_result(
+        &global,
+        "\0quench:process_next_tick_init",
+    ) {
         if quench_runtime::is_callable(&init) {
             let _ = quench_runtime::vm::call_value(&init, &Value::Undefined, &[]);
         }

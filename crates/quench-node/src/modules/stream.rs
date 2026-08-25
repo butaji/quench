@@ -56,13 +56,13 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     let factory = quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
     })?;
-    let deps = host_api::object(vec![
-        ("events".to_string(), crate::modules::events::build()),
-        (
-            "string_decoder".to_string(),
-            crate::host::namespace_object_from_pairs(crate::modules::string_decoder::build()),
-        ),
-    ]);
+    let deps = host_api::object(vec![(
+        "events".to_string(),
+        crate::modules::events::build(),
+    ), (
+        "string_decoder".to_string(),
+        crate::host::namespace_object_from_pairs(crate::modules::string_decoder::build()),
+    )]);
     let module = match quench_runtime::vm::call_value(&factory, &Value::Undefined, &[deps]) {
         Ok(module) => module,
         Err(_) => {
