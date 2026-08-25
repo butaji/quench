@@ -166,12 +166,19 @@ pub fn util_inspect(
         .get(1)
         .filter(|options| matches!(options, Value::Object(_) | Value::ObjectAlias(_)))
         .or_else(|| args.get(2))
-        .and_then(|options| match options {
+        .and_then(|options| {
+            let options = if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+                execute::get_property(options, "depth")
+            } else {
+                options.clone()
+            };
+            match options {
             Value::Null => Some(usize::MAX / 2),
-            Value::Number(value) if value.is_finite() && *value >= 0.0 => {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => {
                 Some(value.floor() as usize + 1)
             }
             _ => None,
+            }
         });
     let show_hidden = matches!(args.get(1), Some(Value::Boolean(true)))
         || args.get(1).is_some_and(|options| {
