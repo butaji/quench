@@ -590,7 +590,7 @@ pub fn publish(
     let name = data.borrow().name.clone();
     let callbacks = data.borrow().subscribers.clone();
     let stores = data.borrow().stores.clone();
-    let store_active = state.borrow().async_hooks.current_local_store.is_some();
+    let store_active = state.borrow().async_hooks.has_local_store();
     let previous = (!store_active).then(|| enter_stores(&stores, &message));
     for callback in callbacks {
         let result = execute::call(
