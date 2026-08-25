@@ -70,6 +70,10 @@ impl AsyncHooksState {
         self.next_id += 1;
         (id, trigger)
     }
+
+    pub(crate) fn has_local_store(&self) -> bool {
+        !self.local_stores.is_empty()
+    }
 }
 
 pub fn build() -> Value {
