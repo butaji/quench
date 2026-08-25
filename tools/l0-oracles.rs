@@ -153,6 +153,22 @@ fn run(id: &str) -> u64 {
             }
             black_box(x[0]).to_bits()
         }
+        "packed-f64-fill3" => {
+            const SIZE: usize = 262_144;
+            let mut density = vec![1.25_f64; SIZE];
+            let mut u = vec![2.5_f64; SIZE];
+            let mut v = vec![3.75_f64; SIZE];
+            for round in 0..1_000 {
+                density[0] = round as f64 + 1.0;
+                u[0] = density[0];
+                v[0] = density[0];
+                density.fill(0.0);
+                u.fill(0.0);
+                v.fill(0.0);
+                black_box((&density, &u, &v));
+            }
+            black_box(density[0] + u[0] + v[0]).to_bits()
+        }
         _ => panic!("unknown L0 oracle: {id}"),
     }
 }
