@@ -155,35 +155,12 @@ fn run_invariant_sum_kernel(
     registers: &mut crate::register_file::RegisterFile,
     loop_shape: u64,
 ) -> Option<crate::completion::Completion> {
-    (body.len() == 5).then_some(())?;
-    let load_total = body.instruction(0)?;
-    let load_value = body.instruction(1)?;
-    let add = body.instruction(2)?;
-    let store_total = body.instruction(3)?;
-    let move_result = body.instruction(4)?;
-    let proven_shape = load_total.opcode == crate::ir::Opcode::LoadLocal
-        && matches!(
-            load_value.opcode,
-            crate::ir::Opcode::LoadLocal | crate::ir::Opcode::LoadLocalChecked
-        )
-        && add.opcode == crate::ir::Opcode::Add
-        && (add.b, add.c) == (load_total.a, load_value.a)
-        && matches!(
-            store_total.opcode,
-            crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked
-        )
-        && (store_total.a, store_total.b) == (load_total.b, add.a)
-        && move_result.opcode == crate::ir::Opcode::Move
-        && (move_result.a, move_result.b) == (dst, add.a)
-        && per_iteration == [fact.slot]
-        && fact.timing == CountedStepTiming::AfterBody;
-    proven_shape.then_some(())?;
-
+    let plan = recognize_invariant_sum(body, dst, fact, per_iteration)?;
     let environment = crate::locals::current();
     let mut index = environment.get_number(fact.slot)?;
     let bound = fact.bound.number(&environment)?;
-    let mut total = environment.get_number(load_total.b)?;
-    let value = environment.get_number(load_value.b)?;
+    let mut total = environment.get_number(plan.total)?;
+    let value = plan.addend.number(&environment)?;
     let mut iterations = 0_u64;
     crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
     while counted_comparison(fact.comparison, index, bound) {
@@ -195,12 +172,113 @@ fn run_invariant_sum_kernel(
         index += fact.step;
         iterations += 1;
     }
-    environment.set(load_total.b, crate::value::Value::Number(total));
+    environment.set(plan.total, crate::value::Value::Number(total));
     environment.set(fact.slot, crate::value::Value::Number(index));
     if iterations != 0 {
         registers.write_number(usize::from(dst), total);
     }
     Some(crate::completion::Completion::Normal)
+}
+
+#[derive(Clone, Copy)]
+struct InvariantSumPlan {
+    total: u16,
+    addend: InvariantAddend,
+}
+
+#[derive(Clone, Copy)]
+enum InvariantAddend {
+    Local(u16),
+    ArrayLength(u16),
+}
+
+impl InvariantAddend {
+    fn number(self, environment: &crate::environment::Environment) -> Option<f64> {
+        match self {
+            Self::Local(slot) => environment.get_number(slot),
+            Self::ArrayLength(slot) => match crate::locals::resolved_replacement(environment.get(slot)) {
+                crate::value::Value::Array(array) => Some(array.header_length() as f64),
+                _ => None,
+            },
+        }
+    }
+}
+
+fn recognize_invariant_sum(
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    fact: CountedForFact,
+    per_iteration: &[u16],
+) -> Option<InvariantSumPlan> {
+    (per_iteration == [fact.slot] && fact.timing == CountedStepTiming::AfterBody)
+        .then_some(())?;
+    recognize_local_invariant_sum(body, dst)
+        .or_else(|| recognize_array_length_sum(body, dst))
+}
+
+fn recognize_local_invariant_sum(
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+) -> Option<InvariantSumPlan> {
+    (body.len() == 5).then_some(())?;
+    let [total, value, add, store, result] =
+        std::array::from_fn(|pc| body.instruction(pc).unwrap());
+    invariant_sum_tail(total, value.a, add, store, result, dst)?;
+    is_local_load(value).then_some(InvariantSumPlan {
+        total: total.b,
+        addend: InvariantAddend::Local(value.b),
+    })
+}
+
+fn recognize_array_length_sum(
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+) -> Option<InvariantSumPlan> {
+    (body.len() == 6).then_some(())?;
+    let [total, array, length, add, store, result] =
+        std::array::from_fn(|pc| body.instruction(pc).unwrap());
+    (is_local_load(array)
+        && length.opcode == crate::ir::Opcode::GetN
+        && length.b == array.a
+        && body.metadata_at(2)?.name.as_deref() == Some("length"))
+    .then_some(())?;
+    invariant_sum_tail(total, length.a, add, store, result, dst)?;
+    Some(InvariantSumPlan {
+        total: total.b,
+        addend: InvariantAddend::ArrayLength(array.b),
+    })
+}
+
+fn invariant_sum_tail(
+    total: crate::ir::Instruction,
+    addend: u16,
+    add: crate::ir::Instruction,
+    store: crate::ir::Instruction,
+    result: crate::ir::Instruction,
+    dst: u16,
+) -> Option<()> {
+    (total.opcode == crate::ir::Opcode::LoadLocal
+        && add.opcode == crate::ir::Opcode::Add
+        && (add.b, add.c) == (total.a, addend)
+        && is_local_store(store)
+        && (store.a, store.b) == (total.b, add.a)
+        && result.opcode == crate::ir::Opcode::Move
+        && (result.a, result.b) == (dst, add.a))
+    .then_some(())
+}
+
+fn is_local_load(instruction: crate::ir::Instruction) -> bool {
+    matches!(
+        instruction.opcode,
+        crate::ir::Opcode::LoadLocal | crate::ir::Opcode::LoadLocalChecked
+    )
+}
+
+fn is_local_store(instruction: crate::ir::Instruction) -> bool {
+    matches!(
+        instruction.opcode,
+        crate::ir::Opcode::StoreLocal | crate::ir::Opcode::StoreLocalChecked
+    )
 }
 
 fn trace_counted_recognition(
