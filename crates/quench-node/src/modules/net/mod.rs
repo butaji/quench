@@ -229,6 +229,23 @@ pub(crate) fn set_server_listening(server: &Value, listening: bool) -> Result<()
     Ok(())
 }
 
+pub(crate) fn set_server_connection_key(
+    server: &Value,
+    port: u16,
+    host: Option<&str>,
+) -> Result<(), VmError> {
+    let address = host.unwrap_or("0.0.0.0");
+    let key = format!("4:{address}:{port}");
+    let descriptor = host_api::object(vec![
+        ("value".to_string(), Value::String(key)),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]);
+    let _ = execute::define_property(server.clone(), "_connectionKey", descriptor)?;
+    Ok(())
+}
+
 fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
         ("connect", cap(crate::registry::SPEC_NET_CONNECT)),
