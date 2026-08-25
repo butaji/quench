@@ -465,6 +465,7 @@ fn own_property_names_tail_end(builtin: Builtin) -> &'static [&'static str] {
             "values",
             "groupBy",
         ],
+        Builtin::Proxy => &["length", "name", "revocable"],
         Builtin::ObjectPrototype => &[
             "constructor",
             "__defineGetter__",
