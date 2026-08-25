@@ -233,6 +233,7 @@ fn validate_leaf_depth(
                 | crate::ir::Opcode::Move
                 | crate::ir::Opcode::LoadLocalChecked
                 | crate::ir::Opcode::StoreLocalChecked
+                | crate::ir::Opcode::InitLocal
                 | crate::ir::Opcode::UpdateLocal
                 | crate::ir::Opcode::GetN
                 | crate::ir::Opcode::SetN
@@ -250,7 +251,9 @@ fn validate_leaf_depth(
         .ok_or(LeafReject::Opcode(op.opcode.name()))?;
         if matches!(
             op.opcode,
-            crate::ir::Opcode::StoreLocalChecked | crate::ir::Opcode::UpdateLocal
+            crate::ir::Opcode::StoreLocalChecked
+                | crate::ir::Opcode::InitLocal
+                | crate::ir::Opcode::UpdateLocal
         ) && !allow_locals
         {
             return Err(LeafReject::Opcode(op.opcode.name()));
@@ -415,7 +418,7 @@ fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
     use crate::ir::Opcode::*;
     match op.opcode {
         LoadConst | LoadLocalChecked | Return => [op.a, 0, 0],
-        StoreLocalChecked => [op.b, 0, 0],
+        StoreLocalChecked | InitLocal => [op.b, 0, 0],
         UpdateLocal => [op.a, op.b, 0],
         Move => [op.a, op.b, 0],
         GetN | SetN => [op.a, op.b, 0],
@@ -488,6 +491,13 @@ fn run_leaf_op(
         )?),
         StoreLocalChecked => {
             leaf_store(function, op.a, leaf_register(registers, op.b)?, locals)?;
+            return Ok(None);
+        }
+        InitLocal => {
+            leaf_store(function, op.a, leaf_register(registers, op.b)?, locals)?;
+            if op.a < function.captures.len() as u16 {
+                function.captures.initialize(op.a);
+            }
             return Ok(None);
         }
         UpdateLocal => Some(leaf_update_local(
