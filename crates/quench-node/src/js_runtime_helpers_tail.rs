@@ -167,7 +167,7 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
                         'd' => format_decimal(value, separators.unwrap_or(false)),
                         'f' => format_number(value, separators.unwrap_or(false)),
                         'i' => format_integer(value, separators.unwrap_or(false)),
-                        'j' => format_json_value(value),
+                        'j' => format_json_value(value)?,
                         _ => format!("%{specifier}"),
                     });
                     continue;
