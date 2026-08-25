@@ -64,6 +64,21 @@ fn regexp_prototype_accessor(receiver: Option<&Value>, key: &str) -> Result<Valu
         }
         return regexp_flags(value);
     }
+    if key == "source" {
+        if !crate::regexp::has_regexp_internal_slot(value)
+            || !crate::regexp::is_current_realm(value)
+        {
+            return Err(crate::value::error::throw_type_error(
+                "RegExp accessor called on incompatible receiver",
+            ));
+        }
+        let source = crate::regexp::extract_source(value);
+        return Ok(if source.is_empty() {
+            Value::String("(?:)".to_string())
+        } else {
+            crate::strings::source_value(&source)
+        });
+    }
     if !crate::regexp::has_regexp_internal_slot(value)
         || !crate::regexp::is_current_realm(value)
     {
@@ -71,7 +86,18 @@ fn regexp_prototype_accessor(receiver: Option<&Value>, key: &str) -> Result<Valu
             "RegExp accessor called on incompatible receiver",
         ));
     }
-    Ok(crate::execute::get_property(value, key))
+    let flag = match key {
+        "global" => 'g',
+        "ignoreCase" => 'i',
+        "multiline" => 'm',
+        "dotAll" => 's',
+        "unicode" => 'u',
+        "unicodeSets" => 'v',
+        "sticky" => 'y',
+        "hasIndices" => 'd',
+        _ => return Ok(Value::Undefined),
+    };
+    Ok(Value::Boolean(crate::regexp::extract_flags(value).contains(flag)))
 }
 
 fn regexp_flags(value: &Value) -> Result<Value, VmError> {

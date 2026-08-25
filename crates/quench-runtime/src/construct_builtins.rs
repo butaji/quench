@@ -137,12 +137,11 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
             }
         }
     }
-    let (source, observable_source, flags) = regexp_source_and_flags(arguments)?;
-    let visible_flags = crate::regexp::canonical_flags(&flags);
+    let (source, _observable_source, flags) = regexp_source_and_flags(arguments)?;
     crate::regexp::ensure_compiled(&source, &flags)
         .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     let last_index = Value::BindingCell(crate::value::BindingCell::new(Value::Number(0.0)));
-    let mut entries = vec![
+    let entries = vec![
         (
             "\0realm".to_string(),
             Value::Number(crate::vm::current_context_or_default().realm().get() as f64),
@@ -154,31 +153,12 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::RegExpPrototype),
         ),
-        (
-            "source".to_string(),
-            Value::BindingCell(crate::value::BindingCell::new(observable_source.clone())),
-        ),
-        (
-            crate::builtins::descriptor_key("source"),
-            regexp_data_descriptor(false, true, observable_source),
-        ),
-        (
-            "flags".to_string(),
-            Value::BindingCell(crate::value::BindingCell::new(Value::String(
-                visible_flags.clone(),
-            ))),
-        ),
-        (
-            crate::builtins::descriptor_key("flags"),
-            regexp_data_descriptor(false, true, Value::String(visible_flags)),
-        ),
         ("lastIndex".to_string(), last_index),
         (
             crate::builtins::descriptor_key("lastIndex"),
             regexp_data_descriptor(true, false, Value::Number(0.0)),
         ),
     ];
-    entries.extend(regexp_flag_entries(&flags));
     Ok(Value::Object(Rc::new(ObjectData::new(entries))))
 }
 
