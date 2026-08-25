@@ -279,6 +279,28 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
 
 fn own_property_names_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::RegExp => &["length", "name", "prototype"],
+        Builtin::RegExpPrototype => &[
+            "constructor",
+            "exec",
+            "compile",
+            "dotAll",
+            "flags",
+            "global",
+            "hasIndices",
+            "ignoreCase",
+            "multiline",
+            "source",
+            "sticky",
+            "unicode",
+            "test",
+            "toString",
+            "Symbol.match",
+            "Symbol.matchAll",
+            "Symbol.replace",
+            "Symbol.search",
+            "Symbol.split",
+        ],
         Builtin::Intl => &[
             "getCanonicalLocales",
             "supportedValuesOf",

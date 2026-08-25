@@ -6,6 +6,13 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::RegExpSourceGetter => Some("get source"),
         Builtin::RegExpFlagsGetter => Some("get flags"),
+        Builtin::RegExpGlobalGetter => Some("get global"),
+        Builtin::RegExpIgnoreCaseGetter => Some("get ignoreCase"),
+        Builtin::RegExpMultilineGetter => Some("get multiline"),
+        Builtin::RegExpDotAllGetter => Some("get dotAll"),
+        Builtin::RegExpUnicodeGetter => Some("get unicode"),
+        Builtin::RegExpStickyGetter => Some("get sticky"),
+        Builtin::RegExpHasIndicesGetter => Some("get hasIndices"),
         Builtin::RegExpLegacyGetter => Some("get RegExp legacy accessor"),
         Builtin::RegExpCompile => Some("RegExp.prototype.compile"),
         Builtin::RegExpPrototypeToString => Some("RegExp.prototype.toString"),
@@ -24,7 +31,15 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
-        Builtin::RegExpSourceGetter | Builtin::RegExpFlagsGetter => Some(0.0),
+        Builtin::RegExpSourceGetter
+        | Builtin::RegExpFlagsGetter
+        | Builtin::RegExpGlobalGetter
+        | Builtin::RegExpIgnoreCaseGetter
+        | Builtin::RegExpMultilineGetter
+        | Builtin::RegExpDotAllGetter
+        | Builtin::RegExpUnicodeGetter
+        | Builtin::RegExpStickyGetter
+        | Builtin::RegExpHasIndicesGetter => Some(0.0),
         Builtin::RegExpCompile => Some(2.0),
         Builtin::RegExpPrototypeToString => Some(0.0),
         Builtin::RegExpEscape | Builtin::RegExpTest | Builtin::RegExpExec => Some(1.0),
