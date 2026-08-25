@@ -8,6 +8,8 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainYearMonth => Some("Temporal.PlainYearMonth"),
         Builtin::TemporalPlainYearMonthFrom => Some("Temporal.PlainYearMonth.from"),
         Builtin::TemporalPlainYearMonthCompare => Some("Temporal.PlainYearMonth.compare"),
+        Builtin::TemporalZonedDateTimeFrom => Some("Temporal.ZonedDateTime.from"),
+        Builtin::TemporalZonedDateTimeCompare => Some("Temporal.ZonedDateTime.compare"),
         Builtin::TemporalNowInstant => Some("Temporal.Now.instant"),
         Builtin::TemporalNowPlainDateISO => Some("Temporal.Now.plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("Temporal.Now.plainDateTimeISO"),
@@ -118,6 +120,8 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainYearMonth => Some("PlainYearMonth"),
         Builtin::TemporalPlainYearMonthFrom => Some("from"),
         Builtin::TemporalPlainYearMonthCompare => Some("compare"),
+        Builtin::TemporalZonedDateTimeFrom => Some("from"),
+        Builtin::TemporalZonedDateTimeCompare => Some("compare"),
         Builtin::TemporalNowInstant => Some("instant"),
         Builtin::TemporalNowPlainDateISO => Some("plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("plainDateTimeISO"),
@@ -209,6 +213,8 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainYearMonth => Some(2.0),
         Builtin::TemporalPlainYearMonthFrom => Some(1.0),
         Builtin::TemporalPlainYearMonthCompare => Some(2.0),
+        Builtin::TemporalZonedDateTimeFrom => Some(1.0),
+        Builtin::TemporalZonedDateTimeCompare => Some(2.0),
         Builtin::TemporalNowInstant
         | Builtin::TemporalNowPlainDateISO
         | Builtin::TemporalNowPlainDateTimeISO

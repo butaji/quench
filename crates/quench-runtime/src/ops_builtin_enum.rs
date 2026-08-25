@@ -136,6 +136,7 @@ pub enum Builtin {
     TemporalInstantToZonedDateTimeISO, TemporalInstantEquals,
     TemporalInstantAdd, TemporalInstantSubtract,
     TemporalZonedDateTime, TemporalZonedDateTimePrototype,
+    TemporalZonedDateTimeFrom, TemporalZonedDateTimeCompare,
     TemporalDuration, TemporalDurationPrototype,
     TemporalDurationFrom, TemporalDurationCompare, TemporalDurationAdd, TemporalDurationSubtract,
     TemporalDurationAbs, TemporalDurationNegated, TemporalDurationRound,

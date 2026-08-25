@@ -203,6 +203,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainYearMonth, "compare") => Some(Value::Builtin(TemporalPlainYearMonthCompare)),
         (TemporalPlainYearMonthPrototype, "constructor") => Some(Value::Builtin(TemporalPlainYearMonth)),
         (TemporalZonedDateTime, "prototype") => Some(Value::Builtin(TemporalZonedDateTimePrototype)),
+        (TemporalZonedDateTime, "from") => Some(Value::Builtin(TemporalZonedDateTimeFrom)),
+        (TemporalZonedDateTime, "compare") => Some(Value::Builtin(TemporalZonedDateTimeCompare)),
         (TemporalZonedDateTimePrototype, "constructor") => Some(Value::Builtin(TemporalZonedDateTime)),
         (TemporalNow, "instant") => Some(Value::Builtin(TemporalNowInstant)),
         (TemporalNow, "plainDateISO") => Some(Value::Builtin(TemporalNowPlainDateISO)),

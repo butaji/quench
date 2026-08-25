@@ -34,6 +34,10 @@ mod stubs {
             | crate::ops::Builtin::TemporalPlainYearMonthCompare => {
                 crate::ops::Builtin::TemporalPlainYearMonthPrototype
             }
+            crate::ops::Builtin::TemporalZonedDateTimeFrom
+            | crate::ops::Builtin::TemporalZonedDateTimeCompare => {
+                crate::ops::Builtin::TemporalZonedDateTimePrototype
+            }
             crate::ops::Builtin::TemporalNowInstant => {
                 return Some(Ok(Value::Object(std::rc::Rc::new(
                     crate::value::ObjectData::new(vec![
