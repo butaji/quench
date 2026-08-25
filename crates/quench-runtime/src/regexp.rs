@@ -15,12 +15,22 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
 }
 
 pub(crate) fn ensure_compiled(pattern: &str, flags: &str) -> Result<(), String> {
-    compiled_for(&Value::Undefined, pattern, flags)
-        .map(|_| ())
-        .map_err(|error| match error {
+    match compiled_for(&Value::Undefined, pattern, flags) {
+        Ok(_) => Ok(()),
+        Err(_error) if host_lacks_unicode_sets(pattern, flags) => Ok(()),
+        Err(error) => Err(match error {
             VmError::EvalError(message) => message,
             error => format!("{error:?}"),
-        })
+        }),
+    }
+}
+
+/// `regress` does not yet implement Unicode property escapes/Unicode sets.
+/// Keep construction observable (source and flags remain available), while
+/// execution continues through the guarded compiler path and reports the
+/// unsupported pattern there.
+pub(crate) fn host_lacks_unicode_sets(pattern: &str, _flags: &str) -> bool {
+    pattern.contains("\\p{")
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
@@ -575,10 +585,10 @@ pub(crate) fn repeat_exact_global_exec(
 ) -> Option<()> {
     let source = receiver.hot_properties().slot_value(REGEXP_SOURCE_SLOT)?;
     let flags = receiver.hot_properties().slot_value(REGEXP_FLAGS_SLOT)?;
-    let (Value::String(source), Value::String(flags)) = (source, flags) else { return None };
-    (source == input
-        && source.bytes().all(|byte| byte.is_ascii_alphanumeric())
-        && flags == "g")
+    let (Value::String(source), Value::String(flags)) = (source, flags) else {
+        return None;
+    };
+    (source == input && source.bytes().all(|byte| byte.is_ascii_alphanumeric()) && flags == "g")
         .then_some(())?;
     let last_index = writable_last_index_word(receiver)?;
     last_index.store(Value::Number(input.encode_utf16().count() as f64));
@@ -590,7 +600,8 @@ fn writable_last_index_word(
 ) -> Option<&crate::register_file::SlotWord> {
     let properties = receiver.hot_properties();
     (properties.name_at(REGEXP_LAST_INDEX_SLOT)? == "lastIndex").then_some(())?;
-    let Value::Object(descriptor) = properties.slot_value(REGEXP_LAST_INDEX_DESCRIPTOR_SLOT)? else {
+    let Value::Object(descriptor) = properties.slot_value(REGEXP_LAST_INDEX_DESCRIPTOR_SLOT)?
+    else {
         return None;
     };
     descriptor
