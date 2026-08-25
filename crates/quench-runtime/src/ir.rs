@@ -65,6 +65,7 @@ instruction_set! {
     LoadLocalChecked = 24 / 2,
     Binary = 25 / 3,
     StoreLocalChecked = 26 / 2,
+    InitLocal = 27 / 2,
 }
 
 macro_rules! compact_binary_operators {
@@ -295,6 +296,15 @@ impl Instruction {
             c: 0,
         }
     }
+    pub const fn init_local(slot: u16, src: Register) -> Self {
+        Self {
+            opcode: Opcode::InitLocal,
+            flags: 0,
+            a: slot,
+            b: src,
+            c: 0,
+        }
+    }
     pub const fn add(dst: Register, left: Register, right: Register) -> Self {
         Self {
             opcode: Opcode::Add,
@@ -460,9 +470,17 @@ impl Instruction {
         }
     }
     pub const fn call_registered_one(dst: Register, object: Register, callee: Register) -> Self {
+        Self::call_registered_window(dst, object, callee, 1)
+    }
+    pub const fn call_registered_window(
+        dst: Register,
+        object: Register,
+        callee: Register,
+        argc: u8,
+    ) -> Self {
         Self {
             opcode: Opcode::CallN,
-            flags: 1,
+            flags: argc,
             a: dst,
             b: object,
             c: callee,
@@ -614,6 +632,21 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
             && spreads.as_slice() == [false] =>
         {
             Some(Instruction::call_registered_one(*dst, *object, *callee))
+        }
+        Op::CallMethod {
+            dst,
+            object,
+            callee: Some(callee),
+            args,
+            spreads,
+            ..
+        } if args.as_slice() == [dst.saturating_sub(2), dst.saturating_sub(1)]
+            && *dst >= 2
+            && spreads.as_slice() == [false, false] =>
+        {
+            Some(Instruction::call_registered_window(
+                *dst, *object, *callee, 2,
+            ))
         }
         _ => None,
     }
@@ -982,7 +1015,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::StoreLocalChecked as u8);
+        assert_eq!(Opcode::COUNT, Opcode::InitLocal as u8);
         assert!(Opcode::Slow.is_compact());
     }
 
@@ -1075,6 +1108,21 @@ mod tests {
                 spreads: vec![false]
             }),
             Some(Instruction::call_one_arg(0, 4, 1))
+        );
+    }
+    #[test]
+    fn lowers_two_argument_method_window_without_operand_storage() {
+        let op = crate::ops::Op::CallMethod {
+            dst: 5,
+            object: 1,
+            key: "method".into(),
+            callee: Some(2),
+            args: vec![3, 4],
+            spreads: vec![false, false],
+        };
+        assert_eq!(
+            lower_compact(&op),
+            Some(Instruction::call_registered_window(5, 1, 2, 2))
         );
     }
     #[test]
