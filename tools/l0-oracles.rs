@@ -92,6 +92,29 @@ fn run(id: &str) -> u64 {
             }
             matches + last_index as u64
         }
+        "packed-f64-jacobi" => {
+            const WIDTH: usize = 4096;
+            const ROW_SIZE: usize = WIDTH + 2;
+            let mut x = vec![1.01_f64; ROW_SIZE * 3];
+            let x0 = vec![2.03_f64; ROW_SIZE * 3];
+            let mut checksum = 0.0;
+            for _ in 0..6_104 {
+                let (mut last, mut current, mut next) = (0, ROW_SIZE + 1, ROW_SIZE * 2);
+                let mut last_x = x[ROW_SIZE];
+                for _ in 0..WIDTH {
+                    let value = (x0[current]
+                        + 0.1 * (last_x + x[current + 1] + x[last + 1] + x[next + 1]))
+                        * 0.5;
+                    x[current] = value;
+                    last_x = value;
+                    current += 1;
+                    last += 1;
+                    next += 1;
+                }
+                checksum += last_x;
+            }
+            black_box(checksum).to_bits()
+        }
         _ => panic!("unknown L0 oracle: {id}"),
     }
 }
