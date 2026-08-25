@@ -164,8 +164,10 @@ cargo run -p quench-node-test --bin run-parallel -- --all --timeout-secs 30
 # Add --results PATH for a machine-readable inventory/result record.
 ```
 
-Exit criteria: deterministic counts, structured pass/fail/skip/timeout/crash
-records, fixture hash, and a clean baseline against the local Node oracle.
+Exit criteria: deterministic counts, structured pass/fail/skip/timeout/crash/
+unclassified records, fixture hash, and a clean baseline against the local
+Node oracle. The result JSON schema is version 2; a child result without an
+explicit marker is `unclassified`, never an implicit pass or fail.
 
 ### 1. Runtime/value semantics
 
