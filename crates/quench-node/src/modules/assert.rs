@@ -1556,8 +1556,8 @@ fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
                 if execute::same_value(&left_item, &right_item) {
                     lines.push(format!("    {}{suffix}", rendered(&left_item)));
                 } else {
-                    lines.push(format!("+   {}{suffix}", rendered(&left_item)));
-                    lines.push(format!("-   {}{suffix}", rendered(&right_item)));
+                    lines.extend(diff_array_item("+", &left_item, suffix));
+                    lines.extend(diff_array_item("-", &right_item, suffix));
                 }
             }
             (true, false) => lines.push(format!(
@@ -1573,6 +1573,42 @@ fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
     }
     lines.push("  ]".into());
     Some(lines.join("\n"))
+}
+
+fn diff_array_item(marker: &str, value: &Value, suffix: &str) -> Vec<String> {
+    let rendered = pretty_array_value(value);
+    let rendered_len = rendered.len();
+    rendered
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let tail = if index + 1 == rendered_len { suffix } else { "" };
+            format!("{marker}   {line}{tail}")
+        })
+        .collect()
+}
+
+fn pretty_array_value(value: &Value) -> Vec<String> {
+    let Value::Array(array) = value else {
+        return vec![rendered(value)];
+    };
+    let owner = Value::Array(array.clone());
+    let length = array.logical_len();
+    let mut lines = vec!["[".to_string()];
+    for index in 0..length {
+        let key = index.to_string();
+        if !execute::has_own_property(&owner, &key) {
+            continue;
+        }
+        let child = pretty_array_value(&execute::get_property(&owner, &key));
+        let child_len = child.len();
+        for (line_index, line) in child.into_iter().enumerate() {
+            let comma = line_index + 1 == child_len && index + 1 < length;
+            lines.push(format!("  {}{}", line, if comma { "," } else { "" }));
+        }
+    }
+    lines.push("]".into());
+    lines
 }
 
 fn collection_diff(actual: &Value, expected: &Value) -> Option<String> {
