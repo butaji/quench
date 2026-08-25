@@ -73,6 +73,7 @@ fn is_simple_regexp(builtin: Builtin) -> bool {
             | Builtin::RegExpMultilineGetter
             | Builtin::RegExpDotAllGetter
             | Builtin::RegExpUnicodeGetter
+            | Builtin::RegExpUnicodeSetsGetter
             | Builtin::RegExpStickyGetter
             | Builtin::RegExpHasIndicesGetter
     )
@@ -220,6 +221,7 @@ fn execute_simple_regexp(
         Builtin::RegExpMultilineGetter => regexp_prototype_accessor(receiver, "multiline"),
         Builtin::RegExpDotAllGetter => regexp_prototype_accessor(receiver, "dotAll"),
         Builtin::RegExpUnicodeGetter => regexp_prototype_accessor(receiver, "unicode"),
+        Builtin::RegExpUnicodeSetsGetter => regexp_prototype_accessor(receiver, "unicodeSets"),
         Builtin::RegExpStickyGetter => regexp_prototype_accessor(receiver, "sticky"),
         Builtin::RegExpHasIndicesGetter => regexp_prototype_accessor(receiver, "hasIndices"),
         _ => return None,

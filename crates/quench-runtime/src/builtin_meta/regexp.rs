@@ -11,6 +11,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::RegExpMultilineGetter => Some("get multiline"),
         Builtin::RegExpDotAllGetter => Some("get dotAll"),
         Builtin::RegExpUnicodeGetter => Some("get unicode"),
+        Builtin::RegExpUnicodeSetsGetter => Some("get unicodeSets"),
         Builtin::RegExpStickyGetter => Some("get sticky"),
         Builtin::RegExpHasIndicesGetter => Some("get hasIndices"),
         Builtin::RegExpLegacyGetter => Some("get RegExp legacy accessor"),
@@ -38,6 +39,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::RegExpMultilineGetter
         | Builtin::RegExpDotAllGetter
         | Builtin::RegExpUnicodeGetter
+        | Builtin::RegExpUnicodeSetsGetter
         | Builtin::RegExpStickyGetter
         | Builtin::RegExpHasIndicesGetter => Some(0.0),
         Builtin::RegExpCompile => Some(2.0),
