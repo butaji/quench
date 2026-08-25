@@ -434,6 +434,7 @@ pub(crate) fn reduce_expression_kind(
             mapped_arguments: crate::function_parameters::is_simple(&function.params),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
+        None,
     ))
 }
 
