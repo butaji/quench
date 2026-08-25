@@ -186,12 +186,25 @@ pub(crate) fn execute_set_property(
     if crate::module_bindings::is_namespace(&target) {
         return write_failure(strict);
     }
-    if key != "__proto__" && rejects_new_property(&target, &key) {
-        return write_failure(strict);
-    }
     let value = crate::execute::read_register(registers, src)?.clone();
     if matches!(target, crate::value::Value::Proxy(_)) {
         return assign_proxy_set(registers, object, &target, &key, value);
+    }
+    if key == "__proto__"
+        && matches!(
+            target,
+            crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+        )
+    {
+        let prototype = value.clone();
+        if !matches!(prototype, crate::value::Value::Null) && !crate::value::is_object(&prototype) {
+            return Ok(());
+        }
+        crate::builtins::object::set_prototype_of(&[target.clone(), prototype])?;
+        return Ok(());
+    }
+    if key != "__proto__" && rejects_new_property(&target, &key) {
+        return write_failure(strict);
     }
     if key == "stack" && inherits_error_prototype(&target) {
         crate::vm::execute_builtin_with_receiver(
@@ -207,28 +220,6 @@ pub(crate) fn execute_set_property(
     ) && matches!(key.as_str(), "constructor" | "Symbol.toStringTag")
     {
         return Err(crate::value::error::throw_type_error("Invalid receiver"));
-    }
-    if key == "__proto__" {
-        let own = match &target {
-            crate::value::Value::Object(data) => data.iter().any(|(name, _)| name == "__proto__"),
-            crate::value::Value::Function(function) => function
-                .properties
-                .borrow()
-                .iter()
-                .any(|(name, _)| name == "__proto__"),
-            _ => false,
-        };
-        if !own {
-            let prototype = value.clone();
-            if !matches!(prototype, crate::value::Value::Null)
-                && !crate::value::is_object(&prototype)
-            {
-                return Ok(());
-            }
-            let args = vec![target.clone(), prototype];
-            crate::builtins::object::set_prototype_of(&args)?;
-            return Ok(());
-        }
     }
     finish_set_property(registers, object, &target, &key, value, strict)
 }
@@ -573,7 +564,9 @@ fn set_builtin_property(
 }
 
 pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
-    match target {
+    let target = crate::locals::resolved_replacement(target.clone());
+    match &target {
+        crate::value::Value::Proxy(proxy) => rejects_new_property(&proxy.target, key),
         crate::value::Value::Object(properties) => marked_without_key(properties, key),
         crate::value::Value::Function(function) => {
             let properties = function.properties.borrow();

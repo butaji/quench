@@ -66,10 +66,32 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
     }
     if let Value::Builtin(builtin) = function.target {
         if matches!(key, "length" | "name") {
+            if builtin == Builtin::ProxyRevoke && key == "name" {
+                return Some(descriptor_object_with_flags(
+                    Value::String(String::new()),
+                    false,
+                    false,
+                    true,
+                ));
+            }
             let property = crate::builtins::property(builtin, key);
             if !matches!(property, Value::Undefined) {
                 return Some(descriptor_object_with_flags(property, false, false, true));
             }
+            if key == "length" {
+                return Some(descriptor_object_with_flags(
+                    Value::Number(0.0),
+                    false,
+                    false,
+                    true,
+                ));
+            }
+            return Some(descriptor_object_with_flags(
+                Value::String(String::new()),
+                false,
+                false,
+                true,
+            ));
         }
     }
     let deleted = crate::builtins::deleted_key(key);
@@ -126,6 +148,12 @@ fn object_descriptor(
     properties: &[(crate::value::PropertyName, Value)],
     key: &str,
 ) -> Option<Value> {
+    if properties
+        .iter()
+        .any(|(name, _)| name == &crate::builtins::deleted_key(key))
+    {
+        return None;
+    }
     if properties.iter().any(|(name, value)| {
         name == "\0regexp" && matches!(value, Value::Boolean(true))
     }) && regexp_virtual_key(key)
