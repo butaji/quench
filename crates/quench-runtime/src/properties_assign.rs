@@ -27,6 +27,19 @@ pub(crate) fn assign_set_property(
             ));
         }
     }
+    let own_readonly = crate::builtins::object::descriptor(
+        Some(target),
+        Some(&crate::value::Value::String(key.to_string())),
+    )
+    .ok()
+    .is_some_and(|descriptor| {
+        matches!(descriptor, crate::value::Value::Object(properties) if properties.iter().any(|(name, value)| name == "writable" && matches!(value, crate::value::Value::Boolean(false))))
+    });
+    if own_readonly {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to read-only property",
+        ));
+    }
     if rejects_new_property(target, key) || inherited_write_blocked(target, key) {
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to read-only property",

@@ -71,6 +71,7 @@ fn has_own_key(value: &Value, key: &str) -> bool {
             .borrow()
             .iter()
             .any(|(name, _)| name == key),
+        Value::Array(values) => values.property(key).is_some() || values.descriptor(key).is_some(),
         _ => false,
     }
 }

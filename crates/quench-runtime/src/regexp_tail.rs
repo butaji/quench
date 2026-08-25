@@ -29,7 +29,11 @@ fn compiled_regex(receiver: &Value) -> Result<(regress::Regex, String), VmError>
 /// Copy capture-group byte ranges out of a match so the borrow can end before
 /// a String is rebound.
 fn group_ranges(m: &regress::Match, passes: &mut Vec<Option<(usize, usize)>>) {
-    passes.extend(m.groups().map(|group| group.map(|range| (range.start, range.end))));
+    passes.extend(
+        m.groups()
+            .skip(1)
+            .map(|group| group.map(|range| (range.start, range.end))),
+    );
 }
 
 fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
@@ -43,19 +47,24 @@ fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
 fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@match")?;
     let input = to_string_argument(arguments)?;
-    let flags = match_all_flags(receiver)?;
+    let unicode = crate::execute::is_truthy(
+        &crate::execute::get_property_result(receiver, "unicode")?,
+    );
     let global = crate::execute::get_property_result(receiver, "global")?;
     if !crate::execute::is_truthy(&global) {
         return regexp_exec(receiver, &input);
     }
-    symbol_match_global(receiver, &input, unicode_mode(&flags))
+    symbol_match_global(receiver, &input, unicode)
 }
 
 fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value, VmError> {
     set_last_index(receiver, 0.0)?;
     let mut matched = Vec::new();
     loop {
-        let previous = extract_last_index(receiver)?;
+        let previous = match crate::execute::get_property_result(receiver, "lastIndex")? {
+            Value::Number(value) => Some(to_length(value)),
+            _ => None,
+        };
         let result = regexp_exec(receiver, s)?;
         if matches!(result, Value::Null) {
             break;
@@ -63,10 +72,17 @@ fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value
         let full = crate::execute::get_property_result(&result, "0")?;
         matched.push(full.clone());
         let empty = matches!(&full, Value::String(value) if value.is_empty());
-        if empty && extract_last_index(receiver)? <= previous {
-            let next = advance_string_index(s, previous, unicode);
+        if empty {
+            let current = extract_last_index(receiver)?;
+            if previous.is_some_and(|previous| current > previous) {
+                continue;
+            }
+            let next = advance_string_index(s, current, unicode);
             set_last_index(receiver, next as f64)?;
         }
+    }
+    if matched.is_empty() {
+        return Ok(Value::Null);
     }
     Ok(Value::array(matched))
 }
@@ -86,12 +102,15 @@ fn unicode_mode(flags: &str) -> bool {
 }
 
 pub(crate) fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
+    let resolved = crate::locals::resolved_replacement(receiver.clone());
+    let receiver = &resolved;
     let method = crate::execute::get_property_result(receiver, "exec")?;
     if !crate::conversion::is_callable(&method) {
         return exec(Some(receiver), &[Value::String(input.to_string())]);
     }
     let result = crate::functions::execute_target(&method, receiver, &[Value::String(input.to_string())])?;
-    if matches!(result, Value::Null) || crate::value::is_object(&result) {
+    let symbol_primitive = matches!(&result, Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some());
+    if matches!(result, Value::Null) || (!symbol_primitive && crate::value::is_object(&result)) {
         return Ok(result);
     }
     Err(crate::value::error::throw_type_error(
@@ -161,7 +180,7 @@ fn replace_with_exec(
     let mut next_source = 0;
     loop {
         let result = regexp_exec(receiver, input)?;
-        let Some((matched, index)) = exec_match(&result)? else { break };
+        let Some((matched, index, exec_result)) = exec_match(&result)? else { break };
         // The exec result's `index` is a UTF-16 code-unit count; convert to
         // a byte offset before slicing `input`.
         let index = crate::strings::utf16_byte_index(input, index);
@@ -177,7 +196,8 @@ fn replace_with_exec(
                 input,
                 clamped_index,
                 &matched,
-            ));
+                &exec_result,
+            )?);
             next_source = (clamped_index + matched.len()).min(input.len());
         }
         if !global {
@@ -189,16 +209,22 @@ fn replace_with_exec(
     Ok(Value::String(output))
 }
 
-fn exec_match(result: &Value) -> Result<Option<(String, usize)>, VmError> {
+fn exec_match(result: &Value) -> Result<Option<(String, usize, Value)>, VmError> {
     if matches!(result, Value::Null) {
         return Ok(None);
     }
     let matched = crate::conversion::to_string(&crate::execute::get_property_result(result, "0")?)?;
     let index = crate::conversion::to_number(&crate::execute::get_property_result(result, "index")?)?;
-    Ok(Some((matched, to_length(index))))
+    Ok(Some((matched, to_length(index), result.clone())))
 }
 
-fn expand_exec_template(template: &str, input: &str, match_index: usize, matched: &str) -> String {
+fn expand_exec_template(
+    template: &str,
+    input: &str,
+    match_index: usize,
+    matched: &str,
+    exec_result: &Value,
+) -> Result<String, VmError> {
     let chars: Vec<char> = template.chars().collect();
     let mut output = String::new();
     let mut cursor = 0;
@@ -226,13 +252,36 @@ fn expand_exec_template(template: &str, input: &str, match_index: usize, matched
                 output.push_str(&input[suffix_start..]);
                 cursor += 2;
             }
+            '<' => {
+                let end = chars[cursor + 2..]
+                    .iter()
+                    .position(|c| *c == '>')
+                    .map(|position| position + cursor + 2);
+                let Some(end) = end else {
+                    output.push('$');
+                    cursor += 1;
+                    continue;
+                };
+                let groups = crate::execute::get_property_result(exec_result, "groups")?;
+                if matches!(groups, Value::Undefined) {
+                    output.push('$');
+                    cursor += 1;
+                    continue;
+                }
+                let name: String = chars[cursor + 2..end].iter().collect();
+                let capture = crate::execute::get_property_result(&groups, &name)?;
+                if !matches!(capture, Value::Undefined) {
+                    output.push_str(&value_to_string(&capture));
+                }
+                cursor = end + 1;
+            }
             _ => {
                 output.push('$');
                 cursor += 1;
             }
         }
     }
-    output
+    Ok(output)
 }
 
 fn advance_empty_exec(receiver: &Value, input: &str, matched: &str) -> Result<(), VmError> {
@@ -308,7 +357,6 @@ fn replacer_args(
 ) -> Vec<Value> {
     let mut args = vec![
         Value::String(rest[m.start()..end].to_string()),
-        Value::Number((s.len() - rest.len() + m.start()) as f64),
     ];
     for group in groups_at(m) {
         let value = match group {
@@ -317,7 +365,20 @@ fn replacer_args(
         };
         args.push(value);
     }
+    args.push(Value::Number((s.len() - rest.len() + m.start()) as f64));
     args.push(Value::String(s.to_string()));
+    if m.named_groups().next().is_some() {
+        let mut groups = vec![("\0prototype".to_string(), Value::Null)];
+        groups.extend(m.named_groups().map(|(name, range)| {
+            let value = range.map_or(Value::Undefined, |range| {
+                Value::String(rest[range.start..range.end].to_string())
+            });
+            (name.to_string(), value)
+        }));
+        args.push(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(groups),
+        )));
+    }
     args
 }
 
@@ -358,6 +419,17 @@ fn expand_template_token(
         '`' => replacement_prefix(input, rest, m),
         '\'' => replacement_suffix(input, rest, m),
         digit @ '1'..='9' => template_group(m, rest, digit)?,
+        '<' if m.named_groups().next().is_some() => {
+            let end = chars[index + 2..].iter().position(|c| *c == '>')? + index + 2;
+            let name: String = chars[index + 2..end].iter().collect();
+            let value = m
+                .named_groups()
+                .find(|(group_name, _)| *group_name == name.as_str())
+                .and_then(|(_, range)| range)
+                .map_or_else(String::new, |range| rest[range.start..range.end].to_string());
+            out.push_str(&value);
+            return Some(end + 1);
+        }
         _ => return None,
     };
     out.push_str(&replacement);
@@ -376,12 +448,14 @@ fn replacement_suffix(input: &str, rest: &str, m: &regress::Match) -> String {
 
 fn template_group(m: &regress::Match, rest: &str, digit: char) -> Option<String> {
     let index = (digit as usize) - ('1' as usize);
-    let (start, end) = groups_at(m).nth(index).flatten()?;
-    Some(rest[start..end].to_string())
+    let group = groups_at(m).nth(index)?;
+    Some(group.map_or_else(String::new, |(start, end)| rest[start..end].to_string()))
 }
 
 fn groups_at<'a>(m: &'a regress::Match) -> impl Iterator<Item = Option<(usize, usize)>> + 'a {
-    m.groups().map(|group| group.map(|range| (range.start, range.end)))
+    m.groups()
+        .skip(1)
+        .map(|group| group.map(|range| (range.start, range.end)))
 }
 
 // RegExp.prototype[Symbol.matchAll]
