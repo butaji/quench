@@ -561,24 +561,45 @@ fn fast_regex_parts(receiver: &Value) -> Option<(String, String, usize)> {
 }
 
 fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
-    let Some(last_index) = regexp_word_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex") else {
+    let Value::Object(object) = receiver else {
         return false;
     };
-    let Some(Value::Object(descriptor)) = regexp_slot(
-        receiver,
-        REGEXP_LAST_INDEX_DESCRIPTOR_SLOT,
-        &crate::builtins::descriptor_key("lastIndex"),
-    ) else {
+    let Some(last_index) = writable_last_index_word(object) else {
         return false;
     };
-    let writable = descriptor
+    last_index.store(value.clone());
+    true
+}
+
+pub(crate) fn repeat_exact_global_exec(
+    receiver: &crate::value::ObjectData,
+    input: &str,
+) -> Option<()> {
+    let source = receiver.hot_properties().slot_value(REGEXP_SOURCE_SLOT)?;
+    let flags = receiver.hot_properties().slot_value(REGEXP_FLAGS_SLOT)?;
+    let (Value::String(source), Value::String(flags)) = (source, flags) else { return None };
+    (source == input
+        && source.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        && flags == "g")
+        .then_some(())?;
+    let last_index = writable_last_index_word(receiver)?;
+    last_index.store(Value::Number(input.encode_utf16().count() as f64));
+    Some(())
+}
+
+fn writable_last_index_word(
+    receiver: &crate::value::ObjectData,
+) -> Option<&crate::register_file::SlotWord> {
+    let properties = receiver.hot_properties();
+    (properties.name_at(REGEXP_LAST_INDEX_SLOT)? == "lastIndex").then_some(())?;
+    let Value::Object(descriptor) = properties.slot_value(REGEXP_LAST_INDEX_DESCRIPTOR_SLOT)? else {
+        return None;
+    };
+    descriptor
         .hot_properties()
         .get(1)
-        .is_some_and(|(name, flag)| name == "writable" && matches!(flag, Value::Boolean(true)));
-    if writable {
-        last_index.store(value.clone());
-    }
-    writable
+        .is_some_and(|(name, flag)| name == "writable" && matches!(flag, Value::Boolean(true)))
+        .then(|| properties.slot_word(REGEXP_LAST_INDEX_SLOT))?
 }
 
 fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a str) {
