@@ -90,6 +90,7 @@ fn run_instruction(
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     use crate::ir::Opcode;
     let _decode_guard = crate::execution_trace::compact(instruction.opcode);
+    crate::execution_trace::compact_site(code, pc);
     crate::execution_trace::operands(instruction);
     match instruction.opcode {
         Opcode::LoadConst => {

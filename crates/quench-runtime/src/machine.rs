@@ -560,6 +560,12 @@ pub struct CodeView<'a> {
 }
 
 impl<'a> CodeView<'a> {
+    #[inline]
+    #[cfg(feature = "execution-trace")]
+    pub(crate) fn trace_identity(self) -> (usize, u32) {
+        (self.store as *const CodeStore as usize, self.range.code.0)
+    }
+
     pub fn len(self) -> usize {
         self.range.end.saturating_sub(self.range.start) as usize
     }
