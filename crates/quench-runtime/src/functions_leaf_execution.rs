@@ -261,6 +261,12 @@ pub(crate) fn execute_proven_leaf(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
+    // Async functions must be lowered through the generator completion path;
+    // a leaf hit would let a body throw escape synchronously instead of
+    // becoming a rejected Promise.
+    if function.is_async {
+        return None;
+    }
     crate::execution_trace::event(crate::execution_trace::Event::LeafAttempt);
     let code = function.code.code()?;
     let extended = match proven_leaf(function, code) {
