@@ -48,6 +48,17 @@ fn invalid_v_character_class(pattern: &str) -> bool {
         "[@@]", "[``]", "[~~]", "[^^^]", "[_^^]",
     ];
     INVALID.iter().any(|candidate| candidate.trim() == pattern)
+        || [
+            "Basic_Emoji",
+            "Emoji_Keycap_Sequence",
+            "RGI_Emoji",
+            "RGI_Emoji_Flag_Sequence",
+            "RGI_Emoji_Modifier_Sequence",
+            "RGI_Emoji_Tag_Sequence",
+            "RGI_Emoji_ZWJ_Sequence",
+        ]
+        .iter()
+        .any(|property| pattern == format!("[^\\p{{{property}}}]").as_str())
 }
 
 fn normalize_named_group_escapes(pattern: &str) -> String {
