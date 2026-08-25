@@ -43,6 +43,16 @@ const TEMPORAL_PLAIN_DATE_PROTOTYPE_NAMES: &[&str] = &[
     "toString",
     "toJSON",
     "toLocaleString",
+    "equals",
+    "add",
+    "subtract",
+    "until",
+    "since",
+    "toPlainDateTime",
+    "toPlainMonthDay",
+    "toPlainYearMonth",
+    "toZonedDateTime",
+    "toLocaleString",
     "valueOf",
 ];
 
