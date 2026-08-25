@@ -400,6 +400,9 @@ pub(crate) fn array_push(
                 .is_empty()
             && prototype_indices_clear
         {
+            if array.append_shared_numbers(arguments) {
+                return Ok(Value::Number(final_length as f64));
+            }
             let (mut values, _, _) = array.hot_storage();
             values.extend(arguments.iter().cloned());
             let updated = Value::array(values);
