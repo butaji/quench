@@ -600,28 +600,49 @@ fn deep_assert(
     }
     let custom = custom_message(args, 2);
     let generated = custom.is_none();
+    let full_diff = _r.is_some_and(|receiver| {
+        matches!(execute::get_property(receiver, "diff"), Value::String(mode) if mode == "full")
+    });
     let message = custom.map_or_else(
         || if !strict {
             format!(
                 "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
-                rendered_deep(&actual),
-                rendered_deep(&expected)
+                rendered_deep_for_mode(&actual, full_diff),
+                rendered_deep_for_mode(&expected, full_diff)
             )
         } else {
             format!(
                 "Expected values to be strictly deep-equal:\n+ actual - expected\n\n{}\n",
-                deep_diff(&actual, &expected)
+                deep_diff_for_mode(&actual, &expected, full_diff)
             )
         },
         |message| format!(
             "{message}\n+ actual - expected\n\n{}\n",
-            deep_diff(&actual, &expected)
+            deep_diff_for_mode(&actual, &expected, full_diff)
         ),
     );
     Err(with_instance_diff(
         assertion_error(message, operator, actual, expected, generated),
         _r,
     ))
+}
+
+fn deep_diff_for_mode(actual: &Value, expected: &Value, full: bool) -> String {
+    if full {
+        if let (Value::String(actual), Value::String(expected)) = (actual, expected) {
+            return format!("+ '{actual}'\n- '{expected}'");
+        }
+    }
+    deep_diff(actual, expected)
+}
+
+fn rendered_deep_for_mode(value: &Value, full: bool) -> String {
+    if full {
+        if let Value::String(value) = value {
+            return format!("'{}'", value.trim_end_matches('\n'));
+        }
+    }
+    rendered_deep(value)
 }
 
 fn rendered_deep(value: &Value) -> String {
