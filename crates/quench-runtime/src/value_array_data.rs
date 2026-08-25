@@ -466,7 +466,7 @@ impl ArrayData {
             live.mapped.truncate(length);
             live.length = length;
         }
-        if length < self.length {
+        if length < self.length || length < self.values.len() {
             self.values.truncate(length);
             self.deleted.truncate(length);
             self.mapped.truncate(length);
