@@ -371,9 +371,10 @@ pub fn trace_sync(
     }
     match execute::call(callback, &this_arg, call_args) {
         Ok(result) => {
-            context = execute::set_property(context, "result", result.clone());
+            execute::set_property_in_place(&context, "result", result.clone());
+            let completion = context.clone();
             if channel_has_subscribers(state, &end) {
-                publish(state, Some(&end), std::slice::from_ref(&context))?;
+                publish(state, Some(&end), std::slice::from_ref(&completion))?;
             }
             Ok(result)
         }
@@ -382,12 +383,13 @@ pub fn trace_sync(
                 VmError::Thrown(value) => value.clone(),
                 _ => Value::Undefined,
             };
-            context = execute::set_property(context, "error", error_value);
+            execute::set_property_in_place(&context, "error", error_value);
+            let completion = context.clone();
             if channel_has_subscribers(state, &error) {
-                publish(state, Some(&error), std::slice::from_ref(&context))?;
+                publish(state, Some(&error), std::slice::from_ref(&completion))?;
             }
             if channel_has_subscribers(state, &end) {
-                publish(state, Some(&end), std::slice::from_ref(&context))?;
+                publish(state, Some(&end), std::slice::from_ref(&completion))?;
             }
             Err(thrown)
         }
