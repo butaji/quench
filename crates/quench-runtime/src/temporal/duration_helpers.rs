@@ -177,12 +177,15 @@ fn add_fractional_time(values: &mut [f64; 10], index: usize, fraction: f64) {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    if same_fields(arguments.first(), arguments.get(1)) {
+        if let Some(options) = arguments.get(2) {
+            validate_compare_options(Some(options))?;
+        }
+        return Ok(Value::Number(0.0));
+    }
     let left = from(arguments.first())?;
     let right = from(arguments.get(1))?;
     validate_compare_options(arguments.get(2))?;
-    if same_fields(arguments.first(), arguments.get(1)) {
-        return Ok(Value::Number(0.0));
-    }
     for value in [&left, &right] {
         let calendar_days = number_property(value, "weeks") * 7.0 + number_property(value, "days");
         if !calendar_days.is_finite() || calendar_days.abs() > 104_249_991_374.0 {
