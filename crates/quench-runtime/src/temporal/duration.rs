@@ -71,7 +71,7 @@ pub(crate) fn execute(
             crate::intl::duration::format_temporal_duration(receiver, arguments),
         ),
         crate::ops::Builtin::TemporalDurationToJSON => Some(to_json(receiver)),
-        crate::ops::Builtin::TemporalDurationToString => Some(to_json(receiver)),
+        crate::ops::Builtin::TemporalDurationToString => Some(to_string(receiver, arguments)),
         crate::ops::Builtin::TemporalDurationYearsGetter => Some(field_getter(receiver, "years")),
         crate::ops::Builtin::TemporalDurationMonthsGetter => Some(field_getter(receiver, "months")),
         crate::ops::Builtin::TemporalDurationWeeksGetter => Some(field_getter(receiver, "weeks")),
@@ -771,7 +771,64 @@ fn to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::String(format_iso_duration(object)))
 }
 
+fn to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    let options = match arguments.first() {
+        None | Some(Value::Undefined) => None,
+        Some(value) if crate::value::is_object(value) => Some(value),
+        _ => {
+            return Err(crate::value::error::throw_type_error(
+                "Options must be an object",
+            ))
+        }
+    };
+    let digits = if let Some(options) = options {
+        let smallest = crate::execute::get_property_result(options, "smallestUnit")?;
+        if !matches!(smallest, Value::Undefined) {
+            Some(match crate::conversion::to_string(&smallest)?.as_str() {
+                "second" | "seconds" => 0,
+                "millisecond" | "milliseconds" => 3,
+                "microsecond" | "microseconds" => 6,
+                "nanosecond" | "nanoseconds" => 9,
+                _ => {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid smallestUnit",
+                    ))
+                }
+            })
+        } else {
+            let value = crate::execute::get_property_result(options, "fractionalSecondDigits")?;
+            if matches!(value, Value::String(ref value) if value == "auto") {
+                return Ok(Value::String(format_iso_duration_with_digits(object, None)));
+            }
+            if matches!(value, Value::Undefined) {
+                None
+            } else {
+                let number = crate::conversion::to_number(&value)?;
+                if !number.is_finite() || number < -0.0 || number > 9.0 {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid fractionalSecondDigits",
+                    ));
+                }
+                Some(number.floor() as usize)
+            }
+        }
+    } else {
+        None
+    };
+    Ok(Value::String(format_iso_duration_with_digits(
+        object, digits,
+    )))
+}
+
 fn format_iso_duration(object: &crate::value::ObjectData) -> String {
+    format_iso_duration_with_digits(object, None)
+}
+
+fn format_iso_duration_with_digits(
+    object: &crate::value::ObjectData,
+    digits: Option<usize>,
+) -> String {
     let names = [
         "years",
         "months",
@@ -788,7 +845,7 @@ fn format_iso_duration(object: &crate::value::ObjectData) -> String {
     let negative = fields.iter().any(|value| *value < 0);
     let fields = fields.map(|value| value.abs());
     let date = format_date_fields(&fields);
-    let time = format_time_fields(&fields);
+    let time = format_time_fields(&fields, digits);
     let body = if date.is_empty() && time.is_empty() {
         "T0S".to_string()
     } else {
@@ -820,7 +877,7 @@ fn format_date_fields(fields: &[i128; 10]) -> String {
         .collect()
 }
 
-fn format_time_fields(fields: &[i128; 10]) -> String {
+fn format_time_fields(fields: &[i128; 10], digits: Option<usize>) -> String {
     let mut result = String::new();
     append_time_field(&mut result, fields[4], "H");
     append_time_field(&mut result, fields[5], "M");
@@ -828,7 +885,11 @@ fn format_time_fields(fields: &[i128; 10]) -> String {
     let seconds = fields[6] + subseconds / 1_000_000_000;
     let remainder = subseconds % 1_000_000_000;
     if seconds != 0 || remainder != 0 {
-        let fraction = format!("{remainder:09}").trim_end_matches('0').to_string();
+        let fraction = match digits {
+            Some(0) => String::new(),
+            Some(digits) => format!("{:09}", remainder)[..digits].to_string(),
+            None => format!("{remainder:09}").trim_end_matches('0').to_string(),
+        };
         if fraction.is_empty() {
             append_time_field(&mut result, seconds, "S");
         } else {
