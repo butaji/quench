@@ -26,6 +26,7 @@ include!("promise_with_resolvers.rs");
 include!("promise_try.rs");
 
 fn process_promise(promise: &Rc<PromiseData>) {
+    promise_phase(promise, "before");
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
     let promise_key = Rc::as_ptr(promise) as usize;
@@ -34,6 +35,7 @@ fn process_promise(promise: &Rc<PromiseData>) {
     for continuation in continuations {
         process_continuation(continuation, &state);
     }
+    promise_phase(promise, "after");
 }
 
 fn process_then_actions(
@@ -315,6 +317,22 @@ pub(crate) fn promise_resolved(promise: &Rc<PromiseData>) {
         descriptor,
         None,
         &[Value::String("resolve".into()), Value::Promise(Rc::clone(promise))],
+    );
+}
+
+pub(crate) fn promise_phase(promise: &Rc<PromiseData>, event: &str) {
+    let context = crate::vm::current_context();
+    let Some(host) = context.host_handle() else {
+        return;
+    };
+    let descriptor = crate::ops::HostCapabilityRef {
+        realm: context.realm(),
+        kind: crate::ops::HostCapabilityKind::PromiseHook,
+    };
+    let _ = host.call(
+        descriptor,
+        None,
+        &[Value::String(event.to_owned()), Value::Promise(Rc::clone(promise))],
     );
 }
 
