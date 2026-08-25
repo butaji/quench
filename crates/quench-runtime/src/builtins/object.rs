@@ -159,6 +159,16 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Cannot set the prototype of a non-extensible object",
         ));
     }
+    if matches!(prototype, Value::Null) {
+        let constructor = crate::vm::get_property(&current, "constructor");
+        if let Value::String(name) = crate::vm::get_property(&constructor, "name") {
+            let _ = crate::execute::set_property_in_place(
+                target,
+                "\0original_constructor_name",
+                Value::String(name),
+            );
+        }
+    }
     let result = match target {
         Value::Function(_) | Value::BoundFunction(_) => set_function_prototype(target, prototype),
         Value::Object(data) => set_object_prototype(data, prototype),

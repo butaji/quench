@@ -494,6 +494,14 @@ fn value_to_string(value: &Value) -> String {
     if quench_runtime::execute::is_symbol(value) {
         return symbol_string(value);
     }
+    if quench_runtime::execute::has_own_property(value, "timeValue")
+        && matches!(
+            quench_runtime::execute::get_prototype_of(value),
+            Ok(Value::Builtin(quench_runtime::ops::Builtin::DatePrototype))
+        )
+    {
+        return inspect_date(value);
+    }
     match value {
         Value::String(s) => s.clone(),
         Value::Number(n) => js_number(*n),
@@ -505,14 +513,25 @@ fn value_to_string(value: &Value) -> String {
         // plain objects inspect.
         Value::Object(_)
         | Value::ObjectAlias(_)
-        | Value::Array(_)
         | Value::Function(_)
         | Value::BoundFunction(_) => match quench_runtime::execute::to_js_string(value) {
             Ok(text) if text != "[object Object]" && !text.is_empty() => text,
             // `%s` inspects plain objects at depth 0: nested containers
             // collapse to `[Array]` / `[Object]`.
-            _ => inspect_depth(value, 0),
+            _ => {
+                let rendered = inspect_depth(value, 0);
+                let constructor = quench_runtime::execute::get_property(value, "constructor");
+                match quench_runtime::execute::get_property(&constructor, "name") {
+                    Value::String(name)
+                        if !name.is_empty() && name != "Object" && rendered.starts_with('{') =>
+                    {
+                        format!("{name} {rendered}")
+                    }
+                    _ => rendered,
+                }
+            }
         },
+        Value::Array(_) => inspect_array(value, 3),
         _ => "<unknown>".into(),
     }
 }
@@ -1109,6 +1128,16 @@ fn inspect_buffer(value: &Value, view: &quench_runtime::value::Uint8ArrayData) -
 }
 
 fn inspect_array(value: &Value, depth: usize) -> String {
+    let prototype = quench_runtime::execute::get_prototype_of(value).ok();
+    let constructor = prototype
+        .as_ref()
+        .map(|prototype| quench_runtime::execute::get_property(prototype, "constructor"))
+        .unwrap_or(Value::Undefined);
+    if let Value::String(name) = quench_runtime::execute::get_property(&constructor, "name") {
+        if !name.is_empty() && name != "Array" && name != "Object" {
+            return inspect_named_array(value, depth, &name);
+        }
+    }
     if depth == 0 {
         return "[Array]".into();
     }
@@ -1138,6 +1167,36 @@ fn inspect_array(value: &Value, depth: usize) -> String {
     let mut parts = items;
     parts.append(&mut properties);
     format!("[ {} ]", parts.join(", "))
+}
+
+fn inspect_named_array(value: &Value, depth: usize, name: &str) -> String {
+    let length = match quench_runtime::execute::get_property(value, "length") {
+        Value::Number(length) if length.is_finite() && length >= 0.0 => length as usize,
+        _ => 0,
+    };
+    let mut parts = Vec::new();
+    let mut holes = 0usize;
+    for index in 0..length.min(64) {
+        let item = quench_runtime::execute::get_property(value, &index.to_string());
+        if matches!(item, Value::Undefined) {
+            holes += 1;
+        } else {
+            if holes > 0 {
+                parts.push(format!("<{holes} empty items>"));
+                holes = 0;
+            }
+            parts.push(inspect_at(&item, depth.saturating_sub(1)));
+        }
+    }
+    if holes > 0 {
+        parts.push(format!("<{holes} empty items>"));
+    }
+    for key in quench_runtime::execute::own_enumerable_keys(value) {
+        if key != "length" && key.parse::<usize>().is_err() {
+            parts.push(format!("{key}: {}", inspect_property(value, &key, depth.saturating_sub(1))));
+        }
+    }
+    format!("{name}({length}) [ {} ]", parts.join(", "))
 }
 
 fn inspect_at(value: &Value, depth: usize) -> String {
@@ -1170,8 +1229,10 @@ fn inspect_object(value: &Value, depth: usize) -> String {
     let prototype = quench_runtime::execute::get_prototype_of(value).ok();
     let original_prototype = value.original_prototype();
     let null_prototype = matches!(prototype, Some(Value::Null));
-    let constructor_name =
-        original_prototype
+    let constructor_name = match quench_runtime::execute::get_property(value, "\0original_constructor_name") {
+        Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
+        _ => None,
+    }.or_else(|| original_prototype
             .as_ref()
             .or(prototype.as_ref())
             .and_then(|prototype| {
@@ -1180,7 +1241,7 @@ fn inspect_object(value: &Value, depth: usize) -> String {
                     Value::String(name) if !name.is_empty() && name != "Object" => Some(name),
                     _ => None,
                 }
-            });
+            }));
     let keys = quench_runtime::execute::own_enumerable_keys(value);
     if keys.is_empty() {
         return if null_prototype {
