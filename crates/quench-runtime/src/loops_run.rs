@@ -70,6 +70,12 @@ fn run_loop(
     }
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
+            trace_counted_recognition(body, fact, per_iteration);
+            if let Some(completion) =
+                run_invariant_sum_kernel(fact, body, dst, per_iteration, registers, loop_shape)
+            {
+                return Ok(completion);
+            }
             if let Some(completion) = run_crypto_integer_kernel(fact, body) {
                 return Ok(completion);
             }
@@ -82,6 +88,8 @@ fn run_loop(
             if let Some(completion) = run_packed_loop_kernel(fact, body) {
                 return Ok(completion);
             }
+        } else {
+            dump_counted_rejection(loop_shape, test, update);
         }
     }
     if label.is_none() && !post_test && per_iteration.is_empty() {
@@ -122,6 +130,148 @@ fn run_loop(
     Ok(crate::completion::Completion::Normal)
 }
 
+fn run_invariant_sum_kernel(
+    fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    per_iteration: &[u16],
+    registers: &mut crate::register_file::RegisterFile,
+    loop_shape: u64,
+) -> Option<crate::completion::Completion> {
+    (body.len() == 5).then_some(())?;
+    let load_total = body.instruction(0)?;
+    let load_value = body.instruction(1)?;
+    let add = body.instruction(2)?;
+    let store_total = body.instruction(3)?;
+    let move_result = body.instruction(4)?;
+    let proven_shape = load_total.opcode == crate::ir::Opcode::LoadLocal
+        && load_value.opcode == crate::ir::Opcode::LoadLocalChecked
+        && add.opcode == crate::ir::Opcode::Add
+        && (add.b, add.c) == (load_total.a, load_value.a)
+        && store_total.opcode == crate::ir::Opcode::StoreLocalChecked
+        && (store_total.a, store_total.b) == (load_total.b, add.a)
+        && move_result.opcode == crate::ir::Opcode::Move
+        && (move_result.a, move_result.b) == (dst, add.a)
+        && per_iteration == [fact.slot]
+        && fact.timing == CountedStepTiming::AfterBody;
+    proven_shape.then_some(())?;
+
+    let environment = crate::locals::current();
+    let mut index = environment.get_number(fact.slot)?;
+    let bound = fact.bound.number(&environment)?;
+    let mut total = environment.get_number(load_total.b)?;
+    let value = environment.get_number(load_value.b)?;
+    let mut iterations = 0_u64;
+    crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
+    while counted_comparison(fact.comparison, index, bound) {
+        crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
+        crate::execution_trace::loop_shape_iteration(loop_shape);
+        crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
+        crate::execution_trace::kernel("invariant_sum", false);
+        total += value;
+        index += fact.step;
+        iterations += 1;
+    }
+    environment.set(load_total.b, crate::value::Value::Number(total));
+    environment.set(fact.slot, crate::value::Value::Number(index));
+    if iterations != 0 {
+        registers.write_number(usize::from(dst), total);
+    }
+    Some(crate::completion::Completion::Normal)
+}
+
+fn trace_counted_recognition(
+    body: crate::machine::CodeView<'_>,
+    fact: CountedForFact,
+    per_iteration: &[u16],
+) {
+    crate::execution_trace::event(crate::execution_trace::Event::CountedForRecognized);
+    if !per_iteration.is_empty() {
+        crate::execution_trace::event(crate::execution_trace::Event::CountedForPerIteration);
+    }
+    dump_counted_shape(body, fact, per_iteration);
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_counted_rejection(
+    fingerprint: u64,
+    test: crate::machine::CodeView<'_>,
+    update: crate::machine::CodeView<'_>,
+) {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+        std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_LOOP_SHAPES").is_some())
+        || !SEEN
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert(fingerprint)
+    {
+        return;
+    }
+    eprintln!("LOOP_REJECT hash={fingerprint} test_len={} update_len={}", test.len(), update.len());
+    dump_loop_fragment("test", test);
+    dump_loop_fragment("update", update);
+}
+
+#[cfg(feature = "execution-trace")]
+fn dump_loop_fragment(name: &str, code: crate::machine::CodeView<'_>) {
+    for pc in 0..code.len() {
+        let instruction = code.instruction(pc).unwrap();
+        let cold = code.cold(instruction).map(crate::ops::Op::variant_name);
+        eprintln!("  {name}[{pc}]: {instruction:?} cold={cold:?}");
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+fn dump_counted_rejection(_: u64, _: crate::machine::CodeView<'_>, _: crate::machine::CodeView<'_>) {}
+
+#[cfg(feature = "execution-trace")]
+fn dump_counted_shape(
+    body: crate::machine::CodeView<'_>,
+    fact: CountedForFact,
+    per_iteration: &[u16],
+) {
+    use std::hash::{Hash, Hasher};
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+        std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("QUENCH_DUMP_LOOP_SHAPES").is_some()) {
+        return;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for pc in 0..body.len() {
+        let instruction = body.instruction(pc).unwrap();
+        (instruction.opcode as u8).hash(&mut hasher);
+        instruction.flags.hash(&mut hasher);
+        instruction.a.hash(&mut hasher);
+        instruction.b.hash(&mut hasher);
+        instruction.c.hash(&mut hasher);
+    }
+    let fingerprint = hasher.finish();
+    if !SEEN.get_or_init(Default::default).lock().unwrap().insert(fingerprint) {
+        return;
+    }
+    eprintln!(
+        "LOOP_SHAPE len={} hash={fingerprint} slot={} bound={:?} comparison={:?} step={} timing={:?} per_iteration={per_iteration:?}",
+        body.len(),
+        fact.slot,
+        fact.bound,
+        fact.comparison,
+        fact.step,
+        fact.timing
+    );
+    for pc in 0..body.len() {
+        let instruction = body.instruction(pc).unwrap();
+        let cold = body.cold(instruction).map(crate::ops::Op::variant_name);
+        eprintln!("  {pc}: {instruction:?} cold={cold:?}");
+    }
+}
+
+#[cfg(not(feature = "execution-trace"))]
+fn dump_counted_shape(_: crate::machine::CodeView<'_>, _: CountedForFact, _: &[u16]) {}
+
 fn run_counted_for(
     fact: CountedForFact,
     body: crate::machine::CodeView<'_>,
@@ -130,25 +280,34 @@ fn run_counted_for(
     registers: &mut crate::register_file::RegisterFile,
     loop_shape: u64,
 ) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
+    crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
     let environment = crate::locals::current();
     loop {
         crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
         crate::execution_trace::loop_shape_iteration(loop_shape);
         let Some(mut index) = environment.get_number(fact.slot) else {
+            crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+            crate::execution_trace::kernel("counted_for", true);
             return Ok(None);
         };
         if fact.timing == CountedStepTiming::BeforeTest {
             let Some((_, updated)) = environment.update_number(fact.slot, fact.step) else {
+                crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+                crate::execution_trace::kernel("counted_for", true);
                 return Ok(None);
             };
             index = updated;
         }
         let Some(bound) = fact.bound.number(&environment) else {
+            crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+            crate::execution_trace::kernel("counted_for", true);
             return Ok(None);
         };
         if !counted_comparison(fact.comparison, index, bound) {
             return Ok(Some(crate::completion::Completion::Normal));
         }
+        crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
+        crate::execution_trace::kernel("counted_for", false);
         match execute_loop_body(registers, &None, body)? {
             crate::completion::LoopTransition::Continue(value) => {
                 store_loop_value(registers, dst, value)?;
@@ -163,6 +322,8 @@ fn run_counted_for(
         }
         if fact.timing == CountedStepTiming::AfterBody {
             let Some((_, _)) = environment.update_number(fact.slot, fact.step) else {
+                crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+                crate::execution_trace::kernel("counted_for", true);
                 run_fragment(update, registers)?;
                 return Ok(None);
             };
@@ -188,7 +349,7 @@ counted_comparisons! {
     GreaterEqual => >=,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct CountedForFact {
     slot: u16,
     bound: CountedBound,
@@ -197,13 +358,13 @@ struct CountedForFact {
     timing: CountedStepTiming,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CountedStepTiming {
     BeforeTest,
     AfterBody,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum CountedBound {
     Constant(f64),
     Slot(u16),
