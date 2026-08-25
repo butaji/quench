@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "oracle": { "max_ratio": 2 },
+  "metrics": {
+    "kernel_hit_per_store": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "counted_packed_f64_boundary",
+          "field": "hits"
+        }
+      },
+      "denominator": "lanes.l0.packed_set",
+      "min_traffic": 100000,
+      "min": 0.49,
+      "max": 0.51
+    },
+    "kernel_deopts": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "counted_packed_f64_boundary",
+          "field": "deopts"
+        }
+      },
+      "max": 0
+    },
+    "decode_per_iteration": {
+      "numerator": "lanes.l0.value_decode",
+      "denominator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "counted_packed_f64_boundary",
+          "field": "hits"
+        }
+      },
+      "min_traffic": 100000,
+      "max": 0.02
+    }
+  }
+}
