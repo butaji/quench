@@ -795,12 +795,7 @@ pub(crate) fn locale_compare(
         unicode_normalization::UnicodeNormalization::nfd(left.chars()).collect::<String>();
     let normalized_right =
         unicode_normalization::UnicodeNormalization::nfd(right.chars()).collect::<String>();
-    if normalized_left == normalized_right
-        || (matches!(left.as_str(), "o\u{0308}" | "ö")
-            && matches!(right.as_str(), "o\u{0308}" | "ö"))
-        || (left.contains('\u{0308}') && right.contains('ö'))
-        || (right.contains('\u{0308}') && left.contains('ö'))
-    {
+    if normalized_left == normalized_right {
         return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(crate::intl::collator::compare(
