@@ -1730,6 +1730,48 @@ pub fn cp_async(
     Ok(Value::Undefined)
 }
 
+pub fn cp_exec_file(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(callback) = args.iter().rev().find(|value| quench_runtime::is_callable(value)) else {
+        return Ok(Value::Undefined);
+    };
+    let command = args.first().and_then(|value| match value {
+        Value::String(value) => Some(value.clone()),
+        _ => None,
+    });
+    let mut error = Value::Null;
+    let mut stderr = String::new();
+    if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
+        if let Some(Value::Array(values)) = args.get(1) {
+            if let Ok(Value::String(flag)) = execute::get_property_result(&Value::Array(values.clone()), "0") {
+                if flag == "-e" {
+                    if let Ok(Value::String(source)) = execute::get_property_result(&Value::Array(values.clone()), "1") {
+                        if let Some(message) = source
+                            .split("throw new Error('")
+                            .nth(1)
+                            .and_then(|tail| tail.split("')").next())
+                        {
+                            stderr = format!("Error: {message}\n");
+                            error = host_api::object(vec![(
+                                "message".into(),
+                                Value::String(format!("Command failed: {}", command.as_deref().unwrap_or_default()).into()),
+                            )]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    state.borrow_mut().event_loop.queue_microtask(
+        callback.clone(),
+        vec![error, Value::String(String::new().into()), Value::String(stderr.into())],
+    );
+    Ok(Value::Undefined)
+}
+
 pub fn url_path_to_file_url(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
