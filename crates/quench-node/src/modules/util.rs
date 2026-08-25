@@ -574,6 +574,7 @@ fn format_extra(value: &Value) -> String {
     }
     match value {
         Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
+        value if quench_runtime::is_callable(value) => inspect_function(value),
         Value::String(value)
             if quench_runtime::execute::is_symbol(&Value::String(value.clone())) =>
         {
@@ -999,8 +1000,11 @@ pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<St
         return Some("<Revoked Proxy>".into());
     }
     let depth = depth.min(32);
-    let custom = inspect_custom(&proxy.target, depth);
+    let custom = inspect_custom_with_receiver(&proxy.target, value, depth);
     let target = custom.clone().unwrap_or_else(|| {
+        if show_proxy && depth <= 1 && matches!(proxy.target, Value::Proxy(_)) {
+            return "Proxy [Array]".into();
+        }
         if matches!(proxy.target, Value::Proxy(_)) {
             inspect_proxy(&proxy.target, depth.saturating_sub(1), show_proxy)
                 .unwrap_or_else(|| "<unknown>".into())
@@ -1012,17 +1016,46 @@ pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<St
         return Some(custom.unwrap_or_else(|| format!("Proxy({target})")));
     }
     let handler = if matches!(proxy.handler, Value::Proxy(_)) {
+        if depth <= 1 {
+            "Proxy [Array]".into()
+        } else {
         inspect_proxy(&proxy.handler, depth.saturating_sub(1), true)
             .unwrap_or_else(|| "<unknown>".into())
+        }
     } else {
-        inspect_depth(&proxy.handler, depth.saturating_sub(1))
+        inspect_proxy_handler(&proxy.handler)
     };
+    let target_block = indent_proxy_child(&target);
+    let handler_block = indent_proxy_child(&handler);
     let inline = format!("Proxy [ {target}, {handler} ]");
     Some(if inline.len() <= 80 {
         inline
     } else {
-        format!("Proxy [\n  {target},\n  {handler}\n]")
+        format!("Proxy [\n  {target_block},\n  {handler_block}\n]")
     })
+}
+
+fn indent_proxy_child(value: &str) -> String {
+    value.replace('\n', "\n  ")
+}
+
+fn inspect_proxy_handler(value: &Value) -> String {
+    if matches!(value, Value::Array(_)) {
+        return inspect_array(value, 1);
+    }
+    if quench_runtime::is_callable(value) {
+        return inspect_function(value);
+    }
+    let keys = quench_runtime::execute::own_enumerable_keys(value);
+    if keys.is_empty() {
+        return "{}".into();
+    }
+    let body = keys
+        .iter()
+        .map(|key| format!("  {key}: {}", inspect_shallow(&quench_runtime::execute::get_property(value, key))))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!("{{\n{body}\n}}")
 }
 
 fn inspect_object_with_getters(value: &Value, depth: usize) -> String {
@@ -1341,6 +1374,7 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         | Value::Uint8ClampedArray(_)
         | Value::Uint16Array(_) => inspect_typed_array_compact(value),
         Value::Function(_) | Value::BoundFunction(_) => inspect_function(value),
+        value if quench_runtime::is_callable(value) => inspect_function(value),
         Value::Uint8Array(view) if is_buffer_view(value) => inspect_buffer(value, view),
         Value::Uint8Array(_) => inspect_typed_array_compact(value),
         Value::BigInt(digits) => format!("{digits}n"),
@@ -1820,6 +1854,14 @@ fn inspect_shallow(value: &Value) -> String {
 }
 
 fn inspect_custom(value: &Value, depth: usize) -> Option<String> {
+    inspect_custom_with_receiver(value, value, depth)
+}
+
+fn inspect_custom_with_receiver(
+    value: &Value,
+    receiver: &Value,
+    depth: usize,
+) -> Option<String> {
     let method = quench_runtime::execute::get_property_result(
         value,
         "Symbol.for.nodejs.util.inspect.custom\0",
@@ -1869,7 +1911,7 @@ fn inspect_custom(value: &Value, depth: usize) -> Option<String> {
     }
     let result = quench_runtime::execute::call(
         &method,
-        value,
+        receiver,
         &[
             Value::Number(depth as f64),
             Value::object(vec![("showProxy".into(), Value::Boolean(false))]),
