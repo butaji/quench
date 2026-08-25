@@ -308,6 +308,10 @@
       }
       if (chunk === null) {
         st.ended = true;
+        if (this._isDuplex && !this.allowHalfOpen &&
+            !this._writableState.ended && !this._writableState.finished) {
+          this.end();
+        }
       } else {
         if (!st.objectMode && typeof chunk !== "string" &&
             !(chunk && typeof chunk.byteLength === "number" &&
@@ -1003,6 +1007,7 @@
   class Duplex extends Readable {
     constructor(options) {
       super(options || {});
+      this._isDuplex = true;
       initWritable(this, options || {});
       this.allowHalfOpen = !options || options.allowHalfOpen !== false;
     }
