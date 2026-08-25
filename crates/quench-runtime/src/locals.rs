@@ -799,7 +799,16 @@ pub(crate) fn array_word_is_current(array: &crate::value::ArrayData) -> bool {
     let identity = ReplacementIdentity::Array(array.identity());
     let root = REPLACEMENT_ROOTS.with(|roots| roots.borrow().get(&identity).copied());
     let Some(root) = root else { return true };
-    !REPLACEMENTS.with(|replacements| replacements.borrow().contains_key(&root))
+    REPLACEMENTS.with(|replacements| {
+        let replacements = replacements.borrow();
+        let Some(replacement) = replacements.get(&root) else {
+            return true;
+        };
+        matches!(
+            &replacement.value,
+            Value::Array(current) if std::ptr::eq(current.as_ref(), array)
+        )
+    })
 }
 
 pub(crate) fn reset_replacements() {
@@ -935,6 +944,22 @@ mod replacement_tests {
         drop(stale);
         drop(original);
         assert!(weak.upgrade().is_none());
+        super::reset_replacements();
+    }
+
+    #[test]
+    fn array_current_word_distinguishes_latest_representative_from_stale_root() {
+        super::reset_replacements();
+        let original = Rc::new(crate::value::ArrayData::new(vec![Value::Number(1.0)]));
+        let mut changed = original.as_ref().clone();
+        changed.set_index(0, Value::Number(2.0));
+        let latest = Rc::new(changed);
+        replace_value(
+            &Value::Array(Rc::clone(&original)),
+            &Value::Array(Rc::clone(&latest)),
+        );
+        assert!(!super::array_word_is_current(&original));
+        assert!(super::array_word_is_current(&latest));
         super::reset_replacements();
     }
 

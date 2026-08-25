@@ -1,7 +1,11 @@
 include!("vm_generator_step.rs");
 include!("vm_completion_step.rs");
 
-fn run_ops(ops: &[Op], registers: &mut crate::register_file::RegisterFile, context: &VmContext) -> Result<Value, VmError> {
+fn run_ops(
+    ops: &[Op],
+    registers: &mut crate::register_file::RegisterFile,
+    context: &VmContext,
+) -> Result<Value, VmError> {
     completion_result(run_ops_completion(ops, registers, context)?)
 }
 
@@ -73,7 +77,9 @@ fn run_code_completion_step_from(
             Err(error) => return completion_step_after_error(registers, error, pc + 1),
         };
         pc += 1;
-        if let Some(completion) = result.filter(|value| !matches!(value, crate::completion::Completion::Normal)) {
+        if let Some(completion) =
+            result.filter(|value| !matches!(value, crate::completion::Completion::Normal))
+        {
             return completion_step_after_transition(registers, completion, pc);
         }
     }
@@ -159,7 +165,13 @@ fn run_instruction(
                 Opcode::Div => crate::ops::BinaryOp::Divide,
                 _ => unreachable!(),
             };
-            vm_arithmetic::execute_binary(registers, instruction.a, operator, instruction.b, instruction.c)?;
+            vm_arithmetic::execute_binary(
+                registers,
+                instruction.a,
+                operator,
+                instruction.b,
+                instruction.c,
+            )?;
             Ok(None)
         }
         Opcode::Binary => {
@@ -210,14 +222,20 @@ fn run_instruction(
             if instruction.opcode == Opcode::AGetI {
                 let index = registers.read_array_index(usize::from(instruction.c));
                 let array = registers.read_array(usize::from(instruction.b));
-                if let Some((array, index)) = array.filter(|array| array.is_packed_ordinary()).zip(index) {
+                if let Some((array, index)) =
+                    array.filter(|array| array.is_packed_ordinary()).zip(index)
+                {
                     if let Some(number) = array.dense_number_at(index) {
-                        crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::PackedArrayGet,
+                        );
                         registers.write_number(usize::from(instruction.a), number);
                         return Ok(None);
                     }
                     if let Some(value) = array.dense_value_at(index) {
-                        crate::execution_trace::event(crate::execution_trace::Event::PackedArrayGet);
+                        crate::execution_trace::event(
+                            crate::execution_trace::Event::PackedArrayGet,
+                        );
                         write_value(registers, instruction.a, value);
                         return Ok(None);
                     }
@@ -226,7 +244,9 @@ fn run_instruction(
                     "kind"
                 } else if index.is_none() {
                     "other"
-                } else if index.expect("checked index") >= array.expect("checked array").logical_len() {
+                } else if index.expect("checked index")
+                    >= array.expect("checked array").logical_len()
+                {
                     "oob"
                 } else {
                     "hole"
@@ -248,30 +268,24 @@ fn run_instruction(
                     .read_array(usize::from(instruction.b))
                     .filter(|array| crate::locals::array_word_is_current(array))
                 {
-                    registers.write_number(
-                        usize::from(instruction.a),
-                        array.header_length() as f64,
-                    );
-                    crate::execution_trace::event(
-                        crate::execution_trace::Event::NamedPropertyHit,
-                    );
+                    registers
+                        .write_number(usize::from(instruction.a), array.header_length() as f64);
+                    crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
                     crate::execution_trace::named_property_word("own", "number");
                     return Ok(None);
                 }
             }
             if instruction.a != instruction.b {
                 let object = registers.read_object(usize::from(instruction.b));
-                if let Some(payload) = object.and_then(|object| {
-                    get_named_cached_payload(object, &metadata.named_cache)
-                }) {
+                if let Some(payload) = object
+                    .and_then(|object| get_named_cached_payload(object, &metadata.named_cache))
+                {
                     match payload {
                         NamedCachedPayload::Word(word) => {
                             // SAFETY: the source register owns the containing
                             // object until this complete word copy returns.
-                            unsafe { &*word }.copy_to_register(
-                                registers,
-                                usize::from(instruction.a),
-                            );
+                            unsafe { &*word }
+                                .copy_to_register(registers, usize::from(instruction.a));
                         }
                         NamedCachedPayload::Cell(cell) => {
                             // SAFETY: the source register keeps the containing
@@ -307,16 +321,11 @@ fn run_instruction(
         }
         Opcode::CallN => {
             if instruction.flags != 0 {
-                crate::methods::execute_registered(registers, instruction)?;
+                crate::methods::execute_registered(registers, instruction, code, pc)?;
             } else {
                 let metadata = code.metadata_at(pc).ok_or(VmError::MissingReturn)?;
                 let key = metadata.name.as_deref().ok_or(VmError::MissingReturn)?;
-                crate::methods::execute_named(
-                    registers,
-                    instruction,
-                    key,
-                    &metadata.named_cache,
-                )?;
+                crate::methods::execute_named(registers, instruction, key, &metadata.named_cache)?;
             }
             Ok(None)
         }
@@ -415,7 +424,9 @@ pub(crate) fn bare_call_receiver(
             })
             .or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)));
         let global = realm
-            .and_then(|realm| crate::vm::with_realm(realm, || Some(crate::vm::current_global_object())))
+            .and_then(|realm| {
+                crate::vm::with_realm(realm, || Some(crate::vm::current_global_object()))
+            })
             .flatten()
             .unwrap_or_else(crate::vm::current_global_object);
         return to_object_value_in_realm(this_value, &global);
