@@ -51,6 +51,11 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
+    if is_packet_add_candidate(function) {
+        if let Some(result) = execute_packet_add(function, &receiver, arguments) {
+            return Ok(result);
+        }
+    }
     if is_scheduler_queue_candidate(function) {
         if let Some(result) = execute_scheduler_queue(function, &receiver, arguments)? {
             return Ok(result);
