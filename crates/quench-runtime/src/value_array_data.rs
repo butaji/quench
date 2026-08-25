@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ArrayKind {
+    PackedLimb28,
     PackedInt,
     PackedDouble,
     PackedValue,
@@ -12,11 +13,10 @@ impl ArrayKind {
     pub fn is_packed(self) -> bool {
         matches!(
             self,
-            Self::PackedInt | Self::PackedDouble | Self::PackedValue
+            Self::PackedLimb28 | Self::PackedInt | Self::PackedDouble | Self::PackedValue
         )
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ArrayData {
@@ -124,7 +124,15 @@ impl DenseElements {
             return ArrayKind::Holey;
         }
         match self {
-            Self::Numbers(values) if values.borrow().iter().all(|value| value.get().fract() == 0.0) => {
+            Self::Numbers(values) if values.borrow().iter().all(|value| is_limb28(value.get())) => {
+                ArrayKind::PackedLimb28
+            }
+            Self::Numbers(values)
+                if values
+                    .borrow()
+                    .iter()
+                    .all(|value| value.get().fract() == 0.0) =>
+            {
                 ArrayKind::PackedInt
             }
             Self::Numbers(_) => ArrayKind::PackedDouble,
@@ -144,27 +152,38 @@ impl DenseElements {
 
     fn value_at(&self, index: usize) -> Option<Value> {
         match self {
-            Self::Numbers(values) => values.borrow().get(index).map(|value| Value::Number(value.get())),
+            Self::Numbers(values) => values
+                .borrow()
+                .get(index)
+                .map(|value| Value::Number(value.get())),
             Self::Values(values) => values.get(index).cloned(),
         }
     }
 
     fn set_existing_number(&self, index: usize, number: f64) -> bool {
-        let Self::Numbers(values) = self else { return false };
+        let Self::Numbers(values) = self else {
+            return false;
+        };
         let values = values.borrow();
-        let Some(slot) = values.get(index) else { return false };
+        let Some(slot) = values.get(index) else {
+            return false;
+        };
         slot.set(number);
         true
     }
 
     fn append_number(&mut self, number: f64) -> bool {
-        let Self::Numbers(values) = self else { return false };
+        let Self::Numbers(values) = self else {
+            return false;
+        };
         values.borrow_mut().push(std::cell::Cell::new(number));
         true
     }
 
     fn detach_numbers(&mut self) -> bool {
-        let Self::Numbers(values) = self else { return false };
+        let Self::Numbers(values) = self else {
+            return false;
+        };
         let detached = values
             .borrow()
             .iter()
@@ -175,7 +194,9 @@ impl DenseElements {
     }
 
     fn append_number_shared(&self, number: f64) -> bool {
-        let Self::Numbers(values) = self else { return false };
+        let Self::Numbers(values) = self else {
+            return false;
+        };
         values.borrow_mut().push(std::cell::Cell::new(number));
         true
     }
@@ -189,12 +210,16 @@ impl DenseElements {
                 .collect();
             *self = Self::Values(values);
         }
-        let Self::Values(values) = self else { unreachable!() };
+        let Self::Values(values) = self else {
+            unreachable!()
+        };
         values
     }
 
     fn snapshot(&self) -> Vec<Value> {
-        (0..self.len()).filter_map(|index| self.value_at(index)).collect()
+        (0..self.len())
+            .filter_map(|index| self.value_at(index))
+            .collect()
     }
 }
 
@@ -272,7 +297,6 @@ impl ArrayData {
         (self.values.snapshot(), self.logical_len(), self.kind.get())
     }
 
-
     #[inline]
     pub(crate) fn is_packed(&self) -> bool {
         self.kind.get().is_packed()
@@ -349,7 +373,6 @@ impl ArrayData {
         self.values.capacity()
     }
 
-
     #[inline]
     pub(crate) fn is_sparse(&self) -> bool {
         matches!(self.kind.get(), ArrayKind::Sparse)
@@ -358,10 +381,12 @@ impl ArrayData {
         !matches!(self.kind.get(), ArrayKind::Sparse)
     }
 
-
     #[inline]
     pub(crate) fn is_numeric_packed(&self) -> bool {
-        matches!(self.kind.get(), ArrayKind::PackedInt | ArrayKind::PackedDouble)
+        matches!(
+            self.kind.get(),
+            ArrayKind::PackedLimb28 | ArrayKind::PackedInt | ArrayKind::PackedDouble
+        )
     }
 
     /// Whether mutation may use the dense backing store without consulting
@@ -521,6 +546,8 @@ impl ArrayData {
     }
 
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
+        self.kind
+            .set(monotonic_kind(self.kind.get(), ArrayKind::PackedValue));
         self.values.materialize_values()
     }
 
@@ -560,9 +587,8 @@ impl ArrayData {
     }
 
     #[inline]
-    pub(crate) fn numeric_cells(
-        &self,
-    ) -> Option<std::cell::Ref<'_, [std::cell::Cell<f64>]>> {
+    pub(crate) fn numeric_cells(&self) -> Option<std::cell::Ref<'_, [std::cell::Cell<f64>]>> {
+        self.widen_mutable_numeric_kind();
         let DenseElements::Numbers(values) = &self.values else {
             return None;
         };
@@ -584,9 +610,8 @@ impl ArrayData {
 
     /// Borrow the one canonical numeric payload exclusively. Admission must
     /// prove this array distinct from every input before taking this view.
-    pub(crate) fn numeric_kernel_words_mut(
-        &self,
-    ) -> Option<std::cell::RefMut<'_, [f64]>> {
+    pub(crate) fn numeric_kernel_words_mut(&self) -> Option<std::cell::RefMut<'_, [f64]>> {
+        self.widen_mutable_numeric_kind();
         let DenseElements::Numbers(values) = &self.values else {
             return None;
         };
@@ -597,6 +622,37 @@ impl ArrayData {
                 std::slice::from_raw_parts_mut(values.as_mut_ptr().cast::<f64>(), values.len())
             }
         }))
+    }
+
+    /// Borrow a base-2^28 limb payload after one header guard. The element
+    /// kind is the canonical proof that every word is an exact limb; callers
+    /// therefore execute load/ALU/store without per-element float checks.
+    pub(crate) fn limb28_kernel_words(&self) -> Option<std::cell::Ref<'_, [f64]>> {
+        (self.kind.get() == ArrayKind::PackedLimb28 && self.is_packed_ordinary()).then_some(())?;
+        self.numeric_kernel_words()
+    }
+
+    /// Mutable limb view for kernels whose stores are proven masked to 28
+    /// bits. General mutable numeric views widen the kind before returning.
+    pub(crate) fn limb28_kernel_words_mut(&self) -> Option<std::cell::RefMut<'_, [f64]>> {
+        (self.kind.get() == ArrayKind::PackedLimb28 && self.is_packed_ordinary()).then_some(())?;
+        let DenseElements::Numbers(values) = &self.values else {
+            return None;
+        };
+        Some(std::cell::RefMut::map(values.borrow_mut(), |values| {
+            // SAFETY: identical to `numeric_kernel_words_mut`; this narrower
+            // view additionally carries the proven limb element kind.
+            unsafe {
+                std::slice::from_raw_parts_mut(values.as_mut_ptr().cast::<f64>(), values.len())
+            }
+        }))
+    }
+
+    #[inline]
+    fn widen_mutable_numeric_kind(&self) {
+        if self.kind.get() == ArrayKind::PackedLimb28 {
+            self.kind.set(ArrayKind::PackedInt);
+        }
     }
 
     /// Snapshot an own-data numeric range after proving that no indexed
@@ -632,13 +688,20 @@ impl ArrayData {
             return false;
         }
         let start = self.values.len();
-        let Some(mut tail) = self.numeric_sparse_tail(start) else { return false };
-        if !self.values.detach_numbers() { return false; }
+        let Some(mut tail) = self.numeric_sparse_tail(start) else {
+            return false;
+        };
+        if !self.values.detach_numbers() {
+            return false;
+        }
         for number in tail.drain(..) {
-            if !self.values.append_number(number) { return false; }
+            if !self.values.append_number(number) {
+                return false;
+            }
         }
         self.properties.clear();
-        self.kind.set(self.values.kind_with_holes(&self.deleted, self.length));
+        self.kind
+            .set(self.values.kind_with_holes(&self.deleted, self.length));
         self.is_packed_ordinary()
     }
 
@@ -647,7 +710,9 @@ impl ArrayData {
         let mut tail = vec![None; self.length - start];
         for (key, value) in &self.properties {
             let index = usize::try_from(crate::arrays::array_index(key)?).ok()?;
-            let Value::Number(number) = value else { return None };
+            let Value::Number(number) = value else {
+                return None;
+            };
             let slot = index.checked_sub(start)?;
             *tail.get_mut(slot)? = Some(*number);
         }
@@ -666,15 +731,22 @@ impl ArrayData {
     /// pointer-plus-index store.
     #[inline(always)]
     pub(crate) fn set_existing_number(&self, index: usize, value: &Value) -> bool {
-        let Value::Number(number) = value else { return false };
+        let Value::Number(number) = value else {
+            return false;
+        };
         self.set_existing_f64(index, *number)
     }
 
     #[inline(always)]
     pub(crate) fn set_existing_f64(&self, index: usize, number: f64) -> bool {
-        self.is_packed_ordinary()
+        let stored = self.is_packed_ordinary()
             && index < self.logical_len()
-            && self.values.set_existing_number(index, number)
+            && self.values.set_existing_number(index, number);
+        if stored {
+            self.kind
+                .set(monotonic_kind(self.kind.get(), number_kind(number)));
+        }
+        stored
     }
 
     /// Extend a pre-sized holey array in index order without cloning its
@@ -682,7 +754,9 @@ impl ArrayData {
     /// next missing slot of the canonical numeric prefix.
     #[inline]
     pub(crate) fn append_preallocated_number(&self, index: usize, value: &Value) -> bool {
-        let Value::Number(number) = value else { return false };
+        let Value::Number(number) = value else {
+            return false;
+        };
         self.append_preallocated_f64(index, *number)
     }
 
@@ -698,7 +772,9 @@ impl ArrayData {
         if rejected {
             return false;
         }
-        if !self.values.append_number_shared(number) { return false; }
+        if !self.values.append_number_shared(number) {
+            return false;
+        }
         let derived = self.values.kind_with_holes(&self.deleted, self.length);
         self.kind.set(derived);
         true
@@ -733,7 +809,6 @@ impl ArrayData {
         self.values.materialize_values().get_mut(index)
     }
 
-
     pub(crate) fn has_index(&self, index: usize) -> bool {
         if let Some(live) = &self.argument_live {
             let live = live.borrow();
@@ -749,6 +824,20 @@ impl ArrayData {
             && (index < self.values.len()
                 || self.mapped.get(index).and_then(Option::as_ref).is_some()
                 || self.property(&index.to_string()).is_some())
+    }
+
+    /// O(1) proof that an indexed write updates an ordinary own data slot.
+    /// Custom descriptors, argument mappings, holes, and sparse properties
+    /// remain on the property-aware path.
+    #[inline]
+    pub(crate) fn has_plain_dense_index(&self, index: usize) -> bool {
+        !self.arguments
+            && self.argument_live.is_none()
+            && self.descriptors.is_empty()
+            && index < self.logical_len()
+            && index < self.values.len()
+            && self.deleted.get(index) != Some(&true)
+            && self.mapped.get(index).and_then(Option::as_ref).is_none()
     }
     /// Copy a fully dense range within the backing store using memmove ordering.
     ///
@@ -766,7 +855,10 @@ impl ArrayData {
         if src_end > self.values.len() || dst_end > self.values.len() {
             return false;
         }
-        if self.deleted.get(src..src_end).is_some_and(|range| range.iter().any(|&hole| hole))
+        if self
+            .deleted
+            .get(src..src_end)
+            .is_some_and(|range| range.iter().any(|&hole| hole))
             || self
                 .deleted
                 .get(dst..dst_end)
@@ -958,6 +1050,11 @@ fn classify_kind_with_holes(values: &[Value], deleted: &[bool], length: usize) -
     }
     if values
         .iter()
+        .all(|value| matches!(value, Value::Number(number) if is_limb28(*number)))
+    {
+        ArrayKind::PackedLimb28
+    } else if values
+        .iter()
         .all(|value| matches!(value, Value::Number(number) if number.fract() == 0.0))
     {
         ArrayKind::PackedInt
@@ -970,16 +1067,37 @@ fn classify_kind_with_holes(values: &[Value], deleted: &[bool], length: usize) -
 
 /// Element kinds only become less specialized as an array is mutated.
 fn monotonic_kind(previous: ArrayKind, candidate: ArrayKind) -> ArrayKind {
-    if kind_rank(candidate) >= kind_rank(previous) { candidate } else { previous }
+    if kind_rank(candidate) >= kind_rank(previous) {
+        candidate
+    } else {
+        previous
+    }
 }
 
 fn kind_rank(kind: ArrayKind) -> u8 {
     match kind {
-        ArrayKind::PackedInt => 0,
-        ArrayKind::PackedDouble => 1,
-        ArrayKind::PackedValue => 2,
-        ArrayKind::Holey => 3,
-        ArrayKind::Sparse => 4,
+        ArrayKind::PackedLimb28 => 0,
+        ArrayKind::PackedInt => 1,
+        ArrayKind::PackedDouble => 2,
+        ArrayKind::PackedValue => 3,
+        ArrayKind::Holey => 4,
+        ArrayKind::Sparse => 5,
+    }
+}
+
+#[inline]
+fn is_limb28(number: f64) -> bool {
+    number >= 0.0 && number <= 0x0fff_ffff as f64 && number.trunc() == number
+}
+
+#[inline]
+fn number_kind(number: f64) -> ArrayKind {
+    if is_limb28(number) {
+        ArrayKind::PackedLimb28
+    } else if number.fract() == 0.0 {
+        ArrayKind::PackedInt
+    } else {
+        ArrayKind::PackedDouble
     }
 }
 
@@ -1023,8 +1141,10 @@ mod array_data_tests {
     fn classifies_numeric_and_holey_storage() {
         let ints = ArrayData::new(vec![Value::Number(1.0), Value::Number(2.0)]);
         assert_eq!(std::mem::size_of::<ArrayKind>(), 1);
-        assert_eq!(ints.kind(), ArrayKind::PackedInt);
+        assert_eq!(ints.kind(), ArrayKind::PackedLimb28);
         assert!(ints.kind().is_packed());
+        let ints = ArrayData::new(vec![Value::Number(-1.0)]);
+        assert_eq!(ints.kind(), ArrayKind::PackedInt);
         let doubles = ArrayData::new(vec![Value::Number(1.5)]);
         assert_eq!(doubles.kind(), ArrayKind::PackedDouble);
         assert!(doubles.kind().is_packed());
@@ -1036,7 +1156,7 @@ mod array_data_tests {
     #[test]
     fn kind_transitions_preserve_monotonic_holes_and_sparse_boundary() {
         let mut data = ArrayData::new(vec![Value::Number(1.0)]);
-        assert_eq!(data.kind(), ArrayKind::PackedInt);
+        assert_eq!(data.kind(), ArrayKind::PackedLimb28);
 
         data.set_index(0, Value::Number(1.25));
         assert_eq!(data.kind(), ArrayKind::PackedDouble);
@@ -1049,9 +1169,8 @@ mod array_data_tests {
         data.set_index(0, Value::Number(2.0));
         assert_eq!(data.kind(), ArrayKind::Holey);
 
-        let mut boundary = ArrayData::new(
-            (0..32).map(|index| Value::Number(index as f64)).collect(),
-        );
+        let mut boundary =
+            ArrayData::new((0..32).map(|index| Value::Number(index as f64)).collect());
         boundary.set_length(33);
         assert_eq!(boundary.kind(), ArrayKind::Holey);
         boundary.set_length(65);
@@ -1078,7 +1197,10 @@ mod array_data_tests {
             }
         }
         // A linear push strategy would allocate on nearly every append.
-        assert!(reallocations <= 6, "unexpected dense reallocations: {reallocations}");
+        assert!(
+            reallocations <= 6,
+            "unexpected dense reallocations: {reallocations}"
+        );
         data.set_index(10_000, Value::Boolean(true));
         assert!(data.is_sparse());
         assert!(!data.is_dense());
@@ -1097,7 +1219,10 @@ mod array_data_tests {
         let original = sparse.clone();
         assert!(sparse.promote_sparse_numeric());
         assert!(sparse.is_packed_ordinary());
-        assert_eq!(sparse.numeric_kernel_range(0, 64), original.numeric_kernel_range(0, 64));
+        assert_eq!(
+            sparse.numeric_kernel_range(0, 64),
+            original.numeric_kernel_range(0, 64)
+        );
         assert!(original.is_sparse());
     }
 
@@ -1146,6 +1271,24 @@ mod array_data_tests {
         assert!(data.set_existing_number(0, &Value::Number(9.5)));
         assert_eq!(alias.dense_number_at(0), Some(9.5));
         assert_eq!(alias.storage_capacity(), data.storage_capacity());
+    }
+
+    #[test]
+    fn limb_kind_is_one_guard_and_widens_on_unproven_mutation() {
+        let data = ArrayData::new(vec![Value::Number(1.0), Value::Number(0x0fff_ffff as f64)]);
+        assert_eq!(data.kind(), ArrayKind::PackedLimb28);
+        {
+            let mut words = data.limb28_kernel_words_mut().expect("limb words");
+            words[0] = 7.0;
+        }
+        assert_eq!(data.kind(), ArrayKind::PackedLimb28);
+        assert!(data.set_existing_f64(0, -1.0));
+        assert_eq!(data.kind(), ArrayKind::PackedInt);
+        assert!(data.limb28_kernel_words().is_none());
+
+        let general = ArrayData::new(vec![Value::Number(1.0)]);
+        drop(general.numeric_kernel_words_mut().expect("numeric words"));
+        assert_eq!(general.kind(), ArrayKind::PackedInt);
     }
     #[test]
     fn packed_numeric_storage_is_borrowed_until_value_access() {
@@ -1216,7 +1359,10 @@ mod array_data_tests {
         assert_eq!(data.storage_capacity(), capacity);
         assert_eq!(data.get_index(physical), Some(Value::Number(2.0)));
         assert!(data.has_index(physical));
-        assert_eq!(data.next_index(physical, data.logical_len()), Some(physical));
+        assert_eq!(
+            data.next_index(physical, data.logical_len()),
+            Some(physical)
+        );
     }
 }
 

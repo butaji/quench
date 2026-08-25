@@ -76,6 +76,126 @@ pub(crate) struct ImmediateCopyPlan {
     target: *mut TaggedValue,
 }
 
+/// Pre-resolved physical operands for one proven numeric call site.
+///
+/// Admission owns the semantic guard: the callee has already been recognized
+/// as `x + constant`, and the argument, lexical target, and completion result
+/// are immediate words whose backing stores cannot move while the admitted
+/// counted body executes.
+pub(crate) struct ImmediateNumberCallPlan {
+    argument: *const TaggedValue,
+    target: *mut TaggedValue,
+    result: *mut TaggedValue,
+    constant: f64,
+}
+
+impl ImmediateNumberCallPlan {
+    pub(crate) fn new(
+        argument: *const TaggedValue,
+        target: *mut TaggedValue,
+        result: *mut TaggedValue,
+        constant: f64,
+    ) -> Self {
+        Self {
+            argument,
+            target,
+            result,
+            constant,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn execute(&self) {
+        // SAFETY: construction resolves all pointers from fully-sized word
+        // stores. The admitted body contains only these plans, so neither the
+        // lexical store nor the register file can resize before completion.
+        // Admission canonicalizes the first argument as an IEEE number and
+        // every result written below retains that representation.
+        let number = f64::from_bits(unsafe { *self.argument }.bits());
+        let result = TaggedValue::number(number + self.constant);
+        unsafe {
+            *self.target = result;
+            *self.result = result;
+        }
+    }
+
+    /// Execute a chain of pure calls that repeatedly assigns the same local.
+    /// Intermediate assignment values cannot escape: admission requires every
+    /// callee to be the capture-independent numeric fact and the compact body
+    /// contains no operation between these call sites.
+    #[inline(always)]
+    pub(crate) fn is_chain(plans: &[Self]) -> bool {
+        let Some(first) = plans.first() else {
+            return false;
+        };
+        plans.iter().all(|plan| {
+            plan.argument == first.argument
+                && plan.target == first.target
+                && plan.result == first.result
+        })
+    }
+
+    /// Execute a chain whose pointer relation was admitted before entering the
+    /// counted loop. Keeping the guard outside is the difference between a
+    /// runtime fact and repeating the proof as work.
+    #[inline(always)]
+    pub(crate) fn execute_admitted_chain(plans: &[Self]) {
+        debug_assert!(Self::is_chain(plans));
+        let first = &plans[0];
+        let mut number = f64::from_bits(unsafe { *first.argument }.bits());
+        match plans {
+            [first, second] => {
+                number += first.constant;
+                number += second.constant;
+            }
+            [first, second, third] => {
+                number += first.constant;
+                number += second.constant;
+                number += third.constant;
+            }
+            _ => {
+                for plan in plans {
+                    number += plan.constant;
+                }
+            }
+        }
+        let result = TaggedValue::number(number);
+        unsafe {
+            *first.target = result;
+            *first.result = result;
+        }
+    }
+
+    /// Run an admitted call chain for a known counted range. The slice shape
+    /// is selected once so rustc/LLVM sees the inner body as direct scalar
+    /// loads and arithmetic rather than an interpreter over call plans.
+    pub(crate) fn execute_chain_iterations(plans: &[Self], iterations: usize) -> bool {
+        if !Self::is_chain(plans) {
+            return false;
+        }
+        match plans {
+            [first, second] => {
+                for _ in 0..iterations {
+                    let mut number = f64::from_bits(unsafe { *first.argument }.bits());
+                    number += first.constant;
+                    number += second.constant;
+                    let result = TaggedValue::number(number);
+                    unsafe {
+                        *first.target = result;
+                        *first.result = result;
+                    }
+                }
+            }
+            _ => {
+                for _ in 0..iterations {
+                    Self::execute_admitted_chain(plans);
+                }
+            }
+        }
+        true
+    }
+}
+
 impl ImmediateCopyPlan {
     pub(crate) fn new(source: *const TaggedValue, target: *mut TaggedValue) -> Self {
         Self { source, target }

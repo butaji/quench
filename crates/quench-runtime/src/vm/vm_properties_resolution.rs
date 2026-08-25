@@ -84,7 +84,8 @@ pub(crate) fn get_named_cached_payload(
     let layout = object.semantic_layout_id();
     let cached = cache.get();
     if cached & PROTOTYPE_CACHE_TAG != 0 {
-        if let Some(value) = prototype_cache_hit(object, layout, cached, cache as *const _ as usize) {
+        if let Some(value) = prototype_cache_hit(object, layout, cached, cache as *const _ as usize)
+        {
             crate::execution_trace::named_property_result("prototype", &value);
             crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
             return Some(named_cached_payload(&value));
@@ -320,12 +321,18 @@ mod named_prototype_cache_tests {
 }
 
 fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
-    let Value::Object(object) = value else { return None };
-    if crate::vm::is_global_object(value) { return None; }
+    let Value::Object(object) = value else {
+        return None;
+    };
+    if crate::vm::is_global_object(value) {
+        return None;
+    }
     let mut own = None;
     let mut metadata = None;
     for (slot, name) in object.hot_properties().names().enumerate().rev() {
-        if crate::builtins::is_deleted_key_for(name, key) { return None; }
+        if crate::builtins::is_deleted_key_for(name, key) {
+            return None;
+        }
         if name == key && own.is_none() {
             own = Some((slot, object.hot_properties().slot_value(slot)?));
         }
@@ -334,8 +341,12 @@ fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
         }
     }
     let (slot, value) = own?;
-    if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) { return None; }
-    if metadata.is_some_and(|value| accessor_descriptor(&value)) { return None; }
+    if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
+        return None;
+    }
+    if metadata.is_some_and(|value| accessor_descriptor(&value)) {
+        return None;
+    }
     u32::try_from(slot).ok()
 }
 
@@ -400,6 +411,32 @@ pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
         return None;
     }
     Some(property_value(&own))
+}
+
+/// Return the canonical execute word for proven ordinary own data. This is
+/// the L0 projection of `proven_own_data`: callers inspect the tag in place
+/// and fall back before any accessor, descriptor, deletion, or cell semantics.
+pub(crate) fn proven_own_word<'a>(
+    object: &'a crate::value::ObjectData,
+    key: &str,
+) -> Option<&'a crate::register_file::SlotWord> {
+    let mut own = None;
+    let mut metadata = None;
+    for (slot, name) in object.hot_properties().names().enumerate().rev() {
+        if crate::builtins::is_deleted_key_for(name, key) {
+            return None;
+        }
+        if own.is_none() && name == key {
+            own = object.hot_properties().slot_word(slot);
+        }
+        if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
+            metadata = object.hot_properties().slot_value(slot);
+        }
+    }
+    if metadata.is_some_and(|value| accessor_descriptor(&value)) {
+        return None;
+    }
+    own
 }
 
 fn accessor_descriptor(value: &Value) -> bool {
@@ -606,7 +643,8 @@ fn descriptor_property_result(
             return Some(Ok(Value::Number(crate::strings::utf16_len(text) as f64)));
         }
         if let Ok(index) = key.parse::<usize>() {
-            return crate::strings::char_at_utf16(text, index).map(|value| Ok(value));
+            return crate::strings::char_at_utf16(text, index)
+                .map(|value| Ok(Value::String(value)));
         }
         return None;
     }

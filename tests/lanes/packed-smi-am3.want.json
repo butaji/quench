@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "oracle": { "max_ratio": 2 },
+  "metrics": {
+    "kernel_hit_per_iteration": {
+      "numerator": "lanes.l1.crypto.hits",
+      "denominator": "lanes.l1.crypto.direct_iterations",
+      "min_traffic": 100000,
+      "min": 0.99
+    },
+    "kernel_deopts": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "crypto_multiply_to",
+          "field": "deopts"
+        }
+      },
+      "max": 0
+    },
+    "decode_per_iteration": {
+      "numerator": "lanes.l0.value_decode",
+      "denominator": "lanes.l1.crypto.direct_iterations",
+      "min_traffic": 100000,
+      "max": 0.02
+    }
+  }
+}
