@@ -826,7 +826,7 @@ pub fn internal_get_proxy_details(
     let Some(Value::Proxy(proxy)) = args.first() else {
         return Ok(Value::Undefined);
     };
-    let show_handler = matches!(args.get(1), Some(Value::Boolean(true)));
+    let show_handler = !matches!(args.get(1), Some(Value::Boolean(false)));
     if *proxy.revoked.borrow() {
         return Ok(if show_handler {
             quench_runtime::host_api::array(vec![Value::Null, Value::Null])
