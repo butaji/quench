@@ -273,6 +273,28 @@ fn tracing_object(channels: Vec<Value>) -> Value {
             "traceSync".into(),
             crate::host::capability(SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC),
         ),
+        (
+            "traceCallback".into(),
+            eval_function(
+                "function(fn, position, context, thisArg) {\
+                  var args = Array.prototype.slice.call(arguments, 4);\
+                  var callback = args.pop();\
+                  if (typeof fn !== 'function' || typeof callback !== 'function') throw new TypeError('callback');\
+                  if (!this.hasSubscribers) return fn.apply(thisArg, args.concat(callback));\
+                  this.start?.publish(context);\
+                  var self = this;\
+                  var done = function(error, result) {\
+                    if (error) { context.error = error; self.error?.publish(context); }\
+                    else context.result = result;\
+                    self.asyncStart?.publish(context); self.asyncEnd?.publish(context);\
+                    return callback(error, result);\
+                  };\
+                  try { fn.apply(thisArg, args.concat(done)); self.end?.publish(context); }\
+                  catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); throw error; }\
+                }",
+            )
+            .unwrap_or(Value::Undefined),
+        ),
     ]);
     let object = host_api::object(properties);
     let descriptor = host_api::object(vec![
@@ -629,4 +651,12 @@ fn type_error(argument: &str) -> VmError {
             )),
         ),
     ]))
+}
+
+fn eval_function(source: &str) -> Result<Value, VmError> {
+    let program = quench_runtime::reduce::reduce_global_script_source(&format!("({source})"))
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
 }
