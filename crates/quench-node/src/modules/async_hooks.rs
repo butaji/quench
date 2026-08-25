@@ -48,6 +48,7 @@ pub struct AsyncHooksState {
     local_stores: HashMap<u64, Value>,
     next_local_id: u64,
     pub(crate) current_local_store: Option<Value>,
+    resource_stack: Vec<(u64, Option<Value>)>,
 }
 
 impl AsyncHooksState {
@@ -65,6 +66,7 @@ impl AsyncHooksState {
             local_stores: HashMap::new(),
             next_local_id: 1,
             current_local_store: None,
+            resource_stack: Vec::new(),
         }
     }
 
@@ -360,6 +362,12 @@ pub fn resource_before(
         .and_then(number)
         .unwrap_or(1);
     let mut state = state.borrow_mut();
+    let previous_id = state.async_hooks.current_id;
+    let previous_resource = state.async_hooks.current_resource.clone();
+    state
+        .async_hooks
+        .resource_stack
+        .push((previous_id, previous_resource));
     state.async_hooks.current_id = id;
     state.async_hooks.current_resource = Some(resource);
     Ok(Value::Undefined)
@@ -371,8 +379,10 @@ pub fn resource_after(
     _: &[Value],
 ) -> Result<Value, VmError> {
     let mut state = state.borrow_mut();
-    state.async_hooks.current_id = 1;
-    state.async_hooks.current_resource = None;
+    if let Some((id, resource)) = state.async_hooks.resource_stack.pop() {
+        state.async_hooks.current_id = id;
+        state.async_hooks.current_resource = resource;
+    }
     Ok(Value::Undefined)
 }
 
