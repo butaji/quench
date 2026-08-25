@@ -310,13 +310,31 @@ impl ArrayData {
     }
 
     pub fn logical_len(&self) -> usize {
-        self.argument_live.as_ref().map_or(self.length, |live| {
+        self.argument_live.as_ref().map_or_else(
+            || {
+                // Packed ordinary arrays have no separate hole/descriptor
+                // state. Their shared dense store is authoritative so a
+                // value-only append remains visible through all references.
+                if self.kind.get().is_packed()
+                    && self.deleted.is_empty()
+                    && self.properties.is_empty()
+                    && self.descriptors.is_empty()
+                    && self.prototype.borrow().is_none()
+                    && !self.arguments
+                {
+                    self.length.max(self.values.len())
+                } else {
+                    self.length
+                }
+            },
+            |live| {
             let live = live.borrow();
             live.length_override
                 .as_ref()
                 .and_then(argument_length)
                 .unwrap_or(live.length)
-        })
+            },
+        )
     }
 
     pub fn len(&self) -> usize {
@@ -812,6 +830,32 @@ impl ArrayData {
         }
         let derived = self.values.kind_with_holes(&self.deleted, self.length);
         self.kind.set(derived);
+        true
+    }
+
+    /// Append a numeric value to an ordinary packed array without cloning its
+    /// backing store. The array's physical length is its logical length in
+    /// this state, so the dense store remains the single source of truth.
+    #[inline(always)]
+    pub(crate) fn append_shared_numbers(&self, values: &[Value]) -> bool {
+        if !self.is_packed_ordinary() || !values.iter().all(|value| matches!(value, Value::Number(_))) {
+            return false;
+        }
+        let DenseElements::Numbers(numbers) = &self.values else {
+            return false;
+        };
+        numbers.borrow_mut().extend(values.iter().map(|value| {
+            let Value::Number(number) = value else { unreachable!() };
+            std::cell::Cell::new(*number)
+        }));
+        self.kind
+            .set(monotonic_kind(
+                self.kind.get(),
+                values.iter().fold(self.kind.get(), |kind, value| {
+                    let Value::Number(number) = value else { unreachable!() };
+                    monotonic_kind(kind, number_kind(*number))
+                }),
+            ));
         true
     }
 
