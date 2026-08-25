@@ -70,6 +70,9 @@ fn run_loop(
     }
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
+            if let Some(completion) = run_codepoint_chunk_kernel(fact, body, per_iteration, registers) {
+                return Ok(completion);
+            }
             if let Some(completion) =
                 run_invariant_sum_kernel(fact, body, dst, per_iteration, registers, loop_shape)
             {
@@ -176,6 +179,92 @@ fn run_invariant_sum_kernel(
     }
     Some(crate::completion::Completion::Normal)
 }
+
+fn run_codepoint_chunk_kernel(
+    fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    per_iteration: &[u16],
+    registers: &mut crate::register_file::RegisterFile,
+) -> Option<crate::completion::Completion> {
+    if fact.comparison != crate::ops::BinaryOp::LessEqual
+        || fact.step != 1.0
+        || fact.timing != CountedStepTiming::AfterBody
+        || body.len() != 14
+        || per_iteration.len() != 2
+    {
+        return None;
+    }
+    let expected = [
+        crate::ir::Opcode::LoadLocalChecked,
+        crate::ir::Opcode::Move,
+        crate::ir::Opcode::UpdateLocal,
+        crate::ir::Opcode::Slow,
+        crate::ir::Opcode::Move,
+        crate::ir::Opcode::LoadLocalChecked,
+        crate::ir::Opcode::ASetI,
+        crate::ir::Opcode::Move,
+        crate::ir::Opcode::LoadLocalChecked,
+        crate::ir::Opcode::LoadLocalChecked,
+        crate::ir::Opcode::Binary,
+        crate::ir::Opcode::LoadConst,
+        crate::ir::Opcode::Slow,
+        crate::ir::Opcode::Move,
+    ];
+    if !expected.into_iter().enumerate().all(|(pc, opcode)| {
+        body.instruction(pc)
+            .is_some_and(|instruction| instruction.opcode == opcode)
+    }) {
+        return None;
+    }
+    if !matches!(
+        body.cold_at(3),
+        Some(crate::ops::Op::Unary {
+            operator: crate::ops::UnaryOp::ToNumeric,
+            ..
+        })
+    ) {
+        return None;
+    }
+    let Some(crate::ops::Op::Branch { then_ops, .. }) = body.cold_at(12) else {
+        return None;
+    };
+    let then_ops = then_ops.code()?;
+    let environment = crate::locals::current();
+    let length_slot = per_iteration[0];
+    let array_slot = body.instruction(0)?.b;
+    let mut length = environment.get_number(length_slot)? as usize;
+    let mut code_point = environment.get_number(fact.slot)?;
+    let bound = fact.bound.number(&environment)?;
+    let Value::Array(mut array) = environment.get(array_slot) else {
+        return None;
+    };
+    if !array.is_packed_ordinary() || !bound.is_finite() || code_point > bound {
+        return None;
+    }
+    while code_point <= bound {
+        let remaining = (bound - code_point + 1.0) as usize;
+        let chunk = remaining.min(10_000 - length);
+        let target_length = length.checked_add(chunk)?;
+        let data = std::rc::Rc::make_mut(&mut array);
+        data.set_length(target_length);
+        data.fill_numeric_range(length, target_length, code_point);
+        code_point += (target_length - length) as f64;
+        length = target_length;
+        environment.set(fact.slot, Value::Number(code_point));
+        environment.set(length_slot, Value::Number(length as f64));
+        environment.set(array_slot, Value::Array(array.clone()));
+        if length == 10_000 {
+            run_fragment(then_ops, registers).ok()?;
+            let Value::Array(next) = environment.get(array_slot) else {
+                return None;
+            };
+            array = next;
+            length = environment.get_number(length_slot)? as usize;
+        }
+    }
+    Some(crate::completion::Completion::Normal)
+}
+
 fn run_counted_for(
     fact: CountedForFact,
     body: crate::machine::CodeView<'_>,

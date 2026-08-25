@@ -108,6 +108,13 @@ impl DenseElements {
         self.materialize_values().resize(length, Value::Undefined);
     }
 
+    fn resize_numeric(&mut self, length: usize) {
+        match self {
+            Self::Numbers(values) => values.borrow_mut().resize_with(length, || std::cell::Cell::new(0.0)),
+            Self::Values(values) => values.resize(length, Value::Number(0.0)),
+        }
+    }
+
     fn set(&mut self, index: usize, value: Value) {
         if let (Self::Numbers(values), Value::Number(number)) = (&*self, &value) {
             values.borrow()[index].set(*number);
@@ -629,6 +636,22 @@ impl ArrayData {
     #[inline]
     pub(crate) fn set_numeric_index(&mut self, index: usize, number: f64) {
         self.set_index(index, Value::Number(number));
+    }
+
+    pub(crate) fn fill_numeric_range(&mut self, start: usize, end: usize, first: f64) {
+        if self.values.len() < end {
+            self.values.resize_numeric(end);
+        }
+        if let DenseElements::Numbers(values) = &self.values {
+            let values = values.borrow();
+            for (offset, slot) in values[start..end].iter().enumerate() {
+                slot.set(first + offset as f64);
+            }
+            return;
+        }
+        for index in start..end {
+            self.set_numeric_index(index, first + (index - start) as f64);
+        }
     }
 
     /// Mutate an existing packed numeric slot through shared JS array
