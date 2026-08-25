@@ -55,7 +55,7 @@ fn delete_object_property_value(
     {
         return (delete_object_property(properties, key), true);
     }
-    if descriptor_flag_in(&properties, key, "configurable") == Some(false) {
+    if descriptor_flag_in(properties.as_ref(), key, "configurable") == Some(false) {
         return (Value::Object(properties), false);
     }
     (delete_object_property(properties, key), true)
@@ -96,7 +96,7 @@ fn global_constant(properties: &Rc<crate::value::ObjectData>, key: &str) -> bool
 }
 
 fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str) -> (Value, bool) {
-    let configurable = descriptor_flag_in(&function.properties.borrow(), key, "configurable");
+    let configurable = descriptor_flag_in(&function.properties.borrow()[..], key, "configurable");
     if configurable == Some(false) {
         return (Value::Function(function), false);
     }
