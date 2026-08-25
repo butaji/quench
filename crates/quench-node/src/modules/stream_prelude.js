@@ -11,7 +11,9 @@
   // Shared EventEmitter delegation, mixed into every stream prototype.
   const emitterMethods = {
     on(name, fn) {
-      this._emitter.on(name, fn);
+      const wrapper = (...args) => fn.apply(this, args);
+      (this._listenerWrappers ||= []).push({ name, fn, wrapper });
+      this._emitter.on(name, wrapper);
       if (name === "data" && this._readableState &&
                  this.listenerCount("readable") === 0) {
         this.resume();
@@ -35,19 +37,36 @@
       return this.on(name, fn);
     },
     once(name, fn) {
-      this._emitter.once(name, fn);
+      const wrapper = (...args) => {
+        this._listenerWrappers = (this._listenerWrappers || [])
+          .filter((entry) => entry.wrapper !== wrapper);
+        fn.apply(this, args);
+      };
+      (this._listenerWrappers ||= []).push({ name, fn, wrapper });
+      this._emitter.once(name, wrapper);
       return this;
     },
     prependListener(name, fn) {
-      this._emitter.prependListener(name, fn);
+      const wrapper = (...args) => fn.apply(this, args);
+      (this._listenerWrappers ||= []).push({ name, fn, wrapper });
+      this._emitter.prependListener(name, wrapper);
       return this;
     },
     prependOnceListener(name, fn) {
-      this._emitter.prependOnceListener(name, fn);
+      const wrapper = (...args) => {
+        this._listenerWrappers = (this._listenerWrappers || [])
+          .filter((entry) => entry.wrapper !== wrapper);
+        fn.apply(this, args);
+      };
+      (this._listenerWrappers ||= []).push({ name, fn, wrapper });
+      this._emitter.prependOnceListener(name, wrapper);
       return this;
     },
     removeListener(name, fn) {
-      this._emitter.removeListener(name, fn);
+      const wrappers = this._listenerWrappers || [];
+      const entry = [...wrappers].reverse().find((item) => item.name === name && item.fn === fn);
+      this._emitter.removeListener(name, entry?.wrapper || fn);
+      if (entry) this._listenerWrappers = wrappers.filter((item) => item !== entry);
       return this;
     },
     off(name, fn) {
@@ -55,6 +74,11 @@
     },
     removeAllListeners(name) {
       this._emitter.removeAllListeners(name);
+      if (this._listenerWrappers) {
+        this._listenerWrappers = name === undefined
+          ? []
+          : this._listenerWrappers.filter((entry) => entry.name !== name);
+      }
       return this;
     },
     emit(name, ...args) {
@@ -76,7 +100,9 @@
       return this._emitter.listenerCount(name);
     },
     listeners(name) {
-      return this._emitter.listeners(name);
+      return (this._listenerWrappers || [])
+        .filter((entry) => entry.name === name)
+        .map((entry) => entry.fn);
     },
     setMaxListeners(n) {
       this._emitter.setMaxListeners(n);
@@ -329,7 +355,9 @@
         st.ended = true;
         if (this._isDuplex && !this.allowHalfOpen &&
             !this._writableState.ended && !this._writableState.finished) {
-          this.end();
+          setImmediate(() => {
+            if (!this.destroyed && !this._writableState.ended) this.end();
+          });
         }
       } else {
         if (!st.objectMode && typeof chunk !== "string" &&
@@ -1073,6 +1101,16 @@
       this._isDuplex = true;
       initWritable(this, options || {});
       this.allowHalfOpen = !options || options.allowHalfOpen !== false;
+      if (options?.readable === false) {
+        this.readable = false;
+        this._readableState.ended = true;
+        this._readableState.endEmitted = true;
+      }
+      if (options?.writable === false) {
+        this.writable = false;
+        this._writableState.ended = true;
+        this._writableState.finished = true;
+      }
     }
   }
   mixWritable(Duplex.prototype);
