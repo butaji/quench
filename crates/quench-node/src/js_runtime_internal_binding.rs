@@ -6,7 +6,11 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         )));
     };
     if name == "util" {
-        return Ok(util_types_module());
+        return Ok(quench_runtime::execute::set_property(
+            util_types_module(),
+            "getProxyDetails",
+            crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
+        ));
     }
     if name == "os" {
         let binding = quench_runtime::host_api::object(vec![(

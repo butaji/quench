@@ -207,6 +207,30 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
     // Node exposes type/platform/arch/release/hostname as functions (see
     // os_capability_props); only the constant `EOL` is a property.
     out.push(("EOL".to_string(), Value::String(eol())));
+    out.push((
+        "constants".to_string(),
+        host_api::object(vec![
+            (
+                "priority".to_string(),
+                host_api::object(vec![
+                    ("PRIORITY_LOW".to_string(), Value::Number(19.0)),
+                    ("PRIORITY_BELOW_NORMAL".to_string(), Value::Number(10.0)),
+                    ("PRIORITY_NORMAL".to_string(), Value::Number(0.0)),
+                    ("PRIORITY_ABOVE_NORMAL".to_string(), Value::Number(-7.0)),
+                    ("PRIORITY_HIGH".to_string(), Value::Number(-14.0)),
+                    ("PRIORITY_HIGHEST".to_string(), Value::Number(-20.0)),
+                ]),
+            ),
+            (
+                "errno".to_string(),
+                host_api::object(vec![
+                    ("ENOENT".to_string(), Value::Number(2.0)),
+                    ("EACCES".to_string(), Value::Number(13.0)),
+                    ("EEXIST".to_string(), Value::Number(17.0)),
+                ]),
+            ),
+        ]),
+    ));
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
@@ -261,6 +285,14 @@ fn os_capability_props(out: &mut Vec<(String, Value)>) {
     out.push((
         "networkInterfaces".to_string(),
         crate::host::capability(crate::registry::SPEC_OS_NETWORKINTERFACES),
+    ));
+    out.push((
+        "getPriority".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_GET_PRIORITY),
+    ));
+    out.push((
+        "setPriority".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_SET_PRIORITY),
     ));
 }
 

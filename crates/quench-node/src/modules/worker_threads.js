@@ -9,7 +9,8 @@ for (var wa = 0; wa < workerArgs.length; wa++) {
   if (workerArgs[wa] === '--quench-worker') workerEnv = '1';
   if (String(workerArgs[wa]).indexOf('--quench-worker-data=') === 0) workerArgData = String(workerArgs[wa]).slice(21);
 }
-var workerData = workerEnv ? JSON.parse(workerArgData || (proc.env && proc.env.QUENCH_WORKER_DATA) || 'null') : null;
+var workerDataSource = workerArgData || (proc.env && proc.env.QUENCH_WORKER_DATA) || globalThis.__quench_worker_data;
+var workerData = workerEnv ? JSON.parse(workerDataSource || 'null') : null;
 var workerMessage = (workerEnv && proc.env && proc.env.QUENCH_WORKER_MESSAGE) || globalThis.__quench_worker_message;
 var processWorkerListeners = [];
 var processOn = proc && proc.on;
@@ -35,7 +36,7 @@ function workerPortProxy(token) {
   var port = {
     __quench_port: token,
     postMessage: function (value) {
-      proc.stdout.write('__QUENCH_WORKER_PORT__' + JSON.stringify({ token: token, value: value }) + '\n');
+      proc.stdout.write('__QUENCH_WORKER_PORT__' + JSON.stringify({ token: token, value: encodeWorkerData(value, [], []) }) + '\n');
     },
     close: function () {}
   };
@@ -45,6 +46,10 @@ function workerPortProxy(token) {
 function reviveWorkerMessage(value) {
   if (value && typeof value === 'object') {
     if (value.__quench_port !== undefined) return workerPortProxy(value.__quench_port);
+    if (value.__quench_typed_array) {
+      var TypedArray = globalThis[value.__quench_typed_array];
+      return typeof TypedArray === 'function' ? new TypedArray(value.data) : value.data;
+    }
     if (Array.isArray(value)) return value.map(reviveWorkerMessage);
     var object = {};
     var keys = Object.keys(value);
@@ -57,6 +62,7 @@ Object.defineProperty(globalThis, '__quench_worker_revive', {
   configurable: true,
   value: reviveWorkerMessage
 });
+if (workerEnv) workerData = reviveWorkerMessage(workerData);
 function emitter(target) {
   var listeners = {};
   var pending = target._queueEvents ? [] : null;
@@ -104,7 +110,7 @@ var parentPort = workerEnv ? emitter({
   _closed: false,
   postMessage: function (value) {
     if (this._closed) throw new Error('Cannot post message after closing parentPort');
-    proc.stdout.write('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(value) + '\n');
+    proc.stdout.write('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(encodeWorkerData(value, [], [])) + '\n');
   },
   close: function () {
     if (!this._closed) {
@@ -114,6 +120,17 @@ var parentPort = workerEnv ? emitter({
   }
 }) : null;
 function cloneMessage(value) {
+  if (value && value._externalStream && value._externalStream.__quench_external) {
+    throw Object.assign(new Error('Cannot clone object of unsupported type.'), {
+      name: 'DataCloneError'
+    });
+  }
+  if (typeof value === 'function') {
+    var functionName = value.name || '';
+    throw Object.assign(new Error('function ' + functionName + '() {} could not be cloned.'), {
+      name: 'DataCloneError'
+    });
+  }
   if (value && typeof value.postMessage === 'function' && typeof value.close === 'function') {
     return value;
   }
@@ -133,6 +150,10 @@ function cloneMessage(value) {
   }
   return value;
 }
+function dataCloneError(message) {
+  if (typeof DOMException === 'function') return new DOMException(message, 'DataCloneError');
+  return Object.assign(new Error(message), { name: 'DataCloneError', code: 25 });
+}
 function messagePort() {
 var port = emitter({ _queueEvents: true, _peer: null, close: function (callback) {
   if (this._closed) return;
@@ -144,6 +165,12 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
     this._peer.emit('close');
   }
 } });
+  var takePending = port._takePending;
+  port._takePending = function (name) {
+    var queue = messageQueueFor(port);
+    if (name === 'message' && queue.length > 0) return queue.shift();
+    return takePending(name);
+  };
   var onmessage = null;
   var onmessageListener = null;
   port.onmessage = null;
@@ -228,7 +255,15 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
       }
     }
     if (!this._closed && this._peer && !this._peer._closed) {
-      this._peer.emit('message', cloned, transferredPorts);
+      var peer = this._peer;
+      messageQueueFor(peer).push([cloned, transferredPorts]);
+      queueMicrotask(function () {
+        var queued = messageQueueFor(peer);
+        if (queued.length > 0 && !peer._closed) {
+          var next = queued.shift();
+          peer.emit('message', next[0], next[1]);
+        }
+      });
     }
   };
   port.start = function () { return this; };
@@ -249,6 +284,53 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
   Object.setPrototypeOf(port, messagePort.prototype);
   return port;
 }
+function messageQueueFor(port) {
+  if (!port.__quench_message_queue) {
+    Object.defineProperty(port, '__quench_message_queue', {
+      configurable: true, value: []
+    });
+  }
+  return port.__quench_message_queue;
+}
+function encodeWorkerData(value, transferList, transferredPorts) {
+  if (value && typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(value)) {
+    var typedData = Array.from(value);
+    if (value.buffer && transferList.indexOf(value.buffer) >= 0 &&
+        typeof value.buffer.transfer === 'function') {
+      value.buffer.transfer();
+    }
+    return {
+      __quench_typed_array: value.constructor.name,
+      data: typedData
+    };
+  }
+  if (value && typeof value.postMessage === 'function' &&
+      typeof value.close === 'function') {
+    var index = transferList.indexOf(value);
+    if (index < 0) {
+      throw dataCloneError('Object that needs transfer was found in message but not listed in transferList');
+    }
+    var token = transferredPorts.indexOf(value);
+    if (token < 0) {
+      transferredPorts.push(value);
+      token = transferredPorts.length - 1;
+    }
+    return { __quench_port: token };
+  }
+  if (Array.isArray(value)) {
+    return value.map(function (item) {
+      return encodeWorkerData(item, transferList, transferredPorts);
+    });
+  }
+  if (value && typeof value === 'object') {
+    var result = {};
+    Object.keys(value).forEach(function (key) {
+      result[key] = encodeWorkerData(value[key], transferList, transferredPorts);
+    });
+    return result;
+  }
+  return value;
+}
 messagePort.prototype.close = function () { return this; };
 messagePort.prototype.postMessage = function () { return this; };
 messagePort.prototype.start = function () { return this; };
@@ -258,6 +340,7 @@ messagePort.prototype.hasRef = function () { return true; };
 Object.defineProperty(messagePort.prototype, 'onmessage', { configurable: true });
 Object.defineProperty(messagePort.prototype, 'onmessageerror', { configurable: true });
 var environmentData = {};
+var SHARE_ENV = {};
 function MessageChannel() {
   this.port1 = messagePort();
   this.port2 = messagePort();
@@ -272,6 +355,8 @@ var api = {
         throw new TypeError('The "filename" argument must be a string');
       }
       var self = emitter({ threadId: 1, exited: false, _queueEvents: true });
+      self.stdout = emitter({});
+      self.stderr = emitter({});
       var workerOn = self.on;
       self.on = function (name, listener) {
         if (name === 'exit' && self.exited && self._exitCode !== undefined && typeof listener === 'function') {
@@ -283,26 +368,42 @@ var api = {
       };
       self._refed = true;
       self._destroyed = false;
+      self._started = false;
+      self._start = function (message, transferredPort) {
+        if (self._started) return;
+        self._started = true;
+        runWorker(message, transferredPort);
+      };
       self.hasRef = function () { return self._destroyed ? undefined : self._refed; };
-      self.ref = function () { self._refed = true; return self; };
+      self.ref = function () {
+        self._refed = true;
+        if (!self._started) self._start(undefined, null);
+        return self;
+      };
       self.unref = function () { self._refed = false; return self; };
-      if (globalThis.__quenchAsyncHooks) {
-        var workerAsyncId = ++globalThis.__quenchAsyncId;
-        for (var hookIndex = 0; hookIndex < globalThis.__quenchAsyncHooks.length; hookIndex++) {
-          var hook = globalThis.__quenchAsyncHooks[hookIndex];
-          if (hook.callbacks && typeof hook.callbacks.init === 'function') {
-            hook.callbacks.init.call(hook, workerAsyncId, 'WORKER', 1, self);
-          }
-        }
-      }
+      var asyncHooks = require('async_hooks');
+      asyncHooks.__quenchWorkerResource(self);
       if (proc && typeof proc.emit === 'function') proc.emit('worker', { threadId: self.threadId });
       options = options || {};
+      if (options.env !== undefined && options.env !== null &&
+          options.env !== SHARE_ENV && typeof options.env !== 'object') {
+        throw Object.assign(new TypeError('The "options.env" property must be of type object or one of undefined, null, or worker_threads.SHARE_ENV. Received type ' + typeof options.env + ' (' + String(options.env) + ')'), {
+          code: 'ERR_INVALID_ARG_TYPE'
+        });
+      }
       var cp = require('child_process');
       var env = {};
-      var keys = Object.keys(proc.env || {});
+      var sourceEnv = options.env && options.env !== SHARE_ENV ? options.env : proc.env || {};
+      var keys = Object.keys(sourceEnv);
       for (var i = 0; i < keys.length; i++) env[keys[i]] = proc.env[keys[i]];
+      if (sourceEnv !== proc.env) {
+        for (var e = 0; e < keys.length; e++) env[keys[e]] = String(sourceEnv[keys[e]]);
+      }
       env.QUENCH_WORKER = '1';
-      var data = options.workerData === undefined ? null : options.workerData;
+      var transferList = options.transferList || [];
+      var transferredPorts = [];
+      var data = options.workerData === undefined ? null :
+        encodeWorkerData(options.workerData, transferList, transferredPorts);
       env.QUENCH_WORKER_DATA = JSON.stringify(data);
       function runWorker(message, transferredPort) {
         if (message !== undefined) env.QUENCH_WORKER_MESSAGE = JSON.stringify(message);
@@ -313,7 +414,7 @@ var api = {
           // killed runner may not reach the synchronous cleanup below.
           var evalDirectory = require('os').tmpdir();
           evalPath = String(evalDirectory) + '/quench-worker-' + String(Date.now()) + '-' + String(Math.random()).slice(2) + '.js';
-          var evalSource = 'globalThis.__quench_worker_mode = true;\n';
+          var evalSource = 'globalThis.__quench_worker_mode = true; globalThis.__quench_worker_data = ' + JSON.stringify(data) + ';\n';
           if (message !== undefined) evalSource += 'globalThis.__quench_worker_message = ' + JSON.stringify(message) + ';\n';
           evalSource += String(filename);
           if (message !== undefined) evalSource += '\nrequire("worker_threads").parentPort.emit("message", globalThis.__quench_worker_revive(globalThis.__quench_worker_message));\n';
@@ -329,14 +430,24 @@ var api = {
         }
         var status = result && result.status === null ? 1 : (result ? result.status : 1);
         var output = result && result.stdout && typeof result.stdout.toString === 'function' ? result.stdout.toString() : String(result && result.stdout || '');
+        if (result && result.stdout && typeof self.stdout.emit === 'function') {
+          self.stdout.emit('data', result.stdout);
+        }
+        if (result && result.stderr && typeof self.stderr.emit === 'function') {
+          self.stderr.emit('data', result.stderr);
+        }
         var lines = output.split('\n');
         for (var j = 0; j < lines.length; j++) {
           var marker = '__QUENCH_WORKER_MESSAGE__';
           var portMarker = '__QUENCH_WORKER_PORT__';
           if (lines[j].indexOf(marker) === 0) {
-            try { self.emit('message', JSON.parse(lines[j].slice(marker.length))); } catch (_) {}
-          } else if (lines[j].indexOf(portMarker) === 0 && transferredPort) {
-            try { transferredPort.postMessage(JSON.parse(lines[j].slice(portMarker.length)).value); } catch (_) {}
+            try { self.emit('message', reviveWorkerMessage(JSON.parse(lines[j].slice(marker.length)))); } catch (_) {}
+          } else if (lines[j].indexOf(portMarker) === 0) {
+            try {
+              var portEvent = JSON.parse(lines[j].slice(portMarker.length));
+              var destination = transferredPort || transferredPorts[portEvent.token];
+              if (destination) destination.postMessage(portEvent.value);
+            } catch (_) {}
           }
         }
         self.exited = true;
@@ -351,24 +462,32 @@ var api = {
         return status;
       }
       if (options.eval) {
-        runWorker(undefined, null);
         self.postMessage = function (message, transferList) {
           var transferredPort = message && message.port && typeof message.port.postMessage === 'function' ? message.port : null;
           var tokenized = transferredPort ? { port: { __quench_port: 0 } } : message;
-          return runWorker(tokenized, transferredPort);
+          return self._start(tokenized, transferredPort);
         };
       } else {
-        runWorker(undefined, null);
         self.postMessage = function () {};
       }
       self.terminate = function () { self.exited = true; self._destroyed = true; return Promise.resolve(0); };
+      queueMicrotask(function () {
+        if (self._refed && !self._started) self._start(undefined, null);
+      });
       return self;
     },
   receiveMessageOnPort: function (port) {
-    if (!port || typeof port._takePending !== 'function') return undefined;
+    if (!port || typeof port._takePending !== 'function' ||
+        typeof port.postMessage !== 'function' ||
+        typeof port.close !== 'function') {
+      throw Object.assign(new TypeError('The "port" argument must be a MessagePort instance'), {
+        code: 'ERR_INVALID_ARG_TYPE'
+      });
+    }
     var args = port._takePending('message');
     return args ? { message: args[0] } : undefined;
   },
+  SHARE_ENV: SHARE_ENV,
   markAsUncloneable: function () {}, markAsUntransferable: function () {},
   setEnvironmentData: function (key, value) { environmentData[String(key)] = value; },
   getEnvironmentData: function (key) {

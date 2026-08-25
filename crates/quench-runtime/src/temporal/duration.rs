@@ -221,7 +221,7 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
     let unit = round_unit(options)?;
-    let index = unit_index(unit)?;
+    let index = unit_index(&unit)?;
     if index < 2 {
         let relative = options.and_then(|value| match value {
             Value::Object(object) => object
@@ -235,7 +235,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                 "relativeTo is required for calendar rounding",
             ));
         };
-        return calendar_round(object, relative, index);
+        return calendar_round(object, &relative, index);
     }
     fixed_round(object, options, index)
 }
@@ -273,7 +273,8 @@ fn fixed_round(
         .sum::<f64>();
     let increment = rounding_increment(options)?;
     let quantum = scales[first] * increment;
-    let rounded_units = round_number(total / quantum, rounding_mode(options)?);
+    let mode = rounding_mode(options)?;
+    let rounded_units = round_number(total / quantum, &mode);
     let mut rounded = vec![Value::Number(0.0); 10];
     rounded[index] = Value::Number(rounded_units * increment);
     let largest = (2..=index)
@@ -294,7 +295,7 @@ fn rounding_increment(options: Option<&Value>) -> Result<f64, VmError> {
                 .map(|(_, value)| value),
             _ => None,
         })
-        .map(crate::conversion::to_number)
+        .map(|value| crate::conversion::to_number(&value))
         .transpose()?
         .unwrap_or(1.0);
     (value.is_finite() && value > 0.0)
@@ -302,7 +303,7 @@ fn rounding_increment(options: Option<&Value>) -> Result<f64, VmError> {
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid roundingIncrement"))
 }
 
-fn rounding_mode(options: Option<&Value>) -> Result<&str, VmError> {
+fn rounding_mode(options: Option<&Value>) -> Result<String, VmError> {
     let value = options.and_then(|value| match value {
         Value::Object(object) => object
             .iter()
@@ -311,8 +312,8 @@ fn rounding_mode(options: Option<&Value>) -> Result<&str, VmError> {
         _ => None,
     });
     match value {
-        None => Ok("halfExpand"),
-        Some(Value::String(mode)) => Ok(mode.as_str()),
+        None => Ok("halfExpand".into()),
+        Some(Value::String(mode)) => Ok(mode.clone()),
         _ => Err(crate::value::error::throw_type_error(
             "Invalid roundingMode",
         )),
@@ -360,19 +361,19 @@ fn duration_fields(object: &crate::value::ObjectData) -> Vec<Value> {
     .collect()
 }
 
-fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
+fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
     if value.is_none() || value.is_some_and(crate::conversion::is_symbol) {
         return Err(crate::value::error::throw_type_error(
             "Options must be an object",
         ));
     }
     match value {
-        Some(Value::String(unit)) => Ok(unit.as_str()),
+        Some(Value::String(unit)) => Ok(unit.clone()),
         Some(Value::Object(object)) => object
             .iter()
             .find(|(key, _)| key == "smallestUnit" || key == "largestUnit")
             .and_then(|(_, value)| match value {
-                Value::String(unit) => Some(unit.as_str()),
+                Value::String(unit) => Some(unit.clone()),
                 _ => None,
             })
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit")),
@@ -485,7 +486,7 @@ fn largest_unit(value: Option<&Value>) -> Option<usize> {
         .iter()
         .find(|(key, _)| key == "largestUnit")
         .and_then(|(_, value)| match value {
-            Value::String(unit) => unit_index(unit).ok(),
+            Value::String(unit) => unit_index(&unit).ok(),
             _ => None,
         })
 }
@@ -597,7 +598,7 @@ fn duration_field(object: &crate::value::ObjectData, name: &str) -> i128 {
     object
         .iter()
         .find(|(key, _)| key == name)
-        .map_or(0, |(_, value)| number_field(value))
+        .map_or(0, |(_, value)| number_field(&value))
 }
 
 fn number_field(value: &Value) -> i128 {

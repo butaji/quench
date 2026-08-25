@@ -347,8 +347,8 @@ fn super_own_value(holder: &Value, key: &str, receiver: &Value) -> Result<Option
     {
         if !descriptor.iter().any(|(name, _)| name == "value") {
             if let Some((_, getter)) = descriptor.iter().rev().find(|(name, _)| name == "get") {
-                if crate::conversion::is_callable(getter) {
-                    return crate::functions::execute_target(getter, receiver, &[]).map(Some);
+                if crate::conversion::is_callable(&getter) {
+                    return crate::functions::execute_target(&getter, receiver, &[]).map(Some);
                 }
             }
         }
@@ -467,7 +467,7 @@ fn holder_contains_function(holder: &Value, function: &Rc<crate::value::Function
     };
     properties
         .iter()
-        .any(|(_, value)| contains_function(value, function))
+        .any(|(_, value)| contains_function(&value, function))
 }
 
 fn contains_function(value: &Value, function: &Rc<crate::value::FunctionValue>) -> bool {
@@ -476,7 +476,7 @@ fn contains_function(value: &Value, function: &Rc<crate::value::FunctionValue>) 
         Value::Object(descriptor) => descriptor
             .iter()
             .filter(|(name, _)| matches!(name.as_str(), "value" | "get" | "set"))
-            .any(|(_, value)| contains_function(value, function)),
+            .any(|(_, value)| contains_function(&value, function)),
         _ => false,
     }
 }
@@ -488,7 +488,7 @@ pub(crate) fn attach_home_objects(value: &Value) {
                 object,
             )))));
             for (_, property) in object.iter() {
-                attach(property, &alias);
+                attach(&property, &alias);
             }
         }
         Value::Function(function) => {
@@ -516,7 +516,7 @@ fn attach(value: &Value, home: &Value) {
         Value::Object(properties) => {
             for (name, value) in properties.iter() {
                 if matches!(name.as_str(), "get" | "set") {
-                    attach(value, home);
+                    attach(&value, home);
                 }
             }
         }

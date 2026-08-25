@@ -16,13 +16,11 @@
 //! `Fact`, and `Continuation`) before adding breadth.
 
 pub mod build_profile;
+mod host_jobs;
+pub use host_jobs::install_host_job_pump;
 
 mod arrays;
 mod atomics;
-pub use atomics::{
-    agent_notified, clear_agent_waiters, consume_agent_wake, forget_agent_waiter,
-    reset_agent_waiters, set_agent_can_block, set_agent_execution, take_agent_wait_occurred,
-};
 pub mod benchmark;
 mod bigint;
 mod binding_patterns;
@@ -84,7 +82,10 @@ mod own_keys;
 mod private_environment;
 mod private_slots;
 mod promise;
-pub use promise::{drain_microtasks_all as drain_promise_jobs, reject_promise, resolve_promise};
+pub use promise::{
+    drain_microtasks_all as drain_promise_jobs, reject_promise, resolve_promise,
+    take_unhandled_rejections,
+};
 mod properties;
 mod property_define;
 pub mod protocol;

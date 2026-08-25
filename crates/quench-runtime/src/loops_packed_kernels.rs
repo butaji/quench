@@ -1,6 +1,9 @@
 #[derive(Clone, Copy)]
 enum PackedLoopFact {
     AddFields { x: u16, source: u16, scale: u16 },
+    Fill { array: u16 },
+    Fill3 { arrays: [u16; 3] },
+    Boundary(BoundaryFact),
     CopyRow(CopyRowFact),
     Divergence(DivergenceFact),
     Projection(ProjectionFact),
@@ -8,8 +11,17 @@ enum PackedLoopFact {
 
 macro_rules! compact_shape {
     ($code:ident; $($pc:literal => $opcode:ident),+ $(,)?) => {{
-        $((instruction_opcode($code, $pc)? == crate::ir::Opcode::$opcode).then_some(())?;)+
+        $(compact_fact_opcode!($code, $pc, $opcode);)+
     }};
+}
+
+macro_rules! compact_fact_opcode {
+    ($code:ident, $pc:literal, StaticLoad) => {
+        recognized_static_load($code, $pc).map(|_| ())?
+    };
+    ($code:ident, $pc:literal, $opcode:ident) => {
+        (instruction_opcode($code, $pc)? == crate::ir::Opcode::$opcode).then_some(())?
+    };
 }
 
 fn instruction_opcode(code: crate::machine::CodeView<'_>, pc: usize) -> Option<crate::ir::Opcode> {
@@ -19,13 +31,203 @@ fn instruction_opcode(code: crate::machine::CodeView<'_>, pc: usize) -> Option<c
 impl PackedLoopFact {
     fn recognize(code: crate::machine::CodeView<'_>, counter: u16) -> Option<Self> {
         match code.len() {
+            7 => recognize_fill(code, counter),
             15 => recognize_add_fields(code, counter),
+            17 => recognize_fill3(code, counter),
             11 | 20 => CopyRowFact::recognize(code).map(Self::CopyRow),
-            30 => DivergenceFact::recognize(code).map(Self::Divergence),
+            30 => recognize_vertical_boundary(code, counter)
+                .map(Self::Boundary)
+                .or_else(|| DivergenceFact::recognize(code).map(Self::Divergence)),
+            32 => recognize_negative_vertical_boundary(code, counter)
+                .map(Self::Boundary),
+            34 => recognize_horizontal_boundary(code, counter).map(Self::Boundary),
             38 => ProjectionFact::recognize(code).map(Self::Projection),
             _ => None,
         }
     }
+}
+
+fn recognize_fill(code: crate::machine::CodeView<'_>, counter: u16) -> Option<PackedLoopFact> {
+    compact_shape!(code;
+        0 => StaticLoad, 1 => Move, 2 => StaticLoad, 3 => Move,
+        4 => LoadConst, 5 => ASetI, 6 => Move
+    );
+    let array = recognized_static_load(code, 0)?.1;
+    (recognized_static_load(code, 2)?.1 == counter).then_some(())?;
+    matches!(code.constant_at(4), Some((_, crate::ops::Constant::Number(0.0)))).then_some(())?;
+    let set = code.instruction(5)?;
+    (code.instruction(1)?.b == code.instruction(0)?.a
+        && code.instruction(3)?.b == code.instruction(1)?.a
+        && set.a == code.instruction(3)?.a
+        && set.b == code.instruction(2)?.a
+        && set.c == code.instruction(4)?.a
+        && code.instruction(6)?.b == set.c)
+        .then_some(PackedLoopFact::Fill { array })
+}
+
+#[derive(Clone, Copy)]
+enum BoundaryAxis { Vertical, Horizontal }
+
+#[derive(Clone, Copy)]
+enum BoundarySign { Positive, Negative }
+
+#[derive(Clone, Copy)]
+struct BoundaryFact {
+    array: u16,
+    row_size: u16,
+    edge: u16,
+    axis: BoundaryAxis,
+    sign: BoundarySign,
+}
+
+fn recognize_vertical_boundary(
+    code: crate::machine::CodeView<'_>, counter: u16,
+) -> Option<BoundaryFact> {
+    compact_shape!(code;
+        0 => StaticLoad, 1 => Move, 2 => StaticLoad, 3 => Move,
+        4 => StaticLoad, 5 => StaticLoad, 6 => StaticLoad, 7 => Add,
+        8 => AGetI, 9 => ASetI, 10 => Move, 11 => StaticLoad, 12 => Move,
+        13 => StaticLoad, 14 => StaticLoad, 15 => LoadConst, 16 => Add,
+        17 => StaticLoad, 18 => Mul, 19 => Add, 20 => Move, 21 => StaticLoad,
+        22 => StaticLoad, 23 => StaticLoad, 24 => StaticLoad, 25 => Mul,
+        26 => Add, 27 => AGetI, 28 => ASetI, 29 => Move
+    );
+    let array = same_static_slots(code, &[0, 4, 11, 21])?;
+    same_static_slot(code, &[2, 5, 13, 22], counter)?;
+    let row_size = same_static_slots(code, &[6, 17, 24])?;
+    let edge = same_static_slots(code, &[14, 23])?;
+    constant_one(code, 15)?;
+    validate_boundary_sets(code, (3, 2, 8, 9), (20, 19, 27, 28))?;
+    Some(BoundaryFact {
+        array, row_size, edge, axis: BoundaryAxis::Vertical, sign: BoundarySign::Positive,
+    })
+}
+
+fn recognize_negative_vertical_boundary(
+    code: crate::machine::CodeView<'_>, counter: u16,
+) -> Option<BoundaryFact> {
+    compact_shape!(code;
+        0 => StaticLoad, 1 => Move, 2 => StaticLoad, 3 => Move,
+        4 => StaticLoad, 5 => StaticLoad, 6 => StaticLoad, 7 => Add,
+        8 => AGetI, 9 => Slow, 10 => ASetI, 11 => Move,
+        12 => StaticLoad, 13 => Move, 14 => StaticLoad, 15 => StaticLoad,
+        16 => LoadConst, 17 => Add, 18 => StaticLoad, 19 => Mul,
+        20 => Add, 21 => Move, 22 => StaticLoad, 23 => StaticLoad,
+        24 => StaticLoad, 25 => StaticLoad, 26 => Mul, 27 => Add,
+        28 => AGetI, 29 => Slow, 30 => ASetI, 31 => Move
+    );
+    let array = same_static_slots(code, &[0, 4, 12, 22])?;
+    same_static_slot(code, &[2, 5, 14, 23], counter)?;
+    let row_size = same_static_slots(code, &[6, 18, 25])?;
+    let edge = same_static_slots(code, &[15, 24])?;
+    constant_one(code, 16)?;
+    let first_value = validate_negate(code, 8, 9)?;
+    let second_value = validate_negate(code, 28, 29)?;
+    validate_boundary_set_value(code, 3, 2, first_value, 10)?;
+    validate_boundary_set_value(code, 21, 20, second_value, 30)?;
+    Some(BoundaryFact {
+        array, row_size, edge, axis: BoundaryAxis::Vertical, sign: BoundarySign::Negative,
+    })
+}
+
+fn recognize_horizontal_boundary(
+    code: crate::machine::CodeView<'_>, counter: u16,
+) -> Option<BoundaryFact> {
+    compact_shape!(code;
+        0 => StaticLoad, 1 => Move, 2 => StaticLoad, 3 => StaticLoad,
+        4 => Mul, 5 => Move, 6 => StaticLoad, 7 => LoadConst,
+        8 => StaticLoad, 9 => StaticLoad, 10 => Mul, 11 => Add,
+        12 => AGetI, 13 => ASetI, 14 => Move, 15 => StaticLoad, 16 => Move,
+        17 => StaticLoad, 18 => LoadConst, 19 => Add, 20 => StaticLoad,
+        21 => StaticLoad, 22 => Mul, 23 => Add, 24 => Move, 25 => StaticLoad,
+        26 => StaticLoad, 27 => StaticLoad, 28 => StaticLoad, 29 => Mul,
+        30 => Add, 31 => AGetI, 32 => ASetI, 33 => Move
+    );
+    let array = same_static_slots(code, &[0, 6, 15, 25])?;
+    same_static_slot(code, &[2, 8, 20, 27], counter)?;
+    let row_size = same_static_slots(code, &[3, 9, 21, 28])?;
+    let edge = same_static_slots(code, &[17, 26])?;
+    constant_one(code, 7)?;
+    constant_one(code, 18)?;
+    validate_boundary_sets(code, (5, 4, 12, 13), (24, 23, 31, 32))?;
+    Some(BoundaryFact {
+        array, row_size, edge, axis: BoundaryAxis::Horizontal, sign: BoundarySign::Positive,
+    })
+}
+
+fn validate_negate(
+    code: crate::machine::CodeView<'_>, get_pc: usize, unary_pc: usize,
+) -> Option<u16> {
+    let crate::ops::Op::Unary {
+        dst, operator: crate::ops::UnaryOp::Minus, src,
+    } = code.cold_at(unary_pc)? else { return None };
+    (*src == code.instruction(get_pc)?.a).then_some(*dst)
+}
+
+fn validate_boundary_set_value(
+    code: crate::machine::CodeView<'_>,
+    target: usize,
+    key: usize,
+    value: u16,
+    set: usize,
+) -> Option<()> {
+    let set_op = code.instruction(set)?;
+    (set_op.a == code.instruction(target)?.a
+        && set_op.b == code.instruction(key)?.a
+        && set_op.c == value).then_some(())
+}
+
+fn same_static_slots(code: crate::machine::CodeView<'_>, pcs: &[usize]) -> Option<u16> {
+    let first = recognized_static_load(code, *pcs.first()?)?.1;
+    pcs.iter().all(|pc| recognized_static_load(code, *pc).is_some_and(|(_, slot)| slot == first))
+        .then_some(first)
+}
+
+fn same_static_slot(code: crate::machine::CodeView<'_>, pcs: &[usize], slot: u16) -> Option<()> {
+    pcs.iter().all(|pc| recognized_static_load(code, *pc).is_some_and(|(_, value)| value == slot))
+        .then_some(())
+}
+
+fn constant_one(code: crate::machine::CodeView<'_>, pc: usize) -> Option<()> {
+    matches!(code.constant_at(pc), Some((_, crate::ops::Constant::Number(1.0)))).then_some(())
+}
+
+fn validate_boundary_sets(
+    code: crate::machine::CodeView<'_>,
+    first: (usize, usize, usize, usize),
+    second: (usize, usize, usize, usize),
+) -> Option<()> {
+    for (target, key, get, set) in [first, second] {
+        let set_op = code.instruction(set)?;
+        (set_op.a == code.instruction(target)?.a
+            && set_op.b == code.instruction(key)?.a
+            && set_op.c == code.instruction(get)?.a).then_some(())?;
+    }
+    Some(())
+}
+
+fn recognize_fill3(code: crate::machine::CodeView<'_>, counter: u16) -> Option<PackedLoopFact> {
+    compact_shape!(code;
+        0 => StaticLoad, 1 => Move, 2 => StaticLoad, 3 => Move,
+        4 => StaticLoad, 5 => Move, 6 => StaticLoad, 7 => Move,
+        8 => StaticLoad, 9 => Move, 10 => StaticLoad, 11 => Move,
+        12 => LoadConst, 13 => ASetI, 14 => ASetI, 15 => ASetI, 16 => Move
+    );
+    let arrays = [recognized_static_load(code, 0)?.1,
+        recognized_static_load(code, 4)?.1, recognized_static_load(code, 8)?.1];
+    let indices = [recognized_static_load(code, 2)?.1,
+        recognized_static_load(code, 6)?.1, recognized_static_load(code, 10)?.1];
+    indices.into_iter().all(|slot| slot == counter).then_some(())?;
+    matches!(code.constant_at(12), Some((_, crate::ops::Constant::Number(0.0)))).then_some(())?;
+    for (pc, (array_pc, index_pc)) in [13, 14, 15].into_iter().zip([(8, 10), (4, 6), (0, 2)]) {
+        let set = code.instruction(pc)?;
+        let target = code.instruction(index_pc + 1)?;
+        (target.b == code.instruction(array_pc + 1)?.a
+            && set.a == target.a
+            && set.b == code.instruction(index_pc)?.a
+            && set.c == code.instruction(12)?.a).then_some(())?;
+    }
+    Some(PackedLoopFact::Fill3 { arrays })
 }
 
 #[derive(Clone, Copy)]
@@ -49,11 +251,16 @@ impl CopyRowFact {
 }
 
 fn recognize_copy_pair(code: crate::machine::CodeView<'_>, pc: usize) -> Option<(u16, u16, u16)> {
-    let opcodes = [crate::ir::Opcode::LoadLocalChecked, crate::ir::Opcode::Move,
-        crate::ir::Opcode::LoadLocalChecked, crate::ir::Opcode::Move,
-        crate::ir::Opcode::LoadLocalChecked, crate::ir::Opcode::LoadLocalChecked,
-        crate::ir::Opcode::AGetI, crate::ir::Opcode::ASetI, crate::ir::Opcode::Move];
-    opcodes.into_iter().enumerate().all(|(offset, opcode)| instruction_opcode(code, pc + offset) == Some(opcode)).then_some(())?;
+    [0, 2, 4, 5]
+        .into_iter()
+        .all(|offset| recognized_static_load(code, pc + offset).is_some())
+        .then_some(())?;
+    [(1, crate::ir::Opcode::Move), (3, crate::ir::Opcode::Move),
+        (6, crate::ir::Opcode::AGetI), (7, crate::ir::Opcode::ASetI),
+        (8, crate::ir::Opcode::Move)]
+        .into_iter()
+        .all(|(offset, opcode)| instruction_opcode(code, pc + offset) == Some(opcode))
+        .then_some(())?;
     let (_, destination) = recognized_static_load(code, pc)?;
     let (_, destination_index) = recognized_static_load(code, pc + 2)?;
     let (_, source) = recognized_static_load(code, pc + 4)?;
@@ -69,9 +276,9 @@ fn recognize_copy_pair(code: crate::machine::CodeView<'_>, pc: usize) -> Option<
 
 fn recognize_add_fields(code: crate::machine::CodeView<'_>, counter: u16) -> Option<PackedLoopFact> {
     compact_shape!(code;
-        0 => LoadLocalChecked, 2 => LoadLocalChecked, 4 => Slow, 5 => Slow,
-        6 => AGetI, 7 => LoadLocalChecked, 8 => LoadLocalChecked,
-        9 => LoadLocalChecked, 10 => AGetI, 11 => Mul, 12 => Add, 13 => ASetI
+        0 => StaticLoad, 2 => StaticLoad, 4 => Slow, 5 => Slow,
+        6 => AGetI, 7 => StaticLoad, 8 => StaticLoad,
+        9 => StaticLoad, 10 => AGetI, 11 => Mul, 12 => Add, 13 => ASetI
     );
     let (_, x) = recognized_static_load(code, 0)?;
     let (_, index) = recognized_static_load(code, 2)?;
@@ -102,12 +309,12 @@ struct DivergenceFact {
 impl DivergenceFact {
     fn recognize(code: crate::machine::CodeView<'_>) -> Option<Self> {
         compact_shape!(code;
-            0 => LoadLocalChecked, 2 => UpdateLocal, 5 => LoadLocalChecked,
-            6 => UpdateLocal, 7 => AGetI, 8 => LoadLocalChecked, 9 => UpdateLocal,
-            10 => AGetI, 11 => Sub, 12 => LoadLocalChecked, 13 => UpdateLocal,
-            14 => AGetI, 15 => Add, 16 => LoadLocalChecked, 17 => UpdateLocal,
+            0 => StaticLoad, 2 => UpdateLocal, 5 => StaticLoad,
+            6 => UpdateLocal, 7 => AGetI, 8 => StaticLoad, 9 => UpdateLocal,
+            10 => AGetI, 11 => Sub, 12 => StaticLoad, 13 => UpdateLocal,
+            14 => AGetI, 15 => Add, 16 => StaticLoad, 17 => UpdateLocal,
             18 => AGetI, 19 => Sub, 20 => Mul, 21 => ASetI,
-            23 => LoadLocalChecked, 25 => LoadLocalChecked, 27 => LoadConst, 28 => ASetI
+            23 => StaticLoad, 25 => StaticLoad, 27 => LoadConst, 28 => ASetI
         );
         let (_, div) = recognized_static_load(code, 0)?;
         let (_, h) = recognized_static_load(code, 4)?;
@@ -143,13 +350,13 @@ struct ProjectionFact {
 impl ProjectionFact {
     fn recognize(code: crate::machine::CodeView<'_>) -> Option<Self> {
         compact_shape!(code;
-            0 => LoadLocalChecked, 2 => UpdateLocal, 6 => AGetI,
-            7 => LoadLocalChecked, 8 => LoadLocalChecked, 9 => UpdateLocal,
-            10 => AGetI, 11 => LoadLocalChecked, 12 => UpdateLocal, 13 => AGetI,
+            0 => StaticLoad, 2 => UpdateLocal, 6 => AGetI,
+            7 => StaticLoad, 8 => StaticLoad, 9 => UpdateLocal,
+            10 => AGetI, 11 => StaticLoad, 12 => UpdateLocal, 13 => AGetI,
             14 => Sub, 15 => Mul, 16 => Sub, 17 => ASetI,
-            19 => LoadLocalChecked, 21 => LoadLocalChecked, 25 => AGetI,
-            26 => LoadLocalChecked, 27 => LoadLocalChecked, 28 => UpdateLocal,
-            29 => AGetI, 30 => LoadLocalChecked, 31 => UpdateLocal, 32 => AGetI,
+            19 => StaticLoad, 21 => StaticLoad, 25 => AGetI,
+            26 => StaticLoad, 27 => StaticLoad, 28 => UpdateLocal,
+            29 => AGetI, 30 => StaticLoad, 31 => UpdateLocal, 32 => AGetI,
             33 => Sub, 34 => Mul, 35 => Sub, 36 => ASetI
         );
         let (_, u) = recognized_static_load(code, 0)?;
@@ -208,8 +415,8 @@ fn validate_projection_graph(code: crate::machine::CodeView<'_>) -> Option<()> {
 fn run_packed_loop_kernel(
     loop_fact: CountedForFact,
     body: crate::machine::CodeView<'_>,
+    loop_shape: u64,
 ) -> Option<crate::completion::Completion> {
-    (loop_fact.timing == CountedStepTiming::AfterBody).then_some(())?;
     let fact = PackedLoopFact::recognize(body, loop_fact.slot)?;
     let environment = crate::locals::current();
     let counter = environment.get_number(loop_fact.slot)?;
@@ -218,11 +425,135 @@ fn run_packed_loop_kernel(
         PackedLoopFact::AddFields { x, source, scale } => {
             run_add_fields(&environment, x, source, scale, counter, iterations, loop_fact)?
         }
+        PackedLoopFact::Fill3 { arrays } => {
+            run_fill3(&environment, arrays, counter, iterations, loop_fact)?
+        }
+        PackedLoopFact::Fill { array } => {
+            run_fill(&environment, array, counter, iterations, loop_fact)?
+        }
+        PackedLoopFact::Boundary(boundary) => {
+            run_boundary(&environment, boundary, counter, iterations, loop_fact)?
+        }
         PackedLoopFact::CopyRow(fact) => run_copy_row(&environment, fact, counter, iterations, loop_fact)?,
         PackedLoopFact::Divergence(fact) => run_divergence(&environment, fact, counter, iterations, loop_fact)?,
         PackedLoopFact::Projection(fact) => run_projection(&environment, fact, counter, iterations, loop_fact)?,
     }
+    let (id, gets, sets) = fact.trace_fact();
+    crate::execution_trace::numeric_kernel_iterations(id, loop_shape, iterations, gets, sets);
     Some(crate::completion::Completion::Normal)
+}
+
+impl PackedLoopFact {
+    fn trace_fact(self) -> (&'static str, usize, usize) {
+        match self {
+            Self::AddFields { .. } => ("counted_packed_f64_add_fields", 2, 1),
+            Self::Fill { .. } => ("counted_packed_zero_fill", 0, 1),
+            Self::Fill3 { .. } => ("counted_packed_f64_fill3", 0, 3),
+            Self::Boundary(_) => ("counted_packed_f64_boundary", 2, 2),
+            Self::CopyRow(fact) => ("counted_packed_f64_copy", fact.pair_count, fact.pair_count),
+            Self::Divergence(_) => ("counted_packed_f64_divergence", 4, 2),
+            Self::Projection(_) => ("counted_packed_f64_projection", 6, 2),
+        }
+    }
+}
+
+fn run_fill(
+    environment: &crate::environment::Environment,
+    array: u16,
+    counter: f64,
+    iterations: usize,
+    loop_fact: CountedForFact,
+) -> Option<()> {
+    (loop_fact.timing == CountedStepTiming::BeforeTest
+        && loop_fact.comparison == crate::ops::BinaryOp::GreaterEqual
+        && loop_fact.step == -1.0).then_some(())?;
+    let end = kernel_index(counter)?;
+    let start = end.checked_sub(iterations)?;
+    let array = packed_array(environment, array)?;
+    if let Some(mut words) = array.limb28_kernel_words_mut() {
+        words.get_mut(start..end)?.fill(0.0);
+    } else {
+        let mut words = array.numeric_kernel_words_mut()?;
+        words.get_mut(start..end)?.fill(0.0);
+    }
+    environment.set(loop_fact.slot, Value::Number(counter - (iterations as f64 + 1.0)));
+    Some(())
+}
+
+fn run_boundary(
+    environment: &crate::environment::Environment,
+    fact: BoundaryFact,
+    counter: f64,
+    iterations: usize,
+    loop_fact: CountedForFact,
+) -> Option<()> {
+    (loop_fact.comparison == crate::ops::BinaryOp::LessEqual && loop_fact.step == 1.0)
+        .then_some(())?;
+    let start = kernel_index(counter)?;
+    let end = start.checked_add(iterations)?;
+    let row_size = kernel_index(environment.get_number(fact.row_size)?)?;
+    let edge = kernel_index(environment.get_number(fact.edge)?)?;
+    let array = packed_array(environment, fact.array)?;
+    let mut words = array.numeric_kernel_words_mut()?;
+    validate_boundary_range(words.len(), fact.axis, start, end, row_size, edge)?;
+    for index in start..end {
+        let (dst1, src1, dst2, src2) = boundary_indices(fact.axis, index, row_size, edge);
+        match fact.sign {
+            BoundarySign::Positive => {
+                words[dst1] = words[src1];
+                words[dst2] = words[src2];
+            }
+            BoundarySign::Negative => {
+                words[dst1] = -words[src1];
+                words[dst2] = -words[src2];
+            }
+        }
+    }
+    environment.set(loop_fact.slot, Value::Number(end as f64));
+    Some(())
+}
+
+fn boundary_indices(
+    axis: BoundaryAxis, index: usize, row_size: usize, edge: usize,
+) -> (usize, usize, usize, usize) {
+    match axis {
+        BoundaryAxis::Vertical => (index, index + row_size,
+            index + (edge + 1) * row_size, index + edge * row_size),
+        BoundaryAxis::Horizontal => (index * row_size, 1 + index * row_size,
+            edge + 1 + index * row_size, edge + index * row_size),
+    }
+}
+
+fn validate_boundary_range(
+    len: usize, axis: BoundaryAxis, start: usize, end: usize, row_size: usize, edge: usize,
+) -> Option<()> {
+    (start < end && row_size != 0).then_some(())?;
+    let index = end - 1;
+    let last = match axis {
+        BoundaryAxis::Vertical => index.checked_add(edge.checked_add(1)?.checked_mul(row_size)?)?,
+        BoundaryAxis::Horizontal => edge.checked_add(1)?.checked_add(index.checked_mul(row_size)?)?,
+    };
+    (last < len).then_some(())
+}
+
+fn run_fill3(
+    environment: &crate::environment::Environment,
+    arrays: [u16; 3],
+    counter: f64,
+    iterations: usize,
+    loop_fact: CountedForFact,
+) -> Option<()> {
+    (loop_fact.comparison == crate::ops::BinaryOp::LessThan && loop_fact.step == 1.0)
+        .then_some(())?;
+    let start = kernel_index(counter)?;
+    let end = start.checked_add(iterations)?;
+    for slot in arrays {
+        let array = packed_array(environment, slot)?;
+        let mut words = array.numeric_kernel_words_mut()?;
+        words.get_mut(start..end)?.fill(0.0);
+    }
+    environment.set(loop_fact.slot, Value::Number(end as f64));
+    Some(())
 }
 
 fn run_copy_row(
@@ -254,7 +585,7 @@ fn arrays2(
 }
 
 fn packed_array(environment: &crate::environment::Environment, slot: u16) -> Option<std::rc::Rc<crate::value::ArrayData>> {
-    let Value::Array(array) = environment.get(slot) else { return None };
+    let Value::Array(array) = crate::locals::resolved_replacement(environment.get(slot)) else { return None };
     array.is_packed_ordinary().then_some(array)
 }
 
@@ -269,11 +600,19 @@ fn run_add_fields(
     let scale = environment.get_number(scale_slot)?;
     let x = packed_array(environment, x_slot)?;
     let source = packed_array(environment, source_slot)?;
-    let x_words = x.numeric_cells()?;
-    let source_words = source.numeric_cells()?;
-    (end <= x_words.len() && end <= source_words.len()).then_some(())?;
-    for index in start..end {
-        x_words[index].set(x_words[index].get() + scale * source_words[index].get());
+    if std::rc::Rc::ptr_eq(&x, &source) {
+        let mut words = x.numeric_kernel_words_mut()?;
+        (end <= words.len()).then_some(())?;
+        for value in &mut words[start..end] {
+            *value += scale * *value;
+        }
+    } else {
+        let mut x_words = x.numeric_kernel_words_mut()?;
+        let source_words = source.numeric_kernel_words()?;
+        (end <= x_words.len() && end <= source_words.len()).then_some(())?;
+        for (value, source) in x_words[start..end].iter_mut().zip(&source_words[start..end]) {
+            *value += scale * source;
+        }
     }
     environment.set(loop_fact.slot, Value::Number(counter + iterations as f64));
     Some(())

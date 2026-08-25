@@ -18,9 +18,6 @@ fn prototype_for_value(value: &Value) -> Value {
         }
     }
     if let Value::BoundFunction(function) = value {
-        if matches!(function.target, Value::Builtin(Builtin::Atomics)) {
-            return Value::Builtin(Builtin::ObjectPrototype);
-        }
         if let Some((_, prototype)) = function
             .properties
             .borrow()
@@ -58,12 +55,8 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::DisposableStackPrototype
             | Builtin::AsyncDisposableStackPrototype,
         ) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
-        }
-        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
-        }
+        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => Value::Builtin(Builtin::TypedArray),
+        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => Value::Builtin(Builtin::TypedArray),
         Value::Builtin(
             Builtin::RangeErrorPrototype
             | Builtin::TypeErrorPrototype
@@ -76,7 +69,9 @@ fn prototype_for_value(value: &Value) -> Value {
             Builtin::AsyncFunctionPrototype
             | Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype,
-        ) => Value::Builtin(Builtin::FunctionPrototype),
+        ) => {
+            Value::Builtin(Builtin::FunctionPrototype)
+        }
         Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
@@ -114,12 +109,11 @@ fn function_prototype(function: &crate::value::FunctionValue) -> Value {
             .unwrap_or_else(|| crate::vm::current_context_or_default().realm());
         return crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype);
     }
-    internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
+    internal_prototype(&function.properties.borrow()[..], Builtin::FunctionPrototype)
 }
 
 fn intrinsic_bound_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
     let prototype = match &bound.target {
-        Value::Builtin(Builtin::Atomics) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(Builtin::GeneratorFunction) => {
             Value::Builtin(Builtin::GeneratorFunctionPrototype)
         }
@@ -136,13 +130,6 @@ fn intrinsic_bound_prototype(bound: &crate::value::BoundFunctionValue) -> Value 
 
 fn prototype_for_value_tail(value: &Value) -> Value {
     match value {
-        Value::Number(_) => Value::Builtin(Builtin::NumberPrototype),
-        Value::Boolean(_) => Value::Builtin(Builtin::BooleanPrototype),
-        Value::String(value) if crate::conversion::is_symbol_string(value) => {
-            Value::Builtin(Builtin::SymbolPrototype)
-        }
-        Value::String(_) | Value::StringUnits(_) => Value::Builtin(Builtin::StringPrototype),
-        Value::BigInt(_) => Value::Builtin(Builtin::BigIntPrototype),
         Value::Function(function) => function_prototype(function),
         Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
         Value::Builtin(
@@ -159,10 +146,9 @@ fn prototype_for_value_tail(value: &Value) -> Value {
             intrinsic_bound_prototype(bound)
         }
         Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
-        Value::Builtin(
-            Builtin::Atomics | Builtin::Intl | Builtin::Math | Builtin::Reflect | Builtin::Json,
-        ) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(Builtin::PromisePrototype) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Builtin(Builtin::Intl | Builtin::Math | Builtin::Reflect | Builtin::Json) => {
+            Value::Builtin(Builtin::ObjectPrototype)
+        }
         Value::Builtin(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
         Value::Generator(generator) => generator_prototype(generator),
@@ -171,7 +157,10 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::Array(values) => values
             .prototype()
             .unwrap_or(Value::Builtin(Builtin::ArrayPrototype)),
-        Value::Object(properties) => internal_prototype(properties, Builtin::ObjectPrototype),
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            Value::Builtin(Builtin::SymbolPrototype)
+        }
+        Value::Object(properties) => internal_prototype(properties.as_ref(), Builtin::ObjectPrototype),
         _ => typed_array_prototype_for_value(value),
     }
 }
@@ -238,11 +227,11 @@ fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
     )
 }
 
-fn internal_prototype<K: AsRef<str>>(properties: &[(K, Value)], fallback: Builtin) -> Value {
+fn internal_prototype<P: crate::value::PropertyEntries + ?Sized>(properties: &P, fallback: Builtin) -> Value {
     properties
-        .iter()
+        .entries()
         .rev()
-        .find_map(|(name, value)| (name.as_ref() == "\0prototype").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
         .unwrap_or(Value::Builtin(fallback))
 }
 
@@ -321,13 +310,13 @@ pub(crate) fn define_legacy_accessor(
     field: &str,
 ) -> Result<Value, crate::execute::VmError> {
     let target = require_object_receiver(receiver)?;
+    let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
     let accessor = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&accessor) {
         return Err(crate::value::error::throw_type_error(
             "Accessor must be callable",
         ));
     }
-    let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
     let descriptor = vec![
         (field.to_string(), accessor),
         ("enumerable".to_string(), Value::Boolean(true)),
@@ -345,21 +334,7 @@ pub(crate) fn lookup_legacy_accessor(
 ) -> Result<Value, crate::execute::VmError> {
     let target = require_object_receiver(receiver)?;
     let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
-    let mut current = target.clone();
-    loop {
-        let desc = crate::builtins::object::descriptor(
-            Some(&current),
-            Some(&Value::String(key.clone())),
-        )?;
-        if let Value::Object(_) = desc {
-            return crate::execute::get_property_result(&desc, field);
-        }
-        let next = crate::builtins::object::get_prototype_of(Some(&current))?;
-        if matches!(next, Value::Null) {
-            return Ok(Value::Undefined);
-        }
-        current = next;
-    }
+    Ok(crate::property_define::accessor(target, &key, field).unwrap_or(Value::Undefined))
 }
 
 fn require_object_receiver(receiver: Option<&Value>) -> Result<&Value, crate::execute::VmError> {

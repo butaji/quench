@@ -22,7 +22,7 @@ use crate::host::HostState;
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
     if matches!(spec.as_str(), "async_hooks" | "node:async_hooks") {
-        let value = crate::modules::compat_extra::async_hooks(state)?;
+        let value = crate::modules::async_hooks::build();
         state.borrow_mut().module_cache.insert(spec, value.clone());
         return Ok(value);
     }
@@ -244,10 +244,24 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let util = require(state, &[Value::String("util".into())]).ok()?;
             Some(quench_runtime::execute::get_property(&util, "types"))
         }
-        "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "sleep".to_string(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
-        )])),
+        "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![
+            (
+                "pendingDeprecate".to_string(),
+                crate::host::capability(crate::registry::SPEC_UTIL_DEPRECATE),
+            ),
+            (
+                "emitExperimentalWarning".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_EMIT_WARNING),
+            ),
+            (
+                "sleep".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
+            ),
+            (
+                "assertCrypto".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSERT_CRYPTO),
+            ),
+        ])),
         "internal/test/binding" => Some(crate::host::namespace_object_from_pairs(vec![(
             "internalBinding".to_string(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_BINDING),
@@ -345,13 +359,20 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "path" => Some(crate::modules::path::build()),
         "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),
-        "os" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::os::build(),
-        )),
+        "os" => {
+            let object = crate::host::namespace_object_from_pairs(crate::modules::os::build());
+            let descriptor = host_api::object(vec![
+                ("value".into(), quench_runtime::execute::get_property(&object, "EOL")),
+                ("writable".into(), Value::Boolean(false)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]);
+            Some(quench_runtime::execute::define_property(object, "EOL", descriptor).unwrap_or(Value::Undefined))
+        }
         "events" => Some(crate::modules::events::build()),
-        "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
-        "domain" => crate::modules::compat_extra::domain(state).ok(),
-        "async_hooks" => crate::modules::compat_extra::async_hooks(state).ok(),
+        "diagnostics_channel" => Some(crate::modules::diagnostics_channel::build()),
+        "domain" => Some(crate::modules::domain::build(state)),
+        "async_hooks" => Some(crate::modules::async_hooks::build()),
         "string_decoder" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::string_decoder::build(),
         )),
@@ -385,11 +406,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             )),
         )])),
         "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "cluster" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "inspector" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "cluster" => Some(crate::modules::cluster::build(state)),
+        "inspector" => Some(crate::modules::inspector::build()),
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "repl" => Some(crate::modules::repl::build()),
+        "wasi" => Some(crate::modules::wasi::build()),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
             "isSea".to_string(),
@@ -460,6 +481,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             (
                 "exec".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_EXEC),
+            ),
+            (
+                "execFile".to_string(),
+                crate::host::capability(crate::registry::SPEC_CP_EXECFILE),
             ),
             (
                 "spawn".to_string(),

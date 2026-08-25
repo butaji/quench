@@ -459,7 +459,7 @@ fn fields(value: &Value) -> Result<Vec<f64>, VmError> {
                         && matches!(value, Value::Number(_))
                 })
                 .map(|(_, value)| match value {
-                    Value::Number(value) => Ok(*value),
+                    Value::Number(value) => Ok(value),
                     _ => unreachable!(),
                 })
                 .unwrap_or_else(|| {

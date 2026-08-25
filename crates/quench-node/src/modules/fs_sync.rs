@@ -55,14 +55,11 @@ fn view_bytes(
             "The \"data\" argument contains an invalid view".to_string(),
         )
     })?;
-    bytes
-        .get(offset..end)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| {
-            crate::modules::buffer_enc::invalid_arg_type(
-                "The \"data\" argument contains an invalid view".to_string(),
-            )
-        })
+    bytes.get(offset..end).map(ToOwned::to_owned).ok_or_else(|| {
+        crate::modules::buffer_enc::invalid_arg_type(
+            "The \"data\" argument contains an invalid view".to_string(),
+        )
+    })
 }
 
 fn write_open(path: &str, flag: Option<&str>, syscall: &str) -> Result<std::fs::File, VmError> {
@@ -282,6 +279,7 @@ pub fn realpath_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
+    super::fs::parse_options(args.get(1))?;
     let canon = std::fs::canonicalize(Path::new(&path))
         .map_err(|e| super::fs_error::fs_error("realpath", Some(&path), &e))?;
     Ok(Value::String(canon.to_string_lossy().into_owned()))
@@ -419,6 +417,7 @@ pub fn mkdtemp_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let prefix = path_arg(args.first())?;
+    super::fs::parse_options(args.get(1))?;
     for attempt in 0..100u32 {
         let candidate = format!("{prefix}{:06x}", random_suffix(attempt));
         match std::fs::create_dir(Path::new(&candidate)) {

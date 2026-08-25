@@ -26,38 +26,18 @@ pub(crate) fn get_prototype_from_constructor(
     default: impl FnOnce(crate::ops::RealmId) -> Value,
 ) -> Value {
     let constructor = peel_construct_value(constructor);
-    let proto =
-        crate::execute::get_property_result(&constructor, "prototype").unwrap_or(Value::Undefined);
+    let proto = crate::execute::get_property_result(&constructor, "prototype")
+        .unwrap_or(Value::Undefined);
     if crate::value::is_object(&proto) {
         return proto;
     }
     default(constructor_realm(&constructor))
 }
 
-pub(crate) fn get_prototype_from_constructor_strict(
-    constructor: &Value,
-    default: impl FnOnce(crate::ops::RealmId) -> Value,
-) -> Result<Value, crate::execute::VmError> {
-    let constructor = peel_construct_value(constructor);
-    let proto = crate::execute::get_property_result(&constructor, "prototype")?;
-    if crate::value::is_object(&proto) {
-        return Ok(proto);
-    }
-    if let Value::Proxy(proxy) = &constructor {
-        if crate::proxy::is_revoked(proxy) {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot get the realm of a revoked proxy",
-            ));
-        }
-    }
-    Ok(default(constructor_realm(&constructor)))
-}
-
 fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
     fn value_realm(value: &Value) -> Option<crate::ops::RealmId> {
         match value {
             Value::Function(function) => Some(function_realm_id(function)),
-            Value::Proxy(proxy) => value_realm(&proxy.target),
             Value::BoundFunction(bound) => bound
                 .properties
                 .borrow()
@@ -81,7 +61,9 @@ fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
     value_realm(constructor).unwrap_or(crate::ops::RealmId::ROOT)
 }
 
-pub(crate) fn function_realm_id(function: &crate::value::FunctionValue) -> crate::ops::RealmId {
+pub(crate) fn function_realm_id(
+    function: &crate::value::FunctionValue,
+) -> crate::ops::RealmId {
     fn global_realm(value: &Value) -> Option<crate::ops::RealmId> {
         match value {
             Value::BindingCell(cell) => global_realm(&cell.borrow()),
@@ -106,10 +88,6 @@ pub(crate) fn function_realm_id(function: &crate::value::FunctionValue) -> crate
             })?
         })
         .or_else(|| global_realm(&function.captures.get(0)))
-        .or_else(|| {
-            crate::vm::resolve_global_owner(&function.captures.get(0))
-                .and_then(|global| crate::vm::realm_id_for_global_value(&global))
-        })
         .unwrap_or(crate::ops::RealmId::ROOT)
 }
 
@@ -163,10 +141,7 @@ fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> 
         if let Value::HostCapability(capability) = &bound.receiver {
             if let Value::Builtin(builtin) = target {
                 if let Some(prototype) = crate::builtin_meta::instance_prototype(*builtin) {
-                    return Some(crate::vm::realm_intrinsic_for(
-                        capability.realm(),
-                        prototype,
-                    ));
+                    return Some(crate::vm::realm_intrinsic_for(capability.realm(), prototype));
                 }
             }
         }
@@ -214,23 +189,8 @@ fn construct_bound_in_realm(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     if let Value::HostCapability(capability) = &bound.receiver {
-        let realm = capability.realm();
-        return crate::vm::with_realm(realm, || {
-            construct_dynamic_or_builtin_in_realm(builtin, arguments, realm)
-        })
-        .unwrap_or_else(|| construct_dynamic_or_builtin_in_realm(builtin, arguments, realm));
+        return crate::vm::with_realm(capability.realm(), || construct_builtin(builtin, arguments))
+            .unwrap_or_else(|| Err(crate::vm::not_callable()));
     }
-    crate::vm::with_realm(bound.realm, || {
-        construct_dynamic_or_builtin_in_realm(builtin, arguments, bound.realm)
-    })
-    .unwrap_or_else(|| construct_dynamic_or_builtin_in_realm(builtin, arguments, bound.realm))
-}
-
-fn construct_dynamic_or_builtin_in_realm(
-    builtin: crate::ops::Builtin,
-    arguments: &[Value],
-    realm: crate::ops::RealmId,
-) -> Result<Value, crate::execute::VmError> {
-    crate::functions_dynamic::construct_builtin_in_realm(builtin, arguments, Some(realm))
-        .unwrap_or_else(|| construct_builtin(builtin, arguments))
+    construct_builtin(builtin, arguments)
 }

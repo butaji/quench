@@ -31,7 +31,7 @@ enum Needle {
 fn search(receiver: Option<&Value>, args: &[Value], mode: Search) -> HandlerResult {
     let view = this_view(receiver)?;
     let value = args.first().cloned().unwrap_or(Value::Undefined);
-    let haystack = view_bytes(&view).to_vec();
+    let haystack = view_bytes(&view);
     let needle = search_needle(&value, args)?;
     let end = search_end(args.get(2), haystack.len());
     let utf16 = args

@@ -9,6 +9,14 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnhandledRejectionMode {
+    Throw,
+    Strict,
+    Warn,
+    None,
+}
+
 pub struct ProcessState {
     pub argv: Vec<String>,
     pub exit_handlers: Vec<Value>,
@@ -16,6 +24,9 @@ pub struct ProcessState {
     /// `(handler, once)` — `once` handlers fire a single time.
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
     pub warning_handlers: Vec<(Value, bool)>,
+    pub unhandled_rejection_handlers: Vec<(Value, bool)>,
+    pub unhandled_rejection_mode: UnhandledRejectionMode,
+    pub other_handlers: Vec<(String, Value, bool)>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
     pub exit_handlers_ran: bool,
@@ -48,6 +59,9 @@ impl ProcessState {
             before_exit_handlers: Vec::new(),
             uncaught_exception_handlers: Vec::new(),
             warning_handlers: Vec::new(),
+            unhandled_rejection_handlers: Vec::new(),
+            unhandled_rejection_mode: UnhandledRejectionMode::Throw,
+            other_handlers: Vec::new(),
             warnings_emitted: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
@@ -163,6 +177,14 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
         ),
         (
+            "removeListener",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
+        ),
+        (
+            "removeAllListeners",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_ALL_LISTENERS),
+        ),
+        (
             "emitWarning",
             crate::host::capability(crate::registry::SPEC_PROCESS_EMIT_WARNING),
         ),
@@ -213,15 +235,24 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
 pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let rest = args.get(1..).unwrap_or(&[]).to_vec();
+    let resource = crate::modules::async_hooks::new_resource(
+        state,
+        &[Value::Undefined, Value::String("TickObject".into())],
+    )
+    .ok();
     let global = quench_runtime::vm::current_global_object();
-    if let Ok(init) =
-        quench_runtime::execute::get_property_result(&global, "\0quench:process_next_tick_init")
-    {
+    if let Ok(init) = quench_runtime::execute::get_property_result(
+        &global,
+        "\0quench:process_next_tick_init",
+    ) {
         if quench_runtime::is_callable(&init) {
             let _ = quench_runtime::vm::call_value(&init, &Value::Undefined, &[]);
         }
     }
-    state.borrow_mut().event_loop.queue_microtask(cb, rest);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask_with_resource(cb, rest, resource);
     Ok(Value::Undefined)
 }
 
@@ -276,8 +307,14 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
             "exit" | "beforeExit" => {
                 on(state, args)?;
             }
-            "uncaughtException" | "warning" => push_handler(state, handler, event.as_str(), true),
-            _ => {}
+            "uncaughtException" | "warning" | "unhandledRejection" => {
+                push_handler(state, handler, event.as_str(), true)
+            }
+            _ => state
+                .borrow_mut()
+                .process
+                .other_handlers
+                .push((event.clone(), handler.clone(), true)),
         }
     }
     Ok(Value::Undefined)
@@ -291,6 +328,9 @@ fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, on
             .uncaught_exception_handlers
             .push((handler.clone(), once)),
         "warning" => process.warning_handlers.push((handler.clone(), once)),
+        "unhandledRejection" => process
+            .unhandled_rejection_handlers
+            .push((handler.clone(), once)),
         _ => {}
     }
 }
@@ -347,9 +387,15 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
                 .process
                 .before_exit_handlers
                 .push(handler.clone()),
-            "uncaughtException" => push_handler(state, handler, "uncaughtException", false),
+            "uncaughtException" | "unhandledRejection" => {
+                push_handler(state, handler, event, false)
+            }
             "warning" => push_handler(state, handler, "warning", false),
-            _ => {}
+            _ => state
+                .borrow_mut()
+                .process
+                .other_handlers
+                .push((event.clone(), handler.clone(), false)),
         }
     }
     Ok(Value::Undefined)
@@ -366,7 +412,24 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
         let handlers = match event.as_str() {
             "warning" => &guard.process.warning_handlers,
             "uncaughtException" => &guard.process.uncaught_exception_handlers,
-            _ => return Ok(Value::Boolean(false)),
+            "unhandledRejection" => &guard.process.unhandled_rejection_handlers,
+            _ => {
+                let callbacks = guard
+                    .process
+                    .other_handlers
+                    .iter()
+                    .filter(|(name, _, _)| name == event)
+                    .map(|(_, handler, once)| (handler.clone(), *once))
+                    .collect::<Vec<_>>();
+                drop(guard);
+                for (handler, once) in callbacks {
+                    if once {
+                        remove_other_handler(state, event, &handler);
+                    }
+                    quench_runtime::execute::call(&handler, &Value::Undefined, &values)?;
+                }
+                return Ok(Value::Boolean(true));
+            }
         };
         (
             handlers
@@ -389,11 +452,70 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     Ok(Value::Boolean(true))
 }
 
+pub fn remove_listener(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (Some(Value::String(event)), Some(target)) = (args.first(), args.get(1)) else {
+        return Ok(Value::Undefined);
+    };
+    let mut guard = state.borrow_mut();
+    let handlers = match event.as_str() {
+        "warning" => &mut guard.process.warning_handlers,
+        "uncaughtException" => &mut guard.process.uncaught_exception_handlers,
+        "unhandledRejection" => &mut guard.process.unhandled_rejection_handlers,
+        _ => return Ok(Value::Undefined),
+    };
+    if let Some(index) = handlers.iter().rposition(|(handler, _)| handler == target) {
+        handlers.remove(index);
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn remove_all_listeners(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let event = match args.first() {
+        Some(Value::String(event)) => Some(event.as_str()),
+        Some(Value::Undefined) | None => None,
+        _ => return Ok(Value::Undefined),
+    };
+    let mut guard = state.borrow_mut();
+    let process = &mut guard.process;
+    if event.is_none() || event == Some("warning") {
+        process.warning_handlers.clear();
+    }
+    if event.is_none() || event == Some("uncaughtException") {
+        process.uncaught_exception_handlers.clear();
+    }
+    if event.is_none() || event == Some("unhandledRejection") {
+        process.unhandled_rejection_handlers.clear();
+    }
+    process.other_handlers.retain(|(name, _, _)| {
+        event.is_some_and(|target| target != name)
+    });
+    Ok(Value::Undefined)
+}
+
+fn remove_other_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {
+    let mut guard = state.borrow_mut();
+    if let Some(index) = guard
+        .process
+        .other_handlers
+        .iter()
+        .position(|(name, handler, once)| name == event && *once && handler == target)
+    {
+        guard.process.other_handlers.remove(index);
+    }
+}
+
 fn remove_handler(state: &Rc<RefCell<HostState>>, event: &str, target: &Value) {
     let mut guard = state.borrow_mut();
     let handlers = match event {
         "warning" => &mut guard.process.warning_handlers,
         "uncaughtException" => &mut guard.process.uncaught_exception_handlers,
+        "unhandledRejection" => &mut guard.process.unhandled_rejection_handlers,
         _ => return,
     };
     if let Some(index) = handlers
@@ -432,6 +554,41 @@ pub(crate) fn emit_warning(
     if let Some(code) = code {
         props.push(("code".to_string(), Value::String(code.to_string())));
     }
+    let global = quench_runtime::vm::current_global_object();
+    let stack = match quench_runtime::execute::get_property(&global, "\0quench_vm_filename") {
+        Value::String(filename) => format!("{name}: {message}\n    at {filename}"),
+        _ => format!("{name}: {message}"),
+    };
+    props.push(("stack".to_string(), Value::String(stack)));
     let warning = host_api::object(props);
     let _ = emit(state, &[Value::String("warning".into()), warning]);
+}
+
+/// Emit the pair of warnings Node exposes for an unhandled rejection in
+/// `warn` mode: the reason and the note describing its origin.
+pub(crate) fn emit_unhandled_rejection_warnings(
+    state: &Rc<RefCell<HostState>>,
+    reason: &Value,
+) {
+    let rendered = match quench_runtime::execute::get_property(reason, "message") {
+        Value::String(message) => message,
+        _ => crate::modules::util::inspect(reason),
+    };
+    let stack = match quench_runtime::execute::get_property(reason, "stack") {
+        Value::String(stack) => stack,
+        _ => String::new(),
+    };
+    let first = format!("UnhandledPromiseRejectionWarning: {rendered}");
+    let note = "Unhandled promise rejection. This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch().";
+    for message in [first, note.to_string()] {
+        let mut props = vec![
+            ("name".to_string(), Value::String("UnhandledPromiseRejectionWarning".into())),
+            ("message".to_string(), Value::String(message.clone())),
+        ];
+        if !stack.is_empty() {
+            props.push(("stack".to_string(), Value::String(stack.clone())));
+        }
+        let warning = host_api::object(props);
+        let _ = emit(state, &[Value::String("warning".into()), warning]);
+    }
 }

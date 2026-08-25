@@ -80,7 +80,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         result.runInContext ||= () => undefined;
         result.runInNewContext ||= () => undefined;
         result.runInThisContext ||= () => undefined;
-        result.createContext ||= () => ({});
+        if (typeof result.createContext !== "function") {
+          result.createContext = (sandbox = {}) => sandbox;
+        }
         result.isContext ||= () => false;
         result.compileFunction ||= () => () => undefined;
         for (const constructor of "Script Context Module SourceTextModule SyntheticModule".split(

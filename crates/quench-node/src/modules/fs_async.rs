@@ -40,8 +40,7 @@ fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Val
 fn options_arg<'a>(name: &str, leading: &'a [Value]) -> Option<&'a Value> {
     match name {
         "writeFile" | "appendFile" => leading.get(2),
-        "rename" | "copyFile" | "chmod" | "access" | "truncate" | "unlink" | "rmdir" | "rm"
-        | "mkdtemp" => None,
+        "rename" | "copyFile" | "chmod" | "access" | "truncate" | "unlink" | "rmdir" | "rm" => None,
         _ => leading.get(1),
     }
 }

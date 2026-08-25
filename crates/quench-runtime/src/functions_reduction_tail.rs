@@ -137,31 +137,6 @@ pub(crate) fn write(
                 "\0ordinary_function".to_string(),
                 crate::value::Value::Boolean(true),
             ));
-            let mut prototype = crate::value::Value::Object(std::rc::Rc::new(
-                crate::value::ObjectData::new(vec![(
-                    "\0prototype".to_string().into(),
-                    crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype),
-                )]),
-            ));
-            if let crate::value::Value::Object(object) = &mut prototype {
-                std::rc::Rc::get_mut(object)
-                    .expect("ordinary function prototype is uniquely owned")
-                    .properties
-                    .push(("constructor".to_string().into(), value.clone()));
-            }
-            let mut properties = function.properties.borrow_mut();
-            properties.push(("prototype".to_string(), prototype.clone()));
-            properties.push((
-                crate::builtins::descriptor_key("prototype"),
-                crate::value::Value::Object(std::rc::Rc::new(
-                    crate::value::ObjectData::new(vec![
-                        ("value".to_string().into(), prototype),
-                        ("writable".to_string().into(), crate::value::Value::Boolean(true)),
-                        ("enumerable".to_string().into(), crate::value::Value::Boolean(false)),
-                        ("configurable".to_string().into(), crate::value::Value::Boolean(false)),
-                    ]),
-                )),
-            ));
         }
     }
     crate::execute::write_value(registers, dst, value);

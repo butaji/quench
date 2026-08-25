@@ -71,6 +71,11 @@ pub fn buffer_constructor() -> Value {
     for (key, value) in static_pairs() {
         quench_runtime::execute::set_property(constructor.clone(), &key, value);
     }
+    let _ = quench_runtime::execute::set_callable_property(
+        &constructor,
+        "Symbol.hasInstance",
+        crate::host::capability(crate::registry::SPEC_BUFFER_ISBUFFER),
+    );
     constructor
 }
 
@@ -202,9 +207,7 @@ fn alloc_impl(args: &[Value], zero_fill: bool, pooled: bool) -> Result<Value, Vm
             Some(Value::Number(value)) => *value as usize,
             _ => 8,
         };
-        Ok(crate::modules::buffer_proto::make_pooled_buffer_aligned(
-            &bytes, alignment,
-        ))
+        Ok(crate::modules::buffer_proto::make_pooled_buffer_aligned(&bytes, alignment))
     } else {
         Ok(crate::modules::buffer_proto::make_buffer(&bytes))
     }

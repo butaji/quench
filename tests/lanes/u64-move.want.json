@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "oracle": { "max_ratio": 2 },
   "metrics": {
     "move_decode_per_move": {
       "numerator": "lanes.l0.value_decode_by_site.move",

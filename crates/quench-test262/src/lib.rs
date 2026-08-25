@@ -32,17 +32,6 @@ pub trait Test262Host: Send {
         strict: bool,
     ) -> Result<(), String>;
 
-    /// Execute a harnessed script with host scheduling flags from metadata.
-    fn run_harnessed_script_with_flags(
-        &mut self,
-        harness: &[&str],
-        source: &str,
-        strict: bool,
-        _can_block: bool,
-    ) -> Result<(), String> {
-        self.run_harnessed_script(harness, source, strict)
-    }
-
     /// Execute harness scripts, then one module in the same realm.
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String>;
 
@@ -71,8 +60,6 @@ pub struct TestMetadata {
     pub is_raw: bool,
     /// Whether the runner must prepend a strict directive.
     pub only_strict: bool,
-    /// Whether the host agent may suspend while executing this test.
-    pub can_block: bool,
     /// Harness files requested by the test, in declaration order.
     pub includes: Vec<String>,
     /// Expected early/runtime error phase, when the test is negative.
@@ -86,10 +73,8 @@ impl TestMetadata {
     pub fn parse(source: &str) -> Result<Self, String> {
         let frontmatter = extract_frontmatter(source)?;
         let mut metadata = Self::default();
-        metadata.can_block = true;
         let mut in_negative = false;
-        let normalized_frontmatter = frontmatter.replace("\r\n", "\n").replace('\r', "\n");
-        for line in normalized_frontmatter.lines() {
+        for line in frontmatter.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("flags:") {
                 let flags = list_after_colon(trimmed);
@@ -97,7 +82,6 @@ impl TestMetadata {
                 metadata.is_async = flags.iter().any(|flag| flag == "async");
                 metadata.is_raw = flags.iter().any(|flag| flag == "raw");
                 metadata.only_strict = flags.iter().any(|flag| flag == "onlyStrict");
-                metadata.can_block = !flags.iter().any(|flag| flag == "CanBlockIsFalse");
                 in_negative = false;
             } else if trimmed.starts_with("includes:") {
                 metadata.includes = list_after_colon(trimmed);
@@ -123,14 +107,6 @@ fn extract_frontmatter(source: &str) -> Result<&str, String> {
     // narrow preamble, never arbitrary JavaScript preceding the marker.
     let mut body = skip_hashbang_preamble(source);
     loop {
-        if let Some(rest) = body.strip_prefix("\r\n") {
-            body = rest;
-            continue;
-        }
-        if let Some(rest) = body.strip_prefix('\r') {
-            body = rest;
-            continue;
-        }
         if let Some(rest) = body.strip_prefix('\n') {
             body = rest;
             continue;
@@ -138,8 +114,7 @@ fn extract_frontmatter(source: &str) -> Result<&str, String> {
         let Some(rest) = body.strip_prefix("//") else {
             break;
         };
-        let line_end = rest.find('\n').or_else(|| rest.find('\r'));
-        let Some(line_end) = line_end else {
+        let Some(line_end) = rest.find('\n') else {
             return Ok("");
         };
         body = &rest[line_end + 1..];
@@ -581,11 +556,10 @@ impl<H: Test262Host> Test262Runner<H> {
             }
             return runner_support::outcome(self.host.run_harnessed_module(harness, source));
         }
-        runner_support::outcome(self.host.run_harnessed_script_with_flags(
+        runner_support::outcome(self.host.run_harnessed_script(
             harness,
             source,
             metadata.only_strict,
-            metadata.can_block,
         ))
     }
 }

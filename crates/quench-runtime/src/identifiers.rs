@@ -10,11 +10,7 @@ pub(crate) fn reduce(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    // Direct eval can add a var binding to the current activation, including
-    // from a parameter initializer.  Keep unresolved names on the dynamic
-    // resolution path for that activation instead of baking in the realm
-    // global property before eval runs.
-    if !facts.has_dynamic_scope() && !facts.function_has_direct_eval {
+    if !facts.has_dynamic_scope() {
         if let Some(register) = reduce_global(identifier, ops, facts, next_register, locals) {
             return Some(register);
         }
@@ -45,6 +41,13 @@ fn reduce_local(
     let slot = *locals.get(identifier.name.as_str())?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
+    if proven_initialized_local(identifier.name.as_str(), slot, facts, locals) {
+        ops.push(Op::LoadLocal {
+            dst: register,
+            slot,
+        });
+        return Some(register);
+    }
     let name = interned_name(facts, identifier.name.as_str());
     ops.push(Op::LoadBinding {
         dst: register,
@@ -57,6 +60,20 @@ fn reduce_local(
             || (facts.in_function && slot < facts.eval_var_scope_start),
     });
     Some(register)
+}
+
+/// Parameters, function bindings, catch bindings, and `var` bindings are
+/// initialized before their body executes. Lexical declarations retain their
+/// predeclaration marker and therefore require the TDZ-aware load. Dynamic
+/// scope always remains on the complete binding path.
+pub(crate) fn proven_initialized_local(
+    name: &str,
+    slot: u16,
+    facts: &ProgramDb,
+    locals: &HashMap<String, u16>,
+) -> bool {
+    !facts.binding_is_dynamic(slot)
+        && !locals.contains_key(&format!("\0lexical-predeclared:{name}"))
 }
 
 fn resolve_name(
@@ -95,6 +112,9 @@ fn interned_name(facts: &mut ProgramDb, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::facts::ProgramDb;
+    use std::collections::HashMap;
+
+    use super::proven_initialized_local;
 
     #[test]
     fn interner_reuses_ids_and_preserves_content() {
@@ -129,6 +149,34 @@ mod tests {
         assert_eq!(right.identifier_names.intern("same"), 0);
         assert_eq!(left.identifier_names.resolve(0), Some("same"));
         assert_eq!(right.identifier_names.resolve(0), Some("same"));
+    }
+
+    #[test]
+    fn only_preinitialized_static_bindings_skip_tdz_loads() {
+        let locals = HashMap::from([("value".to_string(), 3)]);
+        assert!(proven_initialized_local(
+            "value",
+            3,
+            &ProgramDb::default(),
+            &locals
+        ));
+
+        let lexical = HashMap::from([
+            ("value".to_string(), 3),
+            ("\0lexical-predeclared:value".to_string(), 3),
+        ]);
+        assert!(!proven_initialized_local(
+            "value",
+            3,
+            &ProgramDb::default(),
+            &lexical
+        ));
+
+        let mut dynamic = ProgramDb::default();
+        dynamic.function_has_direct_eval = true;
+        dynamic.in_function = true;
+        dynamic.eval_var_scope_start = 4;
+        assert!(!proven_initialized_local("value", 3, &dynamic, &locals));
     }
 }
 

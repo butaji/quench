@@ -7,28 +7,6 @@ pub(crate) fn set_with_receiver(
     if !crate::value::is_object(receiver) {
         return Ok(false);
     }
-    if let crate::value::Value::BoundFunction(bound) = target {
-        if matches!(bound.target, crate::value::Value::Builtin(_))
-            && (matches!(key, "length" | "name")
-                || crate::builtins::descriptor_flag(target, key, "writable") == Some(false))
-        {
-            return Ok(false);
-        }
-    }
-    if let crate::value::Value::Builtin(builtin) = target {
-        if crate::builtins::object::is_intrinsic_prototype(*builtin)
-            && (matches!(key, "length" | "name")
-                || crate::builtins::descriptor_flag(target, key, "writable") == Some(false))
-        {
-            return Ok(false);
-        }
-    }
-    if matches!(target, crate::value::Value::Proxy(_)) {
-        return Ok(matches!(
-            crate::proxy::proxy_set(target, key, value, Some(receiver))?,
-            crate::value::Value::Boolean(true)
-        ));
-    }
     if crate::module_bindings::is_namespace(target)
         || crate::module_bindings::is_namespace(receiver)
     {
@@ -58,15 +36,6 @@ pub(crate) fn set_with_receiver(
     if key == "length" && crate::regexp::has_regexp_internal_slot(&resolved_target) {
         return set_receiver_data(receiver, key, value);
     }
-    let parent = crate::builtins::object::get_prototype_of(Some(&resolved_target))?;
-    if matches!(parent, crate::value::Value::Proxy(_)) {
-        return Ok(crate::execute::is_truthy(&crate::proxy::proxy_set(
-            &parent,
-            key,
-            value,
-            Some(receiver),
-        )?));
-    }
     let descriptor = inherited_descriptor(target, key)?;
     match descriptor {
         Some(descriptor) if descriptor_field_exists(&descriptor, "set") => {
@@ -83,6 +52,23 @@ fn set_proven_own_data(
     value: &crate::value::Value,
     receiver: &crate::value::Value,
 ) -> bool {
+    if let (crate::value::Value::Array(target), crate::value::Value::Array(receiver_resolved)) = (
+        target,
+        &crate::locals::resolved_replacement(receiver.clone()),
+    ) {
+        let index = crate::arrays::array_index(key).map(|index| index as usize);
+        if std::rc::Rc::ptr_eq(target, receiver_resolved)
+            && index.is_some_and(|index| target.has_plain_dense_index(index))
+        {
+            let updated = crate::builtins::set_property(
+                crate::value::Value::Array(std::rc::Rc::clone(receiver_resolved)),
+                key,
+                value.clone(),
+            );
+            crate::locals::replace_value(receiver, &updated);
+            return true;
+        }
+    }
     let (crate::value::Value::Object(target), crate::value::Value::Object(receiver)) =
         (target, receiver)
     else {
@@ -91,23 +77,11 @@ fn set_proven_own_data(
     if !std::rc::Rc::ptr_eq(target, receiver) || !plain_writable_own_data(target, key) {
         return false;
     }
-    if let Some(crate::value::Value::BindingCell(cell)) = target
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == key).then_some(value))
-    {
-        cell.store(value.clone());
+    if let Some(slot) = target.hot_properties().position_rev(key) {
+        target.hot_properties().store_slot(slot, value.clone());
         return true;
     }
-    crate::execution_trace::event(crate::execution_trace::Event::NamedSetPromoteCell);
-    let value =
-        crate::value::Value::BindingCell(crate::value::BindingCell::new(value.clone()));
-    let updated = crate::builtins::object_alias::set(std::rc::Rc::clone(target), key, value);
-    crate::locals::replace_value(
-        &crate::value::Value::Object(std::rc::Rc::clone(target)),
-        &updated,
-    );
-    true
+    false
 }
 
 fn plain_writable_own_data(properties: &crate::value::ObjectData, key: &str) -> bool {
@@ -115,21 +89,21 @@ fn plain_writable_own_data(properties: &crate::value::ObjectData, key: &str) -> 
     let descriptor = crate::builtins::descriptor_key(key);
     let mut own = None;
     let mut metadata = None;
-    for (name, value) in properties.iter().rev() {
+    for (slot, name) in properties.hot_properties().names().enumerate().rev() {
         if name == &deleted {
             return false;
         }
         if own.is_none() && name == key {
-            own = Some(value);
+            own = properties.hot_properties().slot_value(slot);
         }
         if metadata.is_none() && name == &descriptor {
-            metadata = Some(value);
+            metadata = properties.hot_properties().slot_value(slot);
         }
     }
     if own.is_none() {
         return false;
     }
-    metadata.is_none_or(writable_data_descriptor)
+    metadata.is_none_or(|value| writable_data_descriptor(&value))
 }
 
 fn writable_data_descriptor(value: &crate::value::Value) -> bool {
@@ -262,7 +236,7 @@ fn set_receiver_data(
         if descriptor_field_exists(&current, "set") || !descriptor_writable(&current)? {
             return Ok(false);
         }
-    } else if rejects_new_property(&receiver_resolved, key) {
+    } else if rejects_new_property(receiver, key) {
         return Ok(false);
     }
     let descriptor = receiver_data_descriptor(
@@ -283,8 +257,7 @@ fn set_receiver_data(
             // internal defineProperty rejection.
             return Ok(false);
         }
-        Err(error) => return Err(error),
-        Ok(updated) => updated,
+        result => result?,
     };
     crate::locals::replace_value(receiver, &updated);
     Ok(true)
@@ -301,16 +274,11 @@ fn non_configurable_redefinition(error: &crate::execute::VmError) -> bool {
 }
 
 fn receiver_data_descriptor(
-    receiver: &crate::value::Value,
+    _receiver: &crate::value::Value,
     value: &crate::value::Value,
     create: bool,
 ) -> Vec<(String, crate::value::Value)> {
-    let value = if create && matches!(receiver, crate::value::Value::Object(_)) {
-        crate::value::Value::BindingCell(crate::value::BindingCell::new(value.clone()))
-    } else {
-        value.clone()
-    };
-    let mut descriptor = vec![("value".to_string(), value)];
+    let mut descriptor = vec![("value".to_string(), value.clone())];
     if create {
         descriptor.extend([
             ("writable".to_string(), crate::value::Value::Boolean(true)),

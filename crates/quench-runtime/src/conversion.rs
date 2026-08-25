@@ -89,18 +89,6 @@ fn normalize_exponent(value: String) -> String {
 }
 
 pub(crate) fn to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
-    if matches!(value, Value::Builtin(crate::ops::Builtin::NumberPrototype)) {
-        return Ok(Value::Number(0.0));
-    }
-    if matches!(value, Value::Builtin(crate::ops::Builtin::StringPrototype)) {
-        return Ok(Value::String(String::new()));
-    }
-    if matches!(value, Value::Builtin(crate::ops::Builtin::Math)) {
-        return Ok(Value::String("[object Math]".to_string()));
-    }
-    if matches!(value, Value::Builtin(_)) && !is_symbol(value) {
-        return Ok(crate::builtins::function_prototype_to_string(Some(value)));
-    }
     if !crate::value::is_object(value) || is_symbol(value) {
         return Ok(value.clone());
     }
@@ -130,13 +118,6 @@ pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
     if let Some(value) = crate::strings::materialize(&primitive) {
         return Ok(value);
     }
-    match &primitive {
-        Value::Undefined => return Ok("undefined".to_string()),
-        Value::Null => return Ok("null".to_string()),
-        Value::Boolean(value) => return Ok(value.to_string()),
-        Value::Number(value) => return Ok(number_to_string(*value)),
-        _ => {}
-    }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
 
@@ -144,10 +125,9 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
     let primitive = to_primitive(value, "string")?;
     if is_symbol(&primitive) {
         let description = match &primitive {
-            Value::Builtin(builtin) => {
-                let name = crate::intl::tolocale::symbol::name(*builtin).unwrap_or("");
-                return Ok(format!("Symbol({name})"));
-            }
+            Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin)
+                .map(|name| name.strip_prefix("Symbol.").unwrap_or(name).to_string())
+                .unwrap_or_default(),
             Value::String(value) => value
                 .strip_prefix("Symbol.")
                 .and_then(|value| value.split('\0').next())
@@ -166,13 +146,6 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
     }
     if let Some(value) = crate::strings::materialize(&primitive) {
         return Ok(value);
-    }
-    match &primitive {
-        Value::Undefined => return Ok("undefined".to_string()),
-        Value::Null => return Ok("null".to_string()),
-        Value::Boolean(value) => return Ok(value.to_string()),
-        Value::Number(value) => return Ok(number_to_string(*value)),
-        _ => {}
     }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
@@ -235,7 +208,10 @@ pub(crate) fn is_nullish(value: &Value) -> bool {
 pub(crate) fn is_symbol(value: &Value) -> bool {
     match value {
         Value::String(value) => is_symbol_string(value),
-        Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin).is_some(),
+        Value::Builtin(builtin) => {
+            crate::builtin_meta::constructor_name(*builtin) == Some("Symbol")
+                || crate::intl::tolocale::symbol::name(*builtin).is_some()
+        }
         _ => false,
     }
 }
@@ -376,30 +352,21 @@ pub fn is_callable(value: &Value) -> bool {
     }
     match value {
         Value::Builtin(
-            crate::ops::Builtin::Math | crate::ops::Builtin::Json | crate::ops::Builtin::Reflect,
+            crate::ops::Builtin::Math
+            | crate::ops::Builtin::Json
+            | crate::ops::Builtin::Reflect,
         ) => false,
-        Value::Builtin(crate::ops::Builtin::Atomics) => false,
         Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => false,
         Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
             false
         }
-        Value::Builtin(_) | Value::Function(_) => true,
-        Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                Value::Builtin(builtin)
-                    if crate::builtins::object::is_intrinsic_prototype(builtin)
-            ) =>
-        {
-            false
-        }
+        Value::Builtin(_) | Value::Function(_) | Value::HostCapability(_) => true,
         Value::BoundFunction(bound)
             if crate::vm::is_intrinsic_bound(&bound)
                 && matches!(
                     bound.target,
                     Value::Builtin(
-                        crate::ops::Builtin::Atomics
-                            | crate::ops::Builtin::AsyncFunctionPrototype
+                        crate::ops::Builtin::AsyncFunctionPrototype
                             | crate::ops::Builtin::GeneratorFunctionPrototype
                             | crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
                     )

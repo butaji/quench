@@ -18,6 +18,7 @@ pub enum NodeOutcome {
 pub struct NodeFixture {
     pub path: PathBuf,
     pub source: String,
+    pub argv: Vec<String>,
 }
 
 impl NodeFixture {
@@ -25,11 +26,19 @@ impl NodeFixture {
         let source =
             std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         let path = path.canonicalize().unwrap_or(path);
-        Ok(Self { path, source })
+        Ok(Self {
+            path,
+            source,
+            argv: Vec::new(),
+        })
     }
 
     pub fn from_source(path: PathBuf, source: String) -> Self {
-        Self { path, source }
+        Self {
+            path,
+            source,
+            argv: Vec::new(),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -78,13 +87,22 @@ impl NodeRunner {
     pub fn run(&mut self, fixture: &NodeFixture) -> NodeOutcome {
         // Fresh host per fixture with `node <file>` argv semantics.
         let script = fixture.path.to_string_lossy().into_owned();
-        let (host, context) =
-            quench_node::host::install_script(RealmId::ROOT, self.sink.clone(), &script);
+        let (host, context) = quench_node::host::install_script_with_args(
+            RealmId::ROOT,
+            self.sink.clone(),
+            &script,
+            &fixture.argv,
+        );
         self.host = host;
         self.context = context;
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
+        self.host
+            .state()
+            .borrow_mut()
+            .process
+            .unhandled_rejection_mode = rejection_mode(&fixture.source);
         let is_module = fixture
             .path
             .extension()
@@ -102,6 +120,9 @@ impl NodeRunner {
         } else {
             source
         };
+        let source = format!(
+            "if (typeof globalThis.DOMException !== 'function') {{ Object.defineProperty(globalThis, 'DOMException', {{ configurable: true, enumerable: false, writable: true, value: class DOMException extends Error {{ constructor(message = '', name = 'Error') {{ super(message); this.name = name; this.code = {{ DataCloneError: 25, AbortError: 20 }}[name] || 0; }} }} }}); }}\n{source}"
+        );
         let program = match reduce_fixture(&source, is_module) {
             Ok(program) => program,
             Err(error) => {
@@ -196,6 +217,23 @@ fn strip_v8_native_probes(source: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn rejection_mode(source: &str) -> quench_node::modules::process::UnhandledRejectionMode {
+    let mode = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("// Flags:"))
+        .and_then(|flags| {
+            flags
+                .split_whitespace()
+                .find_map(|flag| flag.strip_prefix("--unhandled-rejections="))
+        });
+    match mode {
+        Some("none") => quench_node::modules::process::UnhandledRejectionMode::None,
+        Some("warn") => quench_node::modules::process::UnhandledRejectionMode::Warn,
+        Some("strict") => quench_node::modules::process::UnhandledRejectionMode::Strict,
+        _ => quench_node::modules::process::UnhandledRejectionMode::Throw,
+    }
 }
 
 fn reduce_fixture(

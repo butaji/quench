@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "oracle": { "max_ratio": 2 },
+  "metrics": {
+    "pair_walk_hit_per_iteration": {
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "pair_word_walk", "field": "hits" } },
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "min": 0.99
+    },
+    "binding_cell_per_hit": {
+      "numerator": "lanes.l0.property_payload.binding_cell",
+      "denominator": "lanes.l0.property_hit",
+      "min_traffic": 250000,
+      "max": 0.01
+    },
+    "getn_decode_per_hit": {
+      "numerator": "lanes.l0.value_decode_by_site.getn",
+      "denominator": "lanes.l0.property_hit",
+      "min_traffic": 250000,
+      "max": 0.02
+    }
+  }
+}

@@ -91,7 +91,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
         // `const { atob }` bindings must not collide with a script-scope var.
         // Free-identifier resolution reads globalThis properties, so callers
         // keep working; `??=` preserves any host-provided implementation.
-        let source_with_globals = format!("var global = globalThis; globalThis.atob ??= function(value) {{ return String(value); }}; globalThis.btoa ??= function(value) {{ return String(value); }}; globalThis.exports ??= {{}}; globalThis.module ??= {{ exports: globalThis.exports }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }};\n{support_source}\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_done = true;");
+        let source_with_globals = format!("var global = globalThis; globalThis.atob ??= function(value) {{ return String(value); }}; globalThis.btoa ??= function(value) {{ return String(value); }}; globalThis.exports ??= {{}}; globalThis.module ??= {{ exports: globalThis.exports }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; if (typeof globalThis.DOMException !== 'function') {{ globalThis.DOMException = class DOMException extends Error {{ constructor(message = '', name = 'Error') {{ super(message); this.name = name; this.code = {{ DataCloneError: 25, AbortError: 20 }}[name] || 0; }} }}; }}\n{support_source}\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_done = true;");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
@@ -280,6 +280,15 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
             "TextDecoder",
             capability_function(HostCapabilityKind::Custom(
                 CapabilityName::TextDecoderConstructor,
+            )),
+        )
+        // Structured cloning is a host capability. Keeping it in the
+        // context data prevents the adapter from silently substituting a
+        // shallow JavaScript object spread (which loses transfer semantics).
+        .with_host_value(
+            "structuredClone",
+            capability_function(HostCapabilityKind::Custom(
+                crate::registry::SPEC_STRUCTURED_CLONE.cap,
             )),
         )
         .with_host_value(

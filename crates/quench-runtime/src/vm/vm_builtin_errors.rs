@@ -17,6 +17,7 @@ fn error_builtin(
             crate::construct::construct_value(&Value::Builtin(builtin), arguments)
         }
         Builtin::ErrorIsError => Ok(error_is_error(arguments.first())),
+        Builtin::ErrorCaptureStackTrace => Ok(Value::Undefined),
         Builtin::ErrorPrototypeToString => error_to_string(receiver),
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
@@ -83,7 +84,6 @@ fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
         Ok(Value::Undefined)
     }
 }
-
 
 fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.stack")?;
@@ -172,10 +172,13 @@ fn set_error_stack_home() -> Option<Value> {
 
 fn has_error_slot(value: &Value) -> bool {
     match value {
-        Value::BindingCell(cell) => has_error_slot(&cell.borrow()),
-        Value::Object(value) => value.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT),
+        Value::Object(value) => value
+            .iter()
+            .any(|(key, _)| key == crate::builtins::ERROR_SLOT),
         Value::ObjectAlias(alias) => alias.0.borrow().upgrade().is_some_and(|value| {
-            value.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT)
+            value
+                .iter()
+                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
         }),
         _ => false,
     }

@@ -1,13 +1,25 @@
 thread_local! {
     static MICROTASK_QUEUE: RefCell<VecDeque<Rc<PromiseData>>> =
         const { RefCell::new(VecDeque::new()) };
+    static PROMISE_TRIGGER: RefCell<Option<Rc<PromiseData>>> =
+        const { RefCell::new(None) };
     static THEN_RESULTS: RefCell<HashMap<usize, VecDeque<Rc<PromiseData>>>> =
         RefCell::new(HashMap::new());
     static JOB_QUEUE: RefCell<VecDeque<Rc<dyn Fn()>>> = const { RefCell::new(VecDeque::new()) };
+    static UNHANDLED_REJECTIONS: RefCell<VecDeque<(Rc<PromiseData>, Value)>> =
+        const { RefCell::new(VecDeque::new()) };
 }
 
 pub fn enqueue_job(job: Rc<dyn Fn()>) {
     JOB_QUEUE.with(|queue| queue.borrow_mut().push_back(job));
+}
+
+pub(crate) fn queue_unhandled_rejection(promise: Rc<PromiseData>, reason: Value) {
+    UNHANDLED_REJECTIONS.with(|queue| queue.borrow_mut().push_back((promise, reason)));
+}
+
+pub fn take_unhandled_rejections() -> Vec<(Rc<PromiseData>, Value)> {
+    UNHANDLED_REJECTIONS.with(|queue| queue.borrow_mut().drain(..).collect())
 }
 
 pub fn clear_jobs() {

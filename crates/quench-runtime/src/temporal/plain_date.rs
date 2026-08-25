@@ -565,7 +565,7 @@ fn with(
     options: Option<&Value>,
 ) -> Result<Value, VmError> {
     let branded = matches!(receiver, Some(Value::Object(object)) if object.iter().any(|(key, value)|
-        key == "\0prototype" && *value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype)));
+        key == "\0prototype" && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype)));
     if !branded {
         return Err(crate::value::error::throw_type_error(
             "Invalid PlainDate receiver",

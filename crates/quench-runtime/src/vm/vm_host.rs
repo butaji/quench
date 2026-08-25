@@ -54,6 +54,7 @@ fn dispatch_host_capability(
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         HostCapabilityKind::EvalScript => run_eval_in_capability_realm(capability, arguments),
         HostCapabilityKind::IsHTMLDDA => Ok(Value::Null),
+        HostCapabilityKind::PromiseHook => Err(VmError::NotCallable),
         HostCapabilityKind::Custom(_) => host_custom_call(descriptor, receiver, arguments),
     }
 }
@@ -96,11 +97,10 @@ fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
             )));
         }
     };
-    let result = match realm {
+    match realm {
         Some(realm) => execute_indirect_eval_in_realm(realm, program.code()),
         None => execute_indirect_eval(program.code()),
-    };
-    result
+    }
 }
 
 pub(crate) fn create_shadow_realm_value() -> Value {
@@ -120,10 +120,23 @@ fn realm_global_object(
             "\0realm".to_string(),
             Value::HostCapability(Rc::clone(token)),
         ),
-        ("globalThis".to_string(), Value::Null),
     ];
-    for name in crate::globals::script_property_names() {
-        let builtin = crate::globals::builtin(name)?;
+    for (name, builtin) in [
+        ("eval", Builtin::Eval),
+        ("Object", Builtin::Object),
+        ("Function", Builtin::Function),
+        ("Number", Builtin::Number),
+        ("String", Builtin::String),
+        ("RegExp", Builtin::RegExp),
+        ("Boolean", Builtin::Boolean),
+        ("Symbol", Builtin::Symbol),
+        ("ArrayBuffer", Builtin::ArrayBuffer),
+        ("SharedArrayBuffer", Builtin::SharedArrayBuffer),
+        ("DataView", Builtin::DataView),
+        ("parseFloat", Builtin::ParseFloat),
+        ("parseInt", Builtin::ParseInt),
+        ("TypeError", Builtin::TypeError),
+    ] {
         properties.push((name.to_string(), realm::intrinsic(realm, builtin)?));
     }
     Some(Rc::new(crate::value::ObjectData::new(properties)))

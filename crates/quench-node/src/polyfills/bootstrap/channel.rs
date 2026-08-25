@@ -270,4 +270,9 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDiagnostics(specifier);
 };
+// The Rust declaration/dispatch path is authoritative. Keep this bootstrap
+// only as a compatibility shell for startup ordering; replace its JS object
+// before the final module surface is installed.
+const __quenchRustDiagnostics = __quenchOriginalRequireWithDiagnostics("diagnostics_channel");
+globalThis.__nodeDiagnosticsChannel = __quenchRustDiagnostics;
 "#);

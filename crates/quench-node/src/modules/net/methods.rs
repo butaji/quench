@@ -21,10 +21,43 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
     Ok(object)
 }
 
+/// `new net.Socket()` creates an unconnected socket whose `connect` method
+/// shares the public connection capability and validation path.
+pub fn socket_construct(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let (object, _id) = new_net_object(state, socket_props())?;
+    let object = install_socket_counters(object)?;
+    install_methods(
+        object,
+        vec![(
+            "connect".to_string(),
+            crate::host::capability(crate::registry::SPEC_NET_CONNECT),
+        )],
+    )
+}
+
 /// `net.connect(port[, host][, cb])` / `net.connect(options, cb)`.
 /// Connects (bounded) on loopback and returns a socket object;
 /// `'connect'` fires on the next pump tick.
 pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    connect_with_receiver(state, None, args)
+}
+
+pub fn connect_existing(
+    state: &Rc<RefCell<HostState>>,
+    receiver: &Value,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    connect_with_receiver(state, Some(receiver), args)
+}
+
+fn connect_with_receiver(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     let (port, host) = connect_target(state, args)?;
     let addr = resolve(host.as_deref().unwrap_or(LOCAL_HOST), port);
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
@@ -32,9 +65,15 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         Err(_) => return connect_refused(state, &addr),
     };
     let _ = stream.set_nonblocking(true);
-    let (object, id) = new_net_object(state, socket_props())?;
+    let (object, id) = match receiver {
+        Some(object) => (object.clone(), net_id(object).unwrap_or_else(|| allocate_id(state))),
+        None => {
+            let (object, id) = new_net_object(state, socket_props())?;
+            (install_socket_counters(object)?, id)
+        }
+    };
     let local = stream.local_addr().ok();
-    let object = install_methods(object, net_info_props(addr, local))?;
+    set_socket_state(&object, true, true, "opening");
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
         id,
         stream: Some(stream),
@@ -42,9 +81,13 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         state: SocketState::Open,
         server_id: None,
         write_buf: Vec::new(),
+        bytes_read: 0,
+        bytes_written: 0,
         read_eof: false,
         close_emitted: false,
         connect_announced: false,
+        peer: Some(addr),
+        local,
         encoding: None,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
@@ -80,9 +123,11 @@ fn connect_target(
     match args.first() {
         Some(Value::Object(_)) => {
             let options = args.first().cloned().unwrap_or(Value::Undefined);
-            let port = execute::to_js_string(&execute::get_property_result(&options, "port")?)?
-                .parse::<u16>()
-                .map_err(|_| execute::type_error("port must be a number"))?;
+            let port_value = execute::get_property_result(&options, "port")?;
+            if matches!(port_value, Value::Undefined | Value::Null) {
+                return Err(missing_connect_args());
+            }
+            let port = parse_port(&port_value)?;
             let host = execute::get_property_result(&options, "host")
                 .ok()
                 .and_then(|v| execute::to_js_string(&v).ok());
@@ -90,17 +135,66 @@ fn connect_target(
         }
         _ => {
             let _ = state;
-            let port = args
-                .first()
-                .map(execute::to_js_string)
-                .transpose()?
-                .unwrap_or_default()
-                .parse::<u16>()
-                .map_err(|_| execute::type_error("port must be a number"))?;
-            let host = args.get(1).and_then(|v| execute::to_js_string(v).ok());
+            let Some(value) = args.first() else {
+                return Err(missing_connect_args());
+            };
+            if matches!(value, Value::Undefined | Value::Null) {
+                return Err(missing_connect_args());
+            }
+            let port = parse_port(value)?;
+            let host = args.get(1).and_then(|v| match v {
+                Value::String(_) => execute::to_js_string(v).ok(),
+                _ => None,
+            });
             Ok((port, host))
         }
     }
+}
+
+fn missing_connect_args() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".to_string(), Value::String("TypeError".to_string())),
+        (
+            "code".to_string(),
+            Value::String("ERR_MISSING_ARGS".to_string()),
+        ),
+        (
+            "message".to_string(),
+            Value::String("The \"options\" or \"port\" or \"path\" argument must be specified".to_string()),
+        ),
+    ]))
+}
+
+fn parse_port(value: &Value) -> Result<u16, VmError> {
+    let text = execute::to_js_string(value)?;
+    let Ok(port) = text.parse::<i64>() else {
+        return Err(execute::type_error("port must be a number"));
+    };
+    if !(0..=u16::MAX as i64).contains(&port) {
+        return Err(bad_port(value, &text));
+    }
+    Ok(port as u16)
+}
+
+fn bad_port(value: &Value, text: &str) -> VmError {
+    let kind = match value {
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        _ => "object",
+    };
+    VmError::Thrown(host_api::object(vec![
+        ("name".to_string(), Value::String("RangeError".to_string())),
+        (
+            "code".to_string(),
+            Value::String("ERR_SOCKET_BAD_PORT".to_string()),
+        ),
+        (
+            "message".to_string(),
+            Value::String(format!(
+                "options.port should be >= 0 and < 65536. Received type {kind} ({text})."
+            )),
+        ),
+    ]))
 }
 
 /// `server.listen(port[, host][, cb])` (or `listen(options, cb)`).
@@ -117,6 +211,7 @@ pub fn server_listen(
         Err(error) => return Err(server_bind_error(&error)),
     };
     register_server(state, &receiver, Some(listener))?;
+    super::set_server_connection_key(&receiver, port, host.as_deref())?;
     add_listener_cb(state, &receiver, args.last(), "listening")?;
     Ok(receiver.clone())
 }
@@ -129,14 +224,12 @@ fn listen_target(
     if matches!(args.first(), Some(Value::Object(_))) {
         return connect_target(state, args);
     }
-    let port = args
-        .first()
-        .map(execute::to_js_string)
-        .transpose()?
-        .unwrap_or_default()
-        .parse::<u16>()
-        .map_err(|_| execute::type_error("port must be a number"))?;
-    let host = args.get(1).and_then(|v| execute::to_js_string(v).ok());
+    let value = args.first().cloned().unwrap_or(Value::Number(0.0));
+    let port = parse_port(&value)?;
+    let host = args.get(1).and_then(|v| match v {
+        Value::String(_) => execute::to_js_string(v).ok(),
+        _ => None,
+    });
     Ok((port, host))
 }
 
@@ -206,6 +299,7 @@ pub fn server_close(
         server.listening = false;
         server.closed = true;
     }
+    super::set_server_listening(&receiver, false)?;
     add_listener_cb(state, &receiver, args.first(), "close")?;
     Ok(receiver)
 }
@@ -252,7 +346,9 @@ pub fn socket_write(
     if guard.state == SocketState::Closed {
         return Ok(Value::Boolean(false));
     }
+    guard.bytes_written = guard.bytes_written.saturating_add(bytes.len() as u64);
     guard.write_buf.extend_from_slice(&bytes);
+    update_socket_counters(&guard);
     let flushed = try_flush(&mut guard);
     Ok(Value::Boolean(flushed))
 }

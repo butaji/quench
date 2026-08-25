@@ -17,22 +17,43 @@ pub fn throws(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let function = arg(args, 0);
+    let (expected, user_message) = match (args.get(1), args.get(2)) {
+        (Some(Value::String(message)), None) => (None, Some(message.clone())),
+        (expected, message) => {
+            let message = match message {
+                Some(Value::String(value)) => Some(value.clone()),
+                Some(Value::Undefined) | None => None,
+                Some(value) => Some(crate::modules::util::inspect(value)),
+            };
+            (expected, message)
+        }
+    };
     let thrown = match invoke(&function)? {
         Ok(()) => {
-            let suffix = custom_message(args, 2)
+            let expected_suffix = expected
+                .filter(|value| is_error_constructor(value))
+                .map(|value| format!(" ({})", name_of(value)))
+                .unwrap_or_default();
+            let suffix = user_message
+                .as_ref()
                 .map(|message| format!(": {message}"))
                 .unwrap_or_else(|| ".".to_string());
+            let suffix = if expected_suffix.is_empty() {
+                suffix
+            } else {
+                format!("{expected_suffix}{suffix}")
+            };
             return Err(assertion_error(
                 format!("Missing expected exception{suffix}"),
                 "throws",
                 Value::Undefined,
-                arg(args, 1),
+                expected.cloned().unwrap_or(Value::Undefined),
                 true,
             ));
         }
         Err(thrown) => thrown,
     };
-    validate_expected(&thrown, args.get(1), args.get(2))
+    validate_expected(&thrown, expected, user_message)
 }
 
 pub fn does_not_throw(
@@ -41,8 +62,12 @@ pub fn does_not_throw(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let function = arg(args, 0);
+    let (expected, custom) = match (args.get(1), args.get(2)) {
+        (Some(Value::String(message)), None) => (None, Some(message.clone())),
+        (expected, _) => (expected, custom_message(args, 2)),
+    };
     if let Err(thrown) = invoke(&function)? {
-        if let Some(expected) = args.get(1) {
+        if let Some(expected) = expected {
             if is_callable(expected)
                 && is_error_constructor(expected)
                 && name_of(expected) != name_of(&thrown)
@@ -50,10 +75,17 @@ pub fn does_not_throw(
                 return Err(VmError::Thrown(thrown));
             }
         }
-        let custom = custom_message(args, 2);
         let generated = custom.is_none();
-        let message =
-            custom.unwrap_or_else(|| format!("Got unwanted exception: {}", error_text(&thrown)));
+        let message = match custom {
+            Some(message) => format!(
+                "Got unwanted exception: {message}\nActual message: \"{}\"",
+                error_text(&thrown)
+            ),
+            None => format!(
+                "Got unwanted exception.\nActual message: \"{}\"",
+                error_text(&thrown)
+            ),
+        };
         return Err(assertion_error(
             message,
             "doesNotThrow",
@@ -85,9 +117,10 @@ pub fn does_not_match(
 /// internal VM errors propagate.
 fn invoke(function: &Value) -> Result<Result<(), Value>, VmError> {
     if !is_callable(function) {
-        return Err(execute::type_error(
-            "The \"fn\" argument must be of type function",
-        ));
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"fn\" argument must be of type function.{}",
+            crate::modules::util::invalid_arg_received(function)
+        )));
     }
     match execute::call(function, &Value::Undefined, &[]) {
         Ok(_) => Ok(Ok(())),
@@ -136,13 +169,8 @@ fn regexp_matches(pattern: &Value, input: &str) -> Result<bool, VmError> {
 fn validate_expected(
     error: &Value,
     expected: Option<&Value>,
-    message: Option<&Value>,
+    user_message: Option<String>,
 ) -> Result<Value, VmError> {
-    let user_message = match message {
-        Some(Value::String(text)) => Some(text.clone()),
-        Some(Value::Undefined) | None => None,
-        Some(value) => Some(crate::modules::util::inspect(value)),
-    };
     match expected {
         None | Some(Value::Undefined) => Ok(Value::Undefined),
         Some(pattern) if is_regexp(pattern) => validate_regexp(error, pattern, user_message),
@@ -202,9 +230,31 @@ fn validate_callable(
     // callables (including ones that happen to have a `prototype`
     // property, like common.mustCall wrappers) are validation functions.
     if is_error_constructor(expected) {
+        if expected_name == "Error" && is_error_instance(error) {
+            return Ok(Value::Undefined);
+        }
+        if expected_name == "AssertionError"
+            && is_error_instance(error)
+            && matches!(name_of(error).as_str(), "Error" | "AssertionError")
+        {
+            return Ok(Value::Undefined);
+        }
         if !expected_name.is_empty() && expected_name == name_of(error) {
             return Ok(Value::Undefined);
         }
+        let detail = format!(
+            "The error is expected to be an instance of \"{expected_name}\". Received \"{}\"\n\nError message:\n\n{}",
+            name_of(error),
+            error_text(error)
+        );
+        return Err(match user_message {
+            Some(message) => {
+                assertion_error(message, "throws", error.clone(), expected.clone(), false)
+            }
+            None => assertion_error(detail, "throws", error.clone(), expected.clone(), true),
+        });
+    }
+    if matches!(expected, Value::Builtin(_)) {
         return Err(invalid_expected(
             user_message,
             format!("The error is not an instance of {expected_name}"),
@@ -222,6 +272,29 @@ fn validate_callable(
         )),
         Err(internal) => Err(internal),
     }
+}
+
+fn is_error_instance(value: &Value) -> bool {
+    let mut current = execute::get_prototype_of(value).ok();
+    while let Some(prototype) = current {
+        if matches!(
+            prototype,
+            Value::Builtin(
+                quench_runtime::ops::Builtin::ErrorPrototype
+                    | quench_runtime::ops::Builtin::RangeErrorPrototype
+                    | quench_runtime::ops::Builtin::TypeErrorPrototype
+                    | quench_runtime::ops::Builtin::EvalErrorPrototype
+                    | quench_runtime::ops::Builtin::ReferenceErrorPrototype
+                    | quench_runtime::ops::Builtin::SyntaxErrorPrototype
+                    | quench_runtime::ops::Builtin::URIErrorPrototype
+                    | quench_runtime::ops::Builtin::AggregateErrorPrototype
+            )
+        ) {
+            return true;
+        }
+        current = execute::get_prototype_of(&prototype).ok();
+    }
+    false
 }
 
 fn is_error_constructor(expected: &Value) -> bool {
@@ -251,9 +324,16 @@ fn is_error_constructor(expected: &Value) -> bool {
 }
 
 fn name_of(value: &Value) -> String {
-    match execute::get_property(value, "name") {
+    let name = match execute::get_property(value, "name") {
         Value::String(name) => name,
         _ => String::new(),
+    };
+    if name != "Error" || !matches!(value, Value::Object(_)) {
+        return name;
+    }
+    match execute::get_property(&execute::get_property(value, "constructor"), "name") {
+        Value::String(constructor) if !constructor.is_empty() => constructor,
+        _ => name,
     }
 }
 
@@ -263,9 +343,34 @@ fn validate_object(
     user_message: Option<String>,
 ) -> Result<Value, VmError> {
     for key in execute::own_enumerable_keys(expected) {
+        if key == "actual" || key == "expected" || key == "generatedMessage" {
+            continue;
+        }
         let expected_value = execute::get_property_result(expected, &key)?;
         let actual_value = execute::get_property_result(error, &key)?;
+        let actual_value = if key == "operator" {
+            match actual_value {
+                Value::String(value) => Value::String(
+                    match value.as_str() {
+                        "equal" => "==",
+                        "notEqual" => "!=",
+                        "strictEqual" => "===",
+                        "notStrictEqual" => "!==",
+                        _ => value.as_str(),
+                    }
+                    .to_string(),
+                ),
+                value => value,
+            }
+        } else {
+            actual_value
+        };
         if !expected_property_matches(&expected_value, &actual_value)? {
+            if execute::has_own_property(expected, "message")
+                && execute::has_own_property(expected, "operator")
+            {
+                return Err(comparison_mismatch(error, expected, user_message));
+            }
             return Err(invalid_expected(
                 user_message,
                 format!("The error did not match the expected object (key \"{key}\")"),
@@ -275,13 +380,70 @@ fn validate_object(
     Ok(Value::Undefined)
 }
 
+fn comparison_mismatch(actual: &Value, expected: &Value, user_message: Option<String>) -> VmError {
+    if let Some(message) = user_message {
+        return assertion_error(message, "throws", Value::Undefined, Value::Undefined, false);
+    }
+    let inspect = |value: Value, marker: &str| {
+        let rendered = crate::modules::util::inspect(&value);
+        let rendered = rendered
+            .strip_suffix("\n  ''")
+            .and_then(|value| value.strip_suffix(" +"))
+            .unwrap_or(&rendered);
+        rendered.replace("\n  ", &format!("\n{marker}     "))
+    };
+    let actual_operator = execute::get_property(actual, "operator");
+    let actual_operator = match actual_operator {
+        Value::String(value) => Value::String(
+            match value.as_str() {
+                "equal" => "==",
+                "notEqual" => "!=",
+                "strictEqual" => "===",
+                "notStrictEqual" => "!==",
+                _ => value.as_str(),
+            }
+            .to_string(),
+        ),
+        value => value,
+    };
+    let message = format!(
+        "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  Comparison {{\n+   message: {},\n+   operator: {}\n-   message: {},\n-   operator: {}\n  }}\n",
+        inspect(execute::get_property(actual, "message"), "+"),
+        inspect(actual_operator, "+"),
+        inspect(execute::get_property(expected, "message"), "-"),
+        inspect(execute::get_property(expected, "operator"), "-"),
+    );
+    assertion_error(message, "throws", actual.clone(), expected.clone(), true)
+}
+
 fn expected_property_matches(expected: &Value, actual: &Value) -> Result<bool, VmError> {
+    if matches!(expected, Value::String(_) | Value::StringUnits(_))
+        && matches!(actual, Value::String(_) | Value::StringUnits(_))
+    {
+        return Ok(execute::to_js_string(expected)? == execute::to_js_string(actual)?);
+    }
     if is_regexp(expected) {
         let input = match actual {
             Value::String(text) => text.clone(),
             _ => crate::modules::util::inspect(actual),
         };
         return regexp_matches(expected, &input);
+    }
+    if is_error_constructor(expected) && is_callable(actual) {
+        let expected_name = name_of(expected);
+        let actual_name = name_of(actual);
+        return Ok(
+            expected_name == actual_name || (expected_name == "Error" && !actual_name.is_empty())
+        );
+    }
+    if is_error_instance(expected) && is_error_instance(actual) {
+        return Ok(execute::same_value(
+            &execute::get_property(expected, "name"),
+            &execute::get_property(actual, "name"),
+        ) && execute::same_value(
+            &execute::get_property(expected, "message"),
+            &execute::get_property(actual, "message"),
+        ));
     }
     crate::modules::deep_equal::deep_equal(expected, actual, true)
 }

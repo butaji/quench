@@ -1,6 +1,13 @@
 //! Polyfill: `context`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchVmContexts = new WeakSet();
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"const __quenchVmContexts = [];
+const __quenchVmHasContext = (value) => {
+  for (const context of __quenchVmContexts) {
+    if (context === value) return true;
+  }
+  return false;
+};
 const __quenchVmTypeError = (message) => {
   throw Object.assign(new TypeError(message), { code: "ERR_INVALID_ARG_TYPE" });
 };
@@ -39,7 +46,7 @@ const __quenchVmIsContext = (value) => {
   ) {
     __quenchVmTypeError('The "sandbox" argument must be of type object.');
   }
-  return __quenchVmContexts.has(value);
+  return __quenchVmHasContext(value);
 };
 const __quenchVmSourceMapURL = (code) =>
   /\/\/#[ \t]*sourceMappingURL=([^\s]+)/.exec(code)?.[1];
@@ -166,7 +173,7 @@ const __quenchVmValidateCompileFields = (options) => {
   }
   if (
     options.parsingContext !== undefined &&
-    !__quenchVmContexts.has(options.parsingContext)
+    !__quenchVmHasContext(options.parsingContext)
   ) {
     __quenchVmTypeError(
       `The "options.parsingContext" property must be an instance of Context.${
@@ -277,7 +284,9 @@ const __quenchVmInstallContext = (sandbox) => {
   if (hiddenProcess) Reflect.deleteProperty(globalThis, "process");
   const previousPrototype = Object.getPrototypeOf(globalThis);
   const sandboxPrototype = Object.getPrototypeOf(sandbox);
-  if (sandboxPrototype) Object.setPrototypeOf(globalThis, sandboxPrototype);
+  // Intrinsics live on the engine's global prototype. A sandbox prototype is
+  // data in the context, not a replacement for the host realm's intrinsic
+  // chain; replacing it makes even `eval`/`SyntaxError` non-callable.
   for (const key of keys) {
     previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
@@ -376,4 +385,5 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
     );
   }
 };
-"#);
+"#
+);
