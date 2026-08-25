@@ -109,6 +109,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "withCalendar") => {
             Some(Value::Builtin(TemporalPlainDateWithCalendar))
         }
+        (TemporalPlainDatePrototype, "with") => Some(Value::Builtin(TemporalPlainDateWith)),
         (TemporalPlainDatePrototype, "add") => Some(Value::Builtin(TemporalPlainDateAdd)),
         (TemporalPlainDatePrototype, "subtract") => Some(Value::Builtin(TemporalPlainDateSubtract)),
         (TemporalPlainDatePrototype, "equals") => Some(Value::Builtin(TemporalPlainDateEquals)),
