@@ -51,10 +51,6 @@ fn zoned_record(
             crate::value::Value::BigInt(epoch.to_string()),
         ),
         (
-            "epochMilliseconds".into(),
-            crate::value::Value::BigInt((epoch / 1_000_000).to_string()),
-        ),
-        (
             "calendarId".into(),
             crate::value::Value::String("iso8601".into()),
         ),
@@ -117,7 +113,6 @@ fn zoned_record(
             ),
         ),
         ("monthsInYear".into(), crate::value::Value::Number(12.0)),
-        ("hoursInDay".into(), crate::value::Value::Number(24.0)),
         (
             "inLeapYear".into(),
             crate::value::Value::Boolean(
@@ -176,7 +171,12 @@ mod stubs {
         }
         if matches!(
             builtin,
-            crate::ops::Builtin::TemporalZonedDateTimeToString
+            crate::ops::Builtin::TemporalZonedDateTimeEpochMillisecondsGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeTimeZoneIdGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeOffsetGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeHoursInDayGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeToString
                 | crate::ops::Builtin::TemporalZonedDateTimeToJSON
                 | crate::ops::Builtin::TemporalZonedDateTimeToLocaleString
                 | crate::ops::Builtin::TemporalZonedDateTimeToInstant
@@ -369,7 +369,49 @@ mod stubs {
             .ok_or_else(|| {
                 crate::value::error::throw_type_error("Invalid ZonedDateTime receiver")
             })?;
+        if !matches!(receiver, Value::Object(object) if object
+            .iter()
+            .any(|(key, value)| key == "\0prototype"
+                && *value == Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)))
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid ZonedDateTime receiver",
+            ));
+        }
         let property = |name: &str| crate::execute::get_property_result(receiver, name);
+        match builtin {
+            crate::ops::Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => {
+                let epoch = property("epochNanoseconds")?;
+                let value = match epoch {
+                    Value::BigInt(value) => {
+                        value.parse::<i128>().unwrap_or(0).div_euclid(1_000_000)
+                    }
+                    _ => 0,
+                };
+                return Ok(Value::Number(value as f64));
+            }
+            crate::ops::Builtin::TemporalZonedDateTimeTimeZoneIdGetter => {
+                return property("timeZoneId");
+            }
+            crate::ops::Builtin::TemporalZonedDateTimeOffsetGetter => {
+                return property("offset");
+            }
+            crate::ops::Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter => {
+                return property("offsetNanoseconds");
+            }
+            crate::ops::Builtin::TemporalZonedDateTimeHoursInDayGetter => {
+                if let Value::BigInt(epoch) = property("epochNanoseconds")? {
+                    let epoch = epoch.parse::<i128>().unwrap_or(0).unsigned_abs();
+                    if epoch >= 8_640_000_000_000_000_000_000u128 {
+                        return Err(crate::value::error::throw_range_error(
+                            "ZonedDateTime day boundary is out of range",
+                        ));
+                    }
+                }
+                return Ok(Value::Number(24.0));
+            }
+            _ => {}
+        }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeEquals {
             let other = arguments
                 .first()
