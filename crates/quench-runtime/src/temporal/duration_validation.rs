@@ -14,7 +14,7 @@ pub(super) fn total_time_out_of_range(values: &[f64]) -> bool {
         .iter()
         .zip(scales)
         .try_fold(0_i128, |total, (value, scale)| {
-            let value = i128::from(*value as i64);
+            let value = *value as i128;
             total.checked_add(value.checked_mul(scale)?)
         });
     let limit = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;

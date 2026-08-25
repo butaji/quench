@@ -51,11 +51,17 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        crate::ops::Builtin::TemporalDuration => Some(Err(crate::value::error::throw_type_error(
+            "Temporal.Duration constructor cannot be called without new",
+        ))),
         crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalDurationAdd => Some(add(receiver, arguments.first())),
         crate::ops::Builtin::TemporalDurationSubtract => {
             Some(subtract(receiver, arguments.first()))
+        }
+        crate::ops::Builtin::TemporalDurationWith => {
+            Some(with_duration(receiver, arguments.first()))
         }
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
         crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
@@ -130,19 +136,76 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         ));
     }
     let nanos = [
-        ("weeks", 7.0 * 86_400_000_000_000.0),
-        ("days", 86_400_000_000_000.0),
-        ("hours", 3_600_000_000_000.0),
-        ("minutes", 60_000_000_000.0),
-        ("seconds", 1_000_000_000.0),
-        ("milliseconds", 1_000_000.0),
-        ("microseconds", 1_000.0),
-        ("nanoseconds", 1.0),
+        ("weeks", 604_800_000_000_000_i128),
+        ("days", 86_400_000_000_000),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
     ]
     .iter()
-    .map(|(name, factor)| duration_field(object, name) as f64 * factor)
-    .sum::<f64>();
-    Ok(Value::Number(nanos / factor))
+    .map(|(name, factor)| duration_field(object, name) as i128 * factor)
+    .sum::<i128>();
+    Ok(Value::Number(nanos as f64 / factor))
+}
+
+fn with_duration(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    let Some(options) = options.filter(|value| crate::value::is_object(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "Duration.with requires an object",
+        ));
+    };
+    let names = [
+        "days",
+        "hours",
+        "microseconds",
+        "milliseconds",
+        "minutes",
+        "months",
+        "nanoseconds",
+        "seconds",
+        "weeks",
+        "years",
+    ];
+    let mut present = false;
+    let canonical = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ];
+    let mut fields = vec![Value::Number(0.0); canonical.len()];
+    for name in names {
+        let index = canonical
+            .iter()
+            .position(|candidate| candidate == &name)
+            .unwrap();
+        let value = {
+            let value = crate::execute::get_property_result(options, name)?;
+            if matches!(value, Value::Undefined) {
+                Ok(Value::Number(duration_field(object, name) as f64))
+            } else {
+                present = true;
+                crate::conversion::to_number(&value).map(Value::Number)
+            }
+        }?;
+        fields[index] = value;
+    }
+    if !present {
+        return Err(crate::value::error::throw_type_error(
+            "Duration.with requires a duration field",
+        ));
+    }
+    construct(&fields)
 }
 
 fn field_getter(receiver: Option<&Value>, field: &str) -> Result<Value, VmError> {
@@ -173,6 +236,7 @@ fn add(receiver: Option<&Value>, argument: Option<&Value>) -> Result<Value, VmEr
     let Value::Object(right) = right else {
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
+    reject_calendar_units(left, &right)?;
     let fields = balanced_sum(left, &right);
     construct(&fields)
 }
@@ -195,7 +259,23 @@ fn subtract(receiver: Option<&Value>, argument: Option<&Value>) -> Result<Value,
         .collect::<Vec<_>>();
     let negated = crate::value::ObjectData::new(negated);
     let left = duration_receiver(receiver)?;
+    reject_calendar_units(left, &negated)?;
     construct(&balanced_sum(left, &negated))
+}
+
+fn reject_calendar_units(
+    left: &crate::value::ObjectData,
+    right: &crate::value::ObjectData,
+) -> Result<(), VmError> {
+    if ["years", "months", "weeks"]
+        .iter()
+        .any(|name| duration_field(left, name) != 0 || duration_field(right, name) != 0)
+    {
+        return Err(crate::value::error::throw_range_error(
+            "relativeTo required for calendar units",
+        ));
+    }
+    Ok(())
 }
 
 fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -507,51 +587,55 @@ fn balance_time_fields(fields: &mut [Value], first: usize) {
 }
 
 fn balanced_sum(left: &crate::value::ObjectData, right: &crate::value::ObjectData) -> Vec<Value> {
-    let years = sum_field(left, right, "years");
-    let months = sum_field(left, right, "months");
-    let weeks = sum_field(left, right, "weeks");
     let days = sum_field(left, right, "days");
-    let time = [
+    let time_names = [
         "hours",
         "minutes",
         "seconds",
         "milliseconds",
         "microseconds",
         "nanoseconds",
-    ]
-    .iter()
-    .map(|name| sum_field(left, right, name))
-    .collect::<Vec<_>>();
-    let total = time[0] * 3_600_000_000_000
-        + time[1] * 60_000_000_000
-        + time[2] * 1_000_000_000
-        + time[3] * 1_000_000
-        + time[4] * 1_000
-        + time[5];
+    ];
+    let time = time_names
+        .iter()
+        .map(|name| sum_field(left, right, name))
+        .collect::<Vec<_>>();
+    let scales = [
+        3_600_000_000_000_i128,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
+    ];
+    let total = time
+        .iter()
+        .zip(scales)
+        .map(|(value, scale)| value * scale)
+        .sum::<i128>();
     let sign = total.signum();
+    let largest = if days != 0 {
+        0
+    } else {
+        time.iter().position(|value| *value != 0).unwrap_or(5)
+    };
     let mut remainder = total.abs();
-    let day_carry = remainder / 86_400_000_000_000;
-    remainder %= 86_400_000_000_000;
-    let hours = remainder / 3_600_000_000_000;
-    remainder %= 3_600_000_000_000;
-    let minutes = remainder / 60_000_000_000;
-    remainder %= 60_000_000_000;
-    let seconds = remainder / 1_000_000_000;
-    remainder %= 1_000_000_000;
-    [years, months, weeks, days + sign * day_carry]
+    let mut fields = vec![0_i128; 10];
+    if days != 0 {
+        fields[3] = days + sign * (remainder / 86_400_000_000_000);
+        remainder %= 86_400_000_000_000;
+    }
+    for index in largest..6 {
+        fields[index + 4] = remainder / scales[index];
+        remainder %= scales[index];
+    }
+    fields
         .into_iter()
-        .chain(
-            [
-                hours,
-                minutes,
-                seconds,
-                remainder / 1_000_000,
-                remainder / 1_000 % 1_000,
-                remainder % 1_000,
-            ]
-            .map(|value| value * sign),
-        )
-        .map(|value| Value::Number(value as f64))
+        .enumerate()
+        .map(|(index, value)| {
+            let value = if index >= 4 { value * sign } else { value };
+            Value::Number(value as f64)
+        })
         .collect()
 }
 
