@@ -21,6 +21,23 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
     Ok(object)
 }
 
+/// `new net.Socket()` creates an unconnected socket whose `connect` method
+/// shares the public connection capability and validation path.
+pub fn socket_construct(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let (object, _id) = new_net_object(state, socket_props())?;
+    let object = install_socket_counters(object)?;
+    install_methods(
+        object,
+        vec![(
+            "connect".to_string(),
+            crate::host::capability(crate::registry::SPEC_NET_CONNECT),
+        )],
+    )
+}
+
 /// `net.connect(port[, host][, cb])` / `net.connect(options, cb)`.
 /// Connects (bounded) on loopback and returns a socket object;
 /// `'connect'` fires on the next pump tick.
@@ -84,7 +101,11 @@ fn connect_target(
     match args.first() {
         Some(Value::Object(_)) => {
             let options = args.first().cloned().unwrap_or(Value::Undefined);
-            let port = execute::to_js_string(&execute::get_property_result(&options, "port")?)?
+            let port_value = execute::get_property_result(&options, "port")?;
+            if matches!(port_value, Value::Undefined | Value::Null) {
+                return Err(missing_connect_args());
+            }
+            let port = execute::to_js_string(&port_value)?
                 .parse::<u16>()
                 .map_err(|_| execute::type_error("port must be a number"))?;
             let host = execute::get_property_result(&options, "host")
@@ -94,17 +115,33 @@ fn connect_target(
         }
         _ => {
             let _ = state;
-            let port = args
-                .first()
-                .map(execute::to_js_string)
-                .transpose()?
-                .unwrap_or_default()
+            let Some(value) = args.first() else {
+                return Err(missing_connect_args());
+            };
+            if matches!(value, Value::Undefined | Value::Null) {
+                return Err(missing_connect_args());
+            }
+            let port = execute::to_js_string(value)?
                 .parse::<u16>()
                 .map_err(|_| execute::type_error("port must be a number"))?;
             let host = args.get(1).and_then(|v| execute::to_js_string(v).ok());
             Ok((port, host))
         }
     }
+}
+
+fn missing_connect_args() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".to_string(), Value::String("TypeError".to_string())),
+        (
+            "code".to_string(),
+            Value::String("ERR_MISSING_ARGS".to_string()),
+        ),
+        (
+            "message".to_string(),
+            Value::String("The \"options\" or \"port\" or \"path\" argument must be specified".to_string()),
+        ),
+    ]))
 }
 
 /// `server.listen(port[, host][, cb])` (or `listen(options, cb)`).
