@@ -359,6 +359,19 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
         Value::BoundFunction(bound) => bound_descriptor(bound, key),
         Value::ArrayBuffer(buffer) => buffer_descriptor(buffer, key),
         Value::DataView(view) => data_view_descriptor(view, key),
+        Value::Float64Array(_)
+        | Value::Float32Array(_)
+        | Value::Int8Array(_)
+        | Value::Int16Array(_)
+        | Value::Uint16Array(_)
+        | Value::Int32Array(_)
+        | Value::Uint32Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::Uint8Array(_)
+        | Value::Uint8ClampedArray(_) => {
+            typed_array_descriptor(value, key)
+        }
         _ => None,
     };
     descriptor
