@@ -55,13 +55,15 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
 }
 
 fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
-    if crate::typed_array_prototype::index_exists(value, key.parse::<usize>().ok()?) {
-        return Some(descriptor_object_with_flags(
-            crate::execute::get_property(value, key),
-            true,
-            true,
-            true,
-        ));
+    if let Ok(index) = key.parse::<usize>() {
+        if crate::typed_array_prototype::index_exists(value, index) {
+            return Some(descriptor_object_with_flags(
+                crate::execute::get_property(value, key),
+                true,
+                true,
+                true,
+            ));
+        }
     }
     crate::typed_array_prototype::own_property(value, key)
         .map(|property| descriptor_object(&property))
