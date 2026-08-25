@@ -70,6 +70,11 @@ fn run_loop(
     }
     if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
+            if let Some(completion) =
+                run_invariant_sum_kernel(fact, body, dst, per_iteration, registers, loop_shape)
+            {
+                return Ok(completion);
+            }
             if let Some(completion) = run_crypto_integer_kernel(fact, body) {
                 return Ok(completion);
             }
@@ -122,6 +127,55 @@ fn run_loop(
     Ok(crate::completion::Completion::Normal)
 }
 
+fn run_invariant_sum_kernel(
+    fact: CountedForFact,
+    body: crate::machine::CodeView<'_>,
+    dst: u16,
+    per_iteration: &[u16],
+    registers: &mut crate::register_file::RegisterFile,
+    loop_shape: u64,
+) -> Option<crate::completion::Completion> {
+    (body.len() == 5).then_some(())?;
+    let load_total = body.instruction(0)?;
+    let load_value = body.instruction(1)?;
+    let add = body.instruction(2)?;
+    let store_total = body.instruction(3)?;
+    let move_result = body.instruction(4)?;
+    let proven_shape = load_total.opcode == crate::ir::Opcode::LoadLocal
+        && load_value.opcode == crate::ir::Opcode::LoadLocalChecked
+        && add.opcode == crate::ir::Opcode::Add
+        && (add.b, add.c) == (load_total.a, load_value.a)
+        && store_total.opcode == crate::ir::Opcode::StoreLocalChecked
+        && (store_total.a, store_total.b) == (load_total.b, add.a)
+        && move_result.opcode == crate::ir::Opcode::Move
+        && (move_result.a, move_result.b) == (dst, add.a)
+        && per_iteration == [fact.slot]
+        && fact.timing == CountedStepTiming::AfterBody;
+    proven_shape.then_some(())?;
+
+    let environment = crate::locals::current();
+    let mut index = environment.get_number(fact.slot)?;
+    let bound = fact.bound.number(&environment)?;
+    let mut total = environment.get_number(load_total.b)?;
+    let value = environment.get_number(load_value.b)?;
+    let mut iterations = 0_u64;
+    crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
+    while counted_comparison(fact.comparison, index, bound) {
+        crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
+        crate::execution_trace::loop_shape_iteration(loop_shape);
+        crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
+        crate::execution_trace::kernel("invariant_sum", false);
+        total += value;
+        index += fact.step;
+        iterations += 1;
+    }
+    environment.set(load_total.b, crate::value::Value::Number(total));
+    environment.set(fact.slot, crate::value::Value::Number(index));
+    if iterations != 0 {
+        registers.write_number(usize::from(dst), total);
+    }
+    Some(crate::completion::Completion::Normal)
+}
 fn run_counted_for(
     fact: CountedForFact,
     body: crate::machine::CodeView<'_>,

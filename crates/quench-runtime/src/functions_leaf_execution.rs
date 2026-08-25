@@ -237,6 +237,7 @@ fn validate_leaf_depth(
                 | crate::ir::Opcode::Move
                 | crate::ir::Opcode::LoadLocalChecked
                 | crate::ir::Opcode::StoreLocalChecked
+                | crate::ir::Opcode::InitLocal
                 | crate::ir::Opcode::UpdateLocal
                 | crate::ir::Opcode::GetN
                 | crate::ir::Opcode::SetN
@@ -254,7 +255,9 @@ fn validate_leaf_depth(
         .ok_or(LeafReject::Opcode(op.opcode.name()))?;
         if matches!(
             op.opcode,
-            crate::ir::Opcode::StoreLocalChecked | crate::ir::Opcode::UpdateLocal
+            crate::ir::Opcode::StoreLocalChecked
+                | crate::ir::Opcode::InitLocal
+                | crate::ir::Opcode::UpdateLocal
         ) && !allow_locals
         {
             return Err(LeafReject::Opcode(op.opcode.name()));
@@ -275,7 +278,7 @@ fn validate_leaf_depth(
             return Err(LeafReject::Register);
         }
         if op.opcode == crate::ir::Opcode::CallN {
-            (op.flags <= 1).then_some(()).ok_or(LeafReject::Call)?;
+            (op.flags <= 2).then_some(()).ok_or(LeafReject::Call)?;
         }
         if op.opcode == crate::ir::Opcode::Slow {
             validate_leaf_control(
@@ -419,7 +422,7 @@ fn leaf_registers(op: crate::ir::Instruction) -> [u16; 3] {
     use crate::ir::Opcode::*;
     match op.opcode {
         LoadConst | LoadLocalChecked | Return => [op.a, 0, 0],
-        StoreLocalChecked => [op.b, 0, 0],
+        StoreLocalChecked | InitLocal => [op.b, 0, 0],
         UpdateLocal => [op.a, op.b, 0],
         Move => [op.a, op.b, 0],
         GetN | SetN => [op.a, op.b, 0],
@@ -492,6 +495,13 @@ fn run_leaf_op(
         )?),
         StoreLocalChecked => {
             leaf_store(function, op.a, leaf_register(registers, op.b)?, locals)?;
+            return Ok(None);
+        }
+        InitLocal => {
+            leaf_store(function, op.a, leaf_register(registers, op.b)?, locals)?;
+            if op.a < function.captures.len() as u16 {
+                function.captures.initialize(op.a);
+            }
             return Ok(None);
         }
         UpdateLocal => Some(leaf_update_local(
@@ -970,20 +980,21 @@ fn leaf_call(
     registers: &impl LeafRegisterFile,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let receiver = crate::locals::resolved_replacement(leaf_register(registers, op.b)?);
-    let (callee, argument) = if op.flags == 0 {
-        (leaf_get_named(code, pc, &receiver)?, None)
-    } else {
-        let argument =
-            op.a.checked_sub(1)
-                .ok_or(crate::execute::VmError::MissingReturn)?;
-        (
-            leaf_register(registers, op.c)?,
-            Some(leaf_register(registers, argument)?),
-        )
-    };
-    let arguments = argument
-        .as_ref()
-        .map(std::slice::from_ref)
-        .unwrap_or_default();
-    crate::functions::execute_target(&callee, &receiver, arguments)
+    if op.flags == 0 {
+        let callee = leaf_get_named(code, pc, &receiver)?;
+        return crate::functions::execute_target(&callee, &receiver, &[]);
+    }
+    let callee = leaf_register(registers, op.c)?;
+    let first = op
+        .a
+        .checked_sub(u16::from(op.flags))
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let arguments = [
+        leaf_register(registers, first)?,
+        (op.flags == 2)
+            .then(|| leaf_register(registers, first + 1))
+            .transpose()?
+            .unwrap_or(crate::value::Value::Undefined),
+    ];
+    crate::functions::execute_target(&callee, &receiver, &arguments[..usize::from(op.flags)])
 }
