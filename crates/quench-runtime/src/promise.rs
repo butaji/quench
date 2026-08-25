@@ -29,7 +29,14 @@ fn process_promise(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
     let promise_key = Rc::as_ptr(promise) as usize;
-    process_then_actions(then_actions, &state, promise_key);
+    if matches!(state, PromiseState::Pending) {
+        // Thenable assimilation runs as a continuation while the target
+        // promise is still pending. Preserve reactions registered on that
+        // target; they must run after the thenable settles.
+        promise.then_actions.borrow_mut().extend(then_actions);
+    } else {
+        process_then_actions(then_actions, &state, promise_key);
+    }
     let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
     for continuation in continuations {
         process_continuation(continuation, &state);
