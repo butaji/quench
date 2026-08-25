@@ -131,6 +131,7 @@ struct CompactSiteKey {
     store: usize,
     code: u32,
     pc: u32,
+    source: u32,
     opcode: u8,
     window_len: u8,
     window: [u8; 7],
@@ -270,6 +271,7 @@ fn top_compact_sites(values: &HashMap<CompactSiteKey, u64>) -> Vec<serde_json::V
                 "store": format!("{:x}", site.store),
                 "code": site.code,
                 "pc": site.pc,
+                "source": (site.source != u32::MAX).then_some(site.source),
                 "opcode": crate::ir::Opcode::from_u8(site.opcode).map(crate::ir::Opcode::name),
                 "window": window,
                 "count": count,
@@ -928,6 +930,10 @@ pub(crate) fn compact_site(code: crate::machine::CodeView<'_>, pc: usize) {
         store,
         code: code_id,
         pc: pc as u32,
+        source: code
+            .metadata_at(pc)
+            .and_then(|metadata| metadata.source)
+            .unwrap_or(u32::MAX),
         opcode: instruction.opcode as u8,
         window_len: (end - start) as u8,
         window,
@@ -1482,6 +1488,7 @@ mod lane_profile_tests {
                 store: 1,
                 code: 7,
                 pc: 2,
+                source: 41,
                 opcode: crate::ir::Opcode::LoadLocalChecked as u8,
                 window_len: 3,
                 window: [8, 24, 20, 0, 0, 0, 0],
@@ -1492,6 +1499,7 @@ mod lane_profile_tests {
         let site = &profile["l2"]["top_compact_sites"][0];
         assert_eq!(site["code"], 7);
         assert_eq!(site["pc"], 2);
+        assert_eq!(site["source"], 41);
         assert_eq!(site["opcode"], "LoadLocalChecked");
         assert_eq!(
             site["window"],
