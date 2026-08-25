@@ -76,6 +76,7 @@ pub(crate) fn source_text(value: &Value) -> Option<String> {
 }
 
 pub(crate) fn source_value(source: &str) -> Value {
+    let source = escape_regexp_delimiters(source);
     let mut units = Vec::new();
     let mut chars = source.chars().peekable();
     let mut has_surrogate = false;
@@ -101,6 +102,28 @@ pub(crate) fn source_value(source: &str) -> Value {
     } else {
         Value::String(source.to_string())
     }
+}
+
+fn escape_regexp_delimiters(source: &str) -> String {
+    let mut escaped = String::with_capacity(source.len());
+    let mut backslashes = 0;
+    for character in source.chars() {
+        let already_escaped = backslashes % 2 == 1;
+        match character {
+            '/' if !already_escaped => escaped.push_str("\\/"),
+            '\n' if !already_escaped => escaped.push_str("\\n"),
+            '\r' if !already_escaped => escaped.push_str("\\r"),
+            '\u{2028}' if !already_escaped => escaped.push_str("\\u2028"),
+            '\u{2029}' if !already_escaped => escaped.push_str("\\u2029"),
+            character => escaped.push(character),
+        }
+        if character == '\\' {
+            backslashes += 1;
+        } else {
+            backslashes = 0;
+        }
+    }
+    escaped
 }
 
 /// Whether two string values hold identical UTF-16 code units.
