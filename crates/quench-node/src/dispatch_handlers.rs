@@ -229,16 +229,19 @@ pub fn util_promisify(
 }
 
 fn timer_promise_alias(value: &Value) -> Option<&'static str> {
-    let Value::BoundFunction(bound) = value else {
-        return None;
-    };
-    let Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
-        quench_runtime::ops::HostCapabilityKind::Custom(cap),
-    )) = bound.target
-    else {
-        return None;
-    };
-    match cap {
+    let capability = match value {
+        Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+            quench_runtime::ops::HostCapabilityKind::Custom(cap),
+        )) => Some(*cap),
+        Value::BoundFunction(bound) => match bound.target {
+            Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+                quench_runtime::ops::HostCapabilityKind::Custom(cap),
+            )) => Some(cap),
+            _ => None,
+        },
+        _ => None,
+    }?;
+    match capability {
         0x0700 => Some("setTimeout"),
         0x0702 => Some("setInterval"),
         0x0704 => Some("setImmediate"),
