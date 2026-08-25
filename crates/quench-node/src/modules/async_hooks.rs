@@ -370,6 +370,11 @@ pub fn resource_before(
         .push((previous_id, previous_resource));
     state.async_hooks.current_id = id;
     state.async_hooks.current_resource = Some(resource);
+    let callbacks = active_callbacks_from(&state.async_hooks, HookEvent::Before);
+    drop(state);
+    for callback in callbacks {
+        let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
+    }
     Ok(Value::Undefined)
 }
 
@@ -379,9 +384,15 @@ pub fn resource_after(
     _: &[Value],
 ) -> Result<Value, VmError> {
     let mut state = state.borrow_mut();
+    let id = state.async_hooks.current_id;
+    let callbacks = active_callbacks_from(&state.async_hooks, HookEvent::After);
     if let Some((id, resource)) = state.async_hooks.resource_stack.pop() {
         state.async_hooks.current_id = id;
         state.async_hooks.current_resource = resource;
+    }
+    drop(state);
+    for callback in callbacks {
+        let _ = execute::call(&callback, &Value::Undefined, &[Value::Number(id as f64)]);
     }
     Ok(Value::Undefined)
 }
