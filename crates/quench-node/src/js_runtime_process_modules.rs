@@ -106,7 +106,13 @@ fn process_module() -> Value {
         ),
         (
             "removeListener".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessRemoveListener)),
+        ),
+        (
+            "removeAllListeners".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::ProcessRemoveAllListeners,
+            )),
         ),
         (
             "emit".into(),
@@ -166,8 +172,12 @@ fn process_module() -> Value {
 }
 
 fn process_on(arguments: &[Value]) -> Result<Value, VmError> {
-    if let Some(listener) = arguments.get(1) {
-        NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow_mut().push(listener.clone()));
+    if let (Some(Value::String(event)), Some(listener)) = (arguments.first(), arguments.get(1)) {
+        NODE_PROCESS_WARNING_LISTENERS.with(|listeners| {
+            listeners
+                .borrow_mut()
+                .push((event.clone(), listener.clone(), false))
+        });
     }
     Ok(NODE_PROCESS_MODULE
         .with(|module| module.borrow().clone())
@@ -175,14 +185,55 @@ fn process_on(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
-    if let Some(value) = arguments.get(1) {
-        let listeners = NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow().clone());
+    if let (Some(Value::String(event)), Some(value)) = (arguments.first(), arguments.get(1)) {
+        let listeners = NODE_PROCESS_WARNING_LISTENERS.with(|listeners| {
+            listeners
+                .borrow()
+                .iter()
+                .filter(|(name, _, _)| name == event)
+                .map(|(_, listener, _)| listener.clone())
+                .collect::<Vec<_>>()
+        });
         for listener in listeners {
             quench_runtime::execute::call(&listener, &Value::Undefined, std::slice::from_ref(value))?;
         }
         return Ok(Value::Boolean(true));
     }
     Ok(Value::Boolean(false))
+}
+
+fn process_remove_listener(arguments: &[Value]) -> Result<Value, VmError> {
+    if let (Some(Value::String(event)), Some(target)) = (arguments.first(), arguments.get(1)) {
+        NODE_PROCESS_WARNING_LISTENERS.with(|listeners| {
+            if let Some(index) = listeners
+                .borrow()
+                .iter()
+                .rposition(|(name, listener, _)| name == event && listener == target)
+            {
+                listeners.borrow_mut().remove(index);
+            }
+        });
+    }
+    Ok(NODE_PROCESS_MODULE
+        .with(|module| module.borrow().clone())
+        .unwrap_or(Value::Undefined))
+}
+
+fn process_remove_all_listeners(arguments: &[Value]) -> Result<Value, VmError> {
+    let event = match arguments.first() {
+        Some(Value::String(name)) => Some(name.clone()),
+        _ => None,
+    };
+    NODE_PROCESS_WARNING_LISTENERS.with(|listeners| {
+        if let Some(event) = event {
+            listeners.borrow_mut().retain(|(name, _, _)| name != &event);
+        } else {
+            listeners.borrow_mut().clear();
+        }
+    });
+    Ok(NODE_PROCESS_MODULE
+        .with(|module| module.borrow().clone())
+        .unwrap_or(Value::Undefined))
 }
 
 fn process_cpu_usage(arguments: &[Value]) -> Result<Value, VmError> {

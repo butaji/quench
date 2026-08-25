@@ -1787,6 +1787,20 @@ pub fn process_once(
 ) -> Result<Value, VmError> {
     crate::modules::process::once(state, args)
 }
+pub fn process_remove_listener(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::remove_listener(state, args)
+}
+pub fn process_remove_all_listeners(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::remove_all_listeners(state, args)
+}
 pub fn process_emit(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
