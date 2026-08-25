@@ -371,7 +371,8 @@ pub(crate) fn execute_target(
             Err(crate::execute::VmError::NotCallable)
         }
         crate::value::Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(bound)
+            if (crate::vm::is_intrinsic_bound(bound)
+                || bound.realm != crate::ops::RealmId::ROOT)
                 && matches!(bound.target, crate::value::Value::Builtin(_)) =>
         {
             let crate::value::Value::Builtin(builtin) = bound.target else {
