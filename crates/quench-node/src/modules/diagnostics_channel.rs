@@ -602,7 +602,25 @@ pub fn publish(
             if !store_active {
                 restore_stores(previous.as_deref());
             }
-            return Err(error);
+            let quench_runtime::execute::VmError::Thrown(thrown) = error else {
+                return Err(error);
+            };
+            if state
+                .borrow()
+                .process
+                .uncaught_exception_handlers
+                .is_empty()
+            {
+                return Err(quench_runtime::execute::VmError::Thrown(thrown));
+            }
+            crate::modules::process::emit(
+                state,
+                &[
+                    Value::String("uncaughtException".into()),
+                    thrown,
+                    Value::String("uncaughtException".into()),
+                ],
+            )?;
         }
     }
     if !store_active {
