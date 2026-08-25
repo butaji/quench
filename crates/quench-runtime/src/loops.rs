@@ -133,11 +133,9 @@ pub(crate) fn reduce_for_in(
         )?;
         Ok::<_, Vec<String>>((body, last))
     })?;
+    prepend_iteration_immutability(&statement.left, slot, &body_locals, &mut body);
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
-    }
-    if for_left_immutable(&statement.left) {
-        body.insert(0, Op::MarkImmutable { slot });
     }
     *locals = outer_locals;
     ops.push(Op::ForIn {
@@ -146,6 +144,7 @@ pub(crate) fn reduce_for_in(
         slot,
         body: crate::machine::FunctionCode::pending(body),
         per_iteration,
+        iteration_slots: iteration_binding_slots(&statement.left, &body_locals),
         dst,
     });
     Ok(Some(dst))
@@ -161,6 +160,53 @@ fn for_left_immutable(left: &oxc::ast::ast::ForStatementLeft<'_>) -> bool {
             | oxc::ast::ast::VariableDeclarationKind::Using
             | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
     )
+}
+
+fn prepend_iteration_immutability(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    slot: u16,
+    locals: &HashMap<String, u16>,
+    body: &mut Vec<Op>,
+) {
+    if !for_left_immutable(left) {
+        return;
+    }
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        body.insert(0, Op::MarkImmutable { slot });
+        return;
+    };
+    let Some(declarator) = declaration.declarations.first() else {
+        body.insert(0, Op::MarkImmutable { slot });
+        return;
+    };
+    if matches!(
+        declarator.id.kind,
+        oxc::ast::ast::BindingPatternKind::BindingIdentifier(_)
+    ) {
+        body.insert(0, Op::MarkImmutable { slot });
+        return;
+    }
+    for name in crate::binding_patterns::names(&declarator.id).into_iter().rev() {
+        if let Some(&name_slot) = locals.get(&name) {
+            body.insert(0, Op::MarkImmutable { slot: name_slot });
+        }
+    }
+}
+
+fn iteration_binding_slots(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    locals: &HashMap<String, u16>,
+) -> Vec<u16> {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return Vec::new();
+    };
+    let Some(declarator) = declaration.declarations.first() else {
+        return Vec::new();
+    };
+    crate::binding_patterns::names(&declarator.id)
+        .into_iter()
+        .filter_map(|name| locals.get(&name).copied())
+        .collect()
 }
 
 fn emit_for_in_initializer(
@@ -230,11 +276,9 @@ pub(crate) fn reduce_for_of(
         )?;
         Ok::<_, Vec<String>>((body, last))
     })?;
+    prepend_iteration_immutability(&statement.left, slot, &body_locals, &mut body);
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
-    }
-    if for_left_immutable(&statement.left) {
-        body.insert(0, Op::MarkImmutable { slot });
     }
     *locals = outer_locals;
     ops.push(Op::ForOf {
@@ -243,6 +287,7 @@ pub(crate) fn reduce_for_of(
         slot,
         body: crate::machine::FunctionCode::pending(body),
         per_iteration,
+        iteration_slots: iteration_binding_slots(&statement.left, &body_locals),
         r#await: statement.r#await,
         dst,
     });
@@ -295,7 +340,7 @@ pub(crate) fn execute_for_of(
     registers: &mut crate::register_file::RegisterFile,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, await_values, iterable, dst) =
+    let (label, slot, body, per_iteration, iteration_slots, await_values, iterable, dst) =
         unpack_for_of(registers, op)?;
     let iterator = if await_values {
         crate::collections::iterator::open_async(iterable)?
@@ -310,6 +355,7 @@ pub(crate) fn execute_for_of(
         per_iteration,
         await_values,
         iterator,
+        iteration_slots,
         dst,
     )
 }
@@ -361,6 +407,7 @@ type ForInLoopData<'a> = (
     u16,
     &'a crate::machine::FunctionCode,
     bool,
+    &'a [u16],
     Vec<String>,
     u16,
     crate::value::Value,
@@ -370,6 +417,7 @@ type ForOfLoopData<'a> = (
     u16,
     &'a crate::machine::FunctionCode,
     bool,
+    &'a [u16],
     bool,
     crate::value::Value,
     u16,
@@ -385,6 +433,7 @@ fn unpack_for_in<'a>(
         slot,
         body,
         per_iteration,
+        iteration_slots,
         dst,
     } = op
     else {
@@ -392,7 +441,7 @@ fn unpack_for_in<'a>(
     };
     let value = crate::execute::read_register(registers, *object)?;
     let keys = for_in_keys(&value);
-    Ok((label, *slot, body, *per_iteration, keys, *dst, value))
+    Ok((label, *slot, body, *per_iteration, iteration_slots, keys, *dst, value))
 }
 
 fn for_in_keys(value: &crate::value::Value) -> Vec<String> {
@@ -409,7 +458,7 @@ fn iterate_loop_keys(
     registers: &mut crate::register_file::RegisterFile,
     data: ForInLoopData<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, keys, dst, object) = data;
+    let (label, slot, body, per_iteration, iteration_slots, keys, dst, object) = data;
     let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
@@ -419,7 +468,7 @@ fn iterate_loop_keys(
             continue;
         }
         let value = crate::value::Value::String(key);
-        let _binding = bind_iteration(slot, value, per_iteration);
+        let _binding = bind_iteration(slot, value, per_iteration, iteration_slots);
         match execute_loop_body(registers, label, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(value) => {
@@ -458,6 +507,7 @@ fn unpack_for_of<'a>(
         slot,
         body,
         per_iteration,
+        iteration_slots,
         r#await,
         dst,
     } = op
@@ -465,7 +515,7 @@ fn unpack_for_of<'a>(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let iterable = crate::execute::read_register(registers, *iterable)?;
-    Ok((label, *slot, body, *per_iteration, *r#await, iterable, *dst))
+    Ok((label, *slot, body, *per_iteration, iteration_slots, *r#await, iterable, *dst))
 }
 
 fn iterate_loop_values(
@@ -476,6 +526,7 @@ fn iterate_loop_values(
     per_iteration: bool,
     await_values: bool,
     iterator: crate::value::Value,
+    iteration_slots: &[u16],
     dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Some(body) = body.code() else {
@@ -499,7 +550,7 @@ fn iterate_loop_values(
         let Some(value) = value else {
             return Ok(crate::completion::Completion::Normal);
         };
-        let _binding = bind_iteration(slot, value, per_iteration);
+        let _binding = bind_iteration(slot, value, per_iteration, iteration_slots);
         match execute_loop_body(registers, label, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
@@ -524,9 +575,18 @@ fn bind_iteration(
     slot: u16,
     value: crate::value::Value,
     per_iteration: bool,
+    iteration_slots: &[u16],
 ) -> Option<crate::locals::IterationBinding> {
     if per_iteration {
-        Some(crate::locals::IterationBinding::install(slot, value))
+        Some(crate::locals::IterationBinding::install_many(
+            std::iter::once((slot, value)).chain(
+                iteration_slots
+                    .iter()
+                    .copied()
+                    .filter(|candidate| *candidate != slot)
+                    .map(|candidate| (candidate, crate::value::Value::Undefined)),
+            ),
+        ))
     } else {
         crate::locals::write(slot, value);
         None
