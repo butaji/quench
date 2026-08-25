@@ -155,7 +155,7 @@ fn descriptor_metadata_lookup_is_cold_and_last_write_wins() {
     ];
     assert_eq!(
         crate::builtins::descriptor_metadata(&properties[..], "alpha"),
-        Some(&Value::String("new".to_string()))
+        Some(&Value::String("new".to_string())).cloned()
     );
     assert_eq!(crate::builtins::descriptor_metadata(&properties[..], "missing"), None);
 }
@@ -180,11 +180,11 @@ fn ordinary_object_slots_ignore_interleaved_metadata() {
     assert_eq!(object.slot_for("alpha"), Some(0));
     assert_eq!(object.slot_for("beta"), Some(1));
     assert_eq!(object.slot_for("gamma"), Some(2));
-    assert_eq!(object.value_at_slot(0), Some(&Value::Number(1.0)));
-    assert_eq!(object.value_at_slot(1), Some(&Value::Number(2.0)));
-    assert_eq!(object.value_at_slot(2), Some(&Value::Number(3.0)));
+    assert_eq!(object.value_at_slot(0), Some(&Value::Number(1.0)).cloned());
+    assert_eq!(object.value_at_slot(1), Some(&Value::Number(2.0)).cloned());
+    assert_eq!(object.value_at_slot(2), Some(&Value::Number(3.0)).cloned());
     assert_eq!(object.slot_for("\0quench:descriptor:alpha"), None);
-    assert_eq!(object.value_for_shape_slot(shape.id, 2), Some(&Value::Number(3.0)));
+    assert_eq!(object.value_for_shape_slot(shape.id, 2), Some(&Value::Number(3.0)).cloned());
 }
 
 #[test]
@@ -227,8 +227,8 @@ fn object_slots_have_one_authoritative_property_source() {
     assert!(std::ptr::eq(object.hot_properties(), &object.properties));
     assert_eq!(object.hot_properties().len(), 3);
     assert_eq!(object.shape().slots, 2);
-    assert_eq!(object.value_for_shape_slot(object.shape_id(), 0), Some(&Value::Number(10.0)));
-    assert_eq!(object.value_for_shape_slot(object.shape_id(), 1), Some(&Value::Number(20.0)));
+    assert_eq!(object.value_for_shape_slot(object.shape_id(), 0), Some(&Value::Number(10.0)).cloned());
+    assert_eq!(object.value_for_shape_slot(object.shape_id(), 1), Some(&Value::Number(20.0)).cloned());
     assert_eq!(object.value_at_slot(2), None);
 }
 
@@ -261,7 +261,7 @@ fn dictionary_storage_contract_keeps_last_write_authoritative() {
     );
 
     assert!(object.is_dictionary());
-    assert_eq!(object.dictionary_value("p7"), Some(&Value::Number(700.0)));
+    assert_eq!(object.dictionary_value("p7"), Some(&Value::Number(700.0)).cloned());
     assert_eq!(object.dictionary_value("\0quench:descriptor:p7"), None);
     assert_eq!(object.dictionary_value("missing"), None);
     // Dictionary lookup never manufactures a slot/cache representation.

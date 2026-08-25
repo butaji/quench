@@ -37,7 +37,7 @@ pub(crate) fn proxy_set(
                                 (name == "value").then_some(v)
                             });
                             if current.is_some_and(|current| {
-                                !crate::builtins::same_value(Some(current), Some(value))
+                                !crate::builtins::same_value(Some(&current), Some(value))
                             }) {
                                 return Err(crate::value::error::throw_type_error(
                                     "Proxy set invariant violated",

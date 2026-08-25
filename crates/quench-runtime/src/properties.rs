@@ -224,11 +224,10 @@ pub(crate) fn execute_set_named_cached(
                 crate::execution_trace::event(
                     crate::execution_trace::Event::NamedSetLayoutMismatch,
                 );
-            } else if let Some((_, crate::value::Value::BindingCell(cell))) =
-                data.hot_properties().slot_entry(slot as usize)
-            {
+            } else if let Some(word) = data.hot_properties().slot_word(slot as usize) {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
-                cell.store(crate::execute::read_register(registers, src)?);
+                word.store_from_register(registers, usize::from(src))
+                    .ok_or(crate::execute::VmError::MissingReturn)?;
                 return Ok(());
             } else {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedSetSlotNotCell);
@@ -267,14 +266,8 @@ fn cacheable_named_write_slot(data: &crate::value::ObjectData, key: &str) -> Opt
         return None;
     }
     data.hot_properties()
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(slot, (name, value))| {
-            (name == key && matches!(value, crate::value::Value::BindingCell(_)))
-                .then(|| u32::try_from(slot).ok())
-                .flatten()
-        })
+        .position_rev(key)
+        .and_then(|slot| u32::try_from(slot).ok())
 }
 
 fn finish_set_property(
@@ -340,7 +333,7 @@ fn inherits_error_prototype(target: &crate::value::Value) -> bool {
             .iter()
             .rev()
             .find_map(|(name, value)| (name == "\0prototype").then_some(value))
-            .is_some_and(inherits_error_prototype),
+            .is_some_and(|target| inherits_error_prototype(&target)),
         crate::value::Value::ObjectAlias(alias) => alias
             .0
             .borrow()

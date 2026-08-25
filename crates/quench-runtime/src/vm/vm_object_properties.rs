@@ -41,7 +41,7 @@ fn object_prototype_property(
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value))
         .map_or(Value::Undefined, |prototype| {
-            get_property_with_receiver(prototype, key, receiver).unwrap_or(Value::Undefined)
+            get_property_with_receiver(&prototype, key, receiver).unwrap_or(Value::Undefined)
         })
 }
 
@@ -119,7 +119,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                 &Value::Object(properties.clone()),
             ));
         }
-        return Some(property_value(value));
+        return Some(property_value(&value));
     }
     if let Some(value) = global_object_property(properties, key) {
         return Some(value);
@@ -155,7 +155,7 @@ pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, k
     else {
         return None;
     };
-    if crate::conversion::is_symbol_string(value) {
+    if crate::conversion::is_symbol_string(&value) {
         return None;
     }
     if crate::builtins::builtin_prototype_property_is_removed(

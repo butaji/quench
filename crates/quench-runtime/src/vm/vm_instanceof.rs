@@ -180,7 +180,7 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
 
 fn is_shadow_realm(properties: &crate::value::ObjectData) -> bool {
     properties.iter().any(|(name, value)| {
-        name == "\0prototype" && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
+        name == "\0prototype" && value == Value::Builtin(Builtin::ShadowRealmPrototype)
     })
 }
 

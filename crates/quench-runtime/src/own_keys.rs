@@ -138,14 +138,14 @@ fn object_enumerable_keys(data: &crate::value::ObjectData) -> Vec<String> {
             .filter(|key| key != "timeValue")
             .collect();
     };
-    if matches!(value, Value::String(value) if crate::conversion::is_symbol_string(value)) {
+    if matches!(value, Value::String(ref value) if crate::conversion::is_symbol_string(&value)) {
         return enumerable_ordered(properties)
             .into_iter()
             .filter(|key| key != "_value" && key != "constructor")
             .collect();
     }
     let mut keys = match value {
-        Value::String(value) => string_indices(value),
+        Value::String(value) => string_indices(&value),
         _ => Vec::new(),
     };
     keys.extend(
@@ -300,7 +300,7 @@ fn object_keys<P: crate::value::PropertyEntries + ?Sized>(
         return filter_namespace_symbol_name(properties, symbols, keys);
     };
 
-    if crate::conversion::is_symbol_string(value) {
+    if crate::conversion::is_symbol_string(&value) {
         // Boxed Symbol: enumerable indices are not meaningful. Only the
         // own data properties (other than `_value`) are visible.
         let keys = ordered(properties, symbols)
@@ -309,7 +309,7 @@ fn object_keys<P: crate::value::PropertyEntries + ?Sized>(
             .collect();
         return filter_namespace_symbol_name(properties, symbols, keys);
     }
-    boxed_string_keys(properties, value, symbols)
+    boxed_string_keys(properties, &value, symbols)
 }
 
 fn filter_namespace_symbol_name<P: crate::value::PropertyEntries + ?Sized>(
@@ -380,7 +380,7 @@ fn descriptor_enumerable<P: crate::value::PropertyEntries + ?Sized>(
         .entries()
         .rev()
         .find_map(|(name, value)| (name == metadata).then_some(value));
-    descriptor_enumerable_value(descriptor)
+    descriptor_enumerable_value(descriptor.as_ref())
 }
 
 fn descriptor_enumerable_value(descriptor: Option<&Value>) -> bool {

@@ -241,6 +241,88 @@ pub(crate) fn store(
     Ok(())
 }
 
+/// Store to a statically resolved, initialized local. Dynamic binding state
+/// remains observable through the ordinary path; the common mutable slot
+/// copies its canonical execute word without cloning an Environment or cell.
+#[inline(always)]
+pub(crate) fn store_proven(
+    registers: &crate::register_file::RegisterFile,
+    slot: u16,
+    source: u16,
+) -> Result<(), VmError> {
+    let fast = CURRENT_ENVIRONMENT.with(|current| {
+        let current = current.borrow();
+        let environment = current.as_ref()?;
+        if environment.is_deleted_slot(slot)
+            || environment.is_immutable_slot(slot)
+            || environment.is_uninitialized(slot)
+        {
+            return None;
+        }
+        Some(environment.copy_proven_from_register(slot, registers, source))
+    });
+    if fast == Some(true) {
+        return Ok(());
+    }
+    store(registers, slot, source)
+}
+
+/// Execute the flagged compact Move over canonical lexical words. Both slot
+/// mappings remain borrowed from the one active Environment; no BindingRef or
+/// semantic Value is constructed on the admitted path.
+#[inline(always)]
+pub(crate) fn move_proven_local(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    source: u16,
+    target: u16,
+) -> Result<(), VmError> {
+    let fast = CURRENT_ENVIRONMENT.with(|current| {
+        let current = current.borrow();
+        let environment = current.as_ref()?;
+        move_proven_local_in(environment, registers, dst, source, target).then_some(true)
+    });
+    if fast == Some(true) {
+        crate::execution_trace::event(crate::execution_trace::Event::RegisterWordCopy);
+        return Ok(());
+    }
+    load_proven(registers, dst, source)?;
+    store(registers, target, dst)
+}
+
+#[inline(always)]
+pub(crate) fn can_move_proven_local(environment: &Environment, source: u16, target: u16) -> bool {
+    environment.has_proven_slot(source)
+        && environment.has_proven_slot(target)
+        && !environment.is_deleted_slot(target)
+        && !environment.is_immutable_slot(target)
+        && !environment.is_uninitialized(target)
+}
+
+#[inline(always)]
+pub(crate) fn move_proven_local_in(
+    environment: &Environment,
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    source: u16,
+    target: u16,
+) -> bool {
+    can_move_proven_local(environment, source, target)
+        && move_admitted_local_in(environment, registers, dst, source, target)
+}
+
+#[inline(always)]
+pub(crate) fn move_admitted_local_in(
+    environment: &Environment,
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    source: u16,
+    target: u16,
+) -> bool {
+    environment.load_proven_into(registers, dst, source)
+        && environment.copy_proven_from_register(target, registers, dst)
+}
+
 pub(crate) fn store_function_name(
     _registers: &crate::register_file::RegisterFile,
     _slot: u16,
@@ -394,6 +476,28 @@ pub(crate) fn load(
     Ok(())
 }
 
+/// Load a statically resolved, initialized local from its canonical word.
+/// Captured/bridged slots are still handled by `SlotStore`; only the mapping
+/// ownership and thread-local Environment clone disappear.
+#[inline(always)]
+pub(crate) fn load_proven(
+    registers: &mut crate::register_file::RegisterFile,
+    dst: u16,
+    slot: u16,
+) -> Result<(), VmError> {
+    crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    let loaded = CURRENT_ENVIRONMENT.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .is_some_and(|environment| environment.load_proven_into(registers, dst, slot))
+    });
+    if !loaded {
+        current().load_into(registers, dst, slot);
+    }
+    Ok(())
+}
+
 #[inline(always)]
 pub(crate) fn load_checked(
     registers: &mut crate::register_file::RegisterFile,
@@ -432,24 +536,21 @@ pub(crate) fn update(
     if environment.is_uninitialized(slot) {
         return ensure_initialized(slot, &format!("local_{slot}"));
     }
-    crate::execute::write_value(registers, old_dst, environment.get(slot));
-    registers.write_number(usize::from(updated_dst), 1.0);
+    let old = environment.get(slot);
     let operator = if decrement {
         crate::ops::BinaryOp::NumericSubtract
     } else {
         crate::ops::BinaryOp::NumericAdd
     };
-    crate::vm::vm_arithmetic::execute_binary(
-        registers,
-        updated_dst,
+    let updated = crate::vm::vm_arithmetic::evaluate_binary(
+        &old,
+        &crate::value::Value::Number(1.0),
         operator,
-        old_dst,
-        updated_dst,
     )?;
-    environment.set(
-        slot,
-        crate::vm::read_register_unchecked(registers, updated_dst),
-    );
+    let numeric_old = crate::vm::vm_arithmetic::evaluate_to_numeric(&old)?;
+    crate::execute::write_value(registers, old_dst, numeric_old);
+    crate::execute::write_value(registers, updated_dst, updated.clone());
+    environment.set(slot, updated);
     Ok(())
 }
 

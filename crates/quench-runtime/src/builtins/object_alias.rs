@@ -10,21 +10,21 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         // property so own-property and descriptor lookups see the new state.
         let deleted = super::deleted_key(key);
         values.retain(|(name, _)| name != &deleted);
-        for (name, value) in &mut values {
+        for (name, mut value) in values.iter_mut() {
             if name == crate::intl::SLOT {
                 continue;
             }
             if super::is_descriptor_key(name) {
-                retarget_descriptor(value, &properties, weak);
+                retarget_descriptor(&mut value, &properties, weak);
             } else {
-                retarget(value, &properties, weak);
+                retarget(&mut value, &properties, weak);
             }
         }
         retarget_private_slots(&properties.private_slots, &properties, weak);
         let mut value = value.clone();
         retarget(&mut value, &properties, weak);
-        if let Some((_, current)) = values.iter_mut().rev().find(|(name, _)| name == key) {
-            *current = value;
+        if let Some(slot) = values.position_rev(key) {
+            values.store_slot(slot, value);
         } else {
             values.push((key.into(), value));
         }
@@ -49,19 +49,19 @@ fn sync_descriptor_value(values: &mut crate::value::ObjectProperties, key: &str)
         .iter()
         .rev()
         .find_map(|(name, value)| (name == key).then(|| value.clone()));
-    let Some((_, Value::Object(descriptor))) = values
-        .iter_mut()
-        .rev()
-        .find(|(name, _)| name == &super::descriptor_key(key))
-    else {
+    let descriptor_key = super::descriptor_key(key);
+    let Some(slot) = values.position_rev(&descriptor_key) else {
         return;
     };
-    if let Some((_, current)) = Rc::make_mut(descriptor)
-        .iter_mut()
-        .find(|(name, _)| name == "value")
-    {
-        *current = value.unwrap_or(Value::Undefined);
+    let Some(Value::Object(mut descriptor)) = values.slot_value(slot) else {
+        return;
+    };
+    if let Some(field_slot) = descriptor.properties.position_rev("value") {
+        Rc::make_mut(&mut descriptor)
+            .properties
+            .store_slot(field_slot, value.unwrap_or(Value::Undefined));
     }
+    values.store_slot(slot, Value::Object(descriptor));
 }
 
 /// Re-anchor `\0home_object` aliases inside the clone's method values so `super`
@@ -110,11 +110,11 @@ fn retarget_descriptor(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject
     let Value::Object(properties) = value else {
         return;
     };
-    for (name, field) in &mut Rc::make_mut(properties).properties {
+    for (name, mut field) in Rc::make_mut(properties).properties.iter_mut() {
         if !matches!(name.as_str(), "value" | "get" | "set") {
             continue;
         }
-        retarget(field, old, new);
+        retarget(&mut field, old, new);
     }
 }
 

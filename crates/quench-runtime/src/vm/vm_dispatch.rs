@@ -498,7 +498,7 @@ fn property_string<P: crate::value::PropertyEntries + ?Sized>(
         .entries()
         .rev()
         .find(|(name, _)| *name == key)
-        .map(|(_, value)| to_string(Some(value)))
+        .map(|(_, value)| to_string(Some(&value)))
 }
 
 fn execute_array(registers: &mut crate::register_file::RegisterFile, dst: u16, elements: &[u16]) -> Result<(), VmError> {

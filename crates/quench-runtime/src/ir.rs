@@ -66,6 +66,7 @@ instruction_set! {
     Binary = 25 / 3,
     StoreLocalChecked = 26 / 2,
     InitLocal = 27 / 2,
+    StoreLocal = 28 / 2,
 }
 
 macro_rules! compact_binary_operators {
@@ -264,6 +265,19 @@ impl Instruction {
             c: 0,
         }
     }
+
+    /// Copy one proven local to another and leave the assigned value in `dst`.
+    /// The Move opcode remains the single semantic declaration; its flag only
+    /// selects the physical word owners named by the operands.
+    pub const fn move_local(dst: Register, source: u16, target: u16) -> Self {
+        Self {
+            opcode: Opcode::Move,
+            flags: 1,
+            a: dst,
+            b: source,
+            c: target,
+        }
+    }
     pub const fn binary_operator(
         dst: Register,
         operator: crate::ops::BinaryOp,
@@ -290,6 +304,15 @@ impl Instruction {
     pub const fn store_local_checked(slot: u16, src: Register) -> Self {
         Self {
             opcode: Opcode::StoreLocalChecked,
+            flags: 0,
+            a: slot,
+            b: src,
+            c: 0,
+        }
+    }
+    pub const fn store_local(slot: u16, src: Register) -> Self {
+        Self {
+            opcode: Opcode::StoreLocal,
             flags: 0,
             a: slot,
             b: src,
@@ -556,6 +579,7 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
     match op {
         Op::Move { dst, src } => Some(Instruction::move_(*dst, *src)),
         Op::LoadLocal { dst, slot } => Some(Instruction::load_local(*dst, *slot)),
+        Op::StoreLocal { slot, src } => Some(Instruction::store_local(*slot, *src)),
         Op::LoadBinding {
             dst,
             slot,
@@ -1015,7 +1039,7 @@ mod tests {
 
     #[test]
     fn opcodes_remain_compact_byte_identifiers() {
-        assert_eq!(Opcode::COUNT, Opcode::InitLocal as u8);
+        assert_eq!(Opcode::COUNT, Opcode::StoreLocal as u8);
         assert!(Opcode::Slow.is_compact());
     }
 

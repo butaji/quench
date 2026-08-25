@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "oracle": { "max_ratio": 2 },
   "metrics": {
     "environment_per_call": {
       "numerator": "heap_lifecycle.environment.allocated",
@@ -12,6 +13,12 @@
       "denominator": "events.loop_iteration",
       "min_traffic": 100000,
       "max": 0.01
+    },
+    "call_decode_per_iteration": {
+      "numerator": "lanes.l0.value_decode_by_site.call",
+      "denominator": "events.loop_iteration",
+      "min_traffic": 100000,
+      "max": 0.02
     }
   }
 }

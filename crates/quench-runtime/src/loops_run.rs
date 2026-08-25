@@ -24,6 +24,7 @@ pub(crate) fn execute(
         ),
         _ => return Err(crate::execute::VmError::MissingReturn),
     };
+    let per_iteration_captured = per_iteration.iter().any(|slot| body.uses_slot(*slot));
     let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
@@ -42,7 +43,7 @@ pub(crate) fn execute(
         test,
         body,
         update,
-        (*post_test, dst, per_iteration),
+        (*post_test, dst, per_iteration, per_iteration_captured),
         registers,
     )
 }
@@ -53,12 +54,12 @@ fn run_loop(
     test: crate::machine::CodeView<'_>,
     body: crate::machine::CodeView<'_>,
     update: crate::machine::CodeView<'_>,
-    config: (bool, u16, &[u16]),
+    config: (bool, u16, &[u16], bool),
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::LoopEntry);
     let loop_shape = crate::execution_trace::loop_shape(body);
-    let (post_test, dst, per_iteration) = config;
+    let (post_test, dst, per_iteration, per_iteration_captured) = config;
     run_fragment(init, registers)?;
     if label.is_none() && !post_test && per_iteration.is_empty() {
         if let Some(completion) = run_montgomery_reduce_kernel(test, body, update) {
@@ -92,12 +93,28 @@ fn run_loop(
             dump_counted_rejection(loop_shape, test, update);
         }
     }
-    if label.is_none() && !post_test && per_iteration.is_empty() {
+    if label.is_none() && !post_test {
         if let Some(fact) = CountedForFact::recognize(test, update) {
-            if let Some(completion) =
-                run_counted_for(fact, body, update, dst, registers, loop_shape)?
-            {
-                return Ok(completion);
+            let stable_iteration_binding = per_iteration.is_empty()
+                || (per_iteration == [fact.slot] && !per_iteration_captured);
+            let compact_body = (0..body.len()).all(|pc| {
+                body.instruction(pc)
+                    .is_some_and(|instruction| instruction.opcode != crate::ir::Opcode::Slow)
+            });
+            if stable_iteration_binding && compact_body {
+                if let Some(completion) =
+                    run_counted_for(
+                        fact,
+                        body,
+                        update,
+                        dst,
+                        registers,
+                        loop_shape,
+                        !per_iteration_captured,
+                    )?
+                {
+                    return Ok(completion);
+                }
             }
         }
     }
@@ -279,9 +296,59 @@ fn run_counted_for(
     dst: u16,
     registers: &mut crate::register_file::RegisterFile,
     loop_shape: u64,
+    index_unused_by_body: bool,
 ) -> Result<Option<crate::completion::Completion>, crate::execute::VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::CountedForAttempt);
     let environment = crate::locals::current();
+    let context = crate::vm::current_context_or_default();
+    let word_body = proven_word_move_body(&environment, body);
+    if index_unused_by_body
+        && fact.timing == CountedStepTiming::AfterBody
+        && matches!(fact.bound, CountedBound::Constant(_))
+    {
+        let Some(mut index) = environment.get_number(fact.slot) else {
+            crate::execution_trace::event(crate::execution_trace::Event::CountedForDeopt);
+            crate::execution_trace::kernel("counted_for", true);
+            return Ok(None);
+        };
+        let CountedBound::Constant(bound) = fact.bound else {
+            unreachable!("constant-bound admission checked above")
+        };
+        #[cfg(not(feature = "execution-trace"))]
+        if let Some(plans) = word_body.as_deref() {
+            while counted_comparison(fact.comparison, index, bound) {
+                for plan in plans {
+                    plan.execute();
+                }
+                index += fact.step;
+            }
+            environment.set(fact.slot, crate::value::Value::Number(index));
+            return Ok(Some(crate::completion::Completion::Normal));
+        }
+        while counted_comparison(fact.comparison, index, bound) {
+            crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
+            crate::execution_trace::loop_shape_iteration(loop_shape);
+            crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
+            crate::execution_trace::kernel("counted_for", false);
+            match execute_counted_body(body, registers, &context, word_body.as_deref())? {
+                crate::completion::LoopTransition::Continue(value) => {
+                    store_loop_value(registers, dst, value)?;
+                }
+                crate::completion::LoopTransition::Break(value) => {
+                    store_loop_value(registers, dst, value)?;
+                    environment.set(fact.slot, crate::value::Value::Number(index));
+                    return Ok(Some(crate::completion::Completion::Normal));
+                }
+                crate::completion::LoopTransition::Propagate(completion) => {
+                    environment.set(fact.slot, crate::value::Value::Number(index));
+                    return update_empty_from(registers, dst, completion).map(Some);
+                }
+            }
+            index += fact.step;
+        }
+        environment.set(fact.slot, crate::value::Value::Number(index));
+        return Ok(Some(crate::completion::Completion::Normal));
+    }
     loop {
         crate::execution_trace::event(crate::execution_trace::Event::LoopIteration);
         crate::execution_trace::loop_shape_iteration(loop_shape);
@@ -308,7 +375,7 @@ fn run_counted_for(
         }
         crate::execution_trace::event(crate::execution_trace::Event::CountedForHit);
         crate::execution_trace::kernel("counted_for", false);
-        match execute_loop_body(registers, &None, body)? {
+        match execute_counted_body(body, registers, &context, word_body.as_deref())? {
             crate::completion::LoopTransition::Continue(value) => {
                 store_loop_value(registers, dst, value)?;
             }
@@ -329,6 +396,43 @@ fn run_counted_for(
             };
         }
     }
+}
+
+fn proven_word_move_body(
+    environment: &crate::environment::Environment,
+    body: crate::machine::CodeView<'_>,
+) -> Option<Vec<crate::register_file::ImmediateCopyPlan>> {
+    (!body.is_empty()).then_some(())?;
+    (0..body.len())
+        .map(|pc| {
+            let instruction = body.instruction(pc)?;
+            (instruction.opcode == crate::ir::Opcode::Move && instruction.flags == 1)
+                .then_some(())?;
+            crate::locals::can_move_proven_local(environment, instruction.b, instruction.c)
+                .then_some(())?;
+            environment.plan_immediate_move(instruction.b, instruction.c)
+        })
+        .collect()
+}
+
+fn execute_counted_body(
+    body: crate::machine::CodeView<'_>,
+    registers: &mut crate::register_file::RegisterFile,
+    context: &crate::vm::VmContext,
+    word_body: Option<&[crate::register_file::ImmediateCopyPlan]>,
+) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
+    let Some(plans) = word_body else {
+        return execute_loop_body_with_context(registers, &None, body, context);
+    };
+    for (pc, plan) in plans.iter().enumerate() {
+        let instruction = body.instruction(pc).expect("word body was validated");
+        let _decode_guard = crate::execution_trace::compact(instruction.opcode);
+        crate::execution_trace::compact_site(body, pc);
+        crate::execution_trace::operands(instruction);
+        plan.execute();
+        crate::execution_trace::event(crate::execution_trace::Event::RegisterWordCopy);
+    }
+    Ok(crate::completion::LoopTransition::Continue(None))
 }
 
 macro_rules! counted_comparisons {
@@ -457,7 +561,9 @@ fn recognize_counted_update(update: crate::machine::CodeView<'_>, slot: u16) -> 
         let instruction = update.instruction(0)?;
         let returned = update.instruction(update.len() - 1)?;
         let valid_return = if update.len() == 2 {
-            returned.a == instruction.b
+            // Prefix update returns the updated word (`b`); compact postfix
+            // update returns the already-ToNumeric old word (`a`).
+            returned.a == instruction.a || returned.a == instruction.b
         } else {
             match update.cold_at(1)? {
                 Op::Unary {
@@ -501,6 +607,38 @@ fn recognize_counted_update(update: crate::machine::CodeView<'_>, slot: u16) -> 
     (*stored_slot == slot && load.a == lhs && step_register == rhs
         && next == *stored && returned.opcode == crate::ir::Opcode::Return && returned.a == next)
         .then_some(*step)
+}
+
+#[cfg(test)]
+mod counted_update_tests {
+    #[test]
+    fn compact_postfix_result_is_a_counted_update() {
+        let mut arena = crate::machine::CodeArena::new();
+        let range = arena.append_slice(&[
+            crate::ops::Op::LoadLocal { dst: 2, slot: 7 },
+            crate::ops::Op::Const {
+                dst: 3,
+                value: crate::ops::Constant::Number(1.0),
+            },
+            crate::ops::Op::Binary {
+                dst: 4,
+                operator: crate::ops::BinaryOp::NumericAdd,
+                lhs: 2,
+                rhs: 3,
+            },
+            crate::ops::Op::StoreLocal { slot: 7, src: 4 },
+            crate::ops::Op::Unary {
+                dst: 5,
+                operator: crate::ops::UnaryOp::ToNumeric,
+                src: 2,
+            },
+            crate::ops::Op::Return { src: 5 },
+        ]);
+        let store = arena.freeze();
+        let update = store.code(range).expect("compact update");
+        assert_eq!(update.len(), 2);
+        assert_eq!(super::recognize_counted_update(update, 7), Some(1.0));
+    }
 }
 
 fn store_loop_value(
