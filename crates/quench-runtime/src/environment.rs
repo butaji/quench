@@ -774,6 +774,12 @@ impl Environment {
             .insert(slot);
     }
 
+    pub(crate) fn clear_immutable_slot(&self, slot: u16) {
+        if let Some(slots) = self.immutable_slots.borrow_mut().as_mut() {
+            slots.remove(&slot);
+        }
+    }
+
     pub(crate) fn is_immutable_slot(&self, slot: u16) -> bool {
         self.immutable_slots
             .borrow()
