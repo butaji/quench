@@ -167,6 +167,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
         Builtin::TemporalPlainYearMonth => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainYearMonthPrototype => &["constructor", "calendarId", "year", "month", "monthCode", "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear", "era", "eraYear", "toString", "toJSON", "toLocaleString", "equals", "with", "add", "subtract", "until", "since", "toPlainDate", "valueOf"],
         Builtin::TemporalZonedDateTime => &["length", "name", "prototype", "from", "compare"],
+        Builtin::TemporalZonedDateTimePrototype => &["constructor", "epochNanoseconds", "epochMilliseconds", "timeZoneId", "calendarId", "year", "month", "monthCode", "day", "dayOfWeek", "dayOfYear", "weekOfYear", "yearOfWeek", "daysInWeek", "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear", "hoursInDay", "offset", "offsetNanoseconds", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond", "toString", "toJSON", "toLocaleString", "toInstant", "toPlainDateTime", "toPlainDate", "toPlainTime", "equals", "valueOf"],
         Builtin::TemporalNow => &["instant", "plainDateISO", "plainDateTimeISO", "plainTimeISO", "timeZoneId", "zonedDateTimeISO", "Symbol.toStringTag"],
         _ => &[],
     }
