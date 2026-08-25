@@ -316,17 +316,33 @@ fn epoch_nanos(text: &str) -> Result<i128, VmError> {
         .map(|index| &time[index..])
         .unwrap_or("Z");
     let time = time.split(['Z', '+', '-']).next().unwrap_or(time);
-    let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+    let day_sep = date
+        .rfind('-')
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
+    let month_sep = date[..day_sep]
+        .rfind('-')
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
+    let year = date[..month_sep]
+        .parse::<i32>()
         .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    let month = date[month_sep + 1..day_sep]
+        .parse::<u32>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    let day = date[day_sep + 1..]
+        .parse::<u32>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
     let (clock, fraction) = time.split_once('.').map_or((time, ""), |parts| parts);
     let clock = chrono::NaiveTime::parse_from_str(clock, "%H:%M:%S")
         .or_else(|_| chrono::NaiveTime::parse_from_str(clock, "%H:%M"))
         .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
-    let base = chrono::NaiveDateTime::new(date, clock)
-        .and_utc()
-        .timestamp_nanos_opt()
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?
-        as i128;
+    let days = days_from_civil(year, month, day);
+    let base = days * 86_400_000_000_000
+        + i128::from(clock.hour()) * 3_600_000_000_000
+        + i128::from(clock.minute()) * 60_000_000_000
+        + i128::from(clock.second()) * 1_000_000_000;
     let nanos = format!("{fraction:0<9}").parse::<i128>().unwrap_or(0);
     let offset_minutes = if offset == "Z" {
         0
@@ -334,6 +350,17 @@ fn epoch_nanos(text: &str) -> Result<i128, VmError> {
         parse_offset(offset)?
     };
     Ok(base + nanos - i128::from(offset_minutes) * 60_000_000_000)
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i128 {
+    let year = i128::from(year) - i128::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month = i128::from(month);
+    let day_of_year =
+        (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + i128::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 fn parse_offset(offset: &str) -> Result<i64, VmError> {
