@@ -4,6 +4,7 @@
 
 pub mod assert;
 pub mod assert_validate;
+pub mod async_hooks;
 pub mod buffer;
 pub mod buffer_enc;
 pub mod buffer_from;
