@@ -64,7 +64,7 @@ impl<'a> oxc::ast::visit::Visit<'a> for RegexpLiteralValidator<'a> {
                     self.errors.push(error);
                 }
                 let flags = &text[separator + 1..];
-                if flags.contains('u') {
+                if flags.contains('u') || flags.contains('v') {
                     if let Err(error) = crate::regexp::validate_unicode(pattern, flags) {
                         self.errors.push(error);
                     }

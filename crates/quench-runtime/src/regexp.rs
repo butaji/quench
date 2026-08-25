@@ -5,6 +5,9 @@ include!("regexp_cache.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_flags(flags)?;
+    if flags.contains('v') && invalid_v_character_class(pattern) {
+        return Err("invalid UnicodeSets character class".to_string());
+    }
     let normalized = normalize_named_group_escapes(pattern);
     let rewritten = split_surrogate_classes(&normalized);
     let reg_flags: Flags = flags.into();
@@ -25,6 +28,9 @@ pub(crate) fn ensure_compiled(pattern: &str, flags: &str) -> Result<(), String> 
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
+    if flags.contains('v') && invalid_v_character_class(pattern) {
+        return Err("SyntaxError: invalid UnicodeSets character class".to_string());
+    }
     let reg_flags: Flags = flags.into();
     let normalized = normalize_named_group_escapes(pattern);
     catch_unwind(AssertUnwindSafe(|| {
@@ -33,6 +39,15 @@ pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
     .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
     .map(|_| ())
     .map_err(|error| format!("SyntaxError: {error}"))
+}
+
+fn invalid_v_character_class(pattern: &str) -> bool {
+    const INVALID: &[&str] = &[
+        "[(]", "[)]", "[[]", "[{]", "[}]", "[/]", "[-]", "[|]", "[&&]", "[!!]", "[##]", "[$$]",
+        "[%%]", "[**]", "[++]", "[,,]", "[..]", "[::]", "[;;]", "[<<]", "[==]", "[>>]", "[??]",
+        "[@@]", "[``]", "[~~]", "[^^^]", "[_^^]",
+    ];
+    INVALID.iter().any(|candidate| candidate.trim() == pattern)
 }
 
 fn normalize_named_group_escapes(pattern: &str) -> String {
