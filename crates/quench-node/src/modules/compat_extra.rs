@@ -36,9 +36,6 @@ pub fn diagnostics_channel(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmE
 pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("v8.js"))
 }
-pub fn inspector(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
-    load(include_str!("inspector.js"))
-}
 pub fn repl(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("repl.js"))
 }
