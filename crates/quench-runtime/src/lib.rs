@@ -19,6 +19,10 @@ pub mod build_profile;
 
 mod arrays;
 mod atomics;
+pub use atomics::{
+    agent_notified, clear_agent_waiters, consume_agent_wake, forget_agent_waiter,
+    reset_agent_waiters, set_agent_can_block, set_agent_execution, take_agent_wait_occurred,
+};
 pub mod benchmark;
 mod bigint;
 mod binding_patterns;

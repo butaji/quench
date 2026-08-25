@@ -287,6 +287,10 @@ pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Val
     overrides::read(builtin, key)
 }
 
+pub(crate) fn intrinsic_override_removed(builtin: Builtin, key: &str) -> bool {
+    overrides::is_removed(builtin, key)
+}
+
 pub(crate) fn intrinsic_override_generation() -> u64 {
     overrides::generation()
 }

@@ -64,6 +64,11 @@ fn symbol_to_string(receiver: Option<&Value>) -> Result<Value, crate::execute::V
 }
 
 fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    if let Some(Value::Builtin(builtin)) = receiver {
+        if let Some(name) = crate::intl::tolocale::symbol::name(*builtin) {
+            return Ok(Value::String(name.to_string()));
+        }
+    }
     let Value::String(symbol) = symbol_value_of(receiver)? else {
         return Err(crate::value::error::throw_type_error(
             "Symbol description requires a symbol",
@@ -83,6 +88,17 @@ fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute:
 }
 
 fn wrapped_symbol(value: &Value) -> Result<Value, crate::execute::VmError> {
+    if let Value::Object(properties) = value {
+        if let Some(wrapped) = properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "_value").then_some(value))
+        {
+            if crate::conversion::is_symbol(wrapped) {
+                return Ok(wrapped.clone());
+            }
+        }
+    }
     let wrapped = crate::execute::get_property_result(value, "_value")?;
     if crate::conversion::is_symbol(&wrapped) {
         return Ok(wrapped);

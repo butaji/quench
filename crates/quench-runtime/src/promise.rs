@@ -25,6 +25,26 @@ include!("promise_settlement.rs");
 include!("promise_with_resolvers.rs");
 include!("promise_try.rs");
 
+thread_local! {
+    static OBJECT_PROMISE_BACKINGS: RefCell<HashMap<u64, Rc<PromiseData>>> = RefCell::new(HashMap::new());
+}
+
+pub(super) fn attach_promise_data(value: Value, capability: Rc<PromiseData>) -> Value {
+    if let Value::Object(object) = &value {
+        OBJECT_PROMISE_BACKINGS.with(|backings| {
+            backings.borrow_mut().insert(object.identity(), capability);
+        });
+    }
+    value
+}
+
+fn object_promise_backing(value: &Value) -> Option<Rc<PromiseData>> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    OBJECT_PROMISE_BACKINGS.with(|backings| backings.borrow().get(&object.identity()).cloned())
+}
+
 fn process_promise(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
@@ -32,6 +52,12 @@ fn process_promise(promise: &Rc<PromiseData>) {
     process_then_actions(then_actions, &state, promise_key);
     let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
     for continuation in continuations {
+        if matches!(state, PromiseState::Pending)
+            && matches!(&continuation, PromiseContinuation::Aggregate { .. })
+        {
+            promise.continuations.borrow_mut().push(continuation);
+            continue;
+        }
         process_continuation(continuation, &state);
     }
 }
@@ -309,6 +335,15 @@ pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
 /// Execute Promise.resolve using the single canonical promise-resolution path.
 pub fn promise_resolve(arguments: &[Value]) -> Value {
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Promise(promise) = &value {
+        let constructor = crate::execute::get_property_result(&value, "constructor").ok();
+        if constructor.as_ref().is_some_and(|constructor| {
+            crate::builtins::same_value(Some(constructor), Some(&Value::Builtin(Builtin::Promise)))
+        }) {
+            return Value::Promise(Rc::clone(promise));
+        }
+        return resolve_object_value(Rc::new(PromiseData::default()), value);
+    }
     resolve_value(value)
 }
 
@@ -483,15 +518,38 @@ fn maybe_handler(arguments: &[Value], index: usize) -> Option<Value> {
 
 /// Execute Promise.prototype.then.
 pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Promise(promise)) = receiver else {
+    let backing = receiver.and_then(|value| {
+        object_promise_backing(value).or_else(|| {
+            crate::execute::get_property_result(value, "\0promise_data")
+                .ok()
+                .and_then(|value| match value {
+                    Value::Promise(promise) => Some(promise),
+                    _ => None,
+                })
+        })
+    });
+    let fallback = receiver
+        .filter(|value| is_promise_prototype_chain(value))
+        .map(|_| {
+            let promise = Rc::new(PromiseData::new(PromiseState::Fulfilled(Value::Undefined)));
+            promise
+        });
+    let Some(promise) = receiver
+        .and_then(|value| match value {
+            Value::Promise(promise) => Some(promise),
+            _ => None,
+        })
+        .or(backing.as_ref())
+        .or(fallback.as_ref())
+    else {
         return Err(VmError::NotCallable);
     };
     let promise_value = Value::Promise(Rc::clone(promise));
-    let constructor = then_species_constructor(&promise_value)?;
-    let result = construct_then_result(&constructor)?;
-    let result_promise = match &result {
-        Value::Promise(promise) => Rc::clone(promise),
-        _ => return Err(VmError::NotCallable),
+    let species_receiver = receiver.unwrap_or(&promise_value);
+    let constructor = then_species_constructor(species_receiver)?;
+    let (result, result_promise) = match construct_then_result(&constructor) {
+        Ok(result) => result,
+        Err(error) => return Err(error),
     };
     promise
         .then_actions
@@ -511,6 +569,17 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     Ok(result)
 }
 
+fn is_promise_prototype_chain(value: &Value) -> bool {
+    let mut current = crate::builtins::object::get_prototype_of(Some(value)).ok();
+    while let Some(prototype) = current {
+        if matches!(prototype, Value::Builtin(Builtin::PromisePrototype)) {
+            return true;
+        }
+        current = crate::builtins::object::get_prototype_of(Some(&prototype)).ok();
+    }
+    false
+}
+
 include!("promise_methods.rs");
 /// Dispatch Promise builtins.
 pub fn execute_builtin(
@@ -519,10 +588,15 @@ pub fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
-        Builtin::Promise => Err(VmError::NotCallable),
+        Builtin::Promise => Err(crate::value::error::throw_type_error(
+            "Promise constructor cannot be called without new",
+        )),
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
         Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, receiver, arguments),
+        Builtin::PromiseAllKeyed => {
+            promise_keyed_combinator(PromiseAggregateKind::All, receiver, arguments)
+        }
         Builtin::PromiseAllSettled => {
             promise_combinator(PromiseAggregateKind::AllSettled, receiver, arguments)
         }
@@ -533,6 +607,9 @@ pub fn execute_builtin(
         Builtin::PromiseRace => promise_combinator(PromiseAggregateKind::Race, receiver, arguments),
         Builtin::PromiseWithResolvers => with_resolvers(receiver),
         Builtin::PromiseTry => promise_try(receiver, arguments),
+        Builtin::PromiseAggregateResolve => aggregate_callback(receiver, arguments, true),
+        Builtin::PromiseAggregateReject => aggregate_callback(receiver, arguments, false),
+        Builtin::PromiseCapabilityExecutor => capability_executor(receiver, arguments),
         Builtin::PromiseThen => promise_then(receiver, arguments),
         Builtin::PromiseCatch => promise_catch(receiver, arguments),
         Builtin::PromiseFinally => promise_finally(receiver, arguments),

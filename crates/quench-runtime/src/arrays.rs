@@ -128,10 +128,7 @@ include!("arrays_mutation.rs");
 include!("arrays_typed_static.rs");
 include!("arrays_from.rs");
 
-fn splice(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
+fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.splice called on null or undefined",
@@ -155,7 +152,9 @@ fn splice(
         .checked_add(item_count)
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid array length"))?;
     if resulting_length > MAX_SAFE_LENGTH {
-        return Err(crate::value::error::throw_type_error("Invalid array length"));
+        return Err(crate::value::error::throw_type_error(
+            "Invalid array length",
+        ));
     }
     let removed_target = crate::builtins::array_species_create(&target, delete_count)?;
     let mut removed = removed_target;
@@ -236,11 +235,8 @@ fn splice(
         }
     }
     for (offset, value) in arguments.iter().skip(2).cloned().enumerate() {
-        target = crate::properties::assign_set_property(
-            &target,
-            &(start + offset).to_string(),
-            value,
-        )?;
+        target =
+            crate::properties::assign_set_property(&target, &(start + offset).to_string(), value)?;
         target = crate::locals::resolved_replacement(target);
     }
     let new_length = resulting_length;
@@ -479,16 +475,15 @@ fn iterator_symbol_removed(key: &str) -> bool {
 
 include!("arrays_iterator.rs");
 
-fn sort(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
+fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.sort called on null or undefined",
         ));
     };
-    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    let compare = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined));
     if let Some(compare) = compare {
         if !crate::conversion::is_callable(compare) {
             return Err(crate::value::error::throw_type_error(
@@ -589,11 +584,7 @@ fn sort_by_string(values: &mut Vec<Value>) -> Result<(), crate::execute::VmError
     Ok(())
 }
 
-fn sort_write(
-    target: Value,
-    key: &str,
-    value: Value,
-) -> Result<Value, crate::execute::VmError> {
+fn sort_write(target: Value, key: &str, value: Value) -> Result<Value, crate::execute::VmError> {
     if let Some(setter) = sort_setter(&target, key)? {
         let (_, updated) = crate::functions::execute_target_with_receiver(
             &setter,
@@ -622,10 +613,9 @@ fn sort_setter(target: &Value, key: &str) -> Result<Option<Value>, crate::execut
             return Ok(Some(setter));
         }
     }
-    if let Some(Value::Object(descriptor)) = crate::builtins::read_intrinsic_override(
-        crate::ops::Builtin::ObjectPrototype,
-        key,
-    ) {
+    if let Some(Value::Object(descriptor)) =
+        crate::builtins::read_intrinsic_override(crate::ops::Builtin::ObjectPrototype, key)
+    {
         let setter = crate::execute::get_property_result(&Value::Object(descriptor), "set")?;
         if !matches!(setter, Value::Undefined) {
             return Ok(Some(setter));
@@ -781,7 +771,9 @@ pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::exec
     }
     let length = array_like_length(&this)?;
     if length >= 1usize << 32 {
-        return Err(crate::value::error::throw_range_error("Invalid array length"));
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
     }
     let mut values = Vec::with_capacity(length);
     for index in (0..length).rev() {
@@ -830,9 +822,7 @@ pub(crate) fn reduce_values(
             }
         }
         found.ok_or_else(|| {
-            crate::value::error::throw_type_error(
-                "Reduce of empty array with no initial value",
-            )
+            crate::value::error::throw_type_error("Reduce of empty array with no initial value")
         })?
     };
     while if reverse { index > 0 } else { index < length } {

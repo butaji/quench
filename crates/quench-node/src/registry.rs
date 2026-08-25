@@ -519,13 +519,16 @@ pub fn namespace_bindings(
     // element conversion is available.
     let float16_prototype = quench_runtime::host_api::object(vec![]);
     let float16_receiver = quench_runtime::host_api::object(vec![
-        ("\0float16_constructor".into(), quench_runtime::value::Value::Boolean(true)),
+        (
+            "\0float16_constructor".into(),
+            quench_runtime::value::Value::Boolean(true),
+        ),
         ("\0prototype".into(), float16_prototype.clone()),
     ]);
     let float16_constructor = quench_runtime::host_api::bound_builtin(
-            quench_runtime::ops::Builtin::Uint16Array,
-            float16_receiver,
-        );
+        quench_runtime::ops::Builtin::Uint16Array,
+        float16_receiver,
+    );
     let float16_constructor = quench_runtime::execute::set_property(
         float16_constructor,
         "prototype",
