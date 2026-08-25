@@ -71,6 +71,7 @@ pub(crate) fn map_group_by(arguments: &[Value]) -> Result<Value, VmError> {
         weak: false,
         keys: std::cell::RefCell::new(VecDeque::new()),
         values: std::cell::RefCell::new(Vec::new()),
+        properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     };
     for (index, value) in values.into_iter().enumerate() {
@@ -114,6 +115,7 @@ pub(crate) fn map_new(arguments: &[Value]) -> Result<Value, VmError> {
         weak: false,
         keys: std::cell::RefCell::new(VecDeque::new()),
         values: std::cell::RefCell::new(Vec::new()),
+        properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     }));
     let Some(iterable) = arguments.first().cloned() else {
@@ -153,6 +155,7 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
                 weak: true,
                 keys: std::cell::RefCell::new(VecDeque::new()),
                 values: std::cell::RefCell::new(Vec::new()),
+                properties: std::cell::RefCell::new(Vec::new()),
                 prototype: std::cell::RefCell::new(None),
             })));
         }
@@ -170,6 +173,7 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
         weak: true,
         keys: std::cell::RefCell::new(VecDeque::new()),
         values: std::cell::RefCell::new(Vec::new()),
+        properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     }));
     let setter = weak_map_adder()?;
@@ -195,6 +199,7 @@ fn weak_map_from_iterable(iterable: Value) -> Result<Value, VmError> {
         weak: true,
         keys: std::cell::RefCell::new(VecDeque::new()),
         values: std::cell::RefCell::new(Vec::new()),
+        properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     })));
     let setter = weak_map_adder()?;
