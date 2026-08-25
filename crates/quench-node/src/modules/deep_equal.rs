@@ -16,6 +16,57 @@ pub fn deep_equal(left: &Value, right: &Value, strict: bool) -> Result<bool, VmE
     deep_equal_opts(left, right, strict, false)
 }
 
+/// Partial strict equality: every structure present in `right` must occur in
+/// `left`; extra properties/elements on the actual value are permitted.
+pub fn partial_deep_equal(left: &Value, right: &Value) -> Result<bool, VmError> {
+    let mut memo = Vec::new();
+    compare_partial(left, right, &mut memo)
+}
+
+fn compare_partial(
+    left: &Value,
+    right: &Value,
+    memo: &mut Vec<(*const (), *const ())>,
+) -> Result<bool, VmError> {
+    if execute::same_value(left, right) {
+        return Ok(true);
+    }
+    match (left, right) {
+        (Value::Array(a), Value::Array(b)) => {
+            if a.logical_len() < b.logical_len() || seen(memo, left, right) {
+                return Ok(a.logical_len() >= b.logical_len());
+            }
+            for index in 0..b.logical_len() {
+                let key = index.to_string();
+                if !compare_partial(
+                    &execute::get_property_result(left, &key)?,
+                    &execute::get_property_result(right, &key)?,
+                    memo,
+                )? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Value::Object(_), Value::Object(_)) => {
+            if seen(memo, left, right) {
+                return Ok(true);
+            }
+            for key in execute::own_enumerable_keys(right) {
+                if !compare_partial(
+                    &execute::get_property_result(left, &key)?,
+                    &execute::get_property_result(right, &key)?,
+                    memo,
+                )? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        _ => compare(left, right, true, false, memo),
+    }
+}
+
 /// `util.isDeepStrictEqual(left, right, options)` — `skip_prototype`
 /// mirrors Node's `skipPrototype` option.
 pub fn deep_equal_opts(

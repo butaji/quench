@@ -33,7 +33,7 @@ pub fn build() -> Vec<(String, Value)> {
         pair("notEqual", SPEC_ASSERT_NOT_EQUAL),
         pair("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         pair("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
-        pair("partialDeepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        pair("partialDeepStrictEqual", SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL),
         // Legacy deep equality aliases share the strict engine for now.
         pair("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         pair("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
@@ -134,7 +134,7 @@ pub fn constructor_new(
         ("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
         ("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         ("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
-        ("partialDeepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        ("partialDeepStrictEqual", SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL),
         ("throws", SPEC_ASSERT_THROWS),
         ("doesNotThrow", SPEC_ASSERT_DOES_NOT_THROW),
         ("ifError", SPEC_ASSERT_IF_ERROR),
@@ -584,4 +584,32 @@ pub fn not_deep_strict_equal(
     binary_assert(_r, args, "notDeepStrictEqual", false, |a, b| {
         crate::modules::deep_equal::deep_equal(a, b, true)
     })
+}
+
+pub fn partial_deep_strict_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if args.len() < 2 {
+        return Err(missing_args());
+    }
+    let actual = arg(args, 0);
+    let expected = arg(args, 1);
+    if crate::modules::deep_equal::partial_deep_equal(&actual, &expected)? {
+        return Ok(Value::Undefined);
+    }
+    let custom = custom_message(args, 2);
+    let generated = custom.is_none();
+    let message = custom.map_or_else(
+        || format!(
+            "Expected values to be partially and strictly deep-equal:\n\n{}\n",
+            deep_diff(&actual, &expected)
+        ),
+        |message| format!("{message}\n+ actual - expected\n\n{}\n", deep_diff(&actual, &expected)),
+    );
+    Err(with_instance_diff(
+        assertion_error(message, "partialDeepStrictEqual", actual, expected, generated),
+        _r,
+    ))
 }
