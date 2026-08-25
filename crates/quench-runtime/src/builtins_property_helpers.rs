@@ -164,8 +164,7 @@ pub(crate) fn define_own_property(
             || descriptor
                 .iter()
                 .rev()
-                .any(|(name, value)| name == "writable"
-                    && matches!(value, Value::Boolean(false))));
+                .any(|(name, value)| name == "writable" && matches!(value, Value::Boolean(false))));
     let mut result = if accessor {
         if needs_disconnect {
             // Skip the placeholder write — the index has been, or is
@@ -183,10 +182,7 @@ pub(crate) fn define_own_property(
     store_descriptor_metadata(&mut result, key, &descriptor);
     if let Some(value) = preserved_temporal_slot {
         if let Value::Object(properties) = &mut result {
-            Rc::make_mut(properties).push((
-                format!("\0temporal-slot:\0{key}").into(),
-                value,
-            ));
+            Rc::make_mut(properties).push((format!("\0temporal-slot:\0{key}").into(), value));
         }
     }
     define_array_descriptor(&mut result, key, descriptor);
@@ -194,12 +190,34 @@ pub(crate) fn define_own_property(
 }
 
 fn temporal_slot_value(target: &Value, key: &str, current: &Value) -> Option<Value> {
-    let Value::Object(object) = target else { return None };
-    let is_plain_date_time = object.iter().any(|(name, value)| {
+    let Value::Object(object) = target else {
+        return None;
+    };
+    let is_temporal_date = object.iter().any(|(name, value)| {
         name == "\0prototype"
-            && matches!(value, Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype))
+            && matches!(
+                value,
+                Value::Builtin(
+                    crate::ops::Builtin::TemporalPlainDatePrototype
+                        | crate::ops::Builtin::TemporalPlainDateTimePrototype
+                        | crate::ops::Builtin::TemporalZonedDateTimePrototype
+                )
+            )
     });
-    if !is_plain_date_time || !matches!(key, "year" | "month" | "day" | "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond") {
+    if !is_temporal_date
+        || !matches!(
+            key,
+            "year"
+                | "month"
+                | "day"
+                | "hour"
+                | "minute"
+                | "second"
+                | "millisecond"
+                | "microsecond"
+                | "nanosecond"
+        )
+    {
         return None;
     }
     match current {
