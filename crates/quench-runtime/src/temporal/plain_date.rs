@@ -160,11 +160,19 @@ fn date_parts(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
     let Value::Object(object) = value.ok_or_else(invalid_receiver)? else {
         return Err(invalid_receiver());
     };
-    Ok((
-        number_field(field(object, "year")),
-        number_field(field(object, "month")),
-        number_field(field(object, "day")),
-    ))
+    let year = number_field(field(object, "year"));
+    let month = number_field(field(object, "month"));
+    let day = number_field(field(object, "day"));
+    if !year.is_finite()
+        || !month.is_finite()
+        || !day.is_finite()
+        || !(-271_821.0..=275_760.0).contains(&year)
+        || !(1.0..=12.0).contains(&month)
+        || !(1.0..=days_in_month(year, month)).contains(&day)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+    }
+    Ok((year, month, day))
 }
 
 fn date_serial(year: f64, month: f64, day: f64) -> i64 {
