@@ -35,8 +35,8 @@ pub fn build() -> Vec<(String, Value)> {
         pair("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
         pair("partialDeepStrictEqual", SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL),
         // Legacy deep equality aliases share the strict engine for now.
-        pair("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
-        pair("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        pair("deepEqual", SPEC_ASSERT_DEEP_EQUAL),
+        pair("notDeepEqual", SPEC_ASSERT_NOT_DEEP_EQUAL),
         pair("throws", SPEC_ASSERT_THROWS),
         pair("doesNotThrow", SPEC_ASSERT_DOES_NOT_THROW),
         pair("fail", SPEC_ASSERT_FAIL),
@@ -134,8 +134,8 @@ pub fn constructor_new(
         ("notEqual", not_equal_spec),
         ("strictEqual", SPEC_ASSERT_STRICT_EQUAL),
         ("notStrictEqual", SPEC_ASSERT_NOT_STRICT_EQUAL),
-        ("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
-        ("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        ("deepEqual", SPEC_ASSERT_DEEP_EQUAL),
+        ("notDeepEqual", SPEC_ASSERT_NOT_DEEP_EQUAL),
         ("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
         ("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
         ("partialDeepStrictEqual", SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL),
@@ -571,21 +571,17 @@ pub fn not_equal(
     binary_assert(_r, args, "notEqual", false, execute::abstract_equal)
 }
 
-pub fn deep_strict_equal(
+fn deep_assert(
     _s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
     args: &[Value],
+    strict_override: Option<bool>,
 ) -> Result<Value, VmError> {
     if args.len() < 2 {
         return Err(missing_args());
     }
     let actual = arg(args, 0);
     let expected = arg(args, 1);
-    if crate::modules::deep_equal::deep_equal(&actual, &expected, true)? {
-        return Ok(Value::Undefined);
-    }
-    let custom = custom_message(args, 2);
-    let generated = custom.is_none();
     let operator = if _r.is_some_and(|receiver| {
         matches!(execute::get_property(receiver, "strict"), Value::Boolean(false))
     }) {
@@ -593,11 +589,16 @@ pub fn deep_strict_equal(
     } else {
         "deepStrictEqual"
     };
-    let full = _r.is_some_and(|receiver| {
-        matches!(execute::get_property(receiver, "diff"), Value::String(diff) if diff == "full")
-    });
+    let strict = strict_override.unwrap_or(operator == "deepStrictEqual");
+    if crate::modules::deep_equal::deep_equal(&actual, &expected, strict)?
+        && typed_props_equal(&actual, &expected)
+    {
+        return Ok(Value::Undefined);
+    }
+    let custom = custom_message(args, 2);
+    let generated = custom.is_none();
     let message = custom.map_or_else(
-        || if full && matches!((&actual, &expected), (Value::String(_), Value::String(_))) {
+        || if !strict {
             format!(
                 "Expected values to be loosely deep-equal:\n\n{}\n\nshould loosely deep-equal\n\n{}",
                 rendered(&actual),
@@ -605,7 +606,7 @@ pub fn deep_strict_equal(
             )
         } else {
             format!(
-                "Expected values to be strictly deep-equal:\n\n{}\n",
+                "Expected values to be strictly deep-equal:\n+ actual - expected\n\n{}\n",
                 deep_diff(&actual, &expected)
             )
         },
@@ -620,7 +621,33 @@ pub fn deep_strict_equal(
     ))
 }
 
+pub fn deep_strict_equal(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    deep_assert(state, receiver, args, None)
+}
+
+pub fn deep_equal(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    deep_assert(state, receiver, args, Some(false))
+}
+
+fn typed_props_equal(actual: &Value, expected: &Value) -> bool {
+    match (typed_array_kind(actual), typed_array_kind(expected)) {
+        (Some(_), Some(_)) => typed_array_props(actual) == typed_array_props(expected),
+        _ => true,
+    }
+}
+
 fn deep_diff(actual: &Value, expected: &Value) -> String {
+    if let Some(diff) = typed_array_diff(actual, expected) {
+        return diff;
+    }
     let (Value::Object(left), Value::Object(right)) = (actual, expected) else {
         return format!("+ {}\n- {}", rendered(actual), rendered(expected));
     };
@@ -646,6 +673,97 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
     lines.join("\n")
 }
 
+fn typed_array_kind(value: &Value) -> Option<(&'static str, usize)> {
+    let Value::Uint8Array(view) = value else {
+        return None;
+    };
+    let kind = if matches!(execute::get_property(value, "parent"), Value::ArrayBuffer(_)) {
+        "Buffer"
+    } else {
+        "Uint8Array"
+    };
+    Some((kind, view.logical_len()))
+}
+
+fn typed_array_diff(actual: &Value, expected: &Value) -> Option<String> {
+    let (actual_kind, actual_len) = typed_array_kind(actual)?;
+    let (expected_kind, expected_len) = typed_array_kind(expected)?;
+    let actual_values = typed_array_values(actual, actual_len);
+    let expected_values = typed_array_values(expected, expected_len);
+    let actual_props = typed_array_props(actual);
+    let expected_props = typed_array_props(expected);
+    let same_shape = actual_kind == expected_kind && actual_len == expected_len;
+    let mut lines = Vec::new();
+    if same_shape && actual_props == expected_props {
+        return Some(format_typed_block(actual_kind, actual_len, &actual_values, &actual_props, "  "));
+    }
+    if actual_kind != expected_kind || actual_len != expected_len {
+        lines.push(format!("+ {} [", typed_label(actual_kind, actual_len)));
+        lines.push(format!("- {} [", typed_label(expected_kind, expected_len)));
+    } else {
+        lines.push(format!("  {} [", typed_label(actual_kind, actual_len)));
+    }
+    for (index, value) in actual_values
+        .iter()
+        .take(actual_len.max(expected_len))
+        .enumerate()
+    {
+        let comma = (index + 1 < actual_len.max(expected_len)
+            || !actual_props.is_empty()
+            || !expected_props.is_empty())
+            .then_some(",")
+            .unwrap_or("");
+        lines.push(format!("    {value}{comma}"));
+    }
+    for prop in actual_props.difference(&expected_props) {
+        lines.push(format!("+   {prop}"));
+    }
+    for prop in expected_props.difference(&actual_props) {
+        lines.push(format!("-   {prop}"));
+    }
+    lines.push("  ]".to_string());
+    Some(lines.join("\n"))
+}
+
+fn typed_label(kind: &str, length: usize) -> String {
+    match kind {
+        "Buffer" => format!("Buffer({length}) [Uint8Array]"),
+        _ => format!("Uint8Array({length})"),
+    }
+}
+
+fn typed_array_values(value: &Value, length: usize) -> Vec<String> {
+    (0..length)
+        .map(|index| rendered(&execute::get_property(value, &index.to_string())))
+        .collect()
+}
+
+fn typed_array_props(value: &Value) -> BTreeSet<String> {
+    execute::own_enumerable_keys(value)
+        .into_iter()
+        .filter(|key| {
+            key.parse::<usize>().is_err()
+                && !key.starts_with('\0')
+                && !matches!(key.as_str(), "offset" | "parent" | "toString")
+        })
+        .map(|key| format!("{key}: {}", rendered(&execute::get_property(value, &key))))
+        .collect()
+}
+
+fn format_typed_block(
+    kind: &str,
+    length: usize,
+    values: &[String],
+    props: &BTreeSet<String>,
+    prefix: &str,
+) -> String {
+    let mut lines = vec![format!("{prefix}{kind}({length}) [")];
+    lines.extend(values.iter().map(|value| format!("    {value},")));
+    lines.extend(props.iter().map(|prop| format!("    {prop},")));
+    lines.push("  ]".to_string());
+    lines.join("\n")
+}
+
 pub fn not_deep_strict_equal(
     _s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
@@ -655,7 +773,20 @@ pub fn not_deep_strict_equal(
         return Err(missing_args());
     }
     binary_assert(_r, args, "notDeepStrictEqual", false, |a, b| {
-        crate::modules::deep_equal::deep_equal(a, b, true)
+        Ok(crate::modules::deep_equal::deep_equal(a, b, true)? && typed_props_equal(a, b))
+    })
+}
+
+pub fn not_deep_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if args.len() < 2 {
+        return Err(missing_args());
+    }
+    binary_assert(_r, args, "notDeepEqual", false, |a, b| {
+        Ok(crate::modules::deep_equal::deep_equal(a, b, false)? && typed_props_equal(a, b))
     })
 }
 
