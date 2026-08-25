@@ -120,24 +120,10 @@ fn realm_global_object(
             "\0realm".to_string(),
             Value::HostCapability(Rc::clone(token)),
         ),
+        ("globalThis".to_string(), Value::Null),
     ];
-    for (name, builtin) in [
-        ("eval", Builtin::Eval),
-        ("Object", Builtin::Object),
-        ("Proxy", Builtin::Proxy),
-        ("Function", Builtin::Function),
-        ("Number", Builtin::Number),
-        ("String", Builtin::String),
-        ("RegExp", Builtin::RegExp),
-        ("Boolean", Builtin::Boolean),
-        ("Symbol", Builtin::Symbol),
-        ("ArrayBuffer", Builtin::ArrayBuffer),
-        ("SharedArrayBuffer", Builtin::SharedArrayBuffer),
-        ("DataView", Builtin::DataView),
-        ("parseFloat", Builtin::ParseFloat),
-        ("parseInt", Builtin::ParseInt),
-        ("TypeError", Builtin::TypeError),
-    ] {
+    for name in crate::globals::script_property_names() {
+        let builtin = crate::globals::builtin(name)?;
         properties.push((name.to_string(), realm::intrinsic(realm, builtin)?));
     }
     Some(Rc::new(crate::value::ObjectData::new(properties)))
