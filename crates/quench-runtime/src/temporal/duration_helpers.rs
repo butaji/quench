@@ -177,36 +177,37 @@ fn add_fractional_time(values: &mut [f64; 10], index: usize, fraction: f64) {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    let left = from(arguments.first())?;
+    let right = from(arguments.get(1))?;
     validate_compare_options(arguments.get(2))?;
     if same_fields(arguments.first(), arguments.get(1)) {
         return Ok(Value::Number(0.0));
     }
-    let left = from(arguments.first())?;
-    let right = from(arguments.get(1))?;
     for value in [&left, &right] {
-        let calendar_days = number_property(value, "weeks") * 7.0
-            + number_property(value, "days");
+        let calendar_days = number_property(value, "weeks") * 7.0 + number_property(value, "days");
         if !calendar_days.is_finite() || calendar_days.abs() > 104_249_991_374.0 {
             return Err(crate::value::error::throw_range_error(
                 "Duration exceeds relative date range",
             ));
         }
     }
-    let relative_to_missing = match arguments.get(2) {
-        Some(Value::Object(options)) => matches!(
-            crate::execute::get_property_result(&Value::Object(options.clone()), "relativeTo")?,
-            Value::Undefined
-        ),
-        Some(value) => matches!(value, Value::Undefined),
-        None => true,
+    let relative_to = match arguments.get(2) {
+        Some(value) if !matches!(value, Value::Undefined) => {
+            Some(crate::execute::get_property_result(value, "relativeTo")?)
+        }
+        _ => None,
     };
-    if (date_units(&left) || date_units(&right)) && relative_to_missing {
+    if (date_units(&left) || date_units(&right))
+        && relative_to
+            .as_ref()
+            .is_none_or(|value| matches!(value, Value::Undefined))
+    {
         return Err(crate::value::error::throw_range_error(
             "relativeTo is required for date units",
         ));
     }
     let difference = if date_units(&left) || date_units(&right) {
-        duration_value(&left) - duration_value(&right)
+        duration_difference(&left, &right, relative_to.as_ref())
     } else {
         exact_time_difference(&left, &right)
     };
@@ -214,6 +215,31 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(if difference < 0 { -1.0 } else { 1.0 }))
+}
+
+fn duration_difference(left: &Value, right: &Value, relative_to: Option<&Value>) -> i128 {
+    let scale =
+        relative_to.and_then(plain_date_month_length).unwrap_or(30) as i128 * 86_400_000_000_000;
+    duration_value_with_month(left, scale) - duration_value_with_month(right, scale)
+}
+
+fn duration_value_with_month(value: &Value, month_scale: i128) -> i128 {
+    duration_value(value) - number_property(value, "months") as i128 * 2_592_000_000_000_000
+        + number_property(value, "months") as i128 * month_scale
+}
+
+fn plain_date_month_length(value: &Value) -> Option<u32> {
+    let year =
+        crate::conversion::to_number(&crate::execute::get_property(value, "year")).ok()? as i32;
+    let month =
+        crate::conversion::to_number(&crate::execute::get_property(value, "month")).ok()? as u32;
+    Some(match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ if (1..=12).contains(&month) => 31,
+        _ => return None,
+    })
 }
 
 fn validate_compare_options(options: Option<&Value>) -> Result<(), VmError> {
