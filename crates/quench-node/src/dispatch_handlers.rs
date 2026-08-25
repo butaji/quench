@@ -187,6 +187,15 @@ pub fn util_inspect(
                 Value::Boolean(true)
             )
         });
+    let show_proxy = args.get(1).is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "showProxy"),
+            Value::Boolean(true)
+        )
+    });
+    if let Some(rendered) = crate::modules::util::inspect_proxy(&arg, depth.unwrap_or(3), show_proxy) {
+        return Ok(Value::String(rendered));
+    }
     let max_array_length = args
         .iter()
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
@@ -555,6 +564,10 @@ pub fn internal_binding(
                 "arrayBufferViewHasBuffer".to_string(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
             ),
+            (
+                "getProxyDetails".to_string(),
+                crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
+            ),
         ]));
     }
     if name == "js_stream" {
@@ -803,6 +816,29 @@ pub fn internal_view_has_buffer(
         view.typed_array_buffer_materialized()
             || matches!(length, Some(Value::Number(value)) if value >= 64.0),
     ))
+}
+
+pub fn internal_get_proxy_details(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Proxy(proxy)) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let show_handler = matches!(args.get(1), Some(Value::Boolean(true)));
+    if *proxy.revoked.borrow() {
+        return Ok(if show_handler {
+            quench_runtime::host_api::array(vec![Value::Null, Value::Null])
+        } else {
+            Value::Null
+        });
+    }
+    Ok(if show_handler {
+        quench_runtime::host_api::array(vec![proxy.target.clone(), proxy.handler.clone()])
+    } else {
+        proxy.target.clone()
+    })
 }
 
 
