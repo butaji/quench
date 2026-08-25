@@ -634,7 +634,7 @@ fn value_to_string(value: &Value) -> String {
             if *proxy.revoked.borrow() {
                 "<Revoked Proxy>".into()
             } else {
-                inspect_depth(value, 0)
+                inspect_proxy(value, 3, false).unwrap_or_else(|| "<unknown>".into())
             }
         }
         Value::ArrayBuffer(buffer) => inspect_array_buffer(value, buffer),
@@ -1033,6 +1033,26 @@ pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<St
     } else {
         format!("Proxy [\n  {target_block},\n  {handler_block}\n]")
     })
+}
+
+pub fn inspect_proxy_colored(value: &Value) -> Option<String> {
+    let Value::Proxy(proxy) = value else {
+        return None;
+    };
+    let Value::Array(target) = &proxy.target else {
+        return None;
+    };
+    let items = (0..target.logical_len())
+        .map(|index| {
+            let item = quench_runtime::execute::get_property(&proxy.target, &index.to_string());
+            let rendered = inspect_depth(&item, 0);
+            format!("  \x1b[33m{rendered}\x1b[39m")
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    Some(format!(
+        "\x1b[36mProxy(\x1b[39m[\n{items}\n]\x1b[36m)\x1b[39m"
+    ))
 }
 
 fn indent_proxy_child(value: &str) -> String {
