@@ -93,6 +93,11 @@ fn wrapped_symbol(value: &Value) -> Result<Value, crate::execute::VmError> {
 }
 
 fn string_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let incompatible = || {
+        crate::value::error::throw_type_error(
+            "String.prototype.valueOf called on incompatible receiver",
+        )
+    };
     match receiver {
         Some(Value::Builtin(Builtin::StringPrototype)) => Ok(Value::String(String::new())),
         Some(Value::String(value)) if !crate::conversion::is_symbol_string(value) => {
@@ -106,13 +111,9 @@ fn string_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
             .upgrade()
             .map(|object| wrapped_string(&Value::Object(object)))
             .unwrap_or_else(|| {
-                Err(crate::value::error::throw_type_error(
-                    "String.prototype.valueOf called on incompatible receiver",
-                ))
+                Err(incompatible())
             }),
-        _ => Err(crate::value::error::throw_type_error(
-            "String.prototype.valueOf called on incompatible receiver",
-        )),
+        _ => Err(incompatible()),
     }
 }
 

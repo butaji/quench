@@ -38,7 +38,10 @@ impl Guard {
             .borrow()
             .iter()
             .rev()
-            .find_map(|(name, value)| (name == "\0super_receiver").then(|| value.clone()))
+            .find_map(|(name, value)| {
+                (name == "\0super_receiver" && !matches!(value, Value::Undefined))
+                    .then(|| value.clone())
+            })
             .unwrap_or_else(|| receiver.clone());
         let lexical_function = function
             .properties
@@ -227,6 +230,14 @@ fn current() -> Result<Context, VmError> {
         .ok_or_else(super_error)
 }
 
+pub(crate) fn current_receiver() -> Option<Value> {
+    CURRENT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|context| context.receiver.clone())
+    })
+}
+
 fn derived_this_slot(function: &crate::value::FunctionValue) -> Result<u16, VmError> {
     let slot = function
         .captures
@@ -346,7 +357,13 @@ fn super_own_value(holder: &Value, key: &str, receiver: &Value) -> Result<Option
         .iter()
         .rev()
         .find(|(name, _)| name == key)
-        .map(|(_, value)| unwrap_binding_cell(value)))
+        .map(|(_, value)| {
+            let value = unwrap_binding_cell(value);
+            match value {
+                Value::Builtin(_) => crate::vm::bind_method(receiver, value),
+                value => value,
+            }
+        }))
 }
 
 fn unwrap_binding_cell(value: &Value) -> Value {
