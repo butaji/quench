@@ -51,6 +51,11 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
+    if is_idle_task_candidate(function) {
+        if let Some(result) = execute_idle_task(function, &receiver)? {
+            return Ok(result);
+        }
+    }
     if is_packet_add_candidate(function) {
         if let Some(result) = execute_packet_add(function, &receiver, arguments) {
             return Ok(result);
