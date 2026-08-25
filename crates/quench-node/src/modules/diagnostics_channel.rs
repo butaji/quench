@@ -336,7 +336,7 @@ fn tracing_object(channels: Vec<Value>) -> Value {
                   try { result = fn.apply(thisArg, args); context.result = result; self.end?.publish(context); }\
                   catch (error) { context.error = error; self.error?.publish(context); self.end?.publish(context); startScope?.dispose?.(); throw error; }\
                   if (!result || typeof result.then !== 'function') { process.emitWarning(\"tracePromise was called with the function '<anonymous>', which returned a non-thenable.\"); startScope?.dispose?.(); return result; }\
-                  result.then(function(value) { context.result = value; var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); startScope?.dispose?.(); }, function(error) { context.error = error; self.error?.publish(context); var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); startScope?.dispose?.(); });\
+                  result.then(function(value) { context.result = value; var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); startScope?.dispose?.(); }, function(error) { context.error = error; self.error?.publish(context); var asyncScope = self.asyncStart?.withStoreScope(context); self.asyncStart?.publish(context); self.asyncEnd?.publish(context); asyncScope?.dispose?.(); startScope?.dispose?.(); throw error; });\
                   return result;\
                 }",
             )
