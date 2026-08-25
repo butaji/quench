@@ -555,6 +555,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         0x0711 => internal_buffer_fill,
         0x0712 => internal_view_has_buffer,
         0x0713 => internal_buffer_aligned_offset,
+        0x0721 => internal_get_proxy_details,
         CAP_DIAGNOSTICS_CHANNEL => crate::modules::diagnostics_channel::channel,
         CAP_DIAGNOSTICS_SUBSCRIBE => crate::modules::diagnostics_channel::subscribe,
         CAP_DIAGNOSTICS_UNSUBSCRIBE => crate::modules::diagnostics_channel::unsubscribe,
