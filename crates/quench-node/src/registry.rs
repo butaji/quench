@@ -224,6 +224,8 @@ pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec = NodeSpec::new("util:exc
 pub const SPEC_INTERNAL_UTIL_EMIT_WARNING: NodeSpec = NodeSpec::new("internal/util:emitExperimentalWarning", 0x0735);
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
+pub const SPEC_INTERNAL_OS_GET_HOME_DIRECTORY: NodeSpec =
+    NodeSpec::new("internal/os:getHomeDirectory", 0x0738);
 pub const SPEC_UTIL_PROMISIFIED_CALL: NodeSpec = NodeSpec::new("util:promisifiedCall", 0x071F);
 pub const SPEC_UTIL_PROMISIFIED_CALLBACK: NodeSpec =
     NodeSpec::new("util:promisifiedCallback", 0x0720);
