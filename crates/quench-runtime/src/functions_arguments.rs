@@ -121,7 +121,10 @@ pub(crate) fn execute_construct(
     );
     let _home = crate::super_scope::Guard::install(function, this_value);
     let result = crate::vm::execute_code_in_environment(
-        function.code.code().ok_or(crate::execute::VmError::MissingReturn)?,
+        function
+            .code
+            .code()
+            .ok_or(crate::execute::VmError::MissingReturn)?,
         &mut registers,
         // Keep the active context so host-provided globals (console,
         // timers, capabilities) stay visible inside constructor bodies.
@@ -303,9 +306,14 @@ pub(crate) fn execute_target(
             execute_in_function_realm(function, receiver, arguments)
         }
         crate::value::Value::BoundFunction(bound)
-            if matches!(bound.target, crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
+            if matches!(
+                bound.target,
+                crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))
+            ) =>
         {
-            let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
+            let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) =
+                bound.target
+            else {
                 unreachable!()
             };
             crate::vm::execute_host_capability_with_receiver(
@@ -376,8 +384,10 @@ fn execute_function_call(
         _ => None,
     };
     if let Some(realm) = realm {
-        return crate::vm::with_realm(realm, || execute_function_call_in_realm(receiver, arguments))
-            .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
+        return crate::vm::with_realm(realm, || {
+            execute_function_call_in_realm(receiver, arguments)
+        })
+        .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
     }
     execute_function_call_in_realm(receiver, arguments)
 }
@@ -503,6 +513,8 @@ include!("functions_leaf_execution.rs");
 include!("functions_shape_kernels.rs");
 include!("functions_plan_kernel.rs");
 include!("functions_linked_schedule.rs");
+include!("functions_linked_task_runners.rs");
+include!("functions_task_control_run_match.rs");
 include!("functions_scheduler_queue.rs");
 include!("functions_packet_add.rs");
 include!("functions_idle_task.rs");
