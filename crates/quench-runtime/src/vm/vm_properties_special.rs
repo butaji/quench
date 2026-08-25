@@ -120,7 +120,10 @@ fn inherit_prototype_property(builtin: Builtin, key: &str) -> Value {
 }
 
 fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
-    if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
+    if builtin != Builtin::FunctionPrototype
+        && callable_builtin_value(value)
+        && matches!(key, "apply" | "call" | "bind")
+    {
         return bind_function_property(value, key);
     }
     if crate::builtin_meta::is_prototype(builtin) || builtin == Builtin::Temporal {
@@ -213,6 +216,7 @@ fn bound_function_property(
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
         match bound.target {
+            Value::Builtin(Builtin::ProxyRevoke) => Value::String(String::new()),
             Value::Builtin(builtin) => crate::builtins::property(builtin, "name"),
             _ => Value::String(String::new()),
         }
