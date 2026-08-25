@@ -142,6 +142,17 @@ fn run(id: &str) -> u64 {
             }
             black_box(d[ROW_SIZE + 1]).to_bits()
         }
+        "packed-f64-add-fields" => {
+            const SIZE: usize = 262_144;
+            let mut x = vec![1.25_f64; SIZE];
+            let source = vec![0.5_f64; SIZE];
+            for _ in 0..1_000 {
+                for (value, source) in x.iter_mut().zip(&source) {
+                    *value += 0.01 * source;
+                }
+            }
+            black_box(x[0]).to_bits()
+        }
         _ => panic!("unknown L0 oracle: {id}"),
     }
 }
