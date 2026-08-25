@@ -34,7 +34,6 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     let _ = stream.set_nonblocking(true);
     let (object, id) = new_net_object(state, socket_props())?;
     let local = stream.local_addr().ok();
-    let object = install_methods(object, net_info_props(addr, local))?;
     let socket = Rc::new(std::cell::RefCell::new(NetSocket {
         id,
         stream: Some(stream),
@@ -45,6 +44,8 @@ pub fn connect(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         read_eof: false,
         close_emitted: false,
         connect_announced: false,
+        peer: Some(addr),
+        local,
         encoding: None,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
