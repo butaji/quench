@@ -187,7 +187,6 @@ class NodeEventEmitter {
     }
     this.captureRejections = options.captureRejections ??
       NodeEventEmitter.captureRejections ?? false;
-    this._captureRejectionHandled = false;
   }
   on(event, listener) {
     this._events ||= Object.create(null);
@@ -237,17 +236,17 @@ class NodeEventEmitter {
     values.slice().filter((listener) => typeof listener === "function").forEach(
       (listener) => {
         const result = Reflect.apply(listener, this, args);
-        if (this.captureRejections && result?.then) {
-          result.catch((error) =>
-            setImmediate(() => {
-              if (this._captureRejectionHandled) return;
-              this._captureRejectionHandled = true;
+        if (result?.then) {
+          result.catch((error) => setImmediate(() => {
+            if (this.captureRejections && event !== "error") {
               const rejection = this[Symbol.for("nodejs.rejection")];
               if (typeof rejection === "function") {
                 rejection.call(this, error, event, ...args);
               } else this.emit("error", error);
-            })
-          );
+            } else {
+              process.emit("unhandledRejection", error);
+            }
+          }));
         }
       },
     );
@@ -300,6 +299,7 @@ class NodeEventEmitter {
     return this.listeners(event).length;
   }
 }
+NodeEventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
 globalThis.__nodeEventEmitter = NodeEventEmitter;
 globalThis.process._events = Object.create(null);
 "#);

@@ -340,11 +340,16 @@ pub fn method_emit(
             }
         }
         let result = execute::call(&listener.callback, receiver, &rest)?;
-        if capture_rejections
+        if matches!(result, Value::Promise(_)) {
+            if capture_rejections {
+                attach_rejection_handler(state, receiver, &event, &rest, &result)?;
+            } else {
+                attach_unhandled_rejection(&result)?;
+            }
+        } else if capture_rejections
             && matches!(
                 result,
-                Value::Promise(_)
-                    | Value::Object(_)
+                Value::Object(_)
                     | Value::ObjectAlias(_)
                     | Value::Function(_)
                     | Value::BoundFunction(_)
@@ -366,8 +371,16 @@ fn attach_rejection_handler(
     let handler = eval_function(
         r#"(emitter, event, arguments, error) => {
           const rejection = emitter[Symbol.for('nodejs.rejection')];
-          if (typeof rejection === 'function') rejection.call(emitter, error, event, ...arguments);
-          else emitter.emit('error', error);
+          if (typeof rejection === 'function') {
+            try {
+              const result = rejection.call(emitter, error, event, ...arguments);
+              if (result && typeof result.then === 'function') {
+                result.then(undefined, (reason) => process.emit('unhandledRejection', reason));
+              }
+            } catch (reason) {
+              process.emit('unhandledRejection', reason);
+            }
+          } else emitter.emit('error', error);
         }"#,
     )?;
     let bind = execute::get_property_result(&handler, "bind")?;
@@ -399,7 +412,7 @@ fn attach_rejection_handler(
     }
     let result = execute::call(&then, promise, &[Value::Undefined, bound]);
     match result {
-        Ok(Value::Promise(child)) => attach_unhandled_rejection(&Value::Promise(child))?,
+        Ok(Value::Promise(_child)) => {}
         Err(VmError::Thrown(reason)) => {
             let _ = method_emit(
                 state,
