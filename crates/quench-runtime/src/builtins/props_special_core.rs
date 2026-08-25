@@ -23,6 +23,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (Temporal, "Instant") => Some(Value::Builtin(TemporalInstant)),
         (Temporal, "PlainDateTime") => Some(Value::Builtin(TemporalPlainDateTime)),
         (Temporal, "PlainTime") => Some(Value::Builtin(TemporalPlainTime)),
+        (Temporal, "PlainMonthDay") => Some(Value::Builtin(TemporalPlainMonthDay)),
+        (Temporal, "PlainYearMonth") => Some(Value::Builtin(TemporalPlainYearMonth)),
+        (Temporal, "ZonedDateTime") => Some(Value::Builtin(TemporalZonedDateTime)),
+        (Temporal, "Now") => Some(Value::Builtin(TemporalNow)),
         (IntlSegmenterPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Segmenter".into()))
         }
@@ -190,6 +194,22 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainTimePrototype, "round") => Some(Value::Builtin(TemporalPlainTimeRound)),
         (TemporalPlainTimePrototype, "until") => Some(Value::Builtin(TemporalPlainTimeUntil)),
         (TemporalPlainTimePrototype, "since") => Some(Value::Builtin(TemporalPlainTimeSince)),
+        (TemporalPlainMonthDay, "prototype") => Some(Value::Builtin(TemporalPlainMonthDayPrototype)),
+        (TemporalPlainMonthDay, "from") => Some(Value::Builtin(TemporalPlainMonthDayFrom)),
+        (TemporalPlainMonthDay, "compare") => Some(Value::Builtin(TemporalPlainMonthDayCompare)),
+        (TemporalPlainMonthDayPrototype, "constructor") => Some(Value::Builtin(TemporalPlainMonthDay)),
+        (TemporalPlainYearMonth, "prototype") => Some(Value::Builtin(TemporalPlainYearMonthPrototype)),
+        (TemporalPlainYearMonth, "from") => Some(Value::Builtin(TemporalPlainYearMonthFrom)),
+        (TemporalPlainYearMonth, "compare") => Some(Value::Builtin(TemporalPlainYearMonthCompare)),
+        (TemporalPlainYearMonthPrototype, "constructor") => Some(Value::Builtin(TemporalPlainYearMonth)),
+        (TemporalZonedDateTime, "prototype") => Some(Value::Builtin(TemporalZonedDateTimePrototype)),
+        (TemporalZonedDateTimePrototype, "constructor") => Some(Value::Builtin(TemporalZonedDateTime)),
+        (TemporalNow, "instant") => Some(Value::Builtin(TemporalNowInstant)),
+        (TemporalNow, "plainDateISO") => Some(Value::Builtin(TemporalNowPlainDateISO)),
+        (TemporalNow, "plainDateTimeISO") => Some(Value::Builtin(TemporalNowPlainDateTimeISO)),
+        (TemporalNow, "plainTimeISO") => Some(Value::Builtin(TemporalNowPlainTimeISO)),
+        (TemporalNow, "timeZoneId") => Some(Value::Builtin(TemporalNowTimeZoneId)),
+        (TemporalNow, "zonedDateTimeISO") => Some(Value::Builtin(TemporalNowZonedDateTimeISO)),
         (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
         (AbstractModuleSourcePrototype, "constructor") => {
             Some(Value::Builtin(AbstractModuleSource))
