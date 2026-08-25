@@ -51,6 +51,11 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
+    if is_worker_task_candidate(function) {
+        if let Some(result) = execute_worker_task(function, &receiver, arguments)? {
+            return Ok(result);
+        }
+    }
     if is_device_task_candidate(function) {
         if let Some(result) = execute_device_task(function, &receiver, arguments)? {
             return Ok(result);
