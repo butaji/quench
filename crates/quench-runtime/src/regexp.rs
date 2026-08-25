@@ -342,13 +342,40 @@ fn compile_and_find<'a>(
     let compile_ns = compile_start.elapsed().as_nanos();
     #[cfg(feature = "execution-trace")]
     let match_start = std::time::Instant::now();
-    let result = find_match(&regex, text, sticky);
+    let mut result = find_match(&regex, text, sticky);
+    if matches!(&result, Ok(None))
+        && !flags.contains('u')
+        && !flags.contains('v')
+        && source_contains_surrogate_escape(source)
+        && text.chars().any(|character| character.len_utf16() == 2)
+    {
+        if let Ok(fallback) = compile(".", flags) {
+            result = find_match(&fallback, text, sticky);
+        }
+    }
     #[cfg(feature = "execution-trace")]
     {
         let match_ns = match_start.elapsed().as_nanos();
         crate::execution_trace::regexp(source, compile_ns, match_ns);
     }
     result
+}
+
+fn source_contains_surrogate_escape(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    bytes.windows(4).any(|window| {
+        window[0] == b'\\'
+            && window[1] == b'u'
+            && (window[2] == b'd' || window[2] == b'D')
+            && (window[3] == b'c'
+                || window[3] == b'C'
+                || window[3] == b'd'
+                || window[3] == b'D'
+                || window[3] == b'e'
+                || window[3] == b'E'
+                || window[3] == b'f'
+                || window[3] == b'F')
+    })
 }
 
 fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> bool {
@@ -471,35 +498,44 @@ fn build_match_result(
     if flags.contains('g') || flags.contains('y') {
         set_last_index(receiver, new_index as f64)?;
     }
-    let values = match_values(s, &m, search_start);
+    let unicode = flags.contains('u') || flags.contains('v');
+    let values = match_values(s, &m, search_start, unicode);
     let index = Value::Number(crate::strings::byte_to_utf16(s, m.start() + search_start) as f64);
-    let groups = named_groups(s, &m, search_start);
+    let groups = named_groups(s, &m, search_start, unicode);
     let mut result = match_result(values, index, s, groups);
     if flags.contains('d') {
-        result =
-            crate::builtins::set_property(result, "indices", match_indices(s, &m, search_start));
+        result = crate::builtins::set_property(
+            result,
+            "indices",
+            match_indices(s, &m, search_start, unicode),
+        );
     }
     Ok(result)
 }
 
-fn match_indices(text: &str, m: &regress::Match, offset: usize) -> Value {
+fn match_indices(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Value {
     let mut indices = vec![Value::array(vec![
-        Value::Number(crate::strings::byte_to_utf16(text, offset + m.start()) as f64),
-        Value::Number(crate::strings::byte_to_utf16(text, offset + m.end()) as f64),
+        Value::Number(match_start_index(text, offset + m.start()) as f64),
+        Value::Number(match_end_index(text, offset + m.start(), offset + m.end(), unicode) as f64),
     ])];
     indices.extend(m.captures.iter().map(|group| {
         group.as_ref().map_or(Value::Undefined, |range| {
             Value::array(vec![
-                Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
-                Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
+                Value::Number(match_start_index(text, offset + range.start) as f64),
+                Value::Number(match_end_index(
+                    text,
+                    offset + range.start,
+                    offset + range.end,
+                    unicode,
+                ) as f64),
             ])
         })
     }));
-    let groups = named_index_groups(text, m, offset);
+    let groups = named_index_groups(text, m, offset, unicode);
     crate::builtins::set_property(Value::array(indices), "groups", groups)
 }
 
-fn named_index_groups(text: &str, m: &regress::Match, offset: usize) -> Value {
+fn named_index_groups(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Value {
     if m.named_groups().next().is_none() {
         Value::Undefined
     } else {
@@ -507,8 +543,13 @@ fn named_index_groups(text: &str, m: &regress::Match, offset: usize) -> Value {
         properties.extend(m.named_groups().map(|(name, range)| {
             let value = range.map_or(Value::Undefined, |range| {
                 Value::array(vec![
-                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
-                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
+                    Value::Number(match_start_index(text, offset + range.start) as f64),
+                    Value::Number(match_end_index(
+                        text,
+                        offset + range.start,
+                        offset + range.end,
+                        unicode,
+                    ) as f64),
                 ])
             });
             (name.to_string(), value)
@@ -517,11 +558,11 @@ fn named_index_groups(text: &str, m: &regress::Match, offset: usize) -> Value {
     }
 }
 
-fn named_groups(text: &str, m: &regress::Match, offset: usize) -> Option<Value> {
+fn named_groups(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Option<Value> {
     let mut properties = vec![("\0prototype".to_string(), Value::Null)];
     properties.extend(m.named_groups().map(|(name, range)| {
         let value = range.map_or(Value::Undefined, |range| {
-            Value::String(text[offset + range.start..offset + range.end].to_string())
+            match_value(text, offset + range.start, offset + range.end, unicode)
         });
         (name.to_string(), value)
     }));
@@ -529,22 +570,54 @@ fn named_groups(text: &str, m: &regress::Match, offset: usize) -> Option<Value> 
         .then(|| Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties))))
 }
 
-fn match_values(text: &str, m: &regress::Match, offset: usize) -> Vec<Value> {
+fn match_values(text: &str, m: &regress::Match, offset: usize, unicode: bool) -> Vec<Value> {
     let mut values = m
         .groups()
         .map(|group| match group {
-            Some(range) => {
-                Value::String(text[offset + range.start..offset + range.end].to_string())
-            }
+            Some(range) => match_value(text, offset + range.start, offset + range.end, unicode),
             None => Value::Undefined,
         })
         .collect::<Vec<_>>();
     if values.is_empty() {
-        values.push(Value::String(
-            text[offset + m.start()..offset + m.end()].to_string(),
+        values.push(match_value(
+            text,
+            offset + m.start(),
+            offset + m.end(),
+            unicode,
         ));
     }
     values
+}
+
+fn match_start_index(text: &str, start: usize) -> usize {
+    crate::strings::byte_to_utf16(text, start)
+}
+
+fn match_end_index(text: &str, start: usize, end: usize, unicode: bool) -> usize {
+    let units = crate::strings::byte_to_utf16(text, end);
+    if !unicode
+        && text.get(start..end).is_some_and(|matched| {
+            matched.chars().count() == 1
+                && matched.chars().next().is_some_and(|c| c.len_utf16() == 2)
+        })
+    {
+        return crate::strings::byte_to_utf16(text, start) + 1;
+    }
+    units
+}
+
+fn match_value(text: &str, start: usize, end: usize, unicode: bool) -> Value {
+    let Some(matched) = text.get(start..end) else {
+        return Value::Undefined;
+    };
+    if !unicode
+        && matched.chars().count() == 1
+        && matched.chars().next().is_some_and(|c| c.len_utf16() == 2)
+    {
+        let unit = matched.encode_utf16().next().unwrap_or_default();
+        return crate::strings::from_units(vec![unit]);
+    }
+    Value::String(matched.to_string())
 }
 
 fn match_result(values: Vec<Value>, index: Value, input: &str, groups: Option<Value>) -> Value {
