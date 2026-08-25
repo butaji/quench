@@ -131,6 +131,20 @@ pub fn tracing_channel(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let source = args.first().ok_or_else(|| type_error("nameOrChannels"))?;
+    if !matches!(source, Value::String(_) | Value::Object(_)) {
+        return Err(tracing_type_error());
+    }
+    if matches!(source, Value::Object(_))
+        && matches!(execute::get_property(source, "start"), Value::Undefined)
+    {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            (
+                "message".into(),
+                Value::String("Cannot convert undefined or null to object".into()),
+            ),
+        ])));
+    }
     let channels = TRACE_CHANNELS
         .iter()
         .map(|name| tracing_member(state, source, name))
@@ -253,8 +267,17 @@ fn tracing_member(
     if matches!(value, Value::Undefined) {
         return Ok(Value::Undefined);
     }
-    if execute::get_property_result(&value, ID).is_err() {
-        return Err(type_error("nameOrChannels"));
+    if channel_data(state, &value).is_err() {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String(format!(
+                    "The \"nameOrChannels.{name}\" property must be an instance of Channel"
+                )),
+            ),
+        ])));
     }
     Ok(value)
 }
@@ -805,6 +828,20 @@ fn type_error(argument: &str) -> VmError {
             Value::String(format!(
                 "The \"{argument}\" argument must be of type function"
             )),
+        ),
+    ]))
+}
+
+fn tracing_type_error() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String(
+                "The \"nameOrChannels\" argument must be of type string or an instance of TracingChannel or Object"
+                    .into(),
+            ),
         ),
     ]))
 }
