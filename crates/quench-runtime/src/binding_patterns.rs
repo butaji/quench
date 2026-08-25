@@ -11,7 +11,7 @@ use crate::{
 };
 
 struct ResolvedBinding {
-    target: u16,
+    target: Option<u16>,
     name: String,
     slot: u16,
 }
@@ -37,7 +37,7 @@ pub(crate) fn bind(
 ) -> Option<()> {
     match &pattern.kind {
         BindingPatternKind::BindingIdentifier(identifier) => {
-            store_identifier(identifier.name.as_str(), source, ops, next, locals)
+            store_identifier(identifier.name.as_str(), source, ops, facts, next, locals)
         }
         BindingPatternKind::AssignmentPattern(pattern) => {
             let name = direct_name(&pattern.left);
@@ -312,10 +312,16 @@ fn store_identifier(
     name: &str,
     source: u16,
     ops: &mut Vec<Op>,
+    facts: &ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
     let slot = *locals.get(name)?;
+    if !facts.has_dynamic_scope() {
+        ops.push(Op::StoreLocal { slot, src: source });
+        ops.push(Op::InitializeLocal { slot });
+        return Some(());
+    }
     let target = take_register(next);
     ops.push(Op::ResolveBindingTarget {
         dst: target,
@@ -375,7 +381,7 @@ fn bind_object(
     for property in &pattern.properties {
         let key = reduce_key(&property.key, ops, facts, next, locals)?;
         excluded.push(reduced_key_register(&key, ops, next));
-        let resolved = pre_resolve(&property.value, ops, next, locals)?;
+        let resolved = pre_resolve(&property.value, ops, facts, next, locals)?;
         let value = get_property(key, source, ops, next);
         match resolved {
             Some(resolved) => {
@@ -394,6 +400,7 @@ fn bind_object(
 fn pre_resolve(
     pattern: &BindingPattern<'_>,
     ops: &mut Vec<Op>,
+    facts: &ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<Option<ResolvedBinding>> {
@@ -401,10 +408,13 @@ fn pre_resolve(
         return Some(None);
     };
     let slot = *locals.get(name)?;
-    let target = take_register(next);
-    ops.push(Op::ResolveBindingTarget {
-        dst: target,
-        name: name.to_string(),
+    let target = facts.has_dynamic_scope().then(|| {
+        let target = take_register(next);
+        ops.push(Op::ResolveBindingTarget {
+            dst: target,
+            name: name.to_string(),
+        });
+        target
     });
     Some(Some(ResolvedBinding {
         target,
@@ -443,12 +453,23 @@ fn bind_resolved(
         BindingPatternKind::BindingIdentifier(_) => source,
         _ => return None,
     };
-    ops.push(Op::InitializeResolvedBinding {
-        target: resolved.target,
-        slot: resolved.slot,
-        name: resolved.name,
-        src: value,
-    });
+    match resolved.target {
+        Some(target) => ops.push(Op::InitializeResolvedBinding {
+            target,
+            slot: resolved.slot,
+            name: resolved.name,
+            src: value,
+        }),
+        None => {
+            ops.push(Op::StoreLocal {
+                slot: resolved.slot,
+                src: value,
+            });
+            ops.push(Op::InitializeLocal {
+                slot: resolved.slot,
+            });
+        }
+    }
     Some(())
 }
 

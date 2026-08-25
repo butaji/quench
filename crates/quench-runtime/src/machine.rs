@@ -369,6 +369,12 @@ impl CodeArena {
                 cursor += 2;
                 continue;
             }
+            if let Some(instruction) = lower_local_initialization(&body[cursor..]) {
+                self.instructions.push(instruction);
+                metadata.push(metadata_for(&body[cursor + 1]));
+                cursor += 2;
+                continue;
+            }
             if let Some(instruction) = lower_named_call(&body[cursor..]) {
                 self.instructions.push(instruction);
                 metadata.push(metadata_for(&body[cursor]));
@@ -453,6 +459,13 @@ fn lower_checked_local_store(ops: &[Op]) -> Option<crate::ir::Instruction> {
         return None;
     };
     (checked == slot).then(|| crate::ir::Instruction::store_local_checked(*slot, *src))
+}
+
+fn lower_local_initialization(ops: &[Op]) -> Option<crate::ir::Instruction> {
+    let [Op::StoreLocal { slot, src }, Op::InitializeLocal { slot: initialized }, ..] = ops else {
+        return None;
+    };
+    (slot == initialized).then(|| crate::ir::Instruction::init_local(*slot, *src))
 }
 
 fn lower_named_call(ops: &[Op]) -> Option<crate::ir::Instruction> {
@@ -1356,6 +1369,22 @@ mod tests {
         assert_eq!(
             code.instruction(0),
             Some(crate::ir::Instruction::store_local_checked(7, 2))
+        );
+        assert!(code.cold_at(0).is_none());
+    }
+    #[test]
+    fn static_binding_initialization_lowers_as_one_instruction() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[
+            super::Op::StoreLocal { slot: 7, src: 2 },
+            super::Op::InitializeLocal { slot: 7 },
+        ]);
+        let store = arena.freeze();
+        let code = store.code(range).expect("compact code range");
+        assert_eq!(code.len(), 1);
+        assert_eq!(
+            code.instruction(0),
+            Some(crate::ir::Instruction::init_local(7, 2))
         );
         assert!(code.cold_at(0).is_none());
     }
