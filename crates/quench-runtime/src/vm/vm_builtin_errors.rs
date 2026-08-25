@@ -17,6 +17,7 @@ fn error_builtin(
             crate::construct::construct_value(&Value::Builtin(builtin), arguments)
         }
         Builtin::ErrorIsError => Ok(error_is_error(arguments.first())),
+        Builtin::ErrorCaptureStackTrace => Ok(Value::Undefined),
         Builtin::ErrorPrototypeToString => error_to_string(receiver),
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
