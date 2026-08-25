@@ -114,6 +114,17 @@ var parentPort = workerEnv ? emitter({
   }
 }) : null;
 function cloneMessage(value) {
+  if (value && value._externalStream && value._externalStream.__quench_external) {
+    throw Object.assign(new Error('Cannot clone object of unsupported type.'), {
+      name: 'DataCloneError'
+    });
+  }
+  if (typeof value === 'function') {
+    var functionName = value.name || '';
+    throw Object.assign(new Error('function ' + functionName + '() {} could not be cloned.'), {
+      name: 'DataCloneError'
+    });
+  }
   if (value && typeof value.postMessage === 'function' && typeof value.close === 'function') {
     return value;
   }
