@@ -30,9 +30,13 @@ fn execute_core(
         return Some(result);
     }
     match builtin {
+        Iterator => Some(Err(crate::value::error::throw_type_error(
+            "Iterator is not callable or constructable",
+        ))),
         IteratorConcat => Some(iterator::concat(arguments)),
         IteratorFrom => Some(iterator::from(arguments)),
         IteratorZip => Some(iterator::zip(arguments)),
+        IteratorZipKeyed => Some(iterator::zip_keyed(arguments)),
         IteratorToArray => Some(iterator::to_array(receiver)),
         IteratorMap => Some(iterator::map(receiver, arguments)),
         IteratorFilter => Some(iterator::filter(receiver, arguments)),
@@ -81,6 +85,7 @@ fn execute_iterator_next(
     Some(match builtin {
         IteratorNext => iterator::next(receiver),
         IteratorReturn => iterator::return_iterator(receiver, arguments),
+        IteratorDispose => iterator::dispose(receiver),
         SetIteratorNext => iterator::next_set(receiver),
         MapIteratorNext => iterator::next_map(receiver),
         IteratorSelf | AsyncIteratorSelf => iterator_self(receiver),

@@ -32,11 +32,9 @@ pub(crate) fn execute_special(
         }
         Builtin::ObjectHasOwnProperty => {
             let (target, key) = has_own_target(receiver, arguments);
-            has_own_property_result(target, key)
+            has_own_property_result_property(target, key)
         }
-        Builtin::ObjectPropertyIsEnumerable => {
-            Ok(object_property_is_enumerable(receiver, arguments))
-        }
+        Builtin::ObjectPropertyIsEnumerable => object_property_is_enumerable(receiver, arguments),
         Builtin::ObjectPrototypeIsPrototypeOf => is_prototype_of(receiver, arguments),
         Builtin::ObjectGetOwnPropertyDescriptor => {
             let (target, key) = static_target(arguments);
@@ -66,6 +64,30 @@ fn execute_special_tail(
         Builtin::ObjectFromEntries => from_entries(arguments),
         Builtin::ObjectGroupBy => group_by(arguments),
         Builtin::ObjectCreate => create(arguments),
+        Builtin::ObjectGetPrototypeOf if receiver.is_some() && arguments.is_empty() => {
+            get_prototype_of(receiver)
+        }
+        Builtin::ObjectSetPrototypeOf
+            if receiver.is_some_and(|value| !matches!(value, Value::Builtin(Builtin::Object))) =>
+        {
+            let receiver = receiver.expect("guarded receiver");
+            if matches!(receiver, Value::Null | Value::Undefined) {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot set __proto__ on null or undefined",
+                ));
+            }
+            let prototype = arguments.first().cloned().unwrap_or(Value::Undefined);
+            if !matches!(prototype, Value::Null) && !crate::value::is_object(&prototype) {
+                return Ok(Value::Undefined);
+            }
+            if !crate::value::is_object(receiver) {
+                return Ok(Value::Undefined);
+            }
+            let mut args = Vec::with_capacity(arguments.len() + 1);
+            args.push(receiver.clone());
+            args.extend_from_slice(arguments);
+            set_prototype_of(&args).map(|_| Value::Undefined)
+        }
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => legacy_accessor_special(builtin, receiver, arguments),
     }
@@ -87,17 +109,31 @@ fn get_own_property_descriptors(arguments: &[Value]) -> Result<Value, VmError> {
         crate::value::error::throw_type_error("Object.getOwnPropertyDescriptors requires an object")
     })?;
     require_object_coercible(Some(target))?;
-    let names = crate::own_keys::names(Some(target))?;
-    let symbols = crate::own_keys::symbols(Some(target))?;
+    let keys = if matches!(target, Value::Proxy(_)) {
+        crate::proxy::proxy_own_keys(target)?
+    } else {
+        let names = crate::own_keys::names(Some(target))?;
+        let symbols = crate::own_keys::symbols(Some(target))?;
+        let mut values = match names {
+            Value::Array(values) => values.snapshot(),
+            _ => Vec::new(),
+        };
+        if let Value::Array(symbols) = symbols {
+            values.extend(symbols.snapshot());
+        }
+        Value::array(values)
+    };
     let mut properties = Vec::new();
-    for keys in [names, symbols] {
-        let Value::Array(keys) = keys else { continue };
-        for key in keys.snapshot() {
-            let descriptor = descriptor(Some(target), Some(&key))?;
+    if let Value::Array(keys) = keys {
+        for key_value in keys.snapshot() {
+            let key = crate::conversion::to_property_key(&key_value)?;
+            let descriptor = if matches!(target, Value::Proxy(_)) {
+                crate::proxy::proxy_get_own_property_descriptor(target, &key)?
+            } else {
+                descriptor(Some(target), Some(&Value::String(key.clone())))?
+            };
             if !matches!(descriptor, Value::Undefined) {
-                if let Value::String(key) = key {
-                    properties.push((key, descriptor));
-                }
+                properties.push((key, descriptor));
             }
         }
     }
@@ -148,10 +184,25 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Object.setPrototypeOf target must be an object",
         ));
     };
-    validate_set_prototype_target(target)?;
     let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     validate_set_prototype_value(&prototype)?;
+    if matches!(target, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Object.setPrototypeOf target must be an object",
+        ));
+    }
+    if !crate::value::is_object(target) {
+        return Ok(target.clone());
+    }
+    validate_set_prototype_target(target)?;
     let current = get_prototype_of(Some(target))?;
+    if matches!(target, Value::Builtin(Builtin::ObjectPrototype))
+        && !matches!(prototype, Value::Null)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot set the prototype of Object.prototype",
+        ));
+    }
     if !crate::builtins::same_value(Some(&current), Some(&prototype))
         && !crate::properties::object_is_extensible(target)
     {
@@ -159,17 +210,15 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Cannot set the prototype of a non-extensible object",
         ));
     }
-    if matches!(prototype, Value::Null) {
-        let constructor = crate::vm::get_property(&current, "constructor");
-        if let Value::String(name) = crate::vm::get_property(&constructor, "name") {
-            let _ = crate::execute::set_property_in_place(
-                target,
-                "\0original_constructor_name",
-                Value::String(name),
-            );
-        }
+    if !crate::builtins::same_value(Some(&current), Some(&prototype))
+        && prototype_contains_target(&prototype, target)?
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cyclic prototype value",
+        ));
     }
     let result = match target {
+        Value::Proxy(_) => crate::proxy::proxy_set_prototype_of(target, &prototype)?,
         Value::Function(_) | Value::BoundFunction(_) => set_function_prototype(target, prototype),
         Value::Object(data) => set_object_prototype(data, prototype),
         _ => crate::builtins::set_property(target.clone(), "\0prototype", prototype),
@@ -177,6 +226,28 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     crate::locals::replace_value(target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
+}
+
+fn prototype_contains_target(prototype: &Value, target: &Value) -> Result<bool, VmError> {
+    let mut current = prototype.clone();
+    let mut seen = Vec::new();
+    while !matches!(current, Value::Null) {
+        if matches!(current, Value::Proxy(_)) {
+            return Ok(false);
+        }
+        if crate::builtins::same_value(Some(&current), Some(target)) {
+            return Ok(true);
+        }
+        if seen
+            .iter()
+            .any(|value| crate::builtins::same_value(Some(&current), Some(value)))
+        {
+            return Ok(false);
+        }
+        seen.push(current.clone());
+        current = get_prototype_of(Some(&current))?;
+    }
+    Ok(false)
 }
 
 fn set_object_prototype(data: &Rc<crate::value::ObjectData>, prototype: Value) -> Value {
@@ -245,6 +316,7 @@ fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
             | Value::BoundFunction(_)
             | Value::HostCapability(_)
             | Value::Builtin(_)
+            | Value::Proxy(_)
     ) {
         return Ok(());
     }
@@ -267,14 +339,24 @@ fn validate_set_prototype_value(prototype: &Value) -> Result<(), VmError> {
 pub(crate) fn object_property_is_enumerable(
     receiver: Option<&Value>,
     arguments: &[Value],
-) -> Value {
-    let (Some(receiver), Some(key)) = (receiver, arguments.first()) else {
-        return Value::Boolean(false);
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Object.prototype.propertyIsEnumerable called on null or undefined",
+        ));
+    };
+    if matches!(receiver, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Object.prototype.propertyIsEnumerable called on null or undefined",
+        ));
+    }
+    let Some(key) = arguments.first() else {
+        return Ok(Value::Boolean(false));
     };
     let Ok(key) = crate::properties::dynamic_property_key(key) else {
-        return Value::Boolean(false);
+        return Ok(Value::Boolean(false));
     };
-    enumerable_value(receiver, &key)
+    Ok(enumerable_value(receiver, &key))
 }
 
 fn enumerable_value(receiver: &Value, key: &str) -> Value {
@@ -344,14 +426,14 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
             {
                 configurable_global_descriptor(&global, key)
             } else {
-                object_descriptor(properties.as_ref(), key)
+                object_descriptor(properties, key)
             }
         }
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
             .upgrade()
-            .and_then(|properties| object_descriptor(properties.as_ref(), key)),
+            .and_then(|properties| object_descriptor(&properties, key)),
         Value::Array(values) => array_descriptor(values, key),
         Value::String(value) => string_descriptor(value, key),
         Value::Builtin(builtin) => builtin_descriptor(*builtin, key),

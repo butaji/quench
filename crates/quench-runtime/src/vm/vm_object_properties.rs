@@ -5,6 +5,15 @@ fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> V
         .upgrade()
         .map_or(Value::Undefined, |object| {
             let object = crate::locals::resolved_replacement(Value::Object(object));
+            if key == "toString" {
+                if let Value::Object(properties) = &object {
+                    if properties.iter().any(|(name, value)| {
+                        name == "_value" && boxed_symbol_value(value)
+                    }) {
+                        return Value::Builtin(crate::ops::Builtin::SymbolToString);
+                    }
+                }
+            }
             get_property(&object, key)
         })
 }
@@ -33,7 +42,7 @@ pub(crate) fn has_restricted_function_property(value: &Value, key: &str) -> bool
 
 fn object_prototype_property(
     receiver: &Value,
-    properties: &crate::value::ObjectData,
+    properties: &[(crate::value::PropertyName, Value)],
     key: &str,
 ) -> Value {
     properties
@@ -41,7 +50,7 @@ fn object_prototype_property(
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value))
         .map_or(Value::Undefined, |prototype| {
-            get_property_with_receiver(&prototype, key, receiver).unwrap_or(Value::Undefined)
+            get_property_with_receiver(prototype, key, receiver).unwrap_or(Value::Undefined)
         })
 }
 
@@ -65,6 +74,22 @@ pub(crate) fn object_property(
     if let Some(value) = direct_object_property(properties, key) {
         return value;
     }
+    if properties.iter().any(|(name, value)| {
+        name == "_value" && boxed_symbol_value(value)
+    }) {
+        if key == "toString" {
+            return Value::Builtin(crate::ops::Builtin::SymbolToString);
+        }
+        if key == "valueOf" {
+            return Value::Builtin(crate::ops::Builtin::SymbolValueOf);
+        }
+        let prototype = crate::vm::realm_intrinsic(crate::ops::Builtin::SymbolPrototype);
+        if let Ok(value) = get_property_with_receiver(&prototype, key, receiver) {
+            if !matches!(value, Value::Undefined) {
+                return value;
+            }
+        }
+    }
     let inherited = object_prototype_property(receiver, properties, key);
     if !matches!(inherited, Value::Undefined) {
         return inherited;
@@ -72,7 +97,14 @@ pub(crate) fn object_property(
     object_builtin_property(properties, key)
 }
 
-fn object_builtin_property(properties: &crate::value::ObjectData, key: &str) -> Value {
+fn boxed_symbol_value(value: &Value) -> bool {
+    match value {
+        Value::BindingCell(cell) => boxed_symbol_value(&cell.borrow()),
+        value => crate::conversion::is_symbol(value),
+    }
+}
+
+fn object_builtin_property(properties: &[(crate::value::PropertyName, Value)], key: &str) -> Value {
     crate::builtins::property(object_prototype(properties), key)
 }
 
@@ -119,7 +151,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                 &Value::Object(properties.clone()),
             ));
         }
-        return Some(property_value(&value));
+        return Some(property_value(value));
     }
     if let Some(value) = global_object_property(properties, key) {
         return Some(value);
@@ -155,7 +187,7 @@ pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, k
     else {
         return None;
     };
-    if crate::conversion::is_symbol_string(&value) {
+    if crate::conversion::is_symbol_string(value) {
         return None;
     }
     if crate::builtins::builtin_prototype_property_is_removed(
@@ -170,7 +202,7 @@ pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, k
     }
 }
 
-fn object_prototype(properties: &crate::value::ObjectData) -> Builtin {
+fn object_prototype(properties: &[(crate::value::PropertyName, Value)]) -> Builtin {
     if let Some((_, value)) = properties.iter().find(|(name, _)| name == "_value") {
         return match value {
             Value::String(value) if value.contains('\0') => Builtin::SymbolPrototype,
@@ -237,7 +269,7 @@ fn global_property(
     )
 }
 
-fn current_host_capability(kind: HostCapabilityKind) -> Value {
+pub(crate) fn current_host_capability(kind: HostCapabilityKind) -> Value {
     let realm = CURRENT_CONTEXT.with(|context| {
         context
             .borrow()

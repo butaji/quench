@@ -39,34 +39,6 @@ pub fn events_method_emit(
 ) -> Result<Value, VmError> {
     crate::modules::events::method_emit(state, receiver, args)
 }
-pub fn events_capture_get(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::events::capture_rejections_get(state, args)
-}
-pub fn events_capture_set(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::events::capture_rejections_set(state, args)
-}
-pub fn events_default_max_get(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::events::default_max_get(state, args)
-}
-pub fn events_default_max_set(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::events::default_max_set(state, args)
-}
 pub fn events_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::events::new_emitter(state, args)
 }
@@ -81,30 +53,6 @@ pub fn events_call(
         return Ok(receiver.clone());
     }
     crate::modules::events::new_emitter(state, &[])
-}
-
-pub fn events_abort_listener(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::events::abort_listener_callback(state, args)
-}
-
-pub fn events_abort_dispose(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::events::abort_listener_dispose(state, args)
-}
-
-pub fn events_add_abort_listener(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::events::add_abort_listener(state, args)
 }
 
 pub fn buffer_of(
@@ -144,7 +92,6 @@ pub fn util_format(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::util::validate_json_arguments(args)?;
     Ok(Value::String(crate::modules::util::format(args)))
 }
 pub fn util_inspect(
@@ -166,19 +113,12 @@ pub fn util_inspect(
         .get(1)
         .filter(|options| matches!(options, Value::Object(_) | Value::ObjectAlias(_)))
         .or_else(|| args.get(2))
-        .and_then(|options| {
-            let options = if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
-                execute::get_property(options, "depth")
-            } else {
-                options.clone()
-            };
-            match options {
+        .and_then(|options| match options {
             Value::Null => Some(usize::MAX / 2),
-            Value::Number(value) if value.is_finite() && value >= 0.0 => {
+            Value::Number(value) if value.is_finite() && *value >= 0.0 => {
                 Some(value.floor() as usize + 1)
             }
             _ => None,
-            }
         });
     let show_hidden = matches!(args.get(1), Some(Value::Boolean(true)))
         || args.get(1).is_some_and(|options| {
@@ -187,30 +127,6 @@ pub fn util_inspect(
                 Value::Boolean(true)
             )
         });
-    let show_proxy = args.get(1).is_some_and(|options| {
-        match execute::get_property(options, "showProxy") {
-            Value::Boolean(value) => value,
-            Value::Number(value) => value != 0.0 && !value.is_nan(),
-            _ => false,
-        }
-    });
-    let colors = args.get(1).is_some_and(|options| {
-        matches!(execute::get_property(options, "colors"), Value::Boolean(true))
-    });
-    let break_length_one = args.get(1).is_some_and(|options| {
-        matches!(
-            execute::get_property(options, "breakLength"),
-            Value::Number(value) if value <= 1.0
-        )
-    });
-    if colors && break_length_one {
-        if let Some(rendered) = crate::modules::util::inspect_proxy_colored(&arg) {
-            return Ok(Value::String(rendered));
-        }
-    }
-    if let Some(rendered) = crate::modules::util::inspect_proxy(&arg, depth.unwrap_or(3), show_proxy) {
-        return Ok(Value::String(rendered));
-    }
     let max_array_length = args
         .iter()
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
@@ -222,29 +138,12 @@ pub fn util_inspect(
                 _ => None,
             },
         );
-    let getters = args.iter().any(|value| {
-        matches!(value, Value::Object(_) | Value::ObjectAlias(_))
-            && matches!(
-                execute::get_property(value, "getters"),
-                Value::Boolean(true)
-            )
-    });
     Ok(Value::String(match depth {
-        Some(depth) => crate::modules::util::inspect_with_options(
-            &arg,
-            depth,
-            show_hidden,
-            max_array_length,
-            getters,
-        ),
-        None if show_hidden || getters || max_array_length.is_some() => {
-            crate::modules::util::inspect_with_options(
-                &arg,
-                3,
-                show_hidden,
-                max_array_length,
-                getters,
-            )
+        Some(depth) => {
+            crate::modules::util::inspect_with_options(&arg, depth, show_hidden, max_array_length)
+        }
+        None if show_hidden => {
+            crate::modules::util::inspect_with_options(&arg, 3, true, max_array_length)
         }
         None => crate::modules::util::inspect(&arg),
     }))
@@ -285,19 +184,16 @@ pub fn util_promisify(
 }
 
 fn timer_promise_alias(value: &Value) -> Option<&'static str> {
-    let capability = match value {
-        Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
-            quench_runtime::ops::HostCapabilityKind::Custom(cap),
-        )) => Some(*cap),
-        Value::BoundFunction(bound) => match bound.target {
-            Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
-                quench_runtime::ops::HostCapabilityKind::Custom(cap),
-            )) => Some(cap),
-            _ => None,
-        },
-        _ => None,
-    }?;
-    match capability {
+    let Value::BoundFunction(bound) = value else {
+        return None;
+    };
+    let Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+        quench_runtime::ops::HostCapabilityKind::Custom(cap),
+    )) = bound.target
+    else {
+        return None;
+    };
+    match cap {
         0x0700 => Some("setTimeout"),
         0x0702 => Some("setInterval"),
         0x0704 => Some("setImmediate"),
@@ -574,16 +470,10 @@ pub fn internal_binding(
         ]));
     }
     if name == "util" {
-        return Ok(crate::host::namespace_object_from_pairs(vec![
-            (
-                "arrayBufferViewHasBuffer".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
-            ),
-            (
-                "getProxyDetails".to_string(),
-                crate::host::capability(crate::registry::SPEC_INTERNAL_GET_PROXY_DETAILS),
-            ),
-        ]));
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "arrayBufferViewHasBuffer".to_string(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_VIEW_HAS_BUFFER),
+        )]));
     }
     if name == "js_stream" {
         return Ok(crate::host::namespace_object_from_pairs(vec![(
@@ -833,30 +723,6 @@ pub fn internal_view_has_buffer(
     ))
 }
 
-pub fn internal_get_proxy_details(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(Value::Proxy(proxy)) = args.first() else {
-        return Ok(Value::Undefined);
-    };
-    let show_handler = !matches!(args.get(1), Some(Value::Boolean(false)));
-    if *proxy.revoked.borrow() {
-        return Ok(if show_handler {
-            quench_runtime::host_api::array(vec![Value::Null, Value::Null])
-        } else {
-            Value::Null
-        });
-    }
-    Ok(if show_handler {
-        quench_runtime::host_api::array(vec![proxy.target.clone(), proxy.handler.clone()])
-    } else {
-        proxy.target.clone()
-    })
-}
-
-
 fn sleep_error(name: &str, message: &str) -> VmError {
     VmError::Thrown(quench_runtime::host_api::object(vec![
         ("name".to_string(), Value::String(name.to_string())),
@@ -873,19 +739,13 @@ fn number_display(value: &Value) -> String {
 }
 
 fn buffer_new_impl(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let vm_filename = execute::get_property(
-        &quench_runtime::vm::current_global_object(),
-        "\0quench_vm_filename",
+    crate::modules::process::emit_warning(
+        state,
+        "DeprecationWarning",
+        "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.",
+        Some("DEP0005"),
+        true,
     );
-    if !matches!(vm_filename, Value::String(ref path) if path.contains("node_modules")) {
-        crate::modules::process::emit_warning(
-            state,
-            "DeprecationWarning",
-            "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.",
-            Some("DEP0005"),
-            true,
-        );
-    }
     if matches!(args.first(), Some(Value::Number(_))) {
         if args.len() > 1 {
             return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
@@ -1178,23 +1038,10 @@ pub fn dns_resolve4(
 // ---- net ----
 pub fn net_connect(
     state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    match receiver {
-        Some(receiver) if crate::modules::net::net_id(receiver).is_some() => {
-            crate::modules::net::connect_existing(state, receiver, args)
-        }
-        _ => crate::modules::net::connect(state, args),
-    }
-}
-
-pub fn net_socket_call(
-    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::net::socket_construct(state, args)
+    crate::modules::net::connect(state, args)
 }
 pub fn net_is_ip(
     _state: &Rc<RefCell<HostState>>,
@@ -1492,6 +1339,11 @@ pub fn abort_controller_abort(
         return Ok(Value::Undefined);
     };
     let original_signal = quench_runtime::execute::get_property(controller, "signal");
+    let signal = quench_runtime::execute::set_property(
+        original_signal.clone(),
+        "aborted",
+        Value::Boolean(true),
+    );
     let reason = args.first().cloned().unwrap_or_else(|| {
         quench_runtime::host_api::object(vec![
             ("name".into(), Value::String("AbortError".into())),
@@ -1501,12 +1353,9 @@ pub fn abort_controller_abort(
             ),
         ])
     });
-    quench_runtime::execute::set_property_in_place(
-        &original_signal,
-        "aborted",
-        Value::Boolean(true),
-    );
-    quench_runtime::execute::set_property_in_place(&original_signal, "reason", reason);
+    let signal = quench_runtime::execute::set_property(signal, "reason", reason);
+    quench_runtime::execute::replace_value(&original_signal, &signal);
+    let _ = quench_runtime::execute::set_property(controller.clone(), "signal", signal.clone());
     let event = quench_runtime::host_api::object(vec![
         ("type".into(), Value::String("abort".into())),
         (
@@ -1514,7 +1363,7 @@ pub fn abort_controller_abort(
             crate::host::capability(crate::registry::SPEC_ABORT_EVENT_STOP_IMMEDIATE),
         ),
     ]);
-    crate::modules::event_target::dispatch_event(state, Some(&original_signal), &[event])
+    crate::modules::event_target::dispatch_event(state, Some(&signal), &[event])
 }
 
 pub fn abort_event_stop_immediate(
@@ -1907,20 +1756,6 @@ pub fn process_once(
 ) -> Result<Value, VmError> {
     crate::modules::process::once(state, args)
 }
-pub fn process_remove_listener(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::process::remove_listener(state, args)
-}
-pub fn process_remove_all_listeners(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::process::remove_all_listeners(state, args)
-}
 pub fn process_emit(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -1982,29 +1817,13 @@ pub fn util_format_with_options(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let options = args.first().unwrap_or(&Value::Undefined);
-    if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
-        return Err(crate::modules::buffer_enc::invalid_arg_type(
-            "The \"inspectOptions\" argument must be an object".into(),
-        ));
-    }
     let separator = quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
         options,
         "numericSeparator",
     ));
-    let colors = quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
-        options,
-        "colors",
-    ));
-    let compact = !matches!(
-        quench_runtime::execute::get_property(options, "compact"),
-        Value::Undefined
-    );
-    crate::modules::util::validate_json_arguments(&args[1..])?;
     Ok(Value::String(crate::modules::util::format_with_options(
         &args[1..],
         separator,
-        colors,
-        compact,
     )))
 }
 
