@@ -173,6 +173,23 @@ fn add_listener(
         let count = guard.add(&event, callback.clone(), once, prepend);
         (count, guard.max, guard.warned)
     };
+    if let Some(receiver) = receiver {
+        if let Ok(events) = execute::get_property_result(receiver, "_events") {
+            let callbacks = emitter
+                .borrow()
+                .listeners_of(&event)
+                .iter()
+                .map(|listener| listener.callback.clone())
+                .collect::<Vec<_>>();
+            let value = if callbacks.len() == 1 {
+                callbacks[0].clone()
+            } else {
+                host_api::array(callbacks)
+            };
+            let updated = execute::set_property(events.clone(), &event, value);
+            execute::replace_value(&events, &updated);
+        }
+    }
     let limit = max.unwrap_or(state.borrow().emitters.default_max);
     if count > limit && limit > 0 && !already_warned {
         emitter.borrow_mut().warned = true;
@@ -515,7 +532,10 @@ pub fn method_listeners(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let event = event_name(args.first())?;
+    let Some(first) = args.first() else {
+        return Ok(host_api::array(Vec::new()));
+    };
+    let event = event_name(Some(first))?;
     let callbacks = expect_emitter(state, receiver)
         .and_then(|id| state.borrow().emitters.get(id))
         .map(|emitter| {
@@ -524,6 +544,57 @@ pub fn method_listeners(
                 .listeners_of(&event)
                 .iter()
                 .map(|listener| listener.callback.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(host_api::array(callbacks))
+}
+
+pub fn method_raw_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(first) = args.first() else {
+        return Ok(host_api::array(Vec::new()));
+    };
+    let event = event_name(Some(first))?;
+    let callbacks = expect_emitter(state, receiver)
+        .and_then(|id| state.borrow().emitters.get(id))
+        .map(|emitter| {
+            emitter
+                .borrow()
+                .listeners_of(&event)
+                .iter()
+                .map(|listener| {
+                    if !listener.once {
+                        return listener.callback.clone();
+                    }
+                    let wrapper = eval_function(
+                        "(emitter, event, listener) => { emitter.removeListener(event, listener); return listener(); }",
+                    )
+                        .and_then(|wrapper| {
+                            let bind = execute::get_property_result(&wrapper, "bind")?;
+                            execute::call(
+                                &bind,
+                                &wrapper,
+                                &[
+                                    Value::Undefined,
+                                    receiver.cloned().unwrap_or(Value::Undefined),
+                                    Value::String(event.clone()),
+                                    listener.callback.clone(),
+                                ],
+                            )
+                        })
+                        .unwrap_or(Value::Undefined);
+                    let updated = execute::set_property(
+                        wrapper.clone(),
+                        "listener",
+                        listener.callback.clone(),
+                    );
+                    execute::replace_value(&wrapper, &updated);
+                    wrapper
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -683,6 +754,7 @@ fn emitter_props() -> Vec<(&'static str, Value)> {
             cap("events:removeAllListeners", 0x0107),
         ),
         ("listeners", cap("events:listeners", 0x0108)),
+        ("rawListeners", cap("events:rawListeners", 0x0127)),
         ("eventNames", cap("events:eventNames", 0x0109)),
         ("listenerCount", cap("events:listenerCount", 0x010A)),
         ("prependListener", cap("events:prependListener", 0x010B)),

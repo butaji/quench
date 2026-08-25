@@ -7,6 +7,7 @@
 
 use crate::dispatch_fs::fs_dispatch;
 use crate::dispatch_handlers as handlers;
+use crate::modules::events;
 
 pub use crate::dispatch_handlers::{CallHandler, ConstructHandler};
 
@@ -18,6 +19,7 @@ const CAP_EVENTS_CAPTURE_GET: u16 = 0x0104;
 const CAP_EVENTS_CAPTURE_SET: u16 = 0x0119;
 const CAP_EVENTS_DEFAULT_MAX_GET: u16 = 0x0125;
 const CAP_EVENTS_DEFAULT_MAX_SET: u16 = 0x0126;
+const CAP_EVENTS_RAW_LISTENERS: u16 = 0x0127;
 const CAP_EVENTS_ONCE: u16 = 0x0105;
 const CAP_EVENTS_REMOVE_LISTENER: u16 = 0x0106;
 const CAP_EVENTS_REMOVE_ALL: u16 = 0x0107;
@@ -307,6 +309,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_EVENTS_CAPTURE_SET => handlers::events_capture_set,
         CAP_EVENTS_DEFAULT_MAX_GET => handlers::events_default_max_get,
         CAP_EVENTS_DEFAULT_MAX_SET => handlers::events_default_max_set,
+        CAP_EVENTS_RAW_LISTENERS => events::method_raw_listeners,
         CAP_CONSOLE_LOG | CAP_CONSOLE_INFO | CAP_CONSOLE_DEBUG => console_log,
         CAP_CONSOLE_WARN | CAP_CONSOLE_ERROR => console_warn,
         CAP_CONSOLE_TRACE => console_trace,

@@ -39,6 +39,7 @@ pub const SPEC_EVENTS_DEFAULT_MAX_GET: NodeSpec =
     NodeSpec::new("events:defaultMaxListeners:get", 0x0125);
 pub const SPEC_EVENTS_DEFAULT_MAX_SET: NodeSpec =
     NodeSpec::new("events:defaultMaxListeners:set", 0x0126);
+pub const SPEC_EVENTS_RAW_LISTENERS: NodeSpec = NodeSpec::new("events:rawListeners", 0x0127);
 
 pub const SPEC_CONSOLE_LOG: NodeSpec = NodeSpec::new("console:log", 0x0200);
 pub const SPEC_CONSOLE_INFO: NodeSpec = NodeSpec::new("console:info", 0x0201);
