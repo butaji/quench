@@ -5,6 +5,7 @@
 //! no second JavaScript object model is introduced.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
@@ -12,28 +13,15 @@ use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
-use crate::registry::NodeSpec;
 
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
 
-pub const SPEC_ASYNC_RESOURCE: NodeSpec = NodeSpec::new("async_hooks:AsyncResource", 0x1400);
-pub const SPEC_EXECUTION_ID: NodeSpec = NodeSpec::new("async_hooks:executionAsyncId", 0x1401);
-pub const SPEC_TRIGGER_ID: NodeSpec = NodeSpec::new("async_hooks:triggerAsyncId", 0x1402);
-pub const SPEC_EXECUTION_RESOURCE: NodeSpec =
-    NodeSpec::new("async_hooks:executionAsyncResource", 0x1403);
-pub const SPEC_CREATE_HOOK: NodeSpec = NodeSpec::new("async_hooks:createHook", 0x1404);
-pub const SPEC_RESOURCE_RUN: NodeSpec =
-    NodeSpec::new("async_hooks:resource:runInAsyncScope", 0x1405);
-pub const SPEC_RESOURCE_BEFORE: NodeSpec = NodeSpec::new("async_hooks:resource:emitBefore", 0x1406);
-pub const SPEC_RESOURCE_AFTER: NodeSpec = NodeSpec::new("async_hooks:resource:emitAfter", 0x1407);
-pub const SPEC_RESOURCE_DESTROY: NodeSpec =
-    NodeSpec::new("async_hooks:resource:emitDestroy", 0x1408);
-pub const SPEC_RESOURCE_ID: NodeSpec = NodeSpec::new("async_hooks:resource:asyncId", 0x1409);
-pub const SPEC_RESOURCE_TRIGGER: NodeSpec =
-    NodeSpec::new("async_hooks:resource:triggerAsyncId", 0x140A);
-pub const SPEC_HOOK_ENABLE: NodeSpec = NodeSpec::new("async_hooks:hook:enable", 0x140B);
-pub const SPEC_HOOK_DISABLE: NodeSpec = NodeSpec::new("async_hooks:hook:disable", 0x140C);
+use crate::registry::{SPEC_ASYNC_CREATE_HOOK, SPEC_ASYNC_EXECUTION_ID,
+    SPEC_ASYNC_EXECUTION_RESOURCE, SPEC_ASYNC_HOOK_DISABLE, SPEC_ASYNC_HOOK_ENABLE,
+    SPEC_ASYNC_RESOURCE, SPEC_ASYNC_RESOURCE_AFTER, SPEC_ASYNC_RESOURCE_BEFORE,
+    SPEC_ASYNC_RESOURCE_DESTROY, SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN,
+    SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_TRIGGER_ID};
 
 #[derive(Debug)]
 pub struct AsyncHooksState {
@@ -41,6 +29,8 @@ pub struct AsyncHooksState {
     current_id: u64,
     current_resource: Option<Value>,
     init_hooks: Vec<Value>,
+    resolve_hooks: Vec<Value>,
+    promise_resources: HashMap<usize, Value>,
 }
 
 impl AsyncHooksState {
@@ -50,6 +40,8 @@ impl AsyncHooksState {
             current_id: 1,
             current_resource: None,
             init_hooks: Vec::new(),
+            resolve_hooks: Vec::new(),
+            promise_resources: HashMap::new(),
         }
     }
 
@@ -68,14 +60,14 @@ pub fn build() -> Value {
         ),
         (
             "executionAsyncId",
-            crate::host::capability(SPEC_EXECUTION_ID),
+            crate::host::capability(SPEC_ASYNC_EXECUTION_ID),
         ),
-        ("triggerAsyncId", crate::host::capability(SPEC_TRIGGER_ID)),
+        ("triggerAsyncId", crate::host::capability(SPEC_ASYNC_TRIGGER_ID)),
         (
             "executionAsyncResource",
-            crate::host::capability(SPEC_EXECUTION_RESOURCE),
+            crate::host::capability(SPEC_ASYNC_EXECUTION_RESOURCE),
         ),
-        ("createHook", crate::host::capability(SPEC_CREATE_HOOK)),
+        ("createHook", crate::host::capability(SPEC_ASYNC_CREATE_HOOK)),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }
@@ -125,27 +117,27 @@ pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         (TRIGGER_ID.to_string(), Value::Number(trigger as f64)),
         (
             "runInAsyncScope".to_string(),
-            crate::host::capability(SPEC_RESOURCE_RUN),
+            crate::host::capability(SPEC_ASYNC_RESOURCE_RUN),
         ),
         (
             "emitBefore".to_string(),
-            crate::host::capability(SPEC_RESOURCE_BEFORE),
+            crate::host::capability(SPEC_ASYNC_RESOURCE_BEFORE),
         ),
         (
             "emitAfter".to_string(),
-            crate::host::capability(SPEC_RESOURCE_AFTER),
+            crate::host::capability(SPEC_ASYNC_RESOURCE_AFTER),
         ),
         (
             "emitDestroy".to_string(),
-            crate::host::capability(SPEC_RESOURCE_DESTROY),
+            crate::host::capability(SPEC_ASYNC_RESOURCE_DESTROY),
         ),
         (
             "asyncId".to_string(),
-            crate::host::capability(SPEC_RESOURCE_ID),
+            crate::host::capability(SPEC_ASYNC_RESOURCE_ID),
         ),
         (
             "triggerAsyncId".to_string(),
-            crate::host::capability(SPEC_RESOURCE_TRIGGER),
+            crate::host::capability(SPEC_ASYNC_RESOURCE_TRIGGER),
         ),
     ]);
     let callbacks = state.borrow().async_hooks.init_hooks.clone();
@@ -255,16 +247,63 @@ pub fn create_hook(
             state.borrow_mut().async_hooks.init_hooks.push(callback);
         }
     }
+    if let Some(callback) = args
+        .first()
+        .and_then(|options| id_property(options, "promiseResolve"))
+    {
+        if quench_runtime::is_callable(&callback) {
+            state.borrow_mut().async_hooks.resolve_hooks.push(callback);
+        }
+    }
     Ok(host_api::object(vec![
         (
             "enable".to_string(),
-            crate::host::capability(SPEC_HOOK_ENABLE),
+            crate::host::capability(SPEC_ASYNC_HOOK_ENABLE),
         ),
         (
             "disable".to_string(),
-            crate::host::capability(SPEC_HOOK_DISABLE),
+            crate::host::capability(SPEC_ASYNC_HOOK_DISABLE),
         ),
     ]))
+}
+
+/// Engine-owned Promise lifecycle edge. Promise allocation is reported by
+/// `quench-runtime`; the host turns it into the same resource identity family
+/// used by timers and `AsyncResource`.
+pub fn promise_hook(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(event)) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(Value::Promise(promise)) = args.get(1) else {
+        return Ok(Value::Undefined);
+    };
+    let key = Rc::as_ptr(promise) as usize;
+    if event == "init" {
+        let resource = new_resource(state, &[Value::Undefined, Value::String("PROMISE".into())])?;
+        state
+            .borrow_mut()
+            .async_hooks
+            .promise_resources
+            .insert(key, resource);
+    } else if event == "resolve" {
+        let (resource, callbacks) = {
+            let host = state.borrow();
+            (
+                host.async_hooks.promise_resources.get(&key).cloned(),
+                host.async_hooks.resolve_hooks.clone(),
+            )
+        };
+        if let Some(resource) = resource {
+            let id = id_property(&resource, ASYNC_ID).unwrap_or(Value::Number(0.0));
+            for callback in callbacks {
+                let _ = execute::call(&callback, &Value::Undefined, &[id.clone()]);
+            }
+        }
+    }
+    Ok(Value::Undefined)
 }
 pub fn hook_toggle(
     _: &Rc<RefCell<HostState>>,

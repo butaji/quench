@@ -132,6 +132,9 @@ impl Host for NodeHost {
     ) -> Result<Value, VmError> {
         let cap = match capability.kind {
             HostCapabilityKind::Custom(c) => c,
+            HostCapabilityKind::PromiseHook => {
+                return crate::modules::async_hooks::promise_hook(&self.state, arguments);
+            }
             _ => return Err(VmError::NotCallable),
         };
         dispatch(cap, &self.state, receiver, arguments)

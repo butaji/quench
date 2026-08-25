@@ -9,7 +9,7 @@ fn with_resolvers(receiver: Option<&Value>) -> Result<Value, VmError> {
             "Promise.withResolvers receiver is not a constructor",
         ));
     }
-    let promise = Rc::new(PromiseData::default());
+    let promise = PromiseData::allocate(PromiseState::Pending);
     if let Some(constructor) = constructor.filter(|value| !matches!(value, Value::Builtin(Builtin::Promise))) {
         let prototype = crate::execute::get_property_result(constructor, "prototype")?;
         if crate::value::is_object(&prototype) {

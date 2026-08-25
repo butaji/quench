@@ -153,7 +153,7 @@ pub(crate) fn async_next(receiver: Option<&Value>, arguments: &[Value]) -> Resul
         return async_next_error();
     }
     if *generator.executing.borrow() {
-        let promise = Rc::new(crate::value::PromiseData::default());
+        let promise = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
         generator
             .async_next_queue
             .borrow_mut()

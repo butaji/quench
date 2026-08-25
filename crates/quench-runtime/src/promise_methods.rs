@@ -13,7 +13,7 @@ fn construct_then_result(constructor: &Value) -> Result<Value, VmError> {
     if matches!(constructor, Value::Builtin(Builtin::Promise)) {
         return Ok(new_promise());
     }
-    let target = Rc::new(PromiseData::default());
+    let target = PromiseData::allocate(PromiseState::Pending);
     let executor = bound_settler(Builtin::PromiseResolve, &target, 2.0);
     crate::construct::construct_value(constructor, &[executor])
 }

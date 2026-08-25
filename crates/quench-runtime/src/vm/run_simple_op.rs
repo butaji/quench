@@ -142,7 +142,7 @@ fn enumerate_import_attributes(options: &Value) -> Result<(), VmError> {
 }
 
 fn rejected_promise(reason: Value) -> Value {
-    let promise = std::rc::Rc::new(crate::value::PromiseData::default());
+    let promise = crate::value::PromiseData::allocate(crate::value::PromiseState::Pending);
     crate::promise::reject_promise(&promise, reason);
     Value::Promise(promise)
 }
