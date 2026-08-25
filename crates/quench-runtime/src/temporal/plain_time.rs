@@ -472,10 +472,20 @@ fn add(
         ("nanoseconds", 1),
     ]
     .iter()
-    .map(|(name, scale)| duration_number(&duration, name).map(|value| value * scale))
+    .map(|(name, scale)| {
+        duration_number(&duration, name).and_then(|value| {
+            value.checked_mul(*scale).ok_or_else(|| {
+                crate::value::error::throw_range_error("Invalid duration")
+            })
+        })
+    })
     .collect::<Result<Vec<_>, _>>()?
     .into_iter()
-    .sum::<i64>()
+    .try_fold(0_i64, |sum, value| {
+        sum.checked_add(value).ok_or_else(|| {
+            crate::value::error::throw_range_error("Invalid duration")
+        })
+    })?
         * direction;
     let total = (time_fields(receiver)? + delta).rem_euclid(86_400_000_000_000);
     let hour = total / 3_600_000_000_000;
