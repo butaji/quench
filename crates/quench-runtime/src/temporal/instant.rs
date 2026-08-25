@@ -6,9 +6,17 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .first()
         .cloned()
         .unwrap_or(Value::BigInt("0".into()));
+    let epoch_milliseconds = match &epoch {
+        Value::BigInt(value) => (value.parse::<i128>().unwrap_or(0) as f64 / 1_000_000.0).floor(),
+        _ => 0.0,
+    };
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             ("epochNanoseconds".into(), epoch),
+            (
+                "epochMilliseconds".into(),
+                Value::Number(epoch_milliseconds),
+            ),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype),
@@ -38,8 +46,97 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalInstantSubtract => {
             Some(arithmetic(receiver, arguments.first(), -1))
         }
+        crate::ops::Builtin::TemporalInstantUntil => {
+            Some(difference(receiver, arguments.first(), 1, arguments.get(1)))
+        }
+        crate::ops::Builtin::TemporalInstantSince => Some(difference(
+            receiver,
+            arguments.first(),
+            -1,
+            arguments.get(1),
+        )),
+        crate::ops::Builtin::TemporalInstantRound => Some(round(receiver, arguments.first())),
         _ => None,
     }
+}
+
+fn difference(
+    receiver: Option<&Value>,
+    other: Option<&Value>,
+    direction: i128,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
+    let left = epoch_number(get_epoch(receiver)?)?;
+    let right = epoch_number(get_epoch(other)?)?;
+    let mut delta = (right - left) * direction;
+    let unit = options
+        .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "second".into());
+    let scale = unit_scale(&unit)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))?;
+    delta = (delta / scale) * scale;
+    let mut fields = vec![Value::Number(0.0); 10];
+    let index = [
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "millisecond",
+        "microsecond",
+        "nanosecond",
+    ]
+    .iter()
+    .position(|name| *name == unit)
+    .unwrap_or(3)
+        + 3;
+    fields[index] = Value::Number((delta / scale) as f64);
+    crate::temporal::duration::construct(&fields)
+}
+
+fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let epoch = epoch_number(get_epoch(receiver)?)?;
+    let unit = options
+        .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
+            _ => None,
+        })
+        .ok_or_else(|| crate::value::error::throw_type_error("Missing smallestUnit"))?;
+    let scale = unit_scale(&unit)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))?;
+    let increment = options
+        .and_then(|value| crate::execute::get_property_result(value, "roundingIncrement").ok())
+        .and_then(|value| crate::conversion::to_number(&value).ok())
+        .unwrap_or(1.0) as i128;
+    let quantum = scale * increment;
+    let rounded = ((epoch as f64 / quantum as f64).round() as i128) * quantum;
+    construct(&[Value::BigInt(rounded.to_string())])
+}
+
+fn epoch_number(value: Value) -> Result<i128, VmError> {
+    match value {
+        Value::BigInt(value) => value
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid instant")),
+        _ => Err(crate::value::error::throw_type_error("Invalid instant")),
+    }
+}
+
+fn unit_scale(unit: &str) -> Option<i128> {
+    Some(match unit {
+        "day" => 86_400_000_000_000,
+        "hour" => 3_600_000_000_000,
+        "minute" => 60_000_000_000,
+        "second" => 1_000_000_000,
+        "millisecond" => 1_000_000,
+        "microsecond" => 1_000,
+        "nanosecond" => 1,
+        _ => return None,
+    })
 }
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -66,17 +163,7 @@ fn to_zoned_date_time_iso(
         Some(Value::String(value)) => value.as_str(),
         _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
     };
-    Ok(Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(vec![
-            ("epochNanoseconds".into(), epoch),
-            ("timeZoneId".into(), Value::String(zone.into())),
-            ("calendarId".into(), Value::String("iso8601".into())),
-            (
-                "\0prototype".into(),
-                Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
-            ),
-        ]),
-    )))
+    crate::temporal::zoned_construct(&[epoch, Value::String(zone.into())])
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
