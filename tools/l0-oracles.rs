@@ -115,6 +115,33 @@ fn run(id: &str) -> u64 {
             }
             black_box(checksum).to_bits()
         }
+        "packed-f64-advect" => {
+            const WIDTH: usize = 4096;
+            const HEIGHT: usize = 64;
+            const ROW_SIZE: usize = WIDTH + 2;
+            let mut d = vec![0.0_f64; ROW_SIZE * (HEIGHT + 2)];
+            let d0 = vec![1.25_f64; d.len()];
+            let u = vec![0.001_f64; d.len()];
+            let v = vec![0.001_f64; d.len()];
+            for _ in 0..100 {
+                for j in 1..=HEIGHT {
+                    let mut pos = j * ROW_SIZE;
+                    for i in 1..=WIDTH {
+                        pos += 1;
+                        let x = (i as f64 - 0.001 * WIDTH as f64 * u[pos])
+                            .clamp(0.5, WIDTH as f64 + 0.5);
+                        let y = (j as f64 - 0.001 * HEIGHT as f64 * v[pos])
+                            .clamp(0.5, HEIGHT as f64 + 0.5);
+                        let (i0, j0) = (x as usize, y as usize);
+                        let (s1, t1) = (x - i0 as f64, y - j0 as f64);
+                        let (row1, row2) = (j0 * ROW_SIZE, (j0 + 1) * ROW_SIZE);
+                        d[pos] = (1.0 - s1) * ((1.0 - t1) * d0[i0 + row1] + t1 * d0[i0 + row2])
+                            + s1 * ((1.0 - t1) * d0[i0 + 1 + row1] + t1 * d0[i0 + 1 + row2]);
+                    }
+                }
+            }
+            black_box(d[ROW_SIZE + 1]).to_bits()
+        }
         _ => panic!("unknown L0 oracle: {id}"),
     }
 }
