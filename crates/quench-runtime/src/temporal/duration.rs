@@ -789,12 +789,25 @@ fn calendar_round(
     let elapsed = (cursor - start).num_days().unsigned_abs() as f64;
     let remainder = (total.abs() - elapsed).max(0.0);
     let span = (next - cursor).num_days().abs() as f64;
+    let has_smallest = options.is_some_and(|value| match value {
+        Value::Object(object) => object
+            .iter()
+            .any(|(key, value)| key == "smallestUnit" && !matches!(value, Value::Undefined)),
+        _ => false,
+    });
     let unrounded_count = count;
-    if span > 0.0 && remainder * 2.0 >= span {
+    if has_smallest && span > 0.0 && remainder * 2.0 >= span {
         count += sign as i64;
     }
-    let increment = rounding_increment(options, unit)? as i128;
-    count = (round_integer(count as i128, increment, &rounding_mode(options)?) * increment) as i64;
+    let increment = if has_smallest {
+        rounding_increment(options, unit)? as i128
+    } else {
+        1
+    };
+    if has_smallest {
+        count =
+            (round_integer(count as i128, increment, &rounding_mode(options)?) * increment) as i64;
+    }
     let mut fields = vec![Value::Number(0.0); 10];
     if preserve_larger {
         let mut larger_cursor = start;
@@ -824,7 +837,54 @@ fn calendar_round(
     } else {
         fields[unit] = Value::Number(count as f64);
     }
-    if count == unrounded_count {
+    if !preserve_larger {
+        if let Some(largest) = largest_unit(options).filter(|largest| *largest < unit) {
+            let mut larger_cursor = start;
+            for larger_unit in largest..unit {
+                let mut larger_count = 0_i64;
+                loop {
+                    let next = shift_calendar(larger_cursor, larger_unit, sign as i32)?;
+                    let reached = if sign >= 0.0 {
+                        next <= target
+                    } else {
+                        next >= target
+                    };
+                    if !reached {
+                        break;
+                    }
+                    larger_cursor = next;
+                    larger_count += sign as i64;
+                }
+                fields[larger_unit] = Value::Number(larger_count as f64);
+            }
+            fields[unit] = Value::Number(0.0);
+        }
+    }
+    let has_higher = (0..unit).any(|index| {
+        [
+            "years", "months", "weeks", "days", "hours", "minutes", "seconds",
+        ]
+        .get(index)
+        .is_some_and(|name| duration_field(object, name) != 0)
+    });
+    let has_lower = ((unit + 1)..10).any(|index| {
+        [
+            "years",
+            "months",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ]
+        .get(index)
+        .is_some_and(|name| duration_field(object, name) != 0)
+    });
+    let balanced_to_larger = largest_unit(options).is_some_and(|largest| largest < unit);
+    if count == unrounded_count && (has_higher || has_lower) && !balanced_to_larger {
         let mut lower_cursor = cursor;
         for lower_unit in (unit + 1)..=3 {
             if lower_unit == 2 && unit < 2 {
