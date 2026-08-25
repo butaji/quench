@@ -623,6 +623,11 @@
       yield* stream;
     }
   };
+  const collectValues = async (stream) => {
+    const values = [];
+    for await (const value of readableValues(stream)) values.push(value);
+    return values;
+  };
 
   function sliceCount(count) {
     const number = Number(count);
@@ -670,11 +675,37 @@
       drop(nextCount, nextOptions) {
         return sliceReadable(this, Infinity, nextCount, nextOptions);
       },
-      async toArray() {
+      toArray() {
         if (limit === 0) return [];
-        const values = [];
-        for await (const value of this) values.push(value);
-        return values;
+        if (signal) {
+          return new Promise((resolve, reject) => {
+            const values = [];
+            let settled = false;
+            const finish = (error, result) => {
+              if (settled) return;
+              settled = true;
+              signal.removeEventListener?.("abort", abort);
+              if (error) reject(error);
+              else resolve(result);
+            };
+            const abort = () => finish(sliceAbortError());
+            signal.addEventListener?.("abort", abort, { once: true });
+            if (signal.aborted) return abort();
+            (async () => {
+              try {
+                await new Promise((next) => nextTick(next));
+                if (signal.aborted) return abort();
+                for await (const value of this) values.push(value);
+                await new Promise((next) => nextTick(next));
+                if (signal.aborted) abort();
+                else finish(null, values);
+              } catch (error) {
+                finish(error);
+              }
+            })();
+          });
+        }
+        return collectValues(this);
       },
       destroy(error) {
         this.destroyed = true;
