@@ -18,6 +18,9 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     if matches!(property, Value::Builtin(_)) {
         return bind_method(value, property);
     }
+    if matches!(property, Value::Undefined) && matches!(key, "apply" | "call" | "bind") {
+        return bind_function_property(value, key);
+    }
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
