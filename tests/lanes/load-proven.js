@@ -1,6 +1,10 @@
 function sum(limit, value) {
-  let total = 0;
-  for (let i = 0; i < limit; i++) total += value;
+  var total = 0;
+  var i = 0;
+  while (i < limit) {
+    total += value;
+    i++;
+  }
   return total;
 }
 
