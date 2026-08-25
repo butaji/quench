@@ -286,15 +286,8 @@ var api = {
       self.hasRef = function () { return self._destroyed ? undefined : self._refed; };
       self.ref = function () { self._refed = true; return self; };
       self.unref = function () { self._refed = false; return self; };
-      if (globalThis.__quenchAsyncHooks) {
-        var workerAsyncId = ++globalThis.__quenchAsyncId;
-        for (var hookIndex = 0; hookIndex < globalThis.__quenchAsyncHooks.length; hookIndex++) {
-          var hook = globalThis.__quenchAsyncHooks[hookIndex];
-          if (hook.callbacks && typeof hook.callbacks.init === 'function') {
-            hook.callbacks.init.call(hook, workerAsyncId, 'WORKER', 1, self);
-          }
-        }
-      }
+      var asyncHooks = require('async_hooks');
+      asyncHooks.__quenchWorkerResource(self);
       if (proc && typeof proc.emit === 'function') proc.emit('worker', { threadId: self.threadId });
       options = options || {};
       var cp = require('child_process');
