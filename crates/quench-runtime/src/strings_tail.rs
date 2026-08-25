@@ -9,22 +9,23 @@ pub(crate) fn search(
     {
         return Ok(result);
     }
-    if let Some(Value::Object(pattern)) = arguments.first() {
-        let pattern = Value::Object(pattern.clone());
-        if let Ok(Value::Array(result)) =
-            crate::regexp::exec(Some(&pattern), &[Value::String(value.clone())])
-        {
-            return Ok(
-                crate::execute::get_property_result(&Value::Array(result), "index")
-                    .unwrap_or_else(|_| Value::Number(-1.0)),
-            );
-        }
-        return Ok(Value::Number(-1.0));
+    let pattern = arguments
+        .first()
+        .map(crate::conversion::to_string)
+        .transpose()?
+        .unwrap_or_default();
+    let regex = crate::construct::construct_value(
+        &Value::Builtin(crate::ops::Builtin::RegExp),
+        &[Value::String(pattern)],
+    )?;
+    let searcher = crate::execute::get_property_result(&regex, "Symbol.search")?;
+    if !crate::conversion::is_callable(&searcher) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype[@@search] is not callable",
+        ));
     }
-    let pattern = arguments.first().map_or_else(String::new, to_string);
-    Ok(Value::Number(
-        value.find(&pattern).map_or(-1.0, |index| index as f64),
-    ))
+    crate::functions::execute_target_with_receiver(&searcher, &regex, &[Value::String(value)])
+        .map(|(result, _)| result)
 }
 
 fn invoke_symbol_method(
@@ -105,8 +106,8 @@ fn string_match_all(
     }
     // If pattern is a RegExp, check the flags contain 'g'.
     if crate::value::is_object(&pattern) {
-        let is_regexp = crate::execute::get_property_result(&pattern, "Symbol.match")?;
-        if crate::execute::is_truthy(&is_regexp) {
+        let is_regexp = crate::regexp::has_regexp_internal_slot(&pattern);
+        if is_regexp {
             let flags_value = crate::execute::get_property_result(&pattern, "flags")?;
             if matches!(flags_value, Value::Undefined | Value::Null) {
                 return Err(crate::value::error::throw_type_error(
@@ -125,7 +126,14 @@ fn string_match_all(
         &Value::Builtin(crate::ops::Builtin::RegExp),
         &[pattern, Value::String("g".to_string())],
     )?;
-    crate::regexp::match_all_for_string(&regex, &input)
+    let matcher = crate::execute::get_property_result(&regex, "Symbol.matchAll")?;
+    if !crate::conversion::is_callable(&matcher) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype[@@matchAll] is not callable",
+        ));
+    }
+    crate::functions::execute_target_with_receiver(&matcher, &regex, &[Value::String(input)])
+        .map(|(result, _)| result)
 }
 
 fn number(value: &Value) -> Option<f64> {
@@ -136,39 +144,52 @@ fn number(value: &Value) -> Option<f64> {
     }
 }
 
-fn to_string(value: &Value) -> String {
-    match value {
-        Value::String(value) => value.clone(),
-        Value::Number(value) => value.to_string(),
-        Value::Boolean(value) => value.to_string(),
-        Value::Null => "null".to_string(),
-        Value::Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
-}
-
 pub(crate) fn replace(
     receiver: Option<&Value>,
     arguments: &[Value],
     all: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let value = string_receiver(receiver)?;
+    let receiver = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error("String.prototype.replace called on null or undefined")
+    })?;
     if let Some(pattern) = arguments
         .first()
         .filter(|value| crate::value::is_object(value))
     {
-        let matcher = crate::execute::get_property_result(pattern, "Symbol.replace")?;
+        let is_regexp = if crate::regexp::has_regexp_internal_slot(pattern) {
+            let matcher = crate::execute::get_property_result(pattern, "Symbol.match")?;
+            matches!(matcher, Value::Undefined) || crate::execute::is_truthy(&matcher)
+        } else {
+            false
+        };
+        if all && is_regexp {
+            let flags = own_or_get(pattern, "flags")?;
+            if matches!(flags, Value::Undefined | Value::Null) {
+                return Err(crate::value::error::throw_type_error("RegExp flags must be coercible"));
+            }
+            if !crate::conversion::to_string(&flags)?.contains('g') {
+                return Err(crate::value::error::throw_type_error(
+                    "String.prototype.replaceAll requires a 'g' flag",
+                ));
+            }
+        }
+        let matcher = own_or_get(pattern, "Symbol.replace")?;
         if crate::conversion::is_callable(&matcher) {
             let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
             return crate::functions::execute_target_with_receiver(
                 &matcher,
                 pattern,
-                &[Value::String(value.clone()), replacement],
+                &[receiver.clone(), replacement],
             )
             .map(|(result, _)| result);
         }
     }
-    let pattern = arguments.first().map_or_else(String::new, to_string);
+    let value = string_receiver(Some(receiver))?;
+    let pattern = arguments
+        .first()
+        .map(crate::conversion::to_string)
+        .transpose()?
+        .unwrap_or_default();
     let Some(replacement) = arguments.get(1) else {
         let result = if all {
             value.replace(&pattern, "")
@@ -180,14 +201,71 @@ pub(crate) fn replace(
     let result = if crate::conversion::is_callable(replacement) {
         apply_callable_replacement(&value, pattern, replacement, all)?
     } else {
-        let template = to_string(replacement);
-        if all {
-            value.replace(&pattern, &template)
-        } else {
-            value.replacen(&pattern, &template, 1)
-        }
+        let template = crate::conversion::to_string(replacement)?;
+        replace_string_template(&value, &pattern, &template, all)
     };
     Ok(Value::String(result))
+}
+
+fn own_or_get(value: &Value, key: &str) -> Result<Value, crate::execute::VmError> {
+    if let Value::Object(properties) = value {
+        if let Some((_, found)) = properties.iter().rev().find(|(name, _)| name == key) {
+            if !matches!(found, Value::Undefined) {
+                return Ok(found.clone());
+            }
+        }
+    }
+    crate::execute::get_property_result(value, key)
+}
+
+fn replace_string_template(value: &str, pattern: &str, template: &str, all: bool) -> String {
+    if pattern.is_empty() {
+        let mut output = String::new();
+        let mut positions = value.char_indices().map(|(index, _)| index).collect::<Vec<_>>();
+        positions.push(value.len());
+        let mut previous = 0;
+        for (count, index) in positions.into_iter().enumerate() {
+            if !all && count > 0 { break; }
+            output.push_str(&value[previous..index]);
+            output.push_str(&expand_string_template(template, value, "", ""));
+            previous = index;
+        }
+        output.push_str(&value[previous..]);
+        return output;
+    }
+    let mut output = String::new();
+    let mut search_from = 0;
+    while let Some(relative) = value[search_from..].find(pattern) {
+        let start = search_from + relative;
+        let end = start + pattern.len();
+        output.push_str(&value[search_from..start]);
+        output.push_str(&expand_string_template(template, value, &value[start..end], &value[end..]));
+        search_from = end;
+        if !all { break; }
+    }
+    output.push_str(&value[search_from..]);
+    output
+}
+
+fn expand_string_template(template: &str, input: &str, matched: &str, suffix: &str) -> String {
+    let mut output = String::new();
+    let chars = template.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '$' || index + 1 >= chars.len() {
+            output.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        match chars[index + 1] {
+            '$' => { output.push('$'); index += 2; }
+            '&' => { output.push_str(matched); index += 2; }
+            '`' => { output.push_str(&input[..input.len() - suffix.len() - matched.len()]); index += 2; }
+            '\'' => { output.push_str(suffix); index += 2; }
+            _ => { output.push('$'); index += 1; }
+        }
+    }
+    output
 }
 
 fn apply_callable_replacement(
@@ -197,11 +275,12 @@ fn apply_callable_replacement(
     all: bool,
 ) -> Result<String, crate::execute::VmError> {
     let mut result = String::new();
-    let mut rest = value;
-    while let Some(index) = rest.find(&pattern) {
-        let matched = rest[..index + pattern.len()].to_string();
+    let mut search_from = 0;
+    while let Some(relative) = value[search_from..].find(&pattern) {
+        let index = search_from + relative;
+        let matched = pattern.clone();
         let suffix_start = index + pattern.len();
-        let offset = value.len() - rest.len() + index;
+        let offset = value[..index].encode_utf16().count();
         let callback_args = [
             Value::String(matched.clone()),
             Value::Number(offset as f64),
@@ -209,14 +288,23 @@ fn apply_callable_replacement(
         ];
         let replaced =
             crate::functions::execute_target(replacement, &Value::Undefined, &callback_args)?;
-        result.push_str(&matched[..index]);
-        result.push_str(&to_string(&replaced));
-        rest = &rest[suffix_start..];
+        result.push_str(&value[search_from..index]);
+        result.push_str(&crate::conversion::to_string(&replaced)?);
+        search_from = suffix_start;
         if !all {
-            result.push_str(rest);
+            result.push_str(&value[search_from..]);
             return Ok(result);
         }
+        if pattern.is_empty() {
+            if search_from < value.len() {
+                let next = value[search_from..].chars().next().map_or(1, char::len_utf8);
+                result.push_str(&value[search_from..search_from + next]);
+                search_from += next;
+            } else {
+                break;
+            }
+        }
     }
-    result.push_str(rest);
+    result.push_str(&value[search_from..]);
     Ok(result)
 }

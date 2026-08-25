@@ -61,11 +61,48 @@ fn decode_unicode_escapes(value: &str, raw: &str) -> Option<Vec<u16>> {
         return None;
     }
     let mut units = Vec::new();
-    let mut chars = value.chars().peekable();
+    let raw = if (raw.starts_with('\'') && raw.ends_with('\''))
+        || (raw.starts_with('"') && raw.ends_with('"'))
+    {
+        &raw[1..raw.len().saturating_sub(1)]
+    } else {
+        raw
+    };
+    let mut chars = raw.chars().peekable();
     while let Some(character) = chars.next() {
-        if character != '\\' || chars.next_if_eq(&'u').is_none() {
+        if character != '\\' {
             let mut encoded = [0; 2];
             let count = character.encode_utf16(&mut encoded).len();
+            units.extend_from_slice(&encoded[..count]);
+            continue;
+        }
+        if chars.next_if_eq(&'u').is_none() {
+            let escaped = chars.next()?;
+            if escaped == '\n' {
+                continue;
+            }
+            if escaped == '\r' {
+                chars.next_if_eq(&'\n');
+                continue;
+            }
+            if escaped == 'x' {
+                let digits: String = chars.by_ref().take(2).collect();
+                let unit = u8::from_str_radix(&digits, 16).ok()?;
+                units.push(u16::from(unit));
+                continue;
+            }
+            let decoded = match escaped {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                'b' => '\u{0008}',
+                'f' => '\u{000c}',
+                'v' => '\u{000b}',
+                '0' => '\0',
+                other => other,
+            };
+            let mut encoded = [0; 2];
+            let count = decoded.encode_utf16(&mut encoded).len();
             units.extend_from_slice(&encoded[..count]);
             continue;
         }

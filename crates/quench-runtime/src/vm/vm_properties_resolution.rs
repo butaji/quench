@@ -740,6 +740,11 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
+    if matches!(value, Value::String(_) | Value::StringUnits(_))
+        && matches!(property, Value::Builtin(_))
+    {
+        return bind_receiver_property(property, receiver);
+    }
     if should_preserve_receiver_property(value, key, &property, receiver)
         || same_property_receiver(value, receiver)
     {
