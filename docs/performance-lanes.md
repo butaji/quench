@@ -100,3 +100,15 @@ node tools/assert-lane-micro.cjs u64-move getn-number call-fp
 Each output line contains the measured numerator, denominator, and ratio. A
 failed assertion names exactly one `<micro>.<metric>` key. Full V8-v7 Score on
 the untraced binary remains the acceptance exam after a drill turns green.
+
+G1 drills also declare an `oracle.max_ratio`. Build the untraced Score binary,
+then compare each JS micro with the matching optimized Rust/C-fast algorithm:
+
+```sh
+cargo build --profile bench-throughput -p quench-node
+node tools/assert-l0-oracles.cjs
+```
+
+The harness reports median process time after one warm-up. This keeps startup,
+parsing, lowering, and execution in the same G1 budget while the trace binary
+continues to measure lane composition separately.

@@ -31,10 +31,11 @@ fn descriptor_flag_via_descriptor(target: &Value, key: &str, field: &str) -> Opt
     let Value::Object(properties) = descriptor else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))))
+        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))));
+    result
 }
 
 fn builtin_flag(builtin: crate::ops::Builtin, key: &str, field: &str) -> Option<bool> {
@@ -46,10 +47,11 @@ fn builtin_flag(builtin: crate::ops::Builtin, key: &str, field: &str) -> Option<
     let Value::Object(properties) = descriptor else {
         return None;
     };
-    properties
+    let result = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))))
+        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))));
+    result
 }
 
 fn array_flag(values: &crate::value::ArrayData, key: &str, field: &str) -> Option<bool> {
@@ -66,10 +68,11 @@ fn array_flag(values: &crate::value::ArrayData, key: &str, field: &str) -> Optio
     let Value::Object(descriptor) = descriptor else {
         return None;
     };
-    descriptor
+    let result = descriptor
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))))
+        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))));
+    result
 }
 
 fn argument_property_flag(
@@ -100,10 +103,11 @@ fn descriptor_flag_in<P: crate::value::PropertyEntries + ?Sized>(
     else {
         return None;
     };
-    descriptor
+    let result = descriptor
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))))
+        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))));
+    result
 }
 
 fn complete_descriptor(descriptor: &[(String, Value)], current: &Value) -> Vec<(String, Value)> {
@@ -158,24 +162,24 @@ fn validate_redefinition(
     current: &Value,
     requested: &[(String, Value)],
 ) -> Result<(), crate::execute::VmError> {
-    if descriptor_value(current, "configurable") != Some(&Value::Boolean(false)) {
+    if descriptor_value(current, "configurable") != Some(Value::Boolean(false)) {
         return Ok(());
     }
-    if descriptor_value_in(requested, "configurable") == Some(&Value::Boolean(true))
+    if descriptor_value_in(requested, "configurable") == Some(Value::Boolean(true))
         || changes_descriptor_kind(current, requested)
     {
         return Err(cannot_redefine());
     }
     if descriptor_value(current, "get").is_some()
         && descriptor_value_in(requested, "get").is_some_and(|requested_get| {
-            !crate::builtins::same_value(Some(requested_get), descriptor_value(current, "get"))
+            !crate::builtins::same_value(Some(&requested_get), descriptor_value(current, "get").as_ref())
         })
     {
         return Err(cannot_redefine());
     }
     if descriptor_value(current, "set").is_some()
         && descriptor_value_in(requested, "set").is_some_and(|requested_set| {
-            !crate::builtins::same_value(Some(requested_set), descriptor_value(current, "set"))
+            !crate::builtins::same_value(Some(&requested_set), descriptor_value(current, "set").as_ref())
         })
     {
         return Err(cannot_redefine());
@@ -185,14 +189,14 @@ fn validate_redefinition(
     {
         return Err(cannot_redefine());
     }
-    if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
-        && descriptor_value_in(requested, "writable") == Some(&Value::Boolean(true))
+    if descriptor_value(current, "writable") == Some(Value::Boolean(false))
+        && descriptor_value_in(requested, "writable") == Some(Value::Boolean(true))
     {
         return Err(cannot_redefine());
     }
-    if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
+    if descriptor_value(current, "writable") == Some(Value::Boolean(false))
         && descriptor_value_in(requested, "value").is_some_and(|requested_value| {
-            !crate::builtins::same_value(Some(requested_value), descriptor_value(current, "value"))
+            !crate::builtins::same_value(Some(&requested_value), descriptor_value(current, "value").as_ref())
         })
     {
         return Err(cannot_redefine());
@@ -210,17 +214,17 @@ fn changes_descriptor_kind(current: &Value, requested: &[(String, Value)]) -> bo
     current_accessor && requests_data || !current_accessor && requests_accessor
 }
 
-fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value> {
+fn descriptor_value(descriptor: &Value, field: &str) -> Option<Value> {
     let Value::Object(properties) = descriptor else {
         return None;
     };
     descriptor_value_in(properties.as_ref(), field)
 }
 
-fn descriptor_value_in<'a, P: crate::value::PropertyEntries + ?Sized>(
-    descriptor: &'a P,
+fn descriptor_value_in<P: crate::value::PropertyEntries + ?Sized>(
+    descriptor: &P,
     field: &str,
-) -> Option<&'a Value> {
+) -> Option<Value> {
     descriptor
         .entries()
         .rev()

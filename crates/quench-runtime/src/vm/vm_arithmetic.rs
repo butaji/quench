@@ -273,19 +273,19 @@ fn bigint_binary(
         return Err(type_error("Cannot mix BigInt and other types"));
     };
     Ok(match operator {
-        BinaryOp::Add => Value::BigInt(bigint::add(left_s, right_s).map_err(bigint_error)?),
+        BinaryOp::Add => Value::BigInt(bigint::add(&left_s, &right_s).map_err(bigint_error)?),
         BinaryOp::Subtract => {
-            Value::BigInt(bigint::subtract(left_s, right_s).map_err(bigint_error)?)
+            Value::BigInt(bigint::subtract(&left_s, &right_s).map_err(bigint_error)?)
         }
         BinaryOp::Multiply => {
-            Value::BigInt(bigint::multiply(left_s, right_s).map_err(bigint_error)?)
+            Value::BigInt(bigint::multiply(&left_s, &right_s).map_err(bigint_error)?)
         }
-        BinaryOp::Divide => Value::BigInt(bigint::divide(left_s, right_s).map_err(bigint_error)?),
+        BinaryOp::Divide => Value::BigInt(bigint::divide(&left_s, &right_s).map_err(bigint_error)?),
         BinaryOp::Remainder => {
-            Value::BigInt(bigint::remainder(left_s, right_s).map_err(bigint_error)?)
+            Value::BigInt(bigint::remainder(&left_s, &right_s).map_err(bigint_error)?)
         }
         BinaryOp::Exponentiate => {
-            Value::BigInt(bigint::exponentiate(left_s, right_s).map_err(bigint_error)?)
+            Value::BigInt(bigint::exponentiate(&left_s, &right_s).map_err(bigint_error)?)
         }
         _ => Value::Undefined,
     })
@@ -366,9 +366,9 @@ fn numeric_update_value(left: &Value, operator: crate::ops::BinaryOp) -> Result<
     let value = to_numeric(left)?;
     if let Some(big) = bigint_value(&value) {
         let result = if decrement {
-            crate::bigint::subtract(big, "1")
+            crate::bigint::subtract(&big, "1")
         } else {
-            crate::bigint::add(big, "1")
+            crate::bigint::add(&big, "1")
         };
         return Ok(Value::BigInt(result.map_err(bigint_error)?));
     }
@@ -388,6 +388,11 @@ fn to_numeric(value: &Value) -> Result<Value, VmError> {
         return Ok(value);
     }
     Ok(Value::Number(crate::conversion::to_number(&value)?))
+}
+
+#[inline]
+pub(crate) fn evaluate_to_numeric(value: &Value) -> Result<Value, VmError> {
+    to_numeric(value)
 }
 
 #[inline]
@@ -429,11 +434,11 @@ fn bigint_bitwise(
         return Err(type_error("Cannot mix BigInt and other types"));
     };
     let result = match operator {
-        BinaryOp::BitwiseAnd => bigint::bitwise_and(left, right),
-        BinaryOp::BitwiseOr => bigint::bitwise_or(left, right),
-        BinaryOp::BitwiseXor => bigint::bitwise_xor(left, right),
-        BinaryOp::ShiftLeft => bigint::shift_left(left, right),
-        BinaryOp::ShiftRight => bigint::shift_right(left, right),
+        BinaryOp::BitwiseAnd => bigint::bitwise_and(&left, &right),
+        BinaryOp::BitwiseOr => bigint::bitwise_or(&left, &right),
+        BinaryOp::BitwiseXor => bigint::bitwise_xor(&left, &right),
+        BinaryOp::ShiftLeft => bigint::shift_left(&left, &right),
+        BinaryOp::ShiftRight => bigint::shift_right(&left, &right),
         _ => return Err(type_error("Invalid BigInt operator")),
     };
     Ok(Value::BigInt(result.map_err(bigint_error)?))
@@ -557,7 +562,7 @@ fn unary_minus(value: &Value) -> Result<Value, VmError> {
     }
     let value = crate::conversion::to_primitive(value, "number")?;
     if let Some(value) = bigint_value(&value) {
-        return Ok(Value::BigInt(bigint::negate(value).map_err(bigint_error)?));
+        return Ok(Value::BigInt(bigint::negate(&value).map_err(bigint_error)?));
     }
     Ok(Value::Number(-crate::conversion::primitive_to_number(
         &value,
@@ -571,7 +576,7 @@ fn bitwise_not(value: &Value) -> Result<Value, VmError> {
     }
     let value = crate::conversion::to_primitive(value, "number")?;
     if let Some(value) = bigint_value(&value) {
-        let result = bigint::subtract("-1", value).map_err(bigint_error)?;
+        let result = bigint::subtract("-1", &value).map_err(bigint_error)?;
         return Ok(Value::BigInt(result));
     }
     let number = crate::conversion::primitive_to_number(&value)?;
@@ -621,24 +626,24 @@ fn add_string(value: &Value) -> Result<String, VmError> {
         return Err(type_error("Cannot convert Symbol value to string"));
     }
     Ok(bigint_value(value)
-        .map(str::to_string)
+        .map(|value| value.to_string())
         .unwrap_or_else(|| crate::intl::tolocale::value::to_string(Some(value))))
 }
 
-fn bigint_value(value: &Value) -> Option<&str> {
+fn bigint_value(value: &Value) -> Option<String> {
     match value {
-        Value::BigInt(value) => Some(value.as_str()),
+        Value::BigInt(value) => Some(value.clone()),
         Value::Object(properties) => properties.iter().find_map(bigint_slot),
         _ => None,
     }
 }
 
-fn bigint_slot<'a>((key, value): (&'a crate::value::PropertyName, &'a Value)) -> Option<&'a str> {
+fn bigint_slot((key, value): (&crate::value::PropertyName, Value)) -> Option<String> {
     if key != "_value" {
         return None;
     }
     match value {
-        Value::BigInt(value) => Some(value.as_str()),
+        Value::BigInt(value) => Some(value),
         _ => None,
     }
 }

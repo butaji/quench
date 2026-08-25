@@ -347,7 +347,7 @@ fn slot(value: &Value, name: &str) -> Option<Rc<crate::value::BindingCell>> {
         .find_map(|(key, value)| (key == name).then_some(value))
         .and_then(|value| {
             if let Value::BindingCell(cell) = value {
-                Some(Rc::clone(cell))
+                Some(Rc::clone(&cell))
             } else {
                 None
             }

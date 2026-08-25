@@ -524,12 +524,24 @@ const REGEXP_FLAGS_SLOT: usize = 3;
 const REGEXP_LAST_INDEX_SLOT: usize = 9;
 const REGEXP_LAST_INDEX_DESCRIPTOR_SLOT: usize = 10;
 
-fn regexp_slot<'a>(receiver: &'a Value, slot: usize, key: &str) -> Option<&'a Value> {
+fn regexp_slot(receiver: &Value, slot: usize, key: &str) -> Option<Value> {
     let Value::Object(object) = receiver else {
         return None;
     };
     let (name, value) = object.hot_properties().slot_entry(slot)?;
     (name == key).then_some(value)
+}
+
+fn regexp_word_slot<'a>(
+    receiver: &'a Value,
+    slot: usize,
+    key: &str,
+) -> Option<&'a crate::register_file::SlotWord> {
+    let Value::Object(object) = receiver else {
+        return None;
+    };
+    (object.hot_properties().name_at(slot)? == key)
+        .then(|| object.hot_properties().slot_word(slot))?
 }
 
 fn fast_regex_parts(receiver: &Value) -> Option<(String, String, usize)> {
@@ -540,19 +552,14 @@ fn fast_regex_parts(receiver: &Value) -> Option<(String, String, usize)> {
     let Value::String(flags) = regexp_slot(receiver, REGEXP_FLAGS_SLOT, "\0regexp_flags")? else {
         return None;
     };
-    let Value::BindingCell(last_index) =
-        regexp_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex")?
-    else {
-        return None;
-    };
-    crate::execution_trace::last_index("binding_cell");
-    let index = crate::conversion::to_number(&last_index.borrow()).ok()?;
+    let last_index = regexp_word_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex")?;
+    crate::execution_trace::last_index("header");
+    let index = last_index.number()?;
     Some((source.clone(), flags.clone(), to_length(index)))
 }
 
 fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
-    let Some(Value::BindingCell(cell)) = regexp_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex")
-    else {
+    let Some(last_index) = regexp_word_slot(receiver, REGEXP_LAST_INDEX_SLOT, "lastIndex") else {
         return false;
     };
     let Some(Value::Object(descriptor)) = regexp_slot(
@@ -567,7 +574,7 @@ fn fast_set_last_index(receiver: &Value, value: &Value) -> bool {
         .get(1)
         .is_some_and(|(name, flag)| name == "writable" && matches!(flag, Value::Boolean(true)));
     if writable {
-        cell.replace(value.clone());
+        last_index.store(value.clone());
     }
     writable
 }

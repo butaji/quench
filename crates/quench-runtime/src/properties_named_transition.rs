@@ -34,7 +34,7 @@ fn named_write_source(
 }
 
 fn object_has_key_metadata(object: &crate::value::ObjectData, key: &str) -> bool {
-    object.hot_properties().iter().any(|(name, _)| {
+    object.hot_properties().names().any(|name| {
         name == key
             || crate::builtins::is_deleted_key_for(name, key)
             || crate::builtins::is_descriptor_key_for(name, key)
@@ -45,26 +45,21 @@ fn object_has_key_metadata(object: &crate::value::ObjectData, key: &str) -> bool
 fn immediate_plain_prototype(
     object: &crate::value::ObjectData,
 ) -> Option<std::rc::Rc<crate::value::ObjectData>> {
-    let (_, crate::value::Value::Object(prototype)) = object
+    let slot = object
         .hot_properties()
-        .iter()
-        .rev()
-        .find(|(name, _)| name.as_str() == "\0prototype")?
-    else {
+        .position_rev("\0prototype")?;
+    let crate::value::Value::Object(prototype) = object.hot_properties().slot_value(slot)? else {
         return None;
     };
-    if prototype.has_replacement() || !has_builtin_object_parent(prototype) {
+    if prototype.has_replacement() || !has_builtin_object_parent(&prototype) {
         return None;
     }
-    Some(std::rc::Rc::clone(prototype))
+    Some(std::rc::Rc::clone(&prototype))
 }
 
 fn has_builtin_object_parent(prototype: &crate::value::ObjectData) -> bool {
-    let parent = prototype
-        .hot_properties()
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value));
+    let parent = prototype.hot_properties().position_rev("\0prototype")
+        .and_then(|slot| prototype.hot_properties().slot_value(slot));
     parent.is_none_or(|value| {
         matches!(
             value,
@@ -88,8 +83,7 @@ fn try_named_write_transition(
     let target = crate::execute::read_register(registers, object_register)?;
     let Some(object) = guarded_transition_object(&target, key, &entry) else { return Ok(false) };
     let value = crate::execute::read_register(registers, source_register)?;
-    let cell = crate::value::Value::BindingCell(crate::value::BindingCell::new(value));
-    let updated = crate::builtins::object_alias::set(object, key, cell);
+    let updated = crate::builtins::object_alias::set(object, key, value);
     crate::locals::replace_value(&target, &updated);
     crate::execute::write_value(registers, object_register, updated);
     Ok(true)
@@ -123,10 +117,7 @@ fn install_named_write_transition(
 ) -> bool {
     let Some(source) = source else { return false };
     let crate::value::Value::Object(updated) = updated else { return false };
-    let has_cell = updated.hot_properties().iter().rev().any(|(name, value)| {
-        name == key && matches!(value, crate::value::Value::BindingCell(_))
-    });
-    if !has_cell {
+    if updated.hot_properties().position_rev(key).is_none() {
         return false;
     }
     let index = transition_slot(&source);
