@@ -214,6 +214,22 @@ pub fn install_script(
     install_with_argv(realm, sink, vec![exec_path, script.to_string()])
 }
 
+pub fn install_script_with_args(
+    realm: RealmId,
+    sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    script: &str,
+    args: &[String],
+) -> (Rc<NodeHost>, VmContext) {
+    let exec_path = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let argv = std::iter::once(exec_path)
+        .chain(std::iter::once(script.to_string()))
+        .chain(args.iter().cloned())
+        .collect();
+    install_with_argv(realm, sink, argv)
+}
+
 /// Same as `install`, but provides a host-side output sink that
 /// receives `console.log/info/...` lines.
 pub fn install_with_sink(

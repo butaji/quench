@@ -47,6 +47,15 @@ impl NodeTestRunner {
         self.run_fixture(fixture)
     }
 
+    pub fn run_file_with_args(&mut self, path: &Path, argv: Vec<String>) -> NodeOutcome {
+        let mut fixture = match NodeFixture::from_path(path.to_path_buf()) {
+            Ok(fixture) => fixture,
+            Err(error) => return NodeOutcome::Fail { reason: error },
+        };
+        fixture.argv = argv;
+        self.run_fixture(fixture)
+    }
+
     pub fn run_source(&mut self, source: &str) -> NodeOutcome {
         let fixture =
             NodeFixture::from_source(std::path::PathBuf::from("<source>"), source.to_string());
