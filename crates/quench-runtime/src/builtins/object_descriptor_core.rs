@@ -54,6 +54,18 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
         .map(|value| descriptor_object(&value))
 }
 
+fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
+    if crate::typed_array_prototype::index_exists(value, key.parse().ok()?) {
+        return Some(descriptor_object_with_flags(
+            crate::execute::get_property(value, key),
+            true,
+            true,
+            false,
+        ));
+    }
+    crate::typed_array_prototype::own_property(value, key).map(|value| descriptor_object(&value))
+}
+
 fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
     if let Some((_, metadata)) = function
         .properties
