@@ -1895,7 +1895,7 @@ fn inspect_object(value: &Value, depth: usize) -> String {
                         format!("'{}...'", &text[..488])
                     }
                     Value::String(text) if text.contains('\n') => {
-                        let mut lines = text.split('\n').take(9)
+                        let mut lines = text.split('\n').take(10)
                             .map(|line| format!("'{line}\\n' +"))
                             .collect::<Vec<_>>();
                         lines.push("'...'".into());

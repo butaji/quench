@@ -206,14 +206,31 @@ pub fn build_value() -> Value {
     for (key, property) in build() {
         let _ = execute::set_callable_property(&value, &key, property);
     }
-    // `assert.strict === assert` in Node's strict entry point.
-    let _ = execute::set_callable_property(&value, "strict", value.clone());
+    let strict = crate::host::capability(SPEC_ASSERT_OK);
+    for (key, property) in build() {
+        let _ = execute::set_callable_property(&strict, &key, property);
+    }
+    for (names, spec) in [
+        (["equal", "strictEqual"], SPEC_ASSERT_STRICT_EQUAL),
+        (["notEqual", "notStrictEqual"], SPEC_ASSERT_NOT_STRICT_EQUAL),
+        (["deepEqual", "deepStrictEqual"], SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        (["notDeepEqual", "notDeepStrictEqual"], SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+    ] {
+        let method = crate::host::capability(spec);
+        for name in names {
+            let _ = execute::set_callable_property(&strict, name, method.clone());
+        }
+    }
+    let _ = execute::set_callable_property(&strict, "strict", strict.clone());
+    let _ = execute::set_callable_property(&value, "strict", strict);
     for (name, source) in [
         ("rejects", ASSERT_REJECTS),
         ("doesNotReject", ASSERT_DOES_NOT_REJECT),
     ] {
         if let Ok(method) = eval_function(source) {
-            let _ = execute::set_callable_property(&value, name, method);
+            let _ = execute::set_callable_property(&value, name, method.clone());
+            let strict = execute::get_property(&value, "strict");
+            let _ = execute::set_callable_property(&strict, name, method);
         }
     }
     value
@@ -283,8 +300,7 @@ fn pair(name: &str, spec: NodeSpec) -> (String, Value) {
 
 fn assertion_error_type() -> Value {
     let prototype = assertion_error_prototype();
-    let constructor =
-        host_api::bound_builtin(quench_runtime::ops::Builtin::Error, Value::Undefined);
+    let constructor = crate::host::capability(SPEC_ASSERTION_ERROR_CONSTRUCTOR);
     let _ = execute::set_callable_property(
         &constructor,
         "name",
@@ -292,6 +308,33 @@ fn assertion_error_type() -> Value {
     );
     let _ = execute::set_callable_property(&constructor, "prototype", prototype);
     constructor
+}
+
+pub fn assertion_error_constructor(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let options = args.first().unwrap_or(&Value::Undefined);
+    if !matches!(options, Value::Object(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"options\" argument must be of type object.{}",
+            crate::modules::util::invalid_arg_received(options)
+        )));
+    }
+    let message = match execute::get_property(options, "message") {
+        Value::String(message) => message,
+        _ => String::new(),
+    };
+    let actual = execute::get_property(options, "actual");
+    let expected = execute::get_property(options, "expected");
+    let operator = match execute::get_property(options, "operator") {
+        Value::String(operator) => operator,
+        _ => "strictEqual".into(),
+    };
+    match assertion_error(message, &operator, actual, expected, false) {
+        VmError::Thrown(error) => Ok(error),
+        error => Err(error),
+    }
 }
 
 fn assertion_error_prototype() -> Value {
@@ -344,6 +387,7 @@ pub fn assertion_error(
             Value::String(format!("AssertionError: {message}")),
         ),
         ("diff".to_string(), Value::String("simple".into())),
+        ("constructor".to_string(), assertion_error_type()),
     ]);
     VmError::Thrown(
         quench_runtime::execute::set_prototype_of(&error, &assertion_error_prototype())
@@ -420,6 +464,14 @@ pub fn ok(
     let custom = custom_message(args, 1);
     let generated = custom.is_none();
     let message = custom.unwrap_or_else(|| {
+        if args.is_empty() {
+            return "No value argument passed to `assert.ok()`".into();
+        }
+        if _r.is_some_and(|receiver| {
+            execute::same_identity(&execute::get_property(receiver, "strict"), receiver)
+        }) {
+            return "The expression evaluated to a falsy value:\n\n  strict.ok(\n".into();
+        }
         format!(
             "The expression evaluated to a falsy value:\n\n  assert.ok({})\n",
             rendered(&arg(args, 0))
@@ -686,17 +738,26 @@ fn simple_loose_message(actual: &str, expected: &str) -> String {
 }
 
 fn simple_side(value: &str, marker: &str, limit: usize) -> String {
-    let lines = value.lines().take(limit).collect::<Vec<_>>();
+    let mut all_lines = value.split('\n').collect::<Vec<_>>();
+    if all_lines.last() == Some(&"") {
+        all_lines.pop();
+    }
+    let lines = all_lines.iter().take(limit).copied().collect::<Vec<_>>();
     let mut rendered = lines
         .iter()
         .enumerate()
         .map(|(index, line)| {
-            let indent = if index == 0 { "" } else { "  " };
+            let indent = if index == 0 { "" } else { "   " };
             format!("{marker}{indent}'{line}\\n' +")
         })
         .collect::<Vec<_>>();
-    while rendered.len() < limit {
-        rendered.push(format!("{marker}  '...'"));
+    if all_lines.len() > limit {
+        rendered.push(format!("{marker}   '...'"));
+    }
+    if let Some(last) = rendered.last_mut() {
+        if last.ends_with(" +") && all_lines.len() <= limit {
+            last.truncate(last.len() - 2);
+        }
     }
     rendered.join("\n")
 }
@@ -742,7 +803,11 @@ pub fn equal(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    binary_assert(_r, args, "equal", true, execute::abstract_equal)
+    binary_assert(_r, args, "equal", true, |a, b| {
+        let equal = execute::abstract_equal(a, b)?;
+        Ok(equal
+            || matches!((a, b), (Value::Number(a), Value::Number(b)) if a.is_nan() && b.is_nan()))
+    })
 }
 
 pub fn not_equal(
@@ -750,7 +815,11 @@ pub fn not_equal(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    binary_assert(_r, args, "notEqual", false, execute::abstract_equal)
+    binary_assert(_r, args, "notEqual", false, |a, b| {
+        let equal = execute::abstract_equal(a, b)?;
+        Ok(equal
+            || matches!((a, b), (Value::Number(a), Value::Number(b)) if a.is_nan() && b.is_nan()))
+    })
 }
 
 fn deep_assert(
