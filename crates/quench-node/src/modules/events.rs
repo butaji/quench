@@ -20,17 +20,11 @@ thread_local! {
     static DEFAULT_MAX_LISTENERS: Cell<usize> = const { Cell::new(10) };
 }
 
-pub fn default_max_get(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn default_max_get(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Number(DEFAULT_MAX_LISTENERS.with(Cell::get) as f64))
 }
 
-pub fn default_max_set(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+pub fn default_max_set(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let n = validate_max_listeners(args.first())?;
     DEFAULT_MAX_LISTENERS.with(|value| value.set(n));
     state.borrow_mut().emitters.default_max = n;
@@ -198,6 +192,30 @@ fn add_listener(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+fn sync_event_property(receiver: Option<&Value>, event: &str, listeners: &[Listener]) {
+    let Some(receiver) = receiver else { return };
+    let Ok(events) = execute::get_property_result(receiver, "_events") else {
+        return;
+    };
+    let updated = if listeners.is_empty() {
+        execute::delete_property(events.clone(), event).0
+    } else if listeners.len() == 1 {
+        execute::set_property(events.clone(), event, listeners[0].callback.clone())
+    } else {
+        execute::set_property(
+            events.clone(),
+            event,
+            host_api::array(
+                listeners
+                    .iter()
+                    .map(|listener| listener.callback.clone())
+                    .collect(),
+            ),
+        )
+    };
+    execute::replace_value(&events, &updated);
+}
+
 /// Queue a `MaxListenersExceededWarning` process warning, mirroring
 /// Node's one-warning-per-emitter behavior.
 fn warn_max_listeners(state: &Rc<RefCell<HostState>>, event: &str, count: usize) {
@@ -277,7 +295,10 @@ pub fn method_emit(
         return Ok(Value::Boolean(false));
     };
     if event == "error" {
-        let monitor = emitter.borrow().listeners_of("Symbol.for.events.errorMonitor\0").to_vec();
+        let monitor = emitter
+            .borrow()
+            .listeners_of("Symbol.for.events.errorMonitor\0")
+            .to_vec();
         for listener in monitor {
             execute::call(&listener.callback, receiver, args.get(1..).unwrap_or(&[]))?;
         }
@@ -489,6 +510,10 @@ pub fn method_remove_listener(
     if let Some(id) = expect_emitter(state, receiver) {
         if let Some(emitter) = state.borrow().emitters.get(id) {
             let removed = emitter.borrow_mut().remove(&event, &callback);
+            if removed {
+                let remaining = emitter.borrow().listeners_of(&event).to_vec();
+                sync_event_property(receiver, &event, &remaining);
+            }
             if removed && event != "removeListener" {
                 let _ = method_emit(
                     state,
@@ -512,14 +537,69 @@ pub fn method_remove_all_listeners(
 ) -> Result<Value, VmError> {
     if let Some(id) = expect_emitter(state, receiver) {
         if let Some(emitter) = state.borrow().emitters.get(id) {
-            let mut guard = emitter.borrow_mut();
-            match args.first() {
-                Some(Value::String(event)) => guard.events.retain(|(key, _)| key != event),
-                Some(Value::Undefined) | None => guard.events.clear(),
+            let target = match args.first() {
+                Some(Value::String(event)) => Some(event.clone()),
+                Some(Value::Undefined) | None => None,
                 _ => {
                     return Err(execute::type_error(
                         "The \"event\" argument must be a string",
                     ))
+                }
+            };
+            if let Some(event) = target {
+                let removed = {
+                    let mut guard = emitter.borrow_mut();
+                    guard
+                        .events
+                        .iter()
+                        .find(|(key, _)| key == &event)
+                        .map(|(_, listeners)| listeners.clone())
+                        .unwrap_or_default()
+                };
+                if !removed.is_empty() {
+                    for listener in removed.into_iter().rev() {
+                        if emitter.borrow_mut().remove(&event, &listener.callback) {
+                            let remaining = emitter.borrow().listeners_of(&event).to_vec();
+                            sync_event_property(receiver, &event, &remaining);
+                            let _ = method_emit(
+                                state,
+                                receiver,
+                                &[
+                                    Value::String("removeListener".into()),
+                                    Value::String(event.clone()),
+                                    listener.callback,
+                                ],
+                            )?;
+                        }
+                    }
+                }
+            } else {
+                let names = emitter
+                    .borrow()
+                    .events
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .filter(|name| name != "removeListener")
+                    .collect::<Vec<_>>();
+                for name in names {
+                    method_remove_all_listeners(state, receiver, &[Value::String(name)])?;
+                }
+                let removed = emitter.borrow().listeners_of("removeListener").to_vec();
+                for listener in removed.into_iter().rev() {
+                    let callback = listener.callback;
+                    if emitter.borrow_mut().remove("removeListener", &callback) {
+                        let remaining = emitter.borrow().listeners_of("removeListener").to_vec();
+                        sync_event_property(receiver, "removeListener", &remaining);
+                        let _ = method_emit(
+                            state,
+                            receiver,
+                            &[
+                                Value::String("removeListener".into()),
+                                Value::String("removeListener".into()),
+                                callback,
+                            ],
+                        )?;
+                    }
                 }
             }
         }
@@ -736,11 +816,8 @@ fn emitter_props() -> Vec<(&'static str, Value)> {
     let on = cap("events:on", 0x0102);
     let remove_listener = cap("events:removeListener", 0x0106);
     let constructor = cap("events:EventEmitter", 0x0100);
-    let _ = execute::set_callable_property(
-        &constructor,
-        "name",
-        Value::String("EventEmitter".into()),
-    );
+    let _ =
+        execute::set_callable_property(&constructor, "name", Value::String("EventEmitter".into()));
     vec![
         ("constructor", constructor),
         ("on", on.clone()),
