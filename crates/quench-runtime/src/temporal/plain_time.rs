@@ -111,6 +111,9 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     .iter()
     .map(crate::conversion::to_number)
     .collect::<Result<Vec<_>, _>>()?;
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(crate::value::error::throw_type_error("Not a PlainTime"));
+    }
     let total = values[0] as i128 * 3_600_000_000_000
         + values[1] as i128 * 60_000_000_000
         + values[2] as i128 * 1_000_000_000
@@ -122,14 +125,14 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     format_time(rounded, precision, omit_seconds)
 }
 
-struct TimeStringOptions {
-    fractional_digits: usize,
-    smallest_unit: Option<String>,
-    rounding_mode: String,
+pub(crate) struct TimeStringOptions {
+    pub(crate) fractional_digits: usize,
+    pub(crate) smallest_unit: Option<String>,
+    pub(crate) rounding_mode: String,
 }
 
 impl TimeStringOptions {
-    fn precision(&self) -> (i128, usize, bool) {
+    pub(crate) fn precision(&self) -> (i128, usize, bool) {
         if let Some(unit) = self.smallest_unit.as_deref() {
             return match unit {
                 "minute" => (60_000_000_000, 0, true),
@@ -149,12 +152,28 @@ impl TimeStringOptions {
     }
 }
 
-fn time_string_options(options: Option<&Value>) -> Result<TimeStringOptions, VmError> {
+pub(crate) fn time_string_options(options: Option<&Value>) -> Result<TimeStringOptions, VmError> {
+    time_string_options_internal(options, false).map(|(options, _)| options)
+}
+
+pub(crate) fn time_string_options_with_timezone(
+    options: Option<&Value>,
+) -> Result<(TimeStringOptions, Value), VmError> {
+    let parsed = time_string_options_internal(options, false);
+    let timezone = options
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(|value| crate::execute::get_property_result(value, "timeZone"))
+        .transpose()?
+        .unwrap_or(Value::Undefined);
+    parsed.map(|(options, _)| (options, timezone))
+}
+
+fn time_string_options_internal(
+    options: Option<&Value>,
+    read_timezone: bool,
+) -> Result<(TimeStringOptions, Option<Value>), VmError> {
     if let Some(value) = options {
-        if !matches!(
-            value,
-            Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
-        ) {
+        if !matches!(value, Value::Undefined) && !crate::value::is_object(value) {
             return Err(crate::value::error::throw_type_error(
                 "Invalid string options",
             ));
@@ -168,15 +187,20 @@ fn time_string_options(options: Option<&Value>) -> Result<TimeStringOptions, VmE
             .map(|value| value.unwrap_or(Value::Undefined))
     };
     let fractional = get("fractionalSecondDigits")?;
+    let fractional_text = option_text(&fractional)?;
+    let rounding = get("roundingMode")?;
+    let rounding_text = option_text(&rounding)?;
+    let smallest_value = get("smallestUnit")?;
+    let smallest_text = option_text(&smallest_value)?;
+    let timezone = read_timezone.then(|| get("timeZone")).transpose()?;
     let fractional_digits = match fractional {
         Value::Undefined => usize::MAX,
         Value::Number(value) if value.is_finite() && (0.0..=9.0).contains(&value) => {
             value.floor() as usize
         }
         Value::String(value) if value == "auto" => usize::MAX,
-        value => {
-            let value = crate::conversion::to_string(&value)?;
-            if value == "auto" {
+        _ => {
+            if fractional_text.as_deref() == Some("auto") {
                 usize::MAX
             } else {
                 return Err(crate::value::error::throw_range_error(
@@ -185,8 +209,8 @@ fn time_string_options(options: Option<&Value>) -> Result<TimeStringOptions, VmE
             }
         }
     };
-    let rounding_mode = option_string(
-        Some(get("roundingMode")?),
+    let rounding_mode = option_string_text(
+        rounding_text,
         "trunc",
         &[
             "ceil",
@@ -200,27 +224,41 @@ fn time_string_options(options: Option<&Value>) -> Result<TimeStringOptions, VmE
             "halfEven",
         ],
     )?;
-    let smallest_value = get("smallestUnit")?;
     let smallest_unit = if matches!(smallest_value, Value::Undefined) {
         None
     } else {
-        Some(option_unit(smallest_value)?)
+        Some(option_unit_text(smallest_text)?)
     };
-    Ok(TimeStringOptions {
-        fractional_digits,
-        smallest_unit,
-        rounding_mode,
-    })
+    Ok((
+        TimeStringOptions {
+            fractional_digits,
+            smallest_unit,
+            rounding_mode,
+        },
+        timezone,
+    ))
 }
 
-fn option_string(value: Option<Value>, default: &str, allowed: &[&str]) -> Result<String, VmError> {
-    let Some(value) = value else {
-        return Ok(default.into());
-    };
-    if matches!(value, Value::Undefined) {
-        return Ok(default.into());
+fn option_text(value: &Value) -> Result<Option<String>, VmError> {
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert symbol",
+        ));
     }
-    let value = crate::conversion::to_string(&value)?;
+    match value {
+        Value::Undefined => Ok(None),
+        Value::Number(value) => Ok(Some(crate::conversion::number_to_string(*value))),
+        Value::String(value) => Ok(Some(value.clone())),
+        value => crate::conversion::to_string(value).map(Some),
+    }
+}
+
+fn option_string_text(
+    value: Option<String>,
+    default: &str,
+    allowed: &[&str],
+) -> Result<String, VmError> {
+    let value = value.unwrap_or_else(|| default.into());
     if allowed.contains(&value.as_str()) {
         Ok(value)
     } else {
@@ -230,8 +268,9 @@ fn option_string(value: Option<Value>, default: &str, allowed: &[&str]) -> Resul
     }
 }
 
-fn option_unit(value: Value) -> Result<String, VmError> {
-    let value = crate::conversion::to_string(&value)?;
+fn option_unit_text(value: Option<String>) -> Result<String, VmError> {
+    let value =
+        value.ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))?;
     let value = value.strip_suffix('s').unwrap_or(&value);
     if [
         "minute",
@@ -250,38 +289,56 @@ fn option_unit(value: Value) -> Result<String, VmError> {
     }
 }
 
-fn round_time(value: i128, quantum: i128, mode: &str) -> i128 {
+pub(crate) fn round_time(value: i128, quantum: i128, mode: &str) -> i128 {
     if quantum == 1 {
         return value;
     }
-    let quotient = value / quantum;
-    let remainder = value % quantum;
+    let quotient = value.div_euclid(quantum);
+    let remainder = value.rem_euclid(quantum);
     if remainder == 0 {
         return value;
     }
-    let away = if value < 0 {
-        quotient - 1
-    } else {
-        quotient + 1
-    };
+    let lower = quotient * quantum;
+    let upper = lower + quantum;
+    let away = if value < 0 { lower } else { upper };
     let rounded = match mode {
-        "ceil" if value > 0 => quotient + 1,
-        "floor" if value < 0 => quotient - 1,
-        "expand" => away,
+        "ceil" => upper,
+        "floor" => lower,
+        "expand" => upper,
+        "trunc" => lower,
         mode if mode.starts_with("half") => {
-            let twice = remainder.abs() * 2;
-            if twice > quantum || (twice == quantum && mode != "halfTrunc") {
+            let twice = remainder * 2;
+            if twice > quantum {
                 away
+            } else if twice < quantum {
+                lower
             } else {
-                quotient
+                match mode {
+                    "halfExpand" => upper,
+                    "halfTrunc" => {
+                        if value < 0 {
+                            upper
+                        } else {
+                            lower
+                        }
+                    }
+                    "halfCeil" => upper,
+                    "halfFloor" => lower,
+                    "halfEven" if quotient % 2 != 0 => upper,
+                    _ => lower,
+                }
             }
         }
-        _ => quotient,
+        _ => lower,
     };
-    rounded * quantum
+    rounded
 }
 
-fn format_time(total: i128, precision: usize, omit_seconds: bool) -> Result<Value, VmError> {
+pub(crate) fn format_time(
+    total: i128,
+    precision: usize,
+    omit_seconds: bool,
+) -> Result<Value, VmError> {
     let hour = total / 3_600_000_000_000;
     let minute = total / 60_000_000_000 % 60;
     let second = total / 1_000_000_000 % 60;
