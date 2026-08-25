@@ -300,9 +300,61 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
-    let unit = round_unit(options)?;
-    let index = unit_index(&unit)?;
-    if index < 2 {
+    let smallest = round_unit(options)?;
+    let index = unit_index(&smallest)?;
+    let has_calendar = ["years", "months", "weeks"]
+        .iter()
+        .any(|name| duration_field(object, name) != 0);
+    let largest = largest_unit(options).unwrap_or_else(|| {
+        [
+            "years",
+            "months",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ]
+        .iter()
+        .position(|name| number_field(&duration_field_value(object, name)) != 0)
+        .unwrap_or(index)
+        .min(if has_calendar { 9 } else { index })
+    });
+    let explicit_unit = options.is_some_and(|value| match value {
+        Value::Object(object) => object.iter().any(|(key, value)| {
+            matches!(key.as_str(), "smallestUnit" | "largestUnit")
+                && !matches!(value, Value::Undefined)
+        }),
+        Value::String(_) => true,
+        _ => false,
+    });
+    if !explicit_unit
+        && ["years", "months", "weeks"]
+            .iter()
+            .any(|name| duration_field(object, name) != 0)
+    {
+        return Err(crate::value::error::throw_range_error(
+            "smallestUnit or largestUnit is required for calendar rounding",
+        ));
+    }
+    if largest > index {
+        return Err(crate::value::error::throw_range_error(
+            "largestUnit must not be smaller than smallestUnit",
+        ));
+    }
+    if index <= 2 {
+        if index == 2
+            && largest_unit(options).is_none()
+            && duration_field(object, "months") != 0
+            && rounding_increment(options, index)? > 1.0
+        {
+            return Err(crate::value::error::throw_range_error(
+                "largestUnit is required for calendar rounding",
+            ));
+        }
         let relative = options.and_then(|value| match value {
             Value::Object(object) => object
                 .iter()
@@ -317,56 +369,82 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         };
         return calendar_round(object, &relative, index);
     }
-    fixed_round(object, options, index)
+    fixed_round(object, options, largest.max(3), index)
+}
+
+fn duration_field_value(object: &crate::value::ObjectData, name: &str) -> Value {
+    object
+        .iter()
+        .find(|(key, _)| key == name)
+        .map_or(Value::Number(0.0), |(_, value)| value.clone())
 }
 
 fn fixed_round(
     object: &crate::value::ObjectData,
     options: Option<&Value>,
+    largest: usize,
     index: usize,
 ) -> Result<Value, VmError> {
-    let fields = duration_fields(object);
     let scales = [
-        7.0 * 86_400_000_000_000.0,
-        86_400_000_000_000.0,
-        3_600_000_000_000.0,
-        60_000_000_000.0,
-        1_000_000_000.0,
-        1_000_000.0,
-        1_000.0,
-        1.0,
+        86_400_000_000_000_i128,
+        3_600_000_000_000,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
     ];
-    let first = index.saturating_sub(2);
-    let total = fields[2..]
-        .iter()
-        .zip([
-            7.0 * 86_400_000_000_000.0,
-            86_400_000_000_000.0,
-            3_600_000_000_000.0,
-            60_000_000_000.0,
-            1_000_000_000.0,
-            1_000_000.0,
-            1_000.0,
-            1.0,
-        ])
-        .map(|(value, scale)| number_field(value) as f64 * scale)
-        .sum::<f64>();
-    let increment = rounding_increment(options)?;
-    let quantum = scales[first] * increment;
+    let total = [
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ]
+    .iter()
+    .zip(scales)
+    .map(|(name, scale)| duration_field(object, name) * scale)
+    .sum::<i128>();
+    let increment = rounding_increment(options, index)?;
+    let quantum = scales[index - 3] * increment as i128;
     let mode = rounding_mode(options)?;
-    let rounded_units = round_number(total / quantum, &mode);
+    let rounded_units = round_integer(total, quantum, &mode);
+    let mut remainder = (rounded_units * quantum).abs();
     let mut rounded = vec![Value::Number(0.0); 10];
-    rounded[index] = Value::Number(rounded_units * increment);
-    let largest = (2..=index)
-        .find(|field| number_field(&fields[*field]) != 0)
-        .unwrap_or(index);
-    if largest < index {
-        balance_time_fields(&mut rounded, largest);
+    let sign = rounded_units.signum();
+    for unit in largest..=index {
+        let component = remainder / scales[unit - 3];
+        rounded[unit] = Value::Number((component * sign) as f64);
+        remainder %= scales[unit - 3];
     }
     construct(&rounded)
 }
 
-fn rounding_increment(options: Option<&Value>) -> Result<f64, VmError> {
+fn round_integer(value: i128, quantum: i128, mode: &str) -> i128 {
+    let sign = value.signum();
+    let absolute = value.abs();
+    let mut units = absolute / quantum;
+    let remainder = absolute % quantum;
+    let increment = match mode {
+        "ceil" => sign > 0 && remainder != 0,
+        "floor" => sign < 0 && remainder != 0,
+        "expand" => remainder != 0,
+        "trunc" => false,
+        "halfEven" => remainder * 2 > quantum || remainder * 2 == quantum && units % 2 != 0,
+        "halfCeil" => remainder * 2 >= quantum && sign > 0 || remainder * 2 > quantum && sign < 0,
+        "halfFloor" => remainder * 2 > quantum && sign > 0 || remainder * 2 >= quantum && sign < 0,
+        "halfTrunc" => remainder * 2 > quantum,
+        _ => remainder * 2 >= quantum,
+    };
+    if increment {
+        units += 1;
+    }
+    units * sign
+}
+
+fn rounding_increment(options: Option<&Value>, index: usize) -> Result<f64, VmError> {
     let value = options
         .and_then(|value| match value {
             Value::Object(object) => object
@@ -375,12 +453,24 @@ fn rounding_increment(options: Option<&Value>) -> Result<f64, VmError> {
                 .map(|(_, value)| value),
             _ => None,
         })
+        .filter(|value| !matches!(value, Value::Undefined))
         .map(|value| crate::conversion::to_number(&value))
         .transpose()?
         .unwrap_or(1.0);
-    (value.is_finite() && value > 0.0)
-        .then_some(value)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid roundingIncrement"))
+    if !value.is_finite() || value <= 0.0 || value.fract() != 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    if index >= 4 {
+        let maximum = [24.0, 60.0, 60.0, 1_000.0, 1_000.0, 1_000.0][index - 4];
+        if value >= maximum || (maximum % value) != 0.0 {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid roundingIncrement",
+            ));
+        }
+    }
+    Ok(value)
 }
 
 fn rounding_mode(options: Option<&Value>) -> Result<String, VmError> {
@@ -392,7 +482,7 @@ fn rounding_mode(options: Option<&Value>) -> Result<String, VmError> {
         _ => None,
     });
     match value {
-        None => Ok("halfExpand".into()),
+        None | Some(Value::Undefined) => Ok("halfExpand".into()),
         Some(Value::String(mode)) => Ok(mode.clone()),
         _ => Err(crate::value::error::throw_type_error(
             "Invalid roundingMode",
@@ -449,14 +539,13 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
     }
     match value {
         Some(Value::String(unit)) => Ok(unit.clone()),
-        Some(Value::Object(object)) => object
-            .iter()
-            .find(|(key, _)| key == "smallestUnit" || key == "largestUnit")
-            .and_then(|(_, value)| match value {
-                Value::String(unit) => Some(unit.clone()),
-                _ => None,
-            })
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit")),
+        Some(Value::Object(object)) => match object.iter().find(|(key, _)| key == "smallestUnit") {
+            Some((_, Value::String(unit))) => Ok(unit.clone()),
+            Some((_, Value::Undefined)) | None => Ok("nanosecond".into()),
+            Some(_) => Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            )),
+        },
         _ => Err(crate::value::error::throw_type_error(
             "Options must be an object",
         )),
@@ -530,6 +619,10 @@ fn calendar_round(
         count += sign as i64;
     }
     let mut fields = vec![Value::Number(0.0); 10];
+    let names = ["years", "months", "weeks"];
+    for (index, name) in names.iter().enumerate().take(unit) {
+        fields[index] = Value::Number(duration_field(object, name) as f64);
+    }
     if unit == 1 && duration_field(object, "years") != 0 {
         fields[0] = Value::Number((count / 12) as f64);
         fields[1] = Value::Number((count % 12) as f64);
@@ -540,6 +633,16 @@ fn calendar_round(
 }
 
 fn shift_calendar(date: NaiveDate, unit: usize, direction: i32) -> Result<NaiveDate, VmError> {
+    if unit == 2 {
+        return date
+            .checked_add_signed(chrono::Duration::days(i64::from(direction) * 7))
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"));
+    }
+    if unit == 3 {
+        return date
+            .checked_add_signed(chrono::Duration::days(i64::from(direction)))
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"));
+    }
     let delta = if unit == 0 { 12 * direction } else { direction };
     let months = date.year() * 12 + date.month0() as i32 + delta;
     let year = months.div_euclid(12);
