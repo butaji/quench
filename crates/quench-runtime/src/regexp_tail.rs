@@ -40,7 +40,14 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     if !flags.contains('g') {
         return regexp_exec(receiver, &input);
     }
-    if !unicode_mode(&flags) && extract_source(receiver) == "." {
+    if !unicode_mode(&flags)
+        && extract_source(receiver) == "."
+        && matches!(
+            crate::execute::get_property(receiver, "exec"),
+            Value::Builtin(crate::ops::Builtin::RegExpExec)
+        )
+        && fast_set_last_index(receiver, &Value::Number(0.0))
+    {
         let units = input.encode_utf16().map(|unit| crate::strings::from_units(vec![unit])).collect();
         return Ok(Value::array(units));
     }
