@@ -297,6 +297,9 @@ test-require-extensions-same-filename-as-dir-trailing-slash.js
 test-require-extensions-same-filename-as-dir.js
 test-require-invalid-main-no-exports.js
 test-require-invalid-package.js
+test-require-mjs.js
+test-require-nul.js
+test-require-resolve.js
 test-module-create-require-multibyte.js
 test-error-format-list.js
 test-compile-cache-api-error.js
