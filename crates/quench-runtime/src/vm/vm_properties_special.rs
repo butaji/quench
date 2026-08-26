@@ -324,6 +324,7 @@ pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
         Builtin::IntlCollatorCompare => RefCell::new(collator_bound_properties()),
         _ => RefCell::new(Vec::new()),
     };
+    append_bound_function_metadata(&properties, builtin);
     properties
         .borrow_mut()
         .push(("\0receiver_bound_method".to_string(), Value::Boolean(true)));
@@ -338,6 +339,23 @@ pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
         arguments: Vec::new(),
         properties,
     }))
+}
+
+fn append_bound_function_metadata(properties: &RefCell<Vec<(String, Value)>>, builtin: Builtin) {
+    let entries = &mut *properties.borrow_mut();
+    for key in ["length", "name"] {
+        let Some(value) = crate::builtins::callable_property(builtin, key) else {
+            continue;
+        };
+        let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])));
+        entries.push((key.to_string(), value));
+        entries.push((crate::builtins::descriptor_key(key), descriptor));
+    }
 }
 
 fn datetime_format_bound_properties() -> Vec<(String, Value)> {

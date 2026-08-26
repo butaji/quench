@@ -22,9 +22,9 @@ fn collect_group_names(body: &str) -> Result<Option<Vec<String>>, String> {
             continue;
         }
         let name = group_name_at(body, next)?;
-        if seen.iter().any(|existing| existing == name) {
-            return Err(syntax_error());
-        }
+        // ES2025 permits duplicate names in disjoint alternatives. The
+        // compiler performs the path-sensitive conflict check; this pass only
+        // collects names for validating backreferences.
         seen.push(name.to_string());
         index = find_close_bracket(body, next).ok_or_else(syntax_error)? + 1;
     }
