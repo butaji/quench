@@ -463,6 +463,17 @@ fn function_inherited_property_result(
     if properties.iter().any(|(name, _)| name == key) {
         return None;
     }
+    if matches!(key, "apply" | "call" | "bind") {
+        let builtin = match key {
+            "apply" => crate::ops::Builtin::FunctionApply,
+            "call" => crate::ops::Builtin::FunctionCall,
+            _ => crate::ops::Builtin::FunctionBind,
+        };
+        return Some(Ok(crate::vm::bind_method(
+            value,
+            Value::Builtin(builtin),
+        )));
+    }
     if matches!(key, "prototype") {
         return None;
     }
