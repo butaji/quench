@@ -23,7 +23,25 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
 
 /// `new net.Socket()` creates an unconnected socket whose `connect` method
 /// shares the public connection capability and validation path.
-pub fn socket_construct(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_)))
+    {
+        let fd = execute::get_property(options, "fd");
+        if let Value::String(_) = fd {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ])));
+        }
+        if matches!(fd, Value::Number(value) if value < 0.0) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("RangeError".into())),
+                ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+            ])));
+        }
+    }
     let (object, _id) = new_net_object(state, socket_props())?;
     let object = install_socket_counters(object)?;
     install_methods(
@@ -518,6 +536,22 @@ pub fn socket_destroy(
         emit(state, &receiver, "close", Vec::new())?;
     }
     Ok(receiver)
+}
+
+pub fn socket_unref(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn socket_ref(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 /// `socket.address()` — the local address object.
