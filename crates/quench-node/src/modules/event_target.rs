@@ -168,7 +168,8 @@ fn same_listener(left: &Value, right: &Value) -> bool {
 /// `{ once: true }` from the options bag; anything else is ignored.
 fn once_option(args: &[Value]) -> bool {
     matches!(
-        args.get(2).and_then(|v| execute::get_property_result(v, "once").ok()),
+        args.get(2)
+            .and_then(|v| execute::get_property_result(v, "once").ok()),
         Some(Value::Boolean(true))
     )
 }
@@ -180,7 +181,9 @@ fn passive_option(args: &[Value]) -> bool {
 }
 
 fn signal_option(args: &[Value]) -> Result<Option<Value>, VmError> {
-    let Some(options) = args.get(2) else { return Ok(None) };
+    let Some(options) = args.get(2) else {
+        return Ok(None);
+    };
     if matches!(options, Value::Null | Value::Undefined) {
         return Ok(None);
     }
@@ -189,7 +192,9 @@ fn signal_option(args: &[Value]) -> Result<Option<Value>, VmError> {
         return Ok(None);
     }
     if !matches!(signal, Value::Object(_)) || !is_abort_signal(&signal) {
-        return Err(execute::type_error("The \"signal\" option must be an AbortSignal"));
+        return Err(execute::type_error(
+            "The \"signal\" option must be an AbortSignal",
+        ));
     }
     Ok(Some(signal))
 }
@@ -317,13 +322,21 @@ pub fn dispatch_event(
         }
     }
     let snapshot: Vec<Listener> = target.borrow().listeners_of(&event_type).to_vec();
-    let has_protected_listener = snapshot.iter().any(|listener| {
-        protected_abort_listener(&listener.callback)
-    });
+    let has_protected_listener = snapshot
+        .iter()
+        .any(|listener| protected_abort_listener(&listener.callback));
     execute::set_property_in_place(event, "target", receiver.clone());
     execute::set_property_in_place(event, "currentTarget", receiver.clone());
     execute::set_property_in_place(event, "srcElement", receiver.clone());
     execute::set_property_in_place(event, "eventPhase", Value::Number(2.0));
+    let handler_name = format!("on{event_type}");
+    let handler = execute::get_property(receiver, &handler_name);
+    if quench_runtime::is_callable(&handler) {
+        if let Err(error) = execute::call(&handler, receiver, std::slice::from_ref(event)) {
+            crate::modules::pump::handle_uncaught(state, error)?;
+            crate::modules::pump::run_uncaught(state)?;
+        }
+    }
     for listener in &snapshot {
         if listener.weak {
             continue;
