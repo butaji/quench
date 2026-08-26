@@ -20,7 +20,9 @@ fn process_module() -> Value {
     let hrtime = quench_runtime::execute::set_property(
         capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime)),
         "bigint",
-        capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtimeBigint)),
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::ProcessHrtimeBigint,
+        )),
     );
     let module = quench_runtime::host_api::object(vec![
         ("env".into(), env),
@@ -82,7 +84,9 @@ fn process_module() -> Value {
         ),
         (
             "removeListener".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessRemoveListener)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::ProcessRemoveListener,
+            )),
         ),
         (
             "removeAllListeners".into(),
@@ -102,20 +106,14 @@ fn process_module() -> Value {
             "cpuUsage".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage)),
         ),
-        (
-            "hrtime".into(),
-            hrtime,
-        ),
+        ("hrtime".into(), hrtime),
         (
             "getActiveResourcesInfo".into(),
             capability_function(HostCapabilityKind::Custom(
                 CapabilityName::ProcessActiveResourcesInfo,
             )),
         ),
-        (
-            "features".into(),
-            crate::modules::process::features(),
-        ),
+        ("features".into(), crate::modules::process::features()),
         (
             "permission".into(),
             quench_runtime::host_api::object(vec![(
@@ -143,6 +141,15 @@ fn process_on(arguments: &[Value]) -> Result<Value, VmError> {
         .unwrap_or(Value::Undefined))
 }
 
+fn drain_pending_process_warnings() -> Result<(), VmError> {
+    let pending = NODE_PENDING_PROCESS_WARNINGS
+        .with(|warnings| warnings.borrow_mut().drain(..).collect::<Vec<_>>());
+    for warning in pending {
+        process_emit(&[Value::String("warning".into()), warning])?;
+    }
+    Ok(())
+}
+
 fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
     if let (Some(Value::String(event)), Some(value)) = (arguments.first(), arguments.get(1)) {
         let listeners = NODE_PROCESS_WARNING_LISTENERS.with(|listeners| {
@@ -154,7 +161,11 @@ fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
                 .collect::<Vec<_>>()
         });
         for listener in listeners {
-            quench_runtime::execute::call(&listener, &Value::Undefined, std::slice::from_ref(value))?;
+            quench_runtime::execute::call(
+                &listener,
+                &Value::Undefined,
+                std::slice::from_ref(value),
+            )?;
         }
         return Ok(Value::Boolean(true));
     }
@@ -372,9 +383,28 @@ fn is_process_builtin(id: &str) -> bool {
     let bare = id.strip_prefix("node:").unwrap_or(id);
     matches!(
         bare,
-        "assert" | "buffer" | "child_process" | "crypto" | "events" | "fs" | "fs/promises"
-            | "http" | "https" | "module" | "net" | "os" | "path" | "process" | "stream"
-            | "string_decoder" | "timers" | "timers/promises" | "tls" | "url" | "util"
-            | "v8" | "worker_threads"
+        "assert"
+            | "buffer"
+            | "child_process"
+            | "crypto"
+            | "events"
+            | "fs"
+            | "fs/promises"
+            | "http"
+            | "https"
+            | "module"
+            | "net"
+            | "os"
+            | "path"
+            | "process"
+            | "stream"
+            | "string_decoder"
+            | "timers"
+            | "timers/promises"
+            | "tls"
+            | "url"
+            | "util"
+            | "v8"
+            | "worker_threads"
     )
 }
