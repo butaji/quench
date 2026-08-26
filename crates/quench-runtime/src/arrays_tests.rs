@@ -222,7 +222,7 @@ mod tests {
             Value::Array(Rc::new(ArrayData::new(vec![Value::Number(3.0)]))),
         ])));
         let values = Value::Array(Rc::new(ArrayData::new(vec![Value::Number(1.0), nested])));
-        let Value::Array(flattened) = super::flat(Some(&values), &[Value::Number(2.0)]) else {
+        let Value::Array(flattened) = super::flat(Some(&values), &[Value::Number(2.0)]).unwrap() else {
             panic!("flat must return an array");
         };
         assert_eq!(
