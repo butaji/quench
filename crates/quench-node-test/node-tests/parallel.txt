@@ -499,3 +499,9 @@ test-tls-env-extra-ca-with-options.js
 test-tls-off-thread-cert-loading-disabled.js
 test-tls-off-thread-cert-loading-system.js
 test-tls-client-cert-resumption.js
+test-https-abortcontroller.js
+test-https-agent-constructor.js
+test-https-agent-getname.js
+test-https-byteswritten.js
+test-https-client-get-url.js
+test-https-client-reject.js
