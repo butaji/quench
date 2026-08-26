@@ -14,16 +14,19 @@ const NAMES: [&str; 9] = [
 ];
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let fields = (0..9)
-        .map(|index| {
+    let mut fields = Vec::with_capacity(9);
+    for index in 0..9 {
             let value = arguments.get(index).unwrap_or(&Value::Undefined);
-            if index >= 3 && matches!(value, Value::Undefined) {
+            let number = if index >= 3 && matches!(value, Value::Undefined) {
                 Ok(0.0)
             } else {
                 Ok(crate::conversion::to_number(value)?.trunc())
+            }?;
+            if !number.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid date-time"));
             }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+            fields.push(number);
+    }
     crate::temporal::plain_date::construct(
         &fields[..3]
             .iter()
@@ -475,6 +478,11 @@ fn calendar_difference(
     }
     let time_fraction_days = (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64
         / 86_400_000_000_000.0;
+    let mut time_delta = time_of_day_nanos(end) - time_of_day_nanos(start);
+    if time_delta < 0 {
+        days -= 1;
+        time_delta += 86_400_000_000_000;
+    }
     if smallest == "day" && matches!(largest, "year" | "month" | "week") {
         let rounded = round_quotient((days as f64 + time_fraction_days) / increment, mode)
             * increment;
@@ -482,6 +490,7 @@ fn calendar_difference(
         months = 0;
         weeks = 0;
         days = rounded as i64;
+        time_delta = 0;
     }
     if matches!(smallest, "year" | "month" | "week") {
         let unit_value = match smallest {
@@ -509,32 +518,40 @@ fn calendar_difference(
                 weeks = 0;
             }
             _ => {
-                years = 0;
-                months = 0;
-                weeks = if largest == "week" {
-                    rounded as i64
+                if largest == "week" {
+                    years = 0;
+                    months = 0;
+                    weeks = rounded as i64;
+                    days = 0;
                 } else {
-                    0
-                };
-                days = if largest == "week" {
-                    0
-                } else {
-                    (rounded * 7.0) as i64
-                };
+                    days = (rounded * 7.0) as i64;
+                    weeks = 0;
+                }
             }
         }
+        time_delta = 0;
     }
+    let hours = time_delta / 3_600_000_000_000;
+    let time_delta = time_delta % 3_600_000_000_000;
+    let minutes = time_delta / 60_000_000_000;
+    let time_delta = time_delta % 60_000_000_000;
+    let seconds = time_delta / 1_000_000_000;
+    let time_delta = time_delta % 1_000_000_000;
+    let milliseconds = time_delta / 1_000_000;
+    let time_delta = time_delta % 1_000_000;
+    let microseconds = time_delta / 1_000;
+    let nanoseconds = time_delta % 1_000;
     crate::temporal::duration::construct(&[
         Value::Number((years * sign) as f64),
         Value::Number((months * sign) as f64),
         Value::Number((weeks * sign) as f64),
         Value::Number((days * sign) as f64),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
+        Value::Number(hours as f64 * sign as f64),
+        Value::Number(minutes as f64 * sign as f64),
+        Value::Number(seconds as f64 * sign as f64),
+        Value::Number(milliseconds as f64 * sign as f64),
+        Value::Number(microseconds as f64 * sign as f64),
+        Value::Number(nanoseconds as f64 * sign as f64),
     ])
 }
 
@@ -1259,14 +1276,6 @@ fn with(
 ) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
-    if let Some(value) = options {
-        if !matches!(
-            value,
-            Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
-        ) {
-            return Err(crate::value::error::throw_type_error("Invalid options"));
-        }
-    }
     let changes = changes
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
@@ -1278,36 +1287,66 @@ fn with(
     if !matches!(calendar, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
-    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
-    let month = crate::execute::get_property_result(changes, "month")?;
-    if !matches!(month_code, Value::Undefined) {
-        values[1] = crate::conversion::to_number(&month_code_number(&month_code)?)?;
+    let time_zone = crate::execute::get_property_result(changes, "timeZone")?;
+    if !matches!(time_zone, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Invalid time zone"));
     }
-    for (index, name) in NAMES.iter().enumerate() {
+    let mut month_input = None;
+    let mut month_code_input = None;
+    let mut recognized = false;
+    for name in [
+        "day",
+        "hour",
+        "microsecond",
+        "millisecond",
+        "minute",
+        "month",
+        "monthCode",
+        "nanosecond",
+        "second",
+        "year",
+    ] {
         let value = crate::execute::get_property_result(changes, name)?;
-        if !matches!(value, Value::Undefined) {
-            values[index] = if *name == "monthCode" {
-                crate::conversion::to_number(&month_code_number(&value)?)?
-            } else {
-                crate::conversion::to_number(&value)?
-            };
+        if matches!(value, Value::Undefined) {
+            continue;
+        }
+        recognized = true;
+        if name == "monthCode" {
+            let month = crate::conversion::to_number(&month_code_number(&value)?)?;
+            values[1] = month;
+            month_code_input = Some(month);
+            continue;
+        }
+        let index = NAMES.iter().position(|field| *field == name).unwrap();
+        let raw_number = crate::conversion::to_number(&value)?;
+        let number = raw_number.trunc();
+        values[index] = number;
+        if name == "month" {
+            month_input = Some(raw_number);
         }
     }
-    if !matches!(month_code, Value::Undefined)
-        && month != Value::Undefined
-        && crate::conversion::to_number(&month)?
-            != crate::conversion::to_number(&month_code_number(&month_code)?)?
-    {
-        return Err(crate::value::error::throw_range_error("Month mismatch"));
+    if let (Some(month), Some(month_code)) = (month_input, month_code_input) {
+        if month.fract() == 0.0 && month != month_code {
+            return Err(crate::value::error::throw_range_error("Month mismatch"));
+        }
     }
-    let recognized = NAMES.iter().any(|name| {
-        crate::execute::get_property_result(changes, name)
-            .is_ok_and(|value| !matches!(value, Value::Undefined))
-    }) || !matches!(month_code, Value::Undefined);
     if !recognized {
         return Err(crate::value::error::throw_type_error(
             "Insufficient date-time data",
         ));
+    }
+    if !values[0].is_finite()
+        || !values[1].is_finite()
+        || !values[2].is_finite()
+        || values[1] < 1.0
+        || values[2] < 1.0
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    if let Some(value) = options {
+        if !matches!(value, Value::Undefined) && !crate::value::is_object(value) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
     }
     let overflow = options
         .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
@@ -1318,14 +1357,6 @@ fn with(
     };
     if overflow != "constrain" && overflow != "reject" {
         return Err(crate::value::error::throw_range_error("Invalid overflow"));
-    }
-    if !values[0].is_finite()
-        || !values[1].is_finite()
-        || !values[2].is_finite()
-        || values[1] < 1.0
-        || values[2] < 1.0
-    {
-        return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     values[1] = values[1].min(12.0);
     if values[2] > days_in_month(values[0] as i32, values[1] as u32) as f64 {
@@ -1355,14 +1386,13 @@ fn with(
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {
-    let (next_year, next_month) = if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
-    };
-    chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
-        .map(|date| (date - chrono::Days::new(1)).day())
-        .unwrap_or(28)
+    match month {
+        2 if year.rem_euclid(4) == 0
+            && (year.rem_euclid(100) != 0 || year.rem_euclid(400) == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
@@ -1574,7 +1604,6 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
-    let overflow = from_overflow_option(options)?;
     if let Value::Object(object) = value {
         let is_plain_date = object.iter().any(|(key, value)| {
             key == "\0temporal-plain-date" && value == Value::Boolean(true)
@@ -1592,6 +1621,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     .map(|(_, value)| value.clone())
             });
             if let [Some(year), Some(month), Some(day)] = hidden {
+                from_overflow_option(options)?;
                 return construct(&[
                     year,
                     month,
@@ -1606,10 +1636,38 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             }
         }
     }
-    let year = crate::execute::get_property_result(value, "year")?;
-    let day = crate::execute::get_property_result(value, "day")?;
-    let month = crate::execute::get_property_result(value, "month")?;
-    let month_code = crate::execute::get_property_result(value, "monthCode")?;
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
+    if !matches!(calendar, Value::Undefined) {
+        validate_calendar(&calendar)?;
+    }
+    let mut raw_fields = vec![None; 9];
+    let mut month_code = Value::Undefined;
+    for name in [
+        "day",
+        "hour",
+        "microsecond",
+        "millisecond",
+        "minute",
+        "month",
+        "monthCode",
+        "nanosecond",
+        "second",
+        "year",
+    ] {
+        let field = crate::execute::get_property_result(value, name)?;
+        if name == "monthCode" {
+            if !matches!(field, Value::Undefined) {
+                month_code = month_code_number(&field)?;
+            }
+        } else if let Some(index) = NAMES.iter().position(|candidate| *candidate == name) {
+            if !matches!(field, Value::Undefined) {
+                raw_fields[index] = Some(Value::Number(crate::conversion::to_number(&field)?.trunc()));
+            }
+        }
+    }
+    let year = raw_fields[0].clone().unwrap_or(Value::Undefined);
+    let month = raw_fields[1].clone().unwrap_or(Value::Undefined);
+    let day = raw_fields[2].clone().unwrap_or(Value::Undefined);
     if matches!(year, Value::Undefined)
         || matches!(day, Value::Undefined)
         || (matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined))
@@ -1621,7 +1679,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let month_code_value = if matches!(month_code, Value::Undefined) {
         None
     } else {
-        Some(month_code_number(&month_code)?)
+        Some(month_code.clone())
     };
     let month = if matches!(month, Value::Undefined) {
         month_code_value
@@ -1630,13 +1688,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     } else {
         month
     };
-    let calendar = crate::execute::get_property_result(value, "calendar")?;
-    if !matches!(calendar, Value::Undefined) {
-        validate_calendar(&calendar)?;
-    }
     let mut fields = vec![year, month, day];
-    for name in &NAMES[3..] {
-        let field = crate::execute::get_property_result(value, name)?;
+    for field in raw_fields.iter().skip(3) {
+        let field = field.clone().unwrap_or(Value::Undefined);
         fields.push(if matches!(field, Value::Undefined) {
             Value::Number(0.0)
         } else {
@@ -1646,8 +1700,8 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let mut numeric = fields
         .iter()
         .map(crate::conversion::to_number)
-        .map(|value| value.map(f64::trunc))
         .collect::<Result<Vec<_>, _>>()?;
+    let overflow = from_overflow_option(options)?;
     if let Some(month_code) = month_code_value {
         let month_code = crate::conversion::to_number(&month_code)?;
         if !(1.0..=12.0).contains(&month_code) {
@@ -1828,6 +1882,15 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if date_fields.len() != 3 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
+    if (!date_fields[0].starts_with(['+', '-']) && date_fields[0].len() != 4)
+        || (date_fields[0].starts_with(['+', '-']) && date_fields[0].len() != 7)
+        || date_fields[1].len() != 2
+        || date_fields[2].len() != 2
+        || !date_fields[1].bytes().all(|byte| byte.is_ascii_digit())
+        || !date_fields[2].bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     if date_fields[0] == "-000000" {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
@@ -1882,6 +1945,13 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     } else {
         Vec::new()
     };
+    if colon_clock
+        && clock
+            .iter()
+            .any(|part| part.len() != 2 || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     if clock.is_empty() || clock.len() > 3 || fraction.len() > 9 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
