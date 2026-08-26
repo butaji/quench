@@ -548,6 +548,22 @@ fn compare(
             return Ok(true);
         }
     }
+    if unresolved_alias(left) || unresolved_alias(right) {
+        let left_unresolved = unresolved_alias(left);
+        let concrete = if left_unresolved { right } else { left };
+        if let Some(pointer) = identity(concrete) {
+            let is_current_cycle_target = memo.last().is_some_and(|(a, b)| {
+                if left_unresolved {
+                    *a == pointer
+                } else {
+                    *b == pointer
+                }
+            });
+            if is_current_cycle_target {
+                return Ok(true);
+            }
+        }
+    }
     let left = &deref_alias(left);
     let right = &deref_alias(right);
     if execute::same_value(left, right) {
@@ -970,6 +986,13 @@ fn deref_alias(value: &Value) -> Value {
             .unwrap_or_else(|| value.clone()),
         _ => value.clone(),
     }
+}
+
+fn unresolved_alias(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::ObjectAlias(alias) if alias.0.borrow().upgrade().is_none()
+    )
 }
 fn identity(value: &Value) -> Option<*const ()> {
     match value {
