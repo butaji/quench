@@ -105,6 +105,8 @@ test-util-styletext-hex.js
 test-util-styletext.js
 test-util-text-decoder.js
 test-buffer-alloc.js
+test-buffer-alloc-unsafe-is-initialized-with-zero-fill-flag.js
+test-buffer-alloc-unsafe-is-uninitialized.js
 test-buffer-ascii.js
 test-buffer-badhex.js
 test-buffer-bigint64.js
@@ -115,6 +117,7 @@ test-buffer-equals.js
 test-buffer-failed-alloc-typed-arrays.js
 test-buffer-from.js
 test-buffer-includes.js
+test-buffer-inspect.js
 test-buffer-isencoding.js
 test-buffer-iterator.js
 test-buffer-no-negative-allocation.js
