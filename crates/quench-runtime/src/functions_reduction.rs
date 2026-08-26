@@ -355,6 +355,7 @@ fn emit_function_op(
         dst: register,
         body: crate::machine::FunctionCode::pending(body).with_facts(crate::facts::FunctionFacts {
             direct_constructor: metadata.direct_constructor.clone(),
+            linked_record_insert: metadata.linked_record_insert.clone(),
         }),
         params,
         captures,
@@ -460,6 +461,7 @@ pub(crate) fn reduce_expression_kind(
                     .map(|slot| (expected, slot))
             }),
             direct_constructor: direct_constructor_fact(function, locals),
+            linked_record_insert: linked_record_insert_fact(function, locals),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
     ))
@@ -498,6 +500,7 @@ pub(crate) fn reduce_arrow(
             raytrace_pixel: false,
             raytrace_render: None,
             direct_constructor: std::rc::Rc::default(),
+            linked_record_insert: None,
         },
     ))
 }

@@ -26,9 +26,18 @@ pub(crate) enum DirectConstructorSource {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LinkedRecordInsertFact {
+    pub(crate) constructor_slot: u16,
+    pub(crate) current: String,
+    pub(crate) list: String,
+    pub(crate) index: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FunctionFacts {
     pub(crate) direct_constructor: Rc<[DirectConstructorField]>,
+    pub(crate) linked_record_insert: Option<Rc<LinkedRecordInsertFact>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
