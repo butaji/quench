@@ -1077,8 +1077,6 @@
   function finishWritable(stream) {
     const st = stream._writableState;
     if (st.destroyed) return;
-    if (stream._passThrough && !stream._passThroughRead &&
-        stream.listenerCount("data") === 0) return;
     if (st.finished || st.errored || !st.ended || st.buffered > 0 || st.writing || st.prefinishing) return;
     if (!st.prefinished) {
       st.prefinishing = true;
@@ -1125,7 +1123,8 @@
     // A duplex with autoDestroy cannot finish its writable side before its
     // readable side has emitted end.  In particular, Transform.end() may
     // queue readable completion and resume() in the same turn.
-    if (st.autoDestroy && stream._isDuplex && !stream._readableState.endEmitted) {
+    if (st.autoDestroy && stream._isDuplex && !stream._readableState.endEmitted &&
+        !stream._finishedWantsWritableOnly) {
       if (!st.finishScheduled) {
         st.finishScheduled = true;
         stream.once("end", emitFinish);
@@ -1583,21 +1582,41 @@
     }
   }
 
-  function finished(stream, callback) {
+  function finished(stream, options, callback) {
     if (!stream || typeof stream.on !== "function") {
       const error = new TypeError("The \"stream\" argument must be an instance of Stream");
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (typeof options === "function") {
+      callback = options;
+      options = {};
+    }
+    options = options || {};
+    callback = callback || (() => {});
+    const wantReadable = options.readable !== false;
+    const wantWritable = options.writable !== false;
+    stream._finishedWantsWritableOnly = wantWritable && !wantReadable;
     let done = false;
-    const finish = (error) => {
+    let readableDone = !wantReadable;
+    let writableDone = !wantWritable;
+    const finish = (error, side) => {
       if (done) return;
-      done = true;
-      callback(error);
+      if (error) {
+        done = true;
+        callback(error);
+        return;
+      }
+      if (side === "readable") readableDone = true;
+      if (side === "writable") writableDone = true;
+      if (readableDone && writableDone) {
+        done = true;
+        callback();
+      }
     };
-    stream.once("end", () => finish());
-    stream.once("finish", () => finish());
-    stream.once("error", finish);
+    if (wantReadable) stream.once("end", () => finish(undefined, "readable"));
+    if (wantWritable) stream.once("finish", () => finish(undefined, "writable"));
+    stream.once("error", (error) => finish(error));
     return () => {
       done = true;
     };
