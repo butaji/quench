@@ -201,12 +201,46 @@ impl TypedArrayMeta {
     pub(crate) fn own_properties(&self) -> Vec<(String, Value)> {
         self.properties.borrow().clone()
     }
-
 }
 
 /// Heap-allocated Promise data.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
+pub(crate) struct PromiseContext(pub(crate) Rc<crate::vm::VmContext>);
+
+impl std::fmt::Debug for PromiseContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PromiseContext(..)")
+    }
+}
+
+impl PartialEq for PromiseContext {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for PromiseData {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PromiseData")
+            .field("state", &self.state.borrow())
+            .field("then_actions", &self.then_actions.borrow())
+            .finish()
+    }
+}
+
+impl PartialEq for PromiseData {
+    fn eq(&self, other: &Self) -> bool {
+        self.context == other.context
+            && self.state == other.state
+            && self.result == other.result
+            && self.prototype == other.prototype
+    }
+}
+
+#[derive(Clone)]
 pub struct PromiseData {
+    pub(crate) context: PromiseContext,
     pub(crate) prototype: RefCell<Option<Value>>,
     pub(crate) properties: RefCell<Vec<(String, Value)>>,
     pub state: RefCell<PromiseState>,
@@ -234,6 +268,7 @@ impl PromiseData {
             PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => Some(value.clone()),
         };
         Self {
+            context: PromiseContext(crate::vm::current_context()),
             prototype: RefCell::new(None),
             properties: RefCell::new(Vec::new()),
             state: RefCell::new(state),
