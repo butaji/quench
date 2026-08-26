@@ -765,6 +765,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_BUFFER_BTOA => buffer_btoa,
         CAP_URL_PATH_TO_FILE_URL => url_path_to_file_url,
         CAP_CP_SPAWNSYNC => cp_spawn_sync,
+        CAP_CP_SPAWN => cp_spawn,
         CAP_CP_EXECSYNC => cp_exec_sync,
         CAP_CP_EXEC => cp_async,
         CAP_CP_EXECFILE => cp_exec_file,
