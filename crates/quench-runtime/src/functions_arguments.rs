@@ -512,6 +512,7 @@ include!("functions_word_call.rs");
 include!("functions_leaf_execution.rs");
 include!("functions_shape_kernels.rs");
 include!("functions_plan_kernel.rs");
+include!("functions_slot_alu.rs");
 include!("functions_linked_schedule.rs");
 include!("functions_linked_record_insert.rs");
 include!("functions_forward_construct_call.rs");
