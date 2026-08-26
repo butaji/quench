@@ -737,8 +737,16 @@ fn calendar_getter(
         }
         crate::ops::Builtin::TemporalPlainDateTimeEraGetter => Value::Undefined,
         crate::ops::Builtin::TemporalPlainDateTimeEraYearGetter => Value::Undefined,
-        crate::ops::Builtin::TemporalPlainDateTimeWeekOfYearGetter => Value::Undefined,
-        crate::ops::Builtin::TemporalPlainDateTimeYearOfWeekGetter => Value::Undefined,
+        crate::ops::Builtin::TemporalPlainDateTimeWeekOfYearGetter => Value::Number(
+            chrono::NaiveDate::from_ymd_opt(year, month, day)
+                .map(|date| date.iso_week().week() as f64)
+                .unwrap_or(f64::NAN),
+        ),
+        crate::ops::Builtin::TemporalPlainDateTimeYearOfWeekGetter => Value::Number(
+            chrono::NaiveDate::from_ymd_opt(year, month, day)
+                .map(|date| date.iso_week().year() as f64)
+                .unwrap_or(f64::NAN),
+        ),
         _ => Value::Undefined,
     })
 }
