@@ -23,6 +23,9 @@ pub(crate) fn integrity_level(
     if is_boxed_string(target) {
         return Ok(crate::value::Value::Boolean(true));
     }
+    if let crate::value::Value::Set(data) = target {
+        return Ok(crate::value::Value::Boolean(!frozen || data.is_frozen()));
+    }
     Ok(crate::value::Value::Boolean(integrity_props(
         target, frozen,
     )))
@@ -68,6 +71,10 @@ pub(crate) fn integrity_apply(
         ));
     }
     match target {
+        crate::value::Value::Set(data) if frozen => {
+            data.frozen.set(true);
+            Ok(target.clone())
+        }
         crate::value::Value::Object(properties) => {
             let mut sealed = integrity_properties(properties, frozen);
             push_non_extensible(&mut sealed);
