@@ -390,6 +390,43 @@ fn emit_function_op(
         mapped_arguments: metadata.mapped_arguments,
         source,
     });
+    if metadata.raytrace_pixel {
+        let marker = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::Const { dst: marker, value: crate::ops::Constant::Boolean(true) });
+        ops.push(Op::SetProperty {
+            object: register,
+            key: "\0quench:raytrace_pixel".to_string(),
+            src: marker,
+            strict: true,
+        });
+    }
+    if let Some((expected, slot)) = metadata.raytrace_render {
+        let slot_register = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::Const {
+            dst: slot_register,
+            value: crate::ops::Constant::Number(f64::from(slot)),
+        });
+        ops.push(Op::SetProperty {
+            object: register,
+            key: "\0quench:raytrace_render_slot".to_string(),
+            src: slot_register,
+            strict: true,
+        });
+        let expected_register = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::Const {
+            dst: expected_register,
+            value: crate::ops::Constant::Number(expected),
+        });
+        ops.push(Op::SetProperty {
+            object: register,
+            key: "\0quench:raytrace_render_expected".to_string(),
+            src: expected_register,
+            strict: true,
+        });
+    }
     register
 }
 
@@ -446,6 +483,13 @@ pub(crate) fn reduce_expression_kind(
             strictness,
             is_async: function.r#async,
             mapped_arguments: crate::function_parameters::is_simple(&function.params),
+            raytrace_pixel: raytrace_pixel_fact(function),
+            raytrace_render: raytrace_render_fact(function).and_then(|(target, expected)| {
+                locals
+                    .get(&target)
+                    .copied()
+                    .map(|slot| (expected, slot))
+            }),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
         None,
@@ -482,6 +526,8 @@ pub(crate) fn reduce_arrow(
             strictness,
             is_async: function.r#async,
             mapped_arguments: false,
+            raytrace_pixel: false,
+            raytrace_render: None,
         },
         facts
             .reduction_source

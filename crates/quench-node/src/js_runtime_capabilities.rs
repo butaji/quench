@@ -41,7 +41,7 @@ impl CapabilityName {
     const ProcessEmit: u16 = 2091;
     const ProcessRemoveListener: u16 = 2092;
     const ProcessRemoveAllListeners: u16 = 2093;
-    const ProcessCpuUsage: u16 = 2110;
+    const ProcessCpuUsage: u16 = 0x0A10;
     const ProcessHrtime: u16 = 2111;
     const ProcessHrtimeBigint: u16 = 2125;
     const ProcessActiveResourcesInfo: u16 = 2112;
