@@ -60,16 +60,41 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
         let text = crate::conversion::to_string(value)?;
-        let parts = text.split('-').collect::<Vec<_>>();
-        if parts.len() < 2 {
+        if let Some(annotation) = text.split('[').skip(1).find(|part| part.contains('=')) {
+            let annotation = annotation.split(']').next().unwrap_or(annotation);
+            if let Some(calendar) = annotation.strip_prefix("u-ca=") {
+                if !calendar.eq_ignore_ascii_case("iso8601") {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid calendar annotation",
+                    ));
+                }
+            } else if annotation.to_ascii_lowercase().starts_with("u-ca=") {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid calendar annotation",
+                ));
+            }
+        }
+        let base = text.split('[').next().unwrap_or(&text);
+        let date = base
+            .split_once(['T', 't', ' '])
+            .map_or(base, |(date, _)| date);
+        let date = date.strip_prefix("--").unwrap_or(date);
+        let parts = date.split('-').collect::<Vec<_>>();
+        let (month, day) = match parts.as_slice() {
+            [month, day] => (*month, *day),
+            [year, month, day] if year.len() == 4 => (*month, *day),
+            _ => {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid PlainMonthDay",
+                ))
+            }
+        };
+        if month.is_empty() || day.is_empty() {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainMonthDay",
             ));
         }
-        return construct(
-            parts[parts.len() - 2].parse().unwrap_or(0.0),
-            parts[parts.len() - 1].parse().unwrap_or(0.0),
-        );
+        return construct(month.parse().unwrap_or(0.0), day.parse().unwrap_or(0.0));
     }
     let month = match crate::execute::get_property_result(value, "month")? {
         Value::Undefined => crate::execute::get_property_result(value, "monthCode")?,
