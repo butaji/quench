@@ -414,12 +414,11 @@ fn unit_scale(unit: &str) -> Option<i128> {
 }
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let instant =
-        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not an Instant"))?;
+    let epoch_milliseconds = get_epoch_milliseconds(receiver)?;
     let formatter = crate::intl::datetime::construct(arguments)?;
     crate::intl::datetime::prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormat,
-        std::slice::from_ref(instant),
+        std::slice::from_ref(&epoch_milliseconds),
         Some(&formatter),
     )
 }
