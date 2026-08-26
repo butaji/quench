@@ -131,7 +131,9 @@ impl NodeRunner {
                 };
             }
         };
-        let result = quench_runtime::vm::execute_code_with_context(program.code(), &self.context)
+        let result = normalize_script_completion(
+            quench_runtime::vm::execute_code_with_context(program.code(), &self.context),
+        )
             .and_then(|_| self.drive("__quench_run_loop__();"))
             .and_then(|_| {
                 self.drive(
@@ -198,7 +200,25 @@ impl NodeRunner {
     ) -> Result<quench_runtime::value::Value, quench_runtime::vm::VmError> {
         let program =
             reduce_fixture(source, false).map_err(quench_runtime::vm::VmError::EvalError)?;
-        quench_runtime::vm::execute_code_with_context(program.code(), &self.context)
+        match quench_runtime::vm::execute_code_with_context(program.code(), &self.context) {
+            // Harness driver snippets are statements; normal completion has
+            // no observable value and is represented by MissingReturn.
+            Err(quench_runtime::vm::VmError::MissingReturn) => {
+                Ok(quench_runtime::value::Value::Undefined)
+            }
+            result => result,
+        }
+    }
+}
+
+fn normalize_script_completion(
+    result: Result<quench_runtime::value::Value, quench_runtime::vm::VmError>,
+) -> Result<quench_runtime::value::Value, quench_runtime::vm::VmError> {
+    match result {
+        Err(quench_runtime::vm::VmError::MissingReturn) => {
+            Ok(quench_runtime::value::Value::Undefined)
+        }
+        result => result,
     }
 }
 
