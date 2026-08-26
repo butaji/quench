@@ -88,18 +88,7 @@ pub fn exists(
     let callback = super::fs::require_callback(args.get(1))?;
     let exists = match args.first() {
         Some(Value::String(path)) => std::path::Path::new(path).exists(),
-        other => {
-            if !matches!(other, Some(Value::String(_))) {
-                crate::modules::process::emit_warning(
-                    state,
-                    "DeprecationWarning",
-                    "Passing invalid argument types to fs.exists is deprecated",
-                    Some("DEP0187"),
-                    true,
-                );
-            }
-            false
-        }
+        _ => false,
     };
     defer(state, &callback, vec![Value::Boolean(exists)]);
     Ok(Value::Undefined)
