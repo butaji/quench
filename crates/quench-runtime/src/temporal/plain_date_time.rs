@@ -325,6 +325,8 @@ fn difference(
             && (rounding_increment as u64) >= increment_max
         || increment_max > 1
             && increment_max % (rounding_increment as u64) != 0
+        || matches!(smallest_unit.as_str(), "year" | "month" | "week")
+            && rounding_increment > 1_000_000.0
     {
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
@@ -559,7 +561,21 @@ fn calendar_difference(
             }
             _ => (weeks as f64) + (days as f64 + time_fraction_days) / 7.0,
         };
-        let rounded = (round_quotient(unit_value * sign as f64 / increment, mode) * increment).abs();
+        let relative_toward_zero = mode == "halfExpand"
+            && ((direction < 0.0 && sign > 0) || (direction > 0.0 && sign < 0));
+        let rounding_mode = if relative_toward_zero {
+            "halfCeil"
+        } else {
+            mode
+        };
+        let round_sign = if direction < 0.0 && sign > 0 && relative_toward_zero {
+            -sign
+        } else {
+            sign
+        };
+        let rounded =
+            (round_quotient(unit_value * round_sign as f64 / increment, rounding_mode) * increment)
+                .abs();
         match smallest {
             "year" => {
                 years = rounded as i64;
@@ -591,6 +607,43 @@ fn calendar_difference(
             }
         }
         time_delta = 0;
+    }
+    if matches!(largest, "year" | "month" | "week")
+        && matches!(
+            smallest,
+            "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+        )
+    {
+        let quantum = match smallest {
+            "hour" => 3_600_000_000_000,
+            "minute" => 60_000_000_000,
+            "second" => 1_000_000_000,
+            "millisecond" => 1_000_000,
+            "microsecond" => 1_000,
+            _ => 1,
+        } * increment as i128;
+        let rounded_time = round_integer(time_delta * sign as i128, quantum, mode).abs();
+        let day_nanos = 86_400_000_000_000i128;
+        let carry_days = (rounded_time / day_nanos) as i64;
+        days += carry_days;
+        time_delta = rounded_time % day_nanos;
+        if carry_days > 0 && matches!(largest, "year" | "month") {
+            let total_months = years * 12 + months;
+            let month_anchor = add_months_serial(start, total_months);
+            let (anchor_year, anchor_month, _) =
+                crate::temporal::plain_date::civil_from_serial(month_anchor);
+            let month_length = days_in_month(anchor_year, anchor_month) as i64;
+            if days >= month_length {
+                let total_months = total_months + 1;
+                days -= month_length;
+                if largest == "year" {
+                    years = total_months.div_euclid(12);
+                    months = total_months.rem_euclid(12);
+                } else {
+                    months = total_months;
+                }
+            }
+        }
     }
     let hours = time_delta / 3_600_000_000_000;
     let time_delta = time_delta % 3_600_000_000_000;
@@ -1279,6 +1332,15 @@ fn round_quotient(value: f64, mode: &str) -> f64 {
         }
         "halfFloor" => {
             if fraction > 0.5 {
+                ceil
+            } else {
+                floor
+            }
+        }
+        "halfExpand" => {
+            if value < 0.0 {
+                if fraction <= 0.5 { floor } else { ceil }
+            } else if fraction >= 0.5 {
                 ceil
             } else {
                 floor
