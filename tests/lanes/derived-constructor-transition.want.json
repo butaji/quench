@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "metrics": {
+    "transition_hit_traffic": {
+      "numerator": "events.named_set_transition_hit",
+      "min": 99990
+    },
+    "transition_miss_ratio": {
+      "numerator": "events.named_property_set_miss",
+      "denominator": "events.named_set_transition_hit",
+      "min_traffic": 99990,
+      "max": 0.02
+    }
+  }
+}
