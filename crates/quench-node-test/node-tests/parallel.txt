@@ -333,6 +333,7 @@ test-console-self-assign.js
 test-process-dlopen-undefined-exports.js
 test-process-domain-segfault.js
 test-process-emit.js
+test-net-autoselectfamily-ipv4first.js
 test-fs-append-file-flush.js
 test-fs-existssync-memleak-longpath.js
 test-fs-promises-exists.js
