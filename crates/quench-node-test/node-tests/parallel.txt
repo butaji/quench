@@ -277,6 +277,9 @@ test-assert-partial-deep-equal.js
 test-assert-typedarray-deepequal.js
 test-net-connect-after-destroy.js
 test-dns-get-server.js
+test-dns-cancel-reverse-lookup.js
+test-dns-channel-cancel.js
+test-dns-channel-timeout.js
 test-dns-negative-zero.js
 test-dns-promises-exists.js
 test-dns-resolve-promises.js
