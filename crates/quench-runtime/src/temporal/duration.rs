@@ -1070,6 +1070,9 @@ fn validate_largest_unit(options: Option<&Value>) -> Result<(), VmError> {
         return Ok(());
     }
     if let Value::String(unit) = value {
+        if unit == "auto" {
+            return Ok(());
+        }
         unit_index(&unit).map(|_| ())
     } else {
         Ok(())
