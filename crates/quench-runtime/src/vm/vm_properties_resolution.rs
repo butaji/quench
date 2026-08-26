@@ -656,6 +656,12 @@ fn descriptor_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     if let Value::Builtin(builtin) = value {
+        if let Some(getter) = crate::property_define::accessor(value, key, "get") {
+            return Some(match getter {
+                Value::Undefined => Ok(Value::Undefined),
+                getter => invoke_accessor(&getter, receiver),
+            });
+        }
         if let Some(getter) = crate::builtins::object::intrinsic_getter(*builtin, key) {
             return Some(invoke_accessor(&Value::Builtin(getter), receiver));
         }
