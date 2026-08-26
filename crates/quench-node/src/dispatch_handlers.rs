@@ -1399,6 +1399,44 @@ pub fn process_hrtime_bigint(
     Ok(Value::BigInt(nanos.to_string()))
 }
 
+pub fn process_cpu_usage(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(previous) = args.first() {
+        if !matches!(previous, Value::Object(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"prevValue\" argument must be of type object.{}",
+                crate::modules::util::invalid_arg_received(previous)
+            )));
+        }
+        for field in ["user", "system"] {
+            let value = execute::get_property(previous, field);
+            let Value::Number(number) = value else {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                    "The \"prevValue.{field}\" property must be of type number.{}",
+                    crate::modules::util::invalid_arg_received(&value)
+                )));
+            };
+            if !number.is_finite() || number < 0.0 {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+                    ("name".into(), Value::String("RangeError".into())),
+                    ("message".into(), Value::String(format!(
+                        "The property 'prevValue.{field}' is invalid. Received {}",
+                        execute::number_to_js_string(number)
+                    ))),
+                ])));
+            }
+        }
+    }
+    Ok(quench_runtime::host_api::object(vec![
+        ("user".into(), Value::Number(0.0)),
+        ("system".into(), Value::Number(0.0)),
+    ]))
+}
+
 // ---- os ----
 pub fn os_platform(
     _state: &Rc<RefCell<HostState>>,
