@@ -813,7 +813,26 @@ fn calendar_round(
     }
     let next = shift_calendar(cursor, unit, sign as i32)?;
     let elapsed = (cursor - start).num_days().unsigned_abs() as f64;
-    let remainder = (total.abs() - elapsed).max(0.0);
+    let only_months = unit == 1
+        && duration_field(object, "months") != 0
+        && [
+            "years",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ]
+        .iter()
+        .all(|name| duration_field(object, name) == 0);
+    let remainder = if (cursor == target && subday == 0.0) || only_months {
+        0.0
+    } else {
+        (total.abs() - elapsed).max(0.0)
+    };
     let span = (next - cursor).num_days().abs() as f64;
     let has_smallest = options.is_some_and(|value| match value {
         Value::Object(object) => object
