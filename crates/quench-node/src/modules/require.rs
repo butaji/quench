@@ -21,6 +21,13 @@ use crate::host::HostState;
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
+    if spec == "node:url" {
+        let cached = state.borrow().module_cache.get("url").cloned();
+        if let Some(value) = cached {
+            state.borrow_mut().module_cache.insert(spec, value.clone());
+            return Ok(value);
+        }
+    }
     if matches!(spec.as_str(), "async_hooks" | "node:async_hooks") {
         let value = crate::modules::async_hooks::build();
         state.borrow_mut().module_cache.insert(spec, value.clone());
