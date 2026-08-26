@@ -27,6 +27,7 @@ test-fs-truncate-clear-file-zero.js
 test-fs-truncate-sync.js
 test-fs-unlink-type-check.js
 test-fs-write-file-buffer.js
+test-http-methods.js
 test-regression-object-prototype.js
 test-stream-end-paused.js
 test-stream-err-multiple-callback-construction.js
