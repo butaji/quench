@@ -231,8 +231,7 @@ impl std::fmt::Debug for PromiseData {
 
 impl PartialEq for PromiseData {
     fn eq(&self, other: &Self) -> bool {
-        self.context == other.context
-            && self.state == other.state
+        self.state == other.state
             && self.result == other.result
             && self.prototype == other.prototype
     }
