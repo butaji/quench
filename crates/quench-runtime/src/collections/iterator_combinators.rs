@@ -118,7 +118,8 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
     if matches!(iterator, Value::Iterator(_)) {
         return Ok(iterator);
     }
-    Ok(make_protocol(iterator))
+    let next = crate::execute::get_property_result(&iterator, "next")?;
+    Ok(make_protocol_with_next(iterator, next))
 }
 
 fn receiver_iterator(receiver: &Value) -> Result<Value, crate::execute::VmError> {
