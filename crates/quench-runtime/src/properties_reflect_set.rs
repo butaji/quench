@@ -312,12 +312,17 @@ fn ordinary_set(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
-    if !set_with_receiver(target, key, &value, target)? {
+    // A script's global-object view is an execution-facing snapshot, while
+    // `this` and global bindings share the realm's canonical global object.
+    // Route writes through that owner so a COW view cannot hide a global var
+    // binding (for example `this.x = 1` followed by `var x`).
+    let owner = crate::vm::resolve_global_owner(target).unwrap_or_else(|| target.clone());
+    if !set_with_receiver(&owner, key, &value, &owner)? {
         return write_failure(strict);
     }
-    if let Some(updated) = crate::locals::replacement(target) {
+    if let Some(updated) = crate::locals::replacement(&owner) {
         crate::execute::write_value(registers, object, updated.clone());
-        crate::vm::synchronize_global_object(registers, target, &updated);
+        crate::vm::synchronize_global_object(registers, &owner, &updated);
     }
     Ok(())
 }
