@@ -169,7 +169,7 @@ pub(crate) fn array_like_length(source: &Value) -> Result<usize, crate::execute:
     }
     let value = crate::execute::get_property_result(source, "length")?;
     let number = crate::conversion::to_number(&value)?;
-    if !number.is_finite() || number <= 0.0 {
+    if number.is_nan() || number <= 0.0 {
         return Ok(0);
     }
     Ok(number.floor().min(9_007_199_254_740_991.0) as usize)
