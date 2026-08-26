@@ -29,6 +29,23 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
     }
 }
 
+/// Retarget only aliases directly stored by a newly cloned object.  This is
+/// intentionally shallow: recursive replacement walks can revisit a
+/// self-referential object graph, while copy-on-write transitions only need
+/// to repair the clone's own weak self-aliases.
+pub(crate) fn retarget_aliases_for_identity(
+    object: &std::rc::Rc<crate::value::ObjectData>,
+    identity: u64,
+) {
+    for (_, value) in object.iter() {
+        if let Value::ObjectAlias(alias) = value {
+            if alias.target().is_some_and(|target| target.identity() == identity) {
+                *alias.0.borrow_mut() = std::rc::Rc::downgrade(object);
+            }
+        }
+    }
+}
+
 fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
     match value {
         Value::ObjectAlias(alias) if alias_targets(alias, old) => {
@@ -185,12 +202,12 @@ fn alias_targets(alias: &crate::value::ObjectAliasValue, target: &Value) -> bool
         .0
         .borrow()
         .upgrade()
-        .is_some_and(|object| Rc::ptr_eq(&object, target))
+        .is_some_and(|object| object.identity() == target.identity())
 }
 
 fn same_identity(left: &Value, right: &Value) -> bool {
     match (left, right) {
-        (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+        (Value::Object(left), Value::Object(right)) => left.identity() == right.identity(),
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Map(left), Value::Map(right)) => Rc::ptr_eq(left, right),
         (Value::Set(left), Value::Set(right)) => Rc::ptr_eq(left, right),
