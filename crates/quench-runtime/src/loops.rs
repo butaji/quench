@@ -490,7 +490,7 @@ fn iterate_loop_keys(
             continue;
         }
         let value = crate::value::Value::String(key);
-        let _binding = bind_iteration(slot, value, per_iteration, iteration_slots);
+        let _binding = bind_iteration(registers, slot, value, per_iteration, iteration_slots);
         match execute_loop_body(registers, label, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(value) => {
@@ -560,6 +560,13 @@ fn iterate_loop_values(
     iteration_slots: &[u16],
     dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    registers.resize_undefined(
+        registers.len().max(
+            usize::from(dst)
+                .saturating_add(body.len())
+                .saturating_add(1),
+        ),
+    );
     let body_code = body.clone();
     let Some(body) = body.code() else {
         return Err(crate::execute::VmError::MissingReturn);
@@ -596,7 +603,7 @@ fn iterate_loop_values(
         let Some(value) = value else {
             return Ok(crate::completion::Completion::Normal);
         };
-        let _binding = bind_iteration(slot, value, per_iteration, iteration_slots);
+        let _binding = bind_iteration(registers, slot, value, per_iteration, iteration_slots);
         match execute_loop_body(registers, label, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
@@ -636,7 +643,13 @@ pub(crate) fn resume_async_for_of(
         let Some(value) = next_value else {
             return Ok((crate::completion::Completion::Normal, None));
         };
-        let _binding = bind_iteration(spec.slot, value, spec.per_iteration, &spec.iteration_slots);
+        let _binding = bind_iteration(
+            registers,
+            spec.slot,
+            value,
+            spec.per_iteration,
+            &spec.iteration_slots,
+        );
         match execute_loop_body(registers, &spec.label, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
             crate::completion::LoopTransition::Break(_) => {
@@ -671,12 +684,19 @@ pub(crate) fn resume_async_for_of(
 }
 
 fn bind_iteration(
+    registers: &mut crate::register_file::RegisterFile,
     slot: u16,
     value: crate::value::Value,
     per_iteration: bool,
     iteration_slots: &[u16],
 ) -> Option<crate::locals::IterationBinding> {
+    registers.write(usize::from(slot), value.clone());
     if per_iteration {
+        for candidate in iteration_slots {
+            if *candidate != slot {
+                registers.write(usize::from(*candidate), crate::value::Value::Undefined);
+            }
+        }
         Some(crate::locals::IterationBinding::install_many(
             std::iter::once((slot, value)).chain(
                 iteration_slots
