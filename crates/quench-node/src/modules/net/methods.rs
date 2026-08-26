@@ -254,6 +254,16 @@ pub fn server_listen(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::String(path)) = args.first() {
+        if path.starts_with('/') {
+            state
+                .borrow_mut()
+                .net
+                .pending_errors
+                .push((receiver.clone(), server_path_error(path)));
+            return Ok(receiver);
+        }
+    }
     let (port, host) = listen_target(state, args)?;
     let listener = match bind_listener(port, host.as_deref()) {
         Ok(listener) => listener,
@@ -269,6 +279,20 @@ pub fn server_listen(
     super::set_server_connection_key(&receiver, port, host.as_deref())?;
     add_listener_cb(state, &receiver, args.last(), "listening")?;
     Ok(receiver.clone())
+}
+
+fn server_path_error(path: &str) -> Value {
+    host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        (
+            "message".into(),
+            Value::String("No such file or directory".into()),
+        ),
+        ("code".into(), Value::String("ENOENT".into())),
+        ("address".into(), Value::String(path.into())),
+        ("port".into(), Value::Number(0.0)),
+        ("syscall".into(), Value::String("bind".into())),
+    ])
 }
 
 /// Resolve the `(port, host)` listen target, mirroring `connect_target`.
