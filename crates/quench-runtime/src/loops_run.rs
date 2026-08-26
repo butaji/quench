@@ -65,7 +65,7 @@ fn run_loop(
     let loop_shape = crate::execution_trace::loop_shape(body);
     let (post_test, dst, per_iteration, body_capture_slots) = config;
     run_fragment(init, registers)?;
-    if label.is_none() && !post_test {
+    if label.is_none() && !post_test && !has_immutable_marker(update) {
         if let Some(completion) = run_montgomery_reduce_kernel(test, body, update) {
             return Ok(completion);
         }
@@ -75,7 +75,7 @@ fn run_loop(
             return Ok(completion);
         }
     }
-    if label.is_none() && !post_test {
+    if label.is_none() && !post_test && !has_immutable_marker(update) {
         if let Some(fact) = CountedForFact::recognize(test, update) {
             trace_counted_recognition(body, fact, per_iteration);
             if let Some(completion) =
@@ -109,7 +109,7 @@ fn run_loop(
             dump_counted_rejection(loop_shape, test, body, update, per_iteration);
         }
     }
-    if label.is_none() && !post_test {
+    if label.is_none() && !post_test && !has_immutable_marker(update) {
         if let Some(fact) = CountedForFact::recognize(test, update) {
             // A compact body cannot allocate or expose the lexical binding.
             // Direct index loads are ordinary uses, not evidence of capture.
@@ -160,6 +160,11 @@ fn run_loop(
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+#[inline]
+fn has_immutable_marker(update: crate::machine::CodeView<'_>) -> bool {
+    update.position_cold(|op| matches!(op, crate::ops::Op::MarkImmutable { .. })).is_some()
 }
 
 #[inline]
