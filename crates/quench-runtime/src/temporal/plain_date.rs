@@ -20,10 +20,20 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
-        if matches!(calendar, Value::String(_) | Value::StringUnits(_))
-            && !is_iso_calendar_value(calendar)?
-        {
-            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        if matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
+            let text = crate::conversion::to_string(calendar)?;
+            let date = text.split(['T', 't', ' ', '[']).next().unwrap_or(&text);
+            let fields: Vec<_> = date.split('-').collect();
+            let date_like = fields.len() == 3
+                && fields[0].len() >= 4
+                && fields[1].len() == 2
+                && fields[2].len() == 2
+                || fields.len() == 1
+                    && date.len() == 8
+                    && date.bytes().all(|byte| byte.is_ascii_digit());
+            if date_like || !is_iso_calendar_value(calendar)? {
+                return Err(crate::value::error::throw_range_error("Invalid calendar"));
+            }
         }
     }
     if !(-271_821.0..=275_760.0).contains(&year)
