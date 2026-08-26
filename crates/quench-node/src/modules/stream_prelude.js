@@ -24,7 +24,11 @@
       if (name === "data" && this._readableState &&
                  this.listenerCount("readable") === 0) {
         this.resume();
-        flowReadable(this);
+        // Deliver already-buffered/iterator data in this turn, but leave a
+        // user-supplied _read pending so an immediate pause can cancel it.
+        if (this._readableState.buffer.length > 0 || this.__quenchIterator) {
+          flowReadable(this);
+        }
       }
       if (name === "readable" && this._readableState &&
           !this._readableState.reading && !this._readableState.ended) {
