@@ -431,7 +431,7 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
     installURLPatternProperties(URLPattern);
     return URLPattern;
   };
-  installURLToStringDescriptor(globalThis.__nodeURL);
+  // URL descriptors are installed by the URL module once its constructor exists.
   globalThis.__quenchURLPatternFactory = createURLPattern;
   globalThis.__quenchURLInstallCanParse = installURLCanParse;
   globalThis.__quenchURLInstallToString = installURLToStringDescriptor;
