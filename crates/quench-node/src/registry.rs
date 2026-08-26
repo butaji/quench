@@ -212,7 +212,8 @@ pub const SPEC_TIMERS_REFRESH: NodeSpec = NodeSpec::new("timers:refresh", 0x070B
 pub const SPEC_RUN_LOOP: NodeSpec = NodeSpec::new("__quench_run_loop__", 0x070C);
 pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D);
 pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
-pub const SPEC_INTERNAL_UTIL_ASSERT_CRYPTO: NodeSpec = NodeSpec::new("internal/util:assertCrypto", 0x0721);
+pub const SPEC_INTERNAL_UTIL_ASSERT_CRYPTO: NodeSpec =
+    NodeSpec::new("internal/util:assertCrypto", 0x0721);
 pub const SPEC_TIMERS_CLOSE: NodeSpec = NodeSpec::new("timers:close", 0x070F);
 pub const SPEC_TIMERS_TO_PRIMITIVE: NodeSpec = NodeSpec::new("timers:toPrimitive", 0x071D);
 pub const SPEC_TIMERS_GET_LIBUV_NOW: NodeSpec = NodeSpec::new("timers:getLibuvNow", 0x0714);
@@ -220,8 +221,10 @@ pub const SPEC_UTIL_PROMISIFY: NodeSpec = NodeSpec::new("util:promisify", 0x071E
 pub const SPEC_UTIL_DEPRECATE: NodeSpec = NodeSpec::new("util:deprecate", 0x0730);
 pub const SPEC_UTIL_DEPRECATED_CALL: NodeSpec = NodeSpec::new("util:deprecatedCall", 0x0731);
 pub const SPEC_UTIL_SYSTEM_ERROR_NAME: NodeSpec = NodeSpec::new("util:getSystemErrorName", 0x0733);
-pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec = NodeSpec::new("util:exceptionWithHostPort", 0x0734);
-pub const SPEC_INTERNAL_UTIL_EMIT_WARNING: NodeSpec = NodeSpec::new("internal/util:emitExperimentalWarning", 0x0735);
+pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec =
+    NodeSpec::new("util:exceptionWithHostPort", 0x0734);
+pub const SPEC_INTERNAL_UTIL_EMIT_WARNING: NodeSpec =
+    NodeSpec::new("internal/util:emitExperimentalWarning", 0x0735);
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
 pub const SPEC_INTERNAL_OS_GET_HOME_DIRECTORY: NodeSpec =
@@ -331,6 +334,15 @@ pub const SPEC_PROCESS_NEXT_TICK: NodeSpec = NodeSpec::new("process:nextTick", 0
 pub const SPEC_PROCESS_HRTIME: NodeSpec = NodeSpec::new("process:hrtime", 0x0A05);
 pub const SPEC_PROCESS_HRTIME_BIGINT: NodeSpec = NodeSpec::new("process:hrtime.bigint", 0x0A0B);
 pub const SPEC_PROCESS_CPU_USAGE: NodeSpec = NodeSpec::new("process:cpuUsage", 0x0A10);
+pub const SPEC_PROCESS_UPTIME: NodeSpec = NodeSpec::new("process:uptime", 0x0A11);
+pub const SPEC_PROCESS_GETUID: NodeSpec = NodeSpec::new("process:getuid", 0x0A12);
+pub const SPEC_PROCESS_GETGID: NodeSpec = NodeSpec::new("process:getgid", 0x0A13);
+pub const SPEC_PROCESS_GETEUID: NodeSpec = NodeSpec::new("process:geteuid", 0x0A14);
+pub const SPEC_PROCESS_GETEGID: NodeSpec = NodeSpec::new("process:getegid", 0x0A15);
+pub const SPEC_PROCESS_SETUID: NodeSpec = NodeSpec::new("process:setuid", 0x0A16);
+pub const SPEC_PROCESS_SETGID: NodeSpec = NodeSpec::new("process:setgid", 0x0A17);
+pub const SPEC_PROCESS_SETEUID: NodeSpec = NodeSpec::new("process:seteuid", 0x0A18);
+pub const SPEC_PROCESS_SETEGID: NodeSpec = NodeSpec::new("process:setegid", 0x0A19);
 pub const SPEC_PROCESS_UMASK: NodeSpec = NodeSpec::new("process:umask", 0x0A06);
 pub const SPEC_PROCESS_ON: NodeSpec = NodeSpec::new("process:on", 0x0A07);
 pub const SPEC_PROCESS_ONCE: NodeSpec = NodeSpec::new("process:once", 0x0A08);
@@ -354,7 +366,8 @@ pub const SPEC_OS_FREEMEM: NodeSpec = NodeSpec::new("os:freemem", 0x0B0A);
 pub const SPEC_OS_TOTALMEM: NodeSpec = NodeSpec::new("os:totalmem", 0x0B0B);
 pub const SPEC_OS_LOADAVG: NodeSpec = NodeSpec::new("os:loadavg", 0x0B0C);
 pub const SPEC_OS_NETWORKINTERFACES: NodeSpec = NodeSpec::new("os:networkInterfaces", 0x0B0D);
-pub const SPEC_OS_AVAILABLE_PARALLELISM: NodeSpec = NodeSpec::new("os:availableParallelism", 0x0B0E);
+pub const SPEC_OS_AVAILABLE_PARALLELISM: NodeSpec =
+    NodeSpec::new("os:availableParallelism", 0x0B0E);
 
 pub const SPEC_STREAM_READABLE: NodeSpec = NodeSpec::new("stream:Readable", 0x0C00);
 pub const SPEC_STREAM_WRITABLE: NodeSpec = NodeSpec::new("stream:Writable", 0x0C01);
