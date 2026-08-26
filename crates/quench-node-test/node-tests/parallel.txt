@@ -126,11 +126,14 @@ test-buffer-generic-methods.js
 test-buffer-includes.js
 test-buffer-isascii.js
 test-buffer-isutf8.js
+test-buffer-isutf8-isascii-fast.js
 test-buffer-inspect.js
 test-buffer-isencoding.js
 test-buffer-iterator.js
 test-buffer-no-negative-allocation.js
+test-buffer-inheritance.js
 test-buffer-new.js
+test-buffer-nopendingdep-map.js
 test-buffer-over-max-length.js
 test-buffer-parent-property.js
 test-buffer-read.js
