@@ -637,6 +637,9 @@ fn flat_mapped_step(
             }
             Err(error) => {
                 *done = true;
+                if let Ok(completion) = crate::completion::Completion::from_vm_error(error.clone()) {
+                    let _ = super::close(inner.clone(), completion);
+                }
                 return Err(error);
             }
         };
@@ -648,6 +651,9 @@ fn flat_mapped_step(
             Ok(value) => value,
             Err(error) => {
                 *done = true;
+                if let Ok(completion) = crate::completion::Completion::from_vm_error(error.clone()) {
+                    let _ = super::close(inner.clone(), completion);
+                }
                 return Err(error);
             }
         };

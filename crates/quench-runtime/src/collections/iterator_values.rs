@@ -176,6 +176,9 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
                     IteratorState::Protocol { .. }
                         | IteratorState::Mapped { .. }
                         | IteratorState::Filtered { .. }
+                        | IteratorState::FlatMapped { .. }
+                        | IteratorState::Dropped { .. }
+                        | IteratorState::Take { .. }
                         | IteratorState::Concat { .. }
                         | IteratorState::Zip { .. }
                 )
