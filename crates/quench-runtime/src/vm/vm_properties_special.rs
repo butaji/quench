@@ -46,6 +46,12 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if builtin == Builtin::Promise && matches!(property, Value::Builtin(_)) {
         return bind_method(value, property);
     }
+    if key == "toString"
+        && callable_builtin_value(value)
+        && matches!(property, Value::Builtin(Builtin::ObjectPrototypeToString))
+    {
+        return Value::Builtin(Builtin::FunctionPrototypeToString);
+    }
     if !matches!(property, Value::Undefined) {
         return property;
     }
@@ -89,6 +95,9 @@ fn inherit_prototype_property(builtin: Builtin, key: &str) -> Value {
 fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
+    }
+    if key == "toString" && callable_builtin_value(value) {
+        return Value::Builtin(Builtin::FunctionPrototypeToString);
     }
     if crate::builtin_meta::is_prototype(builtin) || builtin == Builtin::Temporal {
         return inherit_prototype_property(builtin, key);
@@ -167,6 +176,9 @@ fn bound_function_property(
     }
     if intrinsic_target_is_abstract_module_source(bound) {
         return intrinsic_bound_property(bound, key);
+    }
+    if key == "toString" && crate::conversion::is_callable(&bound.target) {
+        return Value::Builtin(Builtin::FunctionPrototypeToString);
     }
     if key == "prototype" {
         bound_constructor_prototype(bound)
@@ -258,6 +270,12 @@ fn bound_function_fallback(
         }
     }
     let result = get_property(&bound.target, key);
+    if key == "toString"
+        && crate::conversion::is_callable(&bound.target)
+        && matches!(result, Value::Builtin(Builtin::ObjectPrototypeToString))
+    {
+        return Value::Builtin(Builtin::FunctionPrototypeToString);
+    }
     if let Value::Builtin(constructor) = &result {
         if crate::builtin_meta::constructor_name(*constructor).is_some() {
             return realm::intrinsic(bound.realm, *constructor).unwrap_or_else(|| result.clone());
