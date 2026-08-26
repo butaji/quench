@@ -1736,10 +1736,10 @@ mod stubs {
                 property("nanosecond")?,
             ]);
         }
-        let year = year as i32;
-        let month = month as u32;
-        let day = day as u32;
-        let hour = crate::conversion::to_number(&property("hour")?)? as u32;
+        let mut year = year as i32;
+        let mut month = month as u32;
+        let mut day = day as u32;
+        let mut hour = crate::conversion::to_number(&property("hour")?)? as u32;
         let mut minute = crate::conversion::to_number(&property("minute")?)? as u32;
         let mut second = crate::conversion::to_number(&property("second")?)? as u32;
         let mut millisecond = crate::conversion::to_number(&property("millisecond")?)? as u32;
@@ -1772,7 +1772,11 @@ mod stubs {
                 return Ok(None);
             }
             let value = crate::conversion::to_string(&value)?;
-            let value = value.strip_suffix('s').unwrap_or(&value).to_string();
+            let value = if allowed.contains(&value.as_str()) {
+                value
+            } else {
+                value.strip_suffix('s').unwrap_or(&value).to_string()
+            };
             if !allowed.contains(&value.as_str()) {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid string option",
@@ -1796,7 +1800,7 @@ mod stubs {
                 "nanosecond",
             ],
         )?;
-        let _rounding = parse_choice(
+        let rounding_mode = parse_choice(
             "roundingMode",
             &[
                 "ceil",
@@ -1828,7 +1832,9 @@ mod stubs {
                 value.floor() as usize
             }
         };
-        let fraction = millisecond * 1_000_000 + microsecond * 1_000 + nanosecond;
+        let mut fraction = i128::from(millisecond) * 1_000_000
+            + i128::from(microsecond) * 1_000
+            + i128::from(nanosecond);
         if let Some(unit) = smallest.as_deref() {
             match unit {
                 "hour" => {
@@ -1851,6 +1857,59 @@ mod stubs {
                 "nanosecond" => precision = 9,
                 _ => unreachable!(),
             }
+        }
+        if precision != usize::MAX {
+            let quantum = 10i128.pow((9 - precision) as u32);
+            let quotient = fraction / quantum;
+            let remainder = fraction % quantum;
+            let epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                _ => 0,
+            };
+            let mode = rounding_mode.as_deref().unwrap_or("trunc");
+            let round_up = match mode {
+                "trunc" => false,
+                "floor" => false,
+                "ceil" | "expand" => remainder != 0,
+                "halfCeil" | "halfFloor" | "halfExpand" | "halfTrunc" | "halfEven" => {
+                    remainder * 2 > quantum
+                        || (remainder * 2 == quantum
+                            && match mode {
+                                "halfCeil" => true,
+                                "halfFloor" => false,
+                                "halfTrunc" => epoch < 0,
+                                "halfEven" => quotient % 2 != 0,
+                                _ => true,
+                            })
+                }
+                _ => false,
+            };
+            fraction = (quotient + i128::from(round_up)) * quantum;
+            if fraction >= 1_000_000_000 {
+                fraction = 0;
+                second += 1;
+                if second >= 60 {
+                    second = 0;
+                    minute += 1;
+                    if minute >= 60 {
+                        minute = 0;
+                        hour += 1;
+                        if hour >= 24 {
+                            hour = 0;
+                            if let Some(next) = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                                .and_then(|date| date.checked_add_days(chrono::Days::new(1)))
+                            {
+                                year = next.year();
+                                month = next.month();
+                                day = next.day();
+                            }
+                        }
+                    }
+                }
+            }
+            millisecond = (fraction / 1_000_000) as u32;
+            microsecond = (fraction / 1_000 % 1_000) as u32;
+            nanosecond = (fraction % 1_000) as u32;
         }
         let suffix = if precision == 0 || (fraction == 0 && precision == usize::MAX) {
             String::new()
