@@ -79,11 +79,10 @@ pub fn log(
 ) -> Result<Value, quench_runtime::execute::VmError> {
     let line = format_args(args);
     let state = state.borrow();
-    if let Some(sink) = &state.output {
-        sink(&line);
-    }
     if is_error {
         eprintln!("{line}");
+    } else if let Some(sink) = &state.output {
+        sink(&line);
     }
     Ok(Value::Undefined)
 }
