@@ -37,15 +37,24 @@ fn execute_device_task(
     let Some(scheduler) = task_scheduler(task) else {
         return Ok(None);
     };
+    execute_device_task_words(function, arguments, v1, &scheduler)
+}
+
+fn execute_device_task_words(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    arguments: &[crate::value::Value],
+    v1: &crate::register_file::SlotWord,
+    scheduler: &crate::value::Value,
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     let packet = arguments
         .first()
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
-    let Some(call) = device_task_call(function, &scheduler, v1, &packet) else {
+    let Some(call) = device_task_call(function, scheduler, v1, &packet) else {
         return Ok(None);
     };
 
-    let result = call.execute(v1, &scheduler)?;
+    let result = call.execute(v1, scheduler)?;
     crate::execution_trace::kernel("device_task_run_word_slots", false);
     Ok(Some(result))
 }
