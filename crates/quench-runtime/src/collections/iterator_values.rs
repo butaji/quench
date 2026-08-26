@@ -60,7 +60,17 @@ pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
         ));
     };
     if is_helper_iter(data) {
-        if *data.executing.borrow() || *data.in_return.borrow() {
+        let completed = match &*data.state.borrow() {
+            IteratorState::Mapped { done, .. }
+            | IteratorState::Filtered { done, .. }
+            | IteratorState::FlatMapped { done, .. }
+            | IteratorState::Dropped { done, .. }
+            | IteratorState::Concat { done, .. }
+            | IteratorState::Zip { done, .. } => *done,
+            IteratorState::Take { remaining, .. } => *remaining == u64::MAX,
+            _ => false,
+        };
+        if *data.executing.borrow() || (*data.in_return.borrow() && !completed) {
             return Err(crate::value::error::throw_type_error(
                 "Iterator is already executing",
             ));
@@ -140,7 +150,7 @@ pub(crate) fn builtin_for(data: &crate::value::IteratorData) -> crate::ops::Buil
         IteratorState::Dropped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Take { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Concat { .. } => crate::ops::Builtin::IteratorPrototype,
-        IteratorState::Zip { .. } => crate::ops::Builtin::IteratorPrototype,
+        IteratorState::Zip { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
     }
 }
 
