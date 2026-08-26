@@ -1723,6 +1723,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             !fraction.is_empty() && fraction.bytes().all(|byte| byte.is_ascii_digit())
         });
         let clock_has_minutes = time
+            .split(['+', '-'])
+            .next()
+            .unwrap_or(time)
             .split(['.', ','])
             .next()
             .is_some_and(|clock| clock.matches(':').count() >= 1 || clock.len() >= 4);
