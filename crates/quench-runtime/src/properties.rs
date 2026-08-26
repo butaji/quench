@@ -55,6 +55,9 @@ fn reduce_computed_get(
     }
     let object =
         crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
+    if !member.optional && !is_optional_chain_value(&member.object) {
+        ops.push(Op::RequireObjectCoercible { src: object });
+    }
     reduce_dynamic_get(
         &member.expression,
         object,
