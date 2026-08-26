@@ -23,7 +23,25 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
 
 /// `new net.Socket()` creates an unconnected socket whose `connect` method
 /// shares the public connection capability and validation path.
-pub fn socket_construct(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_)))
+    {
+        let fd = execute::get_property(options, "fd");
+        if let Value::String(_) = fd {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ])));
+        }
+        if matches!(fd, Value::Number(value) if value < 0.0) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("RangeError".into())),
+                ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+            ])));
+        }
+    }
     let (object, _id) = new_net_object(state, socket_props())?;
     let object = install_socket_counters(object)?;
     install_methods(
@@ -55,7 +73,85 @@ fn connect_with_receiver(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(path) = args
+        .first()
+        .filter(|value| matches!(value, Value::String(_)))
+    {
+        let path = execute::to_js_string(path)?;
+        if path.starts_with('/') {
+            let (object, _) = new_net_object(state, socket_props())?;
+            let error = host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("code".into(), Value::String("ENOENT".into())),
+                ("syscall".into(), Value::String("connect".into())),
+            ]);
+            let error = execute::define_property(
+                error,
+                "message",
+                host_api::object(vec![
+                    (
+                        "value".into(),
+                        Value::String(format!("connect ENOENT {path}")),
+                    ),
+                    ("enumerable".into(), Value::Boolean(false)),
+                ]),
+            )?;
+            state
+                .borrow_mut()
+                .net
+                .pending_errors
+                .push((object.clone(), error));
+            return Ok(object);
+        }
+    }
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_)))
+    {
+        let path = execute::get_property(options, "path");
+        if !matches!(path, Value::Undefined | Value::Null) && !matches!(path, Value::String(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String("The \"path\" argument must be a string".into()),
+                ),
+            ])));
+        }
+    }
     let (port, host) = connect_target(state, args)?;
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_)))
+    {
+        let block_list = execute::get_property(options, "blockList");
+        let address = host.as_deref().unwrap_or(LOCAL_HOST);
+        if quench_runtime::is_callable(&execute::get_property(&block_list, "check")) {
+            let checked = execute::call(
+                &execute::get_property(&block_list, "check"),
+                &block_list,
+                &[Value::String(if address == "localhost" {
+                    LOCAL_HOST.into()
+                } else {
+                    address.into()
+                })],
+            )?;
+            if execute::is_truthy(&checked) {
+                let (object, _) = new_net_object(state, socket_props())?;
+                let error = host_api::object(vec![
+                    ("name".into(), Value::String("Error".into())),
+                    ("code".into(), Value::String("ERR_IP_BLOCKED".into())),
+                ]);
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((object.clone(), error));
+                return Ok(object);
+            }
+        }
+    }
     let addr = resolve(host.as_deref().unwrap_or(LOCAL_HOST), port);
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
         Ok(stream) => stream,
@@ -207,6 +303,16 @@ pub fn server_listen(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::String(path)) = args.first() {
+        if path.starts_with('/') {
+            state
+                .borrow_mut()
+                .net
+                .pending_errors
+                .push((receiver.clone(), server_path_error(path)));
+            return Ok(receiver);
+        }
+    }
     let (port, host) = listen_target(state, args)?;
     let listener = match bind_listener(port, host.as_deref()) {
         Ok(listener) => listener,
@@ -222,6 +328,20 @@ pub fn server_listen(
     super::set_server_connection_key(&receiver, port, host.as_deref())?;
     add_listener_cb(state, &receiver, args.last(), "listening")?;
     Ok(receiver.clone())
+}
+
+fn server_path_error(path: &str) -> Value {
+    host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        (
+            "message".into(),
+            Value::String("No such file or directory".into()),
+        ),
+        ("code".into(), Value::String("ENOENT".into())),
+        ("address".into(), Value::String(path.into())),
+        ("port".into(), Value::Number(0.0)),
+        ("syscall".into(), Value::String("bind".into())),
+    ])
 }
 
 /// Resolve the `(port, host)` listen target, mirroring `connect_target`.
@@ -447,6 +567,22 @@ pub fn socket_destroy(
         emit(state, &receiver, "close", Vec::new())?;
     }
     Ok(receiver)
+}
+
+pub fn socket_unref(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn socket_ref(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 /// `socket.address()` — the local address object.

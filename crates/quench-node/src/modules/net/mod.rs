@@ -26,9 +26,9 @@ mod pump;
 
 pub use methods::{
     connect, connect_existing, create_server, server_address, server_close, server_listen,
-    server_ref, server_unref,
-    socket_address, socket_construct, socket_destroy, socket_end, socket_pause, socket_resume,
-    socket_set_encoding, socket_set_keep_alive, socket_set_no_delay, socket_write,
+    server_ref, server_unref, socket_address, socket_construct, socket_destroy, socket_end,
+    socket_pause, socket_ref, socket_resume, socket_set_encoding, socket_set_keep_alive,
+    socket_set_no_delay, socket_unref, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -249,10 +249,23 @@ fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
         // Node exposes a nulled-out native handle after a socket closes.
         ("_handle", Value::Null),
+        ("readable", Value::Boolean(true)),
+        ("writable", Value::Boolean(true)),
+        ("destroyed", Value::Boolean(false)),
+        ("connecting", Value::Boolean(false)),
+        ("readyState", Value::String("open".into())),
         ("connect", cap(crate::registry::SPEC_NET_CONNECT)),
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
         ("destroy", cap(crate::registry::SPEC_NET_SOCKET_DESTROY)),
+        (
+            "unref",
+            cap(crate::registry::NodeSpec::new("net:socketUnref", 2290)),
+        ),
+        (
+            "ref",
+            cap(crate::registry::NodeSpec::new("net:socketRef", 2291)),
+        ),
         ("address", cap(crate::registry::SPEC_NET_SOCKET_ADDRESS)),
         (
             "setNoDelay",
@@ -502,6 +515,10 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_NET_SERVER),
         ),
         (
+            "BlockList",
+            crate::host::capability(crate::registry::NodeSpec::new("net:BlockList", 2292)),
+        ),
+        (
             "isIP",
             crate::host::capability(crate::registry::SPEC_NET_ISIP),
         ),
@@ -523,4 +540,97 @@ pub fn build() -> Value {
         ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
+}
+
+pub fn block_list_construct(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(host_api::object(vec![
+        (
+            "\0quench:blocklist:addresses".into(),
+            host_api::array(Vec::new()),
+        ),
+        (
+            "addSubnet".into(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "net:BlockList:addSubnet",
+                2293,
+            )),
+        ),
+        (
+            "addAddress".into(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "net:BlockList:addAddress",
+                2294,
+            )),
+        ),
+        (
+            "check".into(),
+            crate::host::capability(crate::registry::NodeSpec::new("net:BlockList:check", 2295)),
+        ),
+    ]))
+}
+
+pub fn block_list_add_address(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let list = execute::get_property(receiver, "\0quench:blocklist:addresses");
+    let mut values = match list {
+        Value::Array(array) => (0..array.logical_len())
+            .map(|i| array.index_value(i))
+            .collect(),
+        _ => Vec::new(),
+    };
+    values.push(Value::String(
+        args.first().map(value_to_string).unwrap_or_default(),
+    ));
+    execute::set_property_in_place(
+        receiver,
+        "\0quench:blocklist:addresses",
+        host_api::array(values),
+    );
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_check(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let address = args.first().map(value_to_string).unwrap_or_default();
+    let blocked = receiver
+        .and_then(
+            |value| match execute::get_property(value, "\0quench:blocklist:addresses") {
+                Value::Array(array) => Some(
+                    (0..array.logical_len())
+                        .any(|i| value_to_string(&array.index_value(i)) == address),
+                ),
+                _ => None,
+            },
+        )
+        .unwrap_or(false);
+    Ok(Value::Boolean(blocked))
+}
+
+pub fn block_list_add_subnet(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(prefix) = args.get(1) else {
+        return Err(execute::type_error("prefix must be a number"));
+    };
+    if !matches!(prefix, Value::Number(value) if value.is_finite() && *value >= 0.0) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("RangeError".into())),
+            ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+        ])));
+    }
+    Ok(Value::Undefined)
 }
