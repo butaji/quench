@@ -70,7 +70,11 @@ pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
             IteratorState::Take { remaining, .. } => *remaining == u64::MAX,
             _ => false,
         };
-        if *data.executing.borrow() || (*data.in_return.borrow() && !completed) {
+        let active_zip = matches!(
+            &*data.state.borrow(),
+            IteratorState::Zip { started: true, .. }
+        );
+        if *data.executing.borrow() || (*data.in_return.borrow() && (!completed || active_zip)) {
             return Err(crate::value::error::throw_type_error(
                 "Iterator is already executing",
             ));
