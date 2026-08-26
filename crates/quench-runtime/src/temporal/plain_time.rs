@@ -388,11 +388,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let Some(value) = value else {
         return Err(crate::value::error::throw_type_error("Invalid time"));
     };
-    if let Value::String(text) = value {
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
         if crate::conversion::is_symbol(value) {
             return Err(crate::value::error::throw_type_error("Invalid time"));
         }
-        let parsed = parse_string(text)?;
+        let text = crate::conversion::to_string(value)?;
+        let parsed = parse_string(&text)?;
         let _ = overflow_reject(options)?;
         return Ok(parsed);
     }
@@ -885,27 +886,33 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     if !is_plain_time(receiver) {
         return Err(crate::value::error::throw_type_error("Not a PlainTime"));
     }
-    let shorthand = options.filter(|value| matches!(value, Value::String(_)));
+    let shorthand =
+        options.filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)));
     let options = options
         .filter(|value| crate::value::is_object(value))
         .or(shorthand)
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid rounding options"))?;
-    let (increment, rounding_mode, unit_value) = if matches!(options, Value::String(_)) {
-        (1_i64, "halfExpand".into(), options.clone())
-    } else {
-        let value = crate::execute::get_property_result(options, "roundingIncrement")?;
-        let increment = match value {
-            Value::Undefined => 1,
-            value => crate::conversion::to_number(&value)? as i64,
+    let (increment, rounding_mode, unit_value) =
+        if matches!(options, Value::String(_) | Value::StringUnits(_)) {
+            (
+                1_i64,
+                "halfExpand".into(),
+                Value::String(crate::conversion::to_string(options)?),
+            )
+        } else {
+            let value = crate::execute::get_property_result(options, "roundingIncrement")?;
+            let increment = match value {
+                Value::Undefined => 1,
+                value => crate::conversion::to_number(&value)? as i64,
+            };
+            let rounding_mode = option_text(&crate::execute::get_property_result(
+                options,
+                "roundingMode",
+            )?)?
+            .unwrap_or_else(|| "halfExpand".into());
+            let unit_value = crate::execute::get_property_result(options, "smallestUnit")?;
+            (increment, rounding_mode, unit_value)
         };
-        let rounding_mode = option_text(&crate::execute::get_property_result(
-            options,
-            "roundingMode",
-        )?)?
-        .unwrap_or_else(|| "halfExpand".into());
-        let unit_value = crate::execute::get_property_result(options, "smallestUnit")?;
-        (increment, rounding_mode, unit_value)
-    };
     let unit = option_text(&unit_value)?
         .ok_or_else(|| crate::value::error::throw_range_error("Missing smallestUnit"))?;
     let unit = unit.trim_end_matches('s');
