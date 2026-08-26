@@ -72,6 +72,7 @@ pub(crate) fn integrity_apply(
     }
     match target {
         crate::value::Value::Set(data) if frozen => {
+            data.extensible.set(false);
             data.frozen.set(true);
             Ok(target.clone())
         }
