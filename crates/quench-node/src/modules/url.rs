@@ -102,21 +102,17 @@ pub fn parse(
         let href = format!("{}{}", path, hash.as_deref().unwrap_or_default());
         let mut entries = vec![("pathname".into(), Value::String(pathname)), ("path".into(), Value::String(path)), ("href".into(), Value::String(href))];
         entries.push(("search".into(), search.clone().map_or(Value::Null, Value::String)));
-        entries.push(("query".into(), query.map_or(Value::Null, |value| Value::String(encode_query_component(value)))));
+        let query_value = if args.get(1).is_some_and(execute::is_truthy) {
+            crate::modules::querystring_parse::parse(
+                _state,
+                None,
+                &[Value::String(query.unwrap_or_default().to_string())],
+            )?
+        } else {
+            query.map_or(Value::Null, |value| Value::String(encode_query_component(value)))
+        };
+        entries.push(("query".into(), query_value));
         entries.push(("hash".into(), hash.map_or(Value::Null, Value::String)));
-        if args.get(1).is_some_and(execute::is_truthy) {
-            let query = host_api::object(vec![("__query_empty".into(), Value::Undefined)]);
-            execute::define_property(
-                query.clone(),
-                "__query_empty",
-                host_api::object(vec![("enumerable".into(), Value::Boolean(false))]),
-            )?;
-            let query = execute::delete_property(query, "__query_empty").0;
-            entries.push((
-                "query".into(),
-                execute::set_prototype_of(&query, &Value::Null)?,
-            ));
-        }
         return Ok(legacy_object(entries));
     }
     let mut parsed = legacy_parse_url(&url);
@@ -374,7 +370,16 @@ pub fn format(
     let (protocol, auth, host, pathname, query, hash) = read_url_parts(_state, args);
     let slashes = execute::is_truthy(&execute::get_property(&obj, "slashes"))
         || (!host.is_empty() && protocol_uses_authority_slashes(&protocol));
-    let slashes = slashes || (protocol.trim_end_matches(':') == "file" && pathname.starts_with('/'));
+    // A plain object with `file:` defaults to an authority URL, while a
+    // parsed legacy Url carries its original opaque `href` form.
+    let has_original_href = !matches!(
+        execute::get_property(&obj, "href"),
+        Value::Undefined | Value::Null
+    );
+    let slashes = slashes
+        || (protocol.trim_end_matches(':') == "file"
+            && pathname.starts_with('/')
+            && !has_original_href);
     Ok(Value::String(assemble_url(
         &protocol, &auth, &host, &pathname, &query, &hash, slashes,
     )))
