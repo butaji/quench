@@ -41,7 +41,8 @@ fn define_rejected(error: &VmError) -> bool {
         _ => None,
     });
     match message.as_deref() {
-        Some("Cannot define a property on a non-extensible object") => true,
+        Some("Cannot define a property on a non-extensible object")
+        | Some("Cannot assign to read only array length") => true,
         Some(text) => text.starts_with("Cannot redefine"),
         None => false,
     }

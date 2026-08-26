@@ -154,7 +154,11 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
             | Builtin::IntlPluralRulesPrototype,
         )) => "Object",
         Some(Value::Builtin(_)) => "Function",
-        Some(Value::Proxy(_)) => "Object",
+        // IsArray and IsCallable unwrap proxies, while other internal slots
+        // (such as Date's) are not exposed through a proxy.  Preserve only
+        // those two legacy tags; a proxy around Date therefore remains an
+        // ordinary Object.
+        Some(Value::Proxy(proxy)) => proxy_prototype_tag(proxy),
         Some(Value::Promise(_)) => "Promise",
         Some(Value::Map(_)) | Some(Value::Set(_)) => "Object",
         Some(Value::Generator(_)) => "Generator",
@@ -175,17 +179,39 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
     }
 }
 
+fn proxy_prototype_tag(proxy: &crate::value::ProxyValue) -> &'static str {
+    match &proxy.target {
+        Value::Array(_) => "Array",
+        target if crate::conversion::is_callable(target) => "Function",
+        Value::Proxy(inner) => proxy_prototype_tag(inner),
+        _ => "Object",
+    }
+}
+
 fn string_tag(value: &Value) -> Option<String> {
     // Per spec, Object.prototype.toString does `Get(O, @@toStringTag)`,
     // but the spec defines the built-in tag check first. Built-in iterator
     // prototypes carry the tag, so we look at the chain — except for
     // callable builtins, which keep the legacy "Function" tag.
     if !is_callable_builtin(value) {
+        if let Some(tag) = collection_string_tag(value) {
+            return Some(tag);
+        }
         if let Some(tag) = own_or_inherited_to_string_tag(value) {
             return Some(tag);
         }
     }
     None
+}
+
+fn collection_string_tag(value: &Value) -> Option<String> {
+    let (builtin, tag) = match value {
+        Value::Map(_) => (Builtin::MapPrototype, "Map"),
+        Value::Set(_) => (Builtin::SetPrototype, "Set"),
+        _ => return None,
+    };
+    (!crate::builtins::builtin_prototype_property_is_removed(builtin, "Symbol.toStringTag"))
+        .then(|| tag.to_string())
 }
 
 fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {

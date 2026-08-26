@@ -371,6 +371,22 @@ pub(crate) fn array_to_string(
     if crate::conversion::is_callable(&join) {
         return crate::functions::execute_target(&join, &receiver, &[]);
     }
+    if let Value::Proxy(proxy) = &receiver {
+        if crate::proxy::is_revoked(proxy) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot perform operation on revoked proxy",
+            ));
+        }
+    }
+    // Object.prototype.toString performs Get(O, @@toStringTag) before
+    // falling back to the intrinsic class tag.  Do that observable lookup
+    // here so accessor tags (including throwing getters) are preserved.
+    if let Value::String(tag) = crate::execute::get_property_result(
+        &receiver,
+        "Symbol.toStringTag",
+    )? {
+        return Ok(Value::String(format!("[object {tag}]")));
+    }
     Ok(crate::builtins::prototype_to_string(Some(&receiver)))
 }
 
