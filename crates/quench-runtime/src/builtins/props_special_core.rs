@@ -277,6 +277,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainTime, "from") => Some(Value::Builtin(TemporalPlainTimeFrom)),
         (TemporalPlainTime, "compare") => Some(Value::Builtin(TemporalPlainTimeCompare)),
         (TemporalPlainTimePrototype, "constructor") => Some(Value::Builtin(TemporalPlainTime)),
+        (TemporalPlainTimePrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Temporal.PlainTime".into()))
+        }
         (TemporalPlainTimePrototype, "hour") => Some(Value::Builtin(TemporalPlainTimeHourGetter)),
         (TemporalPlainTimePrototype, "minute") => {
             Some(Value::Builtin(TemporalPlainTimeMinuteGetter))
