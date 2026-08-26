@@ -384,7 +384,11 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         };
         return calendar_time_round(object, &relative, options, index);
     }
-    if index <= 3 && (index <= 2 || has_calendar) {
+    if index <= 3
+        && (index <= 2
+            || has_calendar
+            || largest_unit(options).is_some_and(|largest| largest < index))
+    {
         if index == 2
             && largest_unit(options).is_none()
             && duration_field(object, "months") != 0
@@ -423,9 +427,7 @@ fn calendar_time_round(
     options: Option<&Value>,
     index: usize,
 ) -> Result<Value, VmError> {
-    let year = number_property(relative, "year") as i32;
-    let month = number_property(relative, "month") as u32;
-    let day = number_property(relative, "day") as u32;
+    let (year, month, day) = relative_date(relative)?;
     let start = NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     let sign = if duration_field(object, "years") < 0
@@ -739,9 +741,7 @@ fn calendar_round(
     unit: usize,
     preserve_larger: bool,
 ) -> Result<Value, VmError> {
-    let year = number_property(relative, "year") as i32;
-    let month = number_property(relative, "month") as u32;
-    let day = number_property(relative, "day") as u32;
+    let (year, month, day) = relative_date(relative)?;
     let start = NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     let sign = if duration_field(object, "years") < 0
