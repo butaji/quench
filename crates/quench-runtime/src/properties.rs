@@ -733,7 +733,7 @@ fn reject_restricted_property_write(
     Ok(())
 }
 
-fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {
+pub(crate) fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {
     // Prototype objects do not truly own `length`/`name`; assigning them
     // creates an own property that shadows the callable metadata.
     let prototype_meta_key = matches!(key, "length" | "name")
