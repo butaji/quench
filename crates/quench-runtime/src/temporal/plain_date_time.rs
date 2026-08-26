@@ -617,20 +617,20 @@ fn to_zoned_date_time(
     let values = fields(
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
     )?;
-    let Value::String(time_zone) =
-        time_zone.ok_or_else(|| crate::value::error::throw_type_error("Missing time zone"))?
-    else {
+    let time_zone = time_zone
+        .ok_or_else(|| crate::value::error::throw_type_error("Missing time zone"))?;
+    if crate::conversion::is_symbol(time_zone) {
         return Err(crate::value::error::throw_type_error("Invalid time zone"));
+    }
+    let time_zone = match time_zone {
+        Value::String(value) => value.clone(),
+        Value::StringUnits(_) => crate::conversion::to_string(time_zone)?,
+        _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
     };
-    if time_zone.is_empty() {
-        return Err(crate::value::error::throw_range_error("Invalid time zone"));
-    }
-    if time_zone.starts_with("-000000-") {
-        return Err(crate::value::error::throw_range_error("Invalid time zone"));
-    }
+    let time_zone = normalize_time_zone_identifier(&time_zone)?;
     let _ = disambiguation;
     let mut epoch = epoch_nanos(&values);
-    if let Some(offset) = fixed_offset_nanos(time_zone) {
+    if let Some(offset) = fixed_offset_nanos(&time_zone) {
         epoch -= offset;
     }
     const INSTANT_LIMIT: i128 = 8_640_000_000_000_000_000_000;
@@ -644,7 +644,7 @@ fn to_zoned_date_time(
                 Value::BigInt(epoch.to_string()),
             ),
             ("calendarId".into(), Value::String("iso8601".into())),
-            ("timeZoneId".into(), Value::String(time_zone.clone())),
+            ("timeZoneId".into(), Value::String(time_zone)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
@@ -715,6 +715,60 @@ fn fixed_offset_nanos(time_zone: &str) -> Option<i128> {
     let hours = hours.parse::<i128>().ok()?;
     let minutes = minutes.parse::<i128>().ok()?;
     Some(sign * (hours * 3_600_000_000_000 + minutes * 60_000_000_000))
+}
+
+fn normalize_time_zone_identifier(text: &str) -> Result<String, VmError> {
+    if text.is_empty() || text.starts_with("-000000-") || text.contains('\u{2212}') {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    if text.eq_ignore_ascii_case("utc") {
+        return Ok("UTC".into());
+    }
+    if let Some((_, annotation)) = text.rsplit_once('[') {
+        let annotation = annotation
+            .strip_suffix(']')
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"))?;
+        if annotation.is_empty() {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        if annotation.eq_ignore_ascii_case("utc") {
+            return Ok("UTC".into());
+        }
+        if annotation.starts_with(['+', '-']) {
+            if fixed_offset_nanos(annotation).is_none() {
+                return Err(crate::value::error::throw_range_error("Invalid time zone"));
+            }
+            return Ok(annotation.to_string());
+        }
+        return Ok(annotation.to_string());
+    }
+    let time = text.split(['T', 't', ' ']).nth(1);
+    if let Some(time) = time {
+        if time.ends_with(['Z', 'z']) {
+            return Ok("UTC".into());
+        }
+        let offset = time
+            .get(1..)
+            .and_then(|value| value.find(['+', '-']).map(|index| &value[index..]));
+        if let Some(offset) = offset {
+            if matches!(offset.len(), 3 | 5 | 6)
+                && (offset.len() == 3
+                    && offset[1..].bytes().all(|byte| byte.is_ascii_digit())
+                    || offset.len() == 6
+                        && offset.as_bytes().get(3) == Some(&b':')
+                        && offset[1..3].bytes().all(|byte| byte.is_ascii_digit())
+                        && offset[4..].bytes().all(|byte| byte.is_ascii_digit()))
+            {
+                return Ok(offset.to_string());
+            }
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    if fixed_offset_nanos(text).is_some() {
+        return Ok(text.to_string());
+    }
+    Ok(text.to_string())
 }
 
 fn with_plain_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Value, VmError> {
