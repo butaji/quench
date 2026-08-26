@@ -2056,7 +2056,8 @@ pub fn abort_controller_abort(
             crate::host::capability(crate::registry::SPEC_ABORT_EVENT_STOP_IMMEDIATE),
         ),
     ]);
-    crate::modules::event_target::dispatch_event(state, Some(&original_signal), &[event])
+    crate::modules::event_target::dispatch_event(state, Some(&original_signal), &[event])?;
+    propagate_abort_composites(state, &original_signal)
 }
 
 pub fn abort_event_stop_immediate(
@@ -2470,7 +2471,71 @@ pub fn abort_signal_timeout_fire(
     execute::set_property_in_place(signal, "aborted", Value::Boolean(true));
     execute::set_property_in_place(signal, "reason", reason);
     let event = quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
-    crate::modules::event_target::dispatch_event(state, Some(signal), &[event])
+    crate::modules::event_target::dispatch_event(state, Some(signal), &[event])?;
+    propagate_abort_composites(state, signal)
+}
+
+fn propagate_abort_composites(
+    state: &Rc<RefCell<HostState>>,
+    source: &Value,
+) -> Result<Value, VmError> {
+    let Some(identity) = crate::modules::event_target::target_identity(source) else {
+        return Ok(Value::Undefined);
+    };
+    let composites = state
+        .borrow_mut()
+        .abort_composites
+        .remove(&identity)
+        .unwrap_or_default();
+    let reason = execute::get_property(source, "reason");
+    for composite in composites {
+        if execute::is_truthy(&execute::get_property(&composite, "aborted")) {
+            continue;
+        }
+        execute::set_property_in_place(&composite, "aborted", Value::Boolean(true));
+        execute::set_property_in_place(&composite, "reason", reason.clone());
+        let event = quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+        crate::modules::event_target::dispatch_event(state, Some(&composite), &[event])?;
+        propagate_abort_composites(state, &composite)?;
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn abort_signal_any(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let list = args.first().ok_or_else(|| execute::type_error("The \"signals\" argument must be an instance of Array"))?;
+    let length = match execute::get_property(list, "length") {
+        Value::Number(n) if n.is_finite() && n >= 0.0 => n as usize,
+        _ => return Err(execute::type_error("The \"signals\" argument must be an instance of Array")),
+    };
+    let composite = crate::modules::event_target::new_target(state, &[])?;
+    execute::set_property_in_place(&composite, "aborted", Value::Boolean(false));
+    execute::set_property_in_place(&composite, crate::modules::event_target::ABORT_SIGNAL_BRAND, Value::Boolean(true));
+    for index in 0..length {
+        let source = execute::get_property(list, &index.to_string());
+        if !matches!(source, Value::Object(_)) || !matches!(execute::get_property(&source, crate::modules::event_target::ABORT_SIGNAL_BRAND), Value::Boolean(true)) {
+            return Err(execute::type_error("The \"signals\" argument must contain only AbortSignal instances"));
+        }
+        if execute::is_truthy(&execute::get_property(&source, "aborted")) {
+            execute::set_property_in_place(&composite, "aborted", Value::Boolean(true));
+            execute::set_property_in_place(&composite, "reason", execute::get_property(&source, "reason"));
+            return Ok(composite);
+        }
+        if let Some(identity) = crate::modules::event_target::target_identity(&source) {
+            state.borrow_mut().abort_composites.entry(identity).or_default().push(composite.clone());
+        }
+    }
+    Ok(composite)
+}
+
+pub fn abort_signal_any_call(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    abort_signal_any(state, args)
 }
 
 pub fn process_on(
