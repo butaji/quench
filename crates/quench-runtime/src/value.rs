@@ -1230,6 +1230,22 @@ impl ObjectData {
             .filter(|name| !name.starts_with('\0'))
             .position(|name| name == key)
     }
+
+    /// Return the physical property-vector slot for a public own name.
+    ///
+    /// Logical shape slots omit private descriptor entries, while linked
+    /// execution caches retain pointers into the canonical vector.  Keeping
+    /// this projection here prevents fast paths from reconstructing a second
+    /// property layout.
+    #[inline]
+    pub(crate) fn physical_slot_for_name(&self, key: &str) -> Option<usize> {
+        if self.shape().dictionary || key.starts_with('\0') {
+            return None;
+        }
+        self.properties
+            .names()
+            .position(|name| !name.starts_with('\0') && name == key)
+    }
     /// Check the canonical AoS projection used by shape/slot fast paths.
     ///
     /// Kept as a cheap debug-only assertion at call sites so optimized code
