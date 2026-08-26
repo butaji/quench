@@ -410,6 +410,15 @@ fn unhandled_error(arg: Option<&Value>) -> VmError {
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
+        Value::Object(_) => {
+            let method = execute::get_property(value, "toString");
+            if quench_runtime::is_callable(&method) {
+                if let Ok(Value::String(result)) = execute::call(&method, value, &[]) {
+                    return result;
+                }
+            }
+            String::new()
+        }
         _ => String::new(),
     }
 }
@@ -433,7 +442,7 @@ pub fn is_ip(args: &[Value]) -> i32 {
     if std::net::Ipv4Addr::from_str(&s).is_ok() {
         return 4;
     }
-    if std::net::Ipv6Addr::from_str(&s).is_ok() {
+    if parse_ipv6(&s).is_some() {
         return 6;
     }
     0
@@ -446,7 +455,19 @@ pub fn is_ipv4(args: &[Value]) -> bool {
 
 pub fn is_ipv6(args: &[Value]) -> bool {
     let s = args.first().map(value_to_string).unwrap_or_default();
-    s.parse::<std::net::Ipv6Addr>().is_ok()
+    parse_ipv6(&s).is_some()
+}
+
+fn parse_ipv6(value: &str) -> Option<std::net::Ipv6Addr> {
+    let (address, zone) = value.split_once('%').map_or((value, None), |(address, zone)| {
+        (address, Some(zone))
+    });
+    if zone.is_some_and(|zone| {
+        zone.is_empty() || !zone.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'.')
+    }) {
+        return None;
+    }
+    address.parse().ok()
 }
 
 pub fn build() -> Value {
