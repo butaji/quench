@@ -198,6 +198,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
         ),
         (
+            "abort",
+            crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
+        ),
+        (
             "nextTick",
             crate::host::capability(crate::registry::SPEC_PROCESS_NEXT_TICK),
         ),
