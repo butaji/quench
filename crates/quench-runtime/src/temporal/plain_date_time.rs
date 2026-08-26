@@ -17,7 +17,13 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut fields = arguments
         .iter()
         .take(9)
-        .map(crate::conversion::to_number)
+        .map(|value| {
+            if matches!(value, Value::Undefined) {
+                Ok(0.0)
+            } else {
+                crate::conversion::to_number(value)
+            }
+        })
         .collect::<Result<Vec<_>, _>>()?;
     while fields.len() < 9 {
         fields.push(0.0);
