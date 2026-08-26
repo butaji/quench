@@ -53,6 +53,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlRelativeTimeFormatPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.RelativeTimeFormat".into()))
         }
+        (PromisePrototype, "Symbol.toStringTag") => Some(Value::String("Promise".into())),
         (IntlDurationFormatPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.DurationFormat".into()))
         }

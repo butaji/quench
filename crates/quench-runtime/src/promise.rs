@@ -491,7 +491,35 @@ pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
 
 fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     match receiver {
-        Some(Value::Builtin(Builtin::Promise)) => Ok(promise_resolve(arguments)),
+        Some(Value::Builtin(Builtin::Promise)) => {
+            let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+            if let Value::Promise(promise) = &value {
+                let constructor = crate::execute::get_property_result(&value, "constructor")?;
+                if matches!(constructor, Value::Builtin(Builtin::Promise)) {
+                    return Ok(value);
+                }
+                let target = PromiseData::allocate(PromiseState::Pending);
+                let resolve = bound_settler(Builtin::PromiseAdoptResolve, &target, 1.0);
+                let reject = bound_settler(Builtin::PromiseAdoptReject, &target, 1.0);
+                promise
+                    .then_actions
+                    .borrow_mut()
+                    .push((Some(resolve), Some(reject)));
+                THEN_RESULTS
+                    .with(|results| {
+                        results
+                            .borrow_mut()
+                            .entry(Rc::as_ptr(promise) as usize)
+                            .or_default()
+                            .push_back(Rc::clone(&target));
+                    });
+                if !matches!(*promise.state.borrow(), PromiseState::Pending) {
+                    queue_promise(promise);
+                }
+                return Ok(Value::Promise(target));
+            }
+            Ok(promise_resolve(&[value]))
+        }
         Some(Value::Promise(promise)) => {
             let value = arguments.first().cloned().unwrap_or(Value::Undefined);
             if let Value::Promise(other) = &value {

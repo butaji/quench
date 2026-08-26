@@ -24,6 +24,9 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
+    if let Some(override_value) = crate::vm::intrinsic_override_property(builtin, key, value) {
+        return override_value;
+    }
     if key == "toString" && callable_builtin_value(value) {
         return Value::Builtin(Builtin::FunctionPrototypeToString);
     }
@@ -49,6 +52,9 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     }
     // Static Promise methods need the constructor as [[This]] when called
     // through a property reference; prototype methods are bound below.
+    if builtin == Builtin::Promise && matches!(property, Value::Builtin(Builtin::PromiseTry)) {
+        return property;
+    }
     if builtin == Builtin::Promise && matches!(property, Value::Builtin(_)) {
         return bind_method(value, property);
     }
