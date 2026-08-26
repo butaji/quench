@@ -15,6 +15,7 @@ pub(crate) enum DirectConstructorSource {
     Argument(u16),
     Boolean(bool),
     Integer(i32),
+    Null,
     GuardedArray {
         length_slot: u16,
     },
