@@ -174,7 +174,7 @@ fn direct_constructor_value(
         crate::facts::DirectConstructorSource::GuardedArray { length_slot } => {
             let global = function.captures.get(0);
             let constructor =
-                crate::vm::get_global_named_property_result(&global, "Array", global_array_cache)
+                crate::vm::get_named_property_result(&global, "Array", global_array_cache)
                     .ok()?;
             if !matches!(
                 constructor,
