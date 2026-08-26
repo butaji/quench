@@ -29,56 +29,8 @@ fn execute_linked_schedule(
     if !linked_schedule_chain_is_proven(&list_value, &plan)? {
         return Ok(None);
     }
-    let task_control_run = match &list_value {
-        crate::value::Value::Object(_) => {
-            let callee = linked_method(&list_value, plan.ready, plan.run_pc)?;
-            match callee {
-                crate::value::Value::Function(function) => {
-                    match_task_control_run(&function).map(|run| (function, run))
-                }
-                _ => None,
-            }
-        }
-        crate::value::Value::Null => None,
-        _ => return Ok(None),
-    };
-    let Some((task_control_function, task_control_plan)) = task_control_run else {
-        return Ok(None);
-    };
-    if !linked_schedule_chain_has_run(&list_value, &plan, &task_control_function)? {
-        return Ok(None);
-    }
-    let task_runners = linked_task_runners(&list_value);
-    let linked_scheduler = task_runners
-        .as_ref()
-        .and_then(|_| LinkedSchedulerWords::new(scheduler, &task_control_plan));
-    if let (Some(task_runners), Some(linked_scheduler)) = (&task_runners, &linked_scheduler) {
-        if let Some(result) = execute_linked_schedule_state(
-            &list_value,
-            current,
-            current_id,
-            task_runners,
-            linked_scheduler,
-        ) {
-            return Ok(Some(result));
-        }
-        if let Some(result) = execute_direct_schedule_cursor(
-            receiver,
-            &plan,
-            &list_value,
-            current,
-            current_id,
-            &task_control_plan,
-            task_runners,
-            scheduler,
-            linked_scheduler,
-        )? {
-            return Ok(Some(result));
-        }
-    }
-    let packet_link_cache = std::cell::Cell::new(0);
     current.copy_from(list);
-
+    let mut iterations = 0usize;
     loop {
         if scheduler.has_replacement() {
             return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
@@ -92,181 +44,69 @@ fn execute_linked_schedule(
         if tcb.has_replacement() {
             return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
         }
-        let direct = task_runners
-            .as_ref()
-            .and_then(|runners| runners.for_object(tcb));
-        if direct.is_some() {
-            crate::execution_trace::kernel("linked_tcb_word_slots", false);
-        }
-        let held = match direct.and_then(DirectTaskRunner::is_held_or_suspended) {
-            Some(held) => held,
-            None => {
-                let current_value = current.load();
-                crate::vm::is_truthy(&call_linked_method(
-                    &current_value,
-                    plan.body,
-                    plan.predicate_pc,
-                )?)
-            }
-        };
+        let current_value = current.load();
+        let held = crate::vm::is_truthy(&call_linked_method(
+            &current_value,
+            plan.body,
+            plan.predicate_pc,
+        )?);
         if held {
-            let link = direct
-                .map(|runner| runner.word(runner.link))
-                .or_else(|| crate::vm::proven_own_word(tcb, plan.link));
+            let link = crate::vm::proven_own_word(tcb, plan.link);
             let Some(link) = link else {
                 return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
             };
             current.copy_from(link);
         } else {
-            let id = direct
-                .map(|runner| runner.word(runner.id))
-                .or_else(|| crate::vm::proven_own_word(tcb, plan.id));
+            let id = crate::vm::proven_own_word(tcb, plan.id);
             let Some(id) = id else {
                 return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
             };
             current_id.copy_from(id);
-            let next = match execute_task_control_run(
-                tcb,
-                &task_control_plan,
-                direct,
-                &packet_link_cache,
-                task_runners.as_ref(),
-                linked_scheduler.as_ref(),
-            )? {
-                Some(DirectTaskOutcome::Value(value)) => value,
-                Some(DirectTaskOutcome::Miss(packet)) => {
-                    let task = direct
-                        .map(|runner| &runner.task_value)
-                        .ok_or(crate::execute::VmError::MissingReturn)?;
-                    let run = crate::execute::get_property_result(task, "run")?;
-                    crate::functions::execute_target(&run, task, &[packet])?
-                }
-                Some(DirectTaskOutcome::Step(step)) => match step.next {
-                    Some(id) => task_runners
-                        .as_ref()
-                        .and_then(|table| table.value_for_id(id))
-                        .cloned()
-                        .ok_or(crate::execute::VmError::MissingReturn)?,
-                    None => crate::value::Value::Null,
-                },
-                None => {
-                    let current_value = current.load();
-                    crate::functions::execute_target(
-                        &crate::value::Value::Function(std::rc::Rc::clone(&task_control_function)),
-                        &current_value,
-                        &[],
-                    )?
-                }
-            };
+            let next = call_linked_method(&current_value, plan.ready, plan.run_pc)?;
             current.store(next);
         }
-        crate::execution_trace::kernel("linked_schedule_word_slots", false);
+        iterations += 1;
+        crate::execution_trace::kernel("L|S|C", false);
     }
+    crate::execution_trace::numeric_kernel_iterations("L|S|C", 0, iterations, 0, 0);
     Ok(Some(crate::value::Value::Undefined))
 }
 
-fn linked_schedule_word<'a>(
-    object: &'a crate::value::ObjectData,
-    key: &str,
-    cache: &std::cell::Cell<u64>,
-) -> Option<&'a crate::register_file::SlotWord> {
-    if let Some(crate::vm::NamedCachedPayload::Word(word)) =
-        crate::vm::get_named_cached_payload(object, cache)
-    {
-        // SAFETY: the layout guard above proves that `word` belongs to the
-        // retained object and names the admitted ordinary own slot.
-        return Some(unsafe { &*word });
-    }
-    let word = crate::vm::proven_own_word(object, key)?;
-    let slot = object.physical_slot_for_name(key)?;
-    cache.set(crate::machine::pack_named_cache(
-        object.semantic_layout_id(),
-        slot as u32,
-    ));
-    Some(word)
+fn linked_method(
+    receiver: &crate::value::Value,
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let metadata = code
+        .metadata_at(pc)
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    let name = metadata
+        .name
+        .as_deref()
+        .ok_or(crate::execute::VmError::MissingReturn)?;
+    crate::vm::get_named_property_result(receiver, name, &metadata.named_cache)
 }
 
-fn match_task_control_run(
-    function: &std::rc::Rc<crate::value::FunctionValue>,
-) -> Option<TaskControlRunPlan> {
-    let code = function.code.code()?;
-    if function.params != 0 || code.len() != 14 {
+fn call_linked_method(
+    receiver: &crate::value::Value,
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let callee = linked_method(receiver, code, pc)?;
+    crate::functions::execute_target(&callee, receiver, &[])
+}
+
+fn writable_own_word<'a>(
+    object: &'a crate::value::ObjectData,
+    key: &str,
+) -> Option<&'a crate::register_file::SlotWord> {
+    if object.hot_properties().names().any(|name| {
+        crate::builtins::is_deleted_key_for(name, key)
+            || crate::builtins::is_descriptor_key_for(name, key)
+    }) {
         return None;
     }
-    use crate::ir::Opcode::*;
-    let ops: [_; 14] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
-    if !is_local_load(ops[0])
-        || (ops[1].opcode, ops[1].b) != (GetN, ops[0].a)
-        || !is_local_load(ops[2])
-        || ops[3].opcode != Binary
-        || crate::ir::compact_binary_operator(ops[3].flags) != Some(crate::ops::BinaryOp::Equal)
-        || (ops[3].b, ops[3].c) != (ops[1].a, ops[2].a)
-        || ops[5].opcode != Slow
-        || !is_local_load(ops[6])
-        || (ops[7].opcode, ops[7].b) != (GetN, ops[6].a)
-        || (ops[8].opcode, ops[8].b) != (GetN, ops[7].a)
-        || !is_local_load(ops[9])
-        || (ops[10].opcode, ops[10].flags, ops[10].b, ops[10].c) != (CallN, 1, ops[7].a, ops[8].a)
-        || (ops[11].opcode, ops[11].a) != (Return, ops[10].a)
-        || code.metadata_at(1)?.name.as_deref()? != "state"
-        || code.metadata_at(7)?.name.as_deref()? != "task"
-        || code.metadata_at(8)?.name.as_deref()? != "run"
-    {
-        return None;
-    }
-    let crate::ops::Op::Branch {
-        then_ops, else_ops, ..
-    } = code.cold(ops[5])?
-    else {
-        return None;
-    };
-    let (ready, idle) = (then_ops.code()?, else_ops.code()?);
-    if ready.len() != 16 || idle.len() != 3 {
-        return None;
-    }
-    let ready_ops: [_; 16] = std::array::from_fn(|pc| ready.instruction(pc).unwrap());
-    if !is_local_load(ready_ops[0])
-        || (ready_ops[1].opcode, ready_ops[1].b) != (GetN, ready_ops[0].a)
-        || ready_ops[2].opcode != StoreLocal
-        || !is_local_load(ready_ops[3])
-        || ready_ops[4].opcode != Move
-        || ready_ops[5].opcode != Move
-        || !is_local_load(ready_ops[6])
-        || (ready_ops[7].opcode, ready_ops[7].b) != (GetN, ready_ops[6].a)
-        || (ready_ops[8].opcode, ready_ops[8].a, ready_ops[8].b)
-            != (SetN, ready_ops[5].a, ready_ops[7].a)
-        || !is_local_load(ready_ops[9])
-        || (ready_ops[10].opcode, ready_ops[10].b) != (GetN, ready_ops[9].a)
-        || ready_ops[14].opcode != Slow
-        || ready.metadata_at(1)?.name.as_deref()? != "queue"
-        || ready.metadata_at(7)?.name.as_deref()? != "link"
-        || ready.metadata_at(8)?.name.as_deref()? != "queue"
-        || ready.metadata_at(10)?.name.as_deref()? != "queue"
-    {
-        return None;
-    }
-    let (crate::ops::Op::Branch {
-        then_ops, else_ops, ..
-    }
-    | crate::ops::Op::Conditional {
-        consequent: then_ops,
-        alternate: else_ops,
-        ..
-    }) = ready.cold(ready_ops[14])?
-    else {
-        return None;
-    };
-    let (empty, nonempty) = (then_ops.code()?, else_ops.code()?);
-    if !task_state_arm(empty) || !task_state_arm(nonempty) {
-        return None;
-    }
-    let running_slot = empty.instruction(3)?.b;
-    let runnable_slot = nonempty.instruction(3)?.b;
-    Some(TaskControlRunPlan {
-        suspended_runnable: function.captures.get_number(ops[2].b)?,
-        running: function.captures.get_number(running_slot)?,
-        runnable: function.captures.get_number(runnable_slot)?,
-    })
+    crate::vm::proven_own_word(object, key)
 }
 
 #[cold]
@@ -325,30 +165,6 @@ fn linked_schedule_chain_is_proven(
     }
 }
 
-fn linked_schedule_chain_has_run(
-    start: &crate::value::Value,
-    plan: &LinkedSchedulePlan<'_>,
-    expected: &std::rc::Rc<crate::value::FunctionValue>,
-) -> Result<bool, crate::execute::VmError> {
-    let mut cursor = start.clone();
-    loop {
-        let crate::value::Value::Object(object) = &cursor else {
-            return Ok(matches!(cursor, crate::value::Value::Null));
-        };
-        let run = linked_method(&cursor, plan.ready, plan.run_pc)?;
-        let crate::value::Value::Function(run) = run else {
-            return Ok(false);
-        };
-        if !std::rc::Rc::ptr_eq(&run, expected) {
-            return Ok(false);
-        }
-        let Some(link) = crate::vm::proven_own_word(object, plan.link) else {
-            return Ok(false);
-        };
-        cursor = link.load();
-    }
-}
-
 #[derive(Clone, Copy)]
 struct LinkedSchedulePlan<'a> {
     body: crate::machine::CodeView<'a>,
@@ -366,122 +182,149 @@ fn match_linked_schedule(
     function: &std::rc::Rc<crate::value::FunctionValue>,
 ) -> Option<LinkedSchedulePlan<'_>> {
     let code = function.code.code()?;
-    if function.params != 0 || code.len() != 10 {
+    if function.params != 0 {
         return None;
     }
-    use crate::ir::Opcode::*;
-    let main: [_; 10] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
-    if !is_local_load(main[0])
-        || (main[1].opcode, main[1].b) != (Move, main[0].a)
-        || (main[2].opcode, main[2].b) != (Move, main[1].a)
-        || !is_local_load(main[3])
-        || (main[4].opcode, main[4].b) != (GetN, main[3].a)
-        || (main[5].opcode, main[5].a, main[5].b) != (SetN, main[2].a, main[4].a)
-        || main[7].opcode != Slow
-    {
-        return None;
-    }
-    let crate::ops::Op::Loop {
-        test,
-        body,
-        post_test,
-        ..
-    } = code.cold(main[7])?
-    else {
-        return None;
-    };
-    if *post_test {
-        return None;
-    }
-    let (test, body) = (test.code()?, body.code()?);
-    if test.len() != 5 || body.len() != 6 {
-        return None;
-    }
-    let test_ops: [_; 5] = std::array::from_fn(|pc| test.instruction(pc).unwrap());
-    if !is_local_load(test_ops[0])
-        || (test_ops[1].opcode, test_ops[1].b) != (GetN, test_ops[0].a)
-        || test_ops[3].opcode != Binary
-        || crate::ir::compact_binary_operator(test_ops[3].flags)
-            != Some(crate::ops::BinaryOp::NotEqual)
-    {
-        return None;
-    }
-    let body_ops: [_; 6] = std::array::from_fn(|pc| body.instruction(pc).unwrap());
-    if !is_local_load(body_ops[0])
-        || (body_ops[1].opcode, body_ops[1].b) != (GetN, body_ops[0].a)
-        || (body_ops[2].opcode, body_ops[2].flags, body_ops[2].b) != (CallN, 0, body_ops[1].a)
-        || body_ops[4].opcode != Slow
-    {
-        return None;
-    }
-    let crate::ops::Op::Branch {
-        then_ops, else_ops, ..
-    } = body.cold(body_ops[4])?
-    else {
-        return None;
-    };
-    let (held, ready) = (then_ops.code()?, else_ops.code()?);
-    if !held_schedule_shape(held) || !ready_schedule_shape(ready) {
-        return None;
-    }
-    let list = code.metadata_at(4)?.name.as_deref()?;
-    let current = code.metadata_at(5)?.name.as_deref()?;
-    let current_id = ready.metadata_at(6)?.name.as_deref()?;
-    let link = held.metadata_at(5)?.name.as_deref()?;
-    let id = ready.metadata_at(5)?.name.as_deref()?;
-    (test.metadata_at(1)?.name.as_deref()? == current
-        && body.metadata_at(1)?.name.as_deref()? == current
-        && held.metadata_at(4)?.name.as_deref()? == current
-        && held.metadata_at(6)?.name.as_deref()? == current
-        && ready.metadata_at(4)?.name.as_deref()? == current
-        && ready.metadata_at(11)?.name.as_deref()? == current
-        && ready.metadata_at(13)?.name.as_deref()? == current)
-        .then_some(LinkedSchedulePlan {
+    let (loop_pc, test, body, post_test) = (0..code.len()).find_map(|pc| {
+        let instruction = code.instruction(pc)?;
+        (instruction.opcode == crate::ir::Opcode::Slow).then_some(())?;
+        let crate::ops::Op::Loop {
+            test,
             body,
-            ready,
-            list,
-            current,
-            current_id,
-            link,
-            id,
-            predicate_pc: 2,
-            run_pc: 12,
+            post_test,
+            ..
+        } = code.cold(instruction)?
+        else {
+            return None;
+        };
+        Some((pc, test.code()?, body.code()?, *post_test))
+    })?;
+    if post_test {
+        return None;
+    }
+    let current = named_get_in_null_test(test)?;
+    let predicate_pc = named_zero_call(body)?;
+    let (held, ready) = branch_arms(body)?;
+    let (held_target, link) = named_get_assignment(held)?;
+    let (ready_target, run_pc) = named_call_assignment(ready)?;
+    if held_target != current || ready_target != current {
+        return None;
+    }
+    let (current_id, id) = named_get_assignment_excluding(ready, current)?;
+    let (setup_target, list) = named_get_assignment_before(code, loop_pc)?;
+    (setup_target == current).then_some(LinkedSchedulePlan {
+        body,
+        ready,
+        list,
+        current,
+        current_id,
+        link,
+        id,
+        predicate_pc,
+        run_pc,
+    })
+}
+
+fn named_get_in_null_test(code: crate::machine::CodeView<'_>) -> Option<&str> {
+    let has_not_equal = (0..code.len()).any(|pc| {
+        code.instruction(pc).is_some_and(|instruction| {
+            instruction.opcode == crate::ir::Opcode::Binary
+                && crate::ir::compact_binary_operator(instruction.flags)
+                    == Some(crate::ops::BinaryOp::NotEqual)
         })
+    });
+    has_not_equal.then_some(())?;
+    (0..code.len()).find_map(|pc| named_opcode(code, pc, crate::ir::Opcode::GetN))
 }
 
-fn held_schedule_shape(code: crate::machine::CodeView<'_>) -> bool {
-    use crate::ir::Opcode::*;
-    if code.len() != 8 {
-        return false;
-    }
-    let ops: [_; 8] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
-    is_local_load(ops[0])
-        && ops[1].opcode == Move
-        && ops[2].opcode == Move
-        && is_local_load(ops[3])
-        && (ops[4].opcode, ops[4].b) == (GetN, ops[3].a)
-        && (ops[5].opcode, ops[5].b) == (GetN, ops[4].a)
-        && (ops[6].opcode, ops[6].a, ops[6].b) == (SetN, ops[2].a, ops[5].a)
+fn named_zero_call(code: crate::machine::CodeView<'_>) -> Option<usize> {
+    (0..code.len()).find_map(|pc| {
+        let call = code.instruction(pc)?;
+        (call.opcode == crate::ir::Opcode::CallN && call.flags == 0).then_some(())?;
+        code.metadata_at(pc)?.name.as_deref()?;
+        (0..pc).rev().find(|get_pc| {
+            code.instruction(*get_pc)
+                .is_some_and(|get| get.opcode == crate::ir::Opcode::GetN && get.a == call.b)
+        })?;
+        Some(pc)
+    })
 }
 
-fn ready_schedule_shape(code: crate::machine::CodeView<'_>) -> bool {
-    use crate::ir::Opcode::*;
-    if code.len() != 15 {
-        return false;
-    }
-    let ops: [_; 15] = std::array::from_fn(|pc| code.instruction(pc).unwrap());
-    is_local_load(ops[0])
-        && ops[1].opcode == Move
-        && ops[2].opcode == Move
-        && is_local_load(ops[3])
-        && (ops[4].opcode, ops[4].b) == (GetN, ops[3].a)
-        && (ops[5].opcode, ops[5].b) == (GetN, ops[4].a)
-        && (ops[6].opcode, ops[6].a, ops[6].b) == (SetN, ops[2].a, ops[5].a)
-        && is_local_load(ops[7])
-        && ops[8].opcode == Move
-        && ops[9].opcode == Move
-        && is_local_load(ops[10])
-        && (ops[11].opcode, ops[11].b) == (GetN, ops[10].a)
-        && (ops[12].opcode, ops[12].flags, ops[12].b) == (CallN, 0, ops[11].a)
-        && (ops[13].opcode, ops[13].a, ops[13].b) == (SetN, ops[9].a, ops[12].a)
+fn branch_arms(
+    code: crate::machine::CodeView<'_>,
+) -> Option<(crate::machine::CodeView<'_>, crate::machine::CodeView<'_>)> {
+    (0..code.len()).find_map(|pc| {
+        let instruction = code.instruction(pc)?;
+        (instruction.opcode == crate::ir::Opcode::Slow).then_some(())?;
+        let crate::ops::Op::Branch {
+            then_ops, else_ops, ..
+        } = code.cold(instruction)?
+        else {
+            return None;
+        };
+        Some((then_ops.code()?, else_ops.code()?))
+    })
+}
+
+fn named_opcode(
+    code: crate::machine::CodeView<'_>,
+    pc: usize,
+    opcode: crate::ir::Opcode,
+) -> Option<&str> {
+    (code.instruction(pc)?.opcode == opcode)
+        .then_some(())
+        .and_then(|()| code.metadata_at(pc)?.name.as_deref())
+}
+
+fn named_get_assignment(code: crate::machine::CodeView<'_>) -> Option<(&str, &str)> {
+    named_get_assignment_filter(code, |_| true)
+}
+
+fn named_get_assignment_excluding<'a>(
+    code: crate::machine::CodeView<'a>,
+    excluded: &str,
+) -> Option<(&'a str, &'a str)> {
+    named_get_assignment_filter(code, |target| target != excluded)
+}
+
+fn named_get_assignment_before(
+    code: crate::machine::CodeView<'_>,
+    end: usize,
+) -> Option<(&str, &str)> {
+    named_get_assignment_filter(code.slice(0, end)?, |_| true)
+}
+
+fn named_get_assignment_filter(
+    code: crate::machine::CodeView<'_>,
+    accept: impl Fn(&str) -> bool,
+) -> Option<(&str, &str)> {
+    (0..code.len()).find_map(|set_pc| {
+        let set = code.instruction(set_pc)?;
+        let target = named_opcode(code, set_pc, crate::ir::Opcode::SetN)?;
+        accept(target).then_some(())?;
+        let get_pc = (0..set_pc).rev().find(|pc| {
+            code.instruction(*pc)
+                .is_some_and(|get| get.opcode == crate::ir::Opcode::GetN && get.a == set.b)
+        })?;
+        Some((target, named_opcode(code, get_pc, crate::ir::Opcode::GetN)?))
+    })
+}
+
+fn named_call_assignment(code: crate::machine::CodeView<'_>) -> Option<(&str, usize)> {
+    (0..code.len()).find_map(|set_pc| {
+        let set = code.instruction(set_pc)?;
+        let target = named_opcode(code, set_pc, crate::ir::Opcode::SetN)?;
+        let call_pc = (0..set_pc).rev().find(|pc| {
+            code.instruction(*pc).is_some_and(|call| {
+                call.opcode == crate::ir::Opcode::CallN && call.flags == 0 && call.a == set.b
+            })
+        })?;
+        let call = code.instruction(call_pc)?;
+        let get_pc = (0..call_pc).rev().find(|pc| {
+            code.instruction(*pc)
+                .is_some_and(|get| get.opcode == crate::ir::Opcode::GetN && get.a == call.b)
+        })?;
+        named_opcode(code, get_pc, crate::ir::Opcode::GetN)?;
+        Some((target, call_pc))
+    })
 }

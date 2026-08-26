@@ -63,41 +63,6 @@ pub(crate) fn execute(
     if let Some(result) = execute_recalculate_method(function, &receiver)? {
         return Ok(result);
     }
-    if is_handler_task_candidate(function) {
-        if let Some(result) = execute_handler_task(function, &receiver, arguments)? {
-            return Ok(result);
-        }
-    }
-    if is_scheduler_hold_candidate(function) {
-        if let Some(result) = execute_scheduler_hold(function, &receiver)? {
-            return Ok(result);
-        }
-    }
-    if is_worker_task_candidate(function) {
-        if let Some(result) = execute_worker_task(function, &receiver, arguments)? {
-            return Ok(result);
-        }
-    }
-    if is_device_task_candidate(function) {
-        if let Some(result) = execute_device_task(function, &receiver, arguments)? {
-            return Ok(result);
-        }
-    }
-    if is_idle_task_candidate(function) {
-        if let Some(result) = execute_idle_task(function, &receiver)? {
-            return Ok(result);
-        }
-    }
-    if is_packet_add_candidate(function) {
-        if let Some(result) = execute_packet_add(function, &receiver, arguments) {
-            return Ok(result);
-        }
-    }
-    if is_scheduler_queue_candidate(function) {
-        if let Some(result) = execute_scheduler_queue(function, &receiver, arguments)? {
-            return Ok(result);
-        }
-    }
     if let Some(result) = execute_linked_schedule(function, &receiver)? {
         return Ok(result);
     }
