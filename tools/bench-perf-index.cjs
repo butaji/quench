@@ -3,15 +3,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const cp = require("node:child_process");
 const os = require("node:os");
-const bounded = require("./lib/bounded-process.cjs");
 
 const root = path.resolve(__dirname, "..");
-const benchmarkScript = path.join(
-  root,
-  "quench-bench",
-  "run-quench-runtime.mjs"
-);
+const benchmarkScript = path.join(root, "quench-bench", "run-quench-runtime.mjs");
 const args = process.argv.slice(2);
 
 const parseArg = (name, fallback = null) => {
@@ -22,23 +18,14 @@ const parseArg = (name, fallback = null) => {
   return args[idx + 1];
 };
 
-const binary = parseArg(
-  "--binary",
-  path.join(root, "target", "debug", "quench-node")
-);
-const output = parseArg(
-  "--out",
-  path.join(root, "target", "bench-perf-index.json")
-);
+const binary = parseArg("--binary", path.join(root, "target", "debug", "quench-node"));
+const output = parseArg("--out", path.join(root, "target", "bench-perf-index.json"));
 const baseInput = parseArg("--base");
 const only = parseArg(
   "--only",
   "richards,deltablue,crypto,raytrace,earley-boyer,regexp,splay,navier-stokes"
 );
-const repeats = Math.max(
-  1,
-  Number.parseInt(parseArg("--repeat", "1"), 10) || 1
-);
+const repeats = Math.max(1, Number.parseInt(parseArg("--repeat", "1"), 10) || 1);
 
 const parseTimeMetric = (stderr, fallback = null) => {
   if (!stderr) {
@@ -73,25 +60,19 @@ const parseBenchOutput = (json) => {
       name,
       score: Number.isFinite(score) ? score : null,
       raw: entry,
-      wall_ms: Number(entry.__time_ms) || 0
+      wall_ms: Number(entry.__time_ms) || 0,
     };
   });
 
-  const valid = suites.filter(
-    (entry) => Number.isFinite(entry.score) && entry.wall_ms > 0
-  );
+  const valid = suites.filter((entry) => Number.isFinite(entry.score) && entry.wall_ms > 0);
   return {
     suites,
     count: valid.length,
-    min_score: valid.length ? Math.min(...valid.map((v) => v.score)) : 0,
-    max_score: valid.length ? Math.max(...valid.map((v) => v.score)) : 0,
-    mean_score: valid.length
-      ? valid.reduce((acc, value) => acc + value.score, 0) / valid.length
-      : 0,
-    mean_wall_ms: valid.length
-      ? valid.reduce((acc, value) => acc + value.wall_ms, 0) / valid.length
-      : 0,
-    run_payload: json
+    min_score: valid.length ? Math.min(...valid.map((v) => v.score) ) : 0,
+    max_score: valid.length ? Math.max(...valid.map((v) => v.score) ) : 0,
+    mean_score: valid.length ? valid.reduce((acc, value) => acc + value.score, 0) / valid.length : 0,
+    mean_wall_ms: valid.length ? valid.reduce((acc, value) => acc + value.wall_ms, 0) / valid.length : 0,
+    run_payload: json,
   };
 };
 
@@ -104,11 +85,7 @@ const parseMetricEnvelope = (payload) => {
     return payload.metric;
   }
 
-  if (
-    payload.aggregate &&
-    typeof payload.aggregate === "object" &&
-    payload.aggregate.metric
-  ) {
+  if (payload.aggregate && typeof payload.aggregate === "object" && payload.aggregate.metric) {
     return payload.aggregate.metric;
   }
 
@@ -120,38 +97,24 @@ const runSingle = (runLabel) => {
     os.tmpdir(),
     `quench-bench-${Date.now()}-${Math.random().toString(16).slice(2)}.json`
   );
-  const timeArgs = [
-    benchmarkScript,
-    "--binary",
-    binary,
-    "--out",
-    out,
-    "--only",
-    only
-  ];
+  const timeArgs = [benchmarkScript, "--binary", binary, "--out", out, "--only", only];
 
   const isDarwin = process.platform === "darwin";
   const proc = isDarwin
-    ? bounded.spawnSync(
+    ? cp.spawnSync(
         "/usr/bin/time",
         ["-l", process.execPath, ...timeArgs],
         {
           cwd: root,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
-          deadlineMs: 300_000
         }
       )
-    : bounded.spawnSync(
-        "/usr/bin/time",
-        ["-f", "%M", process.execPath, ...timeArgs],
-        {
-          cwd: root,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-          deadlineMs: 300_000
-        }
-      );
+    : cp.spawnSync("/usr/bin/time", ["-f", "%M", process.execPath, ...timeArgs], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
   const stdout = proc.stdout || "";
   const stderr = proc.stderr || "";
@@ -168,7 +131,7 @@ const runSingle = (runLabel) => {
     stdout,
     stderr,
     peak_rss_bytes: parseTimeMetric(stderr, null),
-    error: status === 0 ? null : `runtime exited ${status}`
+    error: status === 0 ? null : `runtime exited ${status}`,
   };
 };
 
@@ -192,10 +155,7 @@ const computeIndex = (metric, base) => {
   ratioParts.push(baseT / t);
   ratioParts.push(baseB / b);
 
-  return Math.pow(
-    ratioParts.reduce((acc, value) => acc * value, 1),
-    1 / 5
-  );
+  return Math.pow(ratioParts.reduce((acc, value) => acc * value, 1), 1 / 5);
 };
 
 const runAll = () => {
@@ -205,7 +165,7 @@ const runAll = () => {
     if (!result.outJson || !fs.existsSync(result.outJson)) {
       runs.push({
         ...result,
-        parsed: { suites: [], count: 0, mean_wall_ms: Number.NaN }
+        parsed: { suites: [], count: 0, mean_wall_ms: Number.NaN },
       });
       continue;
     }
@@ -213,7 +173,7 @@ const runAll = () => {
     const parsed = parseBenchOutput(result.json);
     runs.push({
       ...result,
-      parsed
+      parsed,
     });
   }
 
@@ -225,18 +185,17 @@ const runAll = () => {
     only,
     repeats,
     runs: successful.length,
-    samples: successful
+    samples: successful,
   };
 
   const aggregateWall = successful.length
-    ? successful.reduce((acc, run) => acc + (run.parsed.mean_wall_ms || 0), 0) /
-      successful.length
+    ? successful.reduce((acc, run) => acc + (run.parsed.mean_wall_ms || 0), 0) / successful.length
     : 0;
   const aggregateRss = successful.length
     ? successful.reduce((acc, run) => {
-        const rss = run.peak_rss_bytes || 0;
-        return acc + (Number.isFinite(rss) ? rss : 0);
-      }, 0) / successful.length
+      const rss = run.peak_rss_bytes || 0;
+      return acc + (Number.isFinite(rss) ? rss : 0);
+    }, 0) / successful.length
     : 0;
 
   const aggregateMetric = {
@@ -244,7 +203,7 @@ const runAll = () => {
     m: aggregateRss,
     r: 1,
     a: 1,
-    b: 1
+    b: 1,
   };
 
   const baseMetric = baseInput
@@ -260,8 +219,8 @@ const runAll = () => {
       peak_rss_bytes: aggregateRss,
       metric: aggregateMetric,
       perfIndexOverBase: perf,
-      baseRef: baseInput ? path.resolve(baseInput) : null
-    }
+      baseRef: baseInput ? path.resolve(baseInput) : null,
+    },
   };
 
   fs.writeFileSync(output, JSON.stringify(snapshot, null, 2) + "\n", "utf8");

@@ -32,13 +32,8 @@ Schema 5 `lanes` contains:
   and RegExp `lastIndex` access paths.
 - `l4`: host-call count and non-Function call targets.
 
-`loop_shapes`, `function_call_shapes`, `function_call_sites`, `named_calls`,
-`named_sets`, and `heap_lifecycle` remain beside `lanes` in the snapshot.
-`function_call_sites` ranks code/source identities rather than merging equal
-parameter/capture/length tuples. `named_calls` ranks the
-property names at compact `CallN` sites instead of collapsing all JavaScript
-callees into the `Function` target bucket; `named_sets` does the same for
-compact named writes.
+`loop_shapes`, `function_call_shapes`, and `heap_lifecycle` remain beside
+`lanes` in the snapshot.
 
 ## Executable benchmark contracts
 

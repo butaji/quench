@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "metrics": {
+    "direct_hits": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "linked_task_direct",
+          "field": "hits"
+        }
+      },
+      "min": 19000
+    },
+    "direct_deopts": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "linked_task_direct",
+          "field": "deopts"
+        }
+      },
+      "max": 1
+    },
+    "tcb_word_slot_hits": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "linked_tcb_word_slots",
+          "field": "hits"
+        }
+      },
+      "min": 19000
+    }
+  }
+}

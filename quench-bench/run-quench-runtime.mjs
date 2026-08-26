@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
-const timeoutRunner = resolve(root, "tools", "run-with-timeout.cjs");
 const suite = resolve(import.meta.dirname, "js-engine-benchmark", "v8-v7");
 const runtime = resolve(root, "target", "bench-throughput", "quench-node");
 const fixtures = [
@@ -62,15 +61,11 @@ const selected = arg(
 
 function measure(command, script) {
   const start = process.hrtime.bigint();
-  const result = spawnSync(
-    process.execPath,
-    [timeoutRunner, String(timeoutMs), command, script],
-    {
-      encoding: "utf8",
-      timeout: timeoutMs + 10000,
-      killSignal: "SIGKILL"
-    }
-  );
+  const result = spawnSync(command, [script], {
+    encoding: "utf8",
+    timeout: timeoutMs,
+    killSignal: "SIGKILL"
+  });
   const wallNs = Number(process.hrtime.bigint() - start);
   const stdout = result.stdout || "";
   const score = Number(stdout.match(/^Score:\s*([\d.]+)$/m)?.[1]);
@@ -78,7 +73,7 @@ function measure(command, script) {
     command,
     script,
     status: result.status,
-    timedOut: result.status === 124 || result.error?.code === "ETIMEDOUT",
+    timedOut: result.error?.code === "ETIMEDOUT",
     wallNs,
     score: Number.isFinite(score) ? score : null,
     stdout,
