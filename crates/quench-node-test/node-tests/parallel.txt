@@ -145,6 +145,9 @@ test-buffer-bytelength.js
 test-buffer-compare.js
 test-buffer-compare-offset.js
 test-buffer-concat.js
+test-buffer-constructor-node-modules-paths.js
+test-buffer-constructor-node-modules.js
+test-buffer-constructor-outside-node-modules.js
 test-buffer-constructor-deprecation-error.js
 test-buffer-copy.js
 test-buffer-copy-immutable.js
