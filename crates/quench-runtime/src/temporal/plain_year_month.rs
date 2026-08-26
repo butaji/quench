@@ -137,7 +137,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?;
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
         let text = crate::conversion::to_string(value)?;
-        if text.contains(['\u{2212}', 'Z', 'z']) {
+        if text.contains(['\u{2212}', 'Z', 'z']) || text.starts_with("-000000") {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
             ));
@@ -196,6 +196,19 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             if time.contains('Z') || time.contains('z') {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid PlainYearMonth",
+                ));
+            }
+            let clock = time.find(['+', '-']).map_or(time, |offset| &time[..offset]);
+            let parts = clock.split(':').collect::<Vec<_>>();
+            if (parts.len() == 1
+                && parts[0].contains(['.', ','])
+                && parts[0]
+                    .split_once(['.', ','])
+                    .is_some_and(|(whole, _)| whole.len() <= 2))
+                || parts.get(1).is_some_and(|part| part.contains(['.', ',']))
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Fractional minutes or hours are not allowed",
                 ));
             }
             date
@@ -258,15 +271,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return construct_with_reference(year, month, day);
     }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
-    if !matches!(calendar, Value::Undefined) {
-        if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
-            return Err(crate::value::error::throw_type_error("Invalid calendar"));
-        }
-        let calendar = crate::conversion::to_string(&calendar)?;
-        if !calendar.eq_ignore_ascii_case("iso8601") {
-            return Err(crate::value::error::throw_range_error("Invalid calendar"));
-        }
-    }
+    validate_property_calendar(&calendar)?;
     let year_value = crate::execute::get_property_result(value, "year")?;
     if matches!(year_value, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing year"));
@@ -307,6 +312,33 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         month
     };
     construct(year, month)
+}
+
+fn validate_property_calendar(value: &Value) -> Result<(), VmError> {
+    if matches!(value, Value::Undefined) {
+        return Ok(());
+    }
+    if matches!(value, Value::Object(object) if object.iter().any(|(key, value)| key == "\0prototype" && matches!(value, Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype | crate::ops::Builtin::TemporalPlainDateTimePrototype | crate::ops::Builtin::TemporalPlainMonthDayPrototype | crate::ops::Builtin::TemporalPlainYearMonthPrototype | crate::ops::Builtin::TemporalZonedDateTimePrototype))))
+    {
+        return Ok(());
+    }
+    if !matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
+    let calendar = crate::conversion::to_string(value)?;
+    if calendar.starts_with("-000000") {
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    }
+    if calendar.eq_ignore_ascii_case("iso8601")
+        || (calendar.contains('-')
+            && calendar.chars().next().is_some_and(|character| {
+                character.is_ascii_digit() || matches!(character, '+' | '-')
+            }))
+    {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid calendar"))
+    }
 }
 
 fn parse_month_code(value: &str) -> Result<f64, VmError> {
@@ -578,36 +610,116 @@ fn difference(
     let left =
         values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
     let right = values(&from(other, None)?)?;
-    let largest = difference_largest(options)?;
+    let (largest, smallest, increment, rounding_mode) = difference_options(options)?;
     let total = ((right.0 - left.0) * 12.0 + right.1 - left.1) * direction;
-    let (years, months) = if largest == "month" {
-        (0.0, total)
+    let (years, months) = if smallest == "year" {
+        (round_increment(total / 12.0, increment, rounding_mode), 0.0)
+    } else if largest == "month" {
+        (0.0, round_increment(total, increment, rounding_mode))
     } else {
         let years = (total / 12.0).trunc();
-        (years, total - years * 12.0)
+        let months = round_increment(total - years * 12.0, increment, rounding_mode);
+        if months.abs() >= 12.0 {
+            (years + months.signum(), months - months.signum() * 12.0)
+        } else {
+            (years, months)
+        }
     };
     crate::temporal::duration::construct(&[Value::Number(years), Value::Number(months)])
 }
 
-fn difference_largest(options: Option<&Value>) -> Result<&'static str, VmError> {
+fn difference_options(
+    options: Option<&Value>,
+) -> Result<(&'static str, &'static str, f64, &'static str), VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok("year");
+        return Ok(("year", "month", 1.0, "trunc"));
     };
     if !crate::value::is_object(options) {
         return Err(crate::value::error::throw_type_error("Invalid options"));
     }
-    let value = crate::execute::get_property_result(options, "largestUnit")?;
-    if matches!(value, Value::Undefined) {
-        return Ok("year");
+    let largest = difference_unit(
+        &crate::execute::get_property_result(options, "largestUnit")?,
+        "year",
+    )?;
+    let smallest = difference_unit(
+        &crate::execute::get_property_result(options, "smallestUnit")?,
+        "month",
+    )?;
+    if largest == "month" && smallest == "year" {
+        return Err(crate::value::error::throw_range_error("Invalid unit range"));
     }
-    let value = crate::conversion::to_string(&value)?;
-    match value.trim_end_matches('s') {
+    let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
+    let increment = if matches!(increment_value, Value::Undefined) {
+        1.0
+    } else {
+        crate::conversion::to_number(&increment_value)?.trunc()
+    };
+    if !increment.is_finite() || increment < 1.0 || increment > 1_000_000_000.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    let mode_value = crate::execute::get_property_result(options, "roundingMode")?;
+    let mode = if matches!(mode_value, Value::Undefined) {
+        "trunc"
+    } else {
+        match crate::conversion::to_string(&mode_value)?.as_str() {
+            "ceil" => "ceil",
+            "floor" => "floor",
+            "expand" => "expand",
+            "trunc" => "trunc",
+            "halfCeil" => "halfCeil",
+            "halfFloor" => "halfFloor",
+            "halfExpand" => "halfExpand",
+            "halfTrunc" => "halfTrunc",
+            "halfEven" => "halfEven",
+            _ => {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid roundingMode",
+                ))
+            }
+        }
+    };
+    Ok((largest, smallest, increment, mode))
+}
+
+fn difference_unit(value: &Value, fallback: &'static str) -> Result<&'static str, VmError> {
+    if matches!(value, Value::Undefined) {
+        return Ok(fallback);
+    }
+    match crate::conversion::to_string(value)?.trim_end_matches('s') {
         "year" => Ok("year"),
         "month" => Ok("month"),
-        _ => Err(crate::value::error::throw_range_error(
-            "Invalid largestUnit",
-        )),
+        _ => Err(crate::value::error::throw_range_error("Invalid unit")),
     }
+}
+
+fn round_increment(value: f64, increment: f64, mode: &str) -> f64 {
+    let scaled = value / increment;
+    let rounded = match mode {
+        "ceil" => scaled.ceil(),
+        "floor" => scaled.floor(),
+        "expand" => {
+            if scaled.is_sign_negative() {
+                scaled.floor()
+            } else {
+                scaled.ceil()
+            }
+        }
+        "halfExpand" => scaled.round(),
+        "halfCeil" => (scaled + 0.5).floor(),
+        "halfFloor" => (scaled - 0.5).ceil(),
+        "halfTrunc" => {
+            if scaled.abs().fract() > 0.5 {
+                scaled.round()
+            } else {
+                scaled.trunc()
+            }
+        }
+        "halfEven" => scaled.round(),
+        _ => scaled.trunc(),
+    };
+    rounded * increment
 }
 
 fn days_in_month(receiver: Option<&Value>) -> Result<Value, VmError> {
