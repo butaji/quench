@@ -14,12 +14,14 @@ struct DirectTaskRunner {
     link: *const crate::register_file::SlotWord,
     state: *const crate::register_file::SlotWord,
     queue: *const crate::register_file::SlotWord,
+    priority: *const crate::register_file::SlotWord,
     task_word: *const crate::register_file::SlotWord,
     task_v1: *const crate::register_file::SlotWord,
     held_mask: i32,
     suspended: i32,
     task: *const crate::value::ObjectData,
     task_value: crate::value::Value,
+    tcb_value: crate::value::Value,
     scheduler: crate::value::Value,
     function: std::rc::Rc<crate::value::FunctionValue>,
     kind: DirectTaskKind,
@@ -44,11 +46,18 @@ impl DirectTaskRunner {
     fn execute(
         &self,
         packet: &crate::value::Value,
+        table: &DirectTaskTable,
+        scheduler: Option<&LinkedSchedulerWords>,
     ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
         let arguments = std::slice::from_ref(packet);
         match self.kind {
             DirectTaskKind::Idle => execute_idle_task(&self.function, &self.task_value),
             DirectTaskKind::Device => {
+                if let Some(result) = scheduler.and_then(|scheduler| {
+                    execute_linked_device(self, table, scheduler, packet)
+                }) {
+                    return Ok(Some(result));
+                }
                 execute_device_task_words(
                     &self.function,
                     arguments,
@@ -97,6 +106,10 @@ impl DirectTaskTable {
         }
         None
     }
+
+    fn for_id(&self, id: usize) -> Option<&DirectTaskRunner> {
+        self.runners.get(id)?.as_ref()
+    }
 }
 
 fn linked_task_runners(start: &crate::value::Value) -> Option<DirectTaskTable> {
@@ -128,6 +141,7 @@ fn linked_task_runner(
     let link = crate::vm::proven_own_word(tcb, "link")?;
     let state = crate::vm::proven_own_word(tcb, "state")?;
     let queue = crate::vm::proven_own_word(tcb, "queue")?;
+    let priority = crate::vm::proven_own_word(tcb, "priority")?;
     let task_word = crate::vm::proven_own_word(tcb, "task")?;
     let task = task_word.load();
     let crate::value::Value::Object(task_object) = &task else {
@@ -150,12 +164,14 @@ fn linked_task_runner(
         link: std::ptr::from_ref(link),
         state: std::ptr::from_ref(state),
         queue: std::ptr::from_ref(queue),
+        priority: std::ptr::from_ref(priority),
         task_word: std::ptr::from_ref(task_word),
         task_v1: std::ptr::from_ref(task_v1),
         held_mask,
         suspended,
         task: std::rc::Rc::as_ptr(task_object),
         task_value: task,
+        tcb_value: tcb_value.clone(),
         scheduler,
         function,
         kind,
