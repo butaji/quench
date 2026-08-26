@@ -392,3 +392,9 @@ test-process-euid-egid.js
 test-stream-finished.js
 test-stream-construct.js
 test-async-hooks-enable-disable.js
+test-crypto-argon2-unsupported.js
+test-crypto-dep0181.js
+test-crypto-dep0183.js
+test-crypto-certificate.js
+test-crypto-classes.js
+test-crypto-default-shake-lengths.js
