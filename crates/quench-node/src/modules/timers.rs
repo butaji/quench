@@ -41,6 +41,7 @@ pub struct Timer {
     pub destroyed: Rc<quench_runtime::value::BindingCell>,
     pub referenced: bool,
     pub active: bool,
+    pub domain: Option<Value>,
 }
 
 pub struct TimerRegistry {
@@ -90,6 +91,7 @@ fn schedule(
     if !quench_runtime::is_callable(&cb) {
         return Err(invalid_callback_error());
     }
+    let domain = crate::modules::domain::current(state);
     // `setTimeout(cb, delay, ...args)`; `setImmediate(cb, ...args)`.
     let (delay, rest) = match kind {
         TimerKind::Immediate => (0, args.get(1..).unwrap_or(&[]).to_vec()),
@@ -116,6 +118,7 @@ fn schedule(
             destroyed,
             referenced: true,
             active: true,
+            domain,
         },
     );
     Ok(object)
