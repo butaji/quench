@@ -381,6 +381,22 @@ pub fn namespace_object_from_pairs(props: Vec<(String, Value)>) -> Value {
     host_api::object(entries)
 }
 
+/// Build a namespace whose data properties cannot be reassigned or deleted.
+pub fn readonly_namespace_from_pairs(props: Vec<(String, Value)>) -> Value {
+    let mut entries: Vec<(String, Value)> = Vec::with_capacity(props.len() * 2);
+    for (key, value) in props {
+        let descriptor = host_api::object(vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(false)),
+        ]);
+        entries.push((key.clone(), value));
+        entries.push((descriptor_key(&key), descriptor));
+    }
+    host_api::object(entries)
+}
+
 pub fn null_namespace(props: Vec<(String, Value)>) -> Value {
     let object = namespace_object_from_pairs(props);
     let _ = quench_runtime::execute::set_prototype_of(&object, &Value::Null);
