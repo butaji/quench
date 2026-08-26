@@ -397,6 +397,9 @@ pub fn invalid_arg_received(value: &Value) -> String {
             }
         }
         Value::Array(_) => " Received an instance of Array".into(),
+        Value::Uint8Array(_) if crate::modules::buffer::is_buffer(std::slice::from_ref(value)) => {
+            " Received an instance of Buffer".into()
+        }
         Value::Boolean(_) => format!(" Received type boolean ({})", inspect(value)),
         Value::Number(_) | Value::BigInt(_) => format!(
             " Received type {} ({})",
