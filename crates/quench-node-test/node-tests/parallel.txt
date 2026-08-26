@@ -416,3 +416,7 @@ test-crypto-hkdf.js
 test-crypto-keygen.js
 test-crypto-cipheriv-decipheriv.js
 test-crypto-authenticated.js
+test-crypto-verify-failure.js
+test-crypto-rsa-dsa.js
+test-crypto-rsa-oaep-mgf1.js
+test-crypto-rsa-pss-default-salt-length.js
