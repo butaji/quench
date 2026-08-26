@@ -305,7 +305,14 @@ pub(crate) fn return_iterator(
             IteratorState::Take { remaining, .. } => *remaining == u64::MAX,
             _ => false,
         };
-        if completed {
+        let active_concat = matches!(
+            &*data.state.borrow(),
+            IteratorState::Concat {
+                current: Some(_),
+                ..
+            }
+        );
+        if completed && !active_concat {
             return Ok(result(value, true));
         }
         return Err(crate::value::error::throw_type_error(
