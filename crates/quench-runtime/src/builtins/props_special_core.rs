@@ -426,6 +426,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "since") => {
             Some(Value::Builtin(TemporalZonedDateTimeSince))
         }
+        (TemporalZonedDateTimePrototype, "round") => {
+            Some(Value::Builtin(TemporalZonedDateTimeRound))
+        }
         (TemporalZonedDateTimePrototype, "valueOf") => {
             Some(Value::Builtin(TemporalDurationValueOf))
         }
