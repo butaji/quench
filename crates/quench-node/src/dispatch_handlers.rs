@@ -844,6 +844,14 @@ pub fn internal_binding(
         state.borrow_mut().os_binding = Some(binding.clone());
         return Ok(binding);
     }
+    if name == "cares_wrap" {
+        if let Some(binding) = state.borrow().cares_binding.clone() {
+            return Ok(binding);
+        }
+        let binding = crate::host::namespace_object_from_pairs(Vec::new());
+        state.borrow_mut().cares_binding = Some(binding.clone());
+        return Ok(binding);
+    }
     if name == "util" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
             (
