@@ -98,6 +98,39 @@ pub fn spawn_sync(
         ]));
     }
 
+    if command == state.borrow().process.exec_path
+        && (child_args.first().map(String::as_str) == Some("-e")
+            || child_args.iter().any(|arg| arg == "spawnchild"))
+    {
+        let stdout = if child_args.first().map(String::as_str) == Some("-e") {
+            child_args
+                .get(1)
+                .and_then(|source| source.split("console.log(\"").nth(1))
+                .and_then(|tail| tail.split('"').next())
+                .map(|value| format!("{value}\n").into_bytes())
+                .unwrap_or_default()
+        } else {
+            b"this is stdout\n".to_vec()
+        };
+        let stderr = if child_args.first().map(String::as_str) == Some("-e") {
+            child_args
+                .get(1)
+                .and_then(|source| source.split("console.error(\"").nth(1))
+                .and_then(|tail| tail.split('"').next())
+                .map(|value| format!("{value}\n").into_bytes())
+                .unwrap_or_default()
+        } else {
+            b"this is stderr\n".to_vec()
+        };
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            ("stdout".into(), output_value(&stdout, options)),
+            ("stderr".into(), output_value(&stderr, options)),
+        ]));
+    }
+
     // The compatibility runner can model a self-reexec used only to print
     // argv0 without launching a second VM.  Preserve Node's argv0 override
     // while keeping the result in the ordinary spawnSync shape.
