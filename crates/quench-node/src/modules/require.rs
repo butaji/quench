@@ -268,6 +268,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 "assertCrypto".to_string(),
                 crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_ASSERT_CRYPTO),
             ),
+            (
+                "customPromisifyArgs".to_string(),
+                Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
+            ),
         ])),
         "internal/test/binding" => Some(crate::host::namespace_object_from_pairs(vec![(
             "internalBinding".to_string(),

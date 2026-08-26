@@ -285,6 +285,15 @@ pub fn util_promisify(
     if !quench_runtime::is_callable(&original) {
         return Err(VmError::NotCallable);
     }
+    let custom_key = crate::modules::util::PROMISIFY_CUSTOM_KEY;
+    if let Ok(custom) = execute::get_property_result(&original, custom_key) {
+        if !matches!(custom, Value::Undefined) {
+            if quench_runtime::is_callable(&custom) {
+                return Ok(custom);
+            }
+            return Err(VmError::NotCallable);
+        }
+    }
     if let Some(name) = timer_promise_alias(&original) {
         let timers = crate::modules::require::require(
             state,
@@ -294,9 +303,15 @@ pub fn util_promisify(
             return Ok(execute::get_property(&timers, name));
         }
     }
-    Ok(bound_custom(
+    let wrapper = bound_custom(
         crate::registry::SPEC_UTIL_PROMISIFIED_CALL.cap,
         vec![original],
+    );
+    let custom = wrapper.clone();
+    Ok(execute::set_property(
+        wrapper,
+        crate::modules::util::PROMISIFY_CUSTOM_KEY,
+        custom,
     ))
 }
 
@@ -555,9 +570,14 @@ pub fn util_promisified_call(
     let promise = Rc::new(quench_runtime::value::PromiseData::new(
         quench_runtime::value::PromiseState::Pending,
     ));
+    let custom_args = quench_runtime::execute::get_property_result(
+        original,
+        crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY,
+    )
+    .unwrap_or(Value::Undefined);
     let callback = bound_custom(
         crate::registry::SPEC_UTIL_PROMISIFIED_CALLBACK.cap,
-        vec![Value::Promise(Rc::clone(&promise))],
+        vec![Value::Promise(Rc::clone(&promise)), custom_args],
     );
     let mut call_args = args.get(1..).unwrap_or_default().to_vec();
     call_args.push(callback);
@@ -577,11 +597,29 @@ pub fn util_promisified_callback(
     let Value::Promise(promise) = args.first().cloned().unwrap_or(Value::Undefined) else {
         return Err(VmError::NotCallable);
     };
-    let error = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let custom_args = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let error = args.get(2).cloned().unwrap_or(Value::Undefined);
     if !matches!(error, Value::Undefined | Value::Null) {
         quench_runtime::reject_promise(&promise, error);
     } else {
-        let values = args.get(2..).unwrap_or_default();
+        let values = args.get(3..).unwrap_or_default();
+        if let Value::Array(names) = custom_args {
+            let mut properties = Vec::new();
+            for index in 0..names.logical_len() {
+                let key = quench_runtime::execute::get_property_result(
+                    &Value::Array(names.clone()),
+                    &index.to_string(),
+                );
+                let value = values.get(index).cloned().unwrap_or(Value::Undefined);
+                if let Ok(Value::String(key)) = key {
+                    properties.push((key, value));
+                }
+            }
+            if !properties.is_empty() {
+                quench_runtime::resolve_promise(&promise, host_api::object(properties));
+                return Ok(Value::Undefined);
+            }
+        }
         let value = match values {
             [] => Value::Undefined,
             [value] => value.clone(),
