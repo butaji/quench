@@ -148,12 +148,6 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
         Value::String(month_code_text(&month_code)?)
     };
     let year = crate::execute::get_property_result(value, "year")?;
-    let year = if matches!(year, Value::Undefined) {
-        year
-    } else {
-        Value::Number(crate::conversion::to_number(&year)?.trunc())
-    };
-    let overflow = overflow_value(options)?;
     if matches!(day, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing day"));
     }
@@ -163,6 +157,17 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     if matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing month"));
     }
+    if let Value::String(code) = &month_code {
+        let core = code.strip_suffix('L').unwrap_or(code);
+        if core.len() != 3
+            || !core.starts_with('M')
+            || !core[1..].bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+    }
+    let year = Value::Number(crate::conversion::to_number(&year)?.trunc());
+    let overflow = overflow_value(options)?;
     let month_code_number = if matches!(month_code, Value::Undefined) {
         None
     } else {
