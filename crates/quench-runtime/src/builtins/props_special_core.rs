@@ -69,6 +69,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             Some(Value::Builtin(TemporalInstantFromEpochNanoseconds))
         }
         (TemporalInstantPrototype, "constructor") => Some(Value::Builtin(TemporalInstant)),
+        (TemporalInstantPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Temporal.Instant".into()))
+        }
         (TemporalInstantPrototype, "epochNanoseconds") => {
             Some(Value::Builtin(TemporalInstantEpochNanosecondsGetter))
         }
