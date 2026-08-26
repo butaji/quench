@@ -114,6 +114,7 @@ test-buffer-concat.js
 test-buffer-equals.js
 test-buffer-failed-alloc-typed-arrays.js
 test-buffer-from.js
+test-buffer-includes.js
 test-buffer-isencoding.js
 test-buffer-iterator.js
 test-buffer-no-negative-allocation.js
