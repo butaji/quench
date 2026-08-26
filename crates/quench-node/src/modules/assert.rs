@@ -449,14 +449,23 @@ fn rendered(value: &Value) -> String {
 }
 
 fn rendered_not_deep(value: &Value) -> String {
-    let Value::Array(array) = value else { return rendered(value) };
+    let Value::Array(array) = value else {
+        return rendered(value);
+    };
     let owner = Value::Array(array.clone());
     let mut lines = vec!["[".to_string()];
     let limit = array.logical_len().min(45);
     for index in 0..limit {
         let key = index.to_string();
-        let suffix = if index + 1 < limit || array.logical_len() > limit { "," } else { "" };
-        lines.push(format!("  {}{suffix}", rendered(&execute::get_property(&owner, &key))));
+        let suffix = if index + 1 < limit || array.logical_len() > limit {
+            ","
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "  {}{suffix}",
+            rendered(&execute::get_property(&owner, &key))
+        ));
     }
     if array.logical_len() > limit {
         lines.push("...".into());
@@ -712,7 +721,12 @@ fn binary_assert(
 
 fn simple_binary_message(operator: &str, actual: &str, expected: &str) -> String {
     if operator == "strictEqual" && actual.starts_with("Symbol.") && actual.contains('\0') {
-        let description = actual.split('\0').next().unwrap_or_default().strip_prefix("Symbol.").unwrap_or_default();
+        let description = actual
+            .split('\0')
+            .next()
+            .unwrap_or_default()
+            .strip_prefix("Symbol.")
+            .unwrap_or_default();
         let actual = if description.is_empty() || description.chars().any(char::is_control) {
             "Symbol()"
         } else {
@@ -942,7 +956,11 @@ fn deep_assert(
 }
 
 fn diff_block(diff: &str) -> String {
-    let separator = if diff.starts_with("... Skipped lines") { "\n" } else { "\n\n" };
+    let separator = if diff.starts_with("... Skipped lines") {
+        "\n"
+    } else {
+        "\n\n"
+    };
     format!("{separator}{diff}\n")
 }
 
@@ -973,38 +991,59 @@ fn needs_structural_diff(value: &Value) -> bool {
 fn strict_operand_render(value: &Value) -> String {
     match value {
         Value::Array(_) if needs_structural_diff(value) => {
-            let mut keys = execute::own_enumerable_keys(value).into_iter().filter_map(|key| {
-                key.parse::<usize>().ok()
-            }).collect::<Vec<_>>();
+            let mut keys = execute::own_enumerable_keys(value)
+                .into_iter()
+                .filter_map(|key| key.parse::<usize>().ok())
+                .collect::<Vec<_>>();
             keys.sort_unstable();
-            let values = keys.iter().map(|key| rendered(&execute::get_property(value, &key.to_string()))).collect::<Vec<_>>();
-            format!("[\n{}\n+ ]", values.iter().enumerate()
-                .map(|(index, entry)| {
-                    let comma = if index + 1 < values.len() { "," } else { "" };
-                    format!("+   {entry}{comma}")
-                })
-                .collect::<Vec<_>>().join("\n"))
+            let values = keys
+                .iter()
+                .map(|key| rendered(&execute::get_property(value, &key.to_string())))
+                .collect::<Vec<_>>();
+            format!(
+                "[\n{}\n+ ]",
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        let comma = if index + 1 < values.len() { "," } else { "" };
+                        format!("+   {entry}{comma}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
         }
         Value::Object(_) if !execute::own_enumerable_keys(value).is_empty() => {
             let mut keys = execute::own_enumerable_keys(value);
             keys.sort();
-            let circular = keys.iter().any(|key| execute::same_identity(&execute::get_property(value, key), value));
-            let lines = keys.iter().map(|key| {
-                let property = execute::get_property(value, key);
-                let render = if execute::same_identity(&property, value) {
-                    "[Circular *1]".into()
-                } else {
-                    rendered(&property)
-                };
-                format!("  {key}: {render}")
-            }).collect::<Vec<_>>();
-            let opener = if circular { "<ref *1> {" } else { "{" };
-            format!("{opener}\n{}\n+ }}", lines.iter().enumerate()
-                .map(|(index, line)| {
-                    let comma = if index + 1 < lines.len() { "," } else { "" };
-                    format!("+ {line}{comma}")
+            let circular = keys
+                .iter()
+                .any(|key| execute::same_identity(&execute::get_property(value, key), value));
+            let lines = keys
+                .iter()
+                .map(|key| {
+                    let property = execute::get_property(value, key);
+                    let render = if execute::same_identity(&property, value) {
+                        "[Circular *1]".into()
+                    } else {
+                        rendered(&property)
+                    };
+                    format!("  {key}: {render}")
                 })
-                .collect::<Vec<_>>().join("\n"))
+                .collect::<Vec<_>>();
+            let opener = if circular { "<ref *1> {" } else { "{" };
+            format!(
+                "{opener}\n{}\n+ }}",
+                lines
+                    .iter()
+                    .enumerate()
+                    .map(|(index, line)| {
+                        let comma = if index + 1 < lines.len() { "," } else { "" };
+                        format!("+ {line}{comma}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
         }
         _ => rendered(value),
     }
@@ -1173,8 +1212,15 @@ fn diff_operand(value: &Value, marker: char) -> String {
     let mut lines = vec![format!("{marker} [")];
     for index in 0..array.logical_len() {
         let key = index.to_string();
-        let suffix = if index + 1 < array.logical_len() { "," } else { "" };
-        lines.push(format!("{marker}   {}{suffix}", rendered(&execute::get_property(&owner, &key))));
+        let suffix = if index + 1 < array.logical_len() {
+            ","
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "{marker}   {}{suffix}",
+            rendered(&execute::get_property(&owner, &key))
+        ));
     }
     lines.push(format!("{marker} ]"));
     lines.join("\n")
@@ -1182,10 +1228,13 @@ fn diff_operand(value: &Value, marker: char) -> String {
 
 fn diff_object_keys(object: &Value) -> Vec<String> {
     let mut keys = execute::own_enumerable_keys(object);
-    for key in execute::own_keys(object).into_iter().filter_map(|key| match key {
-        Value::String(key) if !key.starts_with('\0') => Some(key),
-        _ => None,
-    }) {
+    for key in execute::own_keys(object)
+        .into_iter()
+        .filter_map(|key| match key {
+            Value::String(key) if !key.starts_with('\0') => Some(key),
+            _ => None,
+        })
+    {
         if !keys.contains(&key) {
             keys.push(key);
         }
@@ -1200,7 +1249,9 @@ fn diff_object_keys(object: &Value) -> Vec<String> {
             let key = execute::get_property(&Value::Array(symbols.clone()), &index.to_string());
             if let Value::String(key) = key {
                 let key = key.to_string();
-                if !keys.contains(&key) { keys.push(key); }
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
             }
         }
     }
@@ -1235,7 +1286,11 @@ fn is_url_like(value: &Value) -> bool {
 fn deep_diff(actual: &Value, expected: &Value) -> String {
     if is_url_like(actual) || is_url_like(expected) {
         let href = |value: &Value| execute::get_property(value, "href");
-        return format!("+ {}\n- {}", rendered(&href(actual)), rendered(&href(expected)));
+        return format!(
+            "+ {}\n- {}",
+            rendered(&href(actual)),
+            rendered(&href(expected))
+        );
     }
     if let Some(diff) = regexp_diff(actual, expected) {
         return diff;
@@ -1262,7 +1317,11 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
         return diff;
     }
     let (Value::Object(left), Value::Object(right)) = (actual, expected) else {
-        return format!("{}\n{}", diff_operand(actual, '+'), diff_operand(expected, '-'));
+        return format!(
+            "{}\n{}",
+            diff_operand(actual, '+'),
+            diff_operand(expected, '-')
+        );
     };
     let left_object = Value::Object(left.clone());
     let right_object = Value::Object(right.clone());
@@ -1273,16 +1332,16 @@ fn deep_diff(actual: &Value, expected: &Value) -> String {
         .into_iter()
         .chain(diff_object_keys(&right_object))
         .collect::<BTreeSet<_>>();
-    if execute::own_enumerable_keys(&left_object).is_empty()
-        && !keys.is_empty()
-    {
+    if execute::own_enumerable_keys(&left_object).is_empty() && !keys.is_empty() {
         let mut lines = vec!["+ {}".to_string(), "- {".to_string()];
         for key in keys.iter() {
             let display_key = diff_key(key);
             let value = crate::modules::util::inspect_property_with_getters(&right_object, key, 0);
             lines.push(format!("-   {display_key}: {value},"));
         }
-        if let Some(last) = lines.last_mut() { last.pop(); }
+        if let Some(last) = lines.last_mut() {
+            last.pop();
+        }
         lines.push("- }".into());
         return lines.join("\n");
     }
@@ -1368,21 +1427,19 @@ fn nested_property_diff_depth(
                     && !matches!(second_left, Value::Array(_))
                 {
                     let child_indent = indent + 2;
-                    lines.push(format!(
-                        "+{}{}: [",
-                        " ".repeat(child_indent - 1),
-                        first
-                    ));
+                    lines.push(format!("+{}{}: [", " ".repeat(child_indent - 1), first));
                     let left_len = left_array.logical_len();
                     let right_len = right_array.logical_len();
                     let shared = (0..left_len).find_map(|index| {
                         let lv = execute::get_property(&first_left, &index.to_string());
-                        (0..right_len).find(|candidate| {
-                            execute::same_value(
-                                &lv,
-                                &execute::get_property(&second_right, &candidate.to_string()),
-                            )
-                        }).map(|candidate| (index, candidate))
+                        (0..right_len)
+                            .find(|candidate| {
+                                execute::same_value(
+                                    &lv,
+                                    &execute::get_property(&second_right, &candidate.to_string()),
+                                )
+                            })
+                            .map(|candidate| (index, candidate))
                     });
                     let (left_shared, right_shared) = shared.unwrap_or((left_len, right_len));
                     for index in 0..left_shared {
@@ -1399,11 +1456,7 @@ fn nested_property_diff_depth(
                         first,
                         rendered(&first_right)
                     ));
-                    lines.push(format!(
-                        "-{}{}: [",
-                        " ".repeat(child_indent - 1),
-                        second
-                    ));
+                    lines.push(format!("-{}{}: [", " ".repeat(child_indent - 1), second));
                     for index in right_shared..right_len {
                         let value = execute::get_property(&second_right, &index.to_string());
                         let marker = if index == right_shared && shared.is_some() {
@@ -1754,28 +1807,120 @@ fn array_diff(actual: &Value, expected: &Value) -> Option<String> {
     let prefix = (0..left.logical_len().min(right.logical_len()))
         .take_while(|index| {
             let key = index.to_string();
-            execute::same_value(
+            same_diff_value(
                 &execute::get_property(&left_value, &key),
                 &execute::get_property(&right_value, &key),
             )
         })
         .count();
+    let nested = (0..length).any(|index| {
+        let key = index.to_string();
+        object_like(&execute::get_property(&left_value, &key))
+            || object_like(&execute::get_property(&right_value, &key))
+    });
     let skipped = prefix >= 4
-        && ((left.logical_len() != right.logical_len() && length > 6) || length > 8);
+        && (nested || (left.logical_len() != right.logical_len() && length > 6) || length > 8);
     let body = recursive_array_diff(&left_value, &right_value, 2).join("\n");
-    Some(if skipped { format!("... Skipped lines\n\n{body}") } else { body })
+    Some(if skipped {
+        format!("... Skipped lines\n\n{body}")
+    } else {
+        body
+    })
+}
+
+fn same_diff_value(actual: &Value, expected: &Value) -> bool {
+    execute::same_value(actual, expected)
+        || rendered(actual) == rendered(expected)
+        || crate::modules::deep_equal::deep_equal_opts(actual, expected, true, false)
+            .unwrap_or(false)
+}
+
+fn object_like(value: &Value) -> bool {
+    matches!(value, Value::Object(_) | Value::ObjectAlias(_))
+}
+
+fn object_array_lines(value: &Value, indent: usize) -> Vec<String> {
+    if !object_like(value) {
+        return vec![format!("{}{}", " ".repeat(indent), rendered(value))];
+    }
+    let mut lines = vec![format!("{}{{", " ".repeat(indent))];
+    let keys = execute::own_enumerable_keys(value);
+    for (index, key) in keys.iter().enumerate() {
+        let comma = if index + 1 < keys.len() { "," } else { "" };
+        lines.push(format!(
+            "{}{}: {}{}",
+            " ".repeat(indent + 2),
+            key,
+            rendered(&execute::get_property(value, key)),
+            comma
+        ));
+    }
+    lines.push(format!("{}}}", " ".repeat(indent)));
+    lines
+}
+
+fn object_array_diff_lines(actual: &Value, expected: &Value, indent: usize) -> Vec<String> {
+    if !object_like(actual) || !object_like(expected) {
+        return vec![];
+    }
+    let keys = execute::own_enumerable_keys(actual)
+        .into_iter()
+        .chain(execute::own_enumerable_keys(expected))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut lines = vec![format!("{}{{", " ".repeat(indent))];
+    for key in keys {
+        let left = execute::get_property(actual, &key);
+        let right = execute::get_property(expected, &key);
+        if same_diff_value(&left, &right) {
+            lines.push(format!(
+                "{}{}: {}",
+                " ".repeat(indent + 2),
+                key,
+                rendered(&left)
+            ));
+        } else if let Some(nested) = nested_property_diff(&left, &right, &key, indent + 2) {
+            lines.extend(nested);
+        } else {
+            lines.push(format!(
+                "+{}{}: {}",
+                " ".repeat(indent + 1),
+                key,
+                rendered(&left)
+            ));
+            lines.push(format!(
+                "-{}{}: {}",
+                " ".repeat(indent + 1),
+                key,
+                rendered(&right)
+            ));
+        }
+    }
+    lines.push(format!("{}}}", " ".repeat(indent)));
+    lines
 }
 
 fn scalar_block_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<String> {
-    let Value::Array(left) = actual else { return vec![] };
-    let Value::Array(right) = expected else { return vec![] };
+    let Value::Array(left) = actual else {
+        return vec![];
+    };
+    let Value::Array(right) = expected else {
+        return vec![];
+    };
     let mut lines = vec![format!("{}[", " ".repeat(indent))];
     for (marker, array) in [('+', left), ('-', right)] {
         let owner = Value::Array(array.clone());
         for index in 0..array.logical_len() {
             let key = index.to_string();
-            let suffix = if index + 1 < array.logical_len() { "," } else { "" };
-            lines.push(format!("{marker}{}{}{suffix}", " ".repeat(indent + 1), rendered(&execute::get_property(&owner, &key))));
+            let suffix = if index + 1 < array.logical_len() {
+                ","
+            } else {
+                ""
+            };
+            lines.push(format!(
+                "{marker}{}{}{suffix}",
+                " ".repeat(indent + 1),
+                rendered(&execute::get_property(&owner, &key))
+            ));
         }
     }
     lines.push(format!("{}]", " ".repeat(indent)));
@@ -1783,34 +1928,81 @@ fn scalar_block_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<Str
 }
 
 fn scalar_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<String> {
-    let Value::Array(left) = actual else { return vec![] };
-    let Value::Array(right) = expected else { return vec![] };
-    let a = (0..left.logical_len()).map(|i| execute::get_property(actual, &i.to_string())).collect::<Vec<_>>();
-    let b = (0..right.logical_len()).map(|i| execute::get_property(expected, &i.to_string())).collect::<Vec<_>>();
+    let Value::Array(left) = actual else {
+        return vec![];
+    };
+    let Value::Array(right) = expected else {
+        return vec![];
+    };
+    let a = (0..left.logical_len())
+        .map(|i| execute::get_property(actual, &i.to_string()))
+        .collect::<Vec<_>>();
+    let b = (0..right.logical_len())
+        .map(|i| execute::get_property(expected, &i.to_string()))
+        .collect::<Vec<_>>();
     let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in (0..a.len()).rev() { for j in (0..b.len()).rev() {
-        dp[i][j] = if execute::same_value(&a[i], &b[j]) { 1 + dp[i + 1][j + 1] } else { dp[i + 1][j].max(dp[i][j + 1]) };
-    }}
-    let mut ops = Vec::new(); let (mut i, mut j) = (0, 0);
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            dp[i][j] = if execute::same_value(&a[i], &b[j]) {
+                1 + dp[i + 1][j + 1]
+            } else {
+                dp[i + 1][j].max(dp[i][j + 1])
+            };
+        }
+    }
+    let mut ops = Vec::new();
+    let (mut i, mut j) = (0, 0);
     while i < a.len() || j < b.len() {
-        if i < a.len() && j < b.len() && execute::same_value(&a[i], &b[j]) { ops.push((' ', a[i].clone())); i += 1; j += 1; }
-        else if j == b.len() || (i < a.len() && {
-            let left = dp[i + 1][j];
-            let right = dp[i][j + 1];
-            left > right || (left == right && !b[j..].iter().any(|value| execute::same_value(&a[i], value)))
-        }) { ops.push(('+', a[i].clone())); i += 1; }
-        else { ops.push(('-', b[j].clone())); j += 1; }
+        if i < a.len() && j < b.len() && execute::same_value(&a[i], &b[j]) {
+            ops.push((' ', a[i].clone()));
+            i += 1;
+            j += 1;
+        } else if j == b.len()
+            || (i < a.len() && {
+                let left = dp[i + 1][j];
+                let right = dp[i][j + 1];
+                left > right
+                    || (left == right
+                        && !b[j..].iter().any(|value| execute::same_value(&a[i], value)))
+            })
+        {
+            ops.push(('+', a[i].clone()));
+            i += 1;
+        } else {
+            ops.push(('-', b[j].clone()));
+            j += 1;
+        }
     }
     let mut lines = vec![format!("{}[", " ".repeat(indent))];
     let op_len = ops.len();
     for (index, (marker, value)) in ops.iter().cloned().enumerate() {
         let paired = marker != ' ' && ops.get(index + 1).is_some_and(|(next, _)| *next != ' ');
         let suffix = if paired {
-            if index + 2 < op_len { "," } else { "" }
-        } else if index + 1 < op_len { "," } else { "" };
-        let prefix = if marker == ' ' { "" } else { &marker.to_string() };
-        let spaces = if marker == ' ' { indent + 2 } else { indent + 1 };
-        lines.push(format!("{prefix}{}{}{suffix}", " ".repeat(spaces), rendered(&value)));
+            if index + 2 < op_len {
+                ","
+            } else {
+                ""
+            }
+        } else if index + 1 < op_len {
+            ","
+        } else {
+            ""
+        };
+        let prefix = if marker == ' ' {
+            ""
+        } else {
+            &marker.to_string()
+        };
+        let spaces = if marker == ' ' {
+            indent + 2
+        } else {
+            indent + 1
+        };
+        lines.push(format!(
+            "{prefix}{}{}{suffix}",
+            " ".repeat(spaces),
+            rendered(&value)
+        ));
     }
     lines.push(format!("{}]", " ".repeat(indent)));
     lines
@@ -1825,32 +2017,45 @@ fn recursive_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<
     let length = left.logical_len().max(right.logical_len());
     let scalar_values = (0..length).all(|index| {
         let key = index.to_string();
-        [execute::get_property(&left_value, &key), execute::get_property(&right_value, &key)]
-            .into_iter()
-            .all(|value| !matches!(value, Value::Array(_)))
+        [
+            execute::get_property(&left_value, &key),
+            execute::get_property(&right_value, &key),
+        ]
+        .into_iter()
+        .all(|value| !matches!(value, Value::Array(_)))
     });
     if scalar_values && length > 12 {
         return scalar_block_diff(&left_value, &right_value, indent);
     }
-    let first_diff = (0..length).find(|index| {
-        let key = index.to_string();
-        let left_has = execute::has_own_property(&left_value, &key);
-        let right_has = execute::has_own_property(&right_value, &key);
-        left_has != right_has
-            || !execute::same_value(
-                &execute::get_property(&left_value, &key),
-                &execute::get_property(&right_value, &key),
-            )
-    }).unwrap_or(length);
+    let first_diff = (0..length)
+        .find(|index| {
+            let key = index.to_string();
+            let left_has = execute::has_own_property(&left_value, &key);
+            let right_has = execute::has_own_property(&right_value, &key);
+            left_has != right_has
+                || !same_diff_value(
+                    &execute::get_property(&left_value, &key),
+                    &execute::get_property(&right_value, &key),
+                )
+        })
+        .unwrap_or(length);
     let scalar_long = first_diff >= 4
         && ((left.logical_len() != right.logical_len() && length > 6) || length > 8)
         && (0..length).all(|index| {
             let key = index.to_string();
-            [execute::get_property(&left_value, &key), execute::get_property(&right_value, &key)]
-                .into_iter()
-                .all(|value| !matches!(value, Value::Array(_)))
+            [
+                execute::get_property(&left_value, &key),
+                execute::get_property(&right_value, &key),
+            ]
+            .into_iter()
+            .all(|value| !matches!(value, Value::Array(_)))
         });
-    if scalar_values && length <= 12 && !scalar_long {
+    let has_object = (0..length).any(|index| {
+        object_like(&execute::get_property(&left_value, &index.to_string()))
+            || object_like(&execute::get_property(&right_value, &index.to_string()))
+    });
+    let nested_tail = first_diff >= 4 && has_object;
+    if scalar_values && !has_object && length <= 12 && !scalar_long {
         return scalar_array_diff(&left_value, &right_value, indent);
     }
     let tail_start = if left.logical_len() == right.logical_len() {
@@ -1860,6 +2065,12 @@ fn recursive_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<
     };
     let mut lines = vec![format!("{}[", " ".repeat(indent))];
     for index in 0..length {
+        if nested_tail && index == 2 {
+            lines.push("...".into());
+        }
+        if nested_tail && index >= 2 && index < length.saturating_sub(1) {
+            continue;
+        }
         if scalar_long && index == 4 {
             lines.push("...".into());
         }
@@ -1868,25 +2079,70 @@ fn recursive_array_diff(actual: &Value, expected: &Value, indent: usize) -> Vec<
         }
         let key = index.to_string();
         let left_has = index < left.logical_len() && execute::has_own_property(&left_value, &key);
-        let right_has = index < right.logical_len() && execute::has_own_property(&right_value, &key);
+        let right_has =
+            index < right.logical_len() && execute::has_own_property(&right_value, &key);
         let suffix = if index + 1 < length { "," } else { "" };
         match (left_has, right_has) {
             (true, true) => {
                 let left_item = execute::get_property(&left_value, &key);
                 let right_item = execute::get_property(&right_value, &key);
-                if execute::same_value(&left_item, &right_item) {
-                    lines.push(format!("{}{}{suffix}", " ".repeat(indent + 2), rendered(&left_item)));
-                } else if matches!((&left_item, &right_item), (Value::Array(_), Value::Array(_))) {
+                if same_diff_value(&left_item, &right_item) {
+                    if object_like(&left_item) {
+                        let mut nested = object_array_lines(&left_item, indent + 2);
+                        if let Some(last) = nested.last_mut() {
+                            last.push_str(suffix);
+                        }
+                        lines.extend(nested);
+                    } else {
+                        lines.push(format!(
+                            "{}{}{suffix}",
+                            " ".repeat(indent + 2),
+                            rendered(&left_item)
+                        ));
+                    }
+                } else if matches!(
+                    (&left_item, &right_item),
+                    (Value::Array(_), Value::Array(_))
+                ) {
                     let mut nested = recursive_array_diff(&left_item, &right_item, indent + 2);
-                    if let Some(last) = nested.last_mut() { last.push_str(suffix); }
-                    for line in nested { lines.push(line); }
+                    if let Some(last) = nested.last_mut() {
+                        last.push_str(suffix);
+                    }
+                    for line in nested {
+                        lines.push(line);
+                    }
+                } else if object_like(&left_item) && object_like(&right_item) {
+                    let mut nested = object_array_diff_lines(&left_item, &right_item, indent + 2);
+                    if nested_tail {
+                        nested.remove(0);
+                    }
+                    if let Some(last) = nested.last_mut() {
+                        last.push_str(suffix);
+                    }
+                    lines.extend(nested);
                 } else {
-                    lines.push(format!("+{}{}{suffix}", " ".repeat(indent + 1), rendered(&left_item)));
-                    lines.push(format!("-{}{}{suffix}", " ".repeat(indent + 1), rendered(&right_item)));
+                    lines.push(format!(
+                        "+{}{}{suffix}",
+                        " ".repeat(indent + 1),
+                        rendered(&left_item)
+                    ));
+                    lines.push(format!(
+                        "-{}{}{suffix}",
+                        " ".repeat(indent + 1),
+                        rendered(&right_item)
+                    ));
                 }
             }
-            (true, false) => lines.push(format!("+{}{}{suffix}", " ".repeat(indent + 1), rendered(&execute::get_property(&left_value, &key)))),
-            (false, true) => lines.push(format!("-{}{}", " ".repeat(indent + 1), rendered(&execute::get_property(&right_value, &key)))),
+            (true, false) => lines.push(format!(
+                "+{}{}{suffix}",
+                " ".repeat(indent + 1),
+                rendered(&execute::get_property(&left_value, &key))
+            )),
+            (false, true) => lines.push(format!(
+                "-{}{}",
+                " ".repeat(indent + 1),
+                rendered(&execute::get_property(&right_value, &key))
+            )),
             (false, false) => {}
         }
     }
