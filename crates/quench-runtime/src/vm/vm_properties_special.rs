@@ -59,6 +59,10 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         return Value::Builtin(Builtin::FunctionPrototypeToString);
     }
     if !matches!(property, Value::Undefined) {
+        if matches!(value, Value::BoundFunction(bound) if bound.realm != crate::ops::RealmId::ROOT)
+        {
+            return bind_method(value, property);
+        }
         return property;
     }
     if key == "Symbol.toStringTag"
@@ -323,8 +327,12 @@ pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
     properties
         .borrow_mut()
         .push(("\0receiver_bound_method".to_string(), Value::Boolean(true)));
+    let realm = match receiver {
+        Value::BoundFunction(bound) => bound.realm,
+        _ => crate::vm::current_context_or_default().realm(),
+    };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
+        realm,
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),
