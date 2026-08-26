@@ -28,6 +28,11 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         return override_value;
     }
     if key == "toString" && callable_builtin_value(value) {
+        if let Some(override_value) =
+            crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
+        {
+            return bind_method(value, override_value);
+        }
         return Value::Builtin(Builtin::FunctionPrototypeToString);
     }
     if key == "valueOf" && callable_builtin_value(value) {

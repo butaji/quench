@@ -366,11 +366,17 @@ pub(crate) fn get_property_with_receiver(
     if let Some(value) = proven_own_data(&value, key) {
         return Ok(value);
     }
-    if matches!(&value, Value::BoundFunction(_)) {
-        return Ok(crate::execute::get_property(&value, key));
-    }
     if let Some(result) = early_property_result(&value, key, receiver) {
         return result;
+    }
+    let intrinsic_bound = matches!(&value, Value::BoundFunction(bound)
+        if crate::vm::is_intrinsic_bound(bound));
+    if matches!(&value, Value::BoundFunction(_))
+        && (intrinsic_bound
+            || (crate::property_define::accessor(&value, key, "get").is_none()
+                && crate::property_define::accessor(&value, key, "set").is_none()))
+    {
+        return Ok(crate::execute::get_property(&value, key));
     }
     if let Some(result) = array_property_result(&value, key, receiver) {
         return result;

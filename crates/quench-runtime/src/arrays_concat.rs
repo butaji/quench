@@ -148,6 +148,11 @@ fn is_concat_spreadable(value: &Value) -> Result<bool, crate::execute::VmError> 
         return Ok(false);
     }
     let flag = crate::execute::get_property_result(value, "Symbol.isConcatSpreadable")?;
+    if matches!(value, Value::Proxy(proxy) if crate::proxy::is_revoked(proxy)) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot perform operation on revoked proxy",
+        ));
+    }
     if !matches!(flag, Value::Undefined) {
         return Ok(crate::intl::tolocale::value::is_truthy(&flag));
     }
