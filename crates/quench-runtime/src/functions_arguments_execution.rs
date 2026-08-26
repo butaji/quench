@@ -57,6 +57,9 @@ pub(crate) fn execute(
     if let Some(result) = execute_forward_construct_call(function, &receiver, arguments) {
         return result;
     }
+    if let Some(result) = execute_forward_then_call(function, &receiver, arguments) {
+        return result;
+    }
     if is_handler_task_candidate(function) {
         if let Some(result) = execute_handler_task(function, &receiver, arguments)? {
             return Ok(result);
