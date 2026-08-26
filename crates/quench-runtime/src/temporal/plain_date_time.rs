@@ -1082,17 +1082,37 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
-    if text.split('[').skip(1).any(|part| {
-        part.split_once('=')
-            .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
-    }) {
-        return Err(crate::value::error::throw_range_error("Invalid annotation"));
+    let mut calendar_annotation = false;
+    let mut time_zone_annotation = false;
+    for part in text.split('[').skip(1) {
+        let annotation = part
+            .strip_suffix(']')
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid annotation"))?;
+        let annotation = annotation.strip_prefix('!').unwrap_or(annotation);
+        if let Some((key, value)) = annotation.split_once('=') {
+            if key != "u-ca"
+                || value.is_empty()
+                || key.chars().any(|character| character.is_ascii_uppercase())
+                || !value.eq_ignore_ascii_case("iso8601")
+                || calendar_annotation
+            {
+                return Err(crate::value::error::throw_range_error("Invalid annotation"));
+            }
+            calendar_annotation = true;
+        } else if time_zone_annotation {
+            return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        } else if annotation.is_empty() {
+            return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        } else {
+            time_zone_annotation = true;
+        }
     }
     let main = text.split('[').next().unwrap_or(text);
     let (date, time) = main
         .split_once('T')
         .or_else(|| main.split_once('t'))
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+        .or_else(|| main.split_once(' '))
+        .unwrap_or((main, "00:00"));
     let date_fields =
         if date.starts_with(['+', '-']) && date.len() >= 8 && date.as_bytes().get(7) == Some(&b'-')
         {
@@ -1105,6 +1125,13 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if date_fields.len() != 3 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
+    if date_fields[0] == "-000000" {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    if time.ends_with(['Z', 'z']) {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    let time = time.split(['+', '-']).next().unwrap_or(time);
     let (clock, fraction) = time
         .split_once('.')
         .or_else(|| time.split_once(','))
@@ -1113,19 +1140,36 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if clock.len() < 2 || clock.len() > 3 || fraction.len() > 9 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
+    if clock.len() == 2 && !fraction.is_empty() {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     let mut fields = date_fields
         .into_iter()
         .chain(clock)
         .map(|part| part.parse::<f64>().unwrap_or(f64::NAN))
         .collect::<Vec<_>>();
+    if fields.iter().any(|value| !value.is_finite() || value.fract() != 0.0) {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    while fields.len() < 6 {
+        fields.push(0.0);
+    }
     if fields.get(5) == Some(&60.0) {
         fields[5] = 59.0;
     }
-    let nanos = format!("{fraction:0<9}").parse::<f64>().unwrap_or(0.0);
+    if fields[3] > 23.0 || fields[4] > 59.0 || fields[5] > 59.0 {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    let nanos = format!("{fraction:0<9}")
+        .parse::<f64>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid date-time"))?;
     fields.extend([
         (nanos / 1_000_000.0).trunc(),
         (nanos / 1_000.0).trunc() % 1_000.0,
         nanos % 1_000.0,
     ]);
+    if fields[6..].iter().any(|value| *value > 999.0) {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     construct(&fields.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
