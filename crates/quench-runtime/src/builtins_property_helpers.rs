@@ -131,6 +131,10 @@ pub(crate) fn define_own_property(
     // ArraySetLength coerces its value before reading the current length
     // descriptor; the coercion may mutate the array.
     validate_array_length_descriptor(&target, key, descriptor)?;
+    // ToNumber can call user code that publishes a structural array update
+    // (for example, making length non-writable). Continue with that current
+    // representative rather than the pre-coercion COW snapshot.
+    let target = crate::locals::resolved_replacement(target);
     validate_array_index_length(&target, key)?;
     if let Some(result) = prepare_array_length_definition(&target, key, descriptor)? {
         return Ok(result);
