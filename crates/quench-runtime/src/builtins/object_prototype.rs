@@ -53,6 +53,7 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::Reflect
             | Builtin::Json
             | Builtin::Atomics
+            | Builtin::TemporalNow
             | Builtin::DisposableStackPrototype
             | Builtin::AsyncDisposableStackPrototype,
         ) => Value::Builtin(Builtin::ObjectPrototype),
