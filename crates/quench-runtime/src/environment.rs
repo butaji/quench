@@ -1099,6 +1099,12 @@ impl Environment {
         // occurs while this method runs.
         unsafe { &mut *cells.0.get() }.push(cell);
     }
+
+    pub(crate) fn mark_deleted_slot(&self, slot: u16) {
+        if let Some(cell) = self.slot(slot).and_then(|binding| binding.existing_cell()) {
+            self.mark_deleted_cell(cell);
+        }
+    }
     fn clear_deleted_cell(&self, cell: &Rc<crate::value::BindingCell>) {
         if let Some(cells) = self.deleted_cells.borrow().as_ref() {
             // SAFETY: VM execution is single-threaded; see mark_deleted_cell.
