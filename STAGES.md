@@ -160,9 +160,14 @@ Evidence:
 
 ```sh
 cargo test -p quench-node-test
-cargo run -p quench-node-test --bin run-parallel -- --all --timeout-secs 30
+cargo run --release -p quench-node-test --bin run-parallel -- --all --timeout-secs 30
 # Add --results PATH for a machine-readable inventory/result record.
 ```
+
+The complete inventory gate uses the optimized profile: large upstream
+fixtures such as Buffer UTF-8/index workloads are semantically finite but can
+exceed the 30-second bound in an unoptimized debug build. A debug timeout is
+diagnostic evidence, not a compatibility result.
 
 Exit criteria: deterministic counts, structured pass/fail/skip/timeout/crash/
 unclassified records, fixture hash, and a clean baseline against the local
