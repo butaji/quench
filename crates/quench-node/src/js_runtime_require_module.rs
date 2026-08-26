@@ -195,6 +195,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::InternalUtilEmitExperimentalWarning,
                     )),
                 ),
+                (
+                    "customPromisifyArgs".into(),
+                    Value::String(crate::modules::util::PROMISIFY_CUSTOM_ARGS_KEY.into()),
+                ),
             ]));
         }
         if name == "../common" || name.ends_with("/common") || name.ends_with("/common/index") {
