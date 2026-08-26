@@ -342,6 +342,14 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             "largestUnit must not be smaller than smallestUnit",
         ));
     }
+    if largest_unit(options).is_some()
+        && largest < index
+        && rounding_increment(options, index)? > 1.0
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Cannot round calendar units while balancing to a larger unit",
+        ));
+    }
     let no_smallest = options.is_some_and(|value| match value {
         Value::Object(object) => object
             .iter()
@@ -776,8 +784,14 @@ fn calendar_round(
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     let target_distance = (target - start).num_days() as f64 + subday.fract();
     let total = target_distance * sign;
+    let preserve_calendar = preserve_larger
+        && (0..unit).any(|index| {
+            ["years", "months", "weeks"]
+                .get(index)
+                .is_some_and(|name| duration_field(object, name) != 0)
+        });
     let mut cursor = start;
-    if preserve_larger {
+    if preserve_calendar {
         for larger_unit in 0..unit {
             if larger_unit == 2 && unit >= 3 {
                 continue;
@@ -868,7 +882,7 @@ fn calendar_round(
             (round_integer(count as i128, increment, &rounding_mode(options)?) * increment) as i64;
     }
     let mut fields = vec![Value::Number(0.0); 10];
-    if preserve_larger {
+    if preserve_calendar {
         let mut larger_cursor = start;
         for index in 0..unit {
             if index == 2 && unit >= 3 {
@@ -891,8 +905,9 @@ fn calendar_round(
             fields[index] = Value::Number(larger_count as f64);
         }
     }
-    if unit == 1 && preserve_larger {
-        fields[1] = Value::Number(count as f64);
+    if unit == 1 && preserve_calendar && duration_field(object, "years") != 0 {
+        fields[0] = Value::Number(fields[0].as_number().unwrap_or(0.0) + (count / 12) as f64);
+        fields[1] = Value::Number((count % 12) as f64);
     } else {
         fields[unit] = Value::Number(count as f64);
     }
@@ -916,7 +931,16 @@ fn calendar_round(
                 }
                 fields[larger_unit] = Value::Number(larger_count as f64);
             }
-            fields[unit] = Value::Number(0.0);
+            fields[unit] = Value::Number(if larger_cursor == target {
+                0.0
+            } else {
+                count as f64
+            });
+            if unit == 2 && largest == 1 {
+                let residual_days = (target - larger_cursor).num_days() as i128 * sign as i128;
+                fields[2] =
+                    Value::Number(round_integer(residual_days, 7, &rounding_mode(options)?) as f64);
+            }
             if unit == 3 && largest == 2 {
                 fields[2] = Value::Number((count / 7) as f64);
                 fields[3] = Value::Number((count % 7) as f64);
