@@ -55,7 +55,7 @@ struct NativePacketBacking {
 struct NativeSchedule<'a> {
     table: &'a DirectTaskTable,
     scheduler: &'a LinkedSchedulerWords,
-    tasks: Vec<Option<NativeTask>>,
+    tasks: Vec<NativeTask>,
     packets: Vec<NativePacket>,
     backings: Vec<NativePacketBacking>,
     current: Option<usize>,
@@ -94,9 +94,7 @@ impl<'a> NativeSchedule<'a> {
         let mut state = Self {
             table,
             scheduler,
-            tasks: std::iter::repeat_with(|| None)
-                .take(table.runners.len())
-                .collect(),
+            tasks: Vec::with_capacity(table.runners.len()),
             packets: Vec::with_capacity(16),
             backings: Vec::with_capacity(16),
             current: table.id_for_value(start)?,
@@ -110,7 +108,8 @@ impl<'a> NativeSchedule<'a> {
             if exact_linked_task_id(runner.word(runner.id).number()?)? != index {
                 return None;
             }
-            state.tasks[index] = Some(state.load_task(runner)?);
+            let task = state.load_task(runner)?;
+            state.tasks.push(task);
         }
         Some(state)
     }
@@ -462,10 +461,10 @@ impl<'a> NativeSchedule<'a> {
     }
 
     fn task(&self, index: usize) -> Option<&NativeTask> {
-        self.tasks.get(index)?.as_ref()
+        self.tasks.get(index)
     }
 
     fn task_mut(&mut self, index: usize) -> Option<&mut NativeTask> {
-        self.tasks.get_mut(index)?.as_mut()
+        self.tasks.get_mut(index)
     }
 }
