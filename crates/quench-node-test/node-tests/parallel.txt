@@ -341,6 +341,9 @@ test-fs-promises-file-handle-close-errors.js
 test-fs-promises-file-handle-op-errors.js
 test-fs-promises-file-handle-pull.js
 test-fs-promises-file-handle-pullsync.js
+test-fs-promises-file-handle-sync.js
+test-fs-promises-file-handle-writer.js
+test-fs-promises-mkdtempDisposable.js
 test-module-create-require-multibyte.js
 test-error-format-list.js
 test-compile-cache-api-error.js
