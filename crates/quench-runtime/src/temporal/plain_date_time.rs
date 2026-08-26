@@ -1267,6 +1267,9 @@ fn with(
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
     let mut values = fields(receiver)?;
+    if crate::temporal::plain_date::is_temporal_date_like(changes) {
+        return Err(crate::value::error::throw_type_error("Invalid date-time"));
+    }
     let calendar = crate::execute::get_property_result(changes, "calendar")?;
     if !matches!(calendar, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
