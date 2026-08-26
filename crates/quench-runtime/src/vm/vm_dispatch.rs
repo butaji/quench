@@ -289,6 +289,14 @@ fn run_control_op(
         Yield { src } => read_register(registers, *src)
             .map(Completion::Yield)
             .map(Some),
+        YieldStar { .. } => match crate::generator::execute_yield_star(
+            registers,
+            op,
+            Completion::Normal,
+        )? {
+            Some(completion) => Ok(Some(completion)),
+            None => Ok(None),
+        },
         _ => Ok(None),
     }
 }

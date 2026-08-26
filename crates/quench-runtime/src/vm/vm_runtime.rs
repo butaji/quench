@@ -496,7 +496,17 @@ fn to_object_value(this_value: &Value) -> Value {
 }
 
 fn boxed_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
-    let mut properties = vec![("_value".to_string(), value.clone())];
+    let prototype = match constructor {
+        Builtin::Boolean => Builtin::BooleanPrototype,
+        Builtin::String => Builtin::StringPrototype,
+        Builtin::BigInt => Builtin::BigIntPrototype,
+        Builtin::Number => Builtin::NumberPrototype,
+        _ => Builtin::ObjectPrototype,
+    };
+    let mut properties = vec![
+        ("_value".to_string(), value.clone()),
+        ("\0prototype".to_string(), crate::vm::realm_intrinsic(prototype)),
+    ];
     if constructor != Builtin::Number {
         properties.push(("constructor".to_string(), Value::Builtin(constructor)));
     }
