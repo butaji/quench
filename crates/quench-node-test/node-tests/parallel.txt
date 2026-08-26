@@ -180,6 +180,7 @@ test-child-process-bad-stdio.js
 test-child-process-dgram-reuseport.js
 test-child-process-exec-kill-throws.js
 test-process-constants-noatime.js
+test-process-default.js
 test-assert-deep.js
 test-assert-checktag.js
 test-assert-class-destructuring.js
