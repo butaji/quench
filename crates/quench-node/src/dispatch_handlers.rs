@@ -2813,11 +2813,66 @@ pub fn process_emit_warning(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let message = args
-        .first()
-        .map(crate::modules::path::value_to_string)
-        .unwrap_or_default();
-    crate::modules::process::emit_warning(state, "Warning", &message, None, false);
+    let first = args.first().cloned().unwrap_or(Value::Undefined);
+    let message = match &first {
+        Value::Object(_) => match quench_runtime::execute::get_property(&first, "message") {
+            Value::String(value) => value,
+            _ => crate::modules::path::value_to_string(&first),
+        },
+        _ => crate::modules::path::value_to_string(&first),
+    };
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let (name, code, detail) = match options {
+        Value::String(name) => (name, None, None),
+        Value::Object(_) => (
+            match quench_runtime::execute::get_property(&options, "name") {
+                Value::String(value) if !value.is_empty() => value,
+                _ => "Warning".into(),
+            },
+            match quench_runtime::execute::get_property(&options, "code") {
+                Value::String(value) => Some(value),
+                _ => None,
+            },
+            match quench_runtime::execute::get_property(&options, "detail") {
+                Value::String(value) => Some(value),
+                _ => None,
+            },
+        ),
+        _ => ("Warning".into(), None, None),
+    };
+    let global = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&global, "process");
+    let no_deprecation = matches!(
+        quench_runtime::execute::get_property(&process, "noDeprecation"),
+        Value::Boolean(true)
+    );
+    if name == "DeprecationWarning" && no_deprecation {
+        return Ok(Value::Undefined);
+    }
+    let throw_deprecation = name == "DeprecationWarning"
+        && matches!(
+            quench_runtime::execute::get_property(&process, "throwDeprecation"),
+            Value::Boolean(true)
+        );
+    if throw_deprecation {
+        let error = crate::host::namespace_object_from_pairs(vec![
+            (
+                "\0prototype".into(),
+                Value::Builtin(quench_runtime::ops::Builtin::ErrorPrototype),
+            ),
+            ("name".into(), Value::String(name.clone())),
+            ("message".into(), Value::String(message.clone())),
+            ("stack".into(), Value::String(format!("{name}: {message}"))),
+        ]);
+        state.borrow_mut().event_loop.queue_microtask(
+            crate::host::capability(crate::registry::SPEC_PROCESS_EMIT),
+            vec![Value::String("uncaughtException".into()), error],
+        );
+        return Ok(Value::Undefined);
+    }
+    crate::modules::process::emit_warning_with_detail(
+        state, &name, &message, code.as_deref(), detail.as_deref(), false,
+    );
     Ok(Value::Undefined)
 }
 
