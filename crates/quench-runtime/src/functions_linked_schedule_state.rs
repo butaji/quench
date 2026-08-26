@@ -105,7 +105,7 @@ struct NativeSchedule<'a> {
     #[cfg(feature = "execution-trace")]
     append_steps: usize,
     #[cfg(feature = "execution-trace")]
-    direct_branches: [usize; 14],
+    direct_branches: [usize; 15],
     #[cfg(feature = "execution-trace")]
     queue_origin: usize,
     #[cfg(feature = "execution-trace")]
@@ -159,7 +159,7 @@ impl<'a> NativeSchedule<'a> {
             #[cfg(feature = "execution-trace")]
             append_steps: 0,
             #[cfg(feature = "execution-trace")]
-            direct_branches: [0; 14],
+            direct_branches: [0; 15],
             #[cfg(feature = "execution-trace")]
             queue_origin: 0,
             #[cfg(feature = "execution-trace")]
@@ -430,10 +430,17 @@ impl<'a> NativeSchedule<'a> {
                 self.direct_branches[1] += 1;
             }
             self.trace_queue_origin(0);
-            (
-                None,
-                Some(self.queue_packet(current, queued, self.packets.get(queued)?.id)?),
-            )
+            let target = self.packets.get(queued)?.id;
+            let next = self.queue_packet(current, queued, target)?;
+            self.task_mut(current).kind = NativeTaskKind::Device { v1: None };
+            if next == current {
+                #[cfg(feature = "execution-trace")]
+                {
+                    self.direct_branches[14] += 1;
+                }
+                return self.suspend(current);
+            }
+            return Some(Some(next));
         } else {
             #[cfg(feature = "execution-trace")]
             {
