@@ -41,7 +41,12 @@ fn reduce_local(
     let slot = *locals.get(identifier.name.as_str())?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
-    if proven_initialized_local(identifier.name.as_str(), slot, facts, locals) {
+    if proven_initialized_local(identifier.name.as_str(), slot, facts, locals)
+        && !facts
+            .eval_var_barrier
+            .iter()
+            .any(|name| name == identifier.name.as_str())
+    {
         ops.push(Op::LoadLocal {
             dst: register,
             slot,
