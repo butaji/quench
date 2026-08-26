@@ -605,10 +605,17 @@ fn array_property_result(
             receiver,
         ));
     }
-    crate::arrays::prototype_override_getter(key).map(|getter| match getter {
-        Value::Undefined => Ok(Value::Undefined),
-        getter => invoke_accessor(&getter, receiver),
-    })
+    if let Some(getter) = crate::arrays::prototype_override_getter(key) {
+        return Some(match getter {
+            Value::Undefined => Ok(Value::Undefined),
+            getter => invoke_accessor(&getter, receiver),
+        });
+    }
+    Some(get_property_with_receiver(
+        &Value::Builtin(crate::ops::Builtin::ArrayPrototype),
+        key,
+        receiver,
+    ))
 }
 
 fn array_has_own_property(values: &crate::value::ArrayData, key: &str) -> bool {
