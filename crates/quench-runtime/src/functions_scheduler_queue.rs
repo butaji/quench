@@ -129,9 +129,7 @@ enum CheckPriorityTransition<R> {
         result: R,
     },
     Append {
-        queue: *const crate::register_file::SlotWord,
         tail_link: *const crate::register_file::SlotWord,
-        head: crate::value::Value,
         result: R,
     },
 }
@@ -156,16 +154,13 @@ impl<R> CheckPriorityTransition<R> {
                 result
             }
             Self::Append {
-                queue,
                 tail_link,
-                head,
                 result,
             } => {
                 // `Scheduler.queue` has already established packet.link=null;
                 // the admitted Packet.addTo body would repeat that same store.
                 packet_link.store(crate::value::Value::Null);
                 unsafe { &*tail_link }.store(packet);
-                unsafe { &*queue }.store(head);
                 result
             }
         }
@@ -185,8 +180,10 @@ fn check_priority_transition(
     let Some(queue) = writable_own_word(target, "queue") else {
         return Ok(None);
     };
-    let head = queue.load();
-    if head.is_nullish() {
+    let Some(head) = queue.object_or_null_ptr() else {
+        return Ok(None);
+    };
+    let Some(head) = head else {
         return Ok(check_priority_empty(
             ready,
             target,
@@ -194,20 +191,16 @@ fn check_priority_transition(
             task_value,
             queue,
         ));
-    }
-    check_priority_append(occupied, packet, task_value, queue, head)
+    };
+    check_priority_append(occupied, packet, task_value, head)
 }
 
 fn check_priority_append(
     occupied: crate::machine::CodeView<'_>,
     packet: &crate::value::ObjectData,
     task: &crate::value::Value,
-    queue: &crate::register_file::SlotWord,
-    head: crate::value::Value,
+    head: *const crate::value::ObjectData,
 ) -> Result<Option<CheckPriorityTransition<crate::value::Value>>, crate::execute::VmError> {
-    let crate::value::Value::Object(head_object) = &head else {
-        return Ok(None);
-    };
     let Some(add_to_metadata) = occupied.metadata_at(4) else {
         return Ok(None);
     };
@@ -221,15 +214,12 @@ fn check_priority_append(
     if !packet_add_fact(&add_to) {
         return Ok(None);
     }
-    let Some(tail_link) =
-        packet_tail_link(std::rc::Rc::as_ptr(head_object), std::ptr::from_ref(packet))
+    let Some(tail_link) = packet_tail_link(head, std::ptr::from_ref(packet))
     else {
         return Ok(None);
     };
     Ok(Some(CheckPriorityTransition::Append {
-        queue: std::ptr::from_ref(queue),
         tail_link,
-        head,
         result: task.clone(),
     }))
 }
