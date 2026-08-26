@@ -294,10 +294,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         {
             let module = assert_module();
             return if name.ends_with("/strict") {
-                Ok(quench_runtime::execute::set_property(
-                    module.clone(),
-                    "strict",
-                    module,
+                Ok(quench_runtime::execute::get_property(
+                    &module,
+                    "\0quench:strict-namespace",
                 ))
             } else {
                 Ok(module)
