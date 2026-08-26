@@ -52,7 +52,7 @@ fn execute_linked_idle(
     current: &DirectTaskRunner,
     table: &DirectTaskTable,
     scheduler: &LinkedSchedulerWords,
-    plan: IdleTaskPlan,
+    plan: DirectIdleTask,
 ) -> Option<DirectTaskStep> {
     let count = current.word(current.task_count?);
     let next_count = count.number()? - 1.0;
@@ -70,12 +70,11 @@ fn execute_linked_idle(
     } else {
         (value >> 1) ^ 0xD008
     };
-    let slot = if even {
-        plan.device_a_slot
+    let id = if even {
+        plan.device_a
     } else {
-        plan.device_b_slot
+        plan.device_b
     };
-    let id = current.function.captures.get_number(slot)?;
     let transition =
         LinkedReleaseTransition::new(current, table.for_id(exact_linked_task_id(id)?)?)?;
     count.store_number(next_count);
@@ -89,7 +88,7 @@ fn execute_linked_worker(
     table: &DirectTaskTable,
     scheduler: &LinkedSchedulerWords,
     packet: &crate::value::Value,
-    plan: WorkerTaskPlan,
+    plan: DirectWorkerTask,
 ) -> Option<DirectTaskStep> {
     if packet.is_nullish() {
         let next = linked_suspend(current)?;
@@ -105,14 +104,12 @@ fn execute_linked_worker(
     let packet_words = table.packet_words(packet_object)?;
     let v1 = current.word(current.task_v1);
     let v2 = current.word(current.task_v2?);
-    let handler_a = current.function.captures.get_number(plan.handler_a_slot)?;
-    let handler_b = current.function.captures.get_number(plan.handler_b_slot)?;
-    let next_id = if v1.number()? == handler_a {
-        handler_b
+    let next_id = if v1.number()? == plan.handler_a {
+        plan.handler_b
     } else {
-        handler_a
+        plan.handler_a
     };
-    let count = exact_worker_count(current.function.captures.get_number(plan.data_size_slot)?)?;
+    let count = plan.count;
     let (values, next_v2) = worker_values(v2.number()?, count);
     let payload = linked_worker_payload(packet_words.a2, count)?;
     let target_id = exact_linked_task_id(next_id)?;
@@ -159,14 +156,20 @@ fn execute_linked_handler(
     table: &DirectTaskTable,
     scheduler: &LinkedSchedulerWords,
     packet: &crate::value::Value,
-    plan: HandlerTaskPlan,
+    plan: DirectHandlerTask,
 ) -> Option<DirectTaskStep> {
     let task_v1 = current.word(current.task_v1);
     let task_v2 = current.word(current.task_v2?);
     let mut v1 = task_v1.load();
     let mut v2 = task_v2.load();
-    let incoming =
-        linked_incoming_packet(&current.function, packet, plan, task_v1, task_v2, table)?;
+    let incoming = linked_incoming_packet(
+        &current.function,
+        packet,
+        plan.work_kind,
+        task_v1,
+        task_v2,
+        table,
+    )?;
     if let Some(incoming) = &incoming {
         let appended = predicted_append(&incoming.packet, &incoming.queue)?;
         if std::ptr::eq(incoming.target, task_v1) {
@@ -175,7 +178,16 @@ fn execute_linked_handler(
             v2 = appended;
         }
     }
-    let route = linked_handler_route(current, table, scheduler, task_v1, task_v2, v1, v2, plan)?;
+    let route = linked_handler_route(
+        current,
+        table,
+        scheduler,
+        task_v1,
+        task_v2,
+        v1,
+        v2,
+        plan.data_size,
+    )?;
     if let Some(incoming) = incoming {
         apply_linked_incoming(incoming)?;
     }
@@ -186,7 +198,7 @@ fn execute_linked_handler(
 fn linked_incoming_packet<'a>(
     function: &crate::value::FunctionValue,
     packet: &crate::value::Value,
-    plan: HandlerTaskPlan,
+    work_kind: f64,
     task_v1: &'a crate::register_file::SlotWord,
     task_v2: &'a crate::register_file::SlotWord,
     table: &DirectTaskTable,
@@ -199,7 +211,6 @@ fn linked_incoming_packet<'a>(
     };
     let words = table.packet_words(object)?;
     let kind = words.kind.number()?;
-    let work_kind = function.captures.get_number(plan.work_kind_slot)?;
     let target = if kind == work_kind { task_v1 } else { task_v2 };
     let queue = target.load();
     if !queue.is_nullish() && !matches!(queue, crate::value::Value::Object(_)) {
@@ -288,7 +299,7 @@ fn linked_handler_route<'a>(
     task_v2: &'a crate::register_file::SlotWord,
     v1: crate::value::Value,
     v2: crate::value::Value,
-    plan: HandlerTaskPlan,
+    data_size: f64,
 ) -> Option<LinkedHandlerRoute<'a>> {
     if v1.is_nullish() {
         return linked_suspend(current).map(LinkedHandlerRoute::Suspend);
@@ -301,7 +312,6 @@ fn linked_handler_route<'a>(
     }
     let work_words = table.packet_words(&work)?;
     let count = work_words.a1.number()?;
-    let data_size = current.function.captures.get_number(plan.data_size_slot)?;
     if count < data_size {
         return linked_handler_work(current, table, scheduler, task_v2, v2, work, count);
     }
