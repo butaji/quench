@@ -469,7 +469,7 @@ pub(crate) fn reduce_expression_kind(
             forward_construct_call: forward_construct_call_fact(function, locals),
             forward_then_call: forward_then_call_fact(function),
             counted_method_loop: counted_method_loop_fact(function),
-            direct_method: direct_method_fact(function),
+            direct_method: direct_method_fact(function, locals),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
     ))

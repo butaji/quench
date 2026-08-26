@@ -2,12 +2,17 @@ fn execute_plan_loop(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    let Some(plan) = function.code.facts().counted_method_loop.as_deref() else {
+    let Some(crate::facts::CountedMethodLoopFact::Visit {
+        length_method,
+        element_method,
+        body_method,
+    }) = function.code.facts().counted_method_loop.as_deref()
+    else {
         return Ok(None);
     };
     let mut index = 0.0;
     loop {
-        let size = call_fact_named(receiver, &plan.length_method, &[])?;
+        let size = call_fact_named(receiver, length_method, &[])?;
         let condition = crate::vm::vm_arithmetic::evaluate_binary(
             &crate::value::Value::Number(index),
             &size,
@@ -18,11 +23,11 @@ fn execute_plan_loop(
         }
         let constraint = call_fact_named(
             receiver,
-            &plan.element_method,
+            element_method,
             &[crate::value::Value::Number(index)],
         )?;
         let constraint = crate::locals::resolved_replacement(constraint);
-        let body = crate::execute::get_property_result(&constraint, &plan.body_method)?;
+        let body = crate::execute::get_property_result(&constraint, body_method)?;
         if execute_direct_counted_method(&body, &constraint).is_none() {
             let _ = crate::functions::execute_target(&body, &constraint, &[])?;
         }
@@ -63,7 +68,39 @@ fn execute_direct_counted_method(
             crate::execution_trace::kernel("counted_method_copy_property", false);
             Some(())
         }
+        crate::facts::DirectMethodFact::PropertyLoad { property } => {
+            let _ = crate::execute::get_property_result(receiver, property).ok()?;
+            Some(())
+        }
+        crate::facts::DirectMethodFact::PropertyNotEqualCapture {
+            property,
+            capture_slot,
+            capture_property,
+        } => {
+            let _ = direct_not_equal_capture(
+                function,
+                receiver,
+                property,
+                *capture_slot,
+                capture_property,
+            )?;
+            Some(())
+        }
+        crate::facts::DirectMethodFact::AppendArray { .. } => None,
     }
+}
+
+fn direct_not_equal_capture(
+    function: &crate::value::FunctionValue,
+    receiver: &crate::value::Value,
+    property: &str,
+    capture_slot: u16,
+    capture_property: &str,
+) -> Option<bool> {
+    let left = plain_data_property(receiver, property)?;
+    let capture = function.captures.get(capture_slot);
+    let right = plain_data_property(&capture, capture_property)?;
+    Some(!crate::equality::abstract_equal(&left, &right).ok()?)
 }
 
 fn direct_property_select(
@@ -107,161 +144,196 @@ fn execute_constraint_collection_loop(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    let Some(plan) = match_constraint_collection_loop(function) else { return Ok(None) };
-    let Some(variable) = arguments.first() else { return Ok(None) };
-    let Some(collection) = arguments.get(1) else { return Ok(None) };
+    let Some(crate::facts::CountedMethodLoopFact::Filter {
+        determining_property,
+        collection_property,
+        length_method,
+        element_method,
+        predicate_method,
+        append_method,
+    }) = function.code.facts().counted_method_loop.as_deref()
+    else {
+        return Ok(None);
+    };
+    let Some(variable) = arguments.first() else {
+        return Ok(None);
+    };
+    let Some(collection) = arguments.get(1) else {
+        return Ok(None);
+    };
     let variable = crate::locals::resolved_replacement(variable.clone());
     let collection = crate::locals::resolved_replacement(collection.clone());
-    let determining = get_named_complete(&variable, plan.main, plan.determining_pc)?;
-    let constraints = get_named_complete(&variable, plan.main, plan.constraints_pc)?;
-    let mut index = 0.0;
-    loop {
-        let size = call_named_complete(&constraints, plan.test, plan.size_pc, &[])?;
-        let condition = crate::vm::vm_arithmetic::evaluate_binary(
-            &crate::value::Value::Number(index),
-            &size,
-            crate::ops::BinaryOp::LessThan,
-        )?;
-        if !crate::vm::is_truthy(&condition) {
-            break;
-        }
-        let constraint = call_registered_one(
-            &constraints,
-            plan.body,
-            plan.constraint_pc,
-            index,
-        )?;
-        let constraint = crate::locals::resolved_replacement(constraint);
-        if !crate::equality::abstract_equal(&constraint, &determining)? {
-            let satisfied = call_named_complete(
-                &constraint,
-                plan.satisfied,
-                plan.satisfied_pc,
-                &[],
-            )?;
-            if crate::vm::is_truthy(&satisfied) {
-                let _ = call_named_complete(
-                    &collection,
-                    plan.add,
-                    plan.add_pc,
-                    std::slice::from_ref(&constraint),
-                )?;
+    macro_rules! admit {
+        ($value:expr, $reason:literal) => {
+            match $value {
+                Some(value) => value,
+                None => {
+                    crate::execution_trace::kernel(concat!("filtered_reject_", $reason), true);
+                    return Ok(None);
+                }
             }
+        };
+    }
+    let determining = admit!(
+        plain_data_property(&variable, determining_property),
+        "determining"
+    );
+    let constraints = admit!(
+        plain_data_property(&variable, collection_property),
+        "collection"
+    );
+    let length = admit!(plain_method(&constraints, length_method), "length_method");
+    let element = admit!(plain_method(&constraints, element_method), "element_method");
+    let input = admit!(
+        nested_array_for_methods(&constraints, &length, &element),
+        "input_array"
+    );
+    let append = admit!(plain_method(&collection, append_method), "append_method");
+    let Some(crate::facts::DirectMethodFact::AppendArray { property }) =
+        append.code.facts().direct_method.as_deref()
+    else {
+        crate::execution_trace::kernel("filtered_reject_append_fact", true);
+        return Ok(None);
+    };
+    let Some(crate::value::Value::Array(output)) = plain_data_property(&collection, property)
+    else {
+        crate::execution_trace::kernel("filtered_reject_output_array", true);
+        return Ok(None);
+    };
+    if !input.is_packed_ordinary()
+        || !output.is_packed_ordinary()
+        || !crate::locals::array_word_is_current(&input)
+        || !crate::locals::array_word_is_current(&output)
+        || std::rc::Rc::ptr_eq(&input, &output)
+    {
+        crate::execution_trace::kernel("filtered_reject_array_guard", true);
+        return Ok(None);
+    }
+
+    // Admission above proves the collection plumbing once. Predicate guards
+    // remain per element because the input may legally contain several
+    // ordinary object shapes; no output is mutated until every guard passes.
+    let mut selected = Vec::new();
+    let iterations = input.logical_len();
+    for index in 0..iterations {
+        let Some(constraint) = input.dense_value_at(index) else {
+            crate::execution_trace::kernel("filtered_reject_input_hole", true);
+            return Ok(None);
+        };
+        let constraint = crate::locals::resolved_replacement(constraint);
+        if crate::equality::abstract_equal(&constraint, &determining)? {
+            continue;
         }
+        let Some(predicate) = plain_method(&constraint, predicate_method) else {
+            crate::execution_trace::kernel("filtered_reject_predicate_method", true);
+            return Ok(None);
+        };
+        let Some(satisfied) = execute_direct_predicate(&predicate, &constraint) else {
+            crate::execution_trace::kernel("filtered_reject_predicate_fact", true);
+            return Ok(None);
+        };
+        if satisfied {
+            selected.push(constraint);
+        }
+    }
+    if !selected.is_empty() {
+        let receiver = crate::value::Value::Array(output);
+        let _ = crate::builtins::array_push(Some(&receiver), &selected);
+    }
+    for _ in 0..iterations {
         crate::execution_trace::kernel("constraint_collection_loop", false);
-        index += 1.0;
+        crate::execution_trace::kernel("filtered_method_loop_direct", false);
     }
     Ok(Some(crate::value::Value::Undefined))
 }
 
-#[derive(Clone, Copy)]
-struct ConstraintCollectionLoop<'a> {
-    main: crate::machine::CodeView<'a>,
-    test: crate::machine::CodeView<'a>,
-    body: crate::machine::CodeView<'a>,
-    satisfied: crate::machine::CodeView<'a>,
-    add: crate::machine::CodeView<'a>,
-    determining_pc: usize,
-    constraints_pc: usize,
-    size_pc: usize,
-    constraint_pc: usize,
-    satisfied_pc: usize,
-    add_pc: usize,
-}
-
-fn get_named_complete(
+fn nested_array_for_methods(
     receiver: &crate::value::Value,
-    code: crate::machine::CodeView<'_>,
-    pc: usize,
-) -> Result<crate::value::Value, crate::execute::VmError> {
-    let metadata = code.metadata_at(pc).ok_or(crate::execute::VmError::MissingReturn)?;
-    let key = metadata.name.as_deref().ok_or(crate::execute::VmError::MissingReturn)?;
-    crate::vm::get_named_property_result(receiver, key, &metadata.named_cache)
-}
-
-fn match_constraint_collection_loop(
-    function: &std::rc::Rc<crate::value::FunctionValue>,
-) -> Option<ConstraintCollectionLoop<'_>> {
-    let main = function.code.code()?;
-    if main.len() != 10 {
+    length: &std::rc::Rc<crate::value::FunctionValue>,
+    element: &std::rc::Rc<crate::value::FunctionValue>,
+) -> Option<std::rc::Rc<crate::value::ArrayData>> {
+    let ShapeKernelPlan::NestedArrayLength(length_plan) = shape_kernel_fact(length)? else {
+        return None;
+    };
+    let ShapeKernelPlan::NestedArrayIndex(element_plan) = shape_kernel_fact(element)? else {
+        return None;
+    };
+    let length_property = length
+        .code
+        .code()?
+        .metadata_at(length_plan.first_pc)?
+        .name
+        .as_deref()?;
+    let element_property = element
+        .code
+        .code()?
+        .metadata_at(element_plan.first_pc)?
+        .name
+        .as_deref()?;
+    if length_property != element_property {
         return None;
     }
-    let loop_instruction = main.instruction(7)?;
-    let crate::ops::Op::Loop { init, test, body, update, post_test, .. } = main.cold(loop_instruction)? else {
+    let crate::value::Value::Array(array) = plain_data_property(receiver, length_property)? else {
         return None;
     };
-    let (init, test, body, update) = (init.code()?, test.code()?, body.code()?, update.code()?);
-    let conditional_instruction = body.instruction(8)?;
-    let crate::ops::Op::Conditional { consequent, .. } = body.cold(conditional_instruction)? else {
-        return None;
-    };
-    let satisfied = consequent.code()?;
-    let branch_instruction = body.instruction(10)?;
-    let crate::ops::Op::Branch { then_ops, .. } = body.cold(branch_instruction)? else {
-        return None;
-    };
-    let add = then_ops.code()?;
-    constraint_collection_shape(main, init, test, body, update, satisfied, add, *post_test)
-        .then_some(ConstraintCollectionLoop {
-            main, test, body, satisfied, add,
-            determining_pc: 1, constraints_pc: 4, size_pc: 2,
-            constraint_pc: 1, satisfied_pc: 1, add_pc: 1,
-        })
+    Some(array)
 }
 
-fn constraint_collection_shape(
-    main: crate::machine::CodeView<'_>, init: crate::machine::CodeView<'_>,
-    test: crate::machine::CodeView<'_>, body: crate::machine::CodeView<'_>,
-    update: crate::machine::CodeView<'_>, satisfied: crate::machine::CodeView<'_>,
-    add: crate::machine::CodeView<'_>, post_test: bool,
-) -> bool {
-    use crate::ir::Opcode::*;
-    !post_test
-        && [1, 4].into_iter().all(|pc| main.instruction(pc).is_some_and(|op| op.opcode == GetN))
-        && [2, 5].into_iter().all(|pc| main.instruction(pc).is_some_and(|op| op.opcode == InitLocal))
-        && init.len() == 4
-        && test.len() == 5
-        && body.len() == 12
-        && update.len() == 3
-        && test.instruction(2).is_some_and(|op| op.opcode == CallN && op.flags == 0)
-        && test.binary_at(3).is_some_and(|(_, op, _, _)| op == crate::ops::BinaryOp::LessThan)
-        && body.instruction(1).is_some_and(|op| op.opcode == GetN)
-        && body.instruction(3).is_some_and(|op| op.opcode == CallN && op.flags == 1)
-        && body.instruction(4).is_some_and(|op| op.opcode == InitLocal)
-        && body.binary_at(7).is_some_and(|(_, op, _, _)| op == crate::ops::BinaryOp::NotEqual)
-        && metadata_name(main, 1) == Some("determinedBy")
-        && metadata_name(main, 4) == Some("constraints")
-        && metadata_name(test, 2) == Some("size")
-        && metadata_name(body, 1) == Some("at")
-        && metadata_name(satisfied, 1) == Some("isSatisfied")
-        && metadata_name(add, 1) == Some("add")
-        && update.instruction(0).is_some_and(|op| op.opcode == UpdateLocal)
-}
-
-fn metadata_name(code: crate::machine::CodeView<'_>, pc: usize) -> Option<&str> {
-    code.metadata_at(pc)?.name.as_deref()
-}
-
-fn call_named_complete(
+fn execute_direct_predicate(
+    function: &crate::value::FunctionValue,
     receiver: &crate::value::Value,
-    code: crate::machine::CodeView<'_>,
-    pc: usize,
-    arguments: &[crate::value::Value],
-) -> Result<crate::value::Value, crate::execute::VmError> {
-    let metadata = code.metadata_at(pc).ok_or(crate::execute::VmError::MissingReturn)?;
-    let key = metadata.name.as_deref().ok_or(crate::execute::VmError::MissingReturn)?;
-    let callee = crate::vm::get_named_property_result(receiver, key, &metadata.named_cache)?;
-    crate::functions::execute_target(&callee, receiver, arguments)
+) -> Option<bool> {
+    match function.code.facts().direct_method.as_deref()? {
+        crate::facts::DirectMethodFact::PropertyLoad { property } => {
+            plain_data_property(receiver, property).map(|value| crate::vm::is_truthy(&value))
+        }
+        crate::facts::DirectMethodFact::PropertyNotEqualCapture {
+            property,
+            capture_slot,
+            capture_property,
+        } => direct_not_equal_capture(
+            function,
+            receiver,
+            property,
+            *capture_slot,
+            capture_property,
+        ),
+        _ => None,
+    }
 }
 
-fn call_registered_one(
+fn plain_method(
     receiver: &crate::value::Value,
-    body: crate::machine::CodeView<'_>,
-    pc: usize,
-    index: f64,
-) -> Result<crate::value::Value, crate::execute::VmError> {
-    let metadata = body.metadata_at(pc).ok_or(crate::execute::VmError::MissingReturn)?;
-    let key = metadata.name.as_deref().ok_or(crate::execute::VmError::MissingReturn)?;
-    let callee = crate::vm::get_named_property_result(receiver, key, &metadata.named_cache)?;
-    crate::functions::execute_target(&callee, receiver, &[crate::value::Value::Number(index)])
+    name: &str,
+) -> Option<std::rc::Rc<crate::value::FunctionValue>> {
+    let crate::value::Value::Function(function) = plain_data_property(receiver, name)? else {
+        return None;
+    };
+    Some(function)
+}
+
+fn plain_data_property(receiver: &crate::value::Value, name: &str) -> Option<crate::value::Value> {
+    let mut owner = crate::locals::resolved_replacement(receiver.clone());
+    for _ in 0..4 {
+        let crate::value::Value::Object(object) = &owner else {
+            return None;
+        };
+        if object.has_replacement() {
+            return None;
+        }
+        let shadows = object.hot_properties().names().any(|candidate| {
+            candidate == name
+                || crate::builtins::is_deleted_key_for(candidate, name)
+                || crate::builtins::is_descriptor_key_for(candidate, name)
+        });
+        if shadows {
+            return crate::vm::proven_own_data(&owner, name)
+                .map(crate::locals::resolved_replacement);
+        }
+        owner = match crate::vm::proven_own_data(&owner, "\0prototype")? {
+            crate::value::Value::ObjectAlias(alias) => crate::value::Value::Object(alias.target()?),
+            prototype => crate::locals::resolved_replacement(prototype),
+        };
+    }
+    None
 }
