@@ -1168,7 +1168,8 @@ fn leaf_call(
     let receiver = crate::locals::resolved_replacement(leaf_register(registers, op.b)?);
     if op.flags == 0 {
         let callee = leaf_get_named(code, pc, &receiver)?;
-        return crate::functions::execute_target(&callee, &receiver, &[]);
+        return crate::functions::execute_target_with_receiver(&callee, &receiver, &[])
+            .map(|(value, _)| value);
     }
     let callee = leaf_register(registers, op.c)?;
     let first =
@@ -1181,5 +1182,10 @@ fn leaf_call(
             .transpose()?
             .unwrap_or(crate::value::Value::Undefined),
     ];
-    crate::functions::execute_target(&callee, &receiver, &arguments[..usize::from(op.flags)])
+    crate::functions::execute_target_with_receiver(
+        &callee,
+        &receiver,
+        &arguments[..usize::from(op.flags)],
+    )
+    .map(|(value, _)| value)
 }
