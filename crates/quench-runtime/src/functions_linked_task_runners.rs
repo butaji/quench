@@ -2,10 +2,29 @@ const LINKED_TASK_ID_LIMIT: usize = 64;
 const LINKED_TASK_IDENTITY_SLOTS: usize = LINKED_TASK_ID_LIMIT * 2;
 
 enum DirectTaskKind {
-    Idle(IdleTaskPlan),
+    Idle(DirectIdleTask),
     Device,
-    Worker(WorkerTaskPlan),
-    Handler(HandlerTaskPlan),
+    Worker(DirectWorkerTask),
+    Handler(DirectHandlerTask),
+}
+
+#[derive(Clone, Copy)]
+struct DirectIdleTask {
+    device_a: f64,
+    device_b: f64,
+}
+
+#[derive(Clone, Copy)]
+struct DirectWorkerTask {
+    handler_a: f64,
+    handler_b: f64,
+    count: usize,
+}
+
+#[derive(Clone, Copy)]
+struct DirectHandlerTask {
+    work_kind: f64,
+    data_size: f64,
 }
 
 struct DirectTaskRunner {
@@ -299,13 +318,23 @@ fn linked_state_predicate(tcb: &crate::value::Value) -> Option<(i32, i32)> {
 
 fn direct_task_kind(function: &std::rc::Rc<crate::value::FunctionValue>) -> Option<DirectTaskKind> {
     if let Some(plan) = idle_task_fact(function) {
-        Some(DirectTaskKind::Idle(plan))
+        Some(DirectTaskKind::Idle(DirectIdleTask {
+            device_a: function.captures.get_number(plan.device_a_slot)?,
+            device_b: function.captures.get_number(plan.device_b_slot)?,
+        }))
     } else if device_task_fact(function) {
         Some(DirectTaskKind::Device)
     } else if let Some(plan) = worker_task_fact(function) {
-        Some(DirectTaskKind::Worker(plan))
+        Some(DirectTaskKind::Worker(DirectWorkerTask {
+            handler_a: function.captures.get_number(plan.handler_a_slot)?,
+            handler_b: function.captures.get_number(plan.handler_b_slot)?,
+            count: exact_worker_count(function.captures.get_number(plan.data_size_slot)?)?,
+        }))
     } else if let Some(plan) = handler_task_fact(function) {
-        Some(DirectTaskKind::Handler(plan))
+        Some(DirectTaskKind::Handler(DirectHandlerTask {
+            work_kind: function.captures.get_number(plan.work_kind_slot)?,
+            data_size: function.captures.get_number(plan.data_size_slot)?,
+        }))
     } else {
         None
     }
