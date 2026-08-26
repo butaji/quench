@@ -31,7 +31,9 @@ fn function_declaration_op(
 ) -> Op {
     Op::MakeFunctionWithKind {
         dst,
-        body: crate::machine::FunctionCode::pending(body),
+        body: crate::machine::FunctionCode::pending(body).with_facts(crate::facts::FunctionFacts {
+            direct_constructor: metadata.direct_constructor.clone(),
+        }),
         params,
         captures,
         kind: metadata.kind,
