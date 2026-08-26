@@ -42,17 +42,17 @@
       }
     });
   }
-  function setTimeoutPromise(delay, value, options) {
+  function setTimeout(delay, value, options) {
     return promiseTimer(
       (finish) => timers.setTimeout(finish, delay),
       (timer) => timers.clearTimeout(timer), value, options);
   }
-  function setImmediatePromise(value, options) {
+  function setImmediate(value, options) {
     return promiseTimer(
       (finish) => timers.setImmediate(finish),
       (timer) => timers.clearImmediate(timer), value, options);
   }
-  function setIntervalPromise(delay, value, options) {
+  function setInterval(delay, value, options) {
     options = options === undefined ? {} : options;
     if (!options || typeof options !== "object") {
       throw new TypeError("The options argument must be an object");
@@ -127,7 +127,7 @@
       error.code = "ERR_INVALID_THIS";
       throw error;
     }
-    return setTimeoutPromise(delay, undefined, options);
+    return setTimeout(delay, undefined, options);
   };
   scheduler.yield = function () {
     if (this !== scheduler) {
@@ -135,12 +135,12 @@
       error.code = "ERR_INVALID_THIS";
       throw error;
     }
-    return setImmediatePromise(undefined);
+    return setImmediate(undefined);
   };
   return {
-    setTimeout: setTimeoutPromise,
-    setImmediate: setImmediatePromise,
-    setInterval: setIntervalPromise,
+    setTimeout,
+    setImmediate,
+    setInterval,
     scheduler
   };
 })
