@@ -36,6 +36,7 @@ fn function_metadata(
         ),
         direct_constructor: crate::functions::direct_constructor_fact(function, locals),
         linked_record_insert: crate::functions::linked_record_insert_fact(function, locals),
+        forward_construct_call: crate::functions::forward_construct_call_fact(function, locals),
     }
 }
 

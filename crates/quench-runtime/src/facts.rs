@@ -34,10 +34,27 @@ pub(crate) struct LinkedRecordInsertFact {
     pub(crate) index: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ForwardValueSource {
+    Receiver,
+    Argument(u16),
+    Integer(i32),
+    Capture(u16),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForwardConstructCallFact {
+    pub(crate) method: String,
+    pub(crate) constructor_slot: u16,
+    pub(crate) forwarded_arguments: Rc<[u16]>,
+    pub(crate) constructor_arguments: Rc<[ForwardValueSource]>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FunctionFacts {
     pub(crate) direct_constructor: Rc<[DirectConstructorField]>,
     pub(crate) linked_record_insert: Option<Rc<LinkedRecordInsertFact>>,
+    pub(crate) forward_construct_call: Option<Rc<ForwardConstructCallFact>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
