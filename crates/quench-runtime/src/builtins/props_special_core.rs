@@ -331,6 +331,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainYearMonthPrototype, "calendarId") => {
             Some(Value::Builtin(TemporalPlainYearMonthCalendarIdGetter))
         }
+        (TemporalPlainYearMonthPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Temporal.PlainYearMonth".into()))
+        }
         (TemporalPlainYearMonthPrototype, "year") => {
             Some(Value::Builtin(TemporalPlainYearMonthYearGetter))
         }
@@ -385,6 +388,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (TemporalPlainYearMonthPrototype, "eraYear") => {
             Some(Value::Builtin(TemporalPlainYearMonthEraYearGetter))
+        }
+        (TemporalPlainYearMonthPrototype, "valueOf") => {
+            Some(Value::Builtin(TemporalPlainYearMonthValueOf))
         }
         (TemporalZonedDateTimePrototype, "toString") => {
             Some(Value::Builtin(TemporalZonedDateTimeToString))
