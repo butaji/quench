@@ -565,8 +565,8 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
             Some(0.0)
         }
         Builtin::TemporalPlainDateTimeToZonedDateTime
-        | Builtin::TemporalPlainDateTimeWithCalendar
-        | Builtin::TemporalPlainDateTimeWithPlainTime => Some(1.0),
+        | Builtin::TemporalPlainDateTimeWithCalendar => Some(1.0),
+        Builtin::TemporalPlainDateTimeWithPlainTime => Some(0.0),
         Builtin::TemporalPlainDateTimeDayOfWeekGetter
         | Builtin::TemporalPlainDateTimeDayOfYearGetter
         | Builtin::TemporalPlainDateTimeDaysInMonthGetter
