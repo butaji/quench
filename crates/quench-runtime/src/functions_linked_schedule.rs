@@ -49,6 +49,7 @@ fn execute_linked_schedule(
         return Ok(None);
     }
     let task_runners = linked_task_runners(&list_value);
+    let packet_link_cache = std::cell::Cell::new(0);
     current.copy_from(list);
 
     loop {
@@ -97,7 +98,12 @@ fn execute_linked_schedule(
                 return continue_linked_schedule_slow(receiver.clone(), &plan).map(Some);
             };
             current_id.copy_from(id);
-            let next = match execute_task_control_run(tcb, &task_control_plan, direct)? {
+            let next = match execute_task_control_run(
+                tcb,
+                &task_control_plan,
+                direct,
+                &packet_link_cache,
+            )? {
                 Some(value) => value,
                 None => {
                     let current_value = current.load();
@@ -126,6 +132,7 @@ fn execute_task_control_run(
     tcb: &crate::value::ObjectData,
     plan: &TaskControlRunPlan,
     direct: Option<&DirectTaskRunner>,
+    packet_link_cache: &std::cell::Cell<u64>,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     if tcb.has_replacement() {
         return Ok(None);
@@ -167,7 +174,7 @@ fn execute_task_control_run(
         if packet_object.has_replacement() {
             return Ok(None);
         }
-        let Some(link) = crate::vm::proven_own_word(packet_object, "link") else {
+        let Some(link) = linked_schedule_word(packet_object, "link", packet_link_cache) else {
             return Ok(None);
         };
         let next = link.load();
@@ -208,6 +215,27 @@ fn execute_task_control_run(
     };
     crate::execution_trace::kernel("task_control_run_word_slots", false);
     Ok(Some(result))
+}
+
+fn linked_schedule_word<'a>(
+    object: &'a crate::value::ObjectData,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Option<&'a crate::register_file::SlotWord> {
+    if let Some(crate::vm::NamedCachedPayload::Word(word)) =
+        crate::vm::get_named_cached_payload(object, cache)
+    {
+        // SAFETY: the layout guard above proves that `word` belongs to the
+        // retained object and names the admitted ordinary own slot.
+        return Some(unsafe { &*word });
+    }
+    let word = crate::vm::proven_own_word(object, key)?;
+    let slot = object.physical_slot_for_name(key)?;
+    cache.set(crate::machine::pack_named_cache(
+        object.semantic_layout_id(),
+        slot as u32,
+    ));
+    Some(word)
 }
 
 fn match_task_control_run(
