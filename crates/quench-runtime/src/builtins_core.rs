@@ -358,6 +358,22 @@ pub(crate) fn array_join(
     Ok(crate::strings::from_units(result))
 }
 
+pub(crate) fn array_to_string(
+    receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.toString called on null or undefined",
+        ));
+    };
+    let receiver = crate::construct::to_object(receiver)?;
+    let mut join = crate::execute::get_property_result(&receiver, "join")?;
+    if crate::conversion::is_callable(&join) {
+        return crate::functions::execute_target(&join, &receiver, &[]);
+    }
+    Ok(crate::builtins::prototype_to_string(Some(&receiver)))
+}
+
 pub(crate) fn array_push(
     receiver: Option<&Value>,
     arguments: &[Value],
