@@ -413,3 +413,4 @@ test-crypto-randomuuidv7.js
 test-crypto-pbkdf2.js
 test-crypto-scrypt.js
 test-crypto-hkdf.js
+test-crypto-keygen.js
