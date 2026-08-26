@@ -347,11 +347,7 @@ fn direct_property(values: &crate::value::ArrayData, key: &str) -> Option<Value>
     // live argument data; consult it before falling back to the
     // ordinary own-property / array-length paths.
     if values.is_arguments() && key == "length" {
-        if let Some(live) = values.argument_live_view() {
-            if live.length_override.is_some() {
-                return Some(values.arguments_length_value());
-            }
-        }
+        return Some(values.arguments_length_value());
     }
     if let Some(value) = values.property(key) {
         return Some(value);

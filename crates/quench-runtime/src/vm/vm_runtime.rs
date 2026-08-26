@@ -270,6 +270,14 @@ fn run_instruction(
                     .read_array(usize::from(instruction.b))
                     .filter(|array| crate::locals::array_word_is_current(array))
                 {
+                    if array.is_arguments() {
+                        registers.write(
+                            usize::from(instruction.a),
+                            array.arguments_length_value(),
+                        );
+                        crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+                        return Ok(None);
+                    }
                     registers
                         .write_number(usize::from(instruction.a), array.header_length() as f64);
                     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
