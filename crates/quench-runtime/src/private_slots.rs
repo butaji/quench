@@ -12,7 +12,7 @@ pub(crate) fn get(value: &Value, name: &PrivateName) -> Result<Value, VmError> {
         .find(|(id, _)| id == name)
         .map(|(_, slot)| slot.clone());
     let Some(slot) = slot else {
-        return Err(private_brand_error());
+        return Err(private_brand_error_for(&name));
     };
     match slot {
         PrivateSlot::Data(value) => Ok(value),
@@ -20,7 +20,7 @@ pub(crate) fn get(value: &Value, name: &PrivateName) -> Result<Value, VmError> {
         PrivateSlot::Accessor { get: Some(get), .. } => {
             crate::functions::execute_target(&get, value, &[])
         }
-        PrivateSlot::Accessor { get: None, .. } => Err(private_brand_error()),
+        PrivateSlot::Accessor { get: None, .. } => Err(private_brand_error_for(&name)),
     }
 }
 
@@ -92,7 +92,7 @@ pub(crate) fn set(value: &Value, name: &PrivateName, new_value: Value) -> Result
         .find(|(id, _)| id == name)
         .map(|(_, slot)| slot.clone());
     let Some(slot) = slot else {
-        return Err(private_brand_error());
+        return Err(private_brand_error_for(name));
     };
     set_slot(value, name, new_value, slot)
 }
@@ -105,11 +105,11 @@ fn set_slot(
 ) -> Result<(), VmError> {
     match slot {
         PrivateSlot::Data(_) => set_data_slot(value, name, new_value),
-        PrivateSlot::Method(_) => Err(private_brand_error()),
+        PrivateSlot::Method(_) => Err(private_brand_error_for(name)),
         PrivateSlot::Accessor { set: Some(set), .. } => {
             crate::functions::execute_target(&set, value, &[new_value]).map(|_| ())
         }
-        PrivateSlot::Accessor { set: None, .. } => Err(private_brand_error()),
+        PrivateSlot::Accessor { set: None, .. } => Err(private_brand_error_for(name)),
     }
 }
 
@@ -204,4 +204,23 @@ fn private_brand_error() -> VmError {
     crate::value::error::throw_type_error(
         "Private field access on an object without the required brand",
     )
+}
+
+fn private_brand_error_for(name: &crate::value::PrivateName) -> VmError {
+    let error = crate::builtins::error(
+        crate::ops::Builtin::TypeError,
+        &[Value::String(
+            "Private field access on an object without the required brand".to_string(),
+        )],
+    );
+    let error = if name.realm() == crate::ops::RealmId::ROOT {
+        error
+    } else {
+        let constructor = crate::vm::with_realm(name.realm(), || {
+            crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError)
+        })
+        .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeError));
+        crate::builtins::set_property(error, "constructor", constructor)
+    };
+    VmError::Thrown(error)
 }
