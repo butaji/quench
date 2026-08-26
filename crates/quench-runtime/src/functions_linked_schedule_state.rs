@@ -74,14 +74,16 @@ struct NativePacket {
     id: usize,
     kind: i32,
     a1: i32,
-    payload: [f64; LINKED_PAYLOAD_LIMIT],
     payload_len: usize,
-    payload_dirty: bool,
 }
+
+const _: () = assert!(std::mem::size_of::<NativePacket>() == 40);
 
 struct NativePacketBacking {
     object: std::rc::Rc<crate::value::ObjectData>,
-    payload: std::rc::Rc<crate::value::ArrayData>,
+    array: std::rc::Rc<crate::value::ArrayData>,
+    payload: [f64; LINKED_PAYLOAD_LIMIT],
+    payload_dirty: bool,
 }
 
 struct NativeSchedule<'a> {
@@ -282,13 +284,13 @@ impl<'a> NativeSchedule<'a> {
             id: exact_linked_task_id(words.id.number()?)?,
             kind: exact_i32(words.kind.number()?)?,
             a1: exact_i32(words.a1.number()?)?,
-            payload: values,
             payload_len,
-            payload_dirty: false,
         });
         self.backings.push(NativePacketBacking {
             object: std::rc::Rc::clone(object),
-            payload,
+            array: payload,
+            payload: values,
+            payload_dirty: false,
         });
         let link = self.packet_from_word(words.link)?;
         self.packets[index].link = link;
@@ -439,8 +441,8 @@ impl<'a> NativeSchedule<'a> {
         let target = self.packets.get_mut(packet)?;
         target.id = next_v1;
         target.a1 = 0;
-        target.payload_dirty = true;
-        for value in &mut target.payload[..count] {
+        self.backings.get_mut(packet)?.payload_dirty = true;
+        for value in &mut self.backings.get_mut(packet)?.payload[..count] {
             v2 += 1;
             if v2 > 26 {
                 v2 = 1;
@@ -512,7 +514,7 @@ impl<'a> NativeSchedule<'a> {
                 if offset >= self.packets.get(work)?.payload_len {
                     return None;
                 }
-                self.packets.get_mut(device)?.a1 = self.packets.get(work)?.payload[offset] as i32;
+                self.packets.get_mut(device)?.a1 = self.backings.get(work)?.payload[offset] as i32;
                 self.packets.get_mut(work)?.a1 += 1;
                 let target = self.packets.get(device)?.id;
                 #[cfg(feature = "execution-trace")]
