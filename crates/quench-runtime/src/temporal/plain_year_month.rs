@@ -20,6 +20,7 @@ pub(crate) fn construct(year: f64, month: f64) -> Result<Value, VmError> {
                 Value::String(format!("M{:02}", month as u32)),
             ),
             ("calendarId".into(), Value::String("iso8601".into())),
+            ("\0temporal-plain-year-month".into(), Value::Boolean(true)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainYearMonthPrototype),
@@ -65,9 +66,13 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainYearMonthDaysInMonthGetter => days_in_month(receiver),
         crate::ops::Builtin::TemporalPlainYearMonthDaysInYearGetter => days_in_year(receiver),
         crate::ops::Builtin::TemporalPlainYearMonthInLeapYearGetter => in_leap_year(receiver),
-        crate::ops::Builtin::TemporalPlainYearMonthMonthsInYearGetter => Ok(Value::Number(12.0)),
+        crate::ops::Builtin::TemporalPlainYearMonthMonthsInYearGetter => {
+            ensure_receiver(receiver).map(|_| Value::Number(12.0))
+        }
         crate::ops::Builtin::TemporalPlainYearMonthEraGetter
-        | crate::ops::Builtin::TemporalPlainYearMonthEraYearGetter => Ok(Value::Undefined),
+        | crate::ops::Builtin::TemporalPlainYearMonthEraYearGetter => {
+            ensure_receiver(receiver).map(|_| Value::Undefined)
+        }
         crate::ops::Builtin::TemporalPlainYearMonthValueOf => Err(
             crate::value::error::throw_type_error("Cannot convert PlainYearMonth to a number"),
         ),
@@ -217,7 +222,30 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
 fn field(receiver: Option<&Value>, name: &str) -> Result<Value, VmError> {
     let receiver = receiver
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth receiver"))?;
+    if !is_plain_year_month(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainYearMonth receiver",
+        ));
+    }
     crate::execute::get_property_result(receiver, name)
+}
+
+fn is_plain_year_month(value: &Value) -> bool {
+    matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+        key == "\0temporal-plain-year-month" && matches!(value, Value::Boolean(true))
+    }))
+}
+
+fn ensure_receiver(receiver: Option<&Value>) -> Result<(), VmError> {
+    let receiver = receiver
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth receiver"))?;
+    if is_plain_year_month(receiver) {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_type_error(
+            "Invalid PlainYearMonth receiver",
+        ))
+    }
 }
 
 fn values(value: &Value) -> Result<(f64, f64), VmError> {
