@@ -389,3 +389,5 @@ test-timers-process-tampering.js
 test-console-formatTime.js
 test-diagnostics-channel-has-subscribers.js
 test-process-euid-egid.js
+test-stream-finished.js
+test-stream-construct.js
