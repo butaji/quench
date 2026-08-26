@@ -280,12 +280,17 @@ test-dns-get-server.js
 test-dns-cancel-reverse-lookup.js
 test-dns-channel-cancel.js
 test-dns-channel-timeout.js
+test-dns-channel-cancel-promise.js
 test-dns-negative-zero.js
 test-dns-promises-exists.js
 test-dns-resolve-promises.js
 test-dns-resolveany-bad-ancount.js
 test-dns-resolveany.js
+test-dns-resolveany-ttl-overflow.js
 test-dns-resolver-max-timeout.js
+test-dns-lookup-promises-options-deprecated.js
+test-dns-multi-channel.js
+test-dns-reverse-dns-only.js
 test-dns-resolvens-typeerror.js
 test-net-access-byteswritten.js
 test-net-during-close.js
