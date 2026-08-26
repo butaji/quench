@@ -10,6 +10,28 @@ pub(crate) fn execute_target_with_receiver(
         let result = execute_target(target, receiver, arguments)?;
         return Ok((result, receiver.clone()));
     };
+    let realm = crate::construct::function_realm_id(function);
+    if realm != crate::ops::RealmId::ROOT {
+        return crate::vm::with_realm(realm, || {
+            execute_target_with_receiver_in_realm(target, receiver, arguments)
+        })
+        .unwrap_or_else(|| execute_target_with_receiver_in_realm(target, receiver, arguments));
+    }
+    execute_target_with_receiver_in_realm(target, receiver, arguments)
+}
+
+fn execute_target_with_receiver_in_realm(
+    target: &crate::value::Value,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<
+    (crate::value::Value, crate::value::Value),
+    crate::execute::VmError,
+> {
+    let crate::value::Value::Function(function) = target else {
+        let result = execute_target(target, receiver, arguments)?;
+        return Ok((result, receiver.clone()));
+    };
     let frame = CallFrame::new(std::rc::Rc::clone(function), receiver.clone(), arguments.to_vec());
     if matches!(function.kind, FunctionKind::Generator) || function.is_async {
         // If the receiver is already an existing generator, resume it instead
@@ -41,7 +63,14 @@ pub(crate) fn execute_target_with_receiver(
         &context,
         std::rc::Rc::clone(&environment),
     )?;
-    let result = crate::vm::completion_result(completion)?;
+    let result = match completion {
+        crate::completion::Completion::TailCall(request) => crate::functions::execute_target(
+            &request.callee,
+            &request.receiver,
+            &request.arguments,
+        )?,
+        completion => crate::vm::completion_result(completion)?,
+    };
     let slot = frame.function.captures.len() as u16 + frame.function.params + 1;
     Ok((result, environment.get(slot)))
 }

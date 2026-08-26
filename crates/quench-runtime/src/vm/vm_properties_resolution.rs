@@ -656,8 +656,27 @@ fn descriptor_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     if let Value::Builtin(builtin) = value {
-        if let Some(value) = crate::vm::intrinsic_override_property(*builtin, key, receiver) {
-            return Some(Ok(value));
+        if let Some(descriptor) = crate::builtins::read_intrinsic_override(*builtin, key) {
+            if let Value::Object(fields) = descriptor {
+                if let Some(getter) = fields
+                    .iter()
+                    .rev()
+                    .find_map(|(name, value)| (name == "get").then_some(value.clone()))
+                {
+                    return Some(match getter {
+                        Value::Undefined => Ok(Value::Undefined),
+                        getter => invoke_accessor(&getter, receiver),
+                    });
+                }
+                if let Some(value) = fields
+                    .iter()
+                    .rev()
+                    .find_map(|(name, value)| (name == "value").then_some(value.clone()))
+                {
+                    return Some(Ok(value));
+                }
+            }
+            return Some(Ok(Value::Undefined));
         }
         if let Some(getter) = crate::property_define::accessor(value, key, "get") {
             return Some(match getter {

@@ -500,6 +500,9 @@ pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for object in objects.iter().rev() {
         let object = live_object(object);
+        if !crate::value::is_object(&object) {
+            continue;
+        }
         if has_property(&object, key)? && !is_unscopable(&object, key)? {
             return Ok(Some(object));
         }
@@ -516,6 +519,9 @@ pub(crate) fn active_binding_target(key: &str) -> Result<Option<Value>, VmError>
     });
     for object in objects.iter().skip(base).rev() {
         let object = live_object(object);
+        if !crate::value::is_object(&object) {
+            continue;
+        }
         if has_property(&object, key)? && !is_unscopable(&object, key)? {
             return Ok(Some(object));
         }
