@@ -85,6 +85,8 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalZonedDateTimeOffsetGetter => Some("get offset"),
         Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter => Some("get offsetNanoseconds"),
         Builtin::TemporalZonedDateTimeHoursInDayGetter => Some("get hoursInDay"),
+        Builtin::TemporalZonedDateTimeWeekOfYearGetter => Some("get weekOfYear"),
+        Builtin::TemporalZonedDateTimeYearOfWeekGetter => Some("get yearOfWeek"),
         Builtin::TemporalNowInstant => Some("Temporal.Now.instant"),
         Builtin::TemporalNowPlainDateISO => Some("Temporal.Now.plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("Temporal.Now.plainDateTimeISO"),
@@ -312,6 +314,8 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalZonedDateTimeOffsetGetter => Some("offset"),
         Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter => Some("offsetNanoseconds"),
         Builtin::TemporalZonedDateTimeHoursInDayGetter => Some("hoursInDay"),
+        Builtin::TemporalZonedDateTimeWeekOfYearGetter => Some("weekOfYear"),
+        Builtin::TemporalZonedDateTimeYearOfWeekGetter => Some("yearOfWeek"),
         Builtin::TemporalNowInstant => Some("instant"),
         Builtin::TemporalNowPlainDateISO => Some("plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("plainDateTimeISO"),
@@ -490,6 +494,8 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalZonedDateTimeOffsetGetter
         | Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter
         | Builtin::TemporalZonedDateTimeHoursInDayGetter => Some(0.0),
+        Builtin::TemporalZonedDateTimeWeekOfYearGetter
+        | Builtin::TemporalZonedDateTimeYearOfWeekGetter => Some(0.0),
         Builtin::TemporalNowInstant
         | Builtin::TemporalNowPlainDateISO
         | Builtin::TemporalNowPlainDateTimeISO

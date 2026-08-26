@@ -87,6 +87,14 @@ fn zoned_record(
             "dayOfYear".into(),
             crate::value::Value::Number(date.ordinal() as f64),
         ),
+        (
+            "weekOfYear".into(),
+            crate::value::Value::Number(date.iso_week().week() as f64),
+        ),
+        (
+            "yearOfWeek".into(),
+            crate::value::Value::Number(date.iso_week().year() as f64),
+        ),
         ("hour".into(), crate::value::Value::Number(hour as f64)),
         ("minute".into(), crate::value::Value::Number(minute as f64)),
         ("second".into(), crate::value::Value::Number(second as f64)),
@@ -320,6 +328,7 @@ pub(crate) fn execute(
 
 mod stubs {
     use crate::{execute::VmError, value::Value};
+    use chrono::Datelike;
 
     pub(super) fn execute(
         builtin: crate::ops::Builtin,
@@ -336,6 +345,8 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeOffsetGetter
                 | crate::ops::Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter
                 | crate::ops::Builtin::TemporalZonedDateTimeHoursInDayGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeWeekOfYearGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeYearOfWeekGetter
                 | crate::ops::Builtin::TemporalZonedDateTimeToString
                 | crate::ops::Builtin::TemporalZonedDateTimeToJSON
                 | crate::ops::Builtin::TemporalZonedDateTimeToLocaleString
@@ -621,6 +632,24 @@ mod stubs {
                     }
                 }
                 return Ok(Value::Number(24.0));
+            }
+            crate::ops::Builtin::TemporalZonedDateTimeWeekOfYearGetter => {
+                let year = crate::conversion::to_number(&property("year")?)? as i32;
+                let month = crate::conversion::to_number(&property("month")?)? as u32;
+                let day = crate::conversion::to_number(&property("day")?)? as u32;
+                let week = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                    .map(|date| date.iso_week().week() as f64)
+                    .unwrap_or(f64::NAN);
+                return Ok(Value::Number(week));
+            }
+            crate::ops::Builtin::TemporalZonedDateTimeYearOfWeekGetter => {
+                let year = crate::conversion::to_number(&property("year")?)? as i32;
+                let month = crate::conversion::to_number(&property("month")?)? as u32;
+                let day = crate::conversion::to_number(&property("day")?)? as u32;
+                let week_year = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                    .map(|date| date.iso_week().year() as f64)
+                    .unwrap_or(f64::NAN);
+                return Ok(Value::Number(week_year));
             }
             _ => {}
         }
