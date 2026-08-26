@@ -183,6 +183,7 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "hrtime",
             hrtime,
         ),
+        ("cpuUsage", crate::host::process_cpu_usage_capability()),
         (
             "umask",
             crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
