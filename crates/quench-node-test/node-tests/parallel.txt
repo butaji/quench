@@ -144,8 +144,11 @@ test-buffer-no-negative-allocation.js
 test-buffer-inheritance.js
 test-buffer-new.js
 test-buffer-nopendingdep-map.js
+test-buffer-of-no-deprecation.js
+test-buffer-pending-deprecation.js
 test-buffer-over-max-length.js
 test-buffer-parent-property.js
+test-buffer-pool-untransferable.js
 test-buffer-prototype-inspect.js
 test-buffer-read.js
 test-buffer-readdouble.js
