@@ -42,8 +42,8 @@ platform profile, Node version, timeout, and fixture inventory hash.
 The upstream `tests/node/test/parallel` checkout currently contains **4,727
 `test-*` executable fixtures**: **4,234 `.js`** and **493 `.mjs`**. There is
 also one non-fixture Python file and one status file. The checked-in
-`crates/quench-node-test/node-tests/parallel.txt` manifest contains 460 entries;
-the remaining 4,267 fixtures are not a conformance gate yet. The runner's
+`crates/quench-node-test/node-tests/parallel.txt` manifest contains 466 entries;
+the remaining 4,261 fixtures are not a conformance gate yet. The runner's
 recursive discovery must remain the canonical inventory: top-level-only or
 `.js`-only enumeration silently understates the target.
 
