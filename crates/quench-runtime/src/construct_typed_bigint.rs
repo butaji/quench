@@ -187,6 +187,10 @@ pub(crate) fn bigint_bits(value: &Value) -> Result<u64, crate::execute::VmError>
     if let Value::BindingCell(cell) = value {
         return bigint_bits(&cell.borrow());
     }
+    if crate::value::is_object(value) {
+        let primitive = crate::conversion::to_primitive(value, "number")?;
+        return bigint_bits(&primitive);
+    }
     let raw = match value {
         Value::BigInt(raw) | Value::String(raw) => raw.clone(),
         Value::StringUnits(units) => String::from_utf16(&units.to_vec())
