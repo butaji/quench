@@ -58,6 +58,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
             ),
+            ("\0temporal-plain-date-time".into(), Value::Boolean(true)),
         ])
         .collect();
     Ok(Value::Object(std::rc::Rc::new(
@@ -591,6 +592,8 @@ fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Valu
     if !object.iter().any(|(key, value)| {
         key == "\0prototype"
             && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+    }) && !object.iter().any(|(key, value)| {
+        key == "\0temporal-plain-date-time" && value == Value::Boolean(true)
     }) {
         return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
     }
@@ -625,6 +628,8 @@ fn fields(value: &Value) -> Result<Vec<f64>, VmError> {
     if !object.iter().any(|(key, value)| {
         key == "\0prototype"
             && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+    }) && !object.iter().any(|(key, value)| {
+        key == "\0temporal-plain-date-time" && value == Value::Boolean(true)
     }) {
         return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
     }
