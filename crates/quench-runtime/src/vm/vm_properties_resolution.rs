@@ -509,13 +509,24 @@ fn object_inherited_property_result(
     if properties.iter().any(|(name, _)| name == key) {
         return None;
     }
+    if crate::vm::realm::id_for_global(properties).is_some()
+        || crate::vm::is_global_object(&Value::Object(properties.clone()))
+    {
+        return None;
+    }
     // Per spec §GetV for boxed primitives: an exotic String object exposes
     // its [[StringData]] as virtual indexed properties. Resolve the tag
     // before walking the prototype chain.
     if let Some(value) = boxed_string_property(properties, key) {
         return Some(Ok(value));
     }
-    let prototype_slot = properties.position_rev("\0prototype")?;
+    let Some(prototype_slot) = properties.position_rev("\0prototype") else {
+        return Some(get_property_with_receiver(
+            &Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+            key,
+            receiver,
+        ));
+    };
     let prototype = properties.slot_value(prototype_slot)?;
     if matches!(prototype, Value::Null) {
         return Some(Ok(Value::Undefined));
