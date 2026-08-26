@@ -77,6 +77,7 @@ pub(crate) fn iterator_prototype_property_callable(builtin: Builtin, key: &str) 
                 "find" => Some(Value::Builtin(IteratorFind)),
                 "some" => Some(Value::Builtin(IteratorSome)),
                 "return" => Some(Value::Builtin(IteratorReturn)),
+                "Symbol.dispose" => Some(Value::Builtin(IteratorDispose)),
                 _ => None,
             };
         }
@@ -137,6 +138,11 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorFrom => Some("Iterator.from"),
         Builtin::IteratorZip => Some("Iterator.zip"),
         Builtin::IteratorZipKeyed => Some("Iterator.zipKeyed"),
+        Builtin::IteratorDispose => Some("[Symbol.dispose]"),
+        Builtin::IteratorPrototypeConstructorGetter => Some("get constructor"),
+        Builtin::IteratorPrototypeConstructorSetter => Some("set constructor"),
+        Builtin::IteratorPrototypeToStringTagGetter => Some("get [Symbol.toStringTag]"),
+        Builtin::IteratorPrototypeToStringTagSetter => Some("set [Symbol.toStringTag]"),
         Builtin::IteratorToArray => Some("Iterator.prototype.toArray"),
         Builtin::IteratorMap => Some("Iterator.prototype.map"),
         Builtin::IteratorFilter => Some("Iterator.prototype.filter"),
@@ -211,6 +217,11 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::AsyncIteratorDispose => Some(0.0),
         Builtin::IteratorZip => Some(1.0),
         Builtin::IteratorZipKeyed => Some(1.0),
+        Builtin::IteratorDispose => Some(0.0),
+        Builtin::IteratorPrototypeConstructorGetter
+        | Builtin::IteratorPrototypeToStringTagGetter => Some(0.0),
+        Builtin::IteratorPrototypeConstructorSetter
+        | Builtin::IteratorPrototypeToStringTagSetter => Some(1.0),
         Builtin::IteratorFrom => Some(1.0),
         Builtin::IteratorToArray => Some(0.0),
         Builtin::IteratorMap => Some(1.0),
@@ -269,6 +280,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorFrom => Some("from"),
         Builtin::IteratorZip => Some("zip"),
         Builtin::IteratorZipKeyed => Some("zipKeyed"),
+        Builtin::IteratorDispose => Some("[Symbol.dispose]"),
         Builtin::IteratorToArray => Some("toArray"),
         Builtin::IteratorMap => Some("map"),
         Builtin::IteratorFilter => Some("filter"),

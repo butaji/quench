@@ -116,6 +116,63 @@ pub(crate) fn zip_keyed(arguments: &[Value]) -> Result<Value, crate::execute::Vm
     ))))
 }
 
+pub(crate) fn dispose(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let receiver = receiver.ok_or_else(not_iterable)?;
+    if crate::builtins::same_value(
+        Some(receiver),
+        Some(&crate::vm::realm_intrinsic(
+            crate::ops::Builtin::IteratorPrototype,
+        )),
+    ) {
+        return Ok(Value::Undefined);
+    }
+    let method = crate::execute::get_property_result(receiver, "return")?;
+    if !matches!(method, Value::Null | Value::Undefined) {
+        if !crate::conversion::is_callable(&method) {
+            return Err(crate::vm::not_callable());
+        }
+        let _ = call(&method, receiver)?;
+    }
+    Ok(Value::Undefined)
+}
+
+pub(crate) fn prototype_constructor_getter(
+    _receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    Ok(crate::vm::realm_intrinsic(crate::ops::Builtin::Iterator))
+}
+
+pub(crate) fn prototype_tag_getter(
+    _receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    Ok(Value::String("Iterator".to_string()))
+}
+
+pub(crate) fn prototype_setter(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    key: &str,
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = receiver
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| {
+            crate::value::error::throw_type_error("Iterator prototype setter requires an object")
+        })?;
+    if crate::builtins::same_value(
+        Some(receiver),
+        Some(&crate::vm::realm_intrinsic(
+            crate::ops::Builtin::IteratorPrototype,
+        )),
+    ) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to Iterator.prototype intrinsic",
+        ));
+    }
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    crate::execute::set_property_in_place(receiver, key, value);
+    Ok(Value::Undefined)
+}
+
 fn collect_zip_padding(
     padding: Value,
     count: usize,
