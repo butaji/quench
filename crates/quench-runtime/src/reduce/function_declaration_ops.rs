@@ -34,6 +34,7 @@ fn function_declaration_op(
         body: crate::machine::FunctionCode::pending(body).with_facts(crate::facts::FunctionFacts {
             direct_constructor: metadata.direct_constructor.clone(),
             linked_record_insert: metadata.linked_record_insert.clone(),
+            forward_construct_call: metadata.forward_construct_call.clone(),
         }),
         params,
         captures,

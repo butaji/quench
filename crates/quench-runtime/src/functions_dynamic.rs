@@ -294,6 +294,7 @@ fn dynamic_value(
             raytrace_render: None,
             direct_constructor: std::rc::Rc::default(),
             linked_record_insert: None,
+            forward_construct_call: None,
         },
     );
     if let Value::Function(function) = &value {
