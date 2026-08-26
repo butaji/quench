@@ -225,6 +225,7 @@ test-buffer-constants.js
 test-btoa-atob.js
 test-string-decoder-end.js
 test-string-decoder-fuzz.js
+test-string-decoder.js
 test-binding-constants.js
 test-bad-unicode.js
 test-blob.js
