@@ -272,6 +272,7 @@ fn util_system_error_name(arguments: &[Value]) -> Result<Value, VmError> {
         -17 => "EEXIST".to_owned(),
         -32 => "EPIPE".to_owned(),
         -105 => "ENOBUFS".to_owned(),
+        -110 => "ETIMEDOUT".to_owned(),
         _ => format!("Unknown system error {errno}"),
     };
     Ok(Value::String(name.into()))
