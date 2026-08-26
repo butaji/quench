@@ -296,9 +296,12 @@ fn dynamic_value(
             strictness,
             is_async,
             mapped_arguments: true,
-            raytrace_pixel: false,
-            raytrace_render: None,
             direct_constructor: std::rc::Rc::default(),
+            linked_record_insert: None,
+            forward_construct_call: None,
+            forward_then_call: None,
+            counted_method_loop: None,
+            direct_method: None,
         },
     );
     if let Value::Function(function) = &value {

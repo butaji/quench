@@ -1,5 +1,7 @@
+function Step() {}
+Step.prototype.execute = function () {};
 const list = {
-  values: [{ execute() {} }, { execute() {} }, { execute() {} }, { execute() {} }],
+  values: [new Step(), new Step(), new Step(), new Step()],
   size() {
     return this.values.length;
   },
@@ -8,11 +10,12 @@ const list = {
   },
 };
 const plan = {
+  v: list,
   size() {
-    return list.size();
+    return this.v.size();
   },
   constraintAt(index) {
-    return list.at(index);
+    return this.v.at(index);
   },
   execute() {
     for (var i = 0; i < this.size(); i++) {

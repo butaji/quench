@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 "use strict";
 
-const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const bounded = require("./lib/bounded-process.cjs");
 
 const root = path.resolve(__dirname, "..");
 const contractsPath = path.join(root, "quench-bench/profile-contracts.json");
@@ -11,7 +11,9 @@ const contracts = JSON.parse(fs.readFileSync(contractsPath, "utf8"));
 const separator = process.argv.indexOf("--");
 const requested = process.argv.slice(2, separator < 0 ? undefined : separator);
 const forwarded = separator < 0 ? [] : process.argv.slice(separator + 1);
-const benchmarks = requested.length ? requested : Object.keys(contracts.benchmarks);
+const benchmarks = requested.length
+  ? requested
+  : Object.keys(contracts.benchmarks);
 let failed = false;
 
 for (const benchmark of benchmarks) {
@@ -20,10 +22,17 @@ for (const benchmark of benchmarks) {
     failed = true;
     continue;
   }
-  const result = cp.spawnSync(process.execPath, [
-    path.join(root, "tools/analyze-quench-bench.cjs"), benchmark,
-    "--assert-profile", contractsPath, ...forwarded,
-  ], { cwd: root, stdio: "inherit" });
+  const result = bounded.spawnSync(
+    process.execPath,
+    [
+      path.join(root, "tools/analyze-quench-bench.cjs"),
+      benchmark,
+      "--assert-profile",
+      contractsPath,
+      ...forwarded
+    ],
+    { cwd: root, stdio: "inherit", deadlineMs: 240_000 }
+  );
   failed ||= result.status !== 0;
 }
 
