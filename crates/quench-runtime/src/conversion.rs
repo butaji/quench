@@ -137,12 +137,18 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
             Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin)
                 .map(str::to_string)
                 .unwrap_or_default(),
-            Value::String(value) => value
-                .strip_prefix("Symbol.")
-                .and_then(|value| value.split('\0').next())
-                .map(|value| value.strip_prefix('\u{1}').unwrap_or(value))
-                .unwrap_or("")
-                .to_string(),
+            Value::String(value) => {
+                let symbol = value.split('\0').next().unwrap_or("");
+                if well_known_symbol(symbol).is_some() {
+                    symbol.to_string()
+                } else {
+                    symbol
+                        .strip_prefix("Symbol.")
+                        .map(|value| value.strip_prefix('\u{1}').unwrap_or(value))
+                        .unwrap_or("")
+                        .to_string()
+                }
+            }
             _ => String::new(),
         };
         if matches!(&primitive, Value::String(value) if value.starts_with("Symbol.unscopables\0")) {

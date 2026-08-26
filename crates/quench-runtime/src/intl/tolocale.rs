@@ -82,6 +82,9 @@ pub(crate) mod value {
         let Some((symbol, _identity)) = value.split_once('\0') else {
             return value.to_string();
         };
+        if crate::conversion::well_known_symbol(symbol).is_some() {
+            return format!("Symbol({symbol})");
+        }
         if let Some(description) = symbol.strip_prefix("Symbol.for.") {
             return format!("Symbol({description})");
         }
