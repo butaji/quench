@@ -349,6 +349,29 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     {
         return zoned_time_round(object, options, index);
     }
+    if index >= 4 && largest_unit(options) == Some(3) && relative_is_zoned(options) {
+        if let Some(Value::Object(option_object)) = options {
+            if let Some((_, relative)) = option_object.iter().find(|(key, _)| key == "relativeTo") {
+                let resolved = crate::locals::resolved_replacement(relative.clone());
+                if let Value::Object(relative_object) = resolved {
+                    if let Some((_, Value::BigInt(epoch))) = relative_object
+                        .iter()
+                        .find(|(key, _)| key == "epochNanoseconds")
+                    {
+                        if epoch
+                            .parse::<i128>()
+                            .ok()
+                            .is_some_and(|epoch| epoch.abs() >= 8_640_000_000_000_000_000_000)
+                        {
+                            return Err(crate::value::error::throw_range_error(
+                                "Invalid relativeTo range",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
     if largest_unit(options).is_some()
         && largest < index
         && largest <= 2
@@ -511,6 +534,12 @@ fn calendar_time_round(
     index: usize,
 ) -> Result<Value, VmError> {
     let (year, month, day) = relative_date(relative)?;
+    if duration_fields(object)
+        .iter()
+        .all(|value| number_field(value) == 0)
+    {
+        return construct(&vec![Value::Number(0.0); 10]);
+    }
     let start = NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     let sign = if duration_field(object, "years") < 0
@@ -854,6 +883,12 @@ fn calendar_round(
     preserve_larger: bool,
 ) -> Result<Value, VmError> {
     let (year, month, day) = relative_date(relative)?;
+    if duration_fields(object)
+        .iter()
+        .all(|value| number_field(value) == 0)
+    {
+        return construct(&vec![Value::Number(0.0); 10]);
+    }
     let start = NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     let sign = if duration_field(object, "years") < 0
