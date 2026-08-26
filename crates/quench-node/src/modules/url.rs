@@ -65,9 +65,22 @@ pub fn resolve(
 }
 
 pub fn parse(
-    _state: &Rc<RefCell<crate::host::HostState>>,
+    state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let vm_filename = execute::get_property(
+        &quench_runtime::vm::current_global_object(),
+        "\0quench_vm_filename",
+    );
+    if !matches!(vm_filename, Value::String(ref path) if path.contains("node_modules")) {
+        crate::modules::process::emit_warning(
+            state,
+            "DeprecationWarning",
+            "`url.parse()` behavior is not standardized and prone to errors. Use the WHATWG URL API instead.",
+            Some("DEP0169"),
+            true,
+        );
+    }
     let raw_url =
         crate::modules::path::validate_string(args.first().unwrap_or(&Value::Undefined), "url")?
             .trim_matches(|character: char| character <= '\u{20}')
