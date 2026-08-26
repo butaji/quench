@@ -301,12 +301,12 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
     let smallest = round_unit(options)?;
-    validate_largest_unit(options)?;
+    let requested_largest = parse_largest_unit(options)?;
     let index = unit_index(&smallest)?;
     let has_calendar = ["years", "months", "weeks"]
         .iter()
         .any(|name| duration_field(object, name) != 0);
-    let largest = largest_unit(options).unwrap_or_else(|| {
+    let largest = requested_largest.unwrap_or_else(|| {
         [
             "years",
             "months",
@@ -342,7 +342,37 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             "largestUnit must not be smaller than smallestUnit",
         ));
     }
-    if largest_unit(options).is_some()
+    if index >= 4
+        && !has_calendar
+        && relative_is_zoned(options)
+        && requested_largest.is_none_or(|largest| largest >= 4)
+    {
+        return zoned_time_round(object, options, index);
+    }
+    if index >= 4 && requested_largest == Some(3) && relative_is_zoned(options) {
+        if let Some(Value::Object(option_object)) = options {
+            if let Some((_, relative)) = option_object.iter().find(|(key, _)| key == "relativeTo") {
+                let resolved = crate::locals::resolved_replacement(relative.clone());
+                if let Value::Object(relative_object) = resolved {
+                    if let Some((_, Value::BigInt(epoch))) = relative_object
+                        .iter()
+                        .find(|(key, _)| key == "epochNanoseconds")
+                    {
+                        if epoch
+                            .parse::<i128>()
+                            .ok()
+                            .is_some_and(|epoch| epoch.abs() >= 8_640_000_000_000_000_000_000)
+                        {
+                            return Err(crate::value::error::throw_range_error(
+                                "Invalid relativeTo range",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if requested_largest.is_some()
         && largest < index
         && largest <= 2
         && rounding_increment(options, index)? > 1.0
@@ -357,7 +387,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             .all(|(key, value)| key != "smallestUnit" || matches!(value, Value::Undefined)),
         _ => false,
     });
-    if has_calendar && no_smallest && largest_unit(options).is_some_and(|unit| unit <= 3) {
+    if has_calendar && no_smallest && requested_largest.is_some_and(|unit| unit <= 3) {
         let relative = options.and_then(|value| match value {
             Value::Object(object) => object
                 .iter()
@@ -374,7 +404,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             object,
             &relative,
             options,
-            largest_unit(options).unwrap_or(3),
+            requested_largest.unwrap_or(3),
             false,
         );
     }
@@ -394,12 +424,10 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         return calendar_time_round(object, &relative, options, index);
     }
     if index <= 3
-        && (index <= 2
-            || has_calendar
-            || largest_unit(options).is_some_and(|largest| largest < index))
+        && (index <= 2 || has_calendar || requested_largest.is_some_and(|largest| largest < index))
     {
         if index == 2
-            && largest_unit(options).is_none()
+            && requested_largest.is_none()
             && duration_field(object, "months") != 0
             && rounding_increment(options, index)? > 1.0
         {
@@ -424,10 +452,77 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             &relative,
             options,
             index,
-            largest_unit(options).is_none(),
+            requested_largest.is_none(),
         );
     }
     fixed_round(object, options, largest, index)
+}
+
+fn relative_is_zoned(options: Option<&Value>) -> bool {
+    let Some(Value::Object(object)) = options else {
+        return false;
+    };
+    let Some((_, relative)) = object.iter().find(|(key, _)| key == "relativeTo") else {
+        return false;
+    };
+    let resolved = crate::locals::resolved_replacement(relative.clone());
+    matches!(
+        resolved,
+        Value::Object(ref object)
+            if object.iter().any(|(key, value)| {
+                key == "\0prototype"
+                    && matches!(
+                        value,
+                        Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+                    )
+            })
+    )
+}
+
+fn zoned_time_round(
+    object: &crate::value::ObjectData,
+    options: Option<&Value>,
+    index: usize,
+) -> Result<Value, VmError> {
+    let scales = [
+        3_600_000_000_000_i128,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
+    ];
+    let total = [
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ]
+    .iter()
+    .zip(scales)
+    .map(|(name, scale)| duration_field(object, name) * scale)
+    .sum::<i128>();
+    let increment = rounding_increment(options, index)? as i128;
+    let quantum = scales[index - 4] * increment;
+    let rounded = round_integer(total, quantum, &rounding_mode(options)?) * quantum;
+    let mut fields = vec![Value::Number(0.0); 10];
+    fields[0] = Value::Number(duration_field(object, "years") as f64);
+    fields[1] = Value::Number(duration_field(object, "months") as f64);
+    fields[2] = Value::Number(duration_field(object, "weeks") as f64);
+    fields[3] = Value::Number(duration_field(object, "days") as f64);
+    let sign = rounded.signum();
+    let mut remainder = rounded.abs();
+    for unit in 4..=index {
+        let value = remainder / scales[unit - 4];
+        fields[unit] = Value::Number((value * sign) as f64);
+        remainder %= scales[unit - 4];
+    }
+    if remainder != 0 {
+        fields[3] = Value::Number(fields[3].as_number().unwrap_or(0.0) + (remainder * sign) as f64);
+    }
+    construct(&fields)
 }
 
 fn calendar_time_round(
@@ -437,6 +532,12 @@ fn calendar_time_round(
     index: usize,
 ) -> Result<Value, VmError> {
     let (year, month, day) = relative_date(relative)?;
+    if duration_fields(object)
+        .iter()
+        .all(|value| number_field(value) == 0)
+    {
+        return construct(&vec![Value::Number(0.0); 10]);
+    }
     let start = NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     let sign = if duration_field(object, "years") < 0
@@ -460,9 +561,15 @@ fn calendar_time_round(
         + duration_field(object, "nanoseconds") as f64 / 86_400_000_000_000.0;
     let mut cursor = start;
     let mut fields = vec![Value::Number(0.0); 10];
-    let preserve = largest_unit(options).is_none();
-    if preserve {
+    let largest = largest_unit(options);
+    if largest.is_none() || largest.is_some_and(|largest| largest <= 1) {
         for unit in 0..2 {
+            if unit == 0 && largest.is_some_and(|largest| largest > 0) {
+                continue;
+            }
+            if unit == 1 && largest.is_some_and(|largest| largest > 1) {
+                continue;
+            }
             let mut count = 0_i64;
             loop {
                 let next = shift_calendar(cursor, unit, sign as i32)?;
@@ -479,6 +586,23 @@ fn calendar_time_round(
             }
             fields[unit] = Value::Number(count as f64);
         }
+    }
+    if largest == Some(2) {
+        let mut count = 0_i64;
+        loop {
+            let next = shift_calendar(cursor, 2, sign as i32)?;
+            let reached = if sign >= 0.0 {
+                next <= target
+            } else {
+                next >= target
+            };
+            if !reached {
+                break;
+            }
+            cursor = next;
+            count += sign as i64;
+        }
+        fields[2] = Value::Number(count as f64);
     }
     let remaining_days = (target - cursor).num_days() as f64 + subday;
     let total_nanos = (remaining_days * 86_400_000_000_000.0) as i128;
@@ -630,8 +754,12 @@ fn rounding_mode(options: Option<&Value>) -> Result<String, VmError> {
     });
     match value {
         None | Some(Value::Undefined) => Ok("halfExpand".into()),
-        Some(Value::String(mode))
-            if [
+        Some(value) if crate::conversion::is_symbol(&value) => Err(
+            crate::value::error::throw_type_error("Invalid roundingMode"),
+        ),
+        Some(value) => {
+            let mode = crate::conversion::to_string(&value)?;
+            [
                 "ceil",
                 "floor",
                 "expand",
@@ -642,16 +770,10 @@ fn rounding_mode(options: Option<&Value>) -> Result<String, VmError> {
                 "halfTrunc",
                 "halfEven",
             ]
-            .contains(&mode.as_str()) =>
-        {
-            Ok(mode.clone())
+            .contains(&mode.as_str())
+            .then_some(mode)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid roundingMode"))
         }
-        Some(Value::String(_)) => Err(crate::value::error::throw_range_error(
-            "Invalid roundingMode",
-        )),
-        _ => Err(crate::value::error::throw_type_error(
-            "Invalid roundingMode",
-        )),
     }
 }
 
@@ -757,6 +879,12 @@ fn calendar_round(
     preserve_larger: bool,
 ) -> Result<Value, VmError> {
     let (year, month, day) = relative_date(relative)?;
+    if duration_fields(object)
+        .iter()
+        .all(|value| number_field(value) == 0)
+    {
+        return construct(&vec![Value::Number(0.0); 10]);
+    }
     let start = NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     let sign = if duration_field(object, "years") < 0
@@ -920,6 +1048,9 @@ fn calendar_round(
         if let Some(largest) = largest_unit(options).filter(|largest| *largest < unit) {
             let mut larger_cursor = start;
             for larger_unit in largest..unit {
+                if larger_unit == 2 && unit >= 3 {
+                    continue;
+                }
                 let mut larger_count = 0_i64;
                 loop {
                     let next = shift_calendar(larger_cursor, larger_unit, sign as i32)?;
@@ -945,6 +1076,46 @@ fn calendar_round(
                 let residual_days = (target - larger_cursor).num_days() as i128 * sign as i128;
                 fields[2] =
                     Value::Number(round_integer(residual_days, 7, &rounding_mode(options)?) as f64);
+            }
+            if unit == 1 && largest == 0 {
+                let mut residual_cursor = larger_cursor;
+                let mut residual_count = 0_i64;
+                loop {
+                    let next = shift_calendar(residual_cursor, 1, sign as i32)?;
+                    let reached = if sign >= 0.0 {
+                        next <= target
+                    } else {
+                        next >= target
+                    };
+                    if !reached {
+                        break;
+                    }
+                    residual_cursor = next;
+                    residual_count += sign as i64;
+                }
+                fields[1] = Value::Number(residual_count as f64);
+            }
+            if unit == 2 && largest == 0 {
+                let mut residual_cursor = larger_cursor;
+                let mut residual_count = 0_i64;
+                loop {
+                    let next = shift_calendar(residual_cursor, 2, sign as i32)?;
+                    let reached = if sign >= 0.0 {
+                        next <= target
+                    } else {
+                        next >= target
+                    };
+                    if !reached {
+                        break;
+                    }
+                    residual_cursor = next;
+                    residual_count += sign as i64;
+                }
+                fields[2] = Value::Number(residual_count as f64);
+            }
+            if unit == 3 && largest <= 1 {
+                fields[2] = Value::Number(0.0);
+                fields[3] = Value::Number((target - larger_cursor).num_days() as f64 * sign as f64);
             }
             if unit == 3 && largest == 2 {
                 fields[2] = Value::Number((count / 7) as f64);
@@ -1065,22 +1236,19 @@ fn largest_unit(value: Option<&Value>) -> Option<usize> {
         })
 }
 
-fn validate_largest_unit(options: Option<&Value>) -> Result<(), VmError> {
+fn parse_largest_unit(options: Option<&Value>) -> Result<Option<usize>, VmError> {
     let Some(options) = options.filter(|value| crate::value::is_object(value)) else {
-        return Ok(());
+        return Ok(None);
     };
     let value = crate::execute::get_property_result(options, "largestUnit")?;
     if matches!(value, Value::Undefined) {
-        return Ok(());
+        return Ok(None);
     }
-    if let Value::String(unit) = value {
-        if unit == "auto" {
-            return Ok(());
-        }
-        unit_index(&unit).map(|_| ())
-    } else {
-        Ok(())
+    let unit = crate::conversion::to_string(&value)?;
+    if unit == "auto" {
+        return Ok(None);
     }
+    unit_index(&unit).map(Some)
 }
 
 fn balance_time_fields(fields: &mut [Value], first: usize) {
