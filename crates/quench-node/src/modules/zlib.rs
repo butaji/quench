@@ -28,6 +28,28 @@ fn output(bytes: Vec<u8>) -> Value {
     crate::modules::buffer_proto::make_buffer(&bytes)
 }
 
+fn validate_window_bits(args: &[Value], minimum: u8) -> Result<(), VmError> {
+    let Some(Value::Object(options)) = args.get(1) else {
+        return Ok(());
+    };
+    let value = execute::get_property(&Value::Object(options.clone()), "windowBits");
+    let Value::Number(window_bits) = value else {
+        return Ok(());
+    };
+    if !window_bits.is_finite()
+        || window_bits.fract() != 0.0
+        || window_bits < f64::from(minimum)
+        || window_bits > 15.0
+    {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "options.windowBits",
+            &format!(">= {minimum} and <= 15"),
+            &execute::number_to_js_string(window_bits),
+        ));
+    }
+    Ok(())
+}
+
 fn run<F>(args: &[Value], mut f: F) -> Result<Value, VmError>
 where
     F: FnMut(&[u8]) -> Result<Vec<u8>, std::io::Error>,
@@ -86,6 +108,7 @@ pub fn gzip(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let _ = state;
+    validate_window_bits(args, 9)?;
     run(args, gzip_deflate)
 }
 
