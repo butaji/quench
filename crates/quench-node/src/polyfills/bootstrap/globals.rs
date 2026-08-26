@@ -193,6 +193,12 @@ globalThis.console.timeEnd = (label = "default") => {
   );
   delete consoleTimers[label];
 };
+globalThis.console.trace ||= (...args) => globalThis.console.error(...args);
+globalThis.console.table ||= (value) => globalThis.console.log(value);
+globalThis.console.dirxml ||= (...args) => globalThis.console.log(...args);
+globalThis.console.group ||= () => undefined;
+globalThis.console.groupCollapsed ||= () => undefined;
+globalThis.console.groupEnd ||= () => undefined;
 globalThis.__quench_node_pids = new Set([globalThis.__quench_pid]);
 const __nodeClusterKill = (cluster, pid, signal) => {
   if (!cluster || !Number.isInteger(pid)) return false;
