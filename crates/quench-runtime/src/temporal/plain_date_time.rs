@@ -1119,6 +1119,13 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             let mut fields = vec![&date[..7]];
             fields.extend(date[8..].split('-'));
             fields
+        } else if date.starts_with(['+', '-'])
+            && date.len() == 11
+            && date[1..].bytes().all(|byte| byte.is_ascii_digit())
+        {
+            vec![&date[..7], &date[7..9], &date[9..]]
+        } else if date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit()) {
+            vec![&date[..4], &date[4..6], &date[6..]]
         } else {
             date.split('-').collect::<Vec<_>>()
         };
@@ -1136,11 +1143,22 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .split_once('.')
         .or_else(|| time.split_once(','))
         .map_or((time, ""), |parts| parts);
-    let clock = clock.split(':').collect::<Vec<_>>();
-    if clock.len() < 2 || clock.len() > 3 || fraction.len() > 9 {
+    let colon_clock = clock.contains(':');
+    let clock = if colon_clock {
+        clock.split(':').collect::<Vec<_>>()
+    } else if matches!(clock.len(), 2 | 4 | 6) && clock.bytes().all(|byte| byte.is_ascii_digit()) {
+        match clock.len() {
+            2 => vec![&clock[..2]],
+            4 => vec![&clock[..2], &clock[2..]],
+            _ => vec![&clock[..2], &clock[2..4], &clock[4..]],
+        }
+    } else {
+        Vec::new()
+    };
+    if clock.is_empty() || clock.len() > 3 || fraction.len() > 9 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
-    if clock.len() == 2 && !fraction.is_empty() {
+    if (clock.len() < 3 && !fraction.is_empty()) || (!colon_clock && clock.len() == 1 && !fraction.is_empty()) {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     let mut fields = date_fields
