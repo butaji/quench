@@ -538,6 +538,7 @@ pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1
 pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1F25);
 pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1F23);
 pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1F24);
+pub const SPEC_ABORT_SIGNAL_TIMEOUT: NodeSpec = NodeSpec::new("AbortSignal.timeout", 0x1F30);
 pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
     NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1F26);
 pub const SPEC_EVENT: NodeSpec = NodeSpec::new("Event", 0x0118);
@@ -732,6 +733,8 @@ pub fn namespace_bindings(
     let abort_signal = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL);
     let abort = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_ABORT);
     let abort_signal = quench_runtime::execute::set_property(abort_signal, "abort", abort);
+    let timeout = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_TIMEOUT);
+    let abort_signal = quench_runtime::execute::set_property(abort_signal, "timeout", timeout);
     out.push(("AbortSignal".to_string(), abort_signal));
     out.push((
         "console".to_string(),

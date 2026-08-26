@@ -299,7 +299,25 @@ pub fn util_promisify(
     if let Ok(custom) = execute::get_property_result(&original, custom_key) {
         if !matches!(custom, Value::Undefined) {
             if quench_runtime::is_callable(&custom) {
-                return Ok(custom);
+                return Ok(match timer_promise_alias(&original).or_else(|| {
+                    match execute::get_property(&custom, "name") {
+                        Value::String(name) if name.ends_with("Promise") => Some("timer"),
+                        _ => None,
+                    }
+                }) {
+                    Some(_) => match execute::get_property(&original, "name") {
+                        Value::String(name) => execute::define_property(
+                            custom.clone(),
+                            "name",
+                            host_api::object(vec![
+                                ("value".into(), Value::String(name.trim_end_matches("Promise").to_string())),
+                                ("configurable".into(), Value::Boolean(true)),
+                            ]),
+                        ).unwrap_or(custom),
+                        _ => custom,
+                    },
+                    None => custom,
+                });
             }
             return Err(VmError::NotCallable);
         }
@@ -310,13 +328,25 @@ pub fn util_promisify(
             &[Value::String("timers/promises".to_string())],
         );
         if let Ok(timers) = timers {
-            return Ok(execute::get_property(&timers, name));
+            let promise_api = execute::get_property(&timers, name);
+            return Ok(match execute::get_property(&original, "name") {
+                Value::String(name) => execute::set_property(
+                    promise_api,
+                    "name",
+                    Value::String(name),
+                ),
+                _ => promise_api,
+            });
         }
     }
     let wrapper = bound_custom(
         crate::registry::SPEC_UTIL_PROMISIFIED_CALL.cap,
-        vec![original],
+        vec![original.clone()],
     );
+    let wrapper = match execute::get_property(&original, "name") {
+        Value::String(name) => execute::set_property(wrapper, "name", Value::String(name)),
+        _ => wrapper,
+    };
     let custom = wrapper.clone();
     Ok(execute::set_property(
         wrapper,
@@ -569,8 +599,8 @@ fn timer_promise_alias(value: &Value) -> Option<&'static str> {
 }
 
 pub fn util_promisified_call(
-    _: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(original) = args.first() else {
@@ -590,8 +620,19 @@ pub fn util_promisified_call(
     );
     let mut call_args = args.get(1..).unwrap_or_default().to_vec();
     call_args.push(callback);
-    match quench_runtime::vm::call_value(original, &Value::Undefined, &call_args) {
-        Ok(_) => {}
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    match quench_runtime::vm::call_value(original, &receiver, &call_args) {
+        Ok(result) => {
+            if matches!(result, Value::Promise(_)) {
+                crate::modules::process::emit_warning(
+                    state,
+                    "DeprecationWarning",
+                    "Calling promisify on a function that returns a Promise is likely a mistake.",
+                    Some("DEP0174"),
+                    false,
+                );
+            }
+        }
         Err(VmError::Thrown(error)) => quench_runtime::reject_promise(&promise, error),
         Err(_) => quench_runtime::reject_promise(&promise, Value::Undefined),
     }
@@ -2392,6 +2433,44 @@ pub fn abort_signal_abort(
             ])
         }),
     ))
+}
+
+pub fn abort_signal_timeout(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let delay = args.first().cloned().unwrap_or(Value::Number(0.0));
+    let signal = crate::modules::event_target::new_target(state, &[])?;
+    let signal = execute::set_property(signal, "aborted", Value::Boolean(false));
+    let signal = execute::set_property(signal, crate::modules::event_target::ABORT_SIGNAL_BRAND, Value::Boolean(true));
+    let callback = crate::host::capability(crate::registry::NodeSpec::new("AbortSignal.timeout.fire", 0x1F31));
+    crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
+    Ok(signal)
+}
+
+pub fn abort_signal_timeout_call(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    abort_signal_timeout(state, args)
+}
+
+pub fn abort_signal_timeout_fire(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(signal) = args.first() else { return Ok(Value::Undefined); };
+    let reason = execute::set_property(
+        quench_runtime::builtins::error(quench_runtime::ops::Builtin::Error, &[Value::String("The operation was aborted due to timeout".into())]),
+        "name",
+        Value::String("TimeoutError".into()),
+    );
+    execute::set_property_in_place(signal, "aborted", Value::Boolean(true));
+    execute::set_property_in_place(signal, "reason", reason);
+    let event = quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+    crate::modules::event_target::dispatch_event(state, Some(signal), &[event])
 }
 
 pub fn process_on(

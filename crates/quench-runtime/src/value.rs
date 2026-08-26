@@ -957,11 +957,8 @@ impl ObjectData {
         properties: ObjectProperties,
         private_slots: PrivateSlots,
     ) -> Self {
-        Self::with_creation_order(
-            properties.clone(),
-            private_slots,
-            creation_order(&properties),
-        )
+        let created = creation_order(&properties);
+        Self::with_creation_order(properties, private_slots, created)
     }
 
     pub(crate) fn with_shared_properties_for_owner(
