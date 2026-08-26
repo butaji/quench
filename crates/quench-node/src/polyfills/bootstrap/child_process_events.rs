@@ -10,9 +10,9 @@ __quenchChildEventOrder.spawn = (...args) => {
     (emit) => (event, ...values) => {
       if (event === "exit" && !child.__spawnEmitted) {
         child.__spawnEmitted = true;
-        emit.call(child, "spawn");
+        Reflect.apply(emit, child, ["spawn"]);
       }
-      return emit.call(child, event, ...values);
+      return Reflect.apply(emit, child, [event, ...values]);
     }
   )(child.emit);
   return child;
