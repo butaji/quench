@@ -553,12 +553,17 @@ fn calendar_time_round(
     target = shift_calendar_by(target, 1, duration_field(object, "months"))?;
     target = shift_calendar_by(target, 2, duration_field(object, "weeks"))?;
     target = shift_calendar_by(target, 3, duration_field(object, "days"))?;
-    let subday = duration_field(object, "hours") as f64 / 24.0
-        + duration_field(object, "minutes") as f64 / 1_440.0
-        + duration_field(object, "seconds") as f64 / 86_400.0
-        + duration_field(object, "milliseconds") as f64 / 86_400_000.0
-        + duration_field(object, "microseconds") as f64 / 86_400_000_000.0
-        + duration_field(object, "nanoseconds") as f64 / 86_400_000_000_000.0;
+    let subday_nanos = [
+        ("hours", 3_600_000_000_000_i128),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
+    ]
+    .iter()
+    .map(|(name, scale)| duration_field(object, name) * scale)
+    .sum::<i128>();
     let mut cursor = start;
     let mut fields = vec![Value::Number(0.0); 10];
     let largest = largest_unit(options);
@@ -604,8 +609,7 @@ fn calendar_time_round(
         }
         fields[2] = Value::Number(count as f64);
     }
-    let remaining_days = (target - cursor).num_days() as f64 + subday;
-    let total_nanos = (remaining_days * 86_400_000_000_000.0) as i128;
+    let total_nanos = (target - cursor).num_days() as i128 * 86_400_000_000_000 + subday_nanos;
     let scales = [
         86_400_000_000_000_i128,
         3_600_000_000_000,
@@ -624,7 +628,8 @@ fn calendar_time_round(
         * increment;
     let mut remainder = rounded.abs();
     let sign = rounded.signum();
-    for unit in 3..=index {
+    let first_unit = largest.map_or(3, |largest| largest.max(3));
+    for unit in first_unit..=index {
         let value = remainder / scales[unit - 3];
         fields[unit] = Value::Number((value * sign) as f64);
         remainder %= scales[unit - 3];
