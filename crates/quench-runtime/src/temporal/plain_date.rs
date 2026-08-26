@@ -1079,7 +1079,7 @@ fn with(
     let month_code_text = if matches!(month_code, Value::Undefined) {
         None
     } else {
-        Some(crate::conversion::to_string(&month_code)?)
+        Some(month_code_text(&month_code)?)
     };
     let year = number_or_field(changes, "year", year)?;
     let overflow = if let Some(value) = options {
@@ -1159,8 +1159,16 @@ fn option_string(value: &Value) -> Result<String, VmError> {
 }
 
 fn month_code_number(value: &Value) -> Result<f64, VmError> {
-    let code = crate::conversion::to_string(value)?;
+    let code = month_code_text(value)?;
     month_code_number_text(&code)
+}
+
+fn month_code_text(value: &Value) -> Result<String, VmError> {
+    let primitive = crate::conversion::to_primitive(value, "string")?;
+    if !matches!(primitive, Value::String(_) | Value::StringUnits(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+    }
+    crate::conversion::to_string(&primitive)
 }
 
 fn month_code_number_text(code: &str) -> Result<f64, VmError> {
