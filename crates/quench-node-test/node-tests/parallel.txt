@@ -511,3 +511,9 @@ test-https-agent-sni.js
 test-https-agent-disable-session-reuse.js
 test-https-agent-session-reuse.js
 test-https-client-checkServerIdentity.js
+test-https-agent-keylog.js
+test-https-agent-pfx-object-array-reuse.js
+test-https-agent-unref-socket.js
+test-https-agent-sockets-leak.js
+test-https-agent-session-eviction.js
+test-https-agent-session-injection.js
