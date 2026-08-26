@@ -1039,6 +1039,7 @@
       errorEmitted: false,
       corked: 0,
       prefinished: false,
+      finishScheduled: false,
       final: options.final || null,
       endCallbacks: [],
       autoDestroy: options.autoDestroy !== false,
@@ -1115,12 +1116,21 @@
     }
     st.finished = true;
     completeEndCallbacks(st);
-    nextTick(() => {
+    const emitFinish = () => nextTick(() => {
       stream._emitter.emit("finish");
       if (st.autoDestroy && (!stream._isDuplex || stream._readableState.endEmitted)) {
         stream.destroy();
       }
     });
+    // A duplex with autoDestroy cannot finish its writable side before its
+    // readable side has emitted end.  In particular, Transform.end() may
+    // queue readable completion and resume() in the same turn.
+    if (st.autoDestroy && stream._isDuplex && !stream._readableState.endEmitted) {
+      if (!st.finishScheduled) {
+        st.finishScheduled = true;
+        stream.once("end", emitFinish);
+      }
+    } else emitFinish();
   }
 
   function flushCorked(stream) {
@@ -1535,7 +1545,10 @@
       if (options && options.transform) this._transform = options.transform;
       if (options && options.flush) this._flush = options.flush;
       // When the writable side finishes, flush then end the readable side.
-      this.once("finish", () => {
+      // Node flushes and closes the readable side during prefinish, before
+      // the writable side emits finish.  Keeping this on the shared lifecycle
+      // event preserves the observable end -> finish ordering.
+      this.once("prefinish", () => {
         const end = (error, data) => {
           if (!error && data != null) this.push(data);
           this.push(null);
