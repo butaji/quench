@@ -33,6 +33,7 @@ fn execute_core(
         IteratorConcat => Some(iterator::concat(arguments)),
         IteratorFrom => Some(iterator::from(arguments)),
         IteratorZip => Some(iterator::zip(arguments)),
+        IteratorZipKeyed => Some(iterator::zip_keyed(arguments)),
         IteratorToArray => Some(iterator::to_array(receiver)),
         IteratorMap => Some(iterator::map(receiver, arguments)),
         IteratorFilter => Some(iterator::filter(receiver, arguments)),
