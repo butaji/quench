@@ -222,6 +222,7 @@ test-child-process-dgram-reuseport.js
 test-child-process-exec-kill-throws.js
 test-child-process-exec-any-shells-windows.js
 test-process-constants-noatime.js
+test-process-features.js
 test-process-default.js
 test-process-env-delete.js
 test-process-cpuUsage.js
