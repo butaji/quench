@@ -153,6 +153,7 @@ test-buffer-zero-fill.js
 test-buffer-constants.js
 test-btoa-atob.js
 test-binding-constants.js
+test-bad-unicode.js
 test-net-connect-after-destroy.js
 test-dns-get-server.js
 test-dns-negative-zero.js
