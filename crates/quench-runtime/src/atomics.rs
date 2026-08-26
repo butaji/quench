@@ -112,6 +112,11 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
         if builtin == Builtin::AtomicsLoad {
             return Ok(Value::BigInt(bigint_old(view, index)?));
         }
+        if bigint_view_immutable(view) {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics operation requires a writable buffer",
+            ));
+        }
         let value = bigint_argument(arguments.get(2))?;
         let bits = crate::construct::bigint_bits(&Value::BigInt(value.to_string()))?;
         let ok = match view {
@@ -137,6 +142,11 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
             crate::value::error::throw_range_error("Atomics index is out of range")
         });
     }
+    if view.immutable() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a writable buffer",
+        ));
+    }
     let value = atomic_value(arguments.get(2))?;
     if !view.set(index, value) {
         return Err(crate::value::error::throw_range_error(
@@ -152,6 +162,11 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
         let view = bigint_view(arguments.first())?;
+        if bigint_view_immutable(view) {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics operation requires a writable buffer",
+            ));
+        }
         let index = atomic_index(arguments.get(1))?;
         let old = bigint_old(view, index)?;
         let value = bigint_argument(arguments.get(2))?;
@@ -168,23 +183,24 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
         }
         return Ok(Value::BigInt(old));
     }
-    let Some(Value::Int32Array(view)) = arguments.first() else {
+    let Some(view) = atomic_view(arguments.first()) else {
         return Err(crate::value::error::throw_type_error(
-            "Atomics.exchange requires an Int32Array",
+            "Atomics.exchange requires an integer typed array",
         ));
     };
-    if !view.buffer.shared {
+    if view.immutable() {
         return Err(crate::value::error::throw_type_error(
-            "Atomics.exchange requires a shared buffer",
+            "Atomics operation requires a writable buffer",
         ));
     }
     let index = atomic_index(arguments.get(1))?;
     let old = view.get(index).ok_or_else(|| {
         crate::value::error::throw_range_error("Atomics.exchange index is out of range")
     })?;
+    let old_number = view.get_number(index).unwrap_or(old as f64);
     let value = atomic_value(arguments.get(2))?;
     view.set(index, value);
-    Ok(Value::Number(old as f64))
+    Ok(Value::Number(old_number))
 }
 
 pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
@@ -258,6 +274,11 @@ pub(crate) fn execute(
             "Atomics operation requires an Int32Array",
         ));
     };
+    if view.immutable() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a writable buffer",
+        ));
+    }
     let index = atomic_index(arguments.get(1))?;
     let old = view
         .get(index)
@@ -285,6 +306,11 @@ pub(crate) fn execute(
 
 fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     let view = bigint_view(args.first())?;
+    if bigint_view_immutable(view) {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a writable buffer",
+        ));
+    }
     let index = atomic_index(args.get(1))?;
     let old = bigint_old(view, index)?;
     let replacement = bigint_result(builtin, args, &old)?;
@@ -393,14 +419,14 @@ enum AtomicView<'a> {
 }
 
 impl AtomicView<'_> {
-    fn shared(&self) -> bool {
+    fn immutable(&self) -> bool {
         match self {
-            Self::Int8(v) => v.buffer.shared,
-            Self::Int16(v) => v.buffer.shared,
-            Self::Int32(v) => v.buffer.shared,
-            Self::Uint8(v) => v.buffer.shared,
-            Self::Uint16(v) => v.buffer.shared,
-            Self::Uint32(v) => v.buffer.shared,
+            Self::Int8(v) => v.buffer.immutable,
+            Self::Int16(v) => v.buffer.immutable,
+            Self::Int32(v) => v.buffer.immutable,
+            Self::Uint8(v) => v.buffer.immutable,
+            Self::Uint16(v) => v.buffer.immutable,
+            Self::Uint32(v) => v.buffer.immutable,
         }
     }
     fn get(&self, index: usize) -> Option<i32> {
@@ -441,6 +467,22 @@ fn atomic_view(value: Option<&Value>) -> Option<AtomicView<'_>> {
         Value::Uint16Array(v) => Some(AtomicView::Uint16(v)),
         Value::Uint32Array(v) => Some(AtomicView::Uint32(v)),
         _ => None,
+    }
+}
+
+fn bigint_view_immutable(view: &Value) -> bool {
+    match view {
+        Value::BigInt64Array(v) => v.buffer.immutable,
+        Value::BigUint64Array(v) => v.buffer.immutable,
+        _ => false,
+    }
+}
+
+fn bigint_view_immutable(view: &Value) -> bool {
+    match view {
+        Value::BigInt64Array(v) => v.buffer.immutable,
+        Value::BigUint64Array(v) => v.buffer.immutable,
+        _ => false,
     }
 }
 
