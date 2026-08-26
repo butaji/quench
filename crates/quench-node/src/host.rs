@@ -200,7 +200,6 @@ fn dispatch(
 }
 
 fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    eprintln!("NODE_CONSTRUCT cap={cap}");
     if cap == crate::registry::SPEC_BUFFER_INDEX_OF.cap
         || cap == crate::registry::SPEC_BUFFER_LAST_INDEX_OF.cap
     {
