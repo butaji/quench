@@ -22,11 +22,76 @@ fn execute_plan_loop(
             &[crate::value::Value::Number(index)],
         )?;
         let constraint = crate::locals::resolved_replacement(constraint);
-        let _ = call_fact_named(&constraint, &plan.body_method, &[])?;
+        let body = crate::execute::get_property_result(&constraint, &plan.body_method)?;
+        if execute_direct_counted_method(&body, &constraint).is_none() {
+            let _ = crate::functions::execute_target(&body, &constraint, &[])?;
+        }
         crate::execution_trace::kernel("plan_execute_loop", false);
         index += 1.0;
     }
     Ok(Some(crate::value::Value::Undefined))
+}
+
+fn execute_direct_counted_method(
+    callee: &crate::value::Value,
+    receiver: &crate::value::Value,
+) -> Option<()> {
+    let crate::value::Value::Function(function) = callee else {
+        return None;
+    };
+    match function.code.facts().direct_method.as_deref()? {
+        crate::facts::DirectMethodFact::Noop => {
+            crate::execution_trace::kernel("counted_method_noop", false);
+            Some(())
+        }
+        crate::facts::DirectMethodFact::CopyMethodProperty {
+            target_method,
+            source_method,
+            property,
+        } => {
+            let target = direct_property_select(function, receiver, target_method)?;
+            let source = direct_property_select(function, receiver, source_method)?;
+            let crate::value::Value::Object(target) = target else {
+                return None;
+            };
+            let crate::value::Value::Object(source) = source else {
+                return None;
+            };
+            let target = plain_own_word(&target, property)?;
+            let source = crate::vm::proven_own_word(&source, property)?;
+            target.copy_from(source);
+            crate::execution_trace::kernel("counted_method_copy_property", false);
+            Some(())
+        }
+    }
+}
+
+fn direct_property_select(
+    _: &crate::value::FunctionValue,
+    receiver: &crate::value::Value,
+    method: &str,
+) -> Option<crate::value::Value> {
+    let method = crate::execute::get_property_result(receiver, method).ok()?;
+    let crate::value::Value::Function(method) = method else {
+        return None;
+    };
+    let ShapeKernelPlan::PropertySelect(plan) = shape_kernel_fact(&method)? else {
+        return None;
+    };
+    execute_property_select(&method, receiver, plan)
+}
+
+fn plain_own_word<'a>(
+    object: &'a crate::value::ObjectData,
+    property: &str,
+) -> Option<&'a crate::register_file::SlotWord> {
+    if object.hot_properties().names().any(|name| {
+        crate::builtins::is_deleted_key_for(name, property)
+            || crate::builtins::is_descriptor_key_for(name, property)
+    }) {
+        return None;
+    }
+    crate::vm::proven_own_word(object, property)
 }
 
 fn call_fact_named(
