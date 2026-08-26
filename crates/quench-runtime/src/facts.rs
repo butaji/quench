@@ -93,6 +93,10 @@ pub(crate) enum DirectMethodFact {
     AppendArray {
         property: String,
     },
+    SlotDot3 {
+        receiver: [String; 3],
+        argument: [String; 3],
+    },
     Recalculate {
         input_method: String,
         output_method: String,
