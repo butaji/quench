@@ -2435,6 +2435,44 @@ pub fn abort_signal_abort(
     ))
 }
 
+pub fn abort_signal_timeout(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let delay = args.first().cloned().unwrap_or(Value::Number(0.0));
+    let signal = crate::modules::event_target::new_target(state, &[])?;
+    let signal = execute::set_property(signal, "aborted", Value::Boolean(false));
+    let signal = execute::set_property(signal, crate::modules::event_target::ABORT_SIGNAL_BRAND, Value::Boolean(true));
+    let callback = crate::host::capability(crate::registry::NodeSpec::new("AbortSignal.timeout.fire", 0x1F31));
+    crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
+    Ok(signal)
+}
+
+pub fn abort_signal_timeout_call(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    abort_signal_timeout(state, args)
+}
+
+pub fn abort_signal_timeout_fire(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(signal) = args.first() else { return Ok(Value::Undefined); };
+    let reason = execute::set_property(
+        quench_runtime::builtins::error(quench_runtime::ops::Builtin::Error, &[Value::String("The operation was aborted due to timeout".into())]),
+        "name",
+        Value::String("TimeoutError".into()),
+    );
+    execute::set_property_in_place(signal, "aborted", Value::Boolean(true));
+    execute::set_property_in_place(signal, "reason", reason);
+    let event = quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+    crate::modules::event_target::dispatch_event(state, Some(signal), &[event])
+}
+
 pub fn process_on(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
