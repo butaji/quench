@@ -1290,6 +1290,13 @@ fn with(
         }
     }
     values[1] = values[1].trunc();
+    if !matches!(month_code, Value::Undefined) && month != Value::Undefined {
+        let month_number = crate::conversion::to_number(&month)?;
+        let month_code_number = crate::conversion::to_number(&month_code_number(&month_code)?)?;
+        if month_number.fract() == 0.0 && month_number != month_code_number {
+            return Err(crate::value::error::throw_range_error("Month mismatch"));
+        }
+    }
     let recognized = NAMES.iter().any(|name| {
         crate::execute::get_property_result(changes, name)
             .is_ok_and(|value| !matches!(value, Value::Undefined))
