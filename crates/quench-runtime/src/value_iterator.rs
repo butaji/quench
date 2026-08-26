@@ -26,7 +26,9 @@ pub enum IteratorState {
     },
     Zip {
         iterators: Vec<Value>,
+        padding: Vec<Value>,
         mode: u8,
+        started: bool,
         done: bool,
     },
     Mapped {
