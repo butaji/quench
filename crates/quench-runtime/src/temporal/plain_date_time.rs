@@ -1888,6 +1888,13 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     } else {
         Vec::new()
     };
+    if colon_clock
+        && clock
+            .iter()
+            .any(|part| part.len() != 2 || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     if clock.is_empty() || clock.len() > 3 || fraction.len() > 9 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
