@@ -188,8 +188,10 @@ fn dispatch(
 }
 
 fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    if matches!(cap, crate::registry::CAP_BUFFER_INDEX_OF | crate::registry::CAP_BUFFER_LAST_INDEX_OF) {
-        let method = if cap == crate::registry::CAP_BUFFER_LAST_INDEX_OF {
+    if cap == crate::registry::SPEC_BUFFER_INDEX_OF.cap
+        || cap == crate::registry::SPEC_BUFFER_LAST_INDEX_OF.cap
+    {
+        let method = if cap == crate::registry::SPEC_BUFFER_LAST_INDEX_OF.cap {
             "lastIndexOf"
         } else {
             "indexOf"
