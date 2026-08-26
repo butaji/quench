@@ -216,7 +216,7 @@ fn direct_constructor_plan(
         return Some(plan);
     }
     let fields = direct_constructor_fields(function);
-    if fields.len() < 3 {
+    if fields.is_empty() {
         return None;
     }
     direct_constructor_prototype(prototype, &fields)?;
