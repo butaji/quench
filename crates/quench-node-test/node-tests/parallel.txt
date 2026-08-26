@@ -410,3 +410,6 @@ test-crypto-sign-verify.js
 test-crypto-randomfillsync-regression.js
 test-crypto-randomuuid.js
 test-crypto-randomuuidv7.js
+test-crypto-pbkdf2.js
+test-crypto-scrypt.js
+test-crypto-hkdf.js
