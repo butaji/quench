@@ -52,6 +52,9 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     }
     // Static Promise methods need the constructor as [[This]] when called
     // through a property reference; prototype methods are bound below.
+    if builtin == Builtin::Promise && matches!(property, Value::Builtin(Builtin::PromiseTry)) {
+        return property;
+    }
     if builtin == Builtin::Promise && matches!(property, Value::Builtin(_)) {
         return bind_method(value, property);
     }
