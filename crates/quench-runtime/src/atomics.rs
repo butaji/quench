@@ -321,14 +321,14 @@ pub(crate) fn execute(
         .ok_or_else(|| crate::value::error::throw_range_error("Atomics index is out of range"))?;
     let old_number = view.get_number(index).unwrap_or(old as f64);
     if builtin == Builtin::AtomicsCompareExchange {
-        let expected = atomic_value(arguments.get(2))?;
+        let expected = view.coerce(arguments.get(2))?;
         if old == expected {
-            let replacement = atomic_value(arguments.get(3))?;
+            let replacement = view.coerce(arguments.get(3))?;
             view.set(index, replacement);
         }
         return Ok(Value::Number(old_number));
     }
-    let value = atomic_value(arguments.get(2))?;
+    let value = view.coerce(arguments.get(2))?;
     let updated = match builtin {
         Builtin::AtomicsAdd => old.wrapping_add(value),
         Builtin::AtomicsAnd => old & value,
@@ -395,7 +395,9 @@ fn bigint_result(builtin: Builtin, args: &[Value], old: &str) -> Result<String, 
         .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))?;
     let value = bigint_argument(args.get(2))?;
     let result = if builtin == Builtin::AtomicsCompareExchange {
-        if old == value {
+        let old_bits = crate::construct::bigint_bits(&Value::BigInt(old.to_string()))?;
+        let expected_bits = crate::construct::bigint_bits(&Value::BigInt(value.to_string()))?;
+        if old_bits == expected_bits {
             bigint_argument(args.get(3))?
         } else {
             old
@@ -496,6 +498,20 @@ impl AtomicView<'_> {
             Self::Uint16(v) => v.set(index, value as u16),
             Self::Uint32(v) => v.set(index, value as u32),
         }
+    }
+
+    fn coerce(&self, value: Option<&Value>) -> Result<i32, VmError> {
+        let number = crate::conversion::to_number(value.ok_or_else(|| {
+            crate::value::error::throw_type_error("Missing value")
+        })?)?;
+        Ok(match self {
+            Self::Int8(_) => crate::construct::to_int8(number).into(),
+            Self::Int16(_) => crate::construct::to_int16(number).into(),
+            Self::Int32(_) => crate::construct::to_int32(number),
+            Self::Uint8(_) => crate::construct::to_uint8(number).into(),
+            Self::Uint16(_) => crate::construct::to_uint16(number).into(),
+            Self::Uint32(_) => crate::construct::to_uint32(number) as i32,
+        })
     }
 }
 
