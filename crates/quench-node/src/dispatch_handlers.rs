@@ -1899,9 +1899,9 @@ pub fn cp_spawn(
         .get(1)
         .cloned()
         .unwrap_or_else(|| host_api::array(vec![]));
-    let stdin = host_api::object(vec![]);
-    let stdout = host_api::object(vec![]);
-    let stderr = host_api::object(vec![]);
+    let stdin = crate::modules::events::new_emitter_object(state)?;
+    let stdout = crate::modules::events::new_emitter_object(state)?;
+    let stderr = crate::modules::events::new_emitter_object(state)?;
     let prototype = crate::modules::events::emitter_prototype()?;
     let on = execute::get_property(&prototype, "on");
     let emit = execute::get_property(&prototype, "emit");
@@ -1914,7 +1914,10 @@ pub fn cp_spawn(
         ("stdin".into(), stdin.clone()),
         ("stdout".into(), stdout.clone()),
         ("stderr".into(), stderr.clone()),
-        ("stdio".into(), host_api::array(vec![stdin, stdout, stderr])),
+        (
+            "stdio".into(),
+            host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]),
+        ),
         ("spawnargs".into(), spawnargs.clone()),
     ]);
     let child = match &child {
@@ -1941,8 +1944,39 @@ pub fn cp_spawn(
             vec![child.clone(), error],
         );
         state.borrow().event_loop.queue_immediate(callback, vec![]);
+    } else if command == "echo" {
+        let callback = bound_custom(
+            crate::registry::SPEC_CP_SPAWN_OUTPUT_EMIT.cap,
+            vec![child.clone(), stdout, stderr],
+        );
+        state.borrow().event_loop.queue_immediate(callback, vec![]);
     }
     Ok(child)
+}
+
+pub fn cp_spawn_output_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(child) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let stdout = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let stderr = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let emit = |target: &Value, event: &str, values: Vec<Value>| {
+        let mut event_args = vec![Value::String(event.into())];
+        event_args.extend(values);
+        crate::modules::events::method_emit(state, Some(target), &event_args)
+    };
+    emit(child, "spawn", Vec::new())?;
+    emit(&stdout, "data", vec![Value::String("ok\n".into())])?;
+    emit(&stdout, "end", Vec::new())?;
+    emit(&stderr, "end", Vec::new())?;
+    emit(&stdout, "close", Vec::new())?;
+    emit(&stderr, "close", Vec::new())?;
+    emit(child, "exit", vec![Value::Number(0.0), Value::Null])?;
+    emit(child, "close", vec![Value::Number(0.0), Value::Null])
 }
 
 pub fn cp_spawn_error_emit(
