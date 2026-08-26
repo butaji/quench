@@ -410,6 +410,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "withPlainTime") => {
             Some(Value::Builtin(TemporalZonedDateTimeWithPlainTime))
         }
+        (TemporalZonedDateTimePrototype, "with") => Some(Value::Builtin(TemporalZonedDateTimeWith)),
         (TemporalZonedDateTimePrototype, "startOfDay") => {
             Some(Value::Builtin(TemporalZonedDateTimeStartOfDay))
         }
