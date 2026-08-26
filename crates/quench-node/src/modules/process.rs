@@ -101,6 +101,10 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ),
         ("execPath", Value::String(exec_path.to_string())),
         ("argv0", Value::String("node".into())),
+        (
+            "release",
+            host_api::object(vec![("name".to_string(), Value::String("node".into()))]),
+        ),
         ("domain", Value::Null),
         ("version", Value::String("v22.0.0".into())),
         (
