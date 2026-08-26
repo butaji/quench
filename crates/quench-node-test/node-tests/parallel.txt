@@ -107,8 +107,10 @@ test-url-format-whatwg.js
 test-url-invalid-file-url-path-input.js
 test-url-pathtofileurl.js
 test-url-parse-query.js
+test-url-parse-format.js
 test-url-revokeobjecturl.js
 test-url-relative.js
+test-urlpattern-types.js
 test-util-format.js
 test-util-callbackify.js
 test-util-deprecate-invalid-code.js
