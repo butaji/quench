@@ -83,6 +83,10 @@ fn target_id(receiver: &Value) -> Option<TargetId> {
     }
 }
 
+pub(crate) fn target_identity(receiver: &Value) -> Option<u64> {
+    target_id(receiver).map(|id| id.0)
+}
+
 fn is_abort_signal(value: &Value) -> bool {
     matches!(
         quench_runtime::vm::get_property(value, ABORT_SIGNAL_BRAND),
