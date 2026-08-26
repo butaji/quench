@@ -450,6 +450,18 @@ pub(crate) fn reduce_expression_kind(
     locals: &HashMap<String, u16>,
     kind: Option<FunctionKind>,
 ) -> Option<u16> {
+    reduce_expression_kind_source(function, ops, facts, next_register, locals, kind, None)
+}
+
+pub(crate) fn reduce_expression_kind_source(
+    function: &oxc::ast::ast::Function<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+    kind: Option<FunctionKind>,
+    source_override: Option<String>,
+) -> Option<u16> {
     let body = function.body.as_ref()?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let (parameters, parameter_count) =
@@ -473,6 +485,12 @@ pub(crate) fn reduce_expression_kind(
         facts.function_dynamic_scope_floor,
     ) = inherited;
     let (body_ops, captures) = reduced?;
+    let source = source_override.or_else(|| {
+        facts
+            .reduction_source
+            .get(function.span.start as usize..function.span.end as usize)
+            .map(str::to_string)
+    });
     Some(emit_function_expression(
         ops,
         next_register,
@@ -495,7 +513,7 @@ pub(crate) fn reduce_expression_kind(
             direct_constructor: direct_constructor_fact(function, locals),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
-        None,
+        source,
     ))
 }
 

@@ -490,6 +490,12 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::IntlSegmenterPrototype
             | Builtin::TemporalInstantPrototype
             | Builtin::TemporalZonedDateTimePrototype
+            | Builtin::TemporalDurationPrototype
+            | Builtin::TemporalPlainDatePrototype
+            | Builtin::TemporalPlainDateTimePrototype
+            | Builtin::TemporalPlainTimePrototype
+            | Builtin::TemporalPlainMonthDayPrototype
+            | Builtin::TemporalPlainYearMonthPrototype
     )
 }
 

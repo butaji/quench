@@ -209,6 +209,15 @@ pub(crate) mod value {
             Value::String(_) => "string",
             Value::StringUnits(_) => "string",
             Value::Builtin(builtin) => builtin_type(*builtin),
+            Value::BoundFunction(bound)
+                if matches!(
+                    bound.target,
+                    Value::Builtin(target)
+                        if crate::builtins::object::is_intrinsic_prototype(target)
+                ) =>
+            {
+                "object"
+            }
             Value::Function(_) | Value::BoundFunction(_) => "function",
             Value::BigInt(_) => "bigint",
             Value::Promise(_)
