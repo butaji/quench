@@ -139,12 +139,13 @@ fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate:
     let start = splice_index(arguments.first(), length)?;
     let available = length - start;
     let delete_count = match arguments.get(1) {
-        None => available,
+        None if arguments.len() == 1 => available,
+        None => 0,
         Some(value) => splice_count(value)?.min(available),
     };
     let mut removed = crate::builtins::array_species_create(&target, delete_count)?;
     for offset in 0..delete_count {
-        if let Some(value) = crate::builtins::map_value(&target, start + offset)? {
+        if let Some(value) = splice_value(&target, start + offset)? {
             removed = crate::builtins::create_data_property_or_throw(
                 removed,
                 &offset.to_string(),
@@ -152,12 +153,22 @@ fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate:
             )?;
         }
     }
+    removed = crate::properties::assign_set_property(
+        &removed,
+        "length",
+        Value::Number(delete_count as f64),
+    )?;
     let items: Vec<Value> = arguments.iter().skip(2).cloned().collect();
     let new_length = length - delete_count + items.len();
+    if new_length > 9_007_199_254_740_991usize {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.splice result exceeds integer limit",
+        ));
+    }
     if items.len() < delete_count {
         for index in start..(length - delete_count) {
             let from = index + delete_count;
-            target = splice_move(&target, index, &target, from)?;
+            target = splice_move(&target, index + items.len(), &target, from)?;
         }
         for index in (new_length..length).rev() {
             target = splice_delete(target, index)?;
@@ -177,6 +188,7 @@ fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate:
         "length",
         Value::Number(new_length as f64),
     )?;
+    crate::locals::replace_value(receiver, &target);
     Ok(removed)
 }
 
@@ -208,10 +220,21 @@ fn splice_move(
     source: &Value,
     from: usize,
 ) -> Result<Value, crate::execute::VmError> {
-    match crate::builtins::map_value(source, from)? {
+    match splice_value(source, from)? {
         Some(value) => crate::properties::assign_set_property(target, &to.to_string(), value),
         None => splice_delete(target.clone(), to),
     }
+}
+
+fn splice_value(
+    source: &Value,
+    index: usize,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let key = index.to_string();
+    if !crate::with_scope::has_property(source, &key)? {
+        return Ok(None);
+    }
+    crate::execute::get_property_result(source, &key).map(Some)
 }
 
 fn splice_delete(target: Value, index: usize) -> Result<Value, crate::execute::VmError> {
@@ -473,12 +496,18 @@ fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::e
     for index in 0..length {
         let key = index.to_string();
         if let Some(value) = elements.get(index).cloned() {
-            target = crate::properties::assign_set_property(&target, &key, value)?;
+            let previous = target.clone();
+            let updated = crate::properties::assign_set_property(&target, &key, value)?;
+            crate::locals::replace_value(&previous, &updated);
+            target = updated;
         } else {
+            let previous = target.clone();
             let (updated, _) = crate::builtins::delete_property(target, &key);
+            crate::locals::replace_value(&previous, &updated);
             target = updated;
         }
     }
+    crate::locals::replace_value(receiver, &target);
     Ok(target)
 }
 
@@ -507,6 +536,16 @@ fn compare_values(
     right: &Value,
     compare: Option<&Value>,
 ) -> Result<std::cmp::Ordering, crate::execute::VmError> {
+    let left_undefined = matches!(left, Value::Undefined);
+    let right_undefined = matches!(right, Value::Undefined);
+    if left_undefined || right_undefined {
+        return Ok(match (left_undefined, right_undefined) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => std::cmp::Ordering::Equal,
+        });
+    }
     let number = if let Some(compare) = compare {
         let value =
             crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
