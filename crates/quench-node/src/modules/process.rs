@@ -201,6 +201,14 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ("cpuUsage", crate::host::process_cpu_usage_capability()),
         ("uptime", crate::host::process_uptime_capability()),
         (
+            "availableMemory",
+            crate::host::capability(crate::registry::SPEC_PROCESS_AVAILABLE_MEMORY),
+        ),
+        (
+            "constrainedMemory",
+            crate::host::capability(crate::registry::SPEC_PROCESS_CONSTRAINED_MEMORY),
+        ),
+        (
             "umask",
             crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
         ),
@@ -359,14 +367,29 @@ pub fn cwd(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmE
 }
 
 pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let path = args.first().map(value_to_string).unwrap_or_default();
+    let Some(Value::String(path)) = args.first() else {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"directory\" argument must be of type string".into(),
+        ));
+    };
     let pb = std::path::PathBuf::from(&path);
     match std::env::set_current_dir(&pb) {
         Ok(()) => {
-            state.borrow_mut().process.cwd = pb;
+            state.borrow_mut().process.cwd = std::env::current_dir().unwrap_or(pb);
             Ok(Value::Undefined)
         }
-        Err(_) => Err(VmError::NotCallable),
+        Err(error) => Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("code".into(), Value::String("ENOENT".into())),
+            (
+                "message".into(),
+                Value::String(format!("ENOENT: no such file or directory, chdir {} -> '{}'", state.borrow().process.cwd.display(), path)),
+            ),
+            ("path".into(), Value::String(state.borrow().process.cwd.to_string_lossy().into_owned())),
+            ("syscall".into(), Value::String("chdir".into())),
+            ("dest".into(), Value::String(path.clone())),
+            ("errno".into(), Value::Number(error.raw_os_error().unwrap_or(2) as f64)),
+        ]))),
     }
 }
 
