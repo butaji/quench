@@ -17,13 +17,7 @@ pub fn promise_finally(receiver: Option<&Value>, arguments: &[Value]) -> Result<
 }
 
 fn finally_handler(builtin: Builtin, callback: Value) -> Value {
-    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(builtin),
-        receiver: callback,
-        arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
-    }))
+    crate::vm::bind_method(&callback, Value::Builtin(builtin))
 }
 
 fn execute_finally_handler(
