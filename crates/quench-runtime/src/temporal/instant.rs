@@ -377,13 +377,13 @@ fn round_instant_integer(value: i128, quantum: i128, mode: &str) -> i128 {
     let increment = match mode {
         "ceil" => sign > 0 && remainder != 0,
         "floor" => sign < 0 && remainder != 0,
-        "expand" => sign > 0 && remainder != 0,
-        "trunc" => sign < 0 && remainder != 0,
+        "expand" => remainder != 0,
+        "trunc" => false,
         "halfEven" => remainder * 2 > quantum || remainder * 2 == quantum && units % 2 != 0,
         "halfCeil" => remainder * 2 >= quantum && sign > 0 || remainder * 2 > quantum && sign < 0,
         "halfFloor" => remainder * 2 > quantum && sign > 0 || remainder * 2 >= quantum && sign < 0,
         "halfTrunc" => remainder * 2 > quantum,
-        _ => remainder * 2 > quantum || remainder * 2 == quantum && sign > 0,
+        _ => remainder * 2 >= quantum,
     };
     if increment {
         units += 1;
