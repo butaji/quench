@@ -306,6 +306,15 @@ fn finish_set_property(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
+    let value = if crate::execute::get_property(target, "\0quench:process_env")
+        == crate::value::Value::Boolean(true)
+    {
+        crate::conversion::to_string(&value)
+            .map(crate::value::Value::String)
+            .unwrap_or(value)
+    } else {
+        value
+    };
     let setter = {
         let _scope = crate::execution_trace::attribution_scope("SetN:accessor");
         if own_data_property(target, key) {
