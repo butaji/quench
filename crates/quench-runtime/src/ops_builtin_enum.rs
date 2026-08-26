@@ -2,7 +2,7 @@
 #[rustfmt::skip]
 pub enum Builtin {
     HostCapability(HostCapabilityKind), Array,
-    Iterator, IteratorPrototype, IteratorConcat, IteratorFrom, IteratorZip, IteratorZipKeyed, IteratorToArray, IteratorMap, IteratorFilter, IteratorSome, IteratorEvery, IteratorFlatMap, IteratorDrop, IteratorTake, IteratorReduce, IteratorFind, IteratorForEach,
+    Iterator, IteratorPrototype, IteratorConcat, IteratorFrom, IteratorZip, IteratorZipKeyed, IteratorDispose, IteratorPrototypeConstructorGetter, IteratorPrototypeConstructorSetter, IteratorPrototypeToStringTagGetter, IteratorPrototypeToStringTagSetter, IteratorToArray, IteratorMap, IteratorFilter, IteratorSome, IteratorEvery, IteratorFlatMap, IteratorDrop, IteratorTake, IteratorReduce, IteratorFind, IteratorForEach,
     TypedArray, ArrayBuffer,
     ArrayBufferPrototype, SharedArrayBuffer,
     SharedArrayBufferPrototype, ArrayBufferIsView,
