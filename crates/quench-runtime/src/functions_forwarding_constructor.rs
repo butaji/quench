@@ -125,6 +125,14 @@ fn direct_forward_receiver(
         return None;
     }
     let prototype = receiver.hot_properties().slot_value(0)?;
+    direct_constructor_object(function, prototype, arguments)
+}
+
+pub(crate) fn direct_constructor_object(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    prototype: crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Option<crate::value::Value> {
     let fields = direct_constructor_plan(function, &prototype)?;
     let mut properties = crate::value::ObjectProperties::with_capacity(fields.len() + 1);
     properties.push(("\0prototype".into(), prototype));
@@ -177,17 +185,12 @@ fn direct_constructor_plan(
 fn direct_constructor_fields(
     function: &crate::value::FunctionValue,
 ) -> Vec<(crate::value::PropertyName, i16)> {
-    const PREFIX: &str = "\0quench:direct_constructor:";
     function
-        .properties
-        .borrow()
+        .code
+        .facts()
+        .direct_constructor
         .iter()
-        .filter_map(|(key, value)| {
-            let name = key.strip_prefix(PREFIX)?;
-            let source = value.as_number()?;
-            (source.fract() == 0.0 && (f64::from(i16::MIN)..=f64::from(i16::MAX)).contains(&source))
-                .then(|| (name.to_owned().into(), source as i16))
-        })
+        .map(|field| (field.name.clone().into(), field.source))
         .collect()
 }
 

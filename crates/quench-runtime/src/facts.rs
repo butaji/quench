@@ -2,6 +2,18 @@
 
 use oxc::span::Span;
 use std::collections::HashMap;
+use std::rc::Rc;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DirectConstructorField {
+    pub(crate) name: String,
+    pub(crate) source: i16,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct FunctionFacts {
+    pub(crate) direct_constructor: Rc<[DirectConstructorField]>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fact<T> {
