@@ -92,6 +92,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         | Value::ObjectAlias(_)
         | Value::Function(_)
         | Value::BindingCell(_) => crate::locals::resolved_replacement(result),
+        Value::WeakFunction(_) => result.strong_function(),
         _ => result,
     }
 }
