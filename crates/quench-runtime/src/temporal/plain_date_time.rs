@@ -1083,22 +1083,33 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
     let mut calendar_annotation = false;
+    let mut calendar_critical = false;
     let mut time_zone_annotation = false;
     for part in text.split('[').skip(1) {
         let annotation = part
             .strip_suffix(']')
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid annotation"))?;
+        let critical = annotation.starts_with('!');
         let annotation = annotation.strip_prefix('!').unwrap_or(annotation);
         if let Some((key, value)) = annotation.split_once('=') {
-            if key != "u-ca"
-                || value.is_empty()
-                || key.chars().any(|character| character.is_ascii_uppercase())
-                || !value.eq_ignore_ascii_case("iso8601")
-                || calendar_annotation
-            {
+            if key == "u-ca" && calendar_annotation {
+                if critical || calendar_critical {
+                    return Err(crate::value::error::throw_range_error("Invalid annotation"));
+                }
+                continue;
+            }
+            if key == "u-ca" {
+                if value.is_empty()
+                    || key.chars().any(|character| character.is_ascii_uppercase())
+                    || !value.eq_ignore_ascii_case("iso8601")
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid annotation"));
+                }
+                calendar_annotation = true;
+                calendar_critical = critical;
+            } else if critical {
                 return Err(crate::value::error::throw_range_error("Invalid annotation"));
             }
-            calendar_annotation = true;
         } else if time_zone_annotation {
             return Err(crate::value::error::throw_range_error("Invalid annotation"));
         } else if annotation.is_empty() {
