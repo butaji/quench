@@ -416,6 +416,16 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "getTimeZoneTransition") => {
             Some(Value::Builtin(TemporalZonedDateTimeGetTimeZoneTransition))
         }
+        (TemporalZonedDateTimePrototype, "add") => Some(Value::Builtin(TemporalZonedDateTimeAdd)),
+        (TemporalZonedDateTimePrototype, "subtract") => {
+            Some(Value::Builtin(TemporalZonedDateTimeSubtract))
+        }
+        (TemporalZonedDateTimePrototype, "until") => {
+            Some(Value::Builtin(TemporalZonedDateTimeUntil))
+        }
+        (TemporalZonedDateTimePrototype, "since") => {
+            Some(Value::Builtin(TemporalZonedDateTimeSince))
+        }
         (TemporalZonedDateTimePrototype, "valueOf") => {
             Some(Value::Builtin(TemporalDurationValueOf))
         }
