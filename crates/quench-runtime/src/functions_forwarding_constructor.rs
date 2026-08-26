@@ -171,6 +171,7 @@ fn direct_constructor_value(
         crate::facts::DirectConstructorSource::Integer(value) => {
             Some(crate::value::Value::Number(f64::from(*value)))
         }
+        crate::facts::DirectConstructorSource::Null => Some(crate::value::Value::Null),
         crate::facts::DirectConstructorSource::GuardedArray { length_slot } => {
             let global = function.captures.get(0);
             let constructor =
