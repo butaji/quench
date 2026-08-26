@@ -92,6 +92,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
         let text = crate::conversion::to_string(value)?;
+        if text.split('[').skip(1).any(|part| {
+            part.split(']')
+                .next()
+                .and_then(|annotation| annotation.split_once('='))
+                .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
+        }) {
+            return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        }
         if let Some(annotation) = text.split('[').skip(1).find(|part| part.contains('=')) {
             let annotation = annotation.split(']').next().unwrap_or(annotation);
             if let Some(calendar) = annotation.strip_prefix("u-ca=") {
@@ -111,14 +119,27 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             .split_once(['T', 't', ' '])
             .map_or(base, |(date, _)| date);
         let date = date.strip_prefix("--").unwrap_or(date);
-        let parts = date.split('-').collect::<Vec<_>>();
-        let (month, day) = match parts.as_slice() {
-            [month, day] => (*month, *day),
-            [year, month, day] if year.len() == 4 => (*month, *day),
-            _ => {
-                return Err(crate::value::error::throw_range_error(
-                    "Invalid PlainMonthDay",
-                ))
+        let (month, day) = if !date.contains('-') {
+            let digits = date.strip_prefix('+').unwrap_or(date);
+            match digits.len() {
+                4 => (&digits[..2], &digits[2..]),
+                length if length >= 8 => (&digits[length - 4..length - 2], &digits[length - 2..]),
+                _ => {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid PlainMonthDay",
+                    ))
+                }
+            }
+        } else {
+            let parts = date.split('-').collect::<Vec<_>>();
+            match parts.as_slice() {
+                [month, day] => (*month, *day),
+                [.., month, day] => (*month, *day),
+                _ => {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid PlainMonthDay",
+                    ))
+                }
             }
         };
         if month.is_empty() || day.is_empty() {
