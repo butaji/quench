@@ -45,7 +45,11 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchReadlineInter
     globalThis.require = (name) => {
       const normalized = String(name).replace(/^node:/, "");
       if (normalized === "readline" || normalized === "readline/promises") {
-        const Interface = function Interface() {};
+        class Interface {
+          question(_prompt, callback) {
+            if (typeof callback === "function") callback(null, "");
+          }
+        }
         const createInterface = (options) => {
           if (normalized === "readline") {
             return __quenchReadlineInterface(options);
