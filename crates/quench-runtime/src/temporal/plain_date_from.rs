@@ -180,6 +180,9 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
             }
             Value::String("iso8601".into())
         }
+        value if crate::temporal::plain_date::is_temporal_date_like(&value) => {
+            Value::String("iso8601".into())
+        }
         _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
     };
     let overflow = overflow_value(options)?;

@@ -1239,7 +1239,7 @@ fn with(
     ])
 }
 
-fn is_temporal_date_like(value: &Value) -> bool {
+pub(crate) fn is_temporal_date_like(value: &Value) -> bool {
     let Value::Object(object) = value else {
         return false;
     };
