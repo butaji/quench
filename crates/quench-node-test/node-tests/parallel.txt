@@ -388,3 +388,4 @@ test-timers-nan-duration-warning-promises.js
 test-timers-process-tampering.js
 test-console-formatTime.js
 test-diagnostics-channel-has-subscribers.js
+test-process-euid-egid.js
