@@ -125,6 +125,7 @@ test-buffer-bytelength.js
 test-buffer-compare.js
 test-buffer-compare-offset.js
 test-buffer-concat.js
+test-buffer-constructor-deprecation-error.js
 test-buffer-copy.js
 test-buffer-copy-immutable.js
 test-buffer-equals.js
@@ -188,6 +189,7 @@ test-benchmark-cli.js
 test-child-process-bad-stdio.js
 test-child-process-dgram-reuseport.js
 test-child-process-exec-kill-throws.js
+test-child-process-exec-any-shells-windows.js
 test-process-constants-noatime.js
 test-process-default.js
 test-os-eol.js
