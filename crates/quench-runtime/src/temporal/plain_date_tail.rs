@@ -17,6 +17,7 @@ pub(super) fn date_object(year: f64, month: f64, day: f64) -> Value {
         ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
         ("day".into(), Value::Number(day)),
         ("calendarId".into(), Value::String("iso8601".into())),
+        ("\0temporal-plain-date".into(), Value::Boolean(true)),
         (
             "\0prototype".into(),
             Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype),
