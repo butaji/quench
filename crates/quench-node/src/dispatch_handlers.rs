@@ -628,7 +628,11 @@ pub fn url_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     crate::modules::url_whatwg::new_url(state, args)
 }
 pub fn url_legacy_new(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::object(Vec::new()))
+    let object = Value::object(Vec::new());
+    Ok(quench_runtime::execute::set_prototype_of(
+        &object,
+        &crate::modules::url::legacy_url_prototype(),
+    )?)
 }
 pub fn url_resolve_object(
     state: &Rc<RefCell<HostState>>,

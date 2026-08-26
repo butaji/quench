@@ -159,6 +159,12 @@ fn require_url_modules(name: &str) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPattern))
                 }
             };
+            let legacy_url = capability_function(HostCapabilityKind::Custom(CapabilityName::Url));
+            let legacy_url = quench_runtime::execute::set_property(
+                legacy_url,
+                "prototype",
+                crate::modules::url::legacy_url_prototype(),
+            );
             return Ok(quench_runtime::host_api::object(vec![
                 ("URL".into(), url_constructor),
                 (
@@ -168,7 +174,7 @@ fn require_url_modules(name: &str) -> Result<Value, VmError> {
                 ("URLSearchParams".into(), url_search_params),
                 (
                     "Url".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                    legacy_url,
                 ),
                 (
                     "parse".into(),
