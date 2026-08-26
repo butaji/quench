@@ -162,7 +162,10 @@ pub fn spawn_sync(
         ]));
     }
 
-    let executable = if command == state.borrow().process.exec_path {
+    let host_exec = state.borrow().process.exec_path.clone();
+    let is_host_exec = command == host_exec
+        || (std::fs::canonicalize(&command).ok() == std::fs::canonicalize(&host_exec).ok());
+    let executable = if is_host_exec {
         std::env::current_exe()
             .ok()
             .and_then(|path| path.parent().map(|dir| {
@@ -176,7 +179,7 @@ pub fn spawn_sync(
     };
     let mut cmd = std::process::Command::new(executable);
     cmd.args(&child_args);
-    if command == state.borrow().process.exec_path {
+    if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
     }
 
