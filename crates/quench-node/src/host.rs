@@ -188,6 +188,16 @@ fn dispatch(
 }
 
 fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if matches!(cap, crate::registry::CAP_BUFFER_INDEX_OF | crate::registry::CAP_BUFFER_LAST_INDEX_OF) {
+        let method = if cap == crate::registry::CAP_BUFFER_LAST_INDEX_OF {
+            "lastIndexOf"
+        } else {
+            "indexOf"
+        };
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"buffer\" argument must be an instance of Buffer, TypedArray, or DataView. Received an instance of {method}"
+        )));
+    }
     if let Some(handler) = crate::dispatch::lookup_construct(cap) {
         return handler(state, args);
     }

@@ -147,16 +147,34 @@ fn require_url_modules(name: &str) -> Result<Value, VmError> {
                 "revokeObjectURL",
                 capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
             );
+            let url_pattern = {
+                let global = quench_runtime::vm::current_global_object();
+                let factory = quench_runtime::execute::get_property(
+                    &global,
+                    "__quenchURLPattern",
+                );
+                if quench_runtime::is_callable(&factory) {
+                    factory
+                } else {
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPattern))
+                }
+            };
+            let legacy_url = capability_function(HostCapabilityKind::Custom(CapabilityName::Url));
+            let legacy_url = quench_runtime::execute::set_property(
+                legacy_url,
+                "prototype",
+                crate::modules::url::legacy_url_prototype(),
+            );
             return Ok(quench_runtime::host_api::object(vec![
                 ("URL".into(), url_constructor),
                 (
                     "URLPattern".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPattern)),
+                    url_pattern,
                 ),
                 ("URLSearchParams".into(), url_search_params),
                 (
                     "Url".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                    legacy_url,
                 ),
                 (
                     "parse".into(),
