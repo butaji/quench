@@ -28,6 +28,7 @@ pub enum IteratorState {
         iterators: Vec<Value>,
         padding: Vec<Value>,
         mode: u8,
+        keys: Option<Vec<String>>,
         started: bool,
         done: bool,
     },

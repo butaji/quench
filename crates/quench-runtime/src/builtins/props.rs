@@ -100,6 +100,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == Iterator && key == "zip" {
         return Some(IteratorZip);
     }
+    if builtin == Iterator && key == "zipKeyed" {
+        return Some(IteratorZipKeyed);
+    }
     if builtin == SharedArrayBuffer && key == "prototype" {
         return Some(SharedArrayBufferPrototype);
     }
@@ -343,8 +346,7 @@ fn uint8_array_base64_method(builtin: Builtin, key: &str) -> Option<Builtin> {
             return Some(method);
         }
     }
-    (key == "subarray" && is_typed_array_prototype(builtin))
-        .then_some(Builtin::Uint8ArraySubarray)
+    (key == "subarray" && is_typed_array_prototype(builtin)).then_some(Builtin::Uint8ArraySubarray)
 }
 fn is_typed_array_prototype(builtin: Builtin) -> bool {
     use Builtin::*;
