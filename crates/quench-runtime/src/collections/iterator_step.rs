@@ -216,7 +216,9 @@ enum Snapshot {
     },
     Zip {
         iterators: Vec<Value>,
+        padding: Vec<Value>,
         mode: u8,
+        started: bool,
         done: bool,
     },
 }
@@ -276,11 +278,15 @@ fn snapshot_reentry(data: &IteratorData) -> Option<Snapshot> {
         },
         IteratorState::Zip {
             iterators,
+            padding,
             mode,
             done,
+            started,
         } => Snapshot::Zip {
             iterators: iterators.clone(),
+            padding: padding.clone(),
             mode: *mode,
+            started: *started,
             done: *done,
         },
         _ => return None,
@@ -353,8 +359,14 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
                 *rem = *remaining;
             }
         }
-        Snapshot::Zip { done, .. } => {
-            if let IteratorState::Zip { done: d, .. } = &mut *state {
+        Snapshot::Zip { started, done, .. } => {
+            if let IteratorState::Zip {
+                started: s,
+                done: d,
+                ..
+            } = &mut *state
+            {
+                *s = *started;
                 *d = *done;
             }
         }
@@ -395,9 +407,11 @@ fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::ex
         Snapshot::Take { inner, remaining } => take_step(inner, remaining).map(StepTarget::Value),
         Snapshot::Zip {
             iterators,
+            padding,
             mode,
+            started,
             done,
-        } => zip_step(iterators, *mode, done).map(StepTarget::Value),
+        } => zip_step(iterators, padding, *mode, started, done).map(StepTarget::Value),
     };
     write_snapshot(data, &owned);
     Ok(Some(result?))
@@ -448,12 +462,15 @@ fn step_target_state(
 
 fn zip_step(
     iterators: &[Value],
+    padding: &[Value],
     mode: u8,
+    started: &mut bool,
     done: &mut bool,
 ) -> Result<Option<Value>, crate::execute::VmError> {
     if *done {
         return Ok(None);
     }
+    *started = true;
     let mut values = Vec::with_capacity(iterators.len());
     let mut ended = 0;
     let mut open = vec![true; iterators.len()];
@@ -470,7 +487,7 @@ fn zip_step(
             Ok(None) => {
                 ended += 1;
                 open[index] = false;
-                values.push(Value::Undefined);
+                values.push(padding.get(index).cloned().unwrap_or(Value::Undefined));
                 if mode == 0 || (mode == 2 && !all_done) {
                     break;
                 }

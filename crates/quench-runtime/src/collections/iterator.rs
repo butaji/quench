@@ -56,15 +56,53 @@ pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError>
             "Iterator.zip iterables",
         ));
     }
-    let mode = zip_mode(&options)?;
+    let (mode, padding_option) = zip_mode(&options)?;
     let iterators = collect_zip_iterators(inputs)?;
+    let padding = if let Some(padding) = padding_option {
+        collect_zip_padding(padding, iterators.len())
+            .map_err(|error| close_zip_iterators(iterators.clone(), error))?
+    } else {
+        Vec::new()
+    };
     Ok(Value::Iterator(Rc::new(IteratorData::new(
         IteratorState::Zip {
             iterators,
+            padding,
             mode,
+            started: false,
             done: false,
         },
     ))))
+}
+
+fn collect_zip_padding(
+    padding: Value,
+    count: usize,
+) -> Result<Vec<Value>, crate::execute::VmError> {
+    if matches!(padding, Value::Undefined) {
+        return Ok(vec![Value::Undefined; count]);
+    }
+    let iterator = open(padding)?;
+    let mut values = Vec::with_capacity(count);
+    let mut exhausted = false;
+    for _ in 0..count {
+        match step_value(&iterator) {
+            Ok(Some(value)) => values.push(value),
+            Ok(None) => {
+                exhausted = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if !exhausted {
+        let completion = close(iterator, crate::completion::Completion::Normal)?;
+        if !matches!(completion, crate::completion::Completion::Normal) {
+            return completion.into_vm_error().map(|_| values);
+        }
+    }
+    values.resize(count, Value::Undefined);
+    Ok(values)
 }
 
 include!("iterator_combinators.rs");
