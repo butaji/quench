@@ -941,24 +941,31 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let _ = fields(receiver)?;
+    let mut normalized_smallest_unit = None;
     if let Some(options) = options {
         if !crate::value::is_object(options) {
             return Err(crate::value::error::throw_type_error(
                 "Invalid string options",
             ));
         }
-        if let Value::String(calendar_name) =
-            crate::execute::get_property_result(options, "calendarName")?
-        {
+        let calendar_name = crate::execute::get_property_result(options, "calendarName")?;
+        if !matches!(calendar_name, Value::Undefined) {
+            if crate::conversion::is_symbol(&calendar_name) {
+                return Err(crate::value::error::throw_type_error("Invalid calendarName"));
+            }
+            let calendar_name = crate::conversion::to_string(&calendar_name)?;
             if !matches!(calendar_name.as_str(), "auto" | "always" | "never") {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid calendarName",
                 ));
             }
         }
-        if let Value::String(smallest_unit) =
-            crate::execute::get_property_result(options, "smallestUnit")?
-        {
+        let smallest_unit = crate::execute::get_property_result(options, "smallestUnit")?;
+        if !matches!(smallest_unit, Value::Undefined) {
+            if crate::conversion::is_symbol(&smallest_unit) {
+                return Err(crate::value::error::throw_type_error("Invalid smallestUnit"));
+            }
+            let smallest_unit = crate::conversion::to_string(&smallest_unit)?;
             let unit = smallest_unit.strip_suffix('s').unwrap_or(&smallest_unit);
             if !matches!(
                 unit,
@@ -967,6 +974,28 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
                 return Err(crate::value::error::throw_range_error(
                     "Invalid smallestUnit",
                 ));
+            }
+            normalized_smallest_unit = Some(smallest_unit);
+        }
+        let rounding_mode = crate::execute::get_property_result(options, "roundingMode")?;
+        if !matches!(rounding_mode, Value::Undefined) {
+            if crate::conversion::is_symbol(&rounding_mode) {
+                return Err(crate::value::error::throw_type_error("Invalid roundingMode"));
+            }
+            let rounding_mode = crate::conversion::to_string(&rounding_mode)?;
+            if !matches!(
+                rounding_mode.as_str(),
+                "ceil"
+                    | "floor"
+                    | "expand"
+                    | "halfCeil"
+                    | "halfFloor"
+                    | "halfEven"
+                    | "halfExpand"
+                    | "halfTrunc"
+                    | "trunc"
+            ) {
+                return Err(crate::value::error::throw_range_error("Invalid roundingMode"));
             }
         }
     }
@@ -977,9 +1006,7 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         .into_iter()
         .map(|value| crate::conversion::to_number(&value))
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(Value::String(smallest_unit)) =
-        options.and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
-    {
+    if let Some(smallest_unit) = normalized_smallest_unit {
         match smallest_unit.strip_suffix('s').unwrap_or(&smallest_unit) {
             "minute" => values[5] = 0.0,
             "second" => {}
@@ -1006,9 +1033,22 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
             }
             Value::String(value) if value == "auto" => Ok(usize::MAX),
             Value::Undefined => Ok(usize::MAX),
-            _ => Err(crate::value::error::throw_range_error(
+            value if crate::conversion::is_symbol(&value) => Err(
+                crate::value::error::throw_type_error("Invalid fractionalSecondDigits"),
+            ),
+            Value::String(_) => Err(crate::value::error::throw_range_error(
                 "Invalid fractionalSecondDigits",
             )),
+            value => {
+                let value = crate::conversion::to_string(&value)?;
+                if value == "auto" {
+                    Ok(usize::MAX)
+                } else {
+                    Err(crate::value::error::throw_range_error(
+                        "Invalid fractionalSecondDigits",
+                    ))
+                }
+            }
         })
         .transpose()?
         .unwrap_or(usize::MAX);
