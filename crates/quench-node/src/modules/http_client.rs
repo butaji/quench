@@ -269,7 +269,38 @@ fn subscribe_socket(state: &Rc<RefCell<HostState>>, socket: &Value) -> Result<()
         Some(socket),
         &[Value::String("end".to_string()), end_cap],
     )?;
+    let close_cap =
+        crate::host::capability(crate::registry::NodeSpec::new("http:reqclose", 0x0F11));
+    crate::modules::events::method_on(
+        state,
+        Some(socket),
+        &[Value::String("close".to_string()), close_cap],
+    )?;
     Ok(())
+}
+
+/// Socket close completes the corresponding ClientRequest lifecycle.
+pub fn req_close(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(socket_id) = receiver.and_then(net::net_id) else {
+        return Ok(Value::Undefined);
+    };
+    let Some(client_id) = state.borrow().http.clients.get(&socket_id).copied() else {
+        return Ok(Value::Undefined);
+    };
+    let request = state
+        .borrow()
+        .http
+        .clientreqs
+        .get(&client_id)
+        .map(|req| req.req.clone());
+    if let Some(request) = request {
+        net::emit(state, &request, "close", Vec::new())?;
+    }
+    Ok(Value::Undefined)
 }
 
 /// Response parser: buffer bytes, then stream `'data'` chunks.
