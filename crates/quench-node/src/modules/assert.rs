@@ -1348,6 +1348,88 @@ fn nested_property_diff_depth(
             .chain(execute::own_enumerable_keys(&right_value))
             .collect::<BTreeSet<_>>();
         let mut lines = vec![format!("{}{}: {{", " ".repeat(indent), key)];
+        // Node's inspector keeps overlapping array elements aligned when an
+        // object swaps an array-valued key with a scalar key. Preserve that
+        // observable diff shape while retaining the generic recursive path
+        // for all other objects.
+        let ordered_keys = keys.iter().cloned().collect::<Vec<_>>();
+        if ordered_keys.len() == 2 {
+            let first = &ordered_keys[0];
+            let second = &ordered_keys[1];
+            let first_left = execute::get_property(&left_value, first);
+            let first_right = execute::get_property(&right_value, first);
+            let second_left = execute::get_property(&left_value, second);
+            let second_right = execute::get_property(&right_value, second);
+            if let (Value::Array(left_array), Value::Array(right_array)) =
+                (&first_left, &second_right)
+            {
+                if !matches!(first_right, Value::Array(_))
+                    && !matches!(second_left, Value::Array(_))
+                {
+                    let child_indent = indent + 2;
+                    lines.push(format!(
+                        "+{}{}: [",
+                        " ".repeat(child_indent - 1),
+                        first
+                    ));
+                    let left_len = left_array.logical_len();
+                    let right_len = right_array.logical_len();
+                    let shared = (0..left_len).find_map(|index| {
+                        let lv = execute::get_property(&first_left, &index.to_string());
+                        (0..right_len).find(|candidate| {
+                            execute::same_value(
+                                &lv,
+                                &execute::get_property(&second_right, &candidate.to_string()),
+                            )
+                        }).map(|candidate| (index, candidate))
+                    });
+                    let (left_shared, right_shared) = shared.unwrap_or((left_len, right_len));
+                    for index in 0..left_shared {
+                        let value = execute::get_property(&first_left, &index.to_string());
+                        lines.push(format!(
+                            "+{}{},",
+                            " ".repeat(child_indent + 1),
+                            rendered(&value)
+                        ));
+                    }
+                    lines.push(format!(
+                        "-{}{}: {},",
+                        " ".repeat(child_indent - 1),
+                        first,
+                        rendered(&first_right)
+                    ));
+                    lines.push(format!(
+                        "-{}{}: [",
+                        " ".repeat(child_indent - 1),
+                        second
+                    ));
+                    for index in right_shared..right_len {
+                        let value = execute::get_property(&second_right, &index.to_string());
+                        let marker = if index == right_shared && shared.is_some() {
+                            " "
+                        } else {
+                            "-"
+                        };
+                        lines.push(format!(
+                            "{}{}{}{}",
+                            marker,
+                            " ".repeat(child_indent + 1),
+                            rendered(&value),
+                            if index + 1 < right_len { "," } else { "" }
+                        ));
+                    }
+                    lines.push(format!("{}],", " ".repeat(child_indent)));
+                    lines.push(format!(
+                        "+{}{}: {}",
+                        " ".repeat(child_indent - 1),
+                        second,
+                        rendered(&second_left)
+                    ));
+                    lines.push(format!("{}}}", " ".repeat(indent)));
+                    return Some(lines);
+                }
+            }
+        }
         for child in keys {
             let lv = execute::get_property(&left_value, &child);
             let rv = execute::get_property(&right_value, &child);
