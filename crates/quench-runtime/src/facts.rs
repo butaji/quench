@@ -58,10 +58,20 @@ pub(crate) struct ForwardThenCallFact {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CountedMethodLoopFact {
-    pub(crate) length_method: String,
-    pub(crate) element_method: String,
-    pub(crate) body_method: String,
+pub(crate) enum CountedMethodLoopFact {
+    Visit {
+        length_method: String,
+        element_method: String,
+        body_method: String,
+    },
+    Filter {
+        determining_property: String,
+        collection_property: String,
+        length_method: String,
+        element_method: String,
+        predicate_method: String,
+        append_method: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +80,17 @@ pub(crate) enum DirectMethodFact {
     CopyMethodProperty {
         target_method: String,
         source_method: String,
+        property: String,
+    },
+    PropertyLoad {
+        property: String,
+    },
+    PropertyNotEqualCapture {
+        property: String,
+        capture_slot: u16,
+        capture_property: String,
+    },
+    AppendArray {
         property: String,
     },
 }
@@ -377,10 +398,12 @@ mod tests {
             .keys()
             .next()
             .expect("literal fact");
-        assert!(program
-            .facts
-            .query_fact_in_context(*site, ReduceContext::Value)
-            .is_known());
+        assert!(
+            program
+                .facts
+                .query_fact_in_context(*site, ReduceContext::Value)
+                .is_known()
+        );
         assert_eq!(
             program.facts.query_fact(FactSiteId(u32::MAX)),
             super::Fact::Unknown
