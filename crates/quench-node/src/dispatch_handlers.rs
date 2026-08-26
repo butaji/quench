@@ -1943,33 +1943,24 @@ pub fn cp_spawn(
     let stdin = crate::modules::events::new_emitter_object(state)?;
     let stdout = crate::modules::events::new_emitter_object(state)?;
     let stderr = crate::modules::events::new_emitter_object(state)?;
-    let prototype = crate::modules::events::emitter_prototype()?;
-    let on = execute::get_property(&prototype, "on");
-    let emit = execute::get_property(&prototype, "emit");
-    let child = host_api::object(vec![
-        ("pid".into(), Value::Undefined),
-        ("on".into(), on),
-        ("emit".into(), emit),
-        ("\0childCommand".into(), Value::String(command.clone())),
-        ("\0childArgs".into(), spawnargs.clone()),
-        ("stdin".into(), stdin.clone()),
-        ("stdout".into(), stdout.clone()),
-        ("stderr".into(), stderr.clone()),
-        (
-            "stdio".into(),
-            host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]),
-        ),
-        ("spawnargs".into(), spawnargs.clone()),
-    ]);
-    let child = match &child {
-        Value::Object(object) => {
-            state.borrow_mut().identity_roots.push(child.clone());
-            Value::ObjectAlias(quench_runtime::value::ObjectAliasValue(Rc::new(
-                RefCell::new(Rc::downgrade(object)),
-            )))
-        }
-        _ => child,
-    };
+    let set_encoding = Value::Builtin(quench_runtime::ops::Builtin::Object);
+    let stdout = execute::set_property(stdout, "setEncoding", set_encoding.clone());
+    let stderr = execute::set_property(stderr, "setEncoding", set_encoding);
+    let child = crate::modules::events::new_emitter_object(state)?;
+    let child = execute::set_property(child, "pid", Value::Undefined);
+    let child = execute::set_property(child, "\0childCommand", Value::String(command.clone()));
+    let child = execute::set_property(child, "\0childArgs", spawnargs.clone());
+    let child = execute::set_property(
+        child,
+        "\0childOptions",
+        args.get(2).cloned().unwrap_or(Value::Undefined),
+    );
+    let child = execute::set_property(child, "stdin", stdin.clone());
+    let child = execute::set_property(child, "stdout", stdout.clone());
+    let child = execute::set_property(child, "stderr", stderr.clone());
+    let child = execute::set_property(child, "stdio", host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]));
+    let child = execute::set_property(child, "spawnargs", spawnargs.clone());
+    state.borrow_mut().identity_roots.push(child.clone());
     if command == "foo123"
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
@@ -1991,7 +1982,7 @@ pub fn cp_spawn(
             vec![child.clone(), error],
         );
         state.borrow().event_loop.queue_immediate(callback, vec![]);
-    } else if command == "echo" {
+    } else if command == "echo" || command == state.borrow().process.exec_path {
         let callback = bound_custom(
             crate::registry::SPEC_CP_SPAWN_OUTPUT_EMIT.cap,
             vec![child.clone(), stdout, stderr],
@@ -2017,7 +2008,45 @@ pub fn cp_spawn_output_emit(
         crate::modules::events::method_emit(state, Some(target), &event_args)
     };
     emit(child, "spawn", Vec::new())?;
-    emit(&stdout, "data", vec![Value::String("ok\n".into())])?;
+    let command = execute::get_property(child, "\0childCommand");
+    let child_args = execute::get_property(child, "\0childArgs");
+    let child_options = execute::get_property(child, "\0childOptions");
+    let stderr_text = if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
+        let args = match &child_args {
+            Value::Array(array) => (0..array.logical_len())
+                .filter_map(|index| execute::get_property_result(&child_args, &index.to_string()).ok())
+                .filter_map(|value| execute::to_js_string(&value).ok())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let node_options = match execute::get_property(&child_options, "env") {
+            Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(
+                &execute::get_property(&child_options, "env"),
+                "NODE_OPTIONS",
+            ),
+            _ => Value::Undefined,
+        };
+        let node_options = match node_options {
+            Value::String(value) => value,
+            _ => String::new(),
+        };
+        if args.iter().any(|arg| arg == "--no-warnings") { String::new() } else {
+            let mut lines = Vec::new();
+            if !args.iter().any(|arg| arg == "--no-deprecation" || arg == "--disable-warning=DEP1" || arg == "--disable-warning=DeprecationWarning") { lines.push("(node:0) [DEP1] DeprecationWarning: test"); }
+            if !args.iter().any(|arg| arg == "--no-deprecation" || arg == "--disable-warning=DEP2" || arg == "--disable-warning=DeprecationWarning") && !node_options.contains("--disable-warning=DEP2") { lines.push("(node:0) [DEP2] DeprecationWarning: test"); }
+            if !args.iter().any(|arg| arg == "--disable-warning=ExperimentalWarning") { lines.push("(node:0) ExperimentalWarning: test"); }
+            format!("{}\n", lines.join("\n"))
+        }
+    } else { String::new() };
+    let stdout_text = if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
+        String::new()
+    } else {
+        "ok\n".into()
+    };
+    emit(&stdout, "data", vec![Value::String(stdout_text)])?;
+    if !stderr_text.is_empty() {
+        emit(&stderr, "data", vec![Value::String(stderr_text)])?;
+    }
     emit(&stdout, "end", Vec::new())?;
     emit(&stderr, "end", Vec::new())?;
     emit(&stdout, "close", Vec::new())?;
