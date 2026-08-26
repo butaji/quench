@@ -546,13 +546,14 @@ pub(crate) fn reduce_values(
             "Array.prototype.reduce called on null or undefined",
         ));
     }
+    let receiver = crate::construct::to_object(receiver)?;
+    let length = crate::builtins::map_length(&receiver)?;
     let Some(callback) = arguments.first() else {
         return Err(crate::vm::not_callable());
     };
     if !crate::conversion::is_callable(callback) {
         return Err(crate::vm::not_callable());
     }
-    let length = crate::builtins::map_length(receiver)?;
     let initial = arguments.get(1).cloned();
     let mut index = if reverse { length } else { 0 };
     let mut accumulator = initial;
@@ -564,7 +565,7 @@ pub(crate) fn reduce_values(
             index += 1;
         }
         let position = if reverse { index } else { index - 1 };
-        if let Some(value) = crate::builtins::map_value(receiver, position)? {
+        if let Some(value) = crate::builtins::map_value(&receiver, position)? {
             accumulator = Some(value);
         }
     }
@@ -577,9 +578,9 @@ pub(crate) fn reduce_values(
         Box::new(index..length)
     };
     for position in indices {
-        let Some(value) = crate::builtins::map_value(receiver, position)? else { continue; };
+        let Some(value) = crate::builtins::map_value(&receiver, position)? else { continue; };
         let args = [accumulator, value, Value::Number(position as f64), receiver.clone()];
-        accumulator = crate::functions::execute_target(callback, receiver, &args)?;
+        accumulator = crate::functions::execute_target(callback, &receiver, &args)?;
     }
     Ok(accumulator)
 }
