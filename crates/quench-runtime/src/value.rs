@@ -1393,6 +1393,7 @@ pub type WeakObject = std::rc::Weak<ObjectData>;
 pub(crate) struct PrivateName {
     source: PrivateNameId,
     identity: Rc<()>,
+    realm: crate::ops::RealmId,
 }
 
 impl PrivateName {
@@ -1400,7 +1401,12 @@ impl PrivateName {
         Self {
             source,
             identity: Rc::new(()),
+            realm: crate::vm::current_context_or_default().realm(),
         }
+    }
+
+    pub(crate) fn realm(&self) -> crate::ops::RealmId {
+        self.realm
     }
 
     pub(crate) fn same_identity(&self, other: &Self) -> bool {

@@ -1174,6 +1174,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         Some(value) if crate::value::is_object(value) => value,
         Some(value @ (Value::String(_) | Value::StringUnits(_))) => {
             owned_options = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                ("\0prototype".into(), Value::Null),
                 (
                     "smallestUnit".into(),
                     value.clone(),

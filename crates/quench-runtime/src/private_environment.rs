@@ -16,9 +16,7 @@ impl PrivateEnvironment {
         let mut names = self.names.as_ref().clone();
         let mut by_label = self.labels.as_ref().clone();
         for (index, definition) in definitions.iter().enumerate() {
-            names
-                .entry(*definition)
-                .or_insert_with(|| PrivateName::new(*definition));
+            names.insert(*definition, PrivateName::new(*definition));
             if let Some(label) = labels.get(index) {
                 by_label.insert(label.clone(), *definition);
             }
