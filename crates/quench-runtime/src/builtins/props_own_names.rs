@@ -338,6 +338,8 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
             "getTimeZoneTransition",
             "add",
             "subtract",
+            "until",
+            "since",
             "valueOf",
         ],
         Builtin::TemporalNow => &[

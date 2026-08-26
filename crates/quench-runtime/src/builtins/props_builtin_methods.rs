@@ -115,6 +115,8 @@ fn builtin_method3_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ObjectPrototype, "constructor") => Some(Object),
         (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
         (TemporalDurationPrototype, "toJSON") => Some(TemporalDurationToJSON),
+        (TemporalZonedDateTimePrototype, "until") => Some(TemporalZonedDateTimeUntil),
+        (TemporalZonedDateTimePrototype, "since") => Some(TemporalZonedDateTimeSince),
         (TemporalPlainDatePrototype, "toString") => Some(TemporalPlainDateToString),
         (TemporalPlainDatePrototype, "toJSON") => Some(TemporalPlainDateToJSON),
         (Symbol, "prototype") => Some(SymbolPrototype),
