@@ -80,12 +80,7 @@ fn map_argument_error(
             "Array.prototype.map called on null or undefined",
         )));
     }
-    if !arguments
-        .first()
-        .is_some_and(crate::conversion::is_callable)
-    {
-        return Some(Err(crate::vm::not_callable()));
-    }
+    let _ = arguments;
     None
 }
 
