@@ -276,8 +276,11 @@ const __quenchDnsValidateResultOrder = (order) => {
   return order;
 };
 class __quenchResolver {
+  constructor() {
+    this._handle = { getServers: () => [...__quenchDnsServers] };
+  }
   getServers() {
-    return [...__quenchDnsServers];
+    return this._handle.getServers() || [];
   }
   setServers(servers) {
     __quenchDnsServers = __quenchDnsValidateServers(servers);
@@ -454,6 +457,10 @@ const __quenchDns = {
     },
   },
 };
+Object.defineProperty(globalThis, "\0quench:dns_module", {
+  value: __quenchDns,
+  configurable: true,
+});
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");
   if (name === "dns" || name === "dns/promises") {

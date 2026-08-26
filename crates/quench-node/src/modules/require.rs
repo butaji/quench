@@ -383,7 +383,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "string_decoder" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::string_decoder::build(),
         )),
-        "dns" => Some(crate::modules::dns::build()),
+        "dns" | "node:dns" => {
+            let global = quench_runtime::vm::current_global_object();
+            let module = quench_runtime::execute::get_property(&global, "\0quench:dns_module");
+            (!matches!(module, Value::Undefined)).then_some(module)
+        }
         "net" => Some(crate::modules::net::build()),
         "tty" => Some(crate::modules::tty::build()),
         "fs" => Some(crate::modules::fs::build()),
