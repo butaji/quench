@@ -52,10 +52,10 @@ pub(crate) fn execute(
         | crate::ops::Builtin::TemporalPlainTimeNanosecondGetter => {
             Some(accessor(builtin, _receiver))
         }
-        crate::ops::Builtin::TemporalPlainTimeToString
-        | crate::ops::Builtin::TemporalPlainTimeToJSON => {
+        crate::ops::Builtin::TemporalPlainTimeToString => {
             Some(to_string(_receiver, arguments.first()))
         }
+        crate::ops::Builtin::TemporalPlainTimeToJSON => Some(to_string(_receiver, None)),
         crate::ops::Builtin::TemporalPlainTimeToLocaleString => {
             Some(to_string(_receiver, arguments.first()))
         }
