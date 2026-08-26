@@ -41,6 +41,9 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         }
         return from_property_bag(value, options);
     }
+    if value.is_some_and(crate::conversion::is_symbol) {
+        return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
+    }
     let text = match value {
         Some(Value::String(text)) => text.clone(),
         Some(Value::StringUnits(_)) => crate::conversion::to_string(value.unwrap())?,
