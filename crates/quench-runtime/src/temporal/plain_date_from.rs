@@ -98,14 +98,34 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
 }
 
 fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, VmError> {
-    let year = crate::execute::get_property_result(value, "year")?;
-    let month = crate::execute::get_property_result(value, "month")?;
-    let month_code = crate::execute::get_property_result(value, "monthCode")?;
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
     let day = crate::execute::get_property_result(value, "day")?;
+    let day = if matches!(day, Value::Undefined) {
+        day
+    } else {
+        Value::Number(crate::conversion::to_number(&day)?.trunc())
+    };
+    let month = crate::execute::get_property_result(value, "month")?;
+    let month = if matches!(month, Value::Undefined) {
+        month
+    } else {
+        Value::Number(crate::conversion::to_number(&month)?.trunc())
+    };
+    let month_code = crate::execute::get_property_result(value, "monthCode")?;
+    let month_code = if matches!(month_code, Value::Undefined) {
+        month_code
+    } else {
+        Value::String(crate::conversion::to_string(&month_code)?)
+    };
+    let year = crate::execute::get_property_result(value, "year")?;
+    let year = if matches!(year, Value::Undefined) {
+        year
+    } else {
+        Value::Number(crate::conversion::to_number(&year)?.trunc())
+    };
     if matches!(day, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing day"));
     }
-    let calendar = crate::execute::get_property_result(value, "calendar")?;
     let calendar = match calendar {
         Value::Undefined => calendar,
         Value::String(_) | Value::StringUnits(_) => {
@@ -121,7 +141,7 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     let month = if matches!(month, Value::Undefined) {
         month_from_code(month_code)?
     } else {
-        Value::Number(crate::conversion::to_number(&month)?.trunc())
+        month
     };
     let year_number = crate::conversion::to_number(&year)?.trunc();
     let year = Value::Number(year_number);

@@ -175,10 +175,10 @@ fn difference(
     options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
-    validate_date_options(options, true)?;
     let left = date_parts(receiver)?;
     let right_value = from(other, None)?;
     let right = date_parts(Some(&right_value))?;
+    let settings = difference_settings(options)?;
     let raw_days =
         (date_serial(right.0, right.1, right.2) - date_serial(left.0, left.1, left.2)) as f64;
     let signed_days = raw_days * direction;
@@ -187,8 +187,17 @@ fn difference(
     } else {
         signed_days.signum()
     };
-    let largest = largest_unit_option(options)?;
-    let (years, months, weeks, days) = match largest.as_str() {
+    let mut smallest = settings.smallest.clone();
+    if smallest == "auto" && (settings.increment != 1.0 || settings.mode != "trunc") {
+        smallest = "days".into();
+    }
+    let largest = settings.largest.clone();
+    let largest = if largest == "days" && smallest != "auto" {
+        smallest.clone()
+    } else {
+        largest
+    };
+    let (mut years, mut months, mut weeks, mut days) = match largest.as_str() {
         "years" => {
             let step = if raw_days < 0.0 { -1_i64 } else { 1 };
             let step_f = step as f64;
@@ -197,8 +206,10 @@ fn difference(
             let mut cursor = add_calendar_months(base, (years as i64) * 12 * step);
             let passed = if step < 0 {
                 date_serial(cursor.0, cursor.1, cursor.2) < date_serial(limit.0, limit.1, limit.2)
+                    || (cursor.0 == limit.0 && cursor.1 == limit.1 && cursor.2 < limit.2)
             } else {
                 date_serial(cursor.0, cursor.1, cursor.2) > date_serial(limit.0, limit.1, limit.2)
+                    || (cursor.0 == limit.0 && cursor.1 == limit.1 && cursor.2 > limit.2)
             };
             if passed {
                 years -= 1.0;
@@ -208,8 +219,10 @@ fn difference(
             cursor = add_calendar_months(base, (years as i64 * 12 + months as i64) * step);
             let passed = if step < 0 {
                 date_serial(cursor.0, cursor.1, cursor.2) < date_serial(limit.0, limit.1, limit.2)
+                    || (cursor.0 == limit.0 && cursor.1 == limit.1 && cursor.2 < limit.2)
             } else {
                 date_serial(cursor.0, cursor.1, cursor.2) > date_serial(limit.0, limit.1, limit.2)
+                    || (cursor.0 == limit.0 && cursor.1 == limit.1 && cursor.2 > limit.2)
             };
             if passed {
                 months -= 1.0;
@@ -245,6 +258,27 @@ fn difference(
         }
         _ => (0.0, 0.0, 0.0, signed_days),
     };
+    if smallest != "auto" {
+        let increment = settings.increment;
+        let mode = settings.mode.as_str();
+        let scalar = match smallest.as_str() {
+            "years" => years + months / 12.0 + days / 365.0,
+            "months" => months + days / 31.0,
+            "weeks" => weeks + days / 7.0,
+            _ => days,
+        };
+        let rounded = round_difference(scalar, increment, mode);
+        years = 0.0;
+        months = 0.0;
+        weeks = 0.0;
+        days = 0.0;
+        match smallest.as_str() {
+            "years" => years = rounded,
+            "months" => months = rounded,
+            "weeks" => weeks = rounded,
+            _ => days = rounded,
+        }
+    }
     crate::temporal::duration::construct(&[
         Value::Number(years),
         Value::Number(months),
@@ -269,6 +303,179 @@ fn largest_unit_option(options: Option<&Value>) -> Result<String, VmError> {
         _ => "days",
     }
     .into())
+}
+
+struct DifferenceSettings {
+    largest: String,
+    smallest: String,
+    increment: f64,
+    mode: String,
+}
+
+fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(DifferenceSettings {
+            largest: "days".into(),
+            smallest: "auto".into(),
+            increment: 1.0,
+            mode: "trunc".into(),
+        });
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let largest_value = crate::execute::get_property_result(options, "largestUnit")?;
+    let largest_text = if matches!(largest_value, Value::Undefined) {
+        "days".into()
+    } else {
+        option_string(&largest_value)?
+    };
+    let largest = match largest_text.as_str() {
+        "year" | "years" => "years",
+        "month" | "months" => "months",
+        "week" | "weeks" => "weeks",
+        "auto" | "day" | "days" => "days",
+        _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
+    };
+    let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
+    let increment = if matches!(increment_value, Value::Undefined) {
+        1.0
+    } else {
+        crate::conversion::to_number(&increment_value)?.trunc()
+    };
+    if !increment.is_finite() || !(1.0..=1_000_000_000.0).contains(&increment) {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    let mode_value = crate::execute::get_property_result(options, "roundingMode")?;
+    let mode = if matches!(mode_value, Value::Undefined) {
+        "trunc".into()
+    } else {
+        option_string(&mode_value)?
+    };
+    let smallest_value = crate::execute::get_property_result(options, "smallestUnit")?;
+    let smallest = if matches!(smallest_value, Value::Undefined) {
+        "auto".into()
+    } else {
+        match option_string(&smallest_value)?.as_str() {
+            "year" | "years" => "years",
+            "month" | "months" => "months",
+            "week" | "weeks" => "weeks",
+            "day" | "days" => "days",
+            _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
+        }
+        .into()
+    };
+    Ok(DifferenceSettings {
+        largest: largest.into(),
+        smallest,
+        increment,
+        mode,
+    })
+}
+
+fn smallest_unit_option(options: Option<&Value>) -> Result<String, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("auto".into());
+    };
+    let value = crate::execute::get_property_result(options, "smallestUnit")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("auto".into());
+    }
+    let value = option_string(&value)?;
+    Ok(match value.as_str() {
+        "year" | "years" => "years",
+        "month" | "months" => "months",
+        "week" | "weeks" => "weeks",
+        "day" | "days" => "days",
+        _ => "auto",
+    }
+    .into())
+}
+
+fn rounding_increment_option(options: Option<&Value>) -> Result<f64, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(1.0);
+    };
+    let value = crate::execute::get_property_result(options, "roundingIncrement")?;
+    if matches!(value, Value::Undefined) {
+        return Ok(1.0);
+    }
+    Ok(crate::conversion::to_number(&value)?.trunc().max(1.0))
+}
+
+fn rounding_mode_option(options: Option<&Value>) -> Result<String, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("trunc".into());
+    };
+    let value = crate::execute::get_property_result(options, "roundingMode")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("trunc".into());
+    }
+    option_string(&value)
+}
+
+fn has_rounding_option(options: Option<&Value>) -> Result<bool, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(false);
+    };
+    Ok(!matches!(
+        crate::execute::get_property_result(options, "roundingIncrement")?,
+        Value::Undefined
+    ) || !matches!(
+        crate::execute::get_property_result(options, "roundingMode")?,
+        Value::Undefined
+    ))
+}
+
+fn round_difference(value: f64, increment: f64, mode: &str) -> f64 {
+    let scaled = value / increment;
+    let rounded = match mode {
+        "ceil" => scaled.ceil(),
+        "floor" => scaled.floor(),
+        "expand" => {
+            if scaled.is_sign_negative() {
+                scaled.floor()
+            } else {
+                scaled.ceil()
+            }
+        }
+        "halfExpand" => {
+            if scaled.is_sign_negative() {
+                (scaled - 0.5).ceil()
+            } else {
+                (scaled + 0.5).floor()
+            }
+        }
+        "halfCeil" => (scaled + 0.5).floor(),
+        "halfFloor" => (scaled - 0.5).ceil(),
+        "halfEven" => {
+            let floor = scaled.floor();
+            let fraction = scaled - floor;
+            if (fraction - 0.5).abs() < f64::EPSILON {
+                if (floor as i64) % 2 == 0 {
+                    floor
+                } else {
+                    floor + 1.0
+                }
+            } else if fraction < 0.5 {
+                floor
+            } else {
+                floor + 1.0
+            }
+        }
+        "halfTrunc" => {
+            let trunc = scaled.trunc();
+            if (scaled.abs() - trunc.abs()) > 0.5 {
+                trunc + scaled.signum()
+            } else {
+                trunc
+            }
+        }
+        _ => scaled.trunc(),
+    };
+    rounded * increment
 }
 
 fn add_calendar_months(date: (f64, f64, f64), months: i64) -> (f64, f64, f64) {
@@ -982,7 +1189,8 @@ fn validate_date_options(options: Option<&Value>, difference: bool) -> Result<()
     let increment = crate::execute::get_property_result(options, "roundingIncrement")?;
     if !matches!(increment, Value::Undefined) {
         let increment = crate::conversion::to_number(&increment)?;
-        if !increment.is_finite() || increment < 1.0 {
+        if !increment.is_finite() || increment.trunc() < 1.0 || increment.trunc() > 1_000_000_000.0
+        {
             return Err(crate::value::error::throw_range_error(
                 "Invalid roundingIncrement",
             ));
