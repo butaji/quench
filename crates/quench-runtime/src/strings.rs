@@ -517,6 +517,8 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "localeCompare" => Some(crate::ops::Builtin::StringLocaleCompare),
         "match" => Some(crate::ops::Builtin::StringMatch),
         "matchAll" => Some(crate::ops::Builtin::StringMatchAll),
+        "toLocaleLowerCase" => Some(crate::ops::Builtin::StringToLocaleLowerCase),
+        "toLocaleUpperCase" => Some(crate::ops::Builtin::StringToLocaleUpperCase),
         _ => None,
     }
 }
