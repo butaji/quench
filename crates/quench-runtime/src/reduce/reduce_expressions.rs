@@ -510,6 +510,13 @@ fn reduce_in(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let dst = take_register(next_register);
+    if let Expression::PrivateInExpression(private_in) = &binary.left {
+        let PrivateInExpression { left, right, .. } = private_in.as_ref();
+        let name = facts.private_name(left.span)?;
+        let object = reduce_expression(right, ops, facts, next_register, locals)?;
+        ops.push(Op::HasPrivate { dst, object, name });
+        return Some(dst);
+    }
     if let Expression::PrivateFieldExpression(member) = &binary.left {
         let name = facts.private_name(member.field.span)?;
         let object = reduce_expression(&member.object, ops, facts, next_register, locals)?;
