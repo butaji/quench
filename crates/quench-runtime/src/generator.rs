@@ -268,6 +268,7 @@ pub(crate) fn async_dispose(receiver: Option<&Value>) -> Result<Value, VmError> 
         )],
     )
 }
+#[derive(Clone)]
 pub(crate) enum Resume {
     Next(Value),
     Return(Value),
@@ -281,7 +282,13 @@ pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value,
         ));
     }
     *generator.running.borrow_mut() = true;
-    let result = resume_inner(generator, resume);
+    let realm = crate::construct::function_realm_id(&generator.function);
+    let result = if realm != crate::vm::current_context_or_default().realm() {
+        crate::vm::with_realm(realm, || resume_inner(generator, resume.clone()))
+            .unwrap_or_else(|| resume_inner(generator, resume))
+    } else {
+        resume_inner(generator, resume)
+    };
     *generator.running.borrow_mut() = false;
     result
 }
