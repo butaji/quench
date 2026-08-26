@@ -157,6 +157,11 @@ fn std_stream(is_error: bool) -> Value {
 }
 
 fn method_props() -> Vec<(&'static str, Value)> {
+    let hrtime = quench_runtime::execute::set_property(
+        crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
+        "bigint",
+        crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME_BIGINT),
+    );
     vec![
         (
             "cwd",
@@ -176,7 +181,7 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ),
         (
             "hrtime",
-            crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
+            hrtime,
         ),
         (
             "umask",
@@ -288,6 +293,28 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
 }
 
 pub fn hrtime(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(value) = args.first() {
+        let Value::Array(array) = value else {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("name".into(), Value::String("TypeError".into())),
+                ("message".into(), Value::String(format!(
+                    "The \"time\" argument must be an instance of Array.{}",
+                    crate::modules::util::invalid_arg_received(value)
+                ))),
+            ])));
+        };
+        if array.len() != 2 {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                ("name".into(), Value::String("RangeError".into())),
+                ("message".into(), Value::String(format!(
+                    "The value of \"time\" is out of range. It must be 2. Received {}",
+                    array.len()
+                ))),
+            ])));
+        }
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
