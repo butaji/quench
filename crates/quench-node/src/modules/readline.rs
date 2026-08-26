@@ -82,9 +82,24 @@ fn input_lines(input: &Value) -> Result<Vec<String>, VmError> {
 }
 
 pub fn build() -> Value {
-    crate::host::namespace_object(vec![(
-        "createInterface",
-        crate::host::capability(crate::registry::SPEC_READLINE),
-    )])
+    let interface = quench_runtime::host_api::bound_builtin(
+        quench_runtime::ops::Builtin::Object,
+        Value::Undefined,
+    );
+    let prototype = quench_runtime::host_api::object(vec![]);
+    let question = quench_runtime::host_api::bound_builtin(
+        quench_runtime::ops::Builtin::Object,
+        Value::Undefined,
+    );
+    let question = execute::set_property(question, "name", Value::String("question".into()));
+    let prototype = execute::set_property(prototype, "question", question);
+    let interface = execute::set_property(interface, "prototype", prototype);
+    crate::host::namespace_object(vec![
+        (
+            "createInterface",
+            crate::host::capability(crate::registry::SPEC_READLINE),
+        ),
+        ("Interface", interface),
+    ])
     .unwrap_or_else(|_| Value::Undefined)
 }

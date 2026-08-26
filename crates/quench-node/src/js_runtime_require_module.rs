@@ -8,6 +8,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = require_common_module(name) {
         return Ok(value);
     }
+    if name == "readline" || name == "node:readline" {
+        return Ok(crate::modules::readline::build());
+    }
     if name == "internal/fs/utils" {
         return Ok(quench_runtime::host_api::object(vec![
             (
