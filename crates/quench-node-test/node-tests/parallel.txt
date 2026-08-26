@@ -223,6 +223,9 @@ test-child-process-exec-kill-throws.js
 test-child-process-exec-any-shells-windows.js
 test-process-constants-noatime.js
 test-process-default.js
+test-process-release.js
+test-process-uptime.js
+test-process-versions.js
 test-os-eol.js
 test-os-checked-function.js
 test-os-homedir-no-envvar.js
