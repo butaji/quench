@@ -14,13 +14,17 @@ fn then_species_constructor(promise: &Value) -> Result<Value, VmError> {
     } else { species })
 }
 
-fn construct_then_result(constructor: &Value) -> Result<Value, VmError> {
+fn construct_then_result(constructor: &Value) -> Result<(Value, Value, Value), VmError> {
     if matches!(constructor, Value::Builtin(Builtin::Promise)) {
-        return Ok(new_promise());
+        let target = new_promise();
+        let Value::Promise(promise) = &target else {
+            return Err(crate::vm::not_callable());
+        };
+        let resolve = bound_settler(Builtin::PromiseResolve, promise, 1.0);
+        let reject = bound_settler(Builtin::PromiseReject, promise, 1.0);
+        return Ok((target, resolve, reject));
     }
-    let target = PromiseData::allocate(PromiseState::Pending);
-    let executor = bound_settler(Builtin::PromiseResolve, &target, 2.0);
-    crate::construct::construct_value(constructor, &[executor])
+    crate::promise::new_promise_capability(constructor)
 }
 
 pub fn promise_catch(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
