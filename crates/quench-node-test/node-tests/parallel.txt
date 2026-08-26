@@ -184,6 +184,7 @@ test-process-constants-noatime.js
 test-process-default.js
 test-os-eol.js
 test-os-checked-function.js
+test-os-homedir-no-envvar.js
 test-assert-deep.js
 test-assert-checktag.js
 test-assert-class-destructuring.js
