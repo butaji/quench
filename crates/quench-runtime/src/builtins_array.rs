@@ -426,6 +426,12 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         return Value::Array(values);
     };
     let index = index as usize;
+    // An arguments object's `length` is an ordinary data property. Writing a
+    // new numeric property must not grow it (unlike an actual Array index).
+    if values.is_arguments() && index >= values.logical_len() {
+        Rc::make_mut(&mut values).set_property(key, value);
+        return Value::Array(values);
+    }
     let existing_number = values.set_existing_number(index, &value);
     let appended_number = !existing_number && values.append_preallocated_number(index, &value);
     if existing_number || appended_number {
