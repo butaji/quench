@@ -29,6 +29,7 @@ pub(crate) mod value {
             Some(Value::Number(value)) => crate::conversion::number_to_string(*value),
             Some(Value::String(value)) => symbol_string(value),
             Some(Value::StringUnits(value)) => String::from_utf16_lossy(value),
+            Some(Value::Builtin(crate::ops::Builtin::Temporal)) => "[object Temporal]".to_string(),
             Some(Value::Array(values)) => array_to_string(&values.snapshot()),
             Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(), Some(Value::DataView(_)) => "[object DataView]".to_string(),
             Some(Value::Float32Array(_)) => "[object Float32Array]".to_string(),
