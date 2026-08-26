@@ -598,7 +598,7 @@ pub fn util_promisified_call(
                     "DeprecationWarning",
                     "Calling promisify on a function that returns a Promise is likely a mistake.",
                     Some("DEP0174"),
-                    true,
+                    false,
                 );
             }
         }
