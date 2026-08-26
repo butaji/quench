@@ -373,29 +373,73 @@ fn sort(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Ok(Value::Undefined);
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.sort called on null or undefined",
+        ));
     };
-    let mut sorted = values.to_vec();
-    if let Some(compare) = arguments.first().filter(|value| !matches!(value, Value::Undefined)) {
+    let mut target = crate::construct::to_object(receiver)?;
+    let length = array_like_length(&target)?;
+    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    if let Some(compare) = compare {
         if !crate::conversion::is_callable(compare) {
             return Err(crate::value::error::throw_type_error(
                 "The comparison function must be either a function or undefined",
             ));
         }
-        sorted.sort_by(|left, right| {
-            let result = crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])
-                .ok()
-                .and_then(|value| crate::conversion::to_number(&value).ok())
-                .unwrap_or(0.0);
-            result.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal)
-        });
-    } else {
-        sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
     }
-    let result = Value::array(sorted);
-    crate::locals::replace_value(receiver, &result);
-    Ok(result)
+    let mut elements = Vec::new();
+    for index in 0..length {
+        if let Some(value) = crate::builtins::map_value(&target, index)? {
+            elements.push(value);
+        }
+    }
+    insertion_sort(&mut elements, compare)?;
+    for index in 0..length {
+        let key = index.to_string();
+        if let Some(value) = elements.get(index).cloned() {
+            target = crate::properties::assign_set_property(&target, &key, value)?;
+        } else {
+            let (updated, _) = crate::builtins::delete_property(target, key);
+            target = updated;
+        }
+    }
+    Ok(target)
+}
+
+fn insertion_sort(
+    elements: &mut [Value],
+    compare: Option<&Value>,
+) -> Result<(), crate::execute::VmError> {
+    for index in 1..elements.len() {
+        let value = elements[index].clone();
+        let mut position = index;
+        while position > 0 {
+            let ordering = compare_values(&elements[position - 1], &value, compare)?;
+            if ordering != std::cmp::Ordering::Greater { break; }
+            elements[position] = elements[position - 1].clone();
+            position -= 1;
+        }
+        elements[position] = value;
+    }
+    Ok(())
+}
+
+fn compare_values(
+    left: &Value,
+    right: &Value,
+    compare: Option<&Value>,
+) -> Result<std::cmp::Ordering, crate::execute::VmError> {
+    let number = if let Some(compare) = compare {
+        let value = crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
+        crate::conversion::to_number(&value)?
+    } else {
+        let left = crate::conversion::to_string(left)?;
+        let right = crate::conversion::to_string(right)?;
+        return Ok(left.cmp(&right));
+    };
+    Ok(number.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal))
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {
