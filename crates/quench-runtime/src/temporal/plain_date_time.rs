@@ -1272,7 +1272,7 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
                 return Err(crate::value::error::throw_type_error("Invalid calendarName"));
             }
             let calendar_name_text = crate::conversion::to_string(&calendar_name_value)?;
-            if !matches!(calendar_name_text.as_str(), "auto" | "always" | "never") {
+            if !matches!(calendar_name_text.as_str(), "auto" | "always" | "never" | "critical") {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid calendarName",
                 ));
@@ -1281,7 +1281,13 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         };
         let fractional = crate::execute::get_property_result(options, "fractionalSecondDigits")?;
         digits = match fractional {
-            Value::Number(value) if (0.0..=9.0).contains(&value) && value.fract() == 0.0 => {
+            Value::Number(value) => {
+                let value = value.floor();
+                if !(0.0..=9.0).contains(&value) {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid fractionalSecondDigits",
+                    ));
+                }
                 value as usize
             }
             Value::String(value) if value == "auto" => usize::MAX,
@@ -1388,6 +1394,8 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     };
     let calendar_suffix = if calendar_name == "always" {
         "[u-ca=iso8601]".into()
+    } else if calendar_name == "critical" {
+        "[!u-ca=iso8601]".into()
     } else {
         String::new()
     };
