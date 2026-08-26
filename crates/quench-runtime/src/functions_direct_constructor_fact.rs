@@ -150,6 +150,7 @@ fn direct_constructor_source(
         Expression::BooleanLiteral(value) => {
             Some(crate::facts::DirectConstructorSource::Boolean(value.value))
         }
+        Expression::NullLiteral(_) => Some(crate::facts::DirectConstructorSource::Null),
         Expression::NumericLiteral(value)
             if value.value.fract() == 0.0
                 && value.value >= i32::MIN as f64
@@ -206,6 +207,18 @@ mod direct_constructor_tests {
                 ("x".into(), DirectConstructorSource::Argument(0)),
                 ("y".into(), DirectConstructorSource::Argument(1)),
                 ("ok".into(), DirectConstructorSource::Boolean(false))
+            ]
+        );
+    }
+
+    #[test]
+    fn records_null_slot_fact() {
+        assert_eq!(
+            fields("function C(x,y){this.x=x;this.y=y;this.next=null;}"),
+            vec![
+                ("x".into(), DirectConstructorSource::Argument(0)),
+                ("y".into(), DirectConstructorSource::Argument(1)),
+                ("next".into(), DirectConstructorSource::Null),
             ]
         );
     }
