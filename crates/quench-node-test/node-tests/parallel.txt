@@ -378,3 +378,5 @@ test-dgram-udp6-send-default-host.js
 test-dgram-unref-in-cluster.js
 test-dgram-unref.js
 test-events-add-abort-listener.mjs
+test-util-promisify-custom-names.mjs
+test-util-internal.js
