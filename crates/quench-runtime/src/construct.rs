@@ -114,9 +114,7 @@ fn construct_with_new_target(
             with_new_target_prototype(value, &target, &new_target)
         }
         Value::Builtin(builtin) => {
-            if *builtin == crate::ops::Builtin::Uint16Array
-                && is_float16_new_target(&new_target)
-            {
+            if *builtin == crate::ops::Builtin::Uint16Array && is_float16_new_target(&new_target) {
                 return construct_float16_array(arguments);
             }
             construct_builtin_target(*builtin, &target, &new_target, arguments)
@@ -148,6 +146,11 @@ fn construct_builtin_target(
         return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
     }
     let needs_new_target = !crate::builtins::same_value(Some(target), Some(new_target));
+    if builtin == crate::ops::Builtin::Iterator && !needs_new_target {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator is not constructable",
+        ));
+    }
     // Promise checks that its executor is callable before GetPrototypeFromConstructor.
     // Fetching the prototype first would incorrectly expose a prototype getter error
     // when the executor is not callable.
