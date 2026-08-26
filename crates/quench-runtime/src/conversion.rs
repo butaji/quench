@@ -208,10 +208,7 @@ pub(crate) fn is_nullish(value: &Value) -> bool {
 pub(crate) fn is_symbol(value: &Value) -> bool {
     match value {
         Value::String(value) => is_symbol_string(value),
-        Value::Builtin(builtin) => {
-            crate::builtin_meta::constructor_name(*builtin) == Some("Symbol")
-                || crate::intl::tolocale::symbol::name(*builtin).is_some()
-        }
+        Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin).is_some(),
         _ => false,
     }
 }
@@ -241,7 +238,7 @@ mod inline_primitive_tests {
 
     #[test]
     fn symbol_builtin_metadata_is_the_authority() {
-        assert!(is_symbol(&Value::Builtin(Builtin::Symbol)));
+        assert!(!is_symbol(&Value::Builtin(Builtin::Symbol)));
         assert!(!is_symbol(&Value::Builtin(Builtin::Object)));
         assert!(!is_symbol(&Value::Undefined));
     }
@@ -362,6 +359,14 @@ pub fn is_callable(value: &Value) -> bool {
             false
         }
         Value::Builtin(_) | Value::Function(_) | Value::HostCapability(_) => true,
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(target) if crate::builtins::object::is_intrinsic_prototype(target)
+            ) =>
+        {
+            false
+        }
         Value::BoundFunction(bound)
             if crate::vm::is_intrinsic_bound(&bound)
                 && matches!(

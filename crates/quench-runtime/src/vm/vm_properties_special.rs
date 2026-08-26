@@ -24,6 +24,12 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
+    if key == "toString" && callable_builtin_value(value) {
+        return Value::Builtin(Builtin::FunctionPrototypeToString);
+    }
+    if key == "valueOf" && callable_builtin_value(value) {
+        return Value::Builtin(Builtin::FunctionPrototypeValueOf);
+    }
     if callable_builtin_value(value) && key != "prototype" {
         if let Some(override_value) =
             crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
@@ -179,6 +185,9 @@ fn bound_function_property(
     }
     if key == "toString" && crate::conversion::is_callable(&bound.target) {
         return Value::Builtin(Builtin::FunctionPrototypeToString);
+    }
+    if key == "valueOf" && crate::conversion::is_callable(&bound.target) {
+        return Value::Builtin(Builtin::FunctionPrototypeValueOf);
     }
     if key == "prototype" {
         bound_constructor_prototype(bound)
