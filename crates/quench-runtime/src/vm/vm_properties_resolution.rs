@@ -719,6 +719,13 @@ fn descriptor_property_result(
         if has_own {
             return Some(Ok(crate::vm::get_property(value, key)));
         }
+        if key == "prototype" {
+            if let Value::Builtin(builtin) = bound.target {
+                if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
+                    return Some(Ok(crate::vm::realm_intrinsic_for(bound.realm, prototype)));
+                }
+            }
+        }
         let prototype = Value::Builtin(Builtin::FunctionPrototype);
         if let Ok(property) = get_property_result(&prototype, key) {
             return Some(Ok(property));
