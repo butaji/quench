@@ -27,9 +27,19 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let properties = NAMES
         .into_iter()
         .zip(fields)
-        .map(|(name, value)| (name.into(), Value::Number(value)))
+        .flat_map(|(name, value)| {
+            let number = Value::Number(value);
+            [
+                (name.into(), number.clone()),
+                (format!("\0temporal-slot:\0{name}"), number),
+            ]
+        })
         .chain([
-            ("monthCode".into(), Value::String(month_code)),
+            ("monthCode".into(), Value::String(month_code.clone())),
+            (
+                "\0temporal-slot:\0monthCode".into(),
+                Value::String(month_code),
+            ),
             ("calendarId".into(), Value::String("iso8601".into())),
             (
                 "\0prototype".into(),
@@ -442,6 +452,14 @@ fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Valu
         crate::ops::Builtin::TemporalPlainDateTimeMicrosecondGetter => "microsecond",
         _ => "nanosecond",
     };
+    if let Value::Object(object) = receiver {
+        if let Some((_, value)) = object
+            .iter()
+            .find(|(key, _)| key == &format!("\0temporal-slot:\0{name}"))
+        {
+            return Ok(value.clone());
+        }
+    }
     crate::execute::get_property_result(receiver, name)
 }
 
