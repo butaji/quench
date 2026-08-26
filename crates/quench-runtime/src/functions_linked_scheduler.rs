@@ -508,8 +508,8 @@ fn linked_priority_transition(
     runnable: i32,
 ) -> Option<CheckPriorityTransition<usize>> {
     let queue = target.word(target.queue);
-    let head = queue.load();
-    if head.is_nullish() {
+    let head = queue.object_or_null_ptr()?;
+    let Some(head) = head else {
         let state = target.word(target.state);
         let next_state = exact_i32(state.number()?)? | runnable;
         let result = linked_priority_result(current, target)?;
@@ -519,15 +519,10 @@ fn linked_priority_transition(
             next_state: f64::from(next_state),
             result,
         });
-    }
-    let crate::value::Value::Object(head_object) = &head else {
-        return None;
     };
-    let tail_link = table.packet_tail_link(std::rc::Rc::as_ptr(head_object), packet as *const _)?;
+    let tail_link = table.packet_tail_link(head, packet as *const _)?;
     Some(CheckPriorityTransition::Append {
-        queue: target.queue,
         tail_link,
-        head,
         result: current.index,
     })
 }
