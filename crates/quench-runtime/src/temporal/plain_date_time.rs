@@ -306,15 +306,13 @@ fn difference(
         "day".into()
     };
     let increment_max = match smallest_unit.as_str() {
-        "day" => 1_u64,
+        "day" => 0,
         "hour" => 24,
         "minute" | "second" => 60,
         "millisecond" | "microsecond" | "nanosecond" => 1_000,
         _ => 0,
     };
-    if increment_max > 0
-        && (rounding_increment as u64) > increment_max
-        || increment_max > 1
+    if increment_max > 1
             && (rounding_increment as u64) >= increment_max
         || increment_max > 1
             && increment_max % (rounding_increment as u64) != 0
