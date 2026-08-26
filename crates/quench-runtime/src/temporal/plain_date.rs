@@ -170,7 +170,15 @@ fn add(
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
     let day = original_day.min(max_day);
-    let days = (number_property(&duration, "weeks") * 7.0 + number_property(&duration, "days"))
+    let time_nanos = number_property(&duration, "hours") * 3_600_000_000_000.0
+        + number_property(&duration, "minutes") * 60_000_000_000.0
+        + number_property(&duration, "seconds") * 1_000_000_000.0
+        + number_property(&duration, "milliseconds") * 1_000_000.0
+        + number_property(&duration, "microseconds") * 1_000.0
+        + number_property(&duration, "nanoseconds");
+    let days = (number_property(&duration, "weeks") * 7.0
+        + number_property(&duration, "days")
+        + (time_nanos / 86_400_000_000_000.0).trunc())
         * direction;
     shift_date(year, month, day, days)
 }
