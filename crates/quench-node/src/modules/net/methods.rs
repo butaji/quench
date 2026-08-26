@@ -121,6 +121,37 @@ fn connect_with_receiver(
         }
     }
     let (port, host) = connect_target(state, args)?;
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_)))
+    {
+        let block_list = execute::get_property(options, "blockList");
+        let address = host.as_deref().unwrap_or(LOCAL_HOST);
+        if quench_runtime::is_callable(&execute::get_property(&block_list, "check")) {
+            let checked = execute::call(
+                &execute::get_property(&block_list, "check"),
+                &block_list,
+                &[Value::String(if address == "localhost" {
+                    LOCAL_HOST.into()
+                } else {
+                    address.into()
+                })],
+            )?;
+            if execute::is_truthy(&checked) {
+                let (object, _) = new_net_object(state, socket_props())?;
+                let error = host_api::object(vec![
+                    ("name".into(), Value::String("Error".into())),
+                    ("code".into(), Value::String("ERR_IP_BLOCKED".into())),
+                ]);
+                state
+                    .borrow_mut()
+                    .net
+                    .pending_errors
+                    .push((object.clone(), error));
+                return Ok(object);
+            }
+        }
+    }
     let addr = resolve(host.as_deref().unwrap_or(LOCAL_HOST), port);
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
         Ok(stream) => stream,
