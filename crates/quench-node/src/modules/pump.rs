@@ -16,6 +16,23 @@ fn call_callback(cb: &Value, receiver: &Value, args: &[Value]) -> Result<(), VmE
     Ok(())
 }
 
+fn call_timer(
+    state: &Rc<RefCell<HostState>>,
+    domain: Option<&Value>,
+    callback: &Value,
+    receiver: &Value,
+    args: &[Value],
+) -> Result<(), VmError> {
+    if let Some(domain) = domain {
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        call_args.push(callback.clone());
+        call_args.extend(args.iter().cloned());
+        crate::modules::domain::run(state, Some(domain), &call_args).map(|_| ())
+    } else {
+        call_guarded(state, callback, receiver, args)
+    }
+}
+
 /// Call a timer/immediate callback. A thrown value dispatches to
 /// `process.on('uncaughtException')` handlers when registered,
 /// mirroring Node; without handlers it unwinds the run.
@@ -316,7 +333,7 @@ fn fire_due_timers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 }
 
 fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(), VmError> {
-    let (cb, receiver, args, resource, destroy) = {
+    let (cb, receiver, args, resource, destroy, domain) = {
         let mut guard = state.borrow_mut();
         let registry = &mut guard.timers;
         let Some(timer) = registry.timers.get_mut(&id) else {
@@ -332,6 +349,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                     timer.args.clone(),
                     timer.async_resource.clone(),
                     true,
+                    timer.domain.clone(),
                 )
             }
             _ => {
@@ -342,11 +360,12 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
                     timer.args.clone(),
                     timer.async_resource.clone(),
                     false,
+                    timer.domain.clone(),
                 )
             }
         }
     };
-    let result = call_guarded(state, &cb, &receiver, &args);
+    let result = call_timer(state, domain.as_ref(), &cb, &receiver, &args);
     if destroy {
         super::timers::async_destroy(&resource);
     }

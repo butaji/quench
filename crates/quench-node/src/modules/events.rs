@@ -100,6 +100,7 @@ fn ensure_emitter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> O
     let mut updated = execute::set_property(receiver.clone(), "_events", events);
     updated = execute::set_property(updated, EMITTER_ID_PROP, Value::Number(id.0 as f64));
     updated = execute::set_property(updated, "_eventsCount", Value::Number(0.0));
+    updated = execute::set_property(updated, "domain", Value::Undefined);
     execute::replace_value(receiver, &updated);
     state.borrow_mut().emitters.bind_identity(&updated, id);
     Some(id)
@@ -307,7 +308,7 @@ pub fn method_emit(
     let snapshot: Vec<Listener> = emitter.borrow().listeners_of(&event).to_vec();
     if snapshot.is_empty() {
         if event == "error" {
-            if let Some(result) = route_domain_error(receiver, args.get(1))? {
+            if let Some(result) = route_domain_error(state, receiver, args.get(1))? {
                 return Ok(result);
             }
             return Err(unhandled_error(args.get(1)));
@@ -437,6 +438,7 @@ fn attach_unhandled_rejection(promise: &Value) -> Result<(), VmError> {
 /// Domain membership is an edge concern: EventEmitter owns the emission, and
 /// the attached domain owns unhandled-error policy.
 fn route_domain_error(
+    state: &Rc<RefCell<HostState>>,
     receiver: &Value,
     argument: Option<&Value>,
 ) -> Result<Option<Value>, VmError> {
@@ -444,8 +446,9 @@ fn route_domain_error(
     if matches!(domain, Value::Undefined | Value::Null) {
         return Ok(None);
     }
-    let handler = execute::get_property_result(&domain, "_handler")?;
-    if matches!(handler, Value::Undefined | Value::Null) {
+    let handler = crate::modules::domain::error_handler(state, &domain)
+        .or_else(|| execute::get_property_result(&domain, "_handler").ok());
+    if handler.is_none() || matches!(handler, Some(Value::Undefined | Value::Null)) {
         return Ok(None);
     }
     let original = argument.cloned();
@@ -461,7 +464,7 @@ fn route_domain_error(
     if let Some(original) = original {
         execute::replace_value(&original, &error);
     }
-    execute::call(&handler, &domain, &[error]).map(Some)
+        execute::call(handler.as_ref().expect("checked handler"), &domain, &[error]).map(Some)
 }
 
 /// `emit('error')` with no listeners throws the error argument.
@@ -775,6 +778,7 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
     let events = execute::set_property(host_api::object(Vec::new()), "\0prototype", Value::Null);
     object = execute::set_property(object, "_events", events);
     object = execute::set_property(object, "_eventsCount", Value::Number(0.0));
+    object = execute::set_property(object, "domain", Value::Undefined);
     let capture = args
         .first()
         .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))

@@ -255,6 +255,7 @@ fn sync_props_more() -> Vec<(&'static str, Value)> {
             crate::host::capability(SPEC_FS_READLINKSYNC),
         ),
         ("chmodSync", crate::host::capability(SPEC_FS_CHMODSYNC)),
+        ("symlinkSync", crate::host::capability(SPEC_FS_SYMLINKSYNC)),
         (
             "truncateSync",
             crate::host::capability(SPEC_FS_TRUNCATESYNC),

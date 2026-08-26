@@ -249,7 +249,16 @@ fn legacy_object(entries: Vec<(String, Value)>) -> Value {
         ("enumerable".into(), Value::Boolean(false)),
         ("configurable".into(), Value::Boolean(true)),
     ]);
-    execute::define_property(object, "resolveObject", descriptor).unwrap_or(Value::Undefined)
+    let object = execute::define_property(object, "resolveObject", descriptor)
+        .unwrap_or(Value::Undefined);
+    let method = crate::host::capability(crate::registry::SPEC_URL_RESOLVE);
+    let descriptor = host_api::object(vec![
+        ("value".into(), method),
+        ("writable".into(), Value::Boolean(true)),
+        ("enumerable".into(), Value::Boolean(false)),
+        ("configurable".into(), Value::Boolean(true)),
+    ]);
+    execute::define_property(object, "resolve", descriptor).unwrap_or(Value::Undefined)
 }
 
 pub fn resolve_object(

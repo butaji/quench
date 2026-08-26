@@ -40,6 +40,7 @@ const CAP_FS_CHMODSYNC: u16 = 0x1121;
 const CAP_FS_TRUNCATESYNC: u16 = 0x1122;
 const CAP_FS_MKDIRSYNC: u16 = 0x1123;
 const CAP_FS_UNLINKSYNC: u16 = 0x1124;
+const CAP_FS_SYMLINKSYNC: u16 = 0x1125;
 const CAP_FS_STAT_ISFILE: u16 = 0x1130;
 const CAP_FS_STAT_ISDIR: u16 = 0x1131;
 const CAP_FS_STAT_ISSYMLINK: u16 = 0x1132;
@@ -123,6 +124,7 @@ fn fs_dispatch_more(cap: u16) -> Option<CallHandler> {
         CAP_FS_TRUNCATESYNC => fs_sync::truncate_sync,
         CAP_FS_MKDIRSYNC => fs_sync::mkdir_sync,
         CAP_FS_UNLINKSYNC => fs_sync::unlink_sync,
+        CAP_FS_SYMLINKSYNC => fs_sync::symlink_sync,
         CAP_FS_STAT_ISFILE => fs_stats::is_file,
         CAP_FS_STAT_ISDIR => fs_stats::is_dir,
         CAP_FS_STAT_ISSYMLINK => fs_stats::is_symlink,
