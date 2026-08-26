@@ -108,7 +108,14 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
         };
         return Ok(make_protocol_with_next(value, next));
     }
-    open(value)
+    let iterator = crate::functions::execute_target(&method, &value, &[])?;
+    if !crate::value::is_object(&iterator) {
+        return Err(not_iterable());
+    }
+    if matches!(iterator, Value::Iterator(_)) {
+        return Ok(iterator);
+    }
+    Ok(make_protocol(iterator))
 }
 
 fn receiver_iterator(receiver: &Value) -> Result<Value, crate::execute::VmError> {
