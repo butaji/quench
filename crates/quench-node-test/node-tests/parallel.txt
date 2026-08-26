@@ -435,3 +435,9 @@ test-webcrypto-util.js
 test-webcrypto-getRandomValues.js
 test-webcrypto-encrypt-decrypt.js
 test-webcrypto-keygen.js
+test-webcrypto-derivekey.js
+test-webcrypto-derivebits-ecdh.js
+test-webcrypto-sign-verify-rsa.js
+test-webcrypto-export-import-rsa.js
+test-webcrypto-digest.js
+test-webcrypto-encrypt-decrypt-chacha20-poly1305.js
