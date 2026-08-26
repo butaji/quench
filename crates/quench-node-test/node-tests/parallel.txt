@@ -188,6 +188,8 @@ test-os-checked-function.js
 test-os-homedir-no-envvar.js
 test-os-process-priority.js
 test-os-fast.js
+test-path-posix-relative-on-windows.js
+test-path-win32-normalize-device-names.js
 test-assert-deep.js
 test-assert-checktag.js
 test-assert-class-destructuring.js
