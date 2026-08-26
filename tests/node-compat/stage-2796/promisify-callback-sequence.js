@@ -13,3 +13,9 @@ function args(err, value, callback) { callback(err, value); }
 promisify(args)(null, 42).then(common.mustCall((value) => assert.strictEqual(value, 42)));
 const never = promisify(async () => {});
 never();
+(async () => {
+  const value = await promisify(args)(null, 42);
+  assert.strictEqual(value, 42);
+})().then(common.mustCall());
+const thrown = promisify(() => { throw new Error('boom'); });
+thrown().then(assert.fail, () => {}).then(common.mustCall());
