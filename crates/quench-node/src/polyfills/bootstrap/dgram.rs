@@ -1,6 +1,11 @@
 //! Polyfill: `dgram`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDgramBind = (socket, type, port, address, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"var __quenchDgramStateSymbol = globalThis.__quenchDgramStateSymbol;
+var __quenchDgramBoundPorts = globalThis.__quenchDgramBoundPorts || new Set();
+var __quenchDgramClosedPorts = globalThis.__quenchDgramClosedPorts || new Set();
+var __quenchDgramSockets = globalThis.__quenchDgramSockets || new Set();
+var __quenchDgramNextPort = globalThis.__quenchDgramNextPort || 40000;
+const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound) {
     throw Object.assign(new Error("Socket is already bound"), {
       code: "ERR_SOCKET_ALREADY_BOUND",
@@ -452,21 +457,26 @@ const __quenchDgramClose = (socket, callback) => {
   if (socket._closed) return socket;
   socket._closed = true;
   socket._bound = false;
-  __quenchDgramSockets.delete(socket);
+  globalThis.__quenchDgramSockets?.delete(socket);
   if (socket[__quenchDgramStateSymbol]?.handle?.fd !== undefined) {
     globalThis.__quenchDgramActiveFds.delete(
       socket[__quenchDgramStateSymbol].handle.fd,
     );
   }
   if (socket._address) {
-    __quenchDgramBoundPorts.delete(socket._address.port);
-    __quenchDgramClosedPorts.add(socket._address.port);
+    globalThis.__quenchDgramBoundPorts?.delete(socket._address.port);
+    globalThis.__quenchDgramClosedPorts?.add(socket._address.port);
   }
   if (typeof callback === "function") callback();
   queueMicrotask(() => socket.emit("close"));
   return socket;
 };
 const __quenchDgramAddress = (socket, type) => {
+  if (socket._closed) {
+    throw Object.assign(new Error("Socket is closed"), {
+      code: "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    });
+  }
   if (!socket._bound) {
     throw Object.assign(new Error("getsockname EBADF"), {
       code: "EBADF",

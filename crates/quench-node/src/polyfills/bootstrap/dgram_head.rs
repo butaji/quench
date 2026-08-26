@@ -2,11 +2,20 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"/* eslint-disable max-lines-per-function, complexity */
 const __quenchOriginalRequireWithDgram = globalThis.require;
-const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
-const __quenchDgramBoundPorts = new Set();
-const __quenchDgramClosedPorts = new Set();
-const __quenchDgramSockets = new Set();
-let __quenchDgramNextPort = 40000;
+var __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
+var __quenchDgramBoundPorts = new Set();
+var __quenchDgramClosedPorts = new Set();
+var __quenchDgramSockets = new Set();
+var __quenchDgramNextPort = 40000;
+Object.defineProperties(globalThis, {
+  __quenchDgramActiveFds: { value: new Set(), configurable: true },
+  __quenchDgramUdpFds: { value: new Set(), configurable: true },
+  __quenchDgramUdpHandleInfo: { value: new Map(), configurable: true },
+  __quenchDgramStateSymbol: { value: __quenchDgramStateSymbol, configurable: true },
+  __quenchDgramBoundPorts: { value: __quenchDgramBoundPorts, configurable: true },
+  __quenchDgramClosedPorts: { value: __quenchDgramClosedPorts, configurable: true },
+  __quenchDgramSockets: { value: __quenchDgramSockets, configurable: true },
+});
 const __quenchDgramTypeDetail = (value) => {
   if (value === null) return " Received null";
   if (value === undefined) return " Received undefined";
