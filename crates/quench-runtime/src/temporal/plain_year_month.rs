@@ -1,7 +1,12 @@
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn construct(year: f64, month: f64) -> Result<Value, VmError> {
-    if !year.is_finite() || !(1.0..=12.0).contains(&month) {
+    if !year.is_finite()
+        || !(-271_821.0..=275_760.0).contains(&year)
+        || !(1.0..=12.0).contains(&month)
+        || (year == -271_821.0 && month < 4.0)
+        || (year == 275_760.0 && month > 9.0)
+    {
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainYearMonth",
         ));
@@ -73,19 +78,128 @@ pub(crate) fn execute(
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
     let value =
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?;
-    if let Value::String(text) = value {
-        let parts = text.split('-').collect::<Vec<_>>();
-        if parts.len() < 2 {
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        let text = crate::conversion::to_string(value)?;
+        if text.contains(['\u{2212}', 'Z', 'z']) {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
             ));
         }
-        let (year, month) = if parts.len() == 3 && parts[0].len() == 4 {
-            (parts[0], parts[1])
+        if let Some(index) = text.find(['.', ',']) {
+            let fraction = text[index + 1..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .count();
+            if fraction > 9 {
+                return Err(crate::value::error::throw_range_error(
+                    "Too many fractional second digits",
+                ));
+            }
+        }
+        let mut calendars = 0;
+        let mut time_zones = 0;
+        for annotation in text
+            .match_indices('[')
+            .filter_map(|(start, _)| text[start + 1..].split(']').next())
+        {
+            let critical = annotation.starts_with('!');
+            let annotation = annotation.strip_prefix('!').unwrap_or(annotation);
+            if let Some((key, _)) = annotation.split_once('=') {
+                if key.chars().any(|character| character.is_ascii_uppercase()) {
+                    return Err(crate::value::error::throw_range_error("Invalid annotation"));
+                }
+            }
+            if annotation.starts_with("u-ca=") {
+                calendars += 1;
+            }
+            if annotation.starts_with("u-ca=")
+                && calendars == 1
+                && !annotation[5..].eq_ignore_ascii_case("iso8601")
+            {
+                return Err(crate::value::error::throw_range_error("Invalid calendar"));
+            }
+            if critical && annotation.contains('=') && !annotation.starts_with("u-ca=") {
+                return Err(crate::value::error::throw_range_error("Invalid annotation"));
+            }
+            if !annotation.starts_with("u-ca=") && !annotation.contains('=') {
+                time_zones += 1;
+            }
+        }
+        if (calendars > 1 && text.contains("[!u-ca=")) || time_zones > 1 {
+            return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        }
+        let base = text.split('[').next().unwrap_or(&text);
+        if base.len() == 9 && base.starts_with('+') {
+            let year = base[0..7].parse().unwrap_or(0.0);
+            let month = base[7..9].parse().unwrap_or(0.0);
+            return construct(year, month);
+        }
+        let date = if let Some((date, time)) = base.split_once(['T', 't', ' ']) {
+            if time.contains('Z') || time.contains('z') {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid PlainYearMonth",
+                ));
+            }
+            date
         } else {
-            (parts[parts.len() - 2], parts[parts.len() - 1])
+            base
         };
-        return construct(year.parse().unwrap_or(0.0), month.parse().unwrap_or(0.0));
+        if !base.contains(['T', 't', ' ']) {
+            let date_tail = date.rsplit('-').next().unwrap_or(date);
+            if date_tail.contains('+') || date_tail.contains(':') {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid PlainYearMonth",
+                ));
+            }
+        }
+        let parts = date.split('-').collect::<Vec<_>>();
+        let (year_text, month_text, day_text) = match parts.as_slice() {
+            [year, month] => (*year, *month, None),
+            [compact] if compact.len() == 6 => (&compact[..4], &compact[4..], None),
+            [compact] if compact.len() == 8 => (&compact[..4], &compact[4..6], None),
+            [compact] if compact.len() == 9 && compact.starts_with('+') => {
+                (&compact[..7], &compact[7..9], None)
+            }
+            [compact] if compact.len() == 11 && compact.starts_with('+') => {
+                (&compact[..7], &compact[7..9], Some(&compact[9..11]))
+            }
+            [year, month, day] if year.len() >= 4 => (*year, *month, Some(*day)),
+            ["", year, month] => (&date[..1 + year.len()], *month, None),
+            ["", year, month, day] => (&date[..1 + year.len()], *month, Some(*day)),
+            _ => {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid PlainYearMonth",
+                ))
+            }
+        };
+        let year = year_text.parse().unwrap_or(0.0);
+        let month = month_text.parse().unwrap_or(0.0);
+        if (year == -271_821.0 && month < 4.0) || (year == 275_760.0 && month > 9.0) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainYearMonth",
+            ));
+        }
+        return construct(year, month);
+    }
+    if !crate::value::is_object(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainYearMonth",
+        ));
+    }
+    if let Value::Builtin(_) = value {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainYearMonth",
+        ));
+    }
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
+    if !matches!(calendar, Value::Undefined) {
+        if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
+        let calendar = crate::conversion::to_string(&calendar)?;
+        if !calendar.eq_ignore_ascii_case("iso8601") {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
     }
     let year = crate::conversion::to_number(&crate::execute::get_property_result(value, "year")?)?;
     let month = match crate::execute::get_property_result(value, "month")? {
