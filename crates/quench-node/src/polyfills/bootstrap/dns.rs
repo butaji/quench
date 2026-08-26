@@ -1,13 +1,6 @@
 //! Polyfill: `dns`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDns = globalThis.require;
-const __quenchDnsCares = () => {
-  try {
-    return __quenchOriginalRequireWithDns("internal/test/binding").internalBinding("cares_wrap");
-  } catch (_) {
-    return null;
-  }
-};
 const __quenchDnsIsIP = (value) =>
   typeof value === "string" && (value.indexOf(":") >= 0 ? 6 : /^\d+(?:\.\d+){3}$/.test(value) ? 4 : 0);
 let __quenchDnsServers = ["127.0.0.1"];
@@ -117,32 +110,22 @@ const __quenchDnsLookup = (hostname, options, callback) => {
   }
   queueMicrotask(() => {
     try {
-      const cares = __quenchDnsCares();
-      if (!__quenchDnsIsIP(hostname) && cares && Object.prototype.hasOwnProperty.call(cares, "getaddrinfo") && typeof cares.getaddrinfo === "function") {
-        try {
-          cares.getaddrinfo(hostname);
-          const error = new Error(`getaddrinfo ENOMEM ${hostname}`);
-          error.code = "ENOMEM";
-          error.syscall = "getaddrinfo";
-          error.hostname = hostname;
-          callback(error);
-          return;
-        } catch (_) {
-          // A non-callable placeholder is equivalent to an unimplemented binding.
-        }
-      }
       const addresses = __quenchDnsIsIP(hostname)
         ? [hostname]
+        : hostname === "localhost"
+          ? ["::1", "127.0.0.1"]
         : globalThis.__quench_dns_lookup(hostname, 0);
       const family = options?.family === 6 ? 6 : options?.family === 4 ? 4 : 0;
       const filtered = [];
-      for (const value of addresses) {
+      for (let index = 0; index < addresses.length; index += 1) {
+        const value = addresses[index];
         const detected = value.indexOf(":") >= 0 ? 6 : 4;
         if (family === 0 || detected === family) filtered.push(value);
       }
       if (options?.all) {
         const result = [];
-        for (const value of filtered) {
+        for (let index = 0; index < filtered.length; index += 1) {
+          const value = filtered[index];
           result.push({
             address: value,
             family: family || (value.indexOf(":") >= 0 ? 6 : 4),
