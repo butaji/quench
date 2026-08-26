@@ -295,6 +295,7 @@ fn dynamic_value(
             direct_constructor: std::rc::Rc::default(),
             linked_record_insert: None,
             forward_construct_call: None,
+            forward_then_call: None,
         },
     );
     if let Value::Function(function) = &value {

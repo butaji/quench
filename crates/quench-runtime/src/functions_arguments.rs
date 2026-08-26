@@ -530,5 +530,6 @@ include!("functions_scheduler_hold.rs");
 include!("functions_handler_task.rs");
 include!("functions_linked_record_insert.rs");
 include!("functions_forward_construct_call.rs");
+include!("functions_forward_then_call.rs");
 include!("functions_arguments_execution.rs");
 include!("functions_arguments_helpers.rs");
