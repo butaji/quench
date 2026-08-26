@@ -84,11 +84,11 @@ pub(crate) fn get_named_cached_payload(
     let layout = object.semantic_layout_id();
     let cached = cache.get();
     if cached & PROTOTYPE_CACHE_TAG != 0 {
-        if let Some(value) = prototype_cache_hit(object, layout, cached, cache as *const _ as usize)
+        if let Some(payload) =
+            prototype_cache_hit(object, layout, cached, cache as *const _ as usize)
         {
-            crate::execution_trace::named_property_result("prototype", &value);
             crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
-            return Some(named_cached_payload(&value));
+            return Some(payload);
         }
         crate::execution_trace::event(crate::execution_trace::Event::NamedGetPrototypeMiss);
         crate::execution_trace::named_get_miss_reason("prototype");
@@ -168,7 +168,7 @@ fn prototype_cache_hit(
     receiver_layout: u32,
     cache: u64,
     site: usize,
-) -> Option<Value> {
+) -> Option<NamedCachedPayload> {
     if cache & PROTOTYPE_CACHE_TAG == 0 {
         return None;
     }
@@ -179,7 +179,7 @@ fn prototype_cache_hit(
         if entry.site != site || entry.receiver_layout != receiver_layout {
             return None;
         }
-        let mut retained = std::array::from_fn::<_, 4, _>(|_| None);
+        let mut owners: [*const crate::value::ObjectData; 4] = [std::ptr::null(); 4];
         for (depth, link) in entry.links[..usize::from(entry.depth)]
             .iter()
             .flatten()
@@ -188,24 +188,27 @@ fn prototype_cache_hit(
             let owner = if depth == 0 {
                 receiver
             } else {
-                retained[depth - 1].as_deref()?
+                // SAFETY: every pointer is owned by the preceding canonical
+                // prototype slot, rooted by `receiver` for this lookup.
+                unsafe { owners[depth - 1].as_ref()? }
             };
-            let Value::Object(prototype) = owner
+            let prototype = owner
                 .hot_properties()
-                .slot_value(link.prototype_slot as usize)?
-            else {
-                return None;
-            };
-            let expected = link.prototype.upgrade()?;
-            if !std::rc::Rc::ptr_eq(&prototype, &expected)
-                || prototype.semantic_layout_id() != link.prototype_layout
+                .slot_word(link.prototype_slot as usize)?
+                .object_or_null_ptr()??;
+            if prototype != link.prototype.as_ptr()
+                || unsafe { &*prototype }.semantic_layout_id() != link.prototype_layout
             {
                 return None;
             }
-            retained[depth] = Some(prototype);
+            owners[depth] = prototype;
         }
-        let owner = retained[usize::from(entry.depth).checked_sub(1)?].as_deref()?;
-        owner.hot_properties().slot_value(entry.value_slot as usize)
+        // SAFETY: the validated chain above keeps this owner reachable from
+        // `receiver` until the returned word has been copied by the caller.
+        let owner = unsafe { owners[usize::from(entry.depth).checked_sub(1)?].as_ref()? };
+        let word = owner.hot_properties().slot_word(entry.value_slot as usize)?;
+        word.trace_named_payload("prototype");
+        Some(NamedCachedPayload::Word(word))
     })
 }
 

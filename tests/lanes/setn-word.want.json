@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "metrics": {
+    "set_hit_traffic": {
+      "numerator": "events.named_property_set_hit",
+      "min": 99999
+    },
+    "set_decode_per_hit": {
+      "numerator": "lanes.l0.value_decode_by_site.setn",
+      "denominator": "events.named_property_set_hit",
+      "min_traffic": 99999,
+      "max": 0.02
+    },
+    "owned_set_read_per_hit": {
+      "numerator": "lanes.l0.owned_word_read_by_site.setn",
+      "denominator": "events.named_property_set_hit",
+      "min_traffic": 99999,
+      "max": 0.02
+    }
+  }
+}
