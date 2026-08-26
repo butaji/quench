@@ -820,6 +820,25 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         }
     }
     let property = get_property(value, key);
+    if let Value::BoundFunction(bound) = &property {
+        if matches!(
+            bound.target,
+            Value::Builtin(
+                Builtin::PromiseResolve
+                    | Builtin::PromiseReject
+                    | Builtin::PromiseAll
+                    | Builtin::PromiseAllSettled
+                    | Builtin::PromiseAllSettledKeyed
+                    | Builtin::PromiseAny
+                    | Builtin::PromiseRace
+                    | Builtin::PromiseWithResolvers
+                    | Builtin::PromiseTry
+            )
+        ) && !crate::builtins::same_value(Some(&bound.receiver), Some(receiver))
+        {
+            return bind_method(receiver, bound.target.clone());
+        }
+    }
     if should_preserve_receiver_property(value, key, &property, receiver)
         || same_property_receiver(value, receiver)
     {
