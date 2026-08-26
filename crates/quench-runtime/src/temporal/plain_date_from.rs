@@ -46,10 +46,14 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         Some(Value::StringUnits(_)) => crate::conversion::to_string(value.unwrap())?,
         _ => return Err(crate::value::error::throw_type_error("Invalid PlainDate")),
     };
-    if text.starts_with("-000000") || has_empty_time_designator(&text) {
+    if text.starts_with("-000000") || text.contains('−') || has_empty_time_designator(&text) {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
-    if has_fractional_minutes(&text) || has_invalid_time(&text) {
+    if has_fractional_minutes(&text)
+        || has_invalid_time(&text)
+        || has_time_junk(&text)
+        || has_annotation_junk(&text)
+    {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
     if has_utc_designator(&text) || text.starts_with("-000000") {
@@ -293,13 +297,48 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
 }
 
 fn has_invalid_calendar_annotation(text: &str) -> bool {
-    text.split('[').skip(1).any(|annotation| {
-        ["u-ca=", "!u-ca="]
+    let mut seen = false;
+    for annotation in text.split('[').skip(1) {
+        let Some(value) = ["u-ca=", "!u-ca="]
             .iter()
             .find_map(|prefix| annotation.strip_prefix(prefix))
             .and_then(|value| value.split(']').next())
-            .is_some_and(|value| !value.eq_ignore_ascii_case("iso8601"))
-    })
+        else {
+            continue;
+        };
+        if seen {
+            continue;
+        }
+        seen = true;
+        return !value.eq_ignore_ascii_case("iso8601");
+    }
+    false
+}
+
+fn has_time_junk(text: &str) -> bool {
+    let Some(base) = text.split('[').next() else {
+        return false;
+    };
+    let Some((_, time)) = base.split_once(['T', 't']) else {
+        return false;
+    };
+    time.chars()
+        .any(|character| !character.is_ascii_digit() && !":.,+-Zz".contains(character))
+}
+
+fn has_annotation_junk(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let Some(close) = rest[open + 1..].find(']') else {
+            return true;
+        };
+        let after = &rest[open + 1 + close + 1..];
+        if !after.is_empty() && !after.starts_with('[') {
+            return true;
+        }
+        rest = after;
+    }
+    false
 }
 
 fn has_multiple_time_zones(text: &str) -> bool {
@@ -331,12 +370,22 @@ fn has_empty_time_designator(text: &str) -> bool {
 
 fn has_fractional_minutes(text: &str) -> bool {
     let Some(time) = text
+        .split('[')
+        .next()
+        .unwrap_or(text)
         .split(['T', 't', ' '])
         .nth(1)
         .and_then(|value| value.split('[').next())
     else {
         return false;
     };
+    let time = time
+        .get(1..)
+        .and_then(|value| value.find(['+', '-']).map(|index| &time[..index + 1]))
+        .unwrap_or(time);
+    if !time.contains(':') {
+        return false;
+    }
     let mut fields = time.split(':');
     let Some(hours) = fields.next() else {
         return false;
@@ -349,24 +398,63 @@ fn has_fractional_minutes(text: &str) -> bool {
 
 fn has_invalid_time(text: &str) -> bool {
     let Some(time) = text
+        .split('[')
+        .next()
+        .unwrap_or(text)
         .split(['T', 't', ' '])
         .nth(1)
         .and_then(|value| value.split('[').next())
     else {
         return false;
     };
-    let fields: Vec<_> = time.split(':').collect();
-    if fields.len() < 2 {
+    let time = time.trim_end_matches(['Z', 'z']);
+    let clock = time
+        .get(1..)
+        .and_then(|value| value.find(['+', '-']).map(|index| &time[..index + 1]))
+        .unwrap_or(time);
+    let fields: Vec<_> = clock.split(':').collect();
+    let parse = |value: &str| value.parse::<u32>().ok();
+    if fields.len() == 1 {
+        let compact = fields[0].split(['.', ',']).next().unwrap_or(fields[0]);
+        if !matches!(compact.len(), 2 | 4 | 6) || !compact.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return true;
+        }
+        let hour = compact[0..2].parse::<u32>().unwrap_or(99);
+        let minute = if compact.len() >= 4 {
+            compact[2..4].parse::<u32>().unwrap_or(99)
+        } else {
+            0
+        };
+        let second = if compact.len() == 6 {
+            compact[4..6].parse::<u32>().unwrap_or(99)
+        } else {
+            0
+        };
+        return hour > 23 || minute > 59 || second > 59;
+    }
+    if fields.len() > 1 && (fields[0].len() != 2 || fields[1].len() != 2) {
         return true;
     }
-    let parse = |value: &str| value.parse::<u32>().ok();
-    let Some(hour) = parse(fields[0].split('.').next().unwrap_or(fields[0])) else {
+    let Some(hour) = parse(fields[0].split(['.', ',']).next().unwrap_or(fields[0])) else {
         return true;
     };
-    let Some(minute) = parse(fields[1].split('.').next().unwrap_or(fields[1])) else {
+    if hour > 23 {
+        return true;
+    }
+    if fields.len() == 1 {
+        return false;
+    }
+    let Some(minute) = parse(fields[1].split(['.', ',']).next().unwrap_or(fields[1])) else {
         return true;
     };
-    hour > 23 || minute > 59
+    if minute > 59 {
+        return true;
+    }
+    fields.get(2).is_some_and(|second| {
+        let second = second.split(['.', ',']).next().unwrap_or(second);
+        second.len() != 2 || parse(second).is_none_or(|second| second > 59)
+    })
 }
 
 fn date_part(text: &str) -> &str {
@@ -375,8 +463,39 @@ fn date_part(text: &str) -> &str {
 
 fn parse_date_parts(parts: &[&str]) -> Result<(i32, i32, i32), VmError> {
     let (year, month, day) = match parts {
-        [year, month, day] => ((*year).to_owned(), (*month).to_owned(), (*day).to_owned()),
-        ["", year, month, day] => (format!("-{year}"), (*month).to_owned(), (*day).to_owned()),
+        [year, month, day]
+            if year.len() == 4
+                && year.bytes().all(|byte| byte.is_ascii_digit())
+                && month.len() == 2
+                && month.bytes().all(|byte| byte.is_ascii_digit())
+                && day.len() == 2
+                && day.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            ((*year).to_owned(), (*month).to_owned(), (*day).to_owned())
+        }
+        [year, month, day]
+            if year.len() == 7
+                && year.starts_with('+')
+                && year.as_bytes()[1..]
+                    .iter()
+                    .all(|byte| byte.is_ascii_digit())
+                && month.len() == 2
+                && month.bytes().all(|byte| byte.is_ascii_digit())
+                && day.len() == 2
+                && day.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            ((*year).to_owned(), (*month).to_owned(), (*day).to_owned())
+        }
+        ["", year, month, day]
+            if year.len() == 6
+                && year.bytes().all(|byte| byte.is_ascii_digit())
+                && month.len() == 2
+                && month.bytes().all(|byte| byte.is_ascii_digit())
+                && day.len() == 2
+                && day.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            (format!("-{year}"), (*month).to_owned(), (*day).to_owned())
+        }
         _ => return Err(crate::value::error::throw_range_error("Invalid ISO date")),
     };
     Ok((
