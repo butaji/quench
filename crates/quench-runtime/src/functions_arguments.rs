@@ -89,7 +89,7 @@ pub(crate) fn scope_captures(function: &crate::value::FunctionValue) -> Vec<crat
         .properties
         .borrow()
         .iter()
-        .any(|(name, _)| matches!(name.as_str(), "\0dynamic_function" | "\0dynamic_source"))
+        .any(|(name, _)| name == "\0dynamic_function")
     {
         vec![function.captures.get(0)]
     } else {

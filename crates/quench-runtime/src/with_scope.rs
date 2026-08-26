@@ -560,6 +560,9 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for (index, object) in objects.iter().enumerate().rev() {
         let object = live_object(object);
+        if !crate::value::is_object(&object) {
+            continue;
+        }
         if has_property(&object, key)? && !is_unscopable(&object, key)? {
             let global =
                 crate::vm::is_global_object(&object).then(crate::vm::current_global_object);
