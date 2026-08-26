@@ -149,6 +149,7 @@ pub enum Builtin {
     TemporalZonedDateTimeWithPlainTime,
     TemporalZonedDateTimeStartOfDay,
     TemporalZonedDateTimeGetTimeZoneTransition,
+    TemporalZonedDateTimeAdd, TemporalZonedDateTimeSubtract,
     TemporalZonedDateTimeEpochMillisecondsGetter,
     TemporalZonedDateTimeTimeZoneIdGetter,
     TemporalZonedDateTimeOffsetGetter,
