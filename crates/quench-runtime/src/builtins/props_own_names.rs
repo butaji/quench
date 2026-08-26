@@ -187,6 +187,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
             "subtract",
             "until",
             "since",
+            "with",
             "round",
         ],
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from", "compare"],
