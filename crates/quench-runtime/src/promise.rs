@@ -82,7 +82,10 @@ fn capability_executor_function(id: u64, target: Builtin) -> Value {
         arguments: Vec::new(),
         properties: RefCell::new(vec![
             ("length".to_string(), length.clone()),
-            (crate::builtins::descriptor_key("length"), descriptor(length)),
+            (
+                crate::builtins::descriptor_key("length"),
+                descriptor(length),
+            ),
             ("name".to_string(), name.clone()),
             (crate::builtins::descriptor_key("name"), descriptor(name)),
         ]),
@@ -135,6 +138,11 @@ include!("promise_with_resolvers.rs");
 include!("promise_try.rs");
 
 fn process_promise(promise: &Rc<PromiseData>) {
+    let context = Rc::clone(&promise.context.0);
+    crate::vm::with_current_context(&context, || process_promise_in_context(promise));
+}
+
+fn process_promise_in_context(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
     let promise_key = Rc::as_ptr(promise) as usize;
@@ -203,16 +211,12 @@ fn process_then_actions(
         }
         let completion =
             match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {
-                Ok(value) => crate::functions::execute_target(
-                    &result.resolve,
-                    &Value::Undefined,
-                    &[value],
-                ),
-                Err(VmError::Thrown(reason)) => crate::functions::execute_target(
-                    &result.reject,
-                    &Value::Undefined,
-                    &[reason],
-                ),
+                Ok(value) => {
+                    crate::functions::execute_target(&result.resolve, &Value::Undefined, &[value])
+                }
+                Err(VmError::Thrown(reason)) => {
+                    crate::functions::execute_target(&result.reject, &Value::Undefined, &[reason])
+                }
                 Err(_) => crate::functions::execute_target(
                     &result.reject,
                     &Value::Undefined,
@@ -649,11 +653,11 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                         .borrow_mut()
                         .entry(Rc::as_ptr(promise) as usize)
                         .or_default()
-                    .push_back(ThenResult {
-                        target: Value::Promise(Rc::clone(&target)),
-                        resolve: resolve.clone(),
-                        reject: reject.clone(),
-                    });
+                        .push_back(ThenResult {
+                            target: Value::Promise(Rc::clone(&target)),
+                            resolve: resolve.clone(),
+                            reject: reject.clone(),
+                        });
                 });
                 if !matches!(*promise.state.borrow(), PromiseState::Pending) {
                     queue_promise(promise);
@@ -758,11 +762,15 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     }
     let promise_key = Rc::as_ptr(promise) as usize;
     THEN_RESULTS.with(|results| {
-        results.borrow_mut().entry(promise_key).or_default().push_back(ThenResult {
-            target: result.clone(),
-            resolve,
-            reject,
-        });
+        results
+            .borrow_mut()
+            .entry(promise_key)
+            .or_default()
+            .push_back(ThenResult {
+                target: result.clone(),
+                resolve,
+                reject,
+            });
     });
     if !matches!(*promise.state.borrow(), PromiseState::Pending) {
         queue_promise(promise);
