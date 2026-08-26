@@ -569,7 +569,7 @@ fn timer_promise_alias(value: &Value) -> Option<&'static str> {
 }
 
 pub fn util_promisified_call(
-    _: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -591,7 +591,17 @@ pub fn util_promisified_call(
     let mut call_args = args.get(1..).unwrap_or_default().to_vec();
     call_args.push(callback);
     match quench_runtime::vm::call_value(original, &Value::Undefined, &call_args) {
-        Ok(_) => {}
+        Ok(result) => {
+            if matches!(result, Value::Promise(_)) {
+                crate::modules::process::emit_warning(
+                    state,
+                    "DeprecationWarning",
+                    "Calling promisify on a function that returns a Promise is likely a mistake.",
+                    Some("DEP0174"),
+                    true,
+                );
+            }
+        }
         Err(VmError::Thrown(error)) => quench_runtime::reject_promise(&promise, error),
         Err(_) => quench_runtime::reject_promise(&promise, Value::Undefined),
     }
