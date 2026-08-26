@@ -434,7 +434,7 @@ fn has_invalid_time(text: &str) -> bool {
         } else {
             0
         };
-        return hour > 23 || minute > 59 || second > 59;
+        return hour > 23 || minute > 59 || second > 60;
     }
     if fields.len() > 1 && (fields[0].len() != 2 || fields[1].len() != 2) {
         return true;
@@ -456,7 +456,7 @@ fn has_invalid_time(text: &str) -> bool {
     }
     fields.get(2).is_some_and(|second| {
         let second = second.split(['.', ',']).next().unwrap_or(second);
-        second.len() != 2 || parse(second).is_none_or(|second| second > 59)
+        second.len() != 2 || parse(second).is_none_or(|second| second > 60)
     })
 }
 
