@@ -119,6 +119,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstantToString => Some("Temporal.Instant.prototype.toString"),
         Builtin::TemporalInstantToJSON => Some("Temporal.Instant.prototype.toJSON"),
         Builtin::TemporalInstantToLocaleString => Some("Temporal.Instant.prototype.toLocaleString"),
+        Builtin::TemporalInstantValueOf => Some("Temporal.Instant.prototype.valueOf"),
         Builtin::TemporalInstantToZonedDateTimeISO => {
             Some("Temporal.Instant.prototype.toZonedDateTimeISO")
         }
@@ -352,6 +353,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalInstantToString => Some("toString"),
         Builtin::TemporalInstantToJSON => Some("toJSON"),
         Builtin::TemporalInstantToLocaleString => Some("toLocaleString"),
+        Builtin::TemporalInstantValueOf => Some("valueOf"),
         Builtin::TemporalInstantToZonedDateTimeISO => Some("toZonedDateTimeISO"),
         Builtin::TemporalInstantEquals => Some("equals"),
         Builtin::TemporalInstantAdd => Some("add"),
@@ -538,6 +540,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalInstantToString
         | Builtin::TemporalInstantToJSON
         | Builtin::TemporalInstantToLocaleString
+        | Builtin::TemporalInstantValueOf
         | Builtin::TemporalInstantToZonedDateTimeISO => Some(0.0),
         Builtin::TemporalInstantEquals
         | Builtin::TemporalInstantAdd
