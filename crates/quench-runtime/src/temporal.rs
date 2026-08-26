@@ -382,6 +382,7 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeSubtract
                 | crate::ops::Builtin::TemporalZonedDateTimeUntil
                 | crate::ops::Builtin::TemporalZonedDateTimeSince
+                | crate::ops::Builtin::TemporalZonedDateTimeRound
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -1246,6 +1247,119 @@ mod stubs {
             }
             let _ = largest_scale;
             return crate::temporal::duration::construct(&fields);
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeRound {
+            let options = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing rounding options"))?;
+            if matches!(options, Value::Null) || crate::conversion::is_symbol(options) {
+                return Err(crate::value::error::throw_type_error(
+                    "Invalid rounding options",
+                ));
+            }
+            let (smallest, increment, mode) =
+                if matches!(options, Value::String(_) | Value::StringUnits(_)) {
+                    (
+                        crate::conversion::to_string(options)?,
+                        1_i128,
+                        "halfExpand".to_string(),
+                    )
+                } else if crate::value::is_object(options) {
+                    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
+                    if matches!(unit, Value::Undefined) {
+                        return Err(crate::value::error::throw_range_error(
+                            "smallestUnit required",
+                        ));
+                    }
+                    let increment =
+                        match crate::execute::get_property_result(options, "roundingIncrement")? {
+                            Value::Undefined => 1,
+                            value => {
+                                let number = crate::conversion::to_number(&value)?;
+                                if !number.is_finite() || number <= 0.0 || number.fract() != 0.0 {
+                                    return Err(crate::value::error::throw_range_error(
+                                        "Invalid roundingIncrement",
+                                    ));
+                                }
+                                number as i128
+                            }
+                        };
+                    let mode = match crate::execute::get_property_result(options, "roundingMode")? {
+                        Value::Undefined => "halfExpand".to_string(),
+                        value => crate::conversion::to_string(&value)?,
+                    };
+                    (crate::conversion::to_string(&unit)?, increment, mode)
+                } else {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid rounding options",
+                    ));
+                };
+            let smallest = smallest.strip_suffix('s').unwrap_or(&smallest);
+            let unit = match smallest {
+                "day" => 86_400_000_000_000_i128,
+                "hour" => 3_600_000_000_000_i128,
+                "minute" => 60_000_000_000,
+                "second" => 1_000_000_000,
+                "millisecond" => 1_000_000,
+                "microsecond" => 1_000,
+                "nanosecond" => 1,
+                _ => {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid smallestUnit",
+                    ))
+                }
+            };
+            let quantum = unit.checked_mul(increment).ok_or_else(|| {
+                crate::value::error::throw_range_error("Invalid roundingIncrement")
+            })?;
+            let epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let offset = if smallest == "day" {
+                match property("offsetNanoseconds")? {
+                    Value::Number(value) => value as i128,
+                    _ => 0,
+                }
+            } else {
+                0
+            };
+            let local_epoch = epoch + offset;
+            let quotient = local_epoch.div_euclid(quantum);
+            let remainder = local_epoch.rem_euclid(quantum);
+            let round_up = match mode.as_str() {
+                "trunc" => local_epoch < 0 && remainder != 0,
+                "floor" => false,
+                "ceil" => remainder != 0,
+                "expand" => remainder != 0,
+                "halfExpand" | "halfCeil" | "halfFloor" | "halfTrunc" | "halfEven" => {
+                    remainder * 2 > quantum
+                        || (remainder * 2 == quantum
+                            && match mode.as_str() {
+                                "halfCeil" => true,
+                                "halfFloor" => false,
+                                "halfTrunc" => local_epoch < 0,
+                                "halfEven" => quotient % 2 != 0,
+                                _ => true,
+                            })
+                }
+                _ => {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid roundingMode",
+                    ))
+                }
+            };
+            let rounded = (quotient + i128::from(round_up)) * quantum - offset;
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            return Ok(super::zoned_record(
+                rounded,
+                timezone,
+                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+            ));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition {
             let options = arguments
