@@ -184,6 +184,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
         ),
         (
+            "off",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
+        ),
+        (
             "removeAllListeners",
             crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_ALL_LISTENERS),
         ),
