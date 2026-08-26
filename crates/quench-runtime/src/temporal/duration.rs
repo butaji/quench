@@ -863,8 +863,12 @@ fn calendar_round(
             "floor" => sign < 0.0,
             "expand" => true,
             "trunc" => false,
-            "halfCeil" => remainder * 2.0 >= span && sign > 0.0,
-            "halfFloor" => remainder * 2.0 >= span && sign < 0.0,
+            "halfCeil" => {
+                (sign > 0.0 && remainder * 2.0 >= span) || (sign < 0.0 && remainder * 2.0 > span)
+            }
+            "halfFloor" => {
+                (sign > 0.0 && remainder * 2.0 > span) || (sign < 0.0 && remainder * 2.0 >= span)
+            }
             "halfTrunc" => remainder * 2.0 > span,
             "halfEven" | "halfExpand" => remainder * 2.0 >= span,
             _ => false,
