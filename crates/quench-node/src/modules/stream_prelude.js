@@ -645,18 +645,21 @@
     const signal = options?.signal;
     const source = stream.__quenchIterator || stream[Symbol.asyncIterator]?.();
     const output = new ReadableClass({ objectMode: true });
-    let ended = false;
-    let pending = [];
-    let sourceDone = false;
-    let operatorError;
+    const state = {
+      ended: false,
+      pending: [],
+      head: 0,
+      sourceDone: false,
+      operatorError: undefined,
+    };
     output.on("error", (error) => {
-      operatorError = error;
-      ended = true;
+      state.operatorError = error;
+      state.ended = true;
     });
     const pull = async () => {
-      if (sourceDone) return null;
+      if (state.sourceDone) return null;
       const step = await source.next();
-      if (!step || step.done) sourceDone = true;
+      if (!step || step.done) state.sourceDone = true;
       return step;
     };
     const enqueue = async () => {
@@ -674,38 +677,38 @@
         task.value = value;
         return value;
       });
-      pending.push(task);
+      state.pending.push(task);
       return true;
     };
     const fill = async () => {
-      while (pending.filter((task) => !task.done).length < concurrency && !sourceDone) {
+      while (state.pending.slice(state.head).filter((task) => !task.done).length < concurrency && !state.sourceDone) {
         if (!(await enqueue())) break;
       }
     };
     const next = async () => {
-      if (operatorError) throw operatorError;
-      if (ended) return { value: undefined, done: true };
+      if (state.operatorError) throw state.operatorError;
+      if (state.ended) return { value: undefined, done: true };
       if (signal?.aborted) throw sliceAbortError();
       await fill();
-      if (pending.length === 0) {
-        ended = true;
+      if (state.head >= state.pending.length) {
+        state.ended = true;
         return { value: undefined, done: true };
       }
-      while (pending[0] && !pending[0].done) {
-        await Promise.race(pending.filter((task) => !task.done).map((task) => task.promise));
+      while (state.pending[state.head] && !state.pending[state.head].done) {
+        await Promise.race(state.pending.slice(state.head).filter((task) => !task.done).map((task) => task.promise));
         await fill();
       }
-      const task = pending.shift();
+      const task = state.pending[state.head++];
       if (!task) {
-        ended = true;
+        state.ended = true;
         return { value: undefined, done: true };
       }
-      if (pending.length === 0 && !sourceDone) await enqueue();
+      if (state.head >= state.pending.length && !state.sourceDone) await enqueue();
       const value = task.value;
       if (filtering && !value.keep) return next();
       return { value: filtering ? value.value : value, done: false };
     };
-    output.__quenchIterator = { next, return() { ended = true; return Promise.resolve({ value: undefined, done: true }); } };
+    output.__quenchIterator = { next, return() { state.ended = true; return Promise.resolve({ value: undefined, done: true }); } };
     output.__quenchIterator[Symbol.asyncIterator] = function () { return this; };
     output[Symbol.asyncIterator] = async function* () {
       while (true) {
