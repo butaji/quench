@@ -144,5 +144,6 @@ test-net-connect-after-destroy.js
 test-net-access-byteswritten.js
 test-net-during-close.js
 test-net-isipv4.js
+test-net-isipv6.js
 test-net-server-close.js
 test-os-constants-signals.js
