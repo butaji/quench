@@ -103,7 +103,7 @@ pub fn spawn_sync(
     let mut cmd = std::process::Command::new(executable);
     cmd.args(&child_args);
 
-    let mut input: Option<String> = None;
+    let mut input: Option<Vec<u8>> = None;
     if let Some(options) = args.get(2) {
         if let Some(cwd) = opt_str(options, "cwd") {
             cmd.current_dir(cwd);
@@ -111,7 +111,20 @@ pub fn spawn_sync(
         if let Some(env) = opt_env(options) {
             cmd.env_clear().envs(env);
         }
-        input = opt_str(options, "input");
+        if let Ok(input_value) = execute::get_property_result(options, "input") {
+            if !matches!(input_value, Value::Undefined) {
+                input = Some(value_to_bytes(input_value).map_err(|_| {
+                VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("TypeError".into())),
+                    ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                    (
+                        "message".into(),
+                        Value::String("The \"options.input\" property must be a string or an instance of Buffer or Uint8Array".into()),
+                    ),
+                ]))
+                })?);
+            }
+        }
     }
 
     let mut child = match cmd
@@ -126,15 +139,21 @@ pub fn spawn_sync(
     let pid = child.id();
     if let Some(data) = input {
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(data.as_bytes());
+            let _ = stdin.write_all(&data);
         }
     }
     let output = match child.wait_with_output() {
         Ok(output) => output,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if args.get(2).is_some_and(|options| stdio_inherit(options)) {
+        use std::io::Write as _;
+        let _ = std::io::stdout().write_all(&output.stdout);
+        let _ = std::io::stderr().write_all(&output.stderr);
+    }
+    let options = args.get(2);
+    let stdout = output_value(&output.stdout, options);
+    let stderr = output_value(&output.stderr, options);
     Ok(host_api::object(vec![
         ("pid".to_string(), Value::Number(pid as f64)),
         (
@@ -145,13 +164,49 @@ pub fn spawn_sync(
                 .map_or(Value::Null, |c| Value::Number(c as f64)),
         ),
         ("signal".to_string(), Value::Null),
-        ("stdout".to_string(), Value::String(stdout.clone())),
-        ("stderr".to_string(), Value::String(stderr.clone())),
+        ("stdout".to_string(), stdout.clone()),
+        ("stderr".to_string(), stderr.clone()),
         (
             "output".to_string(),
-            host_api::array(vec![Value::String(stdout), Value::String(stderr)]),
+            host_api::array(vec![stdout, stderr]),
         ),
     ]))
+}
+
+fn value_to_bytes(value: Value) -> Result<Vec<u8>, ()> {
+    match value {
+        Value::String(value) => Ok(value.into_bytes()),
+        Value::Uint8Array(view) => Ok(
+            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec(),
+        ),
+        _ => Err(()),
+    }
+}
+
+fn output_value(bytes: &[u8], options: Option<&Value>) -> Value {
+    let encoding = options
+        .and_then(|value| opt_str(value, "encoding"))
+        .unwrap_or_default();
+    if encoding == "utf8" || encoding == "utf-8" {
+        Value::String(String::from_utf8_lossy(bytes).into_owned())
+    } else {
+        crate::modules::buffer_proto::make_buffer(bytes)
+    }
+}
+
+fn stdio_inherit(options: &Value) -> bool {
+    match execute::get_property_result(options, "stdio").ok() {
+        Some(Value::String(value)) => value == "inherit",
+        Some(Value::Array(values)) => (0..values.logical_len()).all(|index| {
+            matches!(
+                execute::get_property_result(options, "stdio")
+                    .ok()
+                    .and_then(|stdio| execute::get_property_result(&stdio, &index.to_string()).ok()),
+                Some(Value::String(kind)) if kind == "inherit"
+            )
+        }),
+        _ => false,
+    }
 }
 
 fn spawn_error_result(code: &str, message: &str) -> Value {
