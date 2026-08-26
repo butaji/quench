@@ -178,6 +178,16 @@ fn format_offset(offset: i128) -> String {
     format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
+fn format_year(year: i32) -> String {
+    if (0..=9999).contains(&year) {
+        format!("{year:04}")
+    } else if year < 0 {
+        format!("-{year_abs:06}", year_abs = year.unsigned_abs())
+    } else {
+        format!("+{year:06}")
+    }
+}
+
 fn parse_timezone_identifier(
     value: &crate::value::Value,
 ) -> Result<String, crate::execute::VmError> {
@@ -1730,6 +1740,7 @@ mod stubs {
                 return Ok(None);
             }
             let value = crate::conversion::to_string(&value)?;
+            let value = value.strip_suffix('s').unwrap_or(&value).to_string();
             if !allowed.contains(&value.as_str()) {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid string option",
@@ -1770,6 +1781,11 @@ mod stubs {
         let mut precision = match option("fractionalSecondDigits")? {
             None | Some(Value::Undefined) => usize::MAX,
             Some(Value::String(value)) if value == "auto" => usize::MAX,
+            Some(Value::Null | Value::Boolean(_) | Value::Object(_) | Value::BigInt(_)) => {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid fractionalSecondDigits",
+                ))
+            }
             Some(value) => {
                 let value = crate::conversion::to_number(&value)?;
                 if !value.is_finite() || !(0.0..=9.0).contains(&value) {
@@ -1836,7 +1852,8 @@ mod stubs {
             _ => format!("{hour:02}:{minute:02}:{second:02}{suffix}"),
         };
         let text = format!(
-            "{year:04}-{month:02}-{day:02}T{clock}{offset_suffix}{zone_suffix}{calendar_suffix}"
+            "{}-{month:02}-{day:02}T{clock}{offset_suffix}{zone_suffix}{calendar_suffix}",
+            super::format_year(year),
         );
         Ok(Value::String(text))
     }
