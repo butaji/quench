@@ -760,6 +760,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     }
     let unit = crate::conversion::to_string(&unit)?;
     let quantum = match unit.as_str() {
+        "day" => 86_400_000_000_000.0,
         "hour" => 3_600_000_000_000.0,
         "minute" => 60_000_000_000.0,
         "second" => 1_000_000_000.0,
@@ -777,15 +778,36 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         1.0
     } else {
         crate::conversion::to_number(&increment_value)?
+    }
+    .trunc();
+    let maximum: f64 = match unit.as_str() {
+        "day" => 1.0,
+        "hour" => 24.0,
+        "minute" | "second" => 60.0,
+        _ => 1_000.0,
     };
+    if !increment.is_finite()
+        || increment < 1.0
+        || if unit == "day" {
+            increment > maximum
+        } else {
+            increment >= maximum
+        }
+        || (maximum as u64) % (increment as u64) != 0
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
     let mode_value = crate::execute::get_property_result(options, "roundingMode")?;
+    let mut mode = "halfExpand".to_string();
     if !matches!(mode_value, Value::Undefined) {
         if crate::conversion::is_symbol(&mode_value) {
             return Err(crate::value::error::throw_type_error(
                 "Invalid roundingMode",
             ));
         }
-        let mode = crate::conversion::to_string(&mode_value)?;
+        mode = crate::conversion::to_string(&mode_value)?;
         if !matches!(
             mode.as_str(),
             "ceil"
@@ -803,17 +825,35 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             ));
         }
     }
-    round_values(fields(receiver)?, quantum, increment)
+    round_values(fields(receiver)?, quantum, increment, &mode)
 }
 
-fn round_values(mut values: Vec<f64>, quantum: f64, increment: f64) -> Result<Value, VmError> {
+fn round_values(
+    mut values: Vec<f64>,
+    quantum: f64,
+    increment: f64,
+    mode: &str,
+) -> Result<Value, VmError> {
     let total = values[3] * 3_600_000_000_000.0
         + values[4] * 60_000_000_000.0
         + values[5] * 1_000_000_000.0
         + values[6] * 1_000_000.0
         + values[7] * 1_000.0
         + values[8];
-    let rounded = (total / (quantum * increment)).round() * quantum * increment;
+    let quotient = total / (quantum * increment);
+    let rounded = round_quotient(quotient, mode) * quantum * increment;
+    let day_nanos = 86_400_000_000_000.0;
+    let carry_days = (rounded / day_nanos).floor();
+    if carry_days != 0.0 {
+        let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?
+            .checked_add_signed(CalendarDuration::days(carry_days as i64))
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+        values[0] = date.year() as f64;
+        values[1] = date.month() as f64;
+        values[2] = date.day() as f64;
+    }
+    let rounded = rounded.rem_euclid(day_nanos);
     values[3] = (rounded / 3_600_000_000_000.0).floor();
     let mut remainder = rounded - values[3] * 3_600_000_000_000.0;
     values[4] = (remainder / 60_000_000_000.0).floor();
@@ -825,6 +865,65 @@ fn round_values(mut values: Vec<f64>, quantum: f64, increment: f64) -> Result<Va
     values[7] = (remainder / 1_000.0).floor();
     values[8] = remainder - values[7] * 1_000.0;
     construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
+}
+
+fn round_quotient(value: f64, mode: &str) -> f64 {
+    let floor = value.floor();
+    let ceil = value.ceil();
+    let fraction = value - floor;
+    match mode {
+        "ceil" => ceil,
+        "floor" => floor,
+        "trunc" => value.trunc(),
+        "expand" => {
+            if value >= 0.0 {
+                ceil
+            } else {
+                floor
+            }
+        }
+        "halfTrunc" => {
+            if fraction < 0.5 {
+                floor
+            } else if fraction > 0.5 {
+                ceil
+            } else {
+                value.trunc()
+            }
+        }
+        "halfCeil" => {
+            if fraction >= 0.5 {
+                ceil
+            } else {
+                floor
+            }
+        }
+        "halfFloor" => {
+            if fraction > 0.5 {
+                ceil
+            } else {
+                floor
+            }
+        }
+        "halfEven" => {
+            if fraction < 0.5 {
+                floor
+            } else if fraction > 0.5 {
+                ceil
+            } else if (floor as i64) % 2 == 0 {
+                floor
+            } else {
+                ceil
+            }
+        }
+        _ => {
+            if fraction >= 0.5 {
+                ceil
+            } else {
+                floor
+            }
+        }
+    }
 }
 
 fn with(
