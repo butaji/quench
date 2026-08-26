@@ -469,7 +469,8 @@ pub(crate) fn flat_map(
         return Err(crate::vm::not_callable());
     };
     let length = crate::builtins::map_length(&receiver)?;
-    let mut mapped = Vec::with_capacity(length);
+    let mut target = crate::builtins::array_species_create(&receiver, 0)?;
+    let mut target_index = 0usize;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for index in 0..length {
         let Some(value) = crate::builtins::map_value(&receiver, index)? else { continue; };
@@ -480,11 +481,27 @@ pub(crate) fn flat_map(
         ];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
         match result {
-            Value::Array(nested) => mapped.extend(nested.snapshot()),
-            value => mapped.push(value),
+            Value::Array(nested) => {
+                for value in nested.snapshot() {
+                    target = crate::builtins::create_data_property_or_throw(
+                        target,
+                        &target_index.to_string(),
+                        value,
+                    )?;
+                    target_index += 1;
+                }
+            }
+            value => {
+                target = crate::builtins::create_data_property_or_throw(
+                    target,
+                    &target_index.to_string(),
+                    value,
+                )?;
+                target_index += 1;
+            }
         }
     }
-    Ok(Value::array(mapped))
+    Ok(target)
 }
 pub(crate) fn at(
     receiver: Option<&Value>,
