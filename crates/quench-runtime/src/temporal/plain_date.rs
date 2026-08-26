@@ -21,17 +21,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
         if matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
-            let text = crate::conversion::to_string(calendar)?;
-            let date = text.split(['T', 't', ' ', '[']).next().unwrap_or(&text);
-            let fields: Vec<_> = date.split('-').collect();
-            let date_like = fields.len() == 3
-                && fields[0].len() >= 4
-                && fields[1].len() == 2
-                && fields[2].len() == 2
-                || fields.len() == 1
-                    && date.len() == 8
-                    && date.bytes().all(|byte| byte.is_ascii_digit());
-            if date_like || !is_iso_calendar_value(calendar)? {
+            if !is_iso_calendar_value(calendar)? {
                 return Err(crate::value::error::throw_range_error("Invalid calendar"));
             }
         }
@@ -48,6 +38,28 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
     Ok(date_object(year, month, day))
+}
+
+pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(calendar) = arguments
+        .get(3)
+        .filter(|value| matches!(value, Value::String(_) | Value::StringUnits(_)))
+    {
+        let text = crate::conversion::to_string(calendar)?;
+        let date = text.split(['T', 't', ' ', '[']).next().unwrap_or(&text);
+        let fields: Vec<_> = date.split('-').collect();
+        let date_like = fields.len() == 3
+            && fields[0].len() >= 4
+            && fields[1].len() == 2
+            && fields[2].len() == 2
+            || fields.len() == 1
+                && date.len() == 8
+                && date.bytes().all(|byte| byte.is_ascii_digit());
+        if date_like {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    }
+    construct(arguments)
 }
 
 fn days_in_month(year: f64, month: f64) -> f64 {
@@ -200,6 +212,9 @@ fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok("constrain".into());
     };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
     let value = crate::execute::get_property_result(options, "overflow")?;
     if matches!(value, Value::Undefined) {
         return Ok("constrain".into());
@@ -420,17 +435,22 @@ fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, Vm
         return Err(crate::value::error::throw_type_error("Invalid options"));
     }
     let largest_value = crate::execute::get_property_result(options, "largestUnit")?;
+    let largest_explicit = !matches!(largest_value, Value::Undefined);
     let largest_text = if matches!(largest_value, Value::Undefined) {
         "days".into()
     } else {
         option_string(&largest_value)?
     };
+    let largest_valid = matches!(
+        largest_text.as_str(),
+        "year" | "years" | "month" | "months" | "week" | "weeks" | "auto" | "day" | "days"
+    );
     let largest = match largest_text.as_str() {
         "year" | "years" => "years",
         "month" | "months" => "months",
         "week" | "weeks" => "weeks",
         "auto" | "day" | "days" => "days",
-        _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
+        _ => "days",
     };
     let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
     let increment = if matches!(increment_value, Value::Undefined) {
@@ -449,7 +469,7 @@ fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, Vm
     } else {
         option_string(&mode_value)?
     };
-    if !matches!(
+    let mode_valid = matches!(
         mode.as_str(),
         "ceil"
             | "floor"
@@ -460,25 +480,29 @@ fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, Vm
             | "halfExpand"
             | "halfTrunc"
             | "trunc"
-    ) {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid roundingMode",
-        ));
-    }
+    );
     let smallest_value = crate::execute::get_property_result(options, "smallestUnit")?;
-    let smallest: String = if matches!(smallest_value, Value::Undefined) {
+    let smallest_text = if matches!(smallest_value, Value::Undefined) {
         "auto".into()
     } else {
-        match option_string(&smallest_value)?.as_str() {
-            "year" | "years" => "years",
-            "month" | "months" => "months",
-            "week" | "weeks" => "weeks",
-            "day" | "days" => "days",
-            _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
-        }
-        .into()
+        option_string(&smallest_value)?
     };
-    if smallest != "auto" {
+    let smallest_valid = matches!(
+        smallest_text.as_str(),
+        "year" | "years" | "month" | "months" | "week" | "weeks" | "day" | "days" | "auto"
+    );
+    let smallest: String = match smallest_text.as_str() {
+        "year" | "years" => "years",
+        "month" | "months" => "months",
+        "week" | "weeks" => "weeks",
+        "day" | "days" => "days",
+        _ => "auto",
+    }
+    .into();
+    if !largest_valid || !mode_valid || !smallest_valid {
+        return Err(crate::value::error::throw_range_error("Invalid options"));
+    }
+    if smallest != "auto" && largest_explicit {
         let rank = |unit: &str| match unit {
             "years" => 0,
             "months" => 1,
