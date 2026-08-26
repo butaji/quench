@@ -306,7 +306,8 @@ fn dynamic_value(
         let prototype = match (kind, is_async) {
             (FunctionKind::Generator, true) => crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
             (FunctionKind::Generator, false) => crate::ops::Builtin::GeneratorFunctionPrototype,
-            _ => crate::ops::Builtin::FunctionPrototype,
+            (_, true) => crate::ops::Builtin::AsyncFunctionPrototype,
+            (_, false) => crate::ops::Builtin::FunctionPrototype,
         };
         properties.push((
             "\0function_prototype".to_string(),

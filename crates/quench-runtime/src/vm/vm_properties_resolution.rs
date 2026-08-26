@@ -754,6 +754,9 @@ fn descriptor_property_result(
                 }
             }
         }
+        if key == "constructor" && crate::vm::is_intrinsic_bound(bound) {
+            return None;
+        }
         let prototype = Value::Builtin(Builtin::FunctionPrototype);
         if let Ok(property) = get_property_result(&prototype, key) {
             return Some(Ok(property));
