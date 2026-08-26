@@ -64,6 +64,16 @@ pub(crate) struct CountedMethodLoopFact {
     pub(crate) body_method: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DirectMethodFact {
+    Noop,
+    CopyMethodProperty {
+        target_method: String,
+        source_method: String,
+        property: String,
+    },
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FunctionFacts {
     pub(crate) direct_constructor: Rc<[DirectConstructorField]>,
@@ -71,6 +81,7 @@ pub(crate) struct FunctionFacts {
     pub(crate) forward_construct_call: Option<Rc<ForwardConstructCallFact>>,
     pub(crate) forward_then_call: Option<Rc<ForwardThenCallFact>>,
     pub(crate) counted_method_loop: Option<Rc<CountedMethodLoopFact>>,
+    pub(crate) direct_method: Option<Rc<DirectMethodFact>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

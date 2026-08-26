@@ -297,6 +297,7 @@ fn dynamic_value(
             forward_construct_call: None,
             forward_then_call: None,
             counted_method_loop: None,
+            direct_method: None,
         },
     );
     if let Value::Function(function) = &value {

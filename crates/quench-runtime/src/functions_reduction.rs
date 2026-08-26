@@ -359,6 +359,7 @@ fn emit_function_op(
             forward_construct_call: metadata.forward_construct_call.clone(),
             forward_then_call: metadata.forward_then_call.clone(),
             counted_method_loop: metadata.counted_method_loop.clone(),
+            direct_method: metadata.direct_method.clone(),
         }),
         params,
         captures,
@@ -468,6 +469,7 @@ pub(crate) fn reduce_expression_kind(
             forward_construct_call: forward_construct_call_fact(function, locals),
             forward_then_call: forward_then_call_fact(function),
             counted_method_loop: counted_method_loop_fact(function),
+            direct_method: direct_method_fact(function),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
     ))
@@ -510,6 +512,7 @@ pub(crate) fn reduce_arrow(
             forward_construct_call: None,
             forward_then_call: None,
             counted_method_loop: None,
+            direct_method: None,
         },
     ))
 }
