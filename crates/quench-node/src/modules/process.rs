@@ -201,6 +201,14 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ("cpuUsage", crate::host::process_cpu_usage_capability()),
         ("uptime", crate::host::process_uptime_capability()),
         (
+            "availableMemory",
+            crate::host::capability(crate::registry::SPEC_PROCESS_AVAILABLE_MEMORY),
+        ),
+        (
+            "constrainedMemory",
+            crate::host::capability(crate::registry::SPEC_PROCESS_CONSTRAINED_MEMORY),
+        ),
+        (
             "umask",
             crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
         ),
