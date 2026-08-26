@@ -18,6 +18,7 @@ struct DirectTaskRunner {
     held_mask: i32,
     suspended: i32,
     task: *const crate::value::ObjectData,
+    task_value: crate::value::Value,
     function: std::rc::Rc<crate::value::FunctionValue>,
     kind: DirectTaskKind,
 }
@@ -34,25 +35,26 @@ impl DirectTaskRunner {
         Some(state & self.held_mask != 0 || state == self.suspended)
     }
 
-    fn matches(&self, task: &crate::value::Value) -> bool {
-        matches!(task, crate::value::Value::Object(object) if std::rc::Rc::as_ptr(object) == self.task)
-    }
-
-    fn callee(&self) -> crate::value::Value {
-        crate::value::Value::Function(std::rc::Rc::clone(&self.function))
+    fn matches(&self, task: *const crate::value::ObjectData) -> bool {
+        task == self.task
     }
 
     fn execute(
         &self,
-        task: &crate::value::Value,
         packet: &crate::value::Value,
     ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
         let arguments = std::slice::from_ref(packet);
         match self.kind {
-            DirectTaskKind::Idle => execute_idle_task(&self.function, task),
-            DirectTaskKind::Device => execute_device_task(&self.function, task, arguments),
-            DirectTaskKind::Worker => execute_worker_task(&self.function, task, arguments),
-            DirectTaskKind::Handler => execute_handler_task(&self.function, task, arguments),
+            DirectTaskKind::Idle => execute_idle_task(&self.function, &self.task_value),
+            DirectTaskKind::Device => {
+                execute_device_task(&self.function, &self.task_value, arguments)
+            }
+            DirectTaskKind::Worker => {
+                execute_worker_task(&self.function, &self.task_value, arguments)
+            }
+            DirectTaskKind::Handler => {
+                execute_handler_task(&self.function, &self.task_value, arguments)
+            }
         }
     }
 }
@@ -143,6 +145,7 @@ fn linked_task_runner(
         held_mask,
         suspended,
         task: std::rc::Rc::as_ptr(task_object),
+        task_value: task,
         function,
         kind,
     })
