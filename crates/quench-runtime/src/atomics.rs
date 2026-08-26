@@ -108,7 +108,6 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
         let view = bigint_view(arguments.first())?;
-        require_bigint_shared(view)?;
         let index = atomic_index(arguments.get(1))?;
         if builtin == Builtin::AtomicsLoad {
             return Ok(Value::BigInt(bigint_old(view, index)?));
@@ -132,11 +131,6 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
             "Atomics operation requires an Int32Array",
         ));
     };
-    if !view.shared() {
-        return Err(crate::value::error::throw_type_error(
-            "Atomics operation requires a shared buffer",
-        ));
-    }
     let index = atomic_index(arguments.get(1))?;
     if builtin == Builtin::AtomicsLoad {
         return view.get_number(index).map(Value::Number).ok_or_else(|| {
@@ -158,7 +152,6 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
         let view = bigint_view(arguments.first())?;
-        require_bigint_shared(view)?;
         let index = atomic_index(arguments.get(1))?;
         let old = bigint_old(view, index)?;
         let value = bigint_argument(arguments.get(2))?;
@@ -265,11 +258,6 @@ pub(crate) fn execute(
             "Atomics operation requires an Int32Array",
         ));
     };
-    if !view.shared() {
-        return Err(crate::value::error::throw_type_error(
-            "Atomics operation requires a shared buffer",
-        ));
-    }
     let index = atomic_index(arguments.get(1))?;
     let old = view
         .get(index)
@@ -297,7 +285,6 @@ pub(crate) fn execute(
 
 fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     let view = bigint_view(args.first())?;
-    require_bigint_shared(view)?;
     let index = atomic_index(args.get(1))?;
     let old = bigint_old(view, index)?;
     let replacement = bigint_result(builtin, args, &old)?;
@@ -328,17 +315,6 @@ fn bigint_view(value: Option<&Value>) -> Result<&Value, VmError> {
             "Atomics requires a BigInt typed array",
         )),
     }
-}
-
-fn require_bigint_shared(view: &Value) -> Result<(), VmError> {
-    let shared = match view {
-        Value::BigInt64Array(v) => v.buffer.shared,
-        Value::BigUint64Array(v) => v.buffer.shared,
-        _ => false,
-    };
-    shared
-        .then_some(())
-        .ok_or_else(|| crate::value::error::throw_type_error("Atomics requires a shared buffer"))
 }
 
 fn bigint_old(view: &Value, index: usize) -> Result<String, VmError> {
