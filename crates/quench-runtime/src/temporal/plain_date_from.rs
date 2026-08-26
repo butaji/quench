@@ -1,4 +1,4 @@
-pub(crate) fn from(value: Option<&Value>) -> Result<Value, VmError> {
+pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     if let Some(value) = value.filter(|value| crate::value::is_object(value)) {
         if let Value::Object(object) = value {
             let direct = ["year", "month", "day"].map(|name| {
@@ -11,15 +11,16 @@ pub(crate) fn from(value: Option<&Value>) -> Result<Value, VmError> {
                     .map(|(_, value)| value.clone())
             });
             if let [Some(year), Some(month), Some(day)] = direct {
+                let _ = overflow_value(options)?;
                 return construct(&[year, month, day]);
             }
         }
-        return from_property_bag(value);
+        return from_property_bag(value, options);
     }
     let Some(Value::String(text)) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
-    if has_utc_designator(text) {
+    if has_utc_designator(text) || text.starts_with("-000000") {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
     if has_excess_fraction(text) {
@@ -59,7 +60,9 @@ pub(crate) fn from(value: Option<&Value>) -> Result<Value, VmError> {
         let day = date[6..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return checked_date_object(year, month, day);
+        let result = checked_date_object(year, month, day)?;
+        let _ = overflow_value(options)?;
+        return Ok(result);
     }
     if parts.len() == 1 && date.len() == 11 && matches!(date.as_bytes()[0], b'+' | b'-') {
         let year = date[1..7]
@@ -76,13 +79,17 @@ pub(crate) fn from(value: Option<&Value>) -> Result<Value, VmError> {
         let day = date[9..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return checked_date_object(year, month, day);
+        let result = checked_date_object(year, month, day)?;
+        let _ = overflow_value(options)?;
+        return Ok(result);
     }
     let (year, month, day) = parse_date_parts(&parts)?;
-    checked_date_object(year, month, day)
+    let result = checked_date_object(year, month, day)?;
+    let _ = overflow_value(options)?;
+    Ok(result)
 }
 
-fn from_property_bag(value: &Value) -> Result<Value, VmError> {
+fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, VmError> {
     let year = crate::execute::get_property_result(value, "year")?;
     let month = crate::execute::get_property_result(value, "month")?;
     let month_code = crate::execute::get_property_result(value, "monthCode")?;
@@ -91,16 +98,86 @@ fn from_property_bag(value: &Value) -> Result<Value, VmError> {
     let calendar = match calendar {
         Value::Undefined => calendar,
         Value::String(_) | Value::StringUnits(_) => {
-            Value::String(crate::conversion::to_string(&calendar)?)
+            let text = crate::conversion::to_string(&calendar)?;
+            if !is_iso_calendar_string(&text) {
+                return Err(crate::value::error::throw_range_error("Invalid calendar"));
+            }
+            Value::String("iso8601".into())
         }
         _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
     };
+    let overflow = overflow_value(options)?;
     let month = if matches!(month, Value::Undefined) {
         month_from_code(month_code)?
     } else {
-        month
+        Value::Number(crate::conversion::to_number(&month)?.trunc())
     };
-    construct(&[year, month, day, calendar])
+    let year_number = crate::conversion::to_number(&year)?.trunc();
+    let year = Value::Number(year_number);
+    let mut day = crate::conversion::to_number(&day)?.trunc();
+    let month_number = crate::conversion::to_number(&month)?;
+    if !month_number.is_finite() || month_number < 1.0 || !day.is_finite() || day < 1.0 {
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+    }
+    if overflow == "constrain" {
+        let month_number = month_number.clamp(1.0, 12.0);
+        day = day.clamp(1.0, days_in_month(year_number, month_number));
+        return construct(&[
+            year,
+            Value::Number(month_number),
+            Value::Number(day),
+            calendar,
+        ]);
+    }
+    construct(&[year, month, Value::Number(day), calendar])
+}
+
+fn overflow_value(options: Option<&Value>) -> Result<&'static str, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("constrain");
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let value = crate::execute::get_property_result(options, "overflow")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("constrain");
+    }
+    let value = crate::conversion::to_string(&value)?;
+    if matches!(value.as_str(), "constrain" | "reject") {
+        Ok(if value == "reject" {
+            "reject"
+        } else {
+            "constrain"
+        })
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid overflow"))
+    }
+}
+
+fn is_iso_calendar_string(value: &str) -> bool {
+    if value.eq_ignore_ascii_case("iso8601") {
+        return true;
+    }
+    let (base, annotation) = value
+        .split_once('[')
+        .map_or((value, None), |(base, annotation)| (base, Some(annotation)));
+    if let Some(annotation) = annotation {
+        if !annotation
+            .strip_suffix(']')
+            .is_some_and(|value| value.eq_ignore_ascii_case("u-ca=iso8601"))
+        {
+            return false;
+        }
+    }
+    let date = base.split(['T', 't', ' ']).next().unwrap_or(base);
+    let fields: Vec<_> = date.split('-').collect();
+    match fields.as_slice() {
+        [year, month, day] => year.len() >= 4 && month.len() == 2 && day.len() == 2,
+        [year, month] if year.len() >= 4 => month.len() == 2,
+        [month, day] => month.len() == 2 && day.len() == 2,
+        _ => false,
+    }
 }
 
 fn month_from_code(value: Value) -> Result<Value, VmError> {
