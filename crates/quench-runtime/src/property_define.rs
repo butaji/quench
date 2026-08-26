@@ -249,6 +249,18 @@ fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::TemporalZonedDateTimePrototype, "hoursInDay") => {
             Builtin::TemporalZonedDateTimeHoursInDayGetter
         }
+        (Builtin::TemporalPlainTimePrototype, "hour") => Builtin::TemporalPlainTimeHourGetter,
+        (Builtin::TemporalPlainTimePrototype, "minute") => Builtin::TemporalPlainTimeMinuteGetter,
+        (Builtin::TemporalPlainTimePrototype, "second") => Builtin::TemporalPlainTimeSecondGetter,
+        (Builtin::TemporalPlainTimePrototype, "millisecond") => {
+            Builtin::TemporalPlainTimeMillisecondGetter
+        }
+        (Builtin::TemporalPlainTimePrototype, "microsecond") => {
+            Builtin::TemporalPlainTimeMicrosecondGetter
+        }
+        (Builtin::TemporalPlainTimePrototype, "nanosecond") => {
+            Builtin::TemporalPlainTimeNanosecondGetter
+        }
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
