@@ -1514,18 +1514,18 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             "Missing date-time field",
         ));
     }
+    let month_code_value = if matches!(month_code, Value::Undefined) {
+        None
+    } else {
+        Some(month_code_number(&month_code)?)
+    };
     let month = if matches!(month, Value::Undefined) {
-        month_code_number(&month_code)?
+        month_code_value
+            .clone()
+            .ok_or_else(|| crate::value::error::throw_type_error("Missing month"))?
     } else {
         month
     };
-    let _ = crate::conversion::to_number(&year)?;
-    if !matches!(month_code, Value::Undefined)
-        && crate::conversion::to_number(&month)?
-            != crate::conversion::to_number(&month_code_number(&month_code)?)?
-    {
-        return Err(crate::value::error::throw_range_error("Month mismatch"));
-    }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     if !matches!(calendar, Value::Undefined) {
         validate_calendar(&calendar)?;
@@ -1542,7 +1542,20 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let mut numeric = fields
         .iter()
         .map(crate::conversion::to_number)
+        .map(|value| value.map(f64::trunc))
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(month_code) = month_code_value {
+        let month_code = crate::conversion::to_number(&month_code)?;
+        if !(1.0..=12.0).contains(&month_code) {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+        if numeric[1] != month_code {
+            return Err(crate::value::error::throw_range_error("Month mismatch"));
+        }
+    }
+    if numeric.iter().any(|value| !value.is_finite()) {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     if overflow == "constrain" {
         if numeric[1] > 12.0 {
             numeric[1] = 12.0;
@@ -1585,10 +1598,8 @@ fn month_code_number(value: &Value) -> Result<Value, VmError> {
     if crate::conversion::is_symbol(value) {
         return Err(crate::value::error::throw_type_error("Invalid monthCode"));
     }
-    let Value::String(code) = value else {
-        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
-    };
-    let core = code.strip_suffix('L').unwrap_or(code);
+    let code = crate::conversion::to_string(value)?;
+    let core = code.strip_suffix('L').unwrap_or(&code);
     if core.len() != 3
         || !core.starts_with('M')
         || !core[1..].bytes().all(|byte| byte.is_ascii_digit())
