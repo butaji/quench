@@ -51,12 +51,12 @@ pub(crate) fn assign_set_property(
                 "Cannot set property without a setter",
             ));
         }
-        let (_, target) = crate::functions::execute_target_with_receiver(
+        let (_, _) = crate::functions::execute_target_with_receiver(
             &setter,
             target,
             std::slice::from_ref(&value),
         )?;
-        return Ok(target);
+        return Ok(crate::locals::resolved_replacement(target.clone()));
     }
     Ok(crate::builtins::set_property(target.clone(), key, value))
 }
