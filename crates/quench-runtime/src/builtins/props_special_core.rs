@@ -27,6 +27,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (Temporal, "PlainYearMonth") => Some(Value::Builtin(TemporalPlainYearMonth)),
         (Temporal, "ZonedDateTime") => Some(Value::Builtin(TemporalZonedDateTime)),
         (Temporal, "Now") => Some(Value::Builtin(TemporalNow)),
+        (Temporal, "toString") => Some(Value::Builtin(ObjectPrototypeToString)),
         (IntlSegmenterPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Segmenter".into()))
         }

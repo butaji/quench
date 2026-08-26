@@ -121,6 +121,9 @@ pub fn to_string(value: &Value) -> Result<String, VmError> {
             "Cannot convert a Symbol value to a string",
         ));
     }
+    if matches!(primitive, Value::Builtin(crate::ops::Builtin::Temporal)) {
+        return Ok("[object Temporal]".into());
+    }
     if let Value::BigInt(value) = primitive {
         return Ok(value);
     }
@@ -368,6 +371,7 @@ pub fn is_callable(value: &Value) -> bool {
             | crate::ops::Builtin::Json
             | crate::ops::Builtin::Reflect
             | crate::ops::Builtin::Atomics
+            | crate::ops::Builtin::Temporal
             | crate::ops::Builtin::TemporalNow,
         ) => false,
         Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => false,
