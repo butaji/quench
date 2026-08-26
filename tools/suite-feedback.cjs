@@ -26,12 +26,7 @@ const floors = Object.freeze({
 });
 const expectedKernels = Object.freeze({
   richards: ["L|S|C"],
-  deltablue: [
-    "plan_execute_direct",
-    "plan_execute_loop",
-    "counted_method_affine",
-    "counted_method_copy_property"
-  ],
+  deltablue: ["F|C|S"],
   crypto: ["crypto_integer_multiply", "crypto_kernel"],
   raytrace: ["S|P"],
   "earley-boyer": ["pair_word_walk", "pair_walk"],

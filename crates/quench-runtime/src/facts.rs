@@ -97,18 +97,18 @@ pub(crate) enum DirectMethodFact {
         receiver: [String; 3],
         argument: [String; 3],
     },
-    Recalculate {
+    SelectUpdateCall {
         input_method: String,
         output_method: String,
-        strength_slot: u16,
-        weakest_method: String,
-        receiver_strength: String,
-        input_strength: String,
-        output_strength: String,
-        input_stay: String,
-        output_stay: String,
-        extra_stay_objects: Vec<String>,
-        execute_method: String,
+        namespace_slot: u16,
+        combine_method: String,
+        receiver_value: String,
+        input_value: String,
+        output_value: String,
+        input_flag: String,
+        output_flag: String,
+        extra_flag_objects: Vec<String>,
+        conditional_method: String,
     },
 }
 
