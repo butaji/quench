@@ -227,6 +227,7 @@ test-process-env-delete.js
 test-process-release.js
 test-process-umask-mask.js
 test-process-uptime.js
+test-process-umask.js
 test-process-versions.js
 test-process-next-tick.js
 test-os-eol.js
