@@ -19,9 +19,8 @@ pub(crate) fn zoned_construct(
             ))
         }
     };
-    let timezone = parse_timezone_identifier(
-        arguments.get(1).unwrap_or(&crate::value::Value::Undefined),
-    )?;
+    let timezone =
+        parse_timezone_identifier(arguments.get(1).unwrap_or(&crate::value::Value::Undefined))?;
     Ok(zoned_record(
         epoch,
         timezone,
@@ -225,11 +224,13 @@ fn parse_timezone_identifier(
         let identifier = annotation.or_else(|| {
             if base.ends_with('Z') {
                 Some("UTC")
-            } else if base.len() >= 6 {
-                let suffix = &base[base.len() - 6..];
-                (suffix.starts_with(['+', '-']) && suffix.as_bytes()[3] == b':').then_some(suffix)
             } else {
-                None
+                base.rfind(['+', '-']).and_then(|index| {
+                    let suffix = &base[index..];
+                    normalize_offset_identifier(suffix)
+                        .is_some()
+                        .then_some(suffix)
+                })
             }
         });
         let Some(identifier) = identifier else {
@@ -260,7 +261,10 @@ fn normalize_offset_identifier(text: &str) -> Option<String> {
     }
     let (hour, minute) = match bytes.len() {
         3 => (text[1..3].parse::<u8>().ok()?, 0),
-        5 => (text[1..3].parse::<u8>().ok()?, text[3..5].parse::<u8>().ok()?),
+        5 => (
+            text[1..3].parse::<u8>().ok()?,
+            text[3..5].parse::<u8>().ok()?,
+        ),
         6 if bytes[3] == b':' => (
             text[1..3].parse::<u8>().ok()?,
             text[4..6].parse::<u8>().ok()?,
@@ -364,6 +368,16 @@ mod stubs {
     use crate::{execute::VmError, value::Value};
     use chrono::Datelike;
 
+    fn validate_now_timezone(arguments: &[Value]) -> Result<(), VmError> {
+        if let Some(value) = arguments
+            .first()
+            .filter(|value| !matches!(value, Value::Undefined))
+        {
+            super::parse_timezone_identifier(value)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn execute(
         builtin: crate::ops::Builtin,
         _receiver: Option<&Value>,
@@ -437,6 +451,9 @@ mod stubs {
                 return Some(Ok(Value::String("UTC".into())));
             }
             crate::ops::Builtin::TemporalNowPlainDateISO => {
+                if let Err(error) = validate_now_timezone(arguments) {
+                    return Some(Err(error));
+                }
                 return Some(super::plain_date::construct(&[
                     Value::Number(1970.0),
                     Value::Number(1.0),
@@ -444,6 +461,9 @@ mod stubs {
                 ]));
             }
             crate::ops::Builtin::TemporalNowPlainDateTimeISO => {
+                if let Err(error) = validate_now_timezone(arguments) {
+                    return Some(Err(error));
+                }
                 return Some(super::plain_date_time::construct(&[
                     Value::Number(1970.0),
                     Value::Number(1.0),
@@ -451,12 +471,25 @@ mod stubs {
                 ]));
             }
             crate::ops::Builtin::TemporalNowPlainTimeISO => {
+                if let Err(error) = validate_now_timezone(arguments) {
+                    return Some(Err(error));
+                }
                 return Some(super::plain_time::construct(&[]));
             }
             crate::ops::Builtin::TemporalNowZonedDateTimeISO => {
+                let timezone = match arguments
+                    .first()
+                    .filter(|value| !matches!(value, Value::Undefined))
+                {
+                    Some(value) => match super::parse_timezone_identifier(value) {
+                        Ok(timezone) => timezone,
+                        Err(error) => return Some(Err(error)),
+                    },
+                    None => "UTC".into(),
+                };
                 return Some(Ok(super::zoned_record(
                     0,
-                    "UTC".into(),
+                    timezone,
                     crate::ops::Builtin::TemporalZonedDateTimePrototype,
                 )));
             }
@@ -482,9 +515,7 @@ mod stubs {
                 .split('Z')
                 .next()
                 .unwrap_or(text);
-            let (date, time) = date_time
-                .split_once('T')
-                .unwrap_or((date_time, "00:00:00"));
+            let (date, time) = date_time.split_once('T').unwrap_or((date_time, "00:00:00"));
             let (parsed_year, parsed_month, parsed_day) = super::parse_date_parts(date)
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
             let offset_start = time[1..].find(['+', '-']).map(|index| index + 1);
@@ -549,9 +580,8 @@ mod stubs {
                 .nth(1)
                 .and_then(|part| part.split(']').next())
                 .unwrap_or(if has_z { "UTC" } else { offset_text });
-            let timezone = super::parse_timezone_identifier(&Value::String(
-                timezone_text.to_string(),
-            ))?;
+            let timezone =
+                super::parse_timezone_identifier(&Value::String(timezone_text.to_string()))?;
             if !has_z && offset_start.is_none() {
                 epoch -= super::fixed_offset_nanos(&timezone);
             }
@@ -605,9 +635,9 @@ mod stubs {
             if !matches!(calendar, Value::Undefined) {
                 super::parse_calendar_identifier(&calendar)?;
             }
-            let timezone = super::parse_timezone_identifier(
-                &crate::execute::get_property_result(value, "timeZone")?,
-            )?;
+            let timezone = super::parse_timezone_identifier(&crate::execute::get_property_result(
+                value, "timeZone",
+            )?)?;
             let offset = crate::execute::get_property_result(value, "offset")?;
             let offset = if matches!(offset, Value::Undefined) {
                 None
@@ -641,10 +671,8 @@ mod stubs {
                 + hour * 3_600_000_000_000
                 + minute * 60_000_000_000
                 + second * 1_000_000_000;
-            let local_epoch = local_epoch
-                + millisecond * 1_000_000
-                + microsecond * 1_000
-                + nanosecond;
+            let local_epoch =
+                local_epoch + millisecond * 1_000_000 + microsecond * 1_000 + nanosecond;
             let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
             if let Some(offset) = offset {
                 if super::fixed_offset_nanos(&offset)
@@ -1102,7 +1130,8 @@ mod stubs {
                 None | Some(Value::Undefined) => "constrain".to_string(),
                 Some(options)
                     if crate::value::is_object(options)
-                        || matches!(options, Value::Function(_) | Value::BoundFunction(_)) => {
+                        || matches!(options, Value::Function(_) | Value::BoundFunction(_)) =>
+                {
                     let value = crate::execute::get_property_result(options, "overflow")?;
                     if matches!(value, Value::Undefined) {
                         "constrain".to_string()
@@ -1759,7 +1788,10 @@ mod stubs {
         if let Some(value) = options {
             if !matches!(
                 value,
-                Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
+                Value::Undefined
+                    | Value::Object(_)
+                    | Value::Function(_)
+                    | Value::BoundFunction(_)
                     | Value::Proxy(_)
             ) {
                 return Err(crate::value::error::throw_type_error(
@@ -1811,11 +1843,10 @@ mod stubs {
                 if text.as_deref() == Some("auto") {
                     usize::MAX
                 } else {
-                    let value = text
-                        .as_deref()
-                        .map_or_else(|| crate::conversion::to_number(&value), |text| {
-                            Ok(text.parse::<f64>().unwrap_or(f64::NAN))
-                        })?;
+                    let value = text.as_deref().map_or_else(
+                        || crate::conversion::to_number(&value),
+                        |text| Ok(text.parse::<f64>().unwrap_or(f64::NAN)),
+                    )?;
                     if !value.is_finite() || !(0.0..=9.0).contains(&value) {
                         return Err(crate::value::error::throw_range_error(
                             "Invalid fractionalSecondDigits",
@@ -1830,8 +1861,15 @@ mod stubs {
         let rounding_mode = parse_choice(
             "roundingMode",
             &[
-                "ceil", "floor", "expand", "trunc", "halfCeil", "halfFloor", "halfExpand",
-                "halfTrunc", "halfEven",
+                "ceil",
+                "floor",
+                "expand",
+                "trunc",
+                "halfCeil",
+                "halfFloor",
+                "halfExpand",
+                "halfTrunc",
+                "halfEven",
             ],
         )?;
         let smallest = parse_choice(
