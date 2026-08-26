@@ -326,7 +326,17 @@ pub fn install_with_argv(
 
 /// Build a capability call descriptor for the host.
 pub fn capability(spec: NodeSpec) -> Value {
-    host_api::custom_function(RealmId::ROOT, spec.cap)
+    let function = host_api::custom_function(RealmId::ROOT, spec.cap);
+    let name = spec
+        .name
+        .rsplit([':', '.'])
+        .next()
+        .unwrap_or(spec.name);
+    quench_runtime::execute::set_property(
+        function,
+        "name",
+        Value::String(name.to_string()),
+    )
 }
 
 /// Build a properly-described namespace object. Each named
