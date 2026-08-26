@@ -157,16 +157,33 @@ fn add(
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
     validate_date_options(options, false)?;
+    let overflow = overflow_option(options)?;
     let years =
         number_field(field(&date, "year")) + number_property(&duration, "years") * direction;
     let months = number_field(field(&date, "month")) - 1.0
         + number_property(&duration, "months") * direction;
     let year = years + (months / 12.0).floor();
     let month = months.rem_euclid(12.0) + 1.0;
-    let day = number_field(field(&date, "day")).min(days_in_month(year, month));
+    let original_day = number_field(field(&date, "day"));
+    let max_day = days_in_month(year, month);
+    if overflow == "reject" && original_day > max_day {
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+    }
+    let day = original_day.min(max_day);
     let days = (number_property(&duration, "weeks") * 7.0 + number_property(&duration, "days"))
         * direction;
     shift_date(year, month, day, days)
+}
+
+fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("constrain".into());
+    };
+    let value = crate::execute::get_property_result(options, "overflow")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("constrain".into());
+    }
+    option_string(&value)
 }
 
 fn difference(
