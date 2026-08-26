@@ -38,6 +38,7 @@ fn function_metadata(
         linked_record_insert: crate::functions::linked_record_insert_fact(function, locals),
         forward_construct_call: crate::functions::forward_construct_call_fact(function, locals),
         forward_then_call: crate::functions::forward_then_call_fact(function),
+        counted_method_loop: crate::functions::counted_method_loop_fact(function),
     }
 }
 

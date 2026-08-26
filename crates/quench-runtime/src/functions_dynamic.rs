@@ -296,6 +296,7 @@ fn dynamic_value(
             linked_record_insert: None,
             forward_construct_call: None,
             forward_then_call: None,
+            counted_method_loop: None,
         },
     );
     if let Value::Function(function) = &value {
