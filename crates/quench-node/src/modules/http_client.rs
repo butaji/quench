@@ -510,12 +510,21 @@ fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
         Some(Value::String(url)) => http_url(url),
         Some(Value::Object(_)) => {
             let options = value.cloned().unwrap_or(Value::Undefined);
-            let host = opt(&options, "host")?.unwrap_or_else(|| "127.0.0.1".to_string());
+            // Legacy url.parse() exposes `host`/`path`, while WHATWG URL
+            // exposes `hostname`/`pathname`/`search`; both are request facts.
+            let host = opt_first(&options, &["host", "hostname"])?
+                .unwrap_or_else(|| "127.0.0.1".to_string());
             let port = opt(&options, "port")?
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(80);
             let method = opt(&options, "method")?.unwrap_or_else(|| "GET".to_string());
-            let path = opt(&options, "path")?.unwrap_or_else(|| "/".to_string());
+            let path = match opt(&options, "path")? {
+                Some(path) => path,
+                None => {
+                    let pathname = opt(&options, "pathname")?.unwrap_or_else(|| "/".to_string());
+                    format!("{pathname}{}", opt(&options, "search")?.unwrap_or_default())
+                }
+            };
             let mut headers: Vec<(String, String)> = Vec::new();
             if let Ok(hv) = execute::get_property_result(&options, "headers") {
                 if matches!(hv, Value::Array(_)) {
@@ -568,6 +577,17 @@ fn opt(options: &Value, key: &str) -> Result<Option<String>, VmError> {
         Value::Undefined => Ok(None),
         other => execute::to_js_string(&other).map(Some),
     }
+}
+
+fn opt_first(options: &Value, keys: &[&str]) -> Result<Option<String>, VmError> {
+    for key in keys {
+        if let Some(value) = opt(options, key)? {
+            if !value.is_empty() {
+                return Ok(Some(value));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn http_url(value: &str) -> Result<RequestOptions, VmError> {
