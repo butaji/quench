@@ -433,18 +433,25 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
     })
 }
 
-pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
-    match receiver {
-        Some(Value::Builtin(builtin)) => Value::String(format!(
+pub(crate) fn function_prototype_to_string(
+    receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let Some(value) = receiver.filter(|value| crate::conversion::is_callable(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "Function.prototype.toString called on non-callable",
+        ));
+    };
+    Ok(match value {
+        Value::Builtin(builtin) => Value::String(format!(
             "function {}() {{ [ native code ] }}",
             builtin_name(*builtin)
         )),
-        Some(Value::Function(function)) => {
+        Value::Function(function) => {
             dynamic_function_source(function).map_or_else(native_function_source, Value::String)
         }
-        Some(Value::BoundFunction(_)) => native_function_source(),
-        _ => Value::String(String::new()),
-    }
+        Value::BoundFunction(_) | Value::Proxy(_) => native_function_source(),
+        _ => native_function_source(),
+    })
 }
 
 fn dynamic_function_source(function: &crate::value::FunctionValue) -> Option<String> {
