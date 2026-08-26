@@ -817,13 +817,8 @@ fn with(
             "Invalid time-like object",
         ));
     }
-    let calendar = crate::execute::get_property_result(fields, "calendar")?;
-    let time_zone = crate::execute::get_property_result(fields, "timeZone")?;
-    if !matches!(calendar, Value::Undefined) || !matches!(time_zone, Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Invalid time-like object",
-        ));
-    }
+    let _ = crate::execute::get_property_result(fields, "calendar")?;
+    let _ = crate::execute::get_property_result(fields, "timeZone")?;
     let names = [
         "hour",
         "microsecond",
