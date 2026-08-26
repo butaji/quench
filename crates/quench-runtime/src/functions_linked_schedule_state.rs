@@ -105,7 +105,7 @@ struct NativeSchedule<'a> {
     #[cfg(feature = "execution-trace")]
     append_steps: usize,
     #[cfg(feature = "execution-trace")]
-    direct_branches: [usize; 15],
+    direct_branches: [usize; 16],
     #[cfg(feature = "execution-trace")]
     queue_origin: usize,
     #[cfg(feature = "execution-trace")]
@@ -159,7 +159,7 @@ impl<'a> NativeSchedule<'a> {
             #[cfg(feature = "execution-trace")]
             append_steps: 0,
             #[cfg(feature = "execution-trace")]
-            direct_branches: [0; 15],
+            direct_branches: [0; 16],
             #[cfg(feature = "execution-trace")]
             queue_origin: 0,
             #[cfg(feature = "execution-trace")]
@@ -394,8 +394,8 @@ impl<'a> NativeSchedule<'a> {
             return None;
         };
         count -= 1;
-        let next = if count == 0 {
-            self.hold(current)?
+        let (next, released) = if count == 0 {
+            (self.hold(current)?, None)
         } else {
             let target = if v1 & 1 == 0 { device_a } else { device_b };
             v1 = if v1 & 1 == 0 {
@@ -403,7 +403,7 @@ impl<'a> NativeSchedule<'a> {
             } else {
                 (v1 >> 1) ^ 0xD008
             };
-            self.release(current, target)?
+            (self.release(current, target)?, Some(target))
         };
         self.task_mut(current).kind = NativeTaskKind::Idle {
             v1,
@@ -411,6 +411,24 @@ impl<'a> NativeSchedule<'a> {
             device_a,
             device_b,
         };
+        if let Some(target) = released.filter(|target| next == Some(*target)) {
+            let target_task = self.task(target);
+            if target_task.state & target_task.held_mask == 0
+                && target_task.state != target_task.suspended
+            {
+                let NativeTaskKind::Device { v1 } = target_task.kind else {
+                    return Some(next);
+                };
+                self.current_id = i32::try_from(target).ok()?;
+                let packet = self.take_packet(target)?;
+                #[cfg(feature = "execution-trace")]
+                {
+                    self.direct_branches[15] += 1;
+                    self.task_iterations[1] += 1;
+                }
+                return self.run_device_with_v1(target, packet, v1);
+            }
+        }
         Some(next)
     }
 
@@ -418,6 +436,15 @@ impl<'a> NativeSchedule<'a> {
         let NativeTaskKind::Device { v1 } = self.task(current).kind else {
             return None;
         };
+        self.run_device_with_v1(current, packet, v1)
+    }
+
+    fn run_device_with_v1(
+        &mut self,
+        current: usize,
+        packet: Option<usize>,
+        v1: Option<usize>,
+    ) -> Option<Option<usize>> {
         let (next_v1, next) = if let Some(packet) = packet {
             #[cfg(feature = "execution-trace")]
             {

@@ -24,6 +24,7 @@ impl NativeSchedule<'_> {
             ("linked_skip_held", self.direct_branches[12]),
             ("linked_skip_suspended", self.direct_branches[13]),
             ("linked_device_send_suspend", self.direct_branches[14]),
+            ("linked_idle_release_device", self.direct_branches[15]),
             ("linked_queue_device_empty", self.queue_outcomes[0]),
             ("linked_queue_device_append", self.queue_outcomes[1]),
             ("linked_queue_worker_empty", self.queue_outcomes[2]),
