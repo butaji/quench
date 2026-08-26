@@ -380,3 +380,4 @@ test-dgram-unref.js
 test-events-add-abort-listener.mjs
 test-util-promisify-custom-names.mjs
 test-util-internal.js
+test-assert-myers-diff.js
