@@ -45,6 +45,18 @@ pub enum HostCapabilityKind {
     CreateRealm,
     EvalScript,
     DetachArrayBuffer,
+    Agent,
+    AgentStart,
+    AgentBroadcast,
+    AgentReport,
+    AgentGetReport,
+    AgentLeaving,
+    AgentReceiveBroadcast,
+    AgentSleep,
+    AgentTryYield,
+    AgentTrySleep,
+    AgentSetTimeout,
+    AgentMonotonicNow,
     /// Host-only callable object with an [[IsHTMLDDA]] slot.
     IsHTMLDDA,
     /// Engine lifecycle notification consumed by an embedding host.
