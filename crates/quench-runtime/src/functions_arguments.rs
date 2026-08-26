@@ -528,5 +528,6 @@ include!("functions_device_task.rs");
 include!("functions_worker_task.rs");
 include!("functions_scheduler_hold.rs");
 include!("functions_handler_task.rs");
+include!("functions_linked_record_insert.rs");
 include!("functions_arguments_execution.rs");
 include!("functions_arguments_helpers.rs");
