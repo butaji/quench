@@ -846,6 +846,7 @@ pub struct FunctionCode {
     pub range: CodeRange,
     source: Option<Rc<[Op]>>,
     capture_slots: Rc<[u16]>,
+    facts: Rc<crate::facts::FunctionFacts>,
 }
 
 impl FunctionCode {
@@ -857,6 +858,7 @@ impl FunctionCode {
             range,
             source: None,
             capture_slots,
+            facts: Rc::default(),
         }
     }
 
@@ -871,6 +873,7 @@ impl FunctionCode {
             },
             source: Some(body.into_boxed_slice().into()),
             capture_slots,
+            facts: Rc::default(),
         }
     }
 
@@ -899,6 +902,7 @@ impl FunctionCode {
                 range,
                 source: None,
                 capture_slots,
+                facts: Rc::default(),
             })
             .collect()
     }
@@ -911,11 +915,21 @@ impl FunctionCode {
             range,
             source: None,
             capture_slots: Rc::from([u16::MAX]),
+            facts: Rc::default(),
         }
     }
 
     pub(crate) fn source_ops(&self) -> Option<&[Op]> {
         self.source.as_deref()
+    }
+
+    pub(crate) fn with_facts(mut self, facts: crate::facts::FunctionFacts) -> Self {
+        self.facts = Rc::new(facts);
+        self
+    }
+
+    pub(crate) fn facts(&self) -> &crate::facts::FunctionFacts {
+        &self.facts
     }
 
     pub fn code_id(&self) -> CodeId {
@@ -974,6 +988,7 @@ impl PartialEq for FunctionCode {
     fn eq(&self, other: &Self) -> bool {
         self.range == other.range
             && self.source == other.source
+            && self.facts == other.facts
             && (self.source.is_some() || Rc::ptr_eq(&self.store, &other.store))
     }
 }
