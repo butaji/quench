@@ -62,20 +62,40 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
-    if let Some(result) = execute_linked_record_insert(function, &receiver, arguments) {
-        return result;
+    if is_handler_task_candidate(function) {
+        if let Some(result) = execute_handler_task(function, &receiver, arguments)? {
+            return Ok(result);
+        }
     }
-    if let Some(result) = execute_forward_construct_call(function, &receiver, arguments) {
-        return result;
+    if is_scheduler_hold_candidate(function) {
+        if let Some(result) = execute_scheduler_hold(function, &receiver)? {
+            return Ok(result);
+        }
     }
-    if let Some(result) = execute_forward_then_call(function, &receiver, arguments) {
-        return result;
+    if is_worker_task_candidate(function) {
+        if let Some(result) = execute_worker_task(function, &receiver, arguments)? {
+            return Ok(result);
+        }
     }
-    if let Some(result) = execute_slot_alu(function, &receiver, arguments) {
-        return Ok(result);
+    if is_device_task_candidate(function) {
+        if let Some(result) = execute_device_task(function, &receiver, arguments)? {
+            return Ok(result);
+        }
     }
-    if let Some(result) = execute_select_update_call(function, &receiver)? {
-        return Ok(result);
+    if is_idle_task_candidate(function) {
+        if let Some(result) = execute_idle_task(function, &receiver)? {
+            return Ok(result);
+        }
+    }
+    if is_packet_add_candidate(function) {
+        if let Some(result) = execute_packet_add(function, &receiver, arguments) {
+            return Ok(result);
+        }
+    }
+    if is_scheduler_queue_candidate(function) {
+        if let Some(result) = execute_scheduler_queue(function, &receiver, arguments)? {
+            return Ok(result);
+        }
     }
     if let Some(result) = execute_linked_schedule(function, &receiver)? {
         return Ok(result);
@@ -83,7 +103,7 @@ pub(crate) fn execute(
     if let Some(result) = execute_constraint_collection_loop(function, arguments)? {
         return Ok(result);
     }
-    if let Some(result) = execute_counted_method_loop(function, &receiver)? {
+    if let Some(result) = execute_plan_loop(function, &receiver)? {
         return Ok(result);
     }
     if let Some(result) = execute_shape_kernel(function, &receiver, arguments) {
@@ -118,6 +138,12 @@ pub(crate) fn execute(
         ));
     }
     if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
+        return result;
+    }
+    if let Some(result) = execute_raytrace_render_kernel(function, &receiver, arguments) {
+        return result;
+    }
+    if let Some(result) = execute_raytrace_pixel_kernel(function, &receiver, arguments) {
         return result;
     }
 

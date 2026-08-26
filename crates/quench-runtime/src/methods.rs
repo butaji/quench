@@ -59,7 +59,6 @@ pub(crate) fn execute_named(
     key: &str,
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), VmError> {
-    crate::execution_trace::named_call(key);
     if instruction.flags == 0 && execute_named_word(registers, instruction, cache).is_some() {
         return Ok(());
     }

@@ -186,12 +186,9 @@ fn instance_field_initializer(
             strictness: FunctionStrictness::Strict,
             is_async: false,
             mapped_arguments: false,
+            raytrace_pixel: false,
+            raytrace_render: None,
             direct_constructor: std::rc::Rc::default(),
-            linked_record_insert: None,
-            forward_construct_call: None,
-            forward_then_call: None,
-            counted_method_loop: None,
-            direct_method: None,
         },
     );
     let crate::value::Value::Function(function) = value else {

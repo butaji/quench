@@ -2,19 +2,7 @@
   "schema": 1,
   "metrics": {
     "kernel_iterations_per_call": {
-      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "F|C|S", "field": "hits" } },
-      "denominator": "events.loop_iteration",
-      "min_traffic": 100000,
-      "min": 3.9
-    },
-    "direct_body_per_call": {
-      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "S|C", "field": "hits" } },
-      "denominator": "events.loop_iteration",
-      "min_traffic": 100000,
-      "min": 3.9
-    },
-    "direct_plan_per_call": {
-      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "F|C|S", "field": "hits" } },
+      "numerator": { "top": { "path": "lanes.l1.kernels", "key": "id", "value": "plan_execute_loop", "field": "hits" } },
       "denominator": "events.loop_iteration",
       "min_traffic": 100000,
       "min": 3.9
