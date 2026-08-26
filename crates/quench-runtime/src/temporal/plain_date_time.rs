@@ -463,7 +463,7 @@ fn calendar_difference(
     } else if largest == "month" {
         months = (end[0] as i64 - start[0] as i64) * 12 + end[1] as i64 - start[1] as i64;
     }
-    let anchor = add_months_serial(
+    let mut anchor = add_months_serial(
         start,
         years * 12 + months * if largest == "week" { 0 } else { 1 },
     );
@@ -476,11 +476,60 @@ fn calendar_difference(
     if largest == "week" {
         days %= 7;
     }
-    let time_fraction_days = (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64
+    let backward_receiver = direction > 0.0 && left_total > right_total;
+    let mut time_fraction_days = (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64
         / 86_400_000_000_000.0;
     let mut time_delta = time_of_day_nanos(end) - time_of_day_nanos(start);
-    if time_delta < 0 {
-        days -= 1;
+    if backward_receiver {
+        let mut total_months = if largest == "year" {
+            (left[0] as i64 - right[0] as i64) * 12
+        } else if largest == "month" {
+            (left[0] as i64 - right[0] as i64) * 12 + left[1] as i64 - right[1] as i64
+        } else {
+            0
+        };
+        let raw_time_delta = time_of_day_nanos(right) - time_of_day_nanos(left);
+        if matches!(largest, "year" | "month")
+            && raw_time_delta > 0
+            && add_months_serial(left, -total_months) <= start_serial
+        {
+            total_months -= 1;
+        }
+        if largest == "year" {
+            years = total_months.div_euclid(12);
+            months = total_months.rem_euclid(12);
+        } else if largest == "month" {
+            months = total_months;
+        }
+        anchor = add_months_serial(left, -total_months);
+        days = start_serial - anchor;
+        if largest == "week" {
+            weeks = days / 7;
+            days %= 7;
+        }
+        if raw_time_delta > 0 {
+            days += 1;
+            time_delta = 86_400_000_000_000 - raw_time_delta;
+        } else {
+            time_delta = -raw_time_delta;
+        }
+        days = -days;
+        weeks = -weeks;
+        time_fraction_days = time_delta as f64 / 86_400_000_000_000.0;
+    } else if time_delta < 0 {
+        if matches!(largest, "year" | "month") && years * 12 + months > 0 && days <= 0 {
+            let total_months = years * 12 + months - 1;
+            if largest == "month" {
+                months -= 1;
+            } else {
+                years = total_months.div_euclid(12);
+                months = total_months.rem_euclid(12);
+            }
+            anchor = add_months_serial(start, total_months);
+            days = end_serial - anchor - 1;
+        } else {
+            days -= 1;
+        }
         time_delta += 86_400_000_000_000;
     }
     if smallest == "day" && matches!(largest, "year" | "month" | "week") {
@@ -494,8 +543,20 @@ fn calendar_difference(
     }
     if matches!(smallest, "year" | "month" | "week") {
         let unit_value = match smallest {
-            "year" => years as f64 + months as f64 / 12.0 + (days as f64 + time_fraction_days) / 365.0,
-            "month" => years as f64 * 12.0 + months as f64 + (days as f64 + time_fraction_days) / 30.0,
+            "year" => {
+                let year_anchor = add_months_serial(start, years * 12);
+                let (anchor_year, _, _) = crate::temporal::plain_date::civil_from_serial(year_anchor);
+                let year_length = if days_in_month(anchor_year, 2) == 29 { 366.0 } else { 365.0 };
+                years as f64 + (end_serial - year_anchor) as f64 / year_length + time_fraction_days
+                    / year_length
+            }
+            "month" => {
+                let (anchor_year, anchor_month, _) =
+                    crate::temporal::plain_date::civil_from_serial(anchor);
+                let month_length = days_in_month(anchor_year, anchor_month) as f64;
+                years as f64 * 12.0 + months as f64
+                    + (days as f64 + time_fraction_days) / month_length
+            }
             _ => (weeks as f64) + (days as f64 + time_fraction_days) / 7.0,
         };
         let rounded = (round_quotient(unit_value * sign as f64 / increment, mode) * increment).abs();
