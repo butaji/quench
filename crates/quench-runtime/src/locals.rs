@@ -827,6 +827,10 @@ fn replace_object(old: &Value, new: &Value) -> bool {
     if !Rc::ptr_eq(&old, &old_latest) {
         old.replace_with(new_latest);
     }
+    // A COW write may clone an object while preserving its semantic identity.
+    // Self-referential properties are weak aliases, so retarget aliases held
+    // by the new representative before the previous representative can drop.
+    crate::environment::retarget_aliases_for_identity(&new, old_latest.identity());
     true
 }
 
