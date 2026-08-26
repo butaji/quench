@@ -398,3 +398,9 @@ test-crypto-dep0183.js
 test-crypto-certificate.js
 test-crypto-classes.js
 test-crypto-default-shake-lengths.js
+test-crypto-default-shake-lengths-oneshot.js
+test-crypto-dh-curves.js
+test-crypto-dh-errors.js
+test-crypto-dh-group-setters.js
+test-crypto-dep0204.js
+test-crypto-dep0206.js
