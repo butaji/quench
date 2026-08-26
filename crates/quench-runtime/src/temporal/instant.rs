@@ -188,8 +188,30 @@ fn to_zoned_date_time_iso(
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
-    let Some(Value::String(text)) = value else {
+    let Some(value) = value else {
         return Err(crate::value::error::throw_type_error("Invalid instant"));
+    };
+    if let Value::Object(object) = value {
+        if object.iter().any(|(key, value)| {
+            key == "\0prototype"
+                && matches!(
+                    value,
+                    Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype)
+                )
+        }) {
+            let epoch = object
+                .iter()
+                .find(|(key, _)| key == "epochNanoseconds")
+                .map(|(_, value)| value.clone())
+                .ok_or_else(|| crate::value::error::throw_type_error("Invalid instant"))?;
+            return construct(&[epoch]);
+        }
+    }
+    let text = match value {
+        Value::String(text) if !crate::conversion::is_symbol_string(text) => text.clone(),
+        Value::Builtin(_) => return Err(crate::value::error::throw_range_error("Invalid instant")),
+        value if crate::value::is_object(value) => crate::conversion::to_string(value)?,
+        _ => return Err(crate::value::error::throw_type_error("Invalid instant")),
     };
     let has_offset = text
         .split_once('T')
@@ -198,7 +220,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if !has_offset {
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
-    let epoch = epoch_nanos(text)?;
+    let epoch = epoch_nanos(&text)?;
     construct(&[Value::BigInt(epoch.to_string())])
 }
 
