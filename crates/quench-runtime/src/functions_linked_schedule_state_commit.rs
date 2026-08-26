@@ -43,7 +43,9 @@ impl NativeSchedule<'_> {
                 )?;
             }
             let words = self.table.packet_words(&backing.object)?;
-            words.link.store(self.packet_value(packet.link));
+            words.link.store(
+                self.packet_value((packet.link != NativeQueue::NONE).then_some(packet.link)),
+            );
             words.id.store_number(packet.id as f64);
             words.a1.store_number(f64::from(packet.a1));
         }
