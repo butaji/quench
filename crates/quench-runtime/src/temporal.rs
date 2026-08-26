@@ -383,6 +383,7 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeUntil
                 | crate::ops::Builtin::TemporalZonedDateTimeSince
                 | crate::ops::Builtin::TemporalZonedDateTimeRound
+                | crate::ops::Builtin::TemporalZonedDateTimeWith
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -699,6 +700,62 @@ mod stubs {
                             == crate::execute::get_property_result(&other, name).ok()
                     }),
             ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeWith {
+            let partial = arguments.first().ok_or_else(|| {
+                crate::value::error::throw_type_error("Missing date-time-like argument")
+            })?;
+            if !crate::value::is_object(partial) {
+                return Err(crate::value::error::throw_type_error(
+                    "Invalid date-time-like",
+                ));
+            }
+            let options = arguments.get(1);
+            if options.is_some_and(|value| {
+                !matches!(value, Value::Undefined) && !crate::value::is_object(value)
+            }) {
+                return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+            let value_or = |name: &str| -> Result<Value, VmError> {
+                let value = crate::execute::get_property_result(partial, name)?;
+                if matches!(value, Value::Undefined) {
+                    property(name)
+                } else {
+                    Ok(value)
+                }
+            };
+            let month = crate::execute::get_property_result(partial, "month")?;
+            let month_code = crate::execute::get_property_result(partial, "monthCode")?;
+            let mut fields = vec![
+                ("year".to_string(), value_or("year")?),
+                ("day".to_string(), value_or("day")?),
+                ("hour".to_string(), value_or("hour")?),
+                ("minute".to_string(), value_or("minute")?),
+                ("second".to_string(), value_or("second")?),
+                ("timeZone".to_string(), property("timeZoneId")?),
+            ];
+            if !matches!(month, Value::Undefined) {
+                fields.push(("month".to_string(), month));
+            } else if !matches!(month_code, Value::Undefined) {
+                fields.push(("monthCode".to_string(), month_code));
+            } else {
+                fields.push(("month".to_string(), property("month")?));
+            }
+            let result = zoned_from(Some(&Value::Object(std::rc::Rc::new(
+                crate::value::ObjectData::new(fields),
+            ))))?;
+            let overflow = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "overflow"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined));
+            if let Some(value) = overflow {
+                let value = crate::conversion::to_string(&value)?;
+                if value != "constrain" && value != "reject" {
+                    return Err(crate::value::error::throw_range_error("Invalid overflow"));
+                }
+            }
+            return Ok(result);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone {
             let timezone = arguments
