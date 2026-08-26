@@ -57,6 +57,9 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     if let Value::BindingCell(cell) = value {
         return get_property(&cell.borrow(), key);
     }
+    if let Value::WeakFunction(function) = value {
+        return get_property(&function.value(), key);
+    }
     if matches!(value, Value::Proxy(_)) {
         return crate::proxy::proxy_get(value, key, Some(value)).unwrap_or(Value::Undefined);
     }
