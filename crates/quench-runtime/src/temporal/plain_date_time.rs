@@ -1437,6 +1437,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         from_overflow_option(options)?;
         return Ok(result);
     }
+    if matches!(value, Value::StringUnits(_)) {
+        let text = crate::conversion::to_string(value)?;
+        let result = parse_string(&text)?;
+        from_overflow_option(options)?;
+        return Ok(result);
+    }
     let overflow = from_overflow_option(options)?;
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
@@ -1673,6 +1679,22 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     }
     if time.ends_with(['Z', 'z']) {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    if main.contains('\u{2212}') {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    let time_offset = time
+        .get(1..)
+        .and_then(|value| value.find(['+', '-']).map(|index| &value[index + 1..]));
+    if let Some(offset) = time_offset {
+        let valid = (offset.len() == 5
+            && offset.as_bytes().get(2) == Some(&b':')
+            && offset[..2].bytes().all(|byte| byte.is_ascii_digit())
+            && offset[3..].bytes().all(|byte| byte.is_ascii_digit()))
+            || (offset.len() == 4 && offset.bytes().all(|byte| byte.is_ascii_digit()));
+        if !valid {
+            return Err(crate::value::error::throw_range_error("Invalid date-time"));
+        }
     }
     let time = time.split(['+', '-']).next().unwrap_or(time);
     let (clock, fraction) = time
