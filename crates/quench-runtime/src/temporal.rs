@@ -358,6 +358,7 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone
                 | crate::ops::Builtin::TemporalZonedDateTimeWithCalendar
                 | crate::ops::Builtin::TemporalZonedDateTimeWithPlainTime
+                | crate::ops::Builtin::TemporalZonedDateTimeStartOfDay
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -854,6 +855,57 @@ mod stubs {
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             return Ok(super::zoned_record(
                 epoch,
+                timezone,
+                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+            ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeStartOfDay {
+            let epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128
+                && !(epoch >= 0 && timezone == "UTC")
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
+            }
+            if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
+                return Ok(receiver.clone());
+            }
+            let current = [
+                "hour",
+                "minute",
+                "second",
+                "millisecond",
+                "microsecond",
+                "nanosecond",
+            ]
+            .iter()
+            .map(|name| crate::conversion::to_number(&property(name).unwrap_or(Value::Number(0.0))))
+            .collect::<Result<Vec<_>, _>>()?;
+            let scale = [
+                3_600_000_000_000i128,
+                60_000_000_000,
+                1_000_000_000,
+                1_000_000,
+                1_000,
+                1,
+            ];
+            let midnight = epoch
+                - current
+                    .iter()
+                    .zip(scale.iter())
+                    .map(|(value, scale)| *value as i128 * scale)
+                    .sum::<i128>();
+            return Ok(super::zoned_record(
+                midnight,
                 timezone,
                 crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
