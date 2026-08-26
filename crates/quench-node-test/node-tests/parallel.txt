@@ -152,6 +152,7 @@ test-buffer-readint.js
 test-buffer-readuint.js
 test-buffer-safe-unsafe.js
 test-buffer-sharedarraybuffer.js
+test-buffer-slice.js
 test-buffer-swap.js
 test-buffer-swap-fast.js
 test-buffer-tostring-4gb.js
