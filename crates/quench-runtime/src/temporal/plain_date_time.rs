@@ -1467,10 +1467,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         from_overflow_option(options)?;
         return Ok(result);
     }
-    let overflow = from_overflow_option(options)?;
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
+    let overflow = from_overflow_option(options)?;
     if let Value::Object(object) = value {
         let is_plain_date = object.iter().any(|(key, value)| {
             key == "\0temporal-plain-date" && value == Value::Boolean(true)
