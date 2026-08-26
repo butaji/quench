@@ -388,7 +388,8 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 
 fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
     let guard = state.borrow();
-    !guard.event_loop.microtasks.borrow().is_empty()
+    quench_runtime::has_pending_promise_jobs()
+        || !guard.event_loop.microtasks.borrow().is_empty()
         || !guard.event_loop.immediates.borrow().is_empty()
         || guard
             .timers

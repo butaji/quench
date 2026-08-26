@@ -2,7 +2,7 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"class NodeTransform extends NodeWritable {
   constructor(options = {}) {
-    super(options);
+    super({ ...options, __quenchCompatConstruct: true });
     this.readable = options.readable !== false;
     this.writable = options.writable !== false;
     this.readableObjectMode = options.readableObjectMode ??
@@ -18,6 +18,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"class NodeTransform extends
     this.once("finish", () => {
       if (this.readable !== false && !this.readableEnded) this.push(null);
     });
+    __nodeRunConstruct(this, options);
   }
   once(event, listener) {
     let called = false;
