@@ -203,34 +203,35 @@ pub fn constructor_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
 /// The callable `assert` export: `assert(value)` is `assert.ok`.
 pub fn build_value() -> Value {
     let value = crate::host::capability(SPEC_ASSERT_OK);
-    for (key, property) in build() {
-        let _ = execute::set_callable_property(&value, &key, property);
+    let properties = build();
+    for (key, property) in &properties {
+        let _ = execute::set_callable_property(&value, key, property.clone());
     }
     let strict = crate::host::capability(SPEC_ASSERT_OK);
-    for (key, property) in build() {
-        let _ = execute::set_callable_property(&strict, &key, property);
+    for (key, property) in &properties {
+        let _ = execute::set_callable_property(&strict, key, property.clone());
     }
-    for (names, spec) in [
-        (["equal", "strictEqual"], SPEC_ASSERT_STRICT_EQUAL),
-        (["notEqual", "notStrictEqual"], SPEC_ASSERT_NOT_STRICT_EQUAL),
-        (["deepEqual", "deepStrictEqual"], SPEC_ASSERT_DEEP_STRICT_EQUAL),
-        (["notDeepEqual", "notDeepStrictEqual"], SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+    for (names, source) in [
+        (["equal", "strictEqual"], "strictEqual"),
+        (["notEqual", "notStrictEqual"], "notStrictEqual"),
+        (["deepEqual", "deepStrictEqual"], "deepStrictEqual"),
+        (["notDeepEqual", "notDeepStrictEqual"], "notDeepStrictEqual"),
     ] {
-        let method = crate::host::capability(spec);
+        let method = execute::get_property(&value, source);
         for name in names {
             let _ = execute::set_callable_property(&strict, name, method.clone());
         }
     }
     let _ = execute::set_callable_property(&strict, "strict", strict.clone());
     let _ = execute::set_callable_property(&strict, "\0quench:strict", Value::Boolean(true));
-    let _ = execute::set_callable_property(&value, "strict", strict);
+    let _ = execute::set_callable_property(&value, "strict", value.clone());
+    let _ = execute::set_callable_property(&value, "\0quench:strict-namespace", strict.clone());
     for (name, source) in [
         ("rejects", ASSERT_REJECTS),
         ("doesNotReject", ASSERT_DOES_NOT_REJECT),
     ] {
         if let Ok(method) = eval_function(source) {
             let _ = execute::set_callable_property(&value, name, method.clone());
-            let strict = execute::get_property(&value, "strict");
             let _ = execute::set_callable_property(&strict, name, method);
         }
     }

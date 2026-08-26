@@ -47,6 +47,16 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         state.borrow_mut().module_cache.insert(key, value.clone());
         return Ok(value);
     }
+    if matches!(spec.as_str(), "assert/strict" | "node:assert/strict") {
+        let key = "node:assert/strict".to_string();
+        if let Some(cached) = state.borrow().module_cache.get(&key) {
+            return Ok(cached.clone());
+        }
+        let assert = require(state, &[Value::String("node:assert".into())])?;
+        let value = quench_runtime::execute::get_property(&assert, "\0quench:strict-namespace");
+        state.borrow_mut().module_cache.insert(key, value.clone());
+        return Ok(value);
+    }
     if matches!(
         spec.as_str(),
         "path/posix" | "path/win32" | "node:path/posix" | "node:path/win32"

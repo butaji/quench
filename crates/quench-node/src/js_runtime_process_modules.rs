@@ -2,36 +2,7 @@ fn assert_module() -> Value {
     if let Some(module) = NODE_ASSERT_MODULE.with(|stored| stored.borrow().clone()) {
         return module;
     }
-    let mut module = capability_function(HostCapabilityKind::Custom(CapabilityName::Assert));
-    for (name, id) in [
-        ("strictEqual", CapabilityName::AssertStrictEqual),
-        ("deepStrictEqual", CapabilityName::AssertDeepStrictEqual),
-        ("deepEqual", CapabilityName::AssertDeepStrictEqual),
-        ("ok", CapabilityName::AssertOk),
-        ("throws", CapabilityName::AssertThrows),
-        ("doesNotThrow", CapabilityName::AssertDoesNotThrow),
-        ("ifError", CapabilityName::AssertIfError),
-        ("notStrictEqual", CapabilityName::AssertNotStrictEqual),
-        ("equal", CapabilityName::AssertEqual),
-        ("notEqual", CapabilityName::AssertNotEqual),
-        ("match", CapabilityName::AssertMatchValue),
-        (
-            "notDeepStrictEqual",
-            CapabilityName::AssertNotDeepStrictEqual,
-        ),
-        ("fail", CapabilityName::AssertFail),
-        ("doesNotMatch", CapabilityName::AssertDoesNotMatch),
-        ("notDeepEqual", CapabilityName::AssertNotDeepEqual),
-        ("rejects", CapabilityName::AssertRejects),
-        ("doesNotReject", CapabilityName::AssertDoesNotReject),
-        ("AssertionError", CapabilityName::AssertError),
-    ] {
-        module = quench_runtime::execute::set_property(
-            module,
-            name,
-            capability_function(HostCapabilityKind::Custom(id)),
-        );
-    }
+    let module = crate::modules::assert::build_value();
     NODE_ASSERT_MODULE.with(|stored| stored.replace(Some(module.clone())));
     module
 }
