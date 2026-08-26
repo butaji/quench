@@ -124,6 +124,7 @@ test-buffer-fill.js
 test-buffer-from.js
 test-buffer-generic-methods.js
 test-buffer-includes.js
+test-buffer-isascii.js
 test-buffer-inspect.js
 test-buffer-isencoding.js
 test-buffer-iterator.js
