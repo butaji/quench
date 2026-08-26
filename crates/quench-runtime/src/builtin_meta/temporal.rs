@@ -540,13 +540,13 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalInstantToString
         | Builtin::TemporalInstantToJSON
         | Builtin::TemporalInstantToLocaleString
-        | Builtin::TemporalInstantValueOf
-        | Builtin::TemporalInstantToZonedDateTimeISO => Some(0.0),
+        | Builtin::TemporalInstantValueOf => Some(0.0),
+        Builtin::TemporalInstantToZonedDateTimeISO => Some(1.0),
         Builtin::TemporalInstantEquals
         | Builtin::TemporalInstantAdd
         | Builtin::TemporalInstantSubtract
         | Builtin::TemporalInstantRound => Some(1.0),
-        Builtin::TemporalInstantUntil | Builtin::TemporalInstantSince => Some(2.0),
+        Builtin::TemporalInstantUntil | Builtin::TemporalInstantSince => Some(1.0),
         Builtin::TemporalPlainDateTime => Some(3.0),
         Builtin::TemporalPlainDateTimeFrom => Some(1.0),
         Builtin::TemporalPlainDateTimeCompare => Some(2.0),
