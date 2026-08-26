@@ -179,7 +179,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeToPlainDate => Some(to_plain_date(_receiver)),
         crate::ops::Builtin::TemporalPlainDateTimeToPlainTime => Some(to_plain_time(_receiver)),
         crate::ops::Builtin::TemporalPlainDateTimeToZonedDateTime => {
-            Some(to_zoned_date_time(_receiver, arguments.first()))
+            Some(to_zoned_date_time(_receiver, arguments.first(), arguments.get(1)))
         }
         crate::ops::Builtin::TemporalPlainDateTimeWithCalendar => {
             Some(with_calendar(_receiver, arguments.first()))
@@ -592,7 +592,28 @@ fn to_plain_time(receiver: Option<&Value>) -> Result<Value, VmError> {
 fn to_zoned_date_time(
     receiver: Option<&Value>,
     time_zone: Option<&Value>,
+    options: Option<&Value>,
 ) -> Result<Value, VmError> {
+    let disambiguation = if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+        if !crate::value::is_object(options) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
+        let value = crate::execute::get_property_result(options, "disambiguation")?;
+        if matches!(value, Value::Undefined) {
+            "compatible".to_string()
+        } else {
+            if crate::conversion::is_symbol(&value) {
+                return Err(crate::value::error::throw_type_error("Invalid disambiguation"));
+            }
+            let value = crate::conversion::to_string(&value)?;
+            if !matches!(value.as_str(), "compatible" | "earlier" | "later" | "reject") {
+                return Err(crate::value::error::throw_range_error("Invalid disambiguation"));
+            }
+            value
+        }
+    } else {
+        "compatible".to_string()
+    };
     let values = fields(
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
     )?;
@@ -607,11 +628,20 @@ fn to_zoned_date_time(
     if time_zone.starts_with("-000000-") {
         return Err(crate::value::error::throw_range_error("Invalid time zone"));
     }
+    let _ = disambiguation;
+    let mut epoch = epoch_nanos(&values);
+    if let Some(offset) = fixed_offset_nanos(time_zone) {
+        epoch -= offset;
+    }
+    const INSTANT_LIMIT: i128 = 8_640_000_000_000_000_000_000;
+    if !(-INSTANT_LIMIT..=INSTANT_LIMIT).contains(&epoch) {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             (
                 "epochNanoseconds".into(),
-                Value::BigInt(epoch_nanos(&values).to_string()),
+                Value::BigInt(epoch.to_string()),
             ),
             ("calendarId".into(), Value::String("iso8601".into())),
             ("timeZoneId".into(), Value::String(time_zone.clone())),
@@ -661,10 +691,8 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
 }
 
 fn epoch_nanos(values: &[f64]) -> i128 {
-    let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
-        .unwrap_or(NaiveDate::MIN);
-    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("valid epoch");
-    let days = date.signed_duration_since(epoch).num_days() as i128;
+    let days = (crate::temporal::plain_date::date_serial(values[0], values[1], values[2])
+        - crate::temporal::plain_date::date_serial(1970.0, 1.0, 1.0)) as i128;
     days * 86_400_000_000_000
         + values[3] as i128 * 3_600_000_000_000
         + values[4] as i128 * 60_000_000_000
@@ -672,6 +700,21 @@ fn epoch_nanos(values: &[f64]) -> i128 {
         + values[6] as i128 * 1_000_000
         + values[7] as i128 * 1_000
         + values[8] as i128
+}
+
+fn fixed_offset_nanos(time_zone: &str) -> Option<i128> {
+    let sign = match time_zone.as_bytes().first()? {
+        b'+' => 1_i128,
+        b'-' => -1_i128,
+        _ => return None,
+    };
+    let text = &time_zone[1..];
+    let (hours, minutes) = text
+        .split_once(':')
+        .map_or((text, "0"), |(hours, minutes)| (hours, minutes));
+    let hours = hours.parse::<i128>().ok()?;
+    let minutes = minutes.parse::<i128>().ok()?;
+    Some(sign * (hours * 3_600_000_000_000 + minutes * 60_000_000_000))
 }
 
 fn with_plain_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Value, VmError> {
