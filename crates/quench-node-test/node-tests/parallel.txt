@@ -381,3 +381,5 @@ test-events-add-abort-listener.mjs
 test-util-promisify-custom-names.mjs
 test-util-internal.js
 test-assert-myers-diff.js
+test-timers-nan-duration-warning.js
+test-timers-negative-duration-warning.js
