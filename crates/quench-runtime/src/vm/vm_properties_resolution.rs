@@ -358,32 +358,36 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
-    crate::module_bindings::exports(value, key)?;
-    if let Some(value) = proven_own_data(value, key) {
+    // Prototype mutations materialize a replacement object. Resolve it before
+    // walking inherited properties so ordinary objects (including generator
+    // prototypes) observe the current descriptor rather than the stale view.
+    let value = crate::locals::resolved_replacement(value.clone());
+    crate::module_bindings::exports(&value, key)?;
+    if let Some(value) = proven_own_data(&value, key) {
         return Ok(value);
     }
-    if let Some(result) = early_property_result(value, key, receiver) {
+    if let Some(result) = early_property_result(&value, key, receiver) {
         return result;
     }
-    if let Some(result) = array_property_result(value, key, receiver) {
+    if let Some(result) = array_property_result(&value, key, receiver) {
         return result;
     }
-    if let Some(result) = function_inherited_property_result(value, key, receiver) {
+    if let Some(result) = function_inherited_property_result(&value, key, receiver) {
         return result;
     }
-    if let Some(result) = object_inherited_property_result(value, key, receiver) {
+    if let Some(result) = object_inherited_property_result(&value, key, receiver) {
         return result;
     }
-    if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
+    if let Some(result) = crate::disposable_stack::accessor(&value, key, receiver) {
         return result;
     }
-    if let Some(result) = data_view_instance_accessor(value, key) {
+    if let Some(result) = data_view_instance_accessor(&value, key) {
         return result;
     }
-    if let Some(result) = descriptor_property_result(value, key, receiver) {
+    if let Some(result) = descriptor_property_result(&value, key, receiver) {
         return result;
     }
-    finish_property_access(value, key, receiver)
+    finish_property_access(&value, key, receiver)
 }
 
 pub(crate) fn proven_own_data(value: &Value, key: &str) -> Option<Value> {
