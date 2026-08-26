@@ -35,11 +35,7 @@ pub(crate) fn direct_constructor_fact(
         }
         fields.push(field);
     }
-    if fields.len() >= 3 {
-        fields.into()
-    } else {
-        std::rc::Rc::from([])
-    }
+    fields.into()
 }
 
 fn direct_constructor_conditional(
@@ -207,6 +203,25 @@ mod direct_constructor_tests {
                 ("x".into(), DirectConstructorSource::Argument(0)),
                 ("y".into(), DirectConstructorSource::Argument(1)),
                 ("ok".into(), DirectConstructorSource::Boolean(false))
+            ]
+        );
+    }
+
+    #[test]
+    fn records_single_argument_slot_fact() {
+        assert_eq!(
+            fields("function C(x){this.x=x;}"),
+            vec![("x".into(), DirectConstructorSource::Argument(0))]
+        );
+    }
+
+    #[test]
+    fn records_two_argument_slot_facts() {
+        assert_eq!(
+            fields("function C(x,y){this.x=x;this.y=y;}"),
+            vec![
+                ("x".into(), DirectConstructorSource::Argument(0)),
+                ("y".into(), DirectConstructorSource::Argument(1))
             ]
         );
     }
