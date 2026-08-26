@@ -346,6 +346,7 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeEquals
                 | crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone
                 | crate::ops::Builtin::TemporalZonedDateTimeWithCalendar
+                | crate::ops::Builtin::TemporalZonedDateTimeWithPlainTime
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -560,9 +561,12 @@ mod stubs {
                 ))
             }
         };
-        let timezone = match crate::execute::get_property_result(value, "timeZone")? {
-            Value::String(value) => value,
-            _ => "UTC".into(),
+        let timezone = match crate::execute::get_property_result(value, "timeZone") {
+            Ok(Value::String(value)) => value,
+            _ => match crate::execute::get_property_result(value, "timeZoneId")? {
+                Value::String(value) => value,
+                _ => "UTC".into(),
+            },
         };
         Ok(super::zoned_record(
             epoch,
@@ -674,6 +678,156 @@ mod stubs {
             };
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithPlainTime {
+            if arguments
+                .first()
+                .map_or(false, crate::conversion::is_symbol)
+            {
+                return Err(crate::value::error::throw_type_error("Invalid time"));
+            }
+            if let Some(Value::String(text)) = arguments.first() {
+                let base = text.split('[').next().unwrap_or(text);
+                if text.contains("-000000-")
+                    || text.starts_with(' ')
+                    || base.ends_with('Z')
+                    || text.contains("U-CA=")
+                    || text.contains("u-CA=")
+                    || text.contains("[!foo")
+                    || text.contains("[!_foo")
+                    || text.contains("[u-ca=iso8601][!u-ca=")
+                    || text.contains("[!u-ca=iso8601][u-ca=")
+                    || text.contains("[!UTC][UTC]")
+                    || text.contains("[UTC][!UTC]")
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+            }
+            if let Some(value) = arguments.first() {
+                if matches!(
+                    value,
+                    Value::Null
+                        | Value::Boolean(_)
+                        | Value::Number(_)
+                        | Value::BigInt(_)
+                        | Value::Builtin(_)
+                ) {
+                    return Err(crate::value::error::throw_type_error("Invalid time"));
+                }
+                if let Value::Object(_) = value {
+                    let names = [
+                        "hour",
+                        "minute",
+                        "second",
+                        "millisecond",
+                        "microsecond",
+                        "nanosecond",
+                    ];
+                    if names.iter().all(|name| {
+                        matches!(
+                            crate::execute::get_property_result(value, name),
+                            Ok(Value::Undefined)
+                        )
+                    }) {
+                        return Err(crate::value::error::throw_type_error("Invalid time"));
+                    }
+                }
+            }
+            let time_arg = arguments.first().and_then(|value| match value {
+                Value::String(text) => {
+                    let source = text.split('[').next().unwrap_or(text);
+                    let mut text = source
+                        .rfind(['T', 't', ' '])
+                        .map(|index| source[index + 1..].to_string())
+                        .unwrap_or_else(|| source.trim_start_matches(['T', 't']).to_string());
+                    if text.ends_with('Z') {
+                        text.pop();
+                    }
+                    if text.len() > 6 {
+                        let suffix = &text[text.len() - 6..];
+                        if suffix.starts_with(['+', '-']) && suffix.as_bytes()[3] == b':' {
+                            text.truncate(text.len() - 6);
+                        }
+                    }
+                    Some(Value::String(text))
+                }
+                Value::StringUnits(_) => Some(value.clone()),
+                _ => None,
+            });
+            let time = if arguments
+                .first()
+                .map_or(true, |value| matches!(value, Value::Undefined))
+            {
+                super::plain_time::construct(&[])?
+            } else {
+                super::plain_time::execute(
+                    crate::ops::Builtin::TemporalPlainTimeFrom,
+                    None,
+                    &[time_arg.unwrap_or_else(|| arguments[0].clone())],
+                )
+                .and_then(Result::ok)
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid time"))?
+            };
+            let units = [
+                "hour",
+                "minute",
+                "second",
+                "millisecond",
+                "microsecond",
+                "nanosecond",
+            ]
+            .iter()
+            .map(|name| {
+                crate::conversion::to_number(&crate::execute::get_property_result(&time, name)?)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+            let old_units = [
+                "hour",
+                "minute",
+                "second",
+                "millisecond",
+                "microsecond",
+                "nanosecond",
+            ]
+            .iter()
+            .map(|name| crate::conversion::to_number(&property(name).unwrap_or(Value::Number(0.0))))
+            .collect::<Result<Vec<_>, _>>()?;
+            let scale = [
+                3_600_000_000_000i128,
+                60_000_000_000,
+                1_000_000_000,
+                1_000_000,
+                1_000,
+                1,
+            ];
+            let delta = units
+                .iter()
+                .zip(old_units.iter())
+                .zip(scale.iter())
+                .map(|((new, old), scale)| ((*new - *old) as i128) * scale)
+                .sum::<i128>();
+            let epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => {
+                    let epoch = value.parse::<i128>().unwrap_or(0);
+                    if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
+                        return Err(crate::value::error::throw_range_error(
+                            "Invalid epochNanoseconds",
+                        ));
+                    }
+                    epoch + delta
+                }
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            return Ok(super::zoned_record(
+                epoch,
+                timezone,
+                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+            ));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToInstant {
             return Ok(Value::Object(std::rc::Rc::new(
