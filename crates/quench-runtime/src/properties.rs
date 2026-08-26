@@ -193,9 +193,6 @@ pub(crate) fn execute_set_property(
     if matches!(target, crate::value::Value::Proxy(_)) {
         return assign_proxy_set(registers, object, &target, &key, value);
     }
-    if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
-        return Ok(());
-    }
     if key == "stack" && inherits_error_prototype(&target) {
         crate::vm::execute_builtin_with_receiver(
             crate::ops::Builtin::ErrorPrototypeStackSetter,
