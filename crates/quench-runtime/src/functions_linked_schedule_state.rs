@@ -1,11 +1,35 @@
 const LINKED_PACKET_LIMIT: usize = 64;
 const LINKED_PAYLOAD_LIMIT: usize = 16;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct NativeQueue {
-    head: Option<usize>,
-    tail: Option<usize>,
+    head: usize,
+    tail: usize,
 }
+
+impl NativeQueue {
+    const NONE: usize = usize::MAX;
+
+    const fn empty() -> Self {
+        Self {
+            head: Self::NONE,
+            tail: Self::NONE,
+        }
+    }
+
+    fn from_ends(head: Option<usize>, tail: Option<usize>) -> Self {
+        Self {
+            head: head.unwrap_or(Self::NONE),
+            tail: tail.unwrap_or(Self::NONE),
+        }
+    }
+
+    fn head(self) -> Option<usize> {
+        (self.head != Self::NONE).then_some(self.head)
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<NativeQueue>() == 16);
 
 #[derive(Clone, Copy)]
 enum NativeTaskKind {
@@ -42,6 +66,8 @@ struct NativeTask {
     suspended: i32,
     kind: NativeTaskKind,
 }
+
+const _: () = assert!(std::mem::size_of::<NativeTask>() == 96);
 
 struct NativePacket {
     link: Option<usize>,
@@ -142,10 +168,10 @@ impl<'a> NativeSchedule<'a> {
         for root in self.tasks.iter().flat_map(|task| {
             let (first, second) = match task.kind {
                 NativeTaskKind::Device { v1 } => (v1, None),
-                NativeTaskKind::Handler { v1, v2, .. } => (v1.head, v2.head),
+                NativeTaskKind::Handler { v1, v2, .. } => (v1.head(), v2.head()),
                 _ => (None, None),
             };
-            [task.queue.head, first, second]
+            [task.queue.head(), first, second]
         }) {
             let mut packet = root;
             while let Some(index) = packet {
@@ -210,10 +236,10 @@ impl<'a> NativeSchedule<'a> {
             };
             match self.packets.get(packet)?.link {
                 Some(next) => tail = Some(next),
-                None => return Some(NativeQueue { head, tail }),
+                None => return Some(NativeQueue::from_ends(head, tail)),
             }
         }
-        head.is_none().then_some(NativeQueue::default())
+        head.is_none().then_some(NativeQueue::empty())
     }
 
     fn packet_from_value(&mut self, value: &crate::value::Value) -> Option<Option<usize>> {
@@ -294,12 +320,15 @@ impl<'a> NativeSchedule<'a> {
         if state != suspended | runnable {
             return Some(None);
         }
-        let packet = queue.head?;
+        if queue.head == NativeQueue::NONE {
+            return None;
+        }
+        let packet = queue.head;
         let next = self.packets.get(packet)?.link;
         let task = self.task_mut(current);
-        task.queue.head = next;
+        task.queue.head = next.unwrap_or(NativeQueue::NONE);
         if next.is_none() {
-            task.queue.tail = None;
+            task.queue.tail = NativeQueue::NONE;
         }
         task.state = if next.is_none() { 0 } else { runnable };
         Some(Some(packet))
@@ -453,7 +482,7 @@ impl<'a> NativeSchedule<'a> {
                 v2 = self.append_packet(v2, packet)?;
             }
         }
-        let next = match v1.head {
+        let next = match v1.head() {
             None => {
                 #[cfg(feature = "execution-trace")]
                 {
@@ -462,7 +491,7 @@ impl<'a> NativeSchedule<'a> {
                 self.suspend(current)?
             }
             Some(work) if usize::try_from(self.packets.get(work)?.a1).ok()? < data_size => {
-                let Some(device) = v2.head else {
+                let Some(device) = v2.head() else {
                     #[cfg(feature = "execution-trace")]
                     {
                         self.direct_branches[6] += 1;
@@ -475,9 +504,9 @@ impl<'a> NativeSchedule<'a> {
                     };
                     return self.suspend(current);
                 };
-                v2.head = self.packets.get(device)?.link;
-                if v2.head.is_none() {
-                    v2.tail = None;
+                v2.head = self.packets.get(device)?.link.unwrap_or(NativeQueue::NONE);
+                if v2.head == NativeQueue::NONE {
+                    v2.tail = NativeQueue::NONE;
                 }
                 let offset = usize::try_from(self.packets.get(work)?.a1).ok()?;
                 if offset >= self.packets.get(work)?.payload_len {
@@ -497,9 +526,9 @@ impl<'a> NativeSchedule<'a> {
                 {
                     self.direct_branches[8] += 1;
                 }
-                v1.head = self.packets.get(work)?.link;
-                if v1.head.is_none() {
-                    v1.tail = None;
+                v1.head = self.packets.get(work)?.link.unwrap_or(NativeQueue::NONE);
+                if v1.head == NativeQueue::NONE {
+                    v1.tail = NativeQueue::NONE;
                 }
                 let target = self.packets.get(work)?.id;
                 Some(self.queue_packet(current, work, target)?)
@@ -516,12 +545,13 @@ impl<'a> NativeSchedule<'a> {
 
     fn append_packet(&mut self, mut queue: NativeQueue, packet: usize) -> Option<NativeQueue> {
         self.packets.get_mut(packet)?.link = None;
-        if let Some(tail) = queue.tail {
+        if queue.tail != NativeQueue::NONE {
+            let tail = queue.tail;
             self.packets.get_mut(tail)?.link = Some(packet);
         } else {
-            queue.head = Some(packet);
+            queue.head = packet;
         }
-        queue.tail = Some(packet);
+        queue.tail = packet;
         Some(queue)
     }
 
@@ -536,11 +566,8 @@ impl<'a> NativeSchedule<'a> {
         let current_priority = self.task(current).priority;
         let runnable = self.scheduler.runnable;
         let target_task = self.task_mut(target);
-        if target_task.queue.head.is_none() {
-            target_task.queue = NativeQueue {
-                head: Some(packet),
-                tail: Some(packet),
-            };
+        if target_task.queue.head == NativeQueue::NONE {
+            target_task.queue = NativeQueue::from_ends(Some(packet), Some(packet));
             target_task.state |= runnable;
             let next = if target_task.priority > current_priority {
                 target
