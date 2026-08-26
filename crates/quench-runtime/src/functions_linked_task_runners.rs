@@ -35,14 +35,12 @@ struct DirectTaskRunner {
     state: *const crate::register_file::SlotWord,
     queue: *const crate::register_file::SlotWord,
     priority: *const crate::register_file::SlotWord,
-    task_word: *const crate::register_file::SlotWord,
     task_v1: *const crate::register_file::SlotWord,
     task_count: Option<*const crate::register_file::SlotWord>,
     task_v2: Option<*const crate::register_file::SlotWord>,
     held_mask: i32,
     suspended: i32,
     tcb: *const crate::value::ObjectData,
-    task: *const crate::value::ObjectData,
     task_value: crate::value::Value,
     tcb_value: crate::value::Value,
     scheduler: *const crate::value::ObjectData,
@@ -76,10 +74,6 @@ impl DirectTaskRunner {
     fn is_held_or_suspended(&self) -> Option<bool> {
         let state = exact_i32(self.word(self.state).number()?)?;
         Some(state & self.held_mask != 0 || state == self.suspended)
-    }
-
-    fn matches(&self, task: *const crate::value::ObjectData) -> bool {
-        task == self.task
     }
 
     fn tcb(&self) -> &crate::value::ObjectData {
@@ -281,14 +275,12 @@ fn linked_task_runner(
         state: std::ptr::from_ref(state),
         queue: std::ptr::from_ref(queue),
         priority: std::ptr::from_ref(priority),
-        task_word: std::ptr::from_ref(task_word),
         task_v1: std::ptr::from_ref(task_v1),
         task_count,
         task_v2,
         held_mask,
         suspended,
         tcb: std::ptr::from_ref(tcb),
-        task: std::rc::Rc::as_ptr(task_object),
         task_value: task,
         tcb_value: tcb_value.clone(),
         scheduler: std::rc::Rc::as_ptr(&scheduler),
