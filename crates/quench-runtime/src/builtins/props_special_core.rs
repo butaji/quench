@@ -401,6 +401,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "equals") => {
             Some(Value::Builtin(TemporalZonedDateTimeEquals))
         }
+        (TemporalZonedDateTimePrototype, "withTimeZone") => {
+            Some(Value::Builtin(TemporalZonedDateTimeWithTimeZone))
+        }
         (TemporalZonedDateTimePrototype, "valueOf") => {
             Some(Value::Builtin(TemporalDurationValueOf))
         }
