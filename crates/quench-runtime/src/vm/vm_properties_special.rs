@@ -1,4 +1,49 @@
+thread_local! {
+    static AGENT_OBJECT: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn reset_agent_object() {
+    AGENT_OBJECT.with(|object| object.borrow_mut().take());
+}
+
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "agent" {
+        return AGENT_OBJECT.with(|object| {
+            if let Some(value) = object.borrow().as_ref() {
+                return value.clone();
+            }
+            let token = Value::HostCapability(std::rc::Rc::new(
+                crate::value::HostCapabilityValue::new(HostCapabilityRef {
+                    realm: capability.realm,
+                    kind: crate::ops::HostCapabilityKind::Agent,
+                }),
+            ));
+            let method = |kind| {
+                bind_method(&token, Value::Builtin(Builtin::HostCapability(kind)))
+            };
+            let value = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                ("start".into(), method(crate::ops::HostCapabilityKind::AgentStart)),
+                ("broadcast".into(), method(crate::ops::HostCapabilityKind::AgentBroadcast)),
+                ("report".into(), method(crate::ops::HostCapabilityKind::AgentReport)),
+                ("getReport".into(), method(crate::ops::HostCapabilityKind::AgentGetReport)),
+                ("leaving".into(), method(crate::ops::HostCapabilityKind::AgentLeaving)),
+                ("receiveBroadcast".into(), method(crate::ops::HostCapabilityKind::AgentReceiveBroadcast)),
+                ("sleep".into(), method(crate::ops::HostCapabilityKind::AgentSleep)),
+                ("tryYield".into(), method(crate::ops::HostCapabilityKind::AgentTryYield)),
+                ("trySleep".into(), method(crate::ops::HostCapabilityKind::AgentTrySleep)),
+                ("setTimeout".into(), method(crate::ops::HostCapabilityKind::AgentSetTimeout)),
+                ("monotonicNow".into(), method(crate::ops::HostCapabilityKind::AgentMonotonicNow)),
+                ("timeouts".into(), Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                    ("yield".into(), Value::Number(1.0)),
+                    ("small".into(), Value::Number(100.0)),
+                    ("long".into(), Value::Number(1_000.0)),
+                    ("huge".into(), Value::Number(10_000.0)),
+                ])))),
+            ])));
+            object.borrow_mut().replace(value.clone());
+            value
+        });
+    }
     if let Value::HostCapability(token) = value {
         if let Some((_, property)) = token
             .properties

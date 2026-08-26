@@ -53,10 +53,115 @@ fn dispatch_host_capability(
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         HostCapabilityKind::EvalScript => run_eval_in_capability_realm(capability, arguments),
+        HostCapabilityKind::Agent => Err(type_error("$262.agent is not callable")),
+        HostCapabilityKind::AgentStart => agent_start(arguments),
+        HostCapabilityKind::AgentBroadcast => agent_broadcast(arguments),
+        HostCapabilityKind::AgentReport => agent_report(arguments),
+        HostCapabilityKind::AgentGetReport => Ok(agent_get_report()),
+        HostCapabilityKind::AgentLeaving => Ok(Value::Undefined),
+        HostCapabilityKind::AgentReceiveBroadcast => agent_receive_broadcast(arguments),
+        HostCapabilityKind::AgentSleep
+        | HostCapabilityKind::AgentTryYield
+        | HostCapabilityKind::AgentTrySleep => agent_sleep(kind, arguments),
+        HostCapabilityKind::AgentSetTimeout => Ok(Value::Undefined),
+        HostCapabilityKind::AgentMonotonicNow => Ok(agent_monotonic_now()),
         HostCapabilityKind::IsHTMLDDA => Ok(Value::Null),
         HostCapabilityKind::PromiseHook => Err(VmError::NotCallable),
         HostCapabilityKind::Custom(_) => host_custom_call(descriptor, receiver, arguments),
     }
+}
+
+fn agent_start(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(_)) = arguments.first() else {
+        return Err(type_error("$262.agent.start expects a string"));
+    };
+    run_eval_script(arguments)
+}
+
+fn agent_receive_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments
+        .first()
+        .ok_or_else(|| type_error("$262.agent.receiveBroadcast expects a callback"))?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(type_error("$262.agent.receiveBroadcast expects a callback"));
+    }
+    AGENT_CALLBACKS.with(|callbacks| callbacks.borrow_mut().push(callback.clone()));
+    Ok(Value::Undefined)
+}
+
+fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
+    let buffer = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let callbacks = AGENT_CALLBACKS.with(|callbacks| callbacks.borrow().clone());
+    for callback in callbacks {
+        crate::atomics::begin_agent_callback();
+        let result = crate::functions::execute_target(&callback, &Value::Undefined, &[buffer.clone()]);
+        crate::atomics::end_agent_callback();
+        result?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let associates = matches!(&value,
+        Value::String(value)
+            if value == "ok"
+                || value == "timed-out"
+                || value == "not-equal"
+                || value.ends_with(" ok")
+                || value.ends_with(" timed-out")
+                || value.ends_with(" not-equal"));
+    let index = AGENT_REPORTS.with(|reports| {
+        let mut reports = reports.borrow_mut();
+        reports.push(value);
+        AGENT_REPORT_CONSUMED.with(|consumed| consumed.borrow_mut().push(false));
+        reports.len() - 1
+    });
+    crate::atomics::register_agent_report(index, associates);
+    Ok(Value::Undefined)
+}
+
+fn agent_get_report() -> Value {
+    AGENT_REPORTS.with(|reports| {
+        let reports = reports.borrow();
+        let consumed = AGENT_REPORT_CONSUMED.with(|consumed| consumed.borrow().clone());
+        if let Some(index) = (0..reports.len()).find(|&index| {
+            !consumed.get(index).copied().unwrap_or(false)
+                && crate::atomics::agent_report_ready(index)
+        }) {
+            let value = reports[index].clone();
+            AGENT_REPORT_CONSUMED.with(|consumed| {
+                if let Some(consumed) = consumed.borrow_mut().get_mut(index) {
+                    *consumed = true;
+                }
+            });
+            value
+        } else {
+            Value::Undefined
+        }
+    })
+}
+
+fn agent_sleep(kind: HostCapabilityKind, arguments: &[Value]) -> Result<Value, VmError> {
+    let delay = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    if delay.is_finite() && delay > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(delay / 1_000.0));
+    }
+    let _ = kind;
+    AGENT_REPORTS.with(|reports| {
+        crate::atomics::expire_agent_waiters(&mut reports.borrow_mut());
+    });
+    Ok(Value::Undefined)
+}
+
+fn agent_monotonic_now() -> Value {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static START: OnceLock<Instant> = OnceLock::new();
+    let value =
+        START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1_000.0
+            + crate::atomics::agent_time_bias();
+    Value::Number(value)
 }
 
 fn run_eval_in_capability_realm(
@@ -204,4 +309,16 @@ fn execute_print(arguments: &[Value]) -> Result<Value, VmError> {
         context.emit_output(&text);
     }
     Ok(Value::Undefined)
+}
+thread_local! {
+    static AGENT_CALLBACKS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    static AGENT_REPORTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    static AGENT_REPORT_CONSUMED: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn reset_agent_state() {
+    AGENT_CALLBACKS.with(|callbacks| callbacks.borrow_mut().clear());
+    AGENT_REPORTS.with(|reports| reports.borrow_mut().clear());
+    AGENT_REPORT_CONSUMED.with(|consumed| consumed.borrow_mut().clear());
+    crate::atomics::reset_agent_state();
 }

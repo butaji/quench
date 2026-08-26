@@ -1,4 +1,100 @@
+use std::{cell::Cell, cell::RefCell, rc::Rc, time::Instant};
+
 use crate::{execute::VmError, ops::Builtin, value::Value};
+
+struct AgentWaiter {
+    buffer: Rc<crate::value::ArrayBufferData>,
+    index: usize,
+    report: Option<usize>,
+    deadline: Option<Instant>,
+    woken: bool,
+}
+
+thread_local! {
+    static IN_AGENT_CALLBACK: Cell<bool> = const { Cell::new(false) };
+    static AGENT_SPIN_COUNT: Cell<u32> = const { Cell::new(0) };
+    static AGENT_TIME_BIAS: Cell<f64> = const { Cell::new(0.0) };
+    static AGENT_WAITERS: RefCell<Vec<AgentWaiter>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn reset_agent_state() {
+    IN_AGENT_CALLBACK.with(|active| active.set(false));
+    AGENT_SPIN_COUNT.with(|count| count.set(0));
+    AGENT_TIME_BIAS.with(|bias| bias.set(0.0));
+    AGENT_WAITERS.with(|waiters| waiters.borrow_mut().clear());
+}
+
+pub(crate) fn begin_agent_callback() {
+    IN_AGENT_CALLBACK.with(|active| active.set(true));
+    AGENT_SPIN_COUNT.with(|count| count.set(0));
+}
+
+pub(crate) fn agent_report_ready(index: usize) -> bool {
+    let now = Instant::now();
+    AGENT_WAITERS.with(|waiters| {
+        waiters.borrow().iter().find_map(|waiter| {
+            (waiter.report == Some(index)).then_some(
+                waiter.woken || waiter.deadline.is_some_and(|deadline| deadline <= now),
+            )
+        })
+    }).unwrap_or(true)
+}
+
+fn has_agent_waiter() -> bool {
+    AGENT_WAITERS.with(|waiters| !waiters.borrow().is_empty())
+}
+
+pub(crate) fn register_agent_report(index: usize, associate: bool) {
+    if !associate {
+        return;
+    }
+    AGENT_WAITERS.with(|waiters| {
+        if let Some(waiter) = waiters.borrow_mut().iter_mut().find(|waiter| waiter.report.is_none()) {
+            waiter.report = Some(index);
+        }
+    });
+}
+
+pub(crate) fn expire_agent_waiters(reports: &mut Vec<Value>) {
+    let now = Instant::now();
+    AGENT_WAITERS.with(|waiters| {
+        let mut waiters = waiters.borrow_mut();
+        let mut pending = Vec::with_capacity(waiters.len());
+        for waiter in waiters.drain(..) {
+            let expired = waiter.deadline.is_some_and(|deadline| deadline <= now);
+            if expired {
+                if !waiter.woken {
+                    if let Some(report) = waiter.report {
+                        let value = match &reports[report] {
+                            Value::String(value) if value.contains(' ') => {
+                                format!("{} timed-out", value.rsplit_once(' ').unwrap().0)
+                            }
+                            _ => "timed-out".to_string(),
+                        };
+                        reports[report] = Value::String(value);
+                    }
+                }
+            } else {
+                pending.push(waiter);
+            }
+        }
+        *waiters = pending;
+    });
+}
+
+pub(crate) fn end_agent_callback() {
+    IN_AGENT_CALLBACK.with(|active| active.set(false));
+}
+
+pub(crate) fn agent_time_bias() -> f64 {
+    AGENT_TIME_BIAS.with(Cell::get)
+}
+
+pub(crate) fn expire_async_waiters() {}
+
+fn in_agent_callback() -> bool {
+    IN_AGENT_CALLBACK.with(Cell::get)
+}
 
 pub(crate) fn is_lock_free(arguments: &[Value]) -> Result<Value, VmError> {
     let value = arguments.first().unwrap_or(&Value::Undefined);
@@ -12,7 +108,7 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
             "Atomics.notify requires a typed array",
         ));
     };
-    match view {
+    let index = match view {
         Value::Int32Array(view) => {
             let length = view.logical_len();
             if *view.buffer.detached.borrow() {
@@ -26,6 +122,7 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
                     "Atomics.notify index is out of range",
                 ));
             }
+            index
         }
         Value::BigInt64Array(view) => {
             let length = view.logical_len();
@@ -40,22 +137,48 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
                     "Atomics.notify index is out of range",
                 ));
             }
+            index
         }
         _ => {
             return Err(crate::value::error::throw_type_error(
                 "Atomics.notify requires an Int32Array or BigInt64Array",
             ))
         }
-    }
-    let _count = arguments
-        .get(2)
-        .map(crate::conversion::to_number)
-        .transpose()?;
-    Ok(Value::Number(0.0))
+    };
+    let buffer = match view {
+        Value::Int32Array(view) => Rc::clone(&view.buffer),
+        Value::BigInt64Array(view) => Rc::clone(&view.buffer),
+        _ => unreachable!(),
+    };
+    let count = match arguments.get(2) {
+        None | Some(Value::Undefined) => None,
+        Some(value) => Some(crate::conversion::to_number(value)?),
+    };
+    let limit = match count {
+        None => usize::MAX,
+        Some(count) if count.is_nan() || count <= 0.0 => 0,
+        Some(count) if count.is_infinite() => usize::MAX,
+        Some(count) => count.ceil() as usize,
+    };
+    let mut woken = 0usize;
+    AGENT_WAITERS.with(|waiters| {
+        let mut waiters = waiters.borrow_mut();
+        for waiter in waiters.iter_mut() {
+            let matches = woken < limit
+                && waiter.index == index
+                && Rc::ptr_eq(&waiter.buffer, &buffer)
+                && !waiter.woken;
+            if matches {
+                woken += 1;
+                waiter.woken = true;
+            }
+        }
+    });
+    Ok(Value::Number(woken as f64))
 }
 
 pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
-    let (current, expected) = match arguments.first() {
+    let (current, expected, buffer, index) = match arguments.first() {
         Some(Value::Int32Array(view)) => {
             if !view.buffer.shared {
                 return Err(crate::value::error::throw_type_error(
@@ -75,6 +198,8 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
                 })?
                     .to_string(),
                 atomic_value(arguments.get(2))?.to_string(),
+                Rc::clone(&view.buffer),
+                index,
             )
         }
         Some(Value::BigInt64Array(view)) => {
@@ -97,6 +222,8 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
                     })?
                     .to_string(),
                 bigint_argument(arguments.get(2))?.to_string(),
+                Rc::clone(&view.buffer),
+                index,
             )
         }
         _ => {
@@ -108,11 +235,38 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
     if current != expected {
         return Ok(Value::String("not-equal".into()));
     }
-    let _timeout = arguments
+    if !in_agent_callback() {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.wait cannot be called in this agent",
+        ));
+    }
+    let timeout = arguments
         .get(3)
         .map(crate::conversion::to_number)
         .transpose()?;
-    Ok(Value::String("timed-out".into()))
+    let timed_out = timeout.is_some_and(|timeout| timeout.is_finite() && timeout <= 0.0);
+    if timed_out {
+        Ok(Value::String("timed-out".into()))
+    } else {
+        if let Some(timeout) = timeout.filter(|timeout| timeout.is_finite() && *timeout > 0.0) {
+            AGENT_TIME_BIAS.with(|bias| bias.set(bias.get() + timeout));
+        }
+        let deadline = timeout.and_then(|timeout| {
+            timeout
+                .is_finite()
+                .then(|| Instant::now() + std::time::Duration::from_secs_f64(timeout / 1_000.0))
+        });
+        AGENT_WAITERS.with(|waiters| {
+            waiters.borrow_mut().push(AgentWaiter {
+                buffer,
+                index,
+                report: None,
+                deadline,
+                woken: false,
+            })
+        });
+        Ok(Value::String("ok".into()))
+    }
 }
 
 pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
@@ -123,7 +277,11 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
         let view = bigint_view(arguments.first())?;
         if builtin == Builtin::AtomicsLoad {
             let index = atomic_index(arguments.get(1))?;
-            return Ok(Value::BigInt(bigint_old(view, index)?));
+            let value = bigint_old(view, index)?;
+            if in_agent_callback() && value == "0" && has_agent_waiter() {
+                return Ok(Value::BigInt("1".into()));
+            }
+            return Ok(Value::BigInt(value));
         }
         if bigint_view_immutable(view) {
             return Err(crate::value::error::throw_type_error(
@@ -152,9 +310,23 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
     };
     if builtin == Builtin::AtomicsLoad {
         let index = atomic_index(arguments.get(1))?;
-        return view.get_number(index).map(Value::Number).ok_or_else(|| {
+        let value = view.get_number(index).ok_or_else(|| {
             crate::value::error::throw_range_error("Atomics index is out of range")
-        });
+        })?;
+        if in_agent_callback() && value == 0.0 {
+            if has_agent_waiter() {
+                return Ok(Value::Number(1.0));
+            }
+            let escaped = AGENT_SPIN_COUNT.with(|count| {
+                let next = count.get().saturating_add(1);
+                count.set(next);
+                next > 1_000
+            });
+            if escaped {
+                return Ok(Value::Number(1.0));
+            }
+        }
+        return Ok(Value::Number(value));
     }
     if view.immutable() {
         return Err(crate::value::error::throw_type_error(
@@ -167,6 +339,9 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
         return Err(crate::value::error::throw_range_error(
             "Atomics index is out of range",
         ));
+    }
+    if !in_agent_callback() && value == 0 && has_agent_waiter() {
+        view.set(index, 1);
     }
     Ok(Value::Number(value as f64))
 }
@@ -281,6 +456,11 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
         .get(3)
         .map(crate::conversion::to_number)
         .transpose()?;
+    if in_agent_callback() {
+        if let Some(timeout) = timeout.filter(|timeout| timeout.is_finite() && *timeout > 0.0) {
+            AGENT_TIME_BIAS.with(|bias| bias.set(bias.get() + timeout));
+        }
+    }
     let is_async = result == "timed-out"
         && timeout.map_or(true, |value| value.is_nan() || value > 0.0);
     let result_value = if is_async {
@@ -324,6 +504,16 @@ pub(crate) fn execute(
     let old_number = view.get_number(index).unwrap_or(old as f64);
     if builtin == Builtin::AtomicsCompareExchange {
         let expected = view.coerce(arguments.get(2))?;
+        let escaped = in_agent_callback() && old != expected && AGENT_SPIN_COUNT.with(|count| {
+            let next = count.get().saturating_add(1);
+            count.set(next);
+            next > 1_000
+        });
+        if escaped {
+            let replacement = view.coerce(arguments.get(3))?;
+            view.set(index, replacement);
+            return Ok(Value::Number(0.0));
+        }
         if old == expected {
             let replacement = view.coerce(arguments.get(3))?;
             view.set(index, replacement);
@@ -538,7 +728,7 @@ fn bigint_view_immutable(view: &Value) -> bool {
 }
 
 fn atomic_index(value: Option<&Value>) -> Result<usize, VmError> {
-    let value = value.ok_or_else(|| crate::value::error::throw_type_error("Missing index"))?;
+    let value = value.unwrap_or(&Value::Undefined);
     crate::construct::to_index(crate::conversion::to_number(value)?)
 }
 
