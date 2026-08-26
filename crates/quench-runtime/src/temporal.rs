@@ -378,6 +378,8 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeWithPlainTime
                 | crate::ops::Builtin::TemporalZonedDateTimeStartOfDay
                 | crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition
+                | crate::ops::Builtin::TemporalZonedDateTimeAdd
+                | crate::ops::Builtin::TemporalZonedDateTimeSubtract
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -542,9 +544,17 @@ mod stubs {
             let year =
                 crate::conversion::to_number(&crate::execute::get_property_result(value, "year")?)?
                     as i32;
-            let month = crate::conversion::to_number(&crate::execute::get_property_result(
-                value, "month",
-            )?)? as u32;
+            let month_value = crate::execute::get_property_result(value, "month")?;
+            let month = if matches!(month_value, Value::Undefined) {
+                match crate::execute::get_property_result(value, "monthCode")? {
+                    Value::String(code) if code.len() == 3 && code.starts_with('M') => code[1..]
+                        .parse::<u32>()
+                        .map_err(|_| crate::value::error::throw_range_error("Invalid monthCode"))?,
+                    _ => return Err(crate::value::error::throw_range_error("Invalid monthCode")),
+                }
+            } else {
+                crate::conversion::to_number(&month_value)? as u32
+            };
             let day =
                 crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?
                     as u32;
@@ -864,6 +874,160 @@ mod stubs {
                         ));
                     }
                     epoch + delta
+                }
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            return Ok(super::zoned_record(
+                epoch,
+                timezone,
+                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+            ));
+        }
+        if matches!(
+            builtin,
+            crate::ops::Builtin::TemporalZonedDateTimeAdd
+                | crate::ops::Builtin::TemporalZonedDateTimeSubtract
+        ) {
+            let duration = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing duration"))?;
+            let duration = if matches!(duration, Value::Object(_)) {
+                duration.clone()
+            } else {
+                match super::duration::execute(
+                    crate::ops::Builtin::TemporalDurationFrom,
+                    None,
+                    std::slice::from_ref(duration),
+                ) {
+                    Some(result) => result?,
+                    None => return Err(crate::value::error::throw_type_error("Invalid duration")),
+                }
+            };
+            let names = [
+                "years",
+                "months",
+                "weeks",
+                "days",
+                "hours",
+                "minutes",
+                "seconds",
+                "milliseconds",
+                "microseconds",
+                "nanoseconds",
+            ];
+            let fields = names
+                .iter()
+                .map(|name| crate::execute::get_property_result(&duration, name))
+                .collect::<Result<Vec<_>, _>>()?;
+            if fields.iter().all(|value| matches!(value, Value::Undefined)) {
+                return Err(crate::value::error::throw_type_error(
+                    "Duration requires at least one field",
+                ));
+            }
+            let values = fields
+                .iter()
+                .map(|value| crate::conversion::to_number(value))
+                .collect::<Result<Vec<_>, _>>()?;
+            let overflow = match arguments.get(1) {
+                None | Some(Value::Undefined) => "constrain".to_string(),
+                Some(options) if crate::value::is_object(options) => {
+                    let value = crate::execute::get_property_result(options, "overflow")?;
+                    if matches!(value, Value::Undefined) {
+                        "constrain".to_string()
+                    } else {
+                        let value = crate::conversion::to_string(&value)?;
+                        if value != "constrain" && value != "reject" {
+                            return Err(crate::value::error::throw_range_error("Invalid overflow"));
+                        }
+                        value
+                    }
+                }
+                Some(_) => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Options must be an object",
+                    ))
+                }
+            };
+            let sign = if builtin == crate::ops::Builtin::TemporalZonedDateTimeSubtract {
+                -1.0
+            } else {
+                1.0
+            };
+            let date = chrono::NaiveDate::from_ymd_opt(
+                crate::conversion::to_number(&property("year")?)? as i32,
+                crate::conversion::to_number(&property("month")?)? as u32,
+                crate::conversion::to_number(&property("day")?)? as u32,
+            )
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+            let month_count = (values[0] * 12.0 + values[1]) * sign;
+            if month_count.fract() != 0.0 {
+                return Err(crate::value::error::throw_range_error("Invalid duration"));
+            }
+            let month_count = month_count as i64;
+            let date = if month_count >= 0 {
+                date.checked_add_months(chrono::Months::new(month_count as u32))
+            } else {
+                date.checked_sub_months(chrono::Months::new(month_count.unsigned_abs() as u32))
+            };
+            let date = match date {
+                Some(date) => date,
+                None if overflow == "constrain" => {
+                    let first = chrono::NaiveDate::from_ymd_opt(
+                        crate::conversion::to_number(&property("year")?)? as i32,
+                        crate::conversion::to_number(&property("month")?)? as u32,
+                        1,
+                    )
+                    .and_then(|first| {
+                        if month_count >= 0 {
+                            first.checked_add_months(chrono::Months::new(month_count as u32))
+                        } else {
+                            first.checked_sub_months(chrono::Months::new(
+                                month_count.unsigned_abs() as u32,
+                            ))
+                        }
+                    })
+                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                    let last_day = (first + chrono::Months::new(1) - chrono::Days::new(1)).day();
+                    chrono::NaiveDate::from_ymd_opt(
+                        first.year(),
+                        first.month(),
+                        crate::conversion::to_number(&property("day")?)? as u32,
+                    )
+                    .or_else(|| {
+                        chrono::NaiveDate::from_ymd_opt(first.year(), first.month(), last_day)
+                    })
+                    .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?
+                }
+                None => return Err(crate::value::error::throw_range_error("Invalid date")),
+            };
+            let day_count = (values[2] * 7.0 + values[3]) * sign;
+            let date = if day_count >= 0.0 {
+                date.checked_add_days(chrono::Days::new(day_count as u64))
+            } else {
+                date.checked_sub_days(chrono::Days::new((-day_count) as u64))
+            }
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+            let time_delta = values[4] * 3_600_000_000_000.0
+                + values[5] * 60_000_000_000.0
+                + values[6] * 1_000_000_000.0
+                + values[7] * 1_000_000.0
+                + values[8] * 1_000.0
+                + values[9];
+            let old_date = chrono::NaiveDate::from_ymd_opt(
+                crate::conversion::to_number(&property("year")?)? as i32,
+                crate::conversion::to_number(&property("month")?)? as u32,
+                crate::conversion::to_number(&property("day")?)? as u32,
+            )
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+            let date_delta = (date - old_date).num_days() as i128 * 86_400_000_000_000;
+            let epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => {
+                    value.parse::<i128>().unwrap_or(0) + date_delta + (time_delta * sign) as i128
                 }
                 _ => {
                     return Err(crate::value::error::throw_type_error(
