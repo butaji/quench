@@ -251,7 +251,7 @@ fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
     matches!(
         prototype,
         crate::value::Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
-    ) || is_zoned_receiver(prototype, depth + 1)
+    ) || is_zoned_receiver(&prototype, depth + 1)
 }
 
 pub(crate) fn execute(
