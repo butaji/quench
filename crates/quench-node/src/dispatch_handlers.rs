@@ -2445,7 +2445,10 @@ pub fn abort_signal_timeout(
     let signal = execute::set_property(signal, "aborted", Value::Boolean(false));
     let signal = execute::set_property(signal, crate::modules::event_target::ABORT_SIGNAL_BRAND, Value::Boolean(true));
     let callback = crate::host::capability(crate::registry::NodeSpec::new("AbortSignal.timeout.fire", 0x1F31));
-    crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
+    let timer = crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
+    // Node's AbortSignal.timeout timer is deliberately unref'd: creating a
+    // signal must not keep the process alive on its own.
+    crate::modules::timers::method_unref(state, Some(&timer));
     Ok(signal)
 }
 
