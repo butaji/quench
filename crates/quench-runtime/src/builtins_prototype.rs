@@ -59,6 +59,14 @@ pub(crate) fn prototype_to_string_result(
     if is_callable_builtin(value) {
         return Ok(Value::String("[object Function]".into()));
     }
+    if let Value::BoundFunction(bound) = value {
+        if let Value::Builtin(builtin) = bound.target {
+            if matches!(builtin, Builtin::Math | Builtin::Json) {
+                let tag = if builtin == Builtin::Math { "Math" } else { "JSON" };
+                return Ok(Value::String(format!("[object {tag}]")));
+            }
+        }
+    }
     if let Value::Generator(_) = value {
         if let Ok(prototype) = crate::builtins::object::get_prototype_of(Some(value)) {
             if let Some(getter) =
