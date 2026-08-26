@@ -1452,6 +1452,17 @@ pub(crate) fn kernel(id: &'static str, deopt: bool) {
     let _ = (id, deopt);
 }
 
+#[inline(always)]
+pub(crate) fn kernel_iterations(id: &'static str, iterations: usize) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() && iterations != 0 {
+        COUNTERS.with(|counters| {
+            counters.borrow_mut().kernels.entry(id).or_default().0 += iterations as u64;
+        });
+    }
+    let _ = (id, iterations);
+}
+
 #[cfg(feature = "execution-trace")]
 pub fn snapshot() -> Option<serde_json::Value> {
     enabled().then(|| {

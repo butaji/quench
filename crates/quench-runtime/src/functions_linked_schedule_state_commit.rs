@@ -1,4 +1,34 @@
 impl NativeSchedule<'_> {
+    #[cfg(feature = "execution-trace")]
+    #[inline(always)]
+    fn trace_direct_work(&self) {
+        for (id, iterations) in [
+            ("linked_schedule_idle", self.task_iterations[0]),
+            ("linked_schedule_device", self.task_iterations[1]),
+            ("linked_schedule_worker", self.task_iterations[2]),
+            ("linked_schedule_handler", self.task_iterations[3]),
+            ("linked_schedule_queue", self.queue_iterations),
+            ("linked_schedule_append_step", self.append_steps),
+            ("linked_device_receive", self.direct_branches[0]),
+            ("linked_device_send", self.direct_branches[1]),
+            ("linked_device_suspend", self.direct_branches[2]),
+            ("linked_handler_receive_work", self.direct_branches[3]),
+            ("linked_handler_receive_device", self.direct_branches[4]),
+            ("linked_handler_no_work", self.direct_branches[5]),
+            ("linked_handler_wait_device", self.direct_branches[6]),
+            ("linked_handler_send_device", self.direct_branches[7]),
+            ("linked_handler_send_work", self.direct_branches[8]),
+            ("linked_queue_empty", self.direct_branches[9]),
+            ("linked_queue_append", self.direct_branches[10]),
+        ] {
+            crate::execution_trace::kernel_iterations(id, iterations);
+        }
+    }
+
+    #[cfg(not(feature = "execution-trace"))]
+    #[inline(always)]
+    fn trace_direct_work(&self) {}
+
     fn commit(
         &self,
         current: &crate::register_file::SlotWord,
