@@ -366,7 +366,36 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         }
     };
     let result = call_timer(state, domain.as_ref(), &cb, &receiver, &args);
-    if destroy {
+    let converted = destroy
+        && result.is_ok()
+        && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
+            &receiver,
+            "_repeat",
+        ));
+    if converted {
+        if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
+            timer.kind = TimerKind::Interval;
+            timer.active = true;
+            timer.referenced = true;
+            timer.fire_at = now.saturating_add(timer.period.max(1));
+            *timer.destroyed.borrow_mut() = Value::Boolean(false);
+        }
+    }
+    if !destroy && result.is_ok() {
+        let disabled = matches!(
+            quench_runtime::execute::get_property(&receiver, "_onTimeout"),
+            Value::Null
+        ) || matches!(
+            quench_runtime::execute::get_property(&receiver, "_idleTimeout"),
+            Value::Number(value) if value < 0.0
+        );
+        if disabled {
+            if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
+                timer.active = false;
+            }
+        }
+    }
+    if destroy && !converted {
         super::timers::async_destroy(&resource);
     }
     result
@@ -397,12 +426,28 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             continue;
         };
         super::timers::mark_destroyed(&timer);
+        // An unref'd immediate is only eligible while some other referenced
+        // resource keeps the loop alive. With no such resource Node exits
+        // without invoking it.
+        if !timer.referenced && !has_referenced_work(state) {
+            continue;
+        }
         let result = call_guarded(state, &timer.callback, &timer.object, &timer.args);
         super::timers::async_destroy(&timer.async_resource);
         result?;
         drain_ticks(state)?;
     }
     Ok(())
+}
+
+fn has_referenced_work(state: &Rc<RefCell<HostState>>) -> bool {
+    let guard = state.borrow();
+    guard
+        .timers
+        .timers
+        .values()
+        .any(|timer| timer.referenced && timer.active)
+        || crate::modules::net::has_work(state)
 }
 
 fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
