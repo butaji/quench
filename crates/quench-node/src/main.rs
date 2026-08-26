@@ -1,3 +1,5 @@
+#![cfg(not(test))]
+
 use quench_node::run::eval_script;
 use quench_runtime::vm::OutputSink;
 use std::{
