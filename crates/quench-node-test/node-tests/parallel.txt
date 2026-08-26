@@ -99,6 +99,7 @@ test-util-format.js
 test-util-callbackify.js
 test-util-inspect.js
 test-util-inspect-getters-accessing-this.js
+test-util-parse-env.js
 test-util-types.js
 test-util-types-exists.js
 test-url-urltooptions.js
