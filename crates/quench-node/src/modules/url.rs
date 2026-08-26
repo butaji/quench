@@ -126,7 +126,7 @@ pub fn parse(
         entries.push(("search".into(), search.clone().map_or(Value::Null, Value::String)));
         let query_value = if args.get(1).is_some_and(execute::is_truthy) {
             crate::modules::querystring_parse::parse(
-                _state,
+                state,
                 None,
                 &[Value::String(query.unwrap_or_default().to_string())],
             )?
@@ -244,7 +244,7 @@ pub fn parse(
                 let object = execute::delete_property(object, "__query_empty").0;
                 Ok(execute::set_prototype_of(&object, &Value::Null)?)
             } else {
-                crate::modules::querystring_parse::parse(_state, None, &[Value::String(query)])
+                crate::modules::querystring_parse::parse(state, None, &[Value::String(query)])
             }
         })
         .transpose()?;
@@ -260,13 +260,22 @@ pub fn parse(
         };
         out.push((k, value));
     }
-    if let Some(query) = query_object {
+    if let Some(query) = query_object.as_ref() {
         if !out.iter().any(|(key, _)| key == "search") {
             out.push(("search".into(), Value::Null));
         }
-        out.push(("query".into(), query));
+        out.push(("query".into(), query.clone()));
     }
-    Ok(legacy_object(out))
+    let result = legacy_object(out);
+    if query_object.is_some()
+        && matches!(
+            execute::get_property_result(&result, "search"),
+            Err(_) | Ok(Value::Undefined)
+        )
+    {
+        return Ok(execute::set_property(result, "search", Value::Null));
+    }
+    Ok(result)
 }
 
 fn legacy_object(entries: Vec<(String, Value)>) -> Value {
