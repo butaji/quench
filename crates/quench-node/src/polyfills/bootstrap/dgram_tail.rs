@@ -432,6 +432,10 @@ const __quenchDgram = {
     return __quenchDgramSocket(__quenchDgramValidateType(requested), config);
   },
 };
+Object.defineProperty(globalThis, "\0quench:dgram_module", {
+  value: __quenchDgram,
+  configurable: false,
+});
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "dgram"
     ? __quenchDgram
