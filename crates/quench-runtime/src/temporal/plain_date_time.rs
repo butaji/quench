@@ -1267,8 +1267,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         .map(crate::conversion::to_number)
         .collect::<Result<Vec<_>, _>>()?;
     if overflow == "constrain" {
-        numeric[1] = numeric[1].clamp(1.0, 12.0);
-        if numeric[2].is_finite() {
+        if numeric[1] > 12.0 {
+            numeric[1] = 12.0;
+        }
+        if numeric[2] >= 1.0 && numeric[2].is_finite() {
             numeric[2] = numeric[2].min(days_in_month(numeric[0] as i32, numeric[1] as u32) as f64);
         }
         for (index, limit) in [23.0, 59.0, 59.0, 999.0, 999.0, 999.0]
@@ -1276,7 +1278,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             .enumerate()
         {
             let index = index + 3;
-            if numeric[index].is_finite() {
+            if numeric[index] >= 0.0 && numeric[index].is_finite() {
                 numeric[index] = numeric[index].min(limit);
             }
         }
