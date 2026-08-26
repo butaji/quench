@@ -275,6 +275,7 @@ test-assert-deep.js
 test-assert-checktag.js
 test-assert-class-destructuring.js
 test-assert-deep-with-error.js
+test-errors-hide-stack-frames.js
 test-assert-partial-deep-equal.js
 test-assert-typedarray-deepequal.js
 test-net-connect-after-destroy.js
