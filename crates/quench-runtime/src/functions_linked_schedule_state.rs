@@ -106,6 +106,10 @@ struct NativeSchedule<'a> {
     append_steps: usize,
     #[cfg(feature = "execution-trace")]
     direct_branches: [usize; 14],
+    #[cfg(feature = "execution-trace")]
+    queue_origin: usize,
+    #[cfg(feature = "execution-trace")]
+    queue_outcomes: [usize; 8],
 }
 
 fn execute_linked_schedule_state(
@@ -156,6 +160,10 @@ impl<'a> NativeSchedule<'a> {
             append_steps: 0,
             #[cfg(feature = "execution-trace")]
             direct_branches: [0; 14],
+            #[cfg(feature = "execution-trace")]
+            queue_origin: 0,
+            #[cfg(feature = "execution-trace")]
+            queue_outcomes: [0; 8],
         };
         state.current?;
         for index in 0..table.runners.len() {
@@ -421,6 +429,7 @@ impl<'a> NativeSchedule<'a> {
             {
                 self.direct_branches[1] += 1;
             }
+            self.trace_queue_origin(0);
             (
                 None,
                 Some(self.queue_packet(current, queued, self.packets.get(queued)?.id)?),
@@ -476,6 +485,7 @@ impl<'a> NativeSchedule<'a> {
             handler_b,
             count,
         };
+        self.trace_queue_origin(1);
         self.queue_packet(current, packet, next_v1).map(Some)
     }
 
@@ -541,6 +551,7 @@ impl<'a> NativeSchedule<'a> {
                 {
                     self.direct_branches[7] += 1;
                 }
+                self.trace_queue_origin(2);
                 Some(self.queue_packet(current, device, target)?)
             }
             Some(work) => {
@@ -553,6 +564,7 @@ impl<'a> NativeSchedule<'a> {
                     v1.tail = NativeQueue::NONE;
                 }
                 let target = self.packets.get(work)?.id;
+                self.trace_queue_origin(3);
                 Some(self.queue_packet(current, work, target)?)
             }
         };
@@ -587,6 +599,11 @@ impl<'a> NativeSchedule<'a> {
         self.packets.get_mut(packet)?.id = current;
         let current_priority = self.task(current).priority;
         let runnable = self.scheduler.runnable;
+        #[cfg(feature = "execution-trace")]
+        {
+            let queue_is_empty = self.task(target).queue.head == NativeQueue::NONE;
+            self.queue_outcomes[self.queue_origin * 2 + usize::from(!queue_is_empty)] += 1;
+        }
         let target_task = self.task_mut(target);
         if target_task.queue.head == NativeQueue::NONE {
             target_task.queue = NativeQueue::from_ends(Some(packet), Some(packet));
@@ -611,6 +628,16 @@ impl<'a> NativeSchedule<'a> {
         self.task_mut(target).queue = queue;
         Some(current)
     }
+
+    #[cfg(feature = "execution-trace")]
+    #[inline(always)]
+    fn trace_queue_origin(&mut self, origin: usize) {
+        self.queue_origin = origin;
+    }
+
+    #[cfg(not(feature = "execution-trace"))]
+    #[inline(always)]
+    fn trace_queue_origin(&mut self, _: usize) {}
 
     fn release(&mut self, current: usize, target: usize) -> Option<Option<usize>> {
         let current_priority = self.task(current).priority;

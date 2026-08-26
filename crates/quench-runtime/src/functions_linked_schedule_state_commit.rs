@@ -23,6 +23,14 @@ impl NativeSchedule<'_> {
             ("linked_suspend_fused", self.direct_branches[11]),
             ("linked_skip_held", self.direct_branches[12]),
             ("linked_skip_suspended", self.direct_branches[13]),
+            ("linked_queue_device_empty", self.queue_outcomes[0]),
+            ("linked_queue_device_append", self.queue_outcomes[1]),
+            ("linked_queue_worker_empty", self.queue_outcomes[2]),
+            ("linked_queue_worker_append", self.queue_outcomes[3]),
+            ("linked_queue_handler_device_empty", self.queue_outcomes[4]),
+            ("linked_queue_handler_device_append", self.queue_outcomes[5]),
+            ("linked_queue_handler_work_empty", self.queue_outcomes[6]),
+            ("linked_queue_handler_work_append", self.queue_outcomes[7]),
         ] {
             crate::execution_trace::kernel_iterations(id, iterations);
         }
