@@ -332,6 +332,7 @@ test-console-not-call-toString.js
 test-console-self-assign.js
 test-process-dlopen-undefined-exports.js
 test-process-domain-segfault.js
+test-process-emit.js
 test-module-create-require-multibyte.js
 test-error-format-list.js
 test-compile-cache-api-error.js
