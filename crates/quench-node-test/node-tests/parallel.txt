@@ -113,6 +113,7 @@ test-util-styletext-hex.js
 test-util-styletext.js
 test-util-text-decoder.js
 test-buffer-alloc.js
+test-buffer-alloc-alignment.js
 test-buffer-alloc-unsafe-is-initialized-with-zero-fill-flag.js
 test-buffer-alloc-unsafe-is-uninitialized.js
 test-buffer-ascii.js
@@ -151,6 +152,7 @@ test-buffer-readdouble.js
 test-buffer-readfloat.js
 test-buffer-readint.js
 test-buffer-readuint.js
+test-buffer-resizable.js
 test-buffer-safe-unsafe.js
 test-buffer-sharedarraybuffer.js
 test-buffer-slice.js
@@ -158,6 +160,8 @@ test-buffer-swap.js
 test-buffer-swap-fast.js
 test-buffer-tostring-4gb.js
 test-buffer-tostring.js
+test-buffer-tostring-range.js
+test-buffer-tostring-rangeerror.js
 test-buffer-write.js
 test-buffer-write-fast.js
 test-buffer-writeint.js
