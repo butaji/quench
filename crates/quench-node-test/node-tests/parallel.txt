@@ -487,3 +487,9 @@ test-tls-get-ca-certificates-extra-empty.js
 test-tls-get-ca-certificates-bundled.js
 test-tls-get-ca-certificates-bundled-subset.js
 test-tls-empty-sni-context.js
+test-tls-get-ca-certificates-extra-subset.js
+test-tls-get-ca-certificates-extra.js
+test-tls-get-ca-certificates-system.js
+test-tls-get-ca-certificates-system-without-flag.js
+test-tls-get-ca-certificates-node-use-system-ca.js
+test-tls-getcertificate-x509.js
