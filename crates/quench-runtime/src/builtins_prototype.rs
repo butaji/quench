@@ -436,16 +436,20 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
 pub(crate) fn function_prototype_to_string(
     receiver: Option<&Value>,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(value) = receiver.filter(|value| crate::conversion::is_callable(value)) else {
+    let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Function.prototype.toString called on non-callable",
         ));
     };
+    let resolved = crate::locals::resolved_replacement(receiver.clone());
+    if !crate::conversion::is_callable(&resolved) {
+        return Err(crate::value::error::throw_type_error(
+            "Function.prototype.toString called on non-callable",
+        ));
+    }
+    let value = &resolved;
     Ok(match value {
-        Value::Builtin(builtin) => Value::String(format!(
-            "function {}() {{ [ native code ] }}",
-            builtin_name(*builtin)
-        )),
+        Value::Builtin(builtin) => Value::String(native_builtin_source(*builtin)),
         Value::Function(function) => {
             dynamic_function_source(function).map_or_else(native_function_source, Value::String)
         }
@@ -471,6 +475,32 @@ fn dynamic_function_source(function: &crate::value::FunctionValue) -> Option<Str
 
 fn native_function_source() -> Value {
     Value::String("function () { [ native code ] }".to_string())
+}
+
+fn native_builtin_source(builtin: crate::ops::Builtin) -> String {
+    let full = builtin_name(builtin);
+    let (prefix, name) = if let Some(name) = full.strip_prefix("get ") {
+        ("get ", name)
+    } else if let Some(name) = full.strip_prefix("set ") {
+        ("set ", name)
+    } else {
+        ("", full)
+    };
+    let name = name.rsplit('.').next().unwrap_or(name);
+    if name.is_empty() || !valid_native_identifier(name) {
+        "function () { [ native code ] }".to_string()
+    } else {
+        format!("function {prefix}{name}() {{ [ native code ] }}")
+    }
+}
+
+fn valid_native_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else { return false };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|character| {
+            character == '_' || character == '$' || character.is_ascii_alphanumeric()
+        })
 }
 
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {

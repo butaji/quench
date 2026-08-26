@@ -71,7 +71,11 @@ pub struct TestMetadata {
 impl TestMetadata {
     /// Parse the small YAML subset used for dispatch decisions.
     pub fn parse(source: &str) -> Result<Self, String> {
-        let frontmatter = extract_frontmatter(source)?;
+        // Test262 includes a pair of legacy fixtures with bare CR line
+        // endings. Normalize only metadata parsing; preserve the original
+        // source bytes for execution and Function#toString semantics.
+        let normalized = source.replace('\r', "\n");
+        let frontmatter = extract_frontmatter(&normalized)?;
         let mut metadata = Self::default();
         let mut in_negative = false;
         for line in frontmatter.lines() {

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use oxc::ast::ast::{Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyKey};
+use oxc::span::GetSpan;
 
 use crate::{
     facts::ProgramDb,
@@ -123,7 +124,14 @@ fn reduce_constructor(
         _ => None,
     });
     match method {
-        Some(method) => reduce_method(method, ops, facts, next, locals).map(|value| (value, false)),
+        Some(method) => {
+            let source = facts
+                .reduction_source
+                .get(class.span.start as usize..class.span.end as usize)
+                .map(str::to_string);
+            reduce_method_with_source(method, ops, facts, next, locals, source)
+                .map(|value| (value, false))
+        }
         None => Some((emit_default_constructor(ops, next), true)),
     }
 }
@@ -435,13 +443,59 @@ fn reduce_method(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    reduce_method_with_source(method, ops, facts, next, locals, method_source(method, facts))
+}
+
+fn reduce_method_with_source(
+    method: &MethodDefinition<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+    source: Option<String>,
+) -> Option<u16> {
     let inherited = facts.strict;
     facts.strict = true;
     let kind = method_function_kind(method);
-    let result =
-        crate::functions::reduce_expression_kind(&method.value, ops, facts, next, locals, kind);
+    let result = crate::functions::reduce_expression_kind_source(
+        &method.value,
+        ops,
+        facts,
+        next,
+        locals,
+        kind,
+        source,
+    );
     facts.strict = inherited;
     result
+}
+
+fn method_source(
+    method: &MethodDefinition<'_>,
+    facts: &ProgramDb,
+) -> Option<String> {
+    let full = facts
+        .reduction_source
+        .get(method.span.start as usize..method.span.end as usize)?;
+    let key_offset = (method.key.span().start as usize).saturating_sub(method.span.start as usize);
+    let key_offset = if method.key.as_expression().is_some() {
+        full[..key_offset].rfind('[').unwrap_or(key_offset)
+    } else {
+        key_offset
+    };
+    let start = match method.kind {
+        MethodDefinitionKind::Get => full.find("get").unwrap_or(key_offset),
+        MethodDefinitionKind::Set => full.find("set").unwrap_or(key_offset),
+        MethodDefinitionKind::Constructor => full.find("constructor").unwrap_or(key_offset),
+        MethodDefinitionKind::Method if method.value.r#async => {
+            full.find("async").unwrap_or(key_offset)
+        }
+        MethodDefinitionKind::Method if method.value.generator => {
+            full.find('*').unwrap_or(key_offset)
+        }
+        MethodDefinitionKind::Method => key_offset,
+    };
+    full.get(start..).map(str::to_string)
 }
 
 fn method_function_kind(method: &MethodDefinition<'_>) -> Option<FunctionKind> {
