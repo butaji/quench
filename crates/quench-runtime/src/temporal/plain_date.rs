@@ -1470,7 +1470,7 @@ fn has_date_fields(object: &crate::value::ObjectData) -> bool {
     })
 }
 
-fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
+pub(crate) fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
     let text = crate::conversion::to_string(value)?;
     if text.eq_ignore_ascii_case("iso8601") {
         return Ok(true);
