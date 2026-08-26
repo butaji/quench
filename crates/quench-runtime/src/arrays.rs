@@ -468,14 +468,6 @@ fn iterator_symbol_removed(key: &str) -> bool {
 include!("arrays_iterator.rs");
 
 fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
-    else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.sort called on null or undefined",
-        ));
-    };
-    let mut target = crate::construct::to_object(receiver)?;
-    let length = array_like_length(&target)?;
     let compare = arguments
         .first()
         .filter(|value| !matches!(value, Value::Undefined));
@@ -486,6 +478,14 @@ fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::e
             ));
         }
     }
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.sort called on null or undefined",
+        ));
+    };
+    let mut target = crate::construct::to_object(receiver)?;
+    let length = array_like_length(&target)?;
     let mut elements = Vec::new();
     for index in 0..length {
         if let Some(value) = crate::builtins::map_value(&target, index)? {
@@ -677,29 +677,24 @@ pub(crate) fn at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver else {
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.at called on null or undefined",
         ));
     };
-    let Value::Array(values) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.at called on non-array",
-        ));
-    };
+    let receiver = crate::construct::to_object(receiver)?;
+    let length = crate::builtins::map_length(&receiver)?;
     let number = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
     if number.is_nan() {
-        return Ok(values.first().unwrap_or(Value::Undefined));
+        return Ok(crate::execute::get_property_result(&receiver, "0")?);
     }
     let index = number.trunc();
-    let length = values.len() as f64;
+    let length = length as f64;
     let position = if index < 0.0 { length + index } else { index };
     if position < 0.0 || position >= length {
         return Ok(Value::Undefined);
     }
-    Ok(values
-        .get_index(position as usize)
-        .unwrap_or(Value::Undefined))
+    Ok(crate::execute::get_property_result(&receiver, &(position as usize).to_string())?)
 }
 pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let this = receiver.cloned().unwrap_or(Value::Undefined);
