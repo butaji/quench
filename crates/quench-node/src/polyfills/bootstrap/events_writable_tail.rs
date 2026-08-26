@@ -40,6 +40,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"class NodeWritable extends 
         if (!this.destroyed) this.destroy();
       });
     }
+    if (!options.__quenchSkipConstruct) {
+      __nodeRunConstruct(this, options);
+    }
   }
   once(event, listener) {
     let called = false;
@@ -239,7 +242,7 @@ NodeWritable.prototype.writableFinished = false;
 const NodeWritableCompat = function Writable(options = {}) {
   const instance = Reflect.construct(
     NodeWritable,
-    [{ ...options, __quenchCompatConstruct: true }],
+    [{ ...options, __quenchCompatConstruct: true, __quenchSkipConstruct: true }],
     new.target || NodeWritable,
   );
   if (this !== instance) {
@@ -261,8 +264,10 @@ const NodeWritableCompat = function Writable(options = {}) {
       if (options.signal.aborted) abort();
       else options.signal.addEventListener("abort", abort, { once: true });
     }
+    __nodeRunConstruct(this, options);
     return this;
   }
+  __nodeRunConstruct(instance, options);
   return instance;
 };
 NodeWritableCompat.prototype = NodeWritable.prototype;
