@@ -45,9 +45,10 @@ impl Default for ProcessState {
 
 impl ProcessState {
     pub fn new(argv: Vec<String>) -> Self {
-        let exec_path = std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        // The first argv entry is the process identity exposed by Node.  It
+        // must stay the same value as process.argv[0], even when the host is
+        // embedded or driven by the compatibility runner.
+        let exec_path = argv.first().cloned().unwrap_or_default();
         let versions = vec![
             ("node".to_string(), "v22.0.0".into()),
             ("quench".to_string(), "v0.1.0".into()),
@@ -97,6 +98,7 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
             )]),
         ),
         ("execPath", Value::String(exec_path.to_string())),
+        ("argv0", Value::String("node".into())),
         ("version", Value::String("v22.0.0".into())),
         (
             "versions",
