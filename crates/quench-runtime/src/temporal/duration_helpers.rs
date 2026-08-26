@@ -328,7 +328,8 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
             }
             let date = text.split_once('T').map_or(text.as_str(), |(date, _)| date);
             let date = date.split_once('[').map_or(date, |(date, _)| date);
-            let date_value = crate::temporal::plain_date::from(Some(&Value::String(date.into())))?;
+            let date_value =
+                crate::temporal::plain_date::from(Some(&Value::String(date.into())), None)?;
             validate_date_limits(text, &date_value)?;
             date_value
         }
@@ -340,7 +341,7 @@ fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
                     validate_property_bag_fields(value)?;
                 }
             }
-            let date = crate::temporal::plain_date::from(Some(value))?;
+            let date = crate::temporal::plain_date::from(Some(value), None)?;
             let timezone = crate::execute::get_property_result(value, "timeZone")?;
             if !matches!(timezone, Value::Undefined) {
                 let Value::String(timezone) = timezone else {
