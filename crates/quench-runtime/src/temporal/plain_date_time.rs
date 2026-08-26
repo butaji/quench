@@ -549,6 +549,9 @@ fn to_zoned_date_time(
     if time_zone.is_empty() {
         return Err(crate::value::error::throw_range_error("Invalid time zone"));
     }
+    if time_zone.starts_with("-000000-") {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             (
@@ -1493,6 +1496,10 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
         || crate::conversion::is_symbol(value)
     {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
+    let text = crate::conversion::to_string(value)?;
+    if text.starts_with("-000000-") {
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
     }
     if !crate::temporal::plain_date::is_iso_calendar_value(value)? {
         Err(crate::value::error::throw_range_error("Invalid calendar"))
