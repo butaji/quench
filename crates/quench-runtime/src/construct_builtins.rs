@@ -96,7 +96,9 @@ fn construct_builtin_tail(
             crate::temporal::plain_year_month::construct(year, month)
         }
         crate::ops::Builtin::TemporalZonedDateTime => crate::temporal::zoned_construct(arguments),
-        crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
+        crate::ops::Builtin::TemporalPlainDate => {
+            crate::temporal::plain_date::construct_from_constructor(arguments)
+        }
         crate::ops::Builtin::ShadowRealm => {
             let realm = crate::vm::create_shadow_realm_value();
             let prototype = crate::vm::realm_intrinsic_for(
