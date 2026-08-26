@@ -117,6 +117,7 @@ test-buffer-badhex.js
 test-buffer-bigint64.js
 test-buffer-bytelength.js
 test-buffer-compare.js
+test-buffer-compare-offset.js
 test-buffer-concat.js
 test-buffer-equals.js
 test-buffer-failed-alloc-typed-arrays.js
@@ -146,6 +147,7 @@ test-buffer-sharedarraybuffer.js
 test-buffer-swap.js
 test-buffer-tostring-4gb.js
 test-buffer-tostring.js
+test-buffer-write.js
 test-buffer-writedouble.js
 test-buffer-writefloat.js
 test-buffer-zero-fill-cli.js
