@@ -353,6 +353,10 @@ const CAP_VM_CREATE_CONTEXT: u16 = 0x1601;
 const CAP_VM_RUN_IN_CONTEXT: u16 = 0x1602;
 const CAP_VM_IS_CONTEXT: u16 = 0x1603;
 const CAP_URL_PATH_TO_FILE_URL: u16 = 0x0505;
+const CAP_URL_PATTERN: u16 = 2281;
+const CAP_URL_PATTERN_GET: u16 = 2283;
+const CAP_URL_PATTERN_TEST: u16 = 2284;
+const CAP_URL_PATTERN_EXEC: u16 = 2285;
 const CAP_CP_SPAWNSYNC: u16 = 0x1e00;
 const CAP_CP_EXECSYNC: u16 = 0x1e01;
 const CAP_CP_EXEC: u16 = 0x1e02;
@@ -551,6 +555,9 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
         CAP_URL_PARSE => url_parse,
+        CAP_URL_PATTERN_GET => crate::modules::url::url_pattern_get,
+        CAP_URL_PATTERN_TEST => crate::modules::url::url_pattern_test,
+        CAP_URL_PATTERN_EXEC => crate::modules::url::url_pattern_exec,
         CAP_URL_FORMAT => url_format,
         CAP_URL_RESOLVE => url_resolve,
         CAP_URL_RESOLVE_OBJECT => url_resolve_object,
@@ -894,6 +901,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_STRING_DECODER => string_decoder_new,
         CAP_URL_NEW => url_new,
         CAP_URL_LEGACY_NEW => url_legacy_new,
+        CAP_URL_PATTERN => crate::modules::url::url_pattern_construct,
         CAP_TEXT_DECODER_NEW => crate::modules::text_decoder::new_text_decoder,
         CAP_TEXT_ENCODER_NEW => crate::modules::text_encoder::new_text_encoder,
         CAP_URL_SEARCH => url_search_params,
