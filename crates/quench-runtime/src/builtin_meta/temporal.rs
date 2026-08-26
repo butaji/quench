@@ -559,8 +559,8 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalPlainDateTimeToJSON
         | Builtin::TemporalPlainDateTimeToLocaleString
         | Builtin::TemporalPlainDateTimeValueOf => Some(0.0),
-        Builtin::TemporalPlainDateTimeUntil => Some(2.0),
-        Builtin::TemporalPlainDateTimeSince => Some(2.0),
+        Builtin::TemporalPlainDateTimeUntil => Some(1.0),
+        Builtin::TemporalPlainDateTimeSince => Some(1.0),
         Builtin::TemporalPlainDateTimeToPlainDate | Builtin::TemporalPlainDateTimeToPlainTime => {
             Some(0.0)
         }
