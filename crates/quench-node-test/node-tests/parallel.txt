@@ -470,3 +470,6 @@ test-tls-certcb-sync-write.js
 test-tls-alpn-server-client.js
 test-tls-cli-min-version-1.3.js
 test-tls-connect-secure-context.js
+test-tls-ticket.js
+test-tls-sni-servername.js
+test-tls-client-resume.js
