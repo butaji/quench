@@ -241,19 +241,19 @@ fn validate_number_option(options: &Value, key: &str) -> Result<(), VmError> {
 
 fn validate_kill_signal(options: &Value) -> Result<(), VmError> {
     let Ok(value) = execute::get_property_result(options, "killSignal") else { return Ok(()); };
-    let valid = match value {
-        Value::Undefined | Value::Null => true,
-        Value::Number(number) => number.fract() == 0.0 && (1.0..=64.0).contains(&number),
+    let (valid, code) = match value {
+        Value::Undefined | Value::Null => (true, "ERR_UNKNOWN_SIGNAL"),
+        Value::Number(number) => (number.fract() == 0.0 && (1.0..=64.0).contains(&number), "ERR_UNKNOWN_SIGNAL"),
         Value::String(signal) => {
             let normalized = signal.to_ascii_uppercase();
-            normalized.starts_with("SIG") && normalized != "SIGNOTAVALIDSIGNALNAME"
+            (normalized.starts_with("SIG") && normalized != "SIGNOTAVALIDSIGNALNAME", "ERR_UNKNOWN_SIGNAL")
         }
-        _ => false,
+        _ => (false, "ERR_INVALID_ARG_TYPE"),
     };
     if valid { return Ok(()); }
     Err(VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
+        ("code".into(), Value::String(code.into())),
     ])))
 }
 
