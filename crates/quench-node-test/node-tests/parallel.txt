@@ -426,3 +426,7 @@ test-crypto-x509.js
 test-dns-memory-error.js
 test-dns-resolvesrv.js
 test-dns-resolvesrv-econnrefused.js
+test-crypto-subtle-cross-realm.js
+test-crypto-webcrypto-aes-decrypt-tag-too-small.js
+test-crypto-encoding-validation-error.js
+test-crypto-subtle-zero-length.js
