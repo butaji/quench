@@ -30,10 +30,28 @@ fn execute_core(
         return Some(result);
     }
     match builtin {
+        Iterator => Some(Err(crate::value::error::throw_type_error(
+            "Iterator is not callable",
+        ))),
         IteratorConcat => Some(iterator::concat(arguments)),
         IteratorFrom => Some(iterator::from(arguments)),
         IteratorZip => Some(iterator::zip(arguments)),
         IteratorZipKeyed => Some(iterator::zip_keyed(arguments)),
+        IteratorDispose => Some(iterator::dispose(receiver)),
+        IteratorPrototypeConstructorGetter => {
+            Some(iterator::prototype_constructor_getter(receiver))
+        }
+        IteratorPrototypeConstructorSetter => Some(iterator::prototype_setter(
+            receiver,
+            arguments,
+            "constructor",
+        )),
+        IteratorPrototypeToStringTagGetter => Some(iterator::prototype_tag_getter(receiver)),
+        IteratorPrototypeToStringTagSetter => Some(iterator::prototype_setter(
+            receiver,
+            arguments,
+            "Symbol.toStringTag",
+        )),
         IteratorToArray => Some(iterator::to_array(receiver)),
         IteratorMap => Some(iterator::map(receiver, arguments)),
         IteratorFilter => Some(iterator::filter(receiver, arguments)),
