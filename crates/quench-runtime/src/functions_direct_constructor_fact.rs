@@ -4,34 +4,38 @@ const DIRECT_TRUE: i16 = -2;
 
 pub(crate) fn direct_constructor_fact(
     function: &oxc::ast::ast::Function<'_>,
-) -> Vec<DirectConstructorField> {
+) -> std::rc::Rc<[crate::facts::DirectConstructorField]> {
     let Some(body) = function.body.as_ref() else {
-        return Vec::new();
+        return std::rc::Rc::default();
     };
     let Ok((parameters, _)) = crate::function_parameters::bindings(&function.params) else {
-        return Vec::new();
+        return std::rc::Rc::default();
     };
     let mut fields = Vec::new();
     for statement in &body.statements {
         let Some((name, expression)) = direct_constructor_assignment(statement) else {
-            return Vec::new();
+            return std::rc::Rc::default();
         };
         if fields.len() == DIRECT_CONSTRUCTOR_FIELD_LIMIT
             || fields
                 .iter()
-                .any(|field: &DirectConstructorField| field.name == name)
+                .any(|field: &crate::facts::DirectConstructorField| field.name == name)
         {
-            return Vec::new();
+            return std::rc::Rc::default();
         }
         let Some(source) = direct_constructor_source(expression, &parameters) else {
-            return Vec::new();
+            return std::rc::Rc::default();
         };
-        fields.push(DirectConstructorField {
+        fields.push(crate::facts::DirectConstructorField {
             name: name.to_string(),
             source,
         });
     }
-    (fields.len() >= 3).then_some(fields).unwrap_or_default()
+    if fields.len() >= 3 {
+        fields.into()
+    } else {
+        std::rc::Rc::from([])
+    }
 }
 
 fn direct_constructor_assignment<'a>(
@@ -87,8 +91,9 @@ mod direct_constructor_tests {
             panic!("expected function declaration");
         };
         direct_constructor_fact(function)
+            .iter()
             .into_iter()
-            .map(|field| (field.name, field.source))
+            .map(|field| (field.name.clone(), field.source))
             .collect()
     }
 
@@ -108,5 +113,22 @@ mod direct_constructor_tests {
     fn rejects_receiver_dependent_or_conditional_initialization() {
         assert!(fields("function C(x,y,z){this.x=x;this.y=this.x;this.z=z;}").is_empty());
         assert!(fields("function C(x,y,z){if(x)this.x=x;this.y=y;this.z=z;}").is_empty());
+    }
+
+    #[test]
+    fn declaration_carries_one_immutable_function_fact() {
+        let program = crate::reduce::reduce_global_script_source(
+            "function C(x,y,z){this.x=x;this.y=y;this.z=z;}",
+        )
+        .expect("function declaration reduces");
+        let code = program.code();
+        let facts = (0..code.len()).find_map(|pc| {
+            let instruction = code.instruction(pc)?;
+            let crate::ops::Op::MakeFunctionWithKind { body, .. } = code.cold(instruction)? else {
+                return None;
+            };
+            Some(body.facts().direct_constructor.clone())
+        });
+        assert_eq!(facts.expect("function body fact").len(), 3);
     }
 }
