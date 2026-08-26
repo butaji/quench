@@ -1,5 +1,5 @@
 use crate::{execute::VmError, value::Value};
-use chrono::{Datelike, Duration as CalendarDuration, NaiveDate};
+use chrono::{Datelike, NaiveDate};
 
 const NAMES: [&str; 9] = [
     "year",
@@ -446,30 +446,28 @@ fn calendar_difference(
     } else {
         (right, left, if direction > 0.0 { -1_i64 } else { 1_i64 })
     };
-    let start_date = NaiveDate::from_ymd_opt(start[0] as i32, start[1] as u32, start[2] as u32)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
-    let end_date = NaiveDate::from_ymd_opt(end[0] as i32, end[1] as u32, end[2] as u32)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+    let start_serial = crate::temporal::plain_date::date_serial(start[0], start[1], start[2]);
+    let end_serial = crate::temporal::plain_date::date_serial(end[0], end[1], end[2]);
     let mut years = 0i64;
     let mut months = 0i64;
     if largest == "year" {
         years = end[0] as i64 - start[0] as i64;
-        let candidate = add_months(start_date, years * 12);
-        if candidate > end_date {
+        let candidate = add_months_serial(start, years * 12);
+        if candidate > end_serial {
             years -= 1;
         }
         months = (end[0] as i64 - (start[0] as i64 + years)) * 12 + end[1] as i64 - start[1] as i64;
     } else if largest == "month" {
         months = (end[0] as i64 - start[0] as i64) * 12 + end[1] as i64 - start[1] as i64;
     }
-    let anchor = add_months(
-        start_date,
+    let anchor = add_months_serial(
+        start,
         years * 12 + months * if largest == "week" { 0 } else { 1 },
     );
-    let mut days = (end_date - anchor).num_days();
+    let mut days = end_serial - anchor;
     if largest == "week" {
         months = 0;
-        days = (end_date - start_date).num_days();
+        days = end_serial - start_serial;
     }
     let mut weeks = if largest == "week" { days / 7 } else { 0 };
     if largest == "week" {
@@ -477,6 +475,14 @@ fn calendar_difference(
     }
     let time_fraction_days = (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64
         / 86_400_000_000_000.0;
+    if smallest == "day" && matches!(largest, "year" | "month" | "week") {
+        let rounded = round_quotient((days as f64 + time_fraction_days) / increment, mode)
+            * increment;
+        years = 0;
+        months = 0;
+        weeks = 0;
+        days = rounded as i64;
+    }
     if matches!(smallest, "year" | "month" | "week") {
         let unit_value = match smallest {
             "year" => years as f64 + months as f64 / 12.0 + (days as f64 + time_fraction_days) / 365.0,
@@ -532,19 +538,17 @@ fn calendar_difference(
     ])
 }
 
-fn add_months(date: NaiveDate, months: i64) -> NaiveDate {
-    let total = date.year() as i64 * 12 + date.month0() as i64 + months;
+fn add_months_serial(values: &[f64], months: i64) -> i64 {
+    let total = values[0] as i64 * 12 + values[1] as i64 - 1 + months;
     let year = (total.div_euclid(12)) as i32;
     let month = total.rem_euclid(12) as u32 + 1;
-    let day = date.day().min(days_in_month(year, month));
-    NaiveDate::from_ymd_opt(year, month, day).unwrap_or(date)
+    let day = (values[2] as u32).min(days_in_month(year, month));
+    crate::temporal::plain_date::date_serial(year as f64, month as f64, day as f64)
 }
 
 fn date_time_total_nanos(values: &[f64]) -> i128 {
-    let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
-        .unwrap_or(NaiveDate::MIN);
-    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("valid epoch");
-    let date_days = date.signed_duration_since(epoch).num_days() as i128;
+    let date_days = (crate::temporal::plain_date::date_serial(values[0], values[1], values[2])
+        - crate::temporal::plain_date::date_serial(1970.0, 1.0, 1.0)) as i128;
     date_days * 86_400_000_000_000
         + values[3] as i128 * 3_600_000_000_000
         + values[4] as i128 * 60_000_000_000
@@ -965,32 +969,32 @@ fn add(
     }
     let days = (number_property(&duration, "weeks") * 7.0 + number_property(&duration, "days"))
         * direction;
-    let current_time = values[3] * 3_600_000_000_000.0
-        + values[4] * 60_000_000_000.0
-        + values[5] * 1_000_000_000.0
-        + values[6] * 1_000_000.0
-        + values[7] * 1_000.0
-        + values[8];
+    let current_time = (values[3] as i128) * 3_600_000_000_000
+        + (values[4] as i128) * 60_000_000_000
+        + (values[5] as i128) * 1_000_000_000
+        + (values[6] as i128) * 1_000_000
+        + (values[7] as i128) * 1_000
+        + values[8] as i128;
     let time_delta = current_time
-        + (number_property(&duration, "hours") * 3_600_000_000_000.0
-            + number_property(&duration, "minutes") * 60_000_000_000.0
-            + number_property(&duration, "seconds") * 1_000_000_000.0
-            + number_property(&duration, "milliseconds") * 1_000_000.0
-            + number_property(&duration, "microseconds") * 1_000.0
-            + number_property(&duration, "nanoseconds"))
-            * direction;
-    let day_nanos = 86_400_000_000_000.0;
-    let carry_days = (time_delta / day_nanos).floor();
-    let remainder = time_delta.rem_euclid(day_nanos);
-    let total_days = days + carry_days;
-    if total_days != 0.0 {
-        let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?
-            .checked_add_signed(CalendarDuration::days(total_days as i64))
+        + ((number_property(&duration, "hours") as i128) * 3_600_000_000_000
+            + (number_property(&duration, "minutes") as i128) * 60_000_000_000
+            + (number_property(&duration, "seconds") as i128) * 1_000_000_000
+            + (number_property(&duration, "milliseconds") as i128) * 1_000_000
+            + (number_property(&duration, "microseconds") as i128) * 1_000
+            + number_property(&duration, "nanoseconds") as i128)
+            * direction as i128;
+    let day_nanos = 86_400_000_000_000i128;
+    let carry_days = time_delta.div_euclid(day_nanos);
+    let remainder = time_delta.rem_euclid(day_nanos) as f64;
+    let total_days = days as i128 + carry_days;
+    if total_days != 0 {
+        let serial = crate::temporal::plain_date::date_serial(values[0], values[1], values[2])
+            .checked_add(total_days as i64)
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
-        values[0] = date.year() as f64;
-        values[1] = date.month() as f64;
-        values[2] = date.day() as f64;
+        let (year, month, day) = crate::temporal::plain_date::civil_from_serial(serial);
+        values[0] = year as f64;
+        values[1] = month as f64;
+        values[2] = day as f64;
     }
     values[3] = (remainder / 3_600_000_000_000.0).floor();
     let mut remainder = remainder - values[3] * 3_600_000_000_000.0;
@@ -1142,13 +1146,13 @@ fn round_values(
     let day_nanos = 86_400_000_000_000.0;
     let carry_days = (rounded / day_nanos).floor();
     if carry_days != 0.0 {
-        let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?
-            .checked_add_signed(CalendarDuration::days(carry_days as i64))
+        let serial = crate::temporal::plain_date::date_serial(values[0], values[1], values[2])
+            .checked_add(carry_days as i64)
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
-        values[0] = date.year() as f64;
-        values[1] = date.month() as f64;
-        values[2] = date.day() as f64;
+        let (year, month, day) = crate::temporal::plain_date::civil_from_serial(serial);
+        values[0] = year as f64;
+        values[1] = month as f64;
+        values[2] = day as f64;
     }
     let rounded = rounded.rem_euclid(day_nanos);
     values[3] = (rounded / 3_600_000_000_000.0).floor();
