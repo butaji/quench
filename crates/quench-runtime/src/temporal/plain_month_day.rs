@@ -58,7 +58,8 @@ pub(crate) fn execute(
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
     let value =
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;
-    if let Value::String(text) = value {
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        let text = crate::conversion::to_string(value)?;
         let parts = text.split('-').collect::<Vec<_>>();
         if parts.len() < 2 {
             return Err(crate::value::error::throw_range_error(
@@ -70,8 +71,10 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
             parts[parts.len() - 1].parse().unwrap_or(0.0),
         );
     }
-    let month = crate::execute::get_property_result(value, "month")
-        .or_else(|_| crate::execute::get_property_result(value, "monthCode"))?;
+    let month = match crate::execute::get_property_result(value, "month")? {
+        Value::Undefined => crate::execute::get_property_result(value, "monthCode")?,
+        value => value,
+    };
     let month = match month {
         Value::String(code) => code.trim_start_matches('M').parse().unwrap_or(0.0),
         value => crate::conversion::to_number(&value)?,
