@@ -29,6 +29,10 @@ pub fn process_cpu_usage_capability() -> Value {
     capability(crate::registry::SPEC_PROCESS_CPU_USAGE)
 }
 
+pub fn process_uptime_capability() -> Value {
+    capability(crate::registry::SPEC_PROCESS_UPTIME)
+}
+
 pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
 }
