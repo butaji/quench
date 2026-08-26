@@ -293,6 +293,7 @@ fn dynamic_value(
             raytrace_pixel: false,
             raytrace_render: None,
             direct_constructor: std::rc::Rc::default(),
+            linked_record_insert: None,
         },
     );
     if let Value::Function(function) = &value {
