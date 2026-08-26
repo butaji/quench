@@ -580,7 +580,7 @@ pub(crate) fn reduce_values(
     for position in indices {
         let Some(value) = crate::builtins::map_value(&receiver, position)? else { continue; };
         let args = [accumulator, value, Value::Number(position as f64), receiver.clone()];
-        accumulator = crate::functions::execute_target(callback, &receiver, &args)?;
+        accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
     }
     Ok(accumulator)
 }
