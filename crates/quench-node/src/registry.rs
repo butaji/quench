@@ -368,8 +368,7 @@ pub const SPEC_OS_FREEMEM: NodeSpec = NodeSpec::new("os:freemem", 0x0B0A);
 pub const SPEC_OS_TOTALMEM: NodeSpec = NodeSpec::new("os:totalmem", 0x0B0B);
 pub const SPEC_OS_LOADAVG: NodeSpec = NodeSpec::new("os:loadavg", 0x0B0C);
 pub const SPEC_OS_NETWORKINTERFACES: NodeSpec = NodeSpec::new("os:networkInterfaces", 0x0B0D);
-pub const SPEC_OS_AVAILABLE_PARALLELISM: NodeSpec =
-    NodeSpec::new("os:availableParallelism", 0x0B0E);
+pub const SPEC_OS_AVAILABLE_PARALLELISM: NodeSpec = NodeSpec::new("os:availableParallelism", 0x0B0E);
 
 pub const SPEC_STREAM_READABLE: NodeSpec = NodeSpec::new("stream:Readable", 0x0C00);
 pub const SPEC_STREAM_WRITABLE: NodeSpec = NodeSpec::new("stream:Writable", 0x0C01);

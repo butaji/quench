@@ -55,7 +55,7 @@ struct NativePacketBacking {
 struct NativeSchedule<'a> {
     table: &'a DirectTaskTable,
     scheduler: &'a LinkedSchedulerWords,
-    tasks: Vec<Option<NativeTask>>,
+    tasks: Vec<NativeTask>,
     packets: Vec<NativePacket>,
     backings: Vec<NativePacketBacking>,
     current: Option<usize>,
@@ -94,9 +94,7 @@ impl<'a> NativeSchedule<'a> {
         let mut state = Self {
             table,
             scheduler,
-            tasks: std::iter::repeat_with(|| None)
-                .take(table.runners.len())
-                .collect(),
+            tasks: Vec::with_capacity(table.runners.len()),
             packets: Vec::with_capacity(16),
             backings: Vec::with_capacity(16),
             current: table.id_for_value(start)?,
@@ -110,7 +108,8 @@ impl<'a> NativeSchedule<'a> {
             if exact_linked_task_id(runner.word(runner.id).number()?)? != index {
                 return None;
             }
-            state.tasks[index] = Some(state.load_task(runner)?);
+            let task = state.load_task(runner)?;
+            state.tasks.push(task);
         }
         Some(state)
     }
@@ -215,7 +214,7 @@ impl<'a> NativeSchedule<'a> {
         let mut iterations = 0usize;
         while let Some(current) = self.current {
             iterations = iterations.checked_add(1)?;
-            let task = self.task(current)?;
+            let task = self.task(current);
             if task.state & task.held_mask != 0 || task.state == task.suspended {
                 self.current = task.link;
                 continue;
@@ -230,7 +229,7 @@ impl<'a> NativeSchedule<'a> {
     fn take_packet(&mut self, current: usize) -> Option<Option<usize>> {
         let runnable = self.scheduler.runnable;
         let (state, suspended, queue) = {
-            let task = self.task(current)?;
+            let task = self.task(current);
             (task.state, task.suspended, task.queue)
         };
         if state != suspended | runnable {
@@ -238,14 +237,14 @@ impl<'a> NativeSchedule<'a> {
         }
         let packet = queue?;
         let next = self.packets.get(packet)?.link;
-        let task = self.task_mut(current)?;
+        let task = self.task_mut(current);
         task.queue = next;
         task.state = if task.queue.is_none() { 0 } else { runnable };
         Some(Some(packet))
     }
 
     fn run_task(&mut self, current: usize, packet: Option<usize>) -> Option<Option<usize>> {
-        match self.task(current)?.kind {
+        match self.task(current).kind {
             NativeTaskKind::Idle { .. } => self.run_idle(current),
             NativeTaskKind::Device { .. } => self.run_device(current, packet),
             NativeTaskKind::Worker { .. } => self.run_worker(current, packet),
@@ -259,7 +258,7 @@ impl<'a> NativeSchedule<'a> {
             mut count,
             device_a,
             device_b,
-        } = self.task(current)?.kind
+        } = self.task(current).kind
         else {
             return None;
         };
@@ -275,7 +274,7 @@ impl<'a> NativeSchedule<'a> {
             };
             self.release(current, target)?
         };
-        self.task_mut(current)?.kind = NativeTaskKind::Idle {
+        self.task_mut(current).kind = NativeTaskKind::Idle {
             v1,
             count,
             device_a,
@@ -285,7 +284,7 @@ impl<'a> NativeSchedule<'a> {
     }
 
     fn run_device(&mut self, current: usize, packet: Option<usize>) -> Option<Option<usize>> {
-        let NativeTaskKind::Device { v1 } = self.task(current)?.kind else {
+        let NativeTaskKind::Device { v1 } = self.task(current).kind else {
             return None;
         };
         let (next_v1, next) = if let Some(packet) = packet {
@@ -298,7 +297,7 @@ impl<'a> NativeSchedule<'a> {
         } else {
             (None, self.suspend(current)?)
         };
-        self.task_mut(current)?.kind = NativeTaskKind::Device { v1: next_v1 };
+        self.task_mut(current).kind = NativeTaskKind::Device { v1: next_v1 };
         Some(next)
     }
 
@@ -312,7 +311,7 @@ impl<'a> NativeSchedule<'a> {
             handler_a,
             handler_b,
             count,
-        } = self.task(current)?.kind
+        } = self.task(current).kind
         else {
             return None;
         };
@@ -335,7 +334,7 @@ impl<'a> NativeSchedule<'a> {
             }
             *value = f64::from(v2);
         }
-        self.task_mut(current)?.kind = NativeTaskKind::Worker {
+        self.task_mut(current).kind = NativeTaskKind::Worker {
             v1: next_v1,
             v2,
             handler_a,
@@ -351,7 +350,7 @@ impl<'a> NativeSchedule<'a> {
             mut v2,
             work_kind,
             data_size,
-        } = self.task(current)?.kind
+        } = self.task(current).kind
         else {
             return None;
         };
@@ -366,7 +365,7 @@ impl<'a> NativeSchedule<'a> {
             None => self.suspend(current)?,
             Some(work) if usize::try_from(self.packets.get(work)?.a1).ok()? < data_size => {
                 let Some(device) = v2 else {
-                    self.task_mut(current)?.kind = NativeTaskKind::Handler {
+                    self.task_mut(current).kind = NativeTaskKind::Handler {
                         v1,
                         v2,
                         work_kind,
@@ -390,7 +389,7 @@ impl<'a> NativeSchedule<'a> {
                 Some(self.queue_packet(current, work, target)?)
             }
         };
-        self.task_mut(current)?.kind = NativeTaskKind::Handler {
+        self.task_mut(current).kind = NativeTaskKind::Handler {
             v1,
             v2,
             work_kind,
@@ -420,9 +419,9 @@ impl<'a> NativeSchedule<'a> {
         self.queue_count = self.queue_count.checked_add(1)?;
         self.packets.get_mut(packet)?.link = None;
         self.packets.get_mut(packet)?.id = current;
-        let current_priority = self.task(current)?.priority;
+        let current_priority = self.task(current).priority;
         let runnable = self.scheduler.runnable;
-        let target_task = self.task_mut(target)?;
+        let target_task = self.task_mut(target);
         if target_task.queue.is_none() {
             target_task.queue = Some(packet);
             target_task.state |= runnable;
@@ -438,8 +437,8 @@ impl<'a> NativeSchedule<'a> {
     }
 
     fn release(&mut self, current: usize, target: usize) -> Option<Option<usize>> {
-        let current_priority = self.task(current)?.priority;
-        let target_task = self.task_mut(target)?;
+        let current_priority = self.task(current).priority;
+        let target_task = self.task_mut(target);
         target_task.state &= !target_task.held_mask;
         Some(Some(if target_task.priority > current_priority {
             target
@@ -450,22 +449,30 @@ impl<'a> NativeSchedule<'a> {
 
     fn hold(&mut self, current: usize) -> Option<Option<usize>> {
         self.hold_count = self.hold_count.checked_add(1)?;
-        let task = self.task_mut(current)?;
+        let task = self.task_mut(current);
         task.state |= task.held_mask;
         Some(task.link)
     }
 
     fn suspend(&mut self, current: usize) -> Option<Option<usize>> {
-        let task = self.task_mut(current)?;
+        let task = self.task_mut(current);
         task.state |= task.suspended;
         Some(Some(current))
     }
 
-    fn task(&self, index: usize) -> Option<&NativeTask> {
-        self.tasks.get(index)?.as_ref()
+    #[inline(always)]
+    fn task(&self, index: usize) -> &NativeTask {
+        debug_assert!(index < self.tasks.len());
+        // SAFETY: admission resolves every task edge to an index in this
+        // immutable table; the native state machine only copies those IDs.
+        unsafe { self.tasks.get_unchecked(index) }
     }
 
-    fn task_mut(&mut self, index: usize) -> Option<&mut NativeTask> {
-        self.tasks.get_mut(index)?.as_mut()
+    #[inline(always)]
+    fn task_mut(&mut self, index: usize) -> &mut NativeTask {
+        debug_assert!(index < self.tasks.len());
+        // SAFETY: identical invariant to `task`; mutation never changes the
+        // table length or manufactures a task ID.
+        unsafe { self.tasks.get_unchecked_mut(index) }
     }
 }
