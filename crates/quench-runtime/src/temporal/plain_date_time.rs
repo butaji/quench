@@ -1130,28 +1130,6 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         }
         _ => return Err(crate::value::error::throw_type_error("Invalid rounding options")),
     };
-    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
-    if crate::conversion::is_symbol(&unit) {
-        return Err(crate::value::error::throw_type_error(
-            "Invalid smallestUnit",
-        ));
-    }
-    let unit = crate::conversion::to_string(&unit)?;
-    let unit = unit.strip_suffix('s').unwrap_or(&unit).to_string();
-    let quantum = match unit.as_str() {
-        "day" => 86_400_000_000_000.0,
-        "hour" => 3_600_000_000_000.0,
-        "minute" => 60_000_000_000.0,
-        "second" => 1_000_000_000.0,
-        "millisecond" => 1_000_000.0,
-        "microsecond" => 1_000.0,
-        "nanosecond" => 1.0,
-        _ => {
-            return Err(crate::value::error::throw_range_error(
-                "Invalid smallestUnit",
-            ))
-        }
-    };
     let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
     let increment = if matches!(increment_value, Value::Undefined) {
         1.0
@@ -1159,25 +1137,6 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         crate::conversion::to_number(&increment_value)?
     }
     .trunc();
-    let maximum: f64 = match unit.as_str() {
-        "day" => 1.0,
-        "hour" => 24.0,
-        "minute" | "second" => 60.0,
-        _ => 1_000.0,
-    };
-    if !increment.is_finite()
-        || increment < 1.0
-        || if unit == "day" {
-            increment > maximum
-        } else {
-            increment >= maximum
-        }
-        || (maximum as u64) % (increment as u64) != 0
-    {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid roundingIncrement",
-        ));
-    }
     let mode_value = crate::execute::get_property_result(options, "roundingMode")?;
     let mut mode = "halfExpand".to_string();
     if !matches!(mode_value, Value::Undefined) {
@@ -1203,6 +1162,47 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                 "Invalid roundingMode",
             ));
         }
+    }
+    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
+    if crate::conversion::is_symbol(&unit) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid smallestUnit",
+        ));
+    }
+    let unit = crate::conversion::to_string(&unit)?;
+    let unit = unit.strip_suffix('s').unwrap_or(&unit).to_string();
+    let quantum = match unit.as_str() {
+        "day" => 86_400_000_000_000.0,
+        "hour" => 3_600_000_000_000.0,
+        "minute" => 60_000_000_000.0,
+        "second" => 1_000_000_000.0,
+        "millisecond" => 1_000_000.0,
+        "microsecond" => 1_000.0,
+        "nanosecond" => 1.0,
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            ))
+        }
+    };
+    let maximum: f64 = match unit.as_str() {
+        "day" => 1.0,
+        "hour" => 24.0,
+        "minute" | "second" => 60.0,
+        _ => 1_000.0,
+    };
+    if !increment.is_finite()
+        || increment < 1.0
+        || if unit == "day" {
+            increment > maximum
+        } else {
+            increment >= maximum
+        }
+        || (maximum as u64) % (increment as u64) != 0
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
     }
     round_values(fields(receiver)?, quantum, increment, &mode)
 }
@@ -1354,6 +1354,7 @@ fn with(
     }
     let mut month_input = None;
     let mut month_code_input = None;
+    let mut month_code_error = None;
     let mut recognized = false;
     for name in [
         "day",
@@ -1373,9 +1374,20 @@ fn with(
         }
         recognized = true;
         if name == "monthCode" {
-            let month = crate::conversion::to_number(&month_code_number(&value)?)?;
-            values[1] = month;
-            month_code_input = Some(month);
+            match month_code_number(&value)
+                .and_then(|value| crate::conversion::to_number(&value))
+            {
+                Ok(month) if month.is_finite() => {
+                    values[1] = month;
+                    month_code_input = Some(month);
+                }
+                Ok(_) => {
+                    month_code_error = Some(crate::value::error::throw_range_error(
+                        "Invalid monthCode",
+                    ));
+                }
+                Err(error) => month_code_error = Some(error),
+            }
             continue;
         }
         let index = NAMES.iter().position(|field| *field == name).unwrap();
@@ -1385,6 +1397,24 @@ fn with(
         if name == "month" {
             month_input = Some(raw_number);
         }
+    }
+    if let Some(error) = month_code_error {
+        let _ = options
+            .filter(|value| !matches!(value, Value::Undefined))
+            .map(|value| {
+                if !crate::value::is_object(value) {
+                    return Err(crate::value::error::throw_type_error("Invalid options"));
+                }
+                crate::execute::get_property_result(value, "overflow").and_then(|value| {
+                    if matches!(value, Value::Undefined) {
+                        Ok("constrain".to_string())
+                    } else {
+                        crate::conversion::to_string(&value)
+                    }
+                })
+            })
+            .transpose()?;
+        return Err(error);
     }
     if let (Some(month), Some(month_code)) = (month_input, month_code_input) {
         if month.fract() == 0.0 && month != month_code {
@@ -1404,18 +1434,22 @@ fn with(
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
-    if let Some(value) = options {
-        if !matches!(value, Value::Undefined) && !crate::value::is_object(value) {
-            return Err(crate::value::error::throw_type_error("Invalid options"));
-        }
-    }
     let overflow = options
-        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
-        .unwrap_or(Value::String("constrain".into()));
-    let overflow = match overflow {
-        Value::Undefined => "constrain".to_string(),
-        value => crate::conversion::to_string(&value)?,
-    };
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(|value| {
+            if !crate::value::is_object(value) {
+                return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+            crate::execute::get_property_result(value, "overflow").and_then(|value| {
+                if matches!(value, Value::Undefined) {
+                    Ok("constrain".to_string())
+                } else {
+                    crate::conversion::to_string(&value)
+                }
+            })
+        })
+        .transpose()?
+        .unwrap_or_else(|| "constrain".to_string());
     if overflow != "constrain" && overflow != "reject" {
         return Err(crate::value::error::throw_range_error("Invalid overflow"));
     }
