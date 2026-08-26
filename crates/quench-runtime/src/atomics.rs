@@ -62,12 +62,17 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
                     "Atomics.wait requires a shared buffer",
                 ));
             }
+            let length = view.logical_len();
             let index = atomic_index(arguments.get(1))?;
+            if index >= length {
+                return Err(crate::value::error::throw_range_error(
+                    "Atomics.wait index is out of range",
+                ));
+            }
             (
-                view.get(index)
-                    .ok_or_else(|| {
-                        crate::value::error::throw_range_error("Atomics.wait index is out of range")
-                    })?
+                view.get(index).ok_or_else(|| {
+                    crate::value::error::throw_range_error("Atomics.wait index is out of range")
+                })?
                     .to_string(),
                 atomic_value(arguments.get(2))?.to_string(),
             )
@@ -78,7 +83,13 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
                     "Atomics.wait requires a shared buffer",
                 ));
             }
+            let length = view.logical_len();
             let index = atomic_index(arguments.get(1))?;
+            if index >= length {
+                return Err(crate::value::error::throw_range_error(
+                    "Atomics.wait index is out of range",
+                ));
+            }
             (
                 view.get(index)
                     .ok_or_else(|| {
@@ -289,7 +300,8 @@ pub(crate) fn execute(
     if builtin == Builtin::AtomicsCompareExchange {
         let expected = atomic_value(arguments.get(2))?;
         if old == expected {
-            view.set(index, atomic_value(arguments.get(3))?);
+            let replacement = atomic_value(arguments.get(3))?;
+            view.set(index, replacement);
         }
         return Ok(Value::Number(old_number));
     }
@@ -401,7 +413,11 @@ fn bigint_write(view: &Value, index: usize, value: &str, unchanged: bool) -> Res
 }
 
 fn bigint_argument(value: Option<&Value>) -> Result<num_bigint::BigInt, VmError> {
-    let Some(Value::BigInt(value)) = value else {
+    let value = value.ok_or_else(|| {
+        crate::value::error::throw_type_error("Atomics requires BigInt values")
+    })?;
+    let primitive = crate::conversion::to_primitive(value, "number")?;
+    let Value::BigInt(value) = primitive else {
         return Err(crate::value::error::throw_type_error(
             "Atomics requires BigInt values",
         ));
