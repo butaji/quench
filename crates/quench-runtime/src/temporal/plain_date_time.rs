@@ -1207,10 +1207,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     }
     if let Value::String(text) = value {
         let result = parse_string(text)?;
-        validate_from_options(options)?;
+        from_overflow_option(options)?;
         return Ok(result);
     }
-    validate_from_options(options)?;
+    let overflow = from_overflow_option(options)?;
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
@@ -1251,25 +1251,44 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             field
         });
     }
-    construct(&fields)
+    let mut numeric = fields
+        .iter()
+        .map(crate::conversion::to_number)
+        .collect::<Result<Vec<_>, _>>()?;
+    if overflow == "constrain" {
+        numeric[1] = numeric[1].clamp(1.0, 12.0);
+        if numeric[2].is_finite() {
+            numeric[2] = numeric[2].min(days_in_month(numeric[0] as i32, numeric[1] as u32) as f64);
+        }
+        for (index, limit) in [23.0, 59.0, 59.0, 999.0, 999.0, 999.0]
+            .into_iter()
+            .enumerate()
+        {
+            let index = index + 3;
+            if numeric[index].is_finite() {
+                numeric[index] = numeric[index].min(limit);
+            }
+        }
+    }
+    construct(&numeric.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
 
-fn validate_from_options(options: Option<&Value>) -> Result<(), VmError> {
+fn from_overflow_option(options: Option<&Value>) -> Result<String, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(());
+        return Ok("constrain".into());
     };
     if !crate::value::is_object(options) {
         return Err(crate::value::error::throw_type_error("Invalid options"));
     }
     let overflow = crate::execute::get_property_result(options, "overflow")?;
     if matches!(overflow, Value::Undefined) {
-        return Ok(());
+        return Ok("constrain".into());
     }
     let overflow = crate::conversion::to_string(&overflow)?;
     if !matches!(overflow.as_str(), "constrain" | "reject") {
         return Err(crate::value::error::throw_range_error("Invalid overflow"));
     }
-    Ok(())
+    Ok(overflow)
 }
 
 fn month_code_number(value: &Value) -> Result<Value, VmError> {
