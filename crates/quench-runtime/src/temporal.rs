@@ -19,10 +19,9 @@ pub(crate) fn zoned_construct(
             ))
         }
     };
-    let timezone = match arguments.get(1).unwrap_or(&crate::value::Value::Undefined) {
-        crate::value::Value::String(value) => value.clone(),
-        _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
-    };
+    let timezone = parse_timezone_identifier(
+        arguments.get(1).unwrap_or(&crate::value::Value::Undefined),
+    )?;
     Ok(zoned_record(
         epoch,
         timezone,
@@ -204,16 +203,8 @@ fn parse_timezone_identifier(
         return Err(crate::value::error::throw_range_error("Invalid time zone"));
     }
     if text.starts_with(['+', '-']) {
-        let bytes = text.as_bytes();
-        if bytes.len() != 6 || bytes[3] != b':' {
-            return Err(crate::value::error::throw_range_error("Invalid time zone"));
-        }
-        let hour = text[1..3].parse::<u8>().unwrap_or(99);
-        let minute = text[4..6].parse::<u8>().unwrap_or(99);
-        if hour > 23 || minute > 59 {
-            return Err(crate::value::error::throw_range_error("Invalid time zone"));
-        }
-        return Ok(text);
+        return normalize_offset_identifier(&text)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"));
     }
     if text.contains('T') {
         let base = text.split('[').next().unwrap_or(&text);
@@ -234,20 +225,12 @@ fn parse_timezone_identifier(
         let Some(identifier) = identifier else {
             return Err(crate::value::error::throw_range_error("Invalid time zone"));
         };
-        if identifier.ends_with(":60")
-            || (identifier.starts_with(['+', '-']) && identifier.len() != 6)
-        {
-            return Err(crate::value::error::throw_range_error("Invalid time zone"));
-        }
         if identifier.eq_ignore_ascii_case("utc") {
             return Ok("UTC".into());
         }
         if identifier.starts_with(['+', '-']) {
-            let hour = identifier[1..3].parse::<u8>().unwrap_or(99);
-            let minute = identifier[4..6].parse::<u8>().unwrap_or(99);
-            if hour > 23 || minute > 59 {
-                return Err(crate::value::error::throw_range_error("Invalid time zone"));
-            }
+            return normalize_offset_identifier(identifier)
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"));
         }
         return Ok(identifier.to_string());
     }
@@ -258,6 +241,26 @@ fn parse_timezone_identifier(
         return Err(crate::value::error::throw_range_error("Invalid time zone"));
     }
     Ok(text)
+}
+
+fn normalize_offset_identifier(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    if !matches!(bytes.first(), Some(b'+' | b'-')) {
+        return None;
+    }
+    let (hour, minute) = match bytes.len() {
+        3 => (text[1..3].parse::<u8>().ok()?, 0),
+        5 => (text[1..3].parse::<u8>().ok()?, text[3..5].parse::<u8>().ok()?),
+        6 if bytes[3] == b':' => (
+            text[1..3].parse::<u8>().ok()?,
+            text[4..6].parse::<u8>().ok()?,
+        ),
+        _ => return None,
+    };
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some(format!("{}{:02}:{:02}", bytes[0] as char, hour, minute))
 }
 
 fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
@@ -468,7 +471,7 @@ mod stubs {
                 .unwrap_or(text);
             let (date, time) = date_time
                 .split_once('T')
-                .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
+                .unwrap_or((date_time, "00:00:00"));
             let (parsed_year, parsed_month, parsed_day) = super::parse_date_parts(date)
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
             let offset_start = time[1..].find(['+', '-']).map(|index| index + 1);
@@ -528,12 +531,14 @@ mod stubs {
                 + time_parts.get(2).copied().unwrap_or(0) as i128 * 1_000_000_000
                 + fractional_nanos;
             let mut epoch = local_epoch - super::fixed_offset_nanos(offset_text);
-            let timezone = text
+            let timezone_text = text
                 .split('[')
                 .nth(1)
                 .and_then(|part| part.split(']').next())
-                .unwrap_or("UTC")
-                .to_string();
+                .unwrap_or(if has_z { "UTC" } else { offset_text });
+            let timezone = super::parse_timezone_identifier(&Value::String(
+                timezone_text.to_string(),
+            ))?;
             if !has_z && offset_start.is_none() {
                 epoch -= super::fixed_offset_nanos(&timezone);
             }
@@ -571,9 +576,9 @@ mod stubs {
             let second = crate::conversion::to_number(
                 &crate::execute::get_property_result(value, "second").unwrap_or(Value::Number(0.0)),
             )? as i128;
-            let timezone = crate::conversion::to_string(&crate::execute::get_property_result(
-                value, "timeZone",
-            )?)?;
+            let timezone = super::parse_timezone_identifier(
+                &crate::execute::get_property_result(value, "timeZone")?,
+            )?;
             let year_adjusted = i128::from(year) - i128::from(month <= 2);
             let era = if year_adjusted >= 0 {
                 year_adjusted
@@ -587,10 +592,11 @@ mod stubs {
             let days = era * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100
                 + day_of_year
                 - 719_468;
-            let epoch = days * 86_400_000_000_000
+            let local_epoch = days * 86_400_000_000_000
                 + hour * 3_600_000_000_000
                 + minute * 60_000_000_000
                 + second * 1_000_000_000;
+            let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
             return Ok(super::zoned_record(
                 epoch,
                 timezone,
