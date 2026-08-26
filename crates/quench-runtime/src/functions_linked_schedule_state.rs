@@ -105,7 +105,7 @@ struct NativeSchedule<'a> {
     #[cfg(feature = "execution-trace")]
     append_steps: usize,
     #[cfg(feature = "execution-trace")]
-    direct_branches: [usize; 12],
+    direct_branches: [usize; 14],
 }
 
 fn execute_linked_schedule_state(
@@ -155,7 +155,7 @@ impl<'a> NativeSchedule<'a> {
             #[cfg(feature = "execution-trace")]
             append_steps: 0,
             #[cfg(feature = "execution-trace")]
-            direct_branches: [0; 12],
+            direct_branches: [0; 14],
         };
         state.current?;
         for index in 0..table.runners.len() {
@@ -309,6 +309,14 @@ impl<'a> NativeSchedule<'a> {
         let mut iterations = 0usize;
         while let Some(current) = self.current {
             iterations = iterations.checked_add(1)?;
+            #[cfg(feature = "execution-trace")]
+            {
+                let task = self.task(current);
+                let held = task.state & task.held_mask != 0;
+                let suspended = task.state == task.suspended;
+                self.direct_branches[12] += usize::from(held);
+                self.direct_branches[13] += usize::from(!held && suspended);
+            }
             let task = self.task(current);
             if task.state & task.held_mask != 0 || task.state == task.suspended {
                 self.current = task.link;
