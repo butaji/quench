@@ -343,6 +343,8 @@ pub const SPEC_PROCESS_SETUID: NodeSpec = NodeSpec::new("process:setuid", 0x0A16
 pub const SPEC_PROCESS_SETGID: NodeSpec = NodeSpec::new("process:setgid", 0x0A17);
 pub const SPEC_PROCESS_SETEUID: NodeSpec = NodeSpec::new("process:seteuid", 0x0A18);
 pub const SPEC_PROCESS_SETEGID: NodeSpec = NodeSpec::new("process:setegid", 0x0A19);
+pub const SPEC_PROCESS_ACTIVE_RESOURCES: NodeSpec =
+    NodeSpec::new("process:getActiveResourcesInfo", 0x0A1A);
 pub const SPEC_PROCESS_UMASK: NodeSpec = NodeSpec::new("process:umask", 0x0A06);
 pub const SPEC_PROCESS_ON: NodeSpec = NodeSpec::new("process:on", 0x0A07);
 pub const SPEC_PROCESS_ONCE: NodeSpec = NodeSpec::new("process:once", 0x0A08);
