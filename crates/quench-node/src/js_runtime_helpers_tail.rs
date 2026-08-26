@@ -318,7 +318,11 @@ fn next_tick(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(callback) = arguments.first() else {
         return Err(VmError::EvalError("nextTick expects a callback".into()));
     };
-    let _ = arguments;
+    if !quench_runtime::is_callable(callback) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"callback\" argument must be of type function".into(),
+        ));
+    }
     NODE_MICROTASKS.with(|queue| queue.borrow_mut().insert(0, callback.clone()));
     Ok(Value::Undefined)
 }
