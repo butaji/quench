@@ -152,6 +152,7 @@ pub enum Builtin {
     TemporalZonedDateTimeOffsetGetter,
     TemporalZonedDateTimeOffsetNanosecondsGetter,
     TemporalZonedDateTimeHoursInDayGetter,
+    TemporalZonedDateTimeWeekOfYearGetter, TemporalZonedDateTimeYearOfWeekGetter,
     TemporalDuration, TemporalDurationPrototype,
     TemporalDurationFrom, TemporalDurationCompare, TemporalDurationAdd, TemporalDurationSubtract,
     TemporalDurationWith,
