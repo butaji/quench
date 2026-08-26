@@ -487,18 +487,23 @@ pub(crate) fn reduce(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    let callback = arguments
-        .first()
-        .cloned()
-        .ok_or_else(crate::vm::not_callable)?;
+    let callback = arguments.first().cloned().ok_or_else(|| {
+        close_invalid_helper_argument(
+            receiver,
+            "Iterator.prototype.reduce reducer is not callable",
+        )
+    })?;
     if !crate::conversion::is_callable(&callback) {
-        return Err(crate::vm::not_callable());
+        return Err(close_invalid_helper_argument(
+            receiver,
+            "Iterator.prototype.reduce reducer is not callable",
+        ));
     }
     let iterator = receiver_iterator(receiver)?;
-    let mut accumulator = match arguments.get(1) {
-        Some(value) => value.clone(),
+    let (mut accumulator, mut index) = match arguments.get(1) {
+        Some(value) => (value.clone(), 0),
         None => match step_value(&iterator)? {
-            Some(value) => value,
+            Some(value) => (value, 1),
             None => {
                 return Err(crate::value::error::throw_type_error(
                     "Iterator.prototype.reduce called on empty iterator with no initial value",
@@ -506,7 +511,6 @@ pub(crate) fn reduce(
             }
         },
     };
-    let mut index = 0;
     loop {
         let value = match step_value(&iterator) {
             Ok(Some(value)) => value,
@@ -546,7 +550,8 @@ pub(crate) fn find(
     let receiver = receiver.ok_or_else(not_iterable)?;
     let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&callback) {
-        return Err(crate::value::error::throw_type_error(
+        return Err(close_invalid_helper_argument(
+            receiver,
             "Iterator.prototype.find predicate is not callable",
         ));
     }
@@ -574,8 +579,11 @@ pub(crate) fn find(
             }
         };
         if matched {
-            let _ = close(iterator.clone(), crate::completion::Completion::Normal);
-            return Ok(value);
+            let completion = close(iterator.clone(), crate::completion::Completion::Normal)?;
+            return match completion {
+                crate::completion::Completion::Normal => Ok(value),
+                completion => completion.into_vm_error().map(|_| value),
+            };
         }
         index += 1;
     }
@@ -588,7 +596,8 @@ pub(crate) fn for_each(
     let receiver = receiver.ok_or_else(not_iterable)?;
     let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&callback) {
-        return Err(crate::value::error::throw_type_error(
+        return Err(close_invalid_helper_argument(
+            receiver,
             "Iterator.prototype.forEach callback is not callable",
         ));
     }
