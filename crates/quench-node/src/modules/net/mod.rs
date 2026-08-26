@@ -26,9 +26,9 @@ mod pump;
 
 pub use methods::{
     connect, connect_existing, create_server, server_address, server_close, server_listen,
-    server_ref, server_unref,
-    socket_address, socket_construct, socket_destroy, socket_end, socket_pause, socket_resume,
-    socket_set_encoding, socket_set_keep_alive, socket_set_no_delay, socket_write,
+    server_ref, server_unref, socket_address, socket_construct, socket_destroy, socket_end,
+    socket_pause, socket_ref, socket_resume, socket_set_encoding, socket_set_keep_alive,
+    socket_set_no_delay, socket_unref, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -249,10 +249,23 @@ fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
         // Node exposes a nulled-out native handle after a socket closes.
         ("_handle", Value::Null),
+        ("readable", Value::Boolean(true)),
+        ("writable", Value::Boolean(true)),
+        ("destroyed", Value::Boolean(false)),
+        ("connecting", Value::Boolean(false)),
+        ("readyState", Value::String("open".into())),
         ("connect", cap(crate::registry::SPEC_NET_CONNECT)),
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
         ("destroy", cap(crate::registry::SPEC_NET_SOCKET_DESTROY)),
+        (
+            "unref",
+            cap(crate::registry::NodeSpec::new("net:socketUnref", 2290)),
+        ),
+        (
+            "ref",
+            cap(crate::registry::NodeSpec::new("net:socketRef", 2291)),
+        ),
         ("address", cap(crate::registry::SPEC_NET_SOCKET_ADDRESS)),
         (
             "setNoDelay",
