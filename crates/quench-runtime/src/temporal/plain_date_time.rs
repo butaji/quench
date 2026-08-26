@@ -227,7 +227,12 @@ fn difference(
             "day".into()
         } else {
             let text = crate::conversion::to_string(&largest_value)?;
-            text.strip_suffix('s').unwrap_or(&text).to_string()
+            let text = text.strip_suffix('s').unwrap_or(&text);
+            if text == "auto" {
+                "day".into()
+            } else {
+                text.to_string()
+            }
         };
         if !matches!(
             largest.as_str(),
