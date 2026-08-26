@@ -367,7 +367,7 @@ pub(crate) fn array_to_string(
         ));
     };
     let receiver = crate::construct::to_object(receiver)?;
-    let mut join = crate::execute::get_property_result(&receiver, "join")?;
+    let join = crate::execute::get_property_result(&receiver, "join")?;
     if crate::conversion::is_callable(&join) {
         return crate::functions::execute_target(&join, &receiver, &[]);
     }
