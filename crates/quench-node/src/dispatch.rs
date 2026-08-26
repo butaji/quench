@@ -383,6 +383,8 @@ const CAP_NET_SERVER_REF: u16 = 0x1015;
 const CAP_NET_SOCKET_WRITE: u16 = 0x100A;
 const CAP_NET_SOCKET_END: u16 = 0x100B;
 const CAP_NET_SOCKET_DESTROY: u16 = 0x100C;
+const CAP_NET_SOCKET_UNREF: u16 = 2290;
+const CAP_NET_SOCKET_REF: u16 = 2291;
 const CAP_NET_SOCKET_ADDRESS: u16 = 0x100D;
 const CAP_NET_SOCKET_SET_NO_DELAY: u16 = 0x100E;
 const CAP_NET_SOCKET_SET_KEEP_ALIVE: u16 = 0x100F;
@@ -787,6 +789,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_WRITE => crate::modules::net::socket_write,
         CAP_NET_SOCKET_END => crate::modules::net::socket_end,
         CAP_NET_SOCKET_DESTROY => crate::modules::net::socket_destroy,
+        CAP_NET_SOCKET_UNREF => crate::modules::net::socket_unref,
+        CAP_NET_SOCKET_REF => crate::modules::net::socket_ref,
         CAP_NET_SOCKET_ADDRESS => crate::modules::net::socket_address,
         CAP_NET_SOCKET_SET_NO_DELAY => crate::modules::net::socket_set_no_delay,
         CAP_NET_SOCKET_SET_KEEP_ALIVE => crate::modules::net::socket_set_keep_alive,
