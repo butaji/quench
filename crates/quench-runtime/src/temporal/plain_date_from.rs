@@ -17,30 +17,38 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
         }
         return from_property_bag(value, options);
     }
-    let Some(Value::String(text)) = value else {
-        return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
+    let text = match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::StringUnits(_)) => crate::conversion::to_string(value.unwrap())?,
+        _ => return Err(crate::value::error::throw_type_error("Invalid PlainDate")),
     };
-    if has_utc_designator(text) || text.starts_with("-000000") {
+    if text.starts_with("-000000") || has_empty_time_designator(&text) {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
-    if has_excess_fraction(text) {
+    if has_fractional_minutes(&text) || has_invalid_time(&text) {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
+    if has_utc_designator(&text) || text.starts_with("-000000") {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
+    if has_excess_fraction(&text) {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
     let calendar_count = text.matches("[u-ca=").count();
-    if has_uppercase_annotation_key(text) {
+    if has_uppercase_annotation_key(&text) {
         return Err(crate::value::error::throw_range_error(
             "Invalid annotation key",
         ));
     }
-    if has_invalid_calendar_annotation(text) {
+    if has_invalid_calendar_annotation(&text) {
         return Err(crate::value::error::throw_range_error("Invalid calendar"));
     }
-    if has_multiple_time_zones(text) {
+    if has_multiple_time_zones(&text) {
         return Err(crate::value::error::throw_range_error(
             "Multiple time zones",
         ));
     }
-    if has_unknown_critical_annotation(text) {
+    if has_unknown_critical_annotation(&text) {
         return Err(crate::value::error::throw_range_error(
             "Unknown critical annotation",
         ));
@@ -48,7 +56,7 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
     if text.contains("[!u-ca=") && calendar_count > 0 {
         return Err(crate::value::error::throw_range_error("Multiple calendars"));
     }
-    let date = date_part(text);
+    let date = date_part(&text);
     let parts = date.split('-').collect::<Vec<_>>();
     if parts.len() == 1 && date.len() == 8 {
         let year = date[..4]
@@ -94,6 +102,9 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     let month = crate::execute::get_property_result(value, "month")?;
     let month_code = crate::execute::get_property_result(value, "monthCode")?;
     let day = crate::execute::get_property_result(value, "day")?;
+    if matches!(day, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Missing day"));
+    }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     let calendar = match calendar {
         Value::Undefined => calendar,
@@ -156,6 +167,9 @@ fn overflow_value(options: Option<&Value>) -> Result<&'static str, VmError> {
 }
 
 fn is_iso_calendar_string(value: &str) -> bool {
+    if value.starts_with("-000000") || value.starts_with('\u{2212}') {
+        return false;
+    }
     if value.eq_ignore_ascii_case("iso8601") {
         return true;
     }
@@ -241,6 +255,52 @@ fn has_utc_designator(text: &str) -> bool {
     text.split('[')
         .next()
         .is_some_and(|value| value.ends_with('Z'))
+}
+
+fn has_empty_time_designator(text: &str) -> bool {
+    text.split('[')
+        .next()
+        .is_some_and(|value| value.ends_with(['T', 't']))
+}
+
+fn has_fractional_minutes(text: &str) -> bool {
+    let Some(time) = text
+        .split(['T', 't', ' '])
+        .nth(1)
+        .and_then(|value| value.split('[').next())
+    else {
+        return false;
+    };
+    let mut fields = time.split(':');
+    let Some(hours) = fields.next() else {
+        return false;
+    };
+    let Some(minutes) = fields.next() else {
+        return false;
+    };
+    hours.contains(['.', ',']) || minutes.contains(['.', ','])
+}
+
+fn has_invalid_time(text: &str) -> bool {
+    let Some(time) = text
+        .split(['T', 't', ' '])
+        .nth(1)
+        .and_then(|value| value.split('[').next())
+    else {
+        return false;
+    };
+    let fields: Vec<_> = time.split(':').collect();
+    if fields.len() < 2 {
+        return true;
+    }
+    let parse = |value: &str| value.parse::<u32>().ok();
+    let Some(hour) = parse(fields[0].split('.').next().unwrap_or(fields[0])) else {
+        return true;
+    };
+    let Some(minute) = parse(fields[1].split('.').next().unwrap_or(fields[1])) else {
+        return true;
+    };
+    hour > 23 || minute > 59
 }
 
 fn date_part(text: &str) -> &str {
