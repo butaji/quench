@@ -42,6 +42,88 @@ fn execute_plan_loop(
     Ok(Some(crate::value::Value::Undefined))
 }
 
+fn execute_recalculate_method(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    let Some(crate::facts::DirectMethodFact::Recalculate {
+        input_method,
+        output_method,
+        strength_slot,
+        weakest_method,
+        receiver_strength,
+        input_strength,
+        output_strength,
+        input_stay,
+        output_stay,
+        extra_stay_objects,
+        execute_method,
+    }) = function.code.facts().direct_method.as_deref()
+    else {
+        return Ok(None);
+    };
+    let Some(input) = plain_property_select(receiver, input_method) else {
+        return Ok(None);
+    };
+    let Some(output) = plain_property_select(receiver, output_method) else {
+        return Ok(None);
+    };
+    let Some(strength) = plain_data_property(receiver, receiver_strength) else {
+        return Ok(None);
+    };
+    let Some(input_strength) = plain_data_property(
+        &crate::value::Value::Object(std::rc::Rc::clone(&input)),
+        input_strength,
+    ) else {
+        return Ok(None);
+    };
+    let strength_namespace = function.captures.get(*strength_slot);
+    let weakest = call_fact_named(
+        &strength_namespace,
+        weakest_method,
+        &[strength, input_strength],
+    )?;
+
+    // The weakest call is observable.  From this point onward the kernel must
+    // complete through ordinary JS operations on a missed word guard rather
+    // than return None and replay the method in the interpreter.
+    let input_value = crate::value::Value::Object(std::rc::Rc::clone(&input));
+    let mut stay = crate::vm::is_truthy(&crate::execute::get_property_result(
+        &input_value,
+        input_stay,
+    )?);
+    for property in extra_stay_objects {
+        let owner = crate::execute::get_property_result(receiver, property)?;
+        let value = crate::execute::get_property_result(&owner, input_stay)?;
+        stay &= crate::vm::is_truthy(&value);
+    }
+
+    let mut output_value = crate::value::Value::Object(std::rc::Rc::clone(&output));
+    if let (Some(strength_word), Some(stay_word)) = (
+        plain_own_word(&output, output_strength),
+        plain_own_word(&output, output_stay),
+    ) {
+        strength_word.store(weakest);
+        stay_word.store(crate::value::Value::Boolean(stay));
+    } else {
+        output_value =
+            crate::properties::assign_set_property(&output_value, output_strength, weakest)?;
+        let _ = crate::properties::assign_set_property(
+            &output_value,
+            output_stay,
+            crate::value::Value::Boolean(stay),
+        )?;
+    }
+    if stay {
+        let execute = crate::execute::get_property_result(receiver, execute_method)?;
+        if execute_direct_counted_method(&execute, receiver).is_none() {
+            let _ = crate::functions::execute_target(&execute, receiver, &[])?;
+        }
+    }
+    crate::execution_trace::kernel("recalculate_method", false);
+    Ok(Some(crate::value::Value::Undefined))
+}
+
 enum DirectPlanAction {
     Noop,
     Copy {
@@ -224,7 +306,8 @@ fn execute_direct_counted_method(
             )?;
             Some(())
         }
-        crate::facts::DirectMethodFact::AppendArray { .. } => None,
+        crate::facts::DirectMethodFact::AppendArray { .. }
+        | crate::facts::DirectMethodFact::Recalculate { .. } => None,
     }
 }
 

@@ -93,6 +93,19 @@ pub(crate) enum DirectMethodFact {
     AppendArray {
         property: String,
     },
+    Recalculate {
+        input_method: String,
+        output_method: String,
+        strength_slot: u16,
+        weakest_method: String,
+        receiver_strength: String,
+        input_strength: String,
+        output_strength: String,
+        input_stay: String,
+        output_stay: String,
+        extra_stay_objects: Vec<String>,
+        execute_method: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

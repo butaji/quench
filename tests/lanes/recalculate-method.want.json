@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "metrics": {
+    "kernel_traffic": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "recalculate_method",
+          "field": "hits"
+        }
+      },
+      "min": 190000
+    }
+  }
+}
