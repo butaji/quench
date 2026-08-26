@@ -305,6 +305,9 @@ fn parse_calendar_identifier(
             .split_once("[u-ca=")
             .and_then(|(_, rest)| rest.split(']').next())
             .unwrap_or(&text);
+        if text.contains("-000000-") {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
         let iso_date = text
             .chars()
             .all(|ch| ch.is_ascii_digit() || "-+Tt:., ".contains(ch))
@@ -598,9 +601,29 @@ mod stubs {
                 &crate::execute::get_property_result(value, "nanosecond")
                     .unwrap_or(Value::Number(0.0)),
             )? as i128;
+            let calendar = crate::execute::get_property_result(value, "calendar")?;
+            if !matches!(calendar, Value::Undefined) {
+                super::parse_calendar_identifier(&calendar)?;
+            }
             let timezone = super::parse_timezone_identifier(
                 &crate::execute::get_property_result(value, "timeZone")?,
             )?;
+            let offset = crate::execute::get_property_result(value, "offset")?;
+            let offset = if matches!(offset, Value::Undefined) {
+                None
+            } else {
+                if !matches!(offset, Value::String(_) | Value::StringUnits(_)) {
+                    return Err(crate::value::error::throw_type_error("Invalid offset"));
+                }
+                let offset = crate::conversion::to_string(&offset)?;
+                let normalized = if offset.eq_ignore_ascii_case("z") {
+                    Some("+00:00".to_string())
+                } else {
+                    super::normalize_offset_identifier(&offset)
+                }
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid offset"))?;
+                Some(normalized)
+            };
             let year_adjusted = i128::from(year) - i128::from(month <= 2);
             let era = if year_adjusted >= 0 {
                 year_adjusted
@@ -623,6 +646,15 @@ mod stubs {
                 + microsecond * 1_000
                 + nanosecond;
             let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
+            if let Some(offset) = offset {
+                if super::fixed_offset_nanos(&offset)
+                    != super::timezone_offset_nanos(&timezone, local_epoch)
+                {
+                    return Err(crate::value::error::throw_range_error(
+                        "Offset does not match time zone",
+                    ));
+                }
+            }
             return Ok(super::zoned_record(
                 epoch,
                 timezone,
