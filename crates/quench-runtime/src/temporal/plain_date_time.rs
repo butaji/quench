@@ -339,10 +339,12 @@ fn calendar_difference(
     direction: f64,
     largest: &str,
 ) -> Result<Value, VmError> {
-    let (start, end) = if direction > 0.0 {
-        (left, right)
+    let left_total = date_time_total_nanos(left);
+    let right_total = date_time_total_nanos(right);
+    let (start, end, sign) = if left_total <= right_total {
+        (left, right, if direction > 0.0 { 1_i64 } else { -1_i64 })
     } else {
-        (right, left)
+        (right, left, if direction > 0.0 { -1_i64 } else { 1_i64 })
     };
     let start_date = NaiveDate::from_ymd_opt(start[0] as i32, start[1] as u32, start[2] as u32)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
@@ -373,7 +375,6 @@ fn calendar_difference(
     if largest == "week" {
         days %= 7;
     }
-    let sign = 1_i64;
     crate::temporal::duration::construct(&[
         Value::Number((years * sign) as f64),
         Value::Number((months * sign) as f64),
