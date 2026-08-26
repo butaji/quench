@@ -707,7 +707,15 @@ fn descriptor_property_result(
         let has_own = properties
             .iter()
             .any(|(name, _)| name == key || name == &deleted);
+        let accessor = properties
+            .iter()
+            .rev()
+            .find(|(name, _)| name == &crate::builtins::descriptor_key(key))
+            .is_some_and(|(_, value)| accessor_descriptor(value));
         drop(properties);
+        if accessor {
+            return None;
+        }
         if has_own {
             return Some(Ok(crate::vm::get_property(value, key)));
         }
