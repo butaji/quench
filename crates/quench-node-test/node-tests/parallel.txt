@@ -505,3 +505,9 @@ test-https-agent-getname.js
 test-https-byteswritten.js
 test-https-client-get-url.js
 test-https-client-reject.js
+test-https-agent-additional-options.js
+test-https-agent-servername.js
+test-https-agent-sni.js
+test-https-agent-disable-session-reuse.js
+test-https-agent-session-reuse.js
+test-https-client-checkServerIdentity.js
