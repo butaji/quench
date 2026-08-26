@@ -369,7 +369,8 @@ pub const SPEC_OS_FREEMEM: NodeSpec = NodeSpec::new("os:freemem", 0x0B0A);
 pub const SPEC_OS_TOTALMEM: NodeSpec = NodeSpec::new("os:totalmem", 0x0B0B);
 pub const SPEC_OS_LOADAVG: NodeSpec = NodeSpec::new("os:loadavg", 0x0B0C);
 pub const SPEC_OS_NETWORKINTERFACES: NodeSpec = NodeSpec::new("os:networkInterfaces", 0x0B0D);
-pub const SPEC_OS_AVAILABLE_PARALLELISM: NodeSpec = NodeSpec::new("os:availableParallelism", 0x0B0E);
+pub const SPEC_OS_AVAILABLE_PARALLELISM: NodeSpec =
+    NodeSpec::new("os:availableParallelism", 0x0B0E);
 
 pub const SPEC_STREAM_READABLE: NodeSpec = NodeSpec::new("stream:Readable", 0x0C00);
 pub const SPEC_STREAM_WRITABLE: NodeSpec = NodeSpec::new("stream:Writable", 0x0C01);
@@ -513,6 +514,7 @@ pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0
 pub const SPEC_CP_EXEC: NodeSpec = NodeSpec::new("child_process:exec", 0x1e02);
 pub const SPEC_CP_EXECFILE: NodeSpec = NodeSpec::new("child_process:execFile", 0x1e03);
 pub const SPEC_CP_SPAWN: NodeSpec = NodeSpec::new("child_process:spawn", 0x1e03);
+pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec = NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
 pub const SPEC_URL_PATH_TO_FILE_URL: NodeSpec = NodeSpec::new("url:pathToFileURL", 0x0505);
 pub const SPEC_URL_GET_HREF: NodeSpec = NodeSpec::new("url:get:href", 0x0506);
 pub const SPEC_URL_GET_PROTOCOL: NodeSpec = NodeSpec::new("url:get:protocol", 0x0507);
