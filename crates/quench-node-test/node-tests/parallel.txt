@@ -67,6 +67,7 @@ test-timers-destroyed.js
 test-timers-immediate-unref-nested-once.js
 test-timers-immediate-unref.js
 test-timers-immediate-queue.js
+test-timers-immediate-unref-simple.js
 test-timers-immediate.js
 test-timers-interval-throw.js
 test-timers-invalid-clear.js
@@ -86,6 +87,8 @@ test-timers-throw-when-cb-not-function.js
 test-timers-timeout-with-non-integer.js
 test-timers-uncaught-exception.js
 test-timers-unref-throw-then-ref.js
+test-timers-unenroll-unref-interval.js
+test-timers-unrefed-in-callback.js
 test-timers-unrefd-interval-still-fires.js
 test-timers-unrefed-in-beforeexit.js
 test-timers-user-call.js
