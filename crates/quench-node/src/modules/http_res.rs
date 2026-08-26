@@ -181,6 +181,9 @@ fn compose(
     let text = if text.is_empty() { "OK" } else { text };
     let mut out = format!("HTTP/1.1 {status} {text}\r\n").into_bytes();
     out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+    if !headers.iter().any(|(key, _)| key.eq_ignore_ascii_case("date")) {
+        out.extend_from_slice(b"Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n");
+    }
     for (key, value) in headers {
         out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
