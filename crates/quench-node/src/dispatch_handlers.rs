@@ -1905,7 +1905,7 @@ pub fn cp_spawn(
     let prototype = crate::modules::events::emitter_prototype()?;
     let on = execute::get_property(&prototype, "on");
     let emit = execute::get_property(&prototype, "emit");
-    Ok(host_api::object(vec![
+    let child = host_api::object(vec![
         ("pid".into(), Value::Undefined),
         ("on".into(), on),
         ("emit".into(), emit),
@@ -1916,7 +1916,17 @@ pub fn cp_spawn(
         ("stderr".into(), stderr.clone()),
         ("stdio".into(), host_api::array(vec![stdin, stdout, stderr])),
         ("spawnargs".into(), spawnargs),
-    ]))
+    ]);
+    let child = match &child {
+        Value::Object(object) => {
+            _state.borrow_mut().identity_roots.push(child.clone());
+            Value::ObjectAlias(quench_runtime::value::ObjectAliasValue(Rc::new(
+                RefCell::new(Rc::downgrade(object)),
+            )))
+        }
+        _ => child,
+    };
+    Ok(child)
 }
 
 pub fn cp_exec_sync(

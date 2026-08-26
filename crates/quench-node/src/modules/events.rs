@@ -88,7 +88,11 @@ fn ensure_emitter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> O
     }
     if !matches!(
         receiver,
-        Value::Object(_) | Value::Array(_) | Value::Function(_) | Value::BoundFunction(_)
+        Value::Object(_)
+            | Value::ObjectAlias(_)
+            | Value::Array(_)
+            | Value::Function(_)
+            | Value::BoundFunction(_)
     ) {
         return None;
     }
@@ -464,7 +468,12 @@ fn route_domain_error(
     if let Some(original) = original {
         execute::replace_value(&original, &error);
     }
-        execute::call(handler.as_ref().expect("checked handler"), &domain, &[error]).map(Some)
+    execute::call(
+        handler.as_ref().expect("checked handler"),
+        &domain,
+        &[error],
+    )
+    .map(Some)
 }
 
 /// `emit('error')` with no listeners throws the error argument.
@@ -926,11 +935,7 @@ pub fn add_abort_listener(
         },
         vec![listener],
     );
-    execute::set_callable_property(
-        &wrapped,
-        "\0quench:abort-listener",
-        Value::Boolean(true),
-    )?;
+    execute::set_callable_property(&wrapped, "\0quench:abort-listener", Value::Boolean(true))?;
     crate::modules::event_target::add_event_listener(
         state,
         Some(&signal),
@@ -954,7 +959,10 @@ pub fn add_abort_listener(
         },
         vec![signal, wrapped],
     );
-    Ok(host_api::object(vec![("Symbol.dispose".to_string(), dispose)]))
+    Ok(host_api::object(vec![(
+        "Symbol.dispose".to_string(),
+        dispose,
+    )]))
 }
 
 fn coded_abort_error(argument: &str, expected: &str) -> VmError {

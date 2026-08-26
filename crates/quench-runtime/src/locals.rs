@@ -128,7 +128,10 @@ impl IterationBinding {
         let environment = current();
         environment.clear_immutable_slot(slot);
         let previous = vec![(slot, environment.replace_slot(slot, value))];
-        Self { environment, previous }
+        Self {
+            environment,
+            previous,
+        }
     }
 
     pub(crate) fn install_many<I>(bindings: I) -> Self
@@ -143,7 +146,10 @@ impl IterationBinding {
                 (slot, environment.replace_slot(slot, value))
             })
             .collect();
-        Self { environment, previous }
+        Self {
+            environment,
+            previous,
+        }
     }
 }
 
@@ -811,8 +817,13 @@ pub(crate) fn replace_value(old: &Value, new: &Value) {
 }
 
 fn replace_object(old: &Value, new: &Value) -> bool {
-    let Value::Object(new) = new else {
-        return false;
+    let new = match new {
+        Value::Object(new) => Rc::clone(new),
+        Value::ObjectAlias(alias) => match alias.target() {
+            Some(new) => new,
+            None => return false,
+        },
+        _ => return false,
     };
     let old = match old {
         Value::Object(old) => Some(Rc::clone(old)),
@@ -823,18 +834,18 @@ fn replace_object(old: &Value, new: &Value) -> bool {
         return false;
     };
     let old_latest = latest_object(Rc::clone(&old));
-    let new_latest = latest_object(Rc::clone(new));
+    let new_latest = latest_object(new);
     if Rc::ptr_eq(&old_latest, &new_latest) {
         return true;
     }
     old_latest.replace_with(Rc::clone(&new_latest));
     if !Rc::ptr_eq(&old, &old_latest) {
-        old.replace_with(new_latest);
+        old.replace_with(Rc::clone(&new_latest));
     }
     // A COW write may clone an object while preserving its semantic identity.
     // Self-referential properties are weak aliases, so retarget aliases held
     // by the new representative before the previous representative can drop.
-    crate::environment::retarget_aliases_for_identity(&new, old_latest.identity());
+    crate::environment::retarget_aliases_for_identity(&new_latest, old_latest.identity());
     true
 }
 
