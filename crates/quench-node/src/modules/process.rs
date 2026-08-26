@@ -117,6 +117,15 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
+        (
+            "ppid",
+            Value::Number(
+                std::env::var("QUENCH_PARENT_PID")
+                    .ok()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or_else(process_parent_id) as f64,
+            ),
+        ),
         ("execArgv", host_api::array(vec![])),
         ("features", features()),
         ("stdout", std_stream(false)),
