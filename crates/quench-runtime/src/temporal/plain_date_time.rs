@@ -1200,24 +1200,78 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let _ = fields(receiver)?;
+    let mut calendar_name = "auto".to_string();
     let mut normalized_smallest_unit = None;
+    let mut rounding_mode = "trunc".to_string();
+    let mut digits = usize::MAX;
     if let Some(options) = options {
         if !crate::value::is_object(options) {
             return Err(crate::value::error::throw_type_error(
                 "Invalid string options",
             ));
         }
-        let calendar_name = crate::execute::get_property_result(options, "calendarName")?;
-        if !matches!(calendar_name, Value::Undefined) {
-            if crate::conversion::is_symbol(&calendar_name) {
+        let calendar_name_value = crate::execute::get_property_result(options, "calendarName")?;
+        if !matches!(calendar_name_value, Value::Undefined) {
+            if crate::conversion::is_symbol(&calendar_name_value) {
                 return Err(crate::value::error::throw_type_error("Invalid calendarName"));
             }
-            let calendar_name = crate::conversion::to_string(&calendar_name)?;
-            if !matches!(calendar_name.as_str(), "auto" | "always" | "never") {
+            let calendar_name_text = crate::conversion::to_string(&calendar_name_value)?;
+            if !matches!(calendar_name_text.as_str(), "auto" | "always" | "never") {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid calendarName",
                 ));
             }
+            calendar_name = calendar_name_text;
+        };
+        let fractional = crate::execute::get_property_result(options, "fractionalSecondDigits")?;
+        digits = match fractional {
+            Value::Number(value) if (0.0..=9.0).contains(&value) && value.fract() == 0.0 => {
+                value as usize
+            }
+            Value::String(value) if value == "auto" => usize::MAX,
+            Value::Undefined => usize::MAX,
+            value if crate::conversion::is_symbol(&value) => {
+                return Err(crate::value::error::throw_type_error(
+                    "Invalid fractionalSecondDigits",
+                ))
+            }
+            Value::String(_) => {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid fractionalSecondDigits",
+                ))
+            }
+            value => {
+                let value = crate::conversion::to_string(&value)?;
+                if value == "auto" {
+                    usize::MAX
+                } else {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid fractionalSecondDigits",
+                    ));
+                }
+            }
+        };
+        let rounding_mode_value = crate::execute::get_property_result(options, "roundingMode")?;
+        if !matches!(rounding_mode_value, Value::Undefined) {
+            if crate::conversion::is_symbol(&rounding_mode_value) {
+                return Err(crate::value::error::throw_type_error("Invalid roundingMode"));
+            }
+            let rounding_mode_text = crate::conversion::to_string(&rounding_mode_value)?;
+            if !matches!(
+                rounding_mode_text.as_str(),
+                "ceil"
+                    | "floor"
+                    | "expand"
+                    | "halfCeil"
+                    | "halfFloor"
+                    | "halfEven"
+                    | "halfExpand"
+                    | "halfTrunc"
+                    | "trunc"
+            ) {
+                return Err(crate::value::error::throw_range_error("Invalid roundingMode"));
+            }
+            rounding_mode = rounding_mode_text;
         }
         let smallest_unit = crate::execute::get_property_result(options, "smallestUnit")?;
         if !matches!(smallest_unit, Value::Undefined) {
@@ -1234,28 +1288,7 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
                     "Invalid smallestUnit",
                 ));
             }
-            normalized_smallest_unit = Some(smallest_unit);
-        }
-        let rounding_mode = crate::execute::get_property_result(options, "roundingMode")?;
-        if !matches!(rounding_mode, Value::Undefined) {
-            if crate::conversion::is_symbol(&rounding_mode) {
-                return Err(crate::value::error::throw_type_error("Invalid roundingMode"));
-            }
-            let rounding_mode = crate::conversion::to_string(&rounding_mode)?;
-            if !matches!(
-                rounding_mode.as_str(),
-                "ceil"
-                    | "floor"
-                    | "expand"
-                    | "halfCeil"
-                    | "halfFloor"
-                    | "halfEven"
-                    | "halfExpand"
-                    | "halfTrunc"
-                    | "trunc"
-            ) {
-                return Err(crate::value::error::throw_range_error("Invalid roundingMode"));
-            }
+            normalized_smallest_unit = Some(unit.to_string());
         }
     }
     let mut values = NAMES
@@ -1265,72 +1298,56 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         .into_iter()
         .map(|value| crate::conversion::to_number(&value))
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(smallest_unit) = normalized_smallest_unit {
-        match smallest_unit.strip_suffix('s').unwrap_or(&smallest_unit) {
-            "minute" => values[5] = 0.0,
-            "second" => {}
-            "millisecond" => values[7] = 0.0,
-            "microsecond" => values[8] = 0.0,
-            _ => {}
-        }
-        if matches!(smallest_unit.as_str(), "minute" | "minutes") {
-            values[6] = 0.0;
-            values[7] = 0.0;
-            values[8] = 0.0;
-        } else if matches!(smallest_unit.as_str(), "second" | "seconds") {
-            values[6] = 0.0;
-            values[7] = 0.0;
-            values[8] = 0.0;
-        }
+    let quantum = normalized_smallest_unit.as_deref().map(|unit| match unit {
+        "minute" => 60_000_000_000.0,
+        "second" => 1_000_000_000.0,
+        "millisecond" => 1_000_000.0,
+        "microsecond" => 1_000.0,
+        _ => 1.0,
+    }).or_else(|| (digits != usize::MAX).then(|| 10_f64.powi((9 - digits) as i32)));
+    if let Some(quantum) = quantum.filter(|quantum| *quantum > 1.0) {
+        let rounded = round_values(values, quantum, 1.0, &rounding_mode)?;
+        values = fields(&rounded)?;
     }
+    let output_digits = match normalized_smallest_unit.as_deref() {
+        Some("minute" | "second") => 0,
+        Some("millisecond") => 3,
+        Some("microsecond") => 6,
+        Some("nanosecond") => 9,
+        None => digits,
+        _ => digits,
+    };
+    let omit_seconds = matches!(normalized_smallest_unit.as_deref(), Some("minute"));
     let fraction = values[6] as u32 * 1_000_000 + values[7] as u32 * 1_000 + values[8] as u32;
-    let digits = options
-        .and_then(|value| crate::execute::get_property_result(value, "fractionalSecondDigits").ok())
-        .map(|value| match value {
-            Value::Number(value) if (0.0..=9.0).contains(&value) && value.fract() == 0.0 => {
-                Ok(value as usize)
-            }
-            Value::String(value) if value == "auto" => Ok(usize::MAX),
-            Value::Undefined => Ok(usize::MAX),
-            value if crate::conversion::is_symbol(&value) => Err(
-                crate::value::error::throw_type_error("Invalid fractionalSecondDigits"),
-            ),
-            Value::String(_) => Err(crate::value::error::throw_range_error(
-                "Invalid fractionalSecondDigits",
-            )),
-            value => {
-                let value = crate::conversion::to_string(&value)?;
-                if value == "auto" {
-                    Ok(usize::MAX)
-                } else {
-                    Err(crate::value::error::throw_range_error(
-                        "Invalid fractionalSecondDigits",
-                    ))
-                }
-            }
-        })
-        .transpose()?
-        .unwrap_or(usize::MAX);
-    let suffix = if digits == 0 || (fraction == 0 && digits == usize::MAX) {
+    let suffix = if output_digits == 0 || (fraction == 0 && output_digits == usize::MAX) {
         String::new()
     } else {
         let text = format!("{fraction:09}");
-        let text = if digits == usize::MAX {
+        let text = if output_digits == usize::MAX {
             text.trim_end_matches('0')
         } else {
-            &text[..digits]
+            &text[..output_digits]
         };
         format!(".{text}")
     };
-    let calendar_suffix = options
-        .and_then(|value| crate::execute::get_property_result(value, "calendarName").ok())
-        .filter(|value| matches!(value, Value::String(value) if value == "always"))
-        .map_or(String::new(), |_| "[u-ca=iso8601]".into());
+    let calendar_suffix = if calendar_name == "always" {
+        "[u-ca=iso8601]".into()
+    } else {
+        String::new()
+    };
     let year = year_text(values[0] as i32);
-    Ok(Value::String(format!(
-        "{year}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}{calendar_suffix}",
-        values[1], values[2], values[3], values[4], values[5]
-    )))
+    let text = if omit_seconds {
+        format!(
+            "{year}-{:02}-{:02}T{:02}:{:02}{calendar_suffix}",
+            values[1], values[2], values[3], values[4]
+        )
+    } else {
+        format!(
+            "{year}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}{calendar_suffix}",
+            values[1], values[2], values[3], values[4], values[5]
+        )
+    };
+    Ok(Value::String(text))
 }
 
 fn year_text(year: i32) -> String {
