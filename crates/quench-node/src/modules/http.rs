@@ -16,6 +16,7 @@ use crate::modules::net;
 
 /// Hidden property mapping a `res` object to its host-side state.
 pub(crate) const RES_ID_PROP: &str = "\0quench:http:res:id";
+const REQ_ENCODING_PROP: &str = "\0quench:http:res:encoding";
 
 pub struct HttpState {
     next_res: u64,
@@ -201,7 +202,16 @@ fn drain_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmEr
     };
     if let Some(req) = req {
         if !data.is_empty() {
-            net::emit(state, &req, "data", vec![make_buffer(&data)])?;
+            let chunk = match execute::get_property_result(&req, REQ_ENCODING_PROP).ok() {
+                Some(Value::String(encoding))
+                    if encoding.eq_ignore_ascii_case("utf8")
+                        || encoding.eq_ignore_ascii_case("utf-8") =>
+                {
+                    Value::String(String::from_utf8_lossy(&data).into_owned())
+                }
+                _ => make_buffer(&data),
+            };
+            net::emit(state, &req, "data", vec![chunk])?;
         }
         if done {
             if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
@@ -327,6 +337,10 @@ fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usiz
             (
                 "resume".to_string(),
                 crate::host::capability(crate::registry::SPEC_HTTP_REQ_RESUME),
+            ),
+            (
+                "setEncoding".to_string(),
+                crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
             ),
         ],
     )?;
