@@ -35,6 +35,7 @@ pub struct ProcessState {
     pub versions: Vec<(String, String)>,
     pub exit_code: Option<i32>,
     pub cwd: std::path::PathBuf,
+    pub umask: u32,
 }
 
 impl Default for ProcessState {
@@ -70,6 +71,7 @@ impl ProcessState {
             versions,
             exit_code: None,
             cwd,
+            umask: 0o022,
         }
     }
 }
@@ -428,8 +430,34 @@ pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
 
 /// `process.umask([mask])` — accepts an optional new mask, returns the
 /// previous one. The host keeps a single shared mask (0o022 default).
-pub fn umask(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::Number(0o022 as f64))
+pub fn umask(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let Some(value) = args.first() else {
+        return Ok(Value::Number(state.borrow().process.umask as f64));
+    };
+    let mask = match value {
+        Value::Number(number) if number.is_finite() && *number >= 0.0 && number.fract() == 0.0 => {
+            *number as u32
+        }
+        Value::String(text) => u32::from_str_radix(text, 8).map_err(|_| {
+            crate::modules::buffer_enc::invalid_arg_value(
+                format!("The \"mask\" argument is invalid. Received {text}"),
+            )
+        })?,
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"mask\" argument must be of type number or string".into(),
+            ));
+        }
+    };
+    if mask > 0o777 {
+        return Err(crate::modules::buffer_enc::invalid_arg_value(
+            format!("The \"mask\" argument is invalid. Received {mask}"),
+        ));
+    }
+    let mut guard = state.borrow_mut();
+    let previous = guard.process.umask;
+    guard.process.umask = mask;
+    Ok(Value::Number(previous as f64))
 }
 
 /// `process.on(event, handler)` — registers lifecycle handlers.
