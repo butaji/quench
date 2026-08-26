@@ -26,6 +26,9 @@ pub fn resolve4(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
 
 pub fn lookup_addresses(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let host = args.first().map(value_to_string).unwrap_or_default();
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(host_api::array(vec![Value::String(host)]));
+    }
     let addresses = format!("{host}:0")
         .to_socket_addrs()
         .map(|iter| iter.map(|addr| Value::String(addr.ip().to_string())).collect())

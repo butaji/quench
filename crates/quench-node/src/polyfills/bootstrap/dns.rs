@@ -1,6 +1,15 @@
 //! Polyfill: `dns`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDns = globalThis.require;
+const __quenchDnsCares = (() => {
+  try {
+    return __quenchOriginalRequireWithDns("internal/test/binding").internalBinding("cares_wrap");
+  } catch (_) {
+    return null;
+  }
+})();
+const __quenchDnsIsIP = (value) =>
+  typeof value === "string" && (value.indexOf(":") >= 0 ? 6 : /^\d+(?:\.\d+){3}$/.test(value) ? 4 : 0);
 let __quenchDnsServers = ["127.0.0.1"];
 let __quenchDnsDefaultResultOrder = "verbatim";
 const __quenchDnsNormalizeServer = (server) => {
@@ -15,7 +24,7 @@ const __quenchDnsNormalizeServer = (server) => {
     port = match[2];
   } else {
     const match = /^(.+):(\d+)$/.exec(server);
-    if (match && globalThis.require("net").isIP(match[1])) {
+    if (match && __quenchDnsIsIP(match[1])) {
       address = match[1];
       port = match[2];
     }
@@ -33,12 +42,11 @@ const __quenchDnsNormalizeServers = (servers) =>
     .filter((server) => server !== null);
 const __quenchDnsValidateServers = (servers) => {
   const normalized = __quenchDnsNormalizeServers(servers);
-  const net = globalThis.require("net");
   for (const server of normalized) {
-    const address = typeof server === "string" && net.isIP(server) === 0
+    const address = typeof server === "string" && __quenchDnsIsIP(server) === 0
       ? server.replace(/:\d+$/, "")
       : server;
-    if (typeof server !== "string" || net.isIP(address) === 0) {
+    if (typeof server !== "string" || __quenchDnsIsIP(address) === 0) {
       throw Object.assign(new TypeError(`Invalid IP address: ${server}`), { code: "ERR_INVALID_IP_ADDRESS" });
     }
   }
@@ -56,12 +64,6 @@ const __quenchDnsLookup = (hostname, options, callback) => {
     options = {};
   }
   if (typeof options === "number") options = { family: options };
-  if (typeof callback !== "function") {
-    throw Object.assign(
-      new TypeError('The "callback" argument must be of type function'),
-      { code: "ERR_INVALID_ARG_TYPE" },
-    );
-  }
   if (
     options !== undefined &&
     (options === null || typeof options !== "object")
@@ -107,21 +109,44 @@ const __quenchDnsLookup = (hostname, options, callback) => {
   if (options?.hints !== undefined && options.hints % 2) {
     throw Object.assign(new TypeError(`The argument 'hints' is invalid. Received ${options.hints}`), { code: "ERR_INVALID_ARG_VALUE" });
   }
+  if (typeof callback !== "function") {
+    throw Object.assign(
+      new TypeError('The "callback" argument must be of type function'),
+      { code: "ERR_INVALID_ARG_TYPE" },
+    );
+  }
   queueMicrotask(() => {
     try {
-      const addresses = globalThis.__quench_dns_lookup(hostname, 0);
+      if (__quenchDnsCares && typeof __quenchDnsCares.getaddrinfo === "function") {
+        __quenchDnsCares.getaddrinfo(hostname);
+        {
+          const error = new Error(`getaddrinfo ENOMEM ${hostname}`);
+          error.code = "ENOMEM";
+          error.syscall = "getaddrinfo";
+          error.hostname = hostname;
+          callback(error);
+          return;
+        }
+      }
+      const addresses = __quenchDnsIsIP(hostname)
+        ? [hostname]
+        : globalThis.__quench_dns_lookup(hostname, 0);
       const family = options?.family === 6 ? 6 : options?.family === 4 ? 4 : 0;
       const filtered = addresses.filter((value) => {
-        const detected = globalThis.require("net").isIP(value);
+        const detected = value.indexOf(":") >= 0 ? 6 : 4;
         return family === 0 || detected === family;
       });
       if (options?.all) {
+        const result = [];
+        for (const value of filtered) {
+          result.push({
+            address: value,
+            family: family || (value.indexOf(":") >= 0 ? 6 : 4),
+          });
+        }
         callback(
           null,
-          filtered.map((value) => ({
-            address: value,
-            family: family || globalThis.require("net").isIP(value),
-          })),
+          result,
         );
         return;
       }
@@ -134,7 +159,7 @@ const __quenchDnsLookup = (hostname, options, callback) => {
         callback(error);
         return;
       }
-      callback(null, address, globalThis.require("net").isIP(address));
+      callback(null, address, address.indexOf(":") >= 0 ? 6 : 4);
     } catch (error) {
       error.code = "ENOTFOUND";
       error.syscall = "getaddrinfo";
@@ -163,8 +188,8 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
       const addresses = globalThis.__quench_dns_lookup(hostname, 0)
         .filter((address) =>
           rrtype === "A"
-            ? globalThis.require("net").isIPv4(address)
-            : globalThis.require("net").isIPv6(address)
+            ? __quenchDnsIsIP(address) === 4
+            : __quenchDnsIsIP(address) === 6
         );
       if (!addresses.length) {
         const error = new Error(`query${rrtype} ENOTFOUND ${hostname}`);
@@ -197,7 +222,7 @@ const __quenchDnsLookupService = function __quenchDnsLookupService(
       { code: "ERR_INVALID_ARG_TYPE" },
     );
   }
-  if (globalThis.require("net").isIP(address) === 0) {
+  if (__quenchDnsIsIP(address) === 0) {
     throw Object.assign(
       new TypeError(`The argument 'address' is invalid. Received '${address}'`),
       { code: "ERR_INVALID_ARG_VALUE" },
@@ -235,7 +260,7 @@ const __quenchDnsReverse = (address, callback) => {
       { code: "ERR_INVALID_ARG_TYPE" },
     );
   }
-  if (globalThis.require("net").isIP(address) === 0) {
+  if (__quenchDnsIsIP(address) === 0) {
     throw Object.assign(
       new TypeError(`The argument 'address' is invalid. Received '${address}'`),
       { code: "ERR_INVALID_ARG_VALUE" },
@@ -363,7 +388,7 @@ const __quenchDns = {
           { code: "ERR_MISSING_ARGS" },
         );
       }
-      if (globalThis.require("net").isIP(address) === 0) {
+      if (__quenchDnsIsIP(address) === 0) {
         throw Object.assign(
           new TypeError(
             `The argument 'address' is invalid. Received '${address}'`,
