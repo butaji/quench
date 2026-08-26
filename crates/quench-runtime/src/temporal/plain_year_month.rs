@@ -106,10 +106,10 @@ pub(crate) fn execute(
             add(receiver, arguments.first(), -1.0)
         }
         crate::ops::Builtin::TemporalPlainYearMonthUntil => {
-            difference(receiver, arguments.first(), 1.0)
+            difference(receiver, arguments.first(), arguments.get(1), 1.0)
         }
         crate::ops::Builtin::TemporalPlainYearMonthSince => {
-            difference(receiver, arguments.first(), -1.0)
+            difference(receiver, arguments.first(), arguments.get(1), -1.0)
         }
         crate::ops::Builtin::TemporalPlainYearMonthDaysInMonthGetter => days_in_month(receiver),
         crate::ops::Builtin::TemporalPlainYearMonthDaysInYearGetter => days_in_year(receiver),
@@ -507,15 +507,42 @@ fn add(
 fn difference(
     receiver: Option<&Value>,
     other: Option<&Value>,
+    options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
     let left =
         values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
     let right = values(&from(other, None)?)?;
-    crate::temporal::duration::construct(&[
-        Value::Number(0.0),
-        Value::Number(((right.0 - left.0) * 12.0 + right.1 - left.1) * direction),
-    ])
+    let largest = difference_largest(options)?;
+    let total = ((right.0 - left.0) * 12.0 + right.1 - left.1) * direction;
+    let (years, months) = if largest == "month" {
+        (0.0, total)
+    } else {
+        let years = (total / 12.0).trunc();
+        (years, total - years * 12.0)
+    };
+    crate::temporal::duration::construct(&[Value::Number(years), Value::Number(months)])
+}
+
+fn difference_largest(options: Option<&Value>) -> Result<&'static str, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("year");
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let value = crate::execute::get_property_result(options, "largestUnit")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("year");
+    }
+    let value = crate::conversion::to_string(&value)?;
+    match value.trim_end_matches('s') {
+        "year" => Ok("year"),
+        "month" => Ok("month"),
+        _ => Err(crate::value::error::throw_range_error(
+            "Invalid largestUnit",
+        )),
+    }
 }
 
 fn days_in_month(receiver: Option<&Value>) -> Result<Value, VmError> {
