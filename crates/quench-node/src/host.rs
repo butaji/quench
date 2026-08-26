@@ -268,6 +268,10 @@ pub fn install_with_argv(
     }
     let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
     context = context.with_host_value("URL".to_string(), url_class);
+    context = context.with_host_value(
+        "__quench_dns_lookup".to_string(),
+        crate::host::capability(crate::registry::SPEC_DNS_LOOKUP_ADDRESSES),
+    );
     let text_decoder = crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW);
     context = context.with_host_value("TextDecoder".to_string(), text_decoder);
     let text_encoder = crate::host::capability(crate::registry::SPEC_TEXT_ENCODER_NEW);

@@ -158,6 +158,7 @@ const CAP_TIMERS_SCHEDULE: u16 = 0x0715;
 const CAP_TIMERS_TOGGLE_REF: u16 = 0x0716;
 const CAP_TIMERS_TOGGLE_IMMEDIATE_REF: u16 = 0x0717;
 const CAP_BUFFER_NEW: u16 = 0x0805;
+const CAP_DNS_LOOKUP_ADDRESSES: u16 = 0x0E02;
 const CAP_TTY_ISATTY: u16 = 0x0900;
 const CAP_PROCESS_EXIT: u16 = 0x0A01;
 const CAP_PROCESS_CWD: u16 = 0x0A02;
@@ -407,6 +408,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_ABORT_SIGNAL_ABORT => handlers::abort_signal_abort,
         2044 => handlers::buffer_of,
         CAP_STRING_DECODER => string_decoder_invoke,
+        CAP_DNS_LOOKUP_ADDRESSES => crate::modules::dns::lookup_addresses_handler,
         0x1a00 => crate::modules::compat_extra::sea_is_sea,
         CAP_EVENTS_FROM => events_from,
         CAP_EVENTS_ON => events_method_on,
