@@ -1,6 +1,7 @@
 //! `dns` module — `lookup` returning the first address.
 
 use std::cell::RefCell;
+use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
@@ -21,6 +22,23 @@ pub fn resolve4(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
     let host = args.first().map(value_to_string).unwrap_or_default();
     let resolved = resolve_address(&host);
     Ok(resolved)
+}
+
+pub fn lookup_addresses(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let host = args.first().map(value_to_string).unwrap_or_default();
+    let addresses = format!("{host}:0")
+        .to_socket_addrs()
+        .map(|iter| iter.map(|addr| Value::String(addr.ip().to_string())).collect())
+        .unwrap_or_default();
+    Ok(host_api::array(addresses))
+}
+
+pub fn lookup_addresses_handler(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    lookup_addresses(state, args)
 }
 
 fn resolve_address(host: &str) -> Value {
