@@ -226,6 +226,7 @@ test-process-default.js
 test-process-release.js
 test-process-uptime.js
 test-process-versions.js
+test-process-next-tick.js
 test-os-eol.js
 test-os-checked-function.js
 test-os-homedir-no-envvar.js
