@@ -681,7 +681,7 @@ fn shift_date(year: f64, month: f64, day: f64, delta: f64) -> Result<Value, VmEr
     ])
 }
 
-fn civil_from_serial(serial: i64) -> (i32, u32, u32) {
+pub(crate) fn civil_from_serial(serial: i64) -> (i32, u32, u32) {
     let mut z = serial;
     let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
     let doe = z - era * 146_097;
