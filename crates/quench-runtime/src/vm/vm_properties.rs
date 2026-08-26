@@ -127,6 +127,10 @@ fn get_property_value(value: &Value, key: &str) -> Value {
                 values
                     .prototype()
                     .map(|prototype| get_property(&prototype, key))
+                    .or_else(|| {
+                        (!values.is_arguments())
+                            .then(|| get_property(&Value::Builtin(crate::ops::Builtin::ArrayPrototype), key))
+                    })
                     .unwrap_or(property)
             } else {
                 property
