@@ -20,12 +20,14 @@ pub(crate) struct FunctionMetadata {
     pub(crate) linked_record_insert: Option<std::rc::Rc<crate::facts::LinkedRecordInsertFact>>,
     pub(crate) forward_construct_call: Option<std::rc::Rc<crate::facts::ForwardConstructCallFact>>,
     pub(crate) forward_then_call: Option<std::rc::Rc<crate::facts::ForwardThenCallFact>>,
+    pub(crate) counted_method_loop: Option<std::rc::Rc<crate::facts::CountedMethodLoopFact>>,
 }
 include!("functions_raytrace_kernel.rs");
 include!("functions_direct_constructor_fact.rs");
 include!("functions_linked_record_insert_fact.rs");
 include!("functions_forward_construct_call_fact.rs");
 include!("functions_forward_then_call_fact.rs");
+include!("functions_counted_method_loop_fact.rs");
 pub(super) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {

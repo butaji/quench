@@ -64,6 +64,7 @@ fn write_non_ordinary(
             linked_record_insert: function.1.facts().linked_record_insert.clone(),
             forward_construct_call: function.1.facts().forward_construct_call.clone(),
             forward_then_call: function.1.facts().forward_then_call.clone(),
+            counted_method_loop: function.1.facts().counted_method_loop.clone(),
             strictness,
             is_async,
             mapped_arguments,
@@ -106,6 +107,7 @@ fn write_ordinary(
             linked_record_insert: body.facts().linked_record_insert.clone(),
             forward_construct_call: body.facts().forward_construct_call.clone(),
             forward_then_call: body.facts().forward_then_call.clone(),
+            counted_method_loop: body.facts().counted_method_loop.clone(),
         },
     );
 }

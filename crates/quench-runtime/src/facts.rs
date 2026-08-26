@@ -57,12 +57,20 @@ pub(crate) struct ForwardThenCallFact {
     pub(crate) nested_method: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CountedMethodLoopFact {
+    pub(crate) length_method: String,
+    pub(crate) element_method: String,
+    pub(crate) body_method: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FunctionFacts {
     pub(crate) direct_constructor: Rc<[DirectConstructorField]>,
     pub(crate) linked_record_insert: Option<Rc<LinkedRecordInsertFact>>,
     pub(crate) forward_construct_call: Option<Rc<ForwardConstructCallFact>>,
     pub(crate) forward_then_call: Option<Rc<ForwardThenCallFact>>,
+    pub(crate) counted_method_loop: Option<Rc<CountedMethodLoopFact>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
