@@ -158,6 +158,7 @@ test-buffer-fill.js
 test-buffer-from.js
 test-buffer-generic-methods.js
 test-buffer-includes.js
+test-buffer-indexof.js
 test-buffer-isascii.js
 test-buffer-isutf8.js
 test-buffer-isutf8-isascii-fast.js
