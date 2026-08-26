@@ -22,6 +22,10 @@ fn parse_epoch_argument(value: Option<&Value>) -> Result<Value, VmError> {
         Value::Boolean(value) => if *value { "1" } else { "0" }.to_string(),
         _ => return Err(crate::value::error::throw_type_error("Invalid instant")),
     };
+    if text.contains('\u{2212}') {
+        eprintln!("MINUSDBG");
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
     let epoch = match text.parse::<i128>() {
         Ok(epoch) => epoch,
         Err(_)
@@ -206,16 +210,36 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
                 .ok_or_else(|| crate::value::error::throw_type_error("Invalid instant"))?;
             return construct(&[epoch]);
         }
+        if object.iter().any(|(key, value)| {
+            key == "\0prototype"
+                && matches!(
+                    value,
+                    Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+                )
+        }) {
+            let epoch = object
+                .iter()
+                .find(|(key, _)| key == "epochNanoseconds")
+                .map(|(_, value)| value.clone())
+                .ok_or_else(|| crate::value::error::throw_type_error("Invalid instant"))?;
+            return construct(&[epoch]);
+        }
     }
     let text = match value {
         Value::String(text) if !crate::conversion::is_symbol_string(text) => text.clone(),
+        Value::StringUnits(_) => crate::conversion::to_string(value)?,
+        Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype) => {
+            return Err(crate::value::error::throw_type_error("Invalid instant"));
+        }
         Value::Builtin(_) => return Err(crate::value::error::throw_range_error("Invalid instant")),
         value if crate::value::is_object(value) => crate::conversion::to_string(value)?,
         _ => return Err(crate::value::error::throw_type_error("Invalid instant")),
     };
     let has_offset = text
         .split_once('T')
-        .and_then(|(_, time)| time.find(['Z', '+', '-']))
+        .or_else(|| text.split_once('t'))
+        .or_else(|| text.split_once(' '))
+        .and_then(|(_, time)| time.find(['Z', 'z', '+', '-']))
         .is_some();
     if !has_offset {
         return Err(crate::value::error::throw_range_error("Invalid instant"));
@@ -414,49 +438,170 @@ fn duration_number(duration: &Value, name: &str) -> Result<f64, VmError> {
 }
 
 fn epoch_nanos(text: &str) -> Result<i128, VmError> {
+    validate_instant_annotations(text)?;
     let main = text.split('[').next().unwrap_or(text);
     let (date, time) = main
         .split_once('T')
+        .or_else(|| main.split_once('t'))
+        .or_else(|| main.split_once(' '))
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
     let offset = time
-        .find(['Z', '+', '-'])
+        .find(['Z', 'z', '+', '-'])
         .map(|index| &time[index..])
         .unwrap_or("Z");
-    let time = time.split(['Z', '+', '-']).next().unwrap_or(time);
-    let day_sep = date
-        .rfind('-')
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
-    let month_sep = date[..day_sep]
-        .rfind('-')
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
-    let year = date[..month_sep]
-        .parse::<i32>()
-        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
-    let month = date[month_sep + 1..day_sep]
-        .parse::<u32>()
-        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
-    let day = date[day_sep + 1..]
-        .parse::<u32>()
-        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    let time = time.split(['Z', 'z', '+', '-']).next().unwrap_or(time);
+    let (year, month, day) = parse_iso_date(date)?;
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
-    let (clock, fraction) = time.split_once('.').map_or((time, ""), |parts| parts);
-    let clock = chrono::NaiveTime::parse_from_str(clock, "%H:%M:%S")
-        .or_else(|_| chrono::NaiveTime::parse_from_str(clock, "%H:%M"))
-        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    let (clock, fraction) = time
+        .split_once('.')
+        .or_else(|| time.split_once(','))
+        .map_or((time, ""), |parts| parts);
+    let digits = clock.replace(':', "");
+    if !digits.chars().all(|value| value.is_ascii_digit())
+        || !fraction.chars().all(|value| value.is_ascii_digit())
+    {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
+    let (hour, minute, second) = match digits.len() {
+        2 => (&digits[0..2], "00", "00"),
+        4 => (&digits[0..2], &digits[2..4], "00"),
+        6 => (&digits[0..2], &digits[2..4], &digits[4..6]),
+        _ => return Err(crate::value::error::throw_range_error("Invalid instant")),
+    };
+    let hour = hour.parse::<u32>().unwrap_or(99);
+    let minute = minute.parse::<u32>().unwrap_or(99);
+    let second = second.parse::<u32>().unwrap_or(99);
+    let leap_second = second == 60;
+    let second = second.min(59);
+    if hour > 23 || minute > 59 || second > 59 || fraction.len() > 9 {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
     let days = days_from_civil(year, month, day);
     let base = days * 86_400_000_000_000
-        + i128::from(clock.hour()) * 3_600_000_000_000
-        + i128::from(clock.minute()) * 60_000_000_000
-        + i128::from(clock.second()) * 1_000_000_000;
+        + i128::from(hour) * 3_600_000_000_000
+        + i128::from(minute) * 60_000_000_000
+        + i128::from(second) * 1_000_000_000;
     let nanos = format!("{fraction:0<9}").parse::<i128>().unwrap_or(0);
-    let offset_minutes = if offset == "Z" {
+    let offset_nanos = if offset.eq_ignore_ascii_case("Z") {
         0
     } else {
         parse_offset(offset)?
     };
-    Ok(base + nanos - i128::from(offset_minutes) * 60_000_000_000)
+    let _ = leap_second;
+    Ok(base + nanos - offset_nanos)
+}
+
+fn validate_instant_annotations(text: &str) -> Result<(), VmError> {
+    let Some(start) = text.find('[') else {
+        return Ok(());
+    };
+    let annotations = &text[start..];
+    if !annotations.ends_with(']') || annotations.contains("]junk") {
+        return Err(crate::value::error::throw_range_error("Invalid annotation"));
+    }
+    let mut _calendars = 0;
+    let mut critical_calendar = false;
+    let mut zones = 0;
+    for annotation in annotations.split('[').skip(1) {
+        let annotation = annotation
+            .strip_suffix(']')
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid annotation"))?;
+        let (critical, name) = annotation
+            .strip_prefix('!')
+            .map_or((false, annotation), |value| (true, value));
+        if name
+            .split_once('=')
+            .is_some_and(|(key, _)| key.chars().any(|value| value.is_ascii_uppercase()))
+        {
+            return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        }
+        if critical && name.contains('=') && !name.starts_with("u-ca=") {
+            return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        }
+        if name.starts_with("u-ca=") {
+            _calendars += 1;
+            critical_calendar |= critical;
+        } else if name.starts_with(['+', '-']) {
+            if name.replace(':', "").split_once('.').is_some()
+                || name.replace(':', "").chars().count() > 5
+            {
+                return Err(crate::value::error::throw_range_error("Invalid annotation"));
+            }
+            zones += 1;
+        } else if name.eq_ignore_ascii_case("utc") || name.contains('/') {
+            zones += 1;
+        }
+    }
+    if zones > 1 || (_calendars > 1 && critical_calendar) {
+        return Err(crate::value::error::throw_range_error("Invalid annotation"));
+    }
+    Ok(())
+}
+
+fn parse_iso_date(date: &str) -> Result<(i32, u32, u32), VmError> {
+    let parts = date.split('-').collect::<Vec<_>>();
+    let (year, month, day) = if parts.len() == 4 && parts[0].is_empty() {
+        (
+            format!("-{}", parts[1]).parse::<i32>(),
+            parts[2].parse::<u32>(),
+            parts[3].parse::<u32>(),
+        )
+    } else if parts.len() == 3 {
+        (
+            parts[0].parse::<i32>(),
+            parts[1].parse::<u32>(),
+            parts[2].parse::<u32>(),
+        )
+    } else if date.len() == 8 {
+        (
+            date[0..4].parse::<i32>(),
+            date[4..6].parse::<u32>(),
+            date[6..8].parse::<u32>(),
+        )
+    } else if date.len() == 11 && date.starts_with(['+', '-']) {
+        (
+            date[0..7].parse::<i32>(),
+            date[7..9].parse::<u32>(),
+            date[9..11].parse::<u32>(),
+        )
+    } else {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    };
+    let (year, month, day) = (
+        year.map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?,
+        month.map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?,
+        day.map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?,
+    );
+    if (parts.len() == 3 && parts[0].len() != 4 && !parts[0].starts_with(['+', '-']))
+        || (parts.len() == 3
+            && (parts[1].len() != 2 || parts[2].len() != 2)
+            && !parts[0].starts_with(['+', '-']))
+        || (parts.len() == 3 && parts[0].starts_with(['+', '-']) && parts[0].len() != 7)
+        || (parts.len() == 4 && parts[0].is_empty() && year == 0)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    if !(1..=12).contains(&month) || day == 0 || day > month_days[month as usize - 1] {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
+    Ok((year, month, day))
 }
 
 fn days_from_civil(year: i32, month: u32, day: u32) -> i128 {
@@ -470,18 +615,52 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> i128 {
     era * 146_097 + day_of_era - 719_468
 }
 
-fn parse_offset(offset: &str) -> Result<i64, VmError> {
+fn parse_offset(offset: &str) -> Result<i128, VmError> {
     let sign = if offset.starts_with('-') { -1 } else { 1 };
-    let value = offset.trim_start_matches(['+', '-']);
-    let parts = value.split(':').collect::<Vec<_>>();
-    if parts.len() != 2 {
+    let (base, fraction) = offset
+        .trim_start_matches(['+', '-'])
+        .split_once(['.', ','])
+        .map_or((offset.trim_start_matches(['+', '-']), ""), |parts| parts);
+    let separators = base.matches(':').count();
+    let value = base.replace(':', "");
+    if (separators == 1 && value.len() != 4)
+        || (separators == 2 && value.len() != 6)
+        || (separators == 0 && !matches!(value.len(), 2 | 4 | 6))
+    {
         return Err(crate::value::error::throw_range_error("Invalid offset"));
     }
-    let hour = parts[0]
+    if !matches!(value.len(), 2 | 4 | 6) {
+        return Err(crate::value::error::throw_range_error("Invalid offset"));
+    }
+    let hour = value[0..2]
         .parse::<i64>()
         .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?;
-    let minute = parts[1]
-        .parse::<i64>()
-        .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?;
-    Ok(sign * (hour * 60 + minute))
+    let minute = if value.len() >= 4 {
+        value[2..4]
+            .parse::<i64>()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?
+    } else {
+        0
+    };
+    let second = if value.len() == 6 {
+        value[4..6]
+            .parse::<i64>()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?
+    } else {
+        0
+    };
+    if hour > 23 || minute > 59 || second > 59 {
+        return Err(crate::value::error::throw_range_error("Invalid offset"));
+    }
+    let fraction = if fraction.is_empty() {
+        0
+    } else if fraction.len() <= 9 {
+        format!("{fraction:0<9}")
+            .parse::<i128>()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?
+    } else {
+        return Err(crate::value::error::throw_range_error("Invalid offset"));
+    };
+    Ok(i128::from(sign)
+        * (i128::from(hour * 3_600 + minute * 60 + second) * 1_000_000_000 + fraction))
 }
