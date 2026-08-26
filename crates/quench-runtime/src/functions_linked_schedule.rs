@@ -53,6 +53,15 @@ fn execute_linked_schedule(
         .as_ref()
         .and_then(|_| LinkedSchedulerWords::new(scheduler, &task_control_plan));
     if let (Some(task_runners), Some(linked_scheduler)) = (&task_runners, &linked_scheduler) {
+        if let Some(result) = execute_linked_schedule_state(
+            &list_value,
+            current,
+            current_id,
+            task_runners,
+            linked_scheduler,
+        ) {
+            return Ok(Some(result));
+        }
         if let Some(result) = execute_direct_schedule_cursor(
             receiver,
             &plan,
