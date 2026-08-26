@@ -59,6 +59,7 @@ fn write_non_ordinary(
             kind,
             length,
             raytrace_pixel: false,
+            raytrace_render: None,
             strictness,
             is_async,
             mapped_arguments,
@@ -96,6 +97,7 @@ fn write_ordinary(
             mapped_arguments,
             length,
             raytrace_pixel: false,
+            raytrace_render: None,
         },
     );
 }

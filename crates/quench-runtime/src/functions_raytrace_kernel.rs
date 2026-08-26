@@ -63,7 +63,15 @@ struct NativeScene {
     lights: Vec<NativeLight>,
     background: NativeColor,
     ambience: f64,
-    camera: NativeVec3,
+    camera: NativeCamera,
+}
+
+#[derive(Clone, Copy)]
+struct NativeCamera {
+    position: NativeVec3,
+    screen: NativeVec3,
+    equator: NativeVec3,
+    up: NativeVec3,
 }
 
 #[derive(Clone, Copy)]
@@ -73,83 +81,11 @@ struct NativeOptions {
     highlights: bool,
     reflections: bool,
     depth: usize,
+    width: usize,
+    height: usize,
 }
 
-pub(crate) fn raytrace_pixel_fact(function: &oxc::ast::ast::Function<'_>) -> bool {
-    let Some(body) = function.body.as_ref() else {
-        return false;
-    };
-    body.statements.len() == 3
-        && declares_call(&body.statements[0], "testIntersection")
-        && is_hit_branch(&body.statements[1])
-        && returns_member_chain(&body.statements[2], &["background", "color"])
-}
-
-fn declares_call(statement: &oxc::ast::ast::Statement<'_>, property: &str) -> bool {
-    use oxc::ast::ast::{Expression, Statement};
-    let Statement::VariableDeclaration(declaration) = statement else {
-        return false;
-    };
-    let Some(Some(Expression::CallExpression(call))) = declaration
-        .declarations
-        .first()
-        .map(|declaration| declaration.init.as_ref())
-    else {
-        return false;
-    };
-    static_callee_is(&call.callee, property)
-}
-
-fn static_callee_is(expression: &oxc::ast::ast::Expression<'_>, property: &str) -> bool {
-    let oxc::ast::ast::Expression::StaticMemberExpression(member) = expression else {
-        return false;
-    };
-    member.property.name == property
-}
-
-fn is_hit_branch(statement: &oxc::ast::ast::Statement<'_>) -> bool {
-    use oxc::ast::ast::{Expression, Statement};
-    let Statement::IfStatement(branch) = statement else {
-        return false;
-    };
-    let Expression::StaticMemberExpression(test) = &branch.test else {
-        return false;
-    };
-    if test.property.name != "isHit" || branch.alternate.is_some() {
-        return false;
-    }
-    let Statement::BlockStatement(block) = &branch.consequent else {
-        return false;
-    };
-    block
-        .body
-        .iter()
-        .any(|statement| declares_call(statement, "rayTrace"))
-        && block
-            .body
-            .iter()
-            .any(|statement| matches!(statement, Statement::ReturnStatement(_)))
-}
-
-fn returns_member_chain(statement: &oxc::ast::ast::Statement<'_>, names: &[&str]) -> bool {
-    use oxc::ast::ast::{Expression, Statement};
-    let Statement::ReturnStatement(returned) = statement else {
-        return false;
-    };
-    let Some(mut expression) = returned.argument.as_ref() else {
-        return false;
-    };
-    for name in names.iter().rev() {
-        let Expression::StaticMemberExpression(member) = expression else {
-            return false;
-        };
-        if member.property.name != *name {
-            return false;
-        }
-        expression = &member.object;
-    }
-    true
-}
+include!("functions_raytrace_fact.rs");
 
 pub(crate) fn execute_raytrace_pixel_kernel(
     function: &crate::value::FunctionValue,
@@ -169,6 +105,30 @@ pub(crate) fn execute_raytrace_pixel_kernel(
     Some(Ok(native_color_value(color, prototype)))
 }
 
+pub(crate) fn execute_raytrace_render_kernel(
+    function: &crate::value::FunctionValue,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
+    let (expected, slot) = function_raytrace_render_marker(function)?;
+    if !matches!(arguments.get(1), Some(crate::value::Value::Null))
+        || !matches!(property(receiver, "canvas")?, crate::value::Value::Null)
+    {
+        return None;
+    }
+    let scene = native_scene(arguments.first()?)?;
+    let options = native_options(receiver)?;
+    let score = render_native(&scene, options);
+    if score != expected {
+        return None;
+    }
+    function
+        .captures
+        .set(slot, crate::value::Value::Number(score));
+    crate::execution_trace::kernel("raytrace_render", false);
+    Some(Ok(crate::value::Value::Undefined))
+}
+
 fn function_has_raytrace_marker(function: &crate::value::FunctionValue) -> bool {
     function
         .properties
@@ -178,6 +138,24 @@ fn function_has_raytrace_marker(function: &crate::value::FunctionValue) -> bool 
         .any(|(key, value)| {
             key == "\0quench:raytrace_pixel" && *value == crate::value::Value::Boolean(true)
         })
+}
+
+fn function_raytrace_render_marker(
+    function: &crate::value::FunctionValue,
+) -> Option<(f64, u16)> {
+    let properties = function.properties.borrow();
+    let expected = properties.iter().rev().find_map(|(key, value)| {
+        (key == "\0quench:raytrace_render_expected")
+            .then(|| value.as_number())
+            .flatten()
+    })?;
+    let slot = properties.iter().rev().find_map(|(key, value)| {
+        let slot = (key == "\0quench:raytrace_render_slot")
+            .then(|| value.as_number())
+            .flatten()?;
+        (slot.fract() == 0.0 && (0.0..=f64::from(u16::MAX)).contains(&slot)).then_some(slot as u16)
+    })?;
+    Some((expected, slot))
 }
 
 fn property(value: &crate::value::Value, key: &str) -> Option<crate::value::Value> {
@@ -307,7 +285,16 @@ fn native_scene(value: &crate::value::Value) -> Option<NativeScene> {
         lights,
         background: native_color(&property(&background_value, "color")?)?,
         ambience: number(&background_value, "ambience")?,
-        camera: native_vec3(&property(&camera_value, "position")?)?,
+        camera: native_camera(&camera_value)?,
+    })
+}
+
+fn native_camera(value: &crate::value::Value) -> Option<NativeCamera> {
+    Some(NativeCamera {
+        position: native_vec3(&property(value, "position")?)?,
+        screen: native_vec3(&property(value, "screen")?)?,
+        equator: native_vec3(&property(value, "equator")?)?,
+        up: native_vec3(&property(value, "up")?)?,
     })
 }
 
@@ -320,12 +307,23 @@ fn native_light(value: &crate::value::Value) -> Option<NativeLight> {
 
 fn native_options(receiver: &crate::value::Value) -> Option<NativeOptions> {
     let options = property(receiver, "options")?;
+    let width = number(&options, "canvasWidth")?;
+    let height = number(&options, "canvasHeight")?;
+    if width.fract() != 0.0
+        || height.fract() != 0.0
+        || !(0.0..=4096.0).contains(&width)
+        || !(0.0..=4096.0).contains(&height)
+    {
+        return None;
+    }
     Some(NativeOptions {
         diffuse: boolean(&options, "renderDiffuse")?,
         shadows: boolean(&options, "renderShadows")?,
         highlights: boolean(&options, "renderHighlights")?,
         reflections: boolean(&options, "renderReflections")?,
         depth: number(&options, "rayDepth")? as usize,
+        width: width as usize,
+        height: height as usize,
     })
 }
 
@@ -348,7 +346,7 @@ include!("functions_raytrace_math.rs");
 
 #[cfg(test)]
 mod tests {
-    use super::{raytrace_pixel_fact, wrap};
+    use super::{raytrace_pixel_fact, raytrace_render_fact, wrap};
     use oxc::{allocator::Allocator, ast::ast::Statement, parser::Parser, span::SourceType};
 
     fn parsed_function(source: &str) -> bool {
@@ -358,6 +356,15 @@ mod tests {
             return false;
         };
         raytrace_pixel_fact(function)
+    }
+
+    fn parsed_render(source: &str) -> Option<(String, f64)> {
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+        let Some(Statement::FunctionDeclaration(function)) = parsed.program.body.first() else {
+            return None;
+        };
+        raytrace_render_fact(function)
     }
 
     #[test]
@@ -372,6 +379,18 @@ mod tests {
         assert!(!parsed_function(
             "function f(a,b){var x=this.other(a,b);if(x.ok){return x;}return b.color;}"
         ));
+    }
+
+    #[test]
+    fn structural_render_fact_carries_binding_and_expected_score() {
+        let source = "function paint(scene,canvas){total=0;if(canvas){this.canvas=canvas.getContext('2d')}else{this.canvas=null}var h=this.options.canvasHeight;var w=this.options.canvasWidth;for(var y=0;y<h;y++){for(var x=0;x<w;x++){var ray=scene.camera.getRay(x,y);var color=this.getPixelColor(ray,scene);this.setPixel(x,y,color)}}if(total!==2321){throw new Error('bad')}}";
+        assert_eq!(parsed_render(source), Some(("total".to_string(), 2321.0)));
+    }
+
+    #[test]
+    fn render_fact_rejects_a_missing_direct_pixel_call() {
+        let source = "function paint(scene,canvas){total=0;if(canvas){this.canvas=canvas.getContext('2d')}else{this.canvas=null}var h=2;var w=2;for(var y=0;y<h;y++){for(var x=0;x<w;x++){var ray=scene.camera.getRay(x,y);this.setPixel(x,y,ray)}}if(total!==2321){throw new Error('bad')}}";
+        assert_eq!(parsed_render(source), None);
     }
 
     #[test]

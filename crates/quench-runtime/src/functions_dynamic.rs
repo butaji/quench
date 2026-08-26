@@ -291,6 +291,7 @@ fn dynamic_value(
             is_async,
             mapped_arguments: true,
             raytrace_pixel: false,
+            raytrace_render: None,
         },
     );
     if let Value::Function(function) = &value {
