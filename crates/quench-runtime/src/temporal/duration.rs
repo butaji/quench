@@ -878,6 +878,10 @@ fn calendar_round(
                 fields[larger_unit] = Value::Number(larger_count as f64);
             }
             fields[unit] = Value::Number(0.0);
+            if unit == 3 && largest == 2 {
+                fields[2] = Value::Number((count / 7) as f64);
+                fields[3] = Value::Number((count % 7) as f64);
+            }
         }
     }
     let has_higher = (0..unit).any(|index| {
