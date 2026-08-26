@@ -114,8 +114,14 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
 fn receiver_iterator(receiver: &Value) -> Result<Value, crate::execute::VmError> {
     if matches!(receiver, Value::Generator(_)) {
         open(receiver.clone())
+    } else if matches!(receiver, Value::Iterator(_)) {
+        Ok(receiver.clone())
     } else {
-        from(std::slice::from_ref(receiver))
+        if !crate::value::is_object(receiver) {
+            return Err(not_iterable());
+        }
+        let next = crate::execute::get_property_result(receiver, "next")?;
+        Ok(make_protocol_with_next(receiver.clone(), next))
     }
 }
 
@@ -132,9 +138,7 @@ pub(crate) fn map(
     let receiver = receiver.ok_or_else(not_iterable)?;
     let mapper = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&mapper) {
-        return Err(crate::value::error::throw_type_error(
-            "Iterator.prototype.map mapper is not callable",
-        ));
+        return Err(close_invalid_helper_argument(receiver, "Iterator.prototype.map mapper is not callable"));
     }
     let iterator = receiver_iterator(receiver)?;
     Ok(Value::Iterator(Rc::new(IteratorData::new(
@@ -154,7 +158,8 @@ pub(crate) fn filter(
     let receiver = receiver.ok_or_else(not_iterable)?;
     let predicate = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&predicate) {
-        return Err(crate::value::error::throw_type_error(
+        return Err(close_invalid_helper_argument(
+            receiver,
             "Iterator.prototype.filter predicate is not callable",
         ));
     }
@@ -167,6 +172,20 @@ pub(crate) fn filter(
             done: false,
         },
     ))))
+}
+
+fn close_invalid_helper_argument(receiver: &Value, message: &str) -> crate::execute::VmError {
+    let error = crate::value::error::throw_type_error(message);
+    if let Ok(method) = crate::execute::get_property_result(receiver, "Symbol.iterator") {
+        if crate::conversion::is_callable(&method) {
+            if let Ok(return_method) = crate::execute::get_property_result(receiver, "return") {
+                if crate::conversion::is_callable(&return_method) {
+                    let _ = crate::functions::execute_target(&return_method, receiver, &[]);
+                }
+            }
+        }
+    }
+    error
 }
 
 pub(crate) fn some(
@@ -266,10 +285,11 @@ pub(crate) fn return_iterator(
     if already_done {
         return Ok(result(value, true));
     }
-    mark_done(data);
     *data.in_return.borrow_mut() = true;
-    let completion = close_inner(data, inner, Some(receiver))?;
+    let completion = close_inner(data, inner, Some(receiver));
+    mark_done(data);
     *data.in_return.borrow_mut() = false;
+    let completion = completion?;
     match completion {
         crate::completion::Completion::Normal => Ok(result(value, true)),
         completion => completion.into_vm_error().map(|_| result(value, true)),
