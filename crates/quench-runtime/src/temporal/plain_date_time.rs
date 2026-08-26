@@ -213,6 +213,9 @@ fn difference(
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
     )?;
     let right = fields(&from(other, None)?)?;
+    let mut smallest_unit = "nanosecond".to_string();
+    let mut rounding_increment = 1.0;
+    let mut rounding_mode = "trunc".to_string();
     let largest = if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined))
     {
         if !crate::value::is_object(options) {
@@ -249,6 +252,7 @@ fn difference(
                     "Invalid roundingIncrement",
                 ));
             }
+            rounding_increment = increment.trunc();
         }
         let mode = crate::execute::get_property_result(options, "roundingMode")?;
         if !matches!(mode, Value::Undefined) {
@@ -267,6 +271,7 @@ fn difference(
             ) {
                 return Err(crate::value::error::throw_range_error("Invalid roundingMode"));
             }
+            rounding_mode = mode;
         }
         let smallest = crate::execute::get_property_result(options, "smallestUnit")?;
         if !matches!(smallest, Value::Undefined) {
@@ -287,6 +292,7 @@ fn difference(
             ) {
                 return Err(crate::value::error::throw_range_error("Invalid smallestUnit"));
             }
+            smallest_unit = smallest.to_string();
             if largest_was_default && unit_rank(smallest) < unit_rank(&largest) {
                 largest = smallest.to_string();
             } else if unit_rank(smallest) < unit_rank(&largest) {
@@ -300,11 +306,31 @@ fn difference(
         "day".into()
     };
     if matches!(largest.as_str(), "year" | "month" | "week") {
-        return calendar_difference(&left, &right, direction, &largest);
+        return calendar_difference(
+            &left,
+            &right,
+            direction,
+            &largest,
+            &smallest_unit,
+            rounding_increment,
+            &rounding_mode,
+        );
     }
     let left_total = date_time_total_nanos(&left);
     let right_total = date_time_total_nanos(&right);
-    let delta = (right_total - left_total) * direction as i128;
+    let mut delta = (right_total - left_total) * direction as i128;
+    let quantum = match smallest_unit.as_str() {
+        "day" => 86_400_000_000_000_i128,
+        "hour" => 3_600_000_000_000,
+        "minute" => 60_000_000_000,
+        "second" => 1_000_000_000,
+        "millisecond" => 1_000_000,
+        "microsecond" => 1_000,
+        _ => 1,
+    } * rounding_increment as i128;
+    if quantum > 1 {
+        delta = round_integer(delta, quantum, &rounding_mode);
+    }
     let sign = delta.signum();
     let mut remainder = delta.unsigned_abs();
     let days = remainder / 86_400_000_000_000;
@@ -338,6 +364,9 @@ fn calendar_difference(
     right: &[f64],
     direction: f64,
     largest: &str,
+    smallest: &str,
+    increment: f64,
+    mode: &str,
 ) -> Result<Value, VmError> {
     let left_total = date_time_total_nanos(left);
     let right_total = date_time_total_nanos(right);
@@ -371,9 +400,52 @@ fn calendar_difference(
         months = 0;
         days = (end_date - start_date).num_days();
     }
-    let weeks = if largest == "week" { days / 7 } else { 0 };
+    let mut weeks = if largest == "week" { days / 7 } else { 0 };
     if largest == "week" {
         days %= 7;
+    }
+    let time_fraction_days = (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64
+        / 86_400_000_000_000.0;
+    if matches!(smallest, "year" | "month" | "week") {
+        let unit_value = match smallest {
+            "year" => years as f64 + months as f64 / 12.0 + (days as f64 + time_fraction_days) / 365.0,
+            "month" => years as f64 * 12.0 + months as f64 + (days as f64 + time_fraction_days) / 30.0,
+            _ => (weeks as f64) + (days as f64 + time_fraction_days) / 7.0,
+        };
+        let rounded = (round_quotient(unit_value * sign as f64 / increment, mode) * increment).abs();
+        match smallest {
+            "year" => {
+                years = rounded as i64;
+                months = 0;
+                days = 0;
+                weeks = 0;
+            }
+            "month" => {
+                if largest == "month" {
+                    years = 0;
+                    months = rounded as i64;
+                } else {
+                    years = (rounded / 12.0).trunc() as i64;
+                    months = (rounded - years as f64 * 12.0) as i64;
+                }
+                days = 0;
+                weeks = 0;
+            }
+            _ => {
+                years = 0;
+                months = 0;
+                weeks = if largest == "week" {
+                    rounded as i64
+                } else {
+                    0
+                };
+                days = if largest == "week" {
+                    0
+                } else {
+                    (rounded * 7.0) as i64
+                };
+            }
+        }
     }
     crate::temporal::duration::construct(&[
         Value::Number((years * sign) as f64),
@@ -404,6 +476,15 @@ fn date_time_total_nanos(values: &[f64]) -> i128 {
     let date_days = date.signed_duration_since(epoch).num_days() as i128;
     date_days * 86_400_000_000_000
         + values[3] as i128 * 3_600_000_000_000
+        + values[4] as i128 * 60_000_000_000
+        + values[5] as i128 * 1_000_000_000
+        + values[6] as i128 * 1_000_000
+        + values[7] as i128 * 1_000
+        + values[8] as i128
+}
+
+fn time_of_day_nanos(values: &[f64]) -> i128 {
+    values[3] as i128 * 3_600_000_000_000
         + values[4] as i128 * 60_000_000_000
         + values[5] as i128 * 1_000_000_000
         + values[6] as i128 * 1_000_000
@@ -959,6 +1040,31 @@ fn round_quotient(value: f64, mode: &str) -> f64 {
             }
         }
     }
+}
+
+fn round_integer(value: i128, quantum: i128, mode: &str) -> i128 {
+    let sign = value.signum();
+    let magnitude = value.unsigned_abs();
+    let quotient = magnitude / quantum as u128;
+    let remainder = magnitude % quantum as u128;
+    if remainder == 0 {
+        return value;
+    }
+    let twice = remainder.saturating_mul(2);
+    let increment = match mode {
+        "ceil" => sign > 0,
+        "floor" => sign < 0,
+        "expand" => true,
+        "trunc" => false,
+        "halfExpand" => twice >= quantum as u128,
+        "halfTrunc" => twice > quantum as u128,
+        "halfCeil" => twice > quantum as u128 || (twice == quantum as u128 && sign > 0),
+        "halfFloor" => twice > quantum as u128 || (twice == quantum as u128 && sign < 0),
+        "halfEven" => twice > quantum as u128 || (twice == quantum as u128 && quotient % 2 == 1),
+        _ => twice >= quantum as u128,
+    };
+    let rounded = quotient + u128::from(increment);
+    (rounded as i128) * sign * quantum
 }
 
 fn with(
