@@ -72,17 +72,25 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateWith => {
             Some(with(receiver, arguments.first(), arguments.get(1)))
         }
-        crate::ops::Builtin::TemporalPlainDateAdd => Some(add(receiver, arguments.first(), 1.0)),
+        crate::ops::Builtin::TemporalPlainDateAdd => {
+            Some(add(receiver, arguments.first(), arguments.get(1), 1.0))
+        }
         crate::ops::Builtin::TemporalPlainDateSubtract => {
-            Some(add(receiver, arguments.first(), -1.0))
+            Some(add(receiver, arguments.first(), arguments.get(1), -1.0))
         }
         crate::ops::Builtin::TemporalPlainDateEquals => Some(equals(receiver, arguments.first())),
-        crate::ops::Builtin::TemporalPlainDateUntil => {
-            Some(difference(receiver, arguments.first(), 1.0))
-        }
-        crate::ops::Builtin::TemporalPlainDateSince => {
-            Some(difference(receiver, arguments.first(), -1.0))
-        }
+        crate::ops::Builtin::TemporalPlainDateUntil => Some(difference(
+            receiver,
+            arguments.first(),
+            arguments.get(1),
+            1.0,
+        )),
+        crate::ops::Builtin::TemporalPlainDateSince => Some(difference(
+            receiver,
+            arguments.first(),
+            arguments.get(1),
+            -1.0,
+        )),
         crate::ops::Builtin::TemporalPlainDateToLocaleString => Some(to_string(receiver, None)),
         crate::ops::Builtin::TemporalPlainDateToPlainDateTime => Some(to_plain_date_time(receiver)),
         crate::ops::Builtin::TemporalPlainDateToPlainMonthDay => Some(to_stub(
@@ -138,6 +146,7 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
 fn add(
     receiver: Option<&Value>,
     duration: Option<&Value>,
+    options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
     let Value::Object(date) = receiver.ok_or_else(invalid_receiver)? else {
@@ -146,6 +155,7 @@ fn add(
     let Value::Object(duration) = crate::temporal::duration::from(duration)? else {
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
+    validate_date_options(options, false)?;
     let years =
         number_field(field(&date, "year")) + number_property(&duration, "years") * direction;
     let months = number_field(field(&date, "month")) - 1.0
@@ -161,10 +171,13 @@ fn add(
 fn difference(
     receiver: Option<&Value>,
     other: Option<&Value>,
+    options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
+    validate_date_options(options, true)?;
     let left = date_parts(receiver)?;
-    let right = date_parts(other)?;
+    let right_value = from(other, None)?;
+    let right = date_parts(Some(&right_value))?;
     let days = (date_serial(right.0, right.1, right.2) - date_serial(left.0, left.1, left.2))
         as f64
         * direction;
@@ -676,6 +689,75 @@ fn invalid_receiver() -> VmError {
     crate::value::error::throw_type_error(
         "Temporal.PlainDate.prototype.withCalendar called on incompatible receiver",
     )
+}
+
+fn validate_date_options(options: Option<&Value>, difference: bool) -> Result<(), VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(());
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    if !difference {
+        let overflow = crate::execute::get_property_result(options, "overflow")?;
+        if !matches!(overflow, Value::Undefined) {
+            let overflow = crate::conversion::to_string(&overflow)?;
+            if !matches!(overflow.as_str(), "constrain" | "reject") {
+                return Err(crate::value::error::throw_range_error("Invalid overflow"));
+            }
+        }
+        return Ok(());
+    }
+    let largest = crate::execute::get_property_result(options, "largestUnit")?;
+    if !matches!(largest, Value::Undefined) {
+        let largest = crate::conversion::to_string(&largest)?;
+        if !matches!(
+            largest.trim_end_matches('s'),
+            "auto" | "year" | "month" | "week" | "day"
+        ) {
+            return Err(crate::value::error::throw_range_error("Invalid unit"));
+        }
+    }
+    let increment = crate::execute::get_property_result(options, "roundingIncrement")?;
+    if !matches!(increment, Value::Undefined) {
+        let increment = crate::conversion::to_number(&increment)?;
+        if !increment.is_finite() || increment < 1.0 {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid roundingIncrement",
+            ));
+        }
+    }
+    let mode = crate::execute::get_property_result(options, "roundingMode")?;
+    if !matches!(mode, Value::Undefined) {
+        let mode = crate::conversion::to_string(&mode)?;
+        if !matches!(
+            mode.as_str(),
+            "ceil"
+                | "floor"
+                | "expand"
+                | "trunc"
+                | "halfCeil"
+                | "halfFloor"
+                | "halfExpand"
+                | "halfTrunc"
+                | "halfEven"
+        ) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid roundingMode",
+            ));
+        }
+    }
+    let smallest = crate::execute::get_property_result(options, "smallestUnit")?;
+    if !matches!(smallest, Value::Undefined) {
+        let smallest = crate::conversion::to_string(&smallest)?;
+        if !matches!(
+            smallest.trim_end_matches('s'),
+            "auto" | "year" | "month" | "week" | "day"
+        ) {
+            return Err(crate::value::error::throw_range_error("Invalid unit"));
+        }
+    }
+    Ok(())
 }
 
 fn has_date_fields(object: &crate::value::ObjectData) -> bool {
