@@ -452,3 +452,9 @@ test-tls-cipher-list.js
 test-tls-buffersize.js
 test-tls-check-server-identity.js
 test-tls-cli-max-version-1.2.js
+test-tls-cli-max-version-1.3.js
+test-tls-cli-min-version-1.0.js
+test-tls-cli-min-version-1.1.js
+test-tls-cli-min-version-1.2.js
+test-tls-cli-min-max-conflict.js
+test-tls-ca-concat.js
