@@ -315,18 +315,19 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::SPEC_DNS_EXCEPTION),
             ),
             (
-            "codes".to_string(),
-            crate::host::namespace_object_from_pairs(vec![
-                (
-                    "ERR_OUT_OF_RANGE".to_string(),
-                    Value::Builtin(quench_runtime::ops::Builtin::RangeError),
-                ),
-                (
-                    "ERR_IPC_CHANNEL_CLOSED".to_string(),
-                    Value::Builtin(quench_runtime::ops::Builtin::Error),
-                ),
-            ]),
-        )])),
+                "codes".to_string(),
+                crate::host::namespace_object_from_pairs(vec![
+                    (
+                        "ERR_OUT_OF_RANGE".to_string(),
+                        Value::Builtin(quench_runtime::ops::Builtin::RangeError),
+                    ),
+                    (
+                        "ERR_IPC_CHANNEL_CLOSED".to_string(),
+                        Value::Builtin(quench_runtime::ops::Builtin::Error),
+                    ),
+                ]),
+            ),
+        ])),
         // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => {
             let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
@@ -388,12 +389,18 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "os" => {
             let object = crate::host::namespace_object_from_pairs(crate::modules::os::build());
             let descriptor = host_api::object(vec![
-                ("value".into(), quench_runtime::execute::get_property(&object, "EOL")),
+                (
+                    "value".into(),
+                    quench_runtime::execute::get_property(&object, "EOL"),
+                ),
                 ("writable".into(), Value::Boolean(false)),
                 ("enumerable".into(), Value::Boolean(true)),
                 ("configurable".into(), Value::Boolean(true)),
             ]);
-            Some(quench_runtime::execute::define_property(object, "EOL", descriptor).unwrap_or(Value::Undefined))
+            Some(
+                quench_runtime::execute::define_property(object, "EOL", descriptor)
+                    .unwrap_or(Value::Undefined),
+            )
         }
         "events" => Some(crate::modules::events::build()),
         "diagnostics_channel" => Some(crate::modules::diagnostics_channel::build()),
@@ -420,7 +427,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 return Some(module);
             }
             None
-        },
+        }
         "https" => Some(crate::host::namespace_object_from_pairs(vec![
             (
                 "request".to_string(),
@@ -519,6 +526,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             (
                 "execFile".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_EXECFILE),
+            ),
+            (
+                "execFileSync".to_string(),
+                crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
             ),
             (
                 "spawn".to_string(),
