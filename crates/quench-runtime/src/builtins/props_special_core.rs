@@ -497,6 +497,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             Some(Value::Builtin(TemporalZonedDateTime))
         }
         (TemporalNow, "instant") => Some(Value::Builtin(TemporalNowInstant)),
+        (TemporalNow, "Symbol.toStringTag") => Some(Value::String("Temporal.Now".into())),
         (TemporalNow, "plainDateISO") => Some(Value::Builtin(TemporalNowPlainDateISO)),
         (TemporalNow, "plainDateTimeISO") => Some(Value::Builtin(TemporalNowPlainDateTimeISO)),
         (TemporalNow, "plainTimeISO") => Some(Value::Builtin(TemporalNowPlainTimeISO)),

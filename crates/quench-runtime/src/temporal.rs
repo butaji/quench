@@ -437,9 +437,13 @@ mod stubs {
                 crate::ops::Builtin::TemporalZonedDateTimePrototype
             }
             crate::ops::Builtin::TemporalNowInstant => {
+                let epoch = super::now_epoch_nanoseconds();
                 return Some(Ok(Value::Object(std::rc::Rc::new(
                     crate::value::ObjectData::new(vec![
-                        ("epochNanoseconds".to_string(), Value::BigInt("0".into())),
+                        (
+                            "epochNanoseconds".to_string(),
+                            Value::BigInt(epoch.to_string()),
+                        ),
                         (
                             "\0prototype".to_string(),
                             Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype),
@@ -2154,6 +2158,12 @@ mod stubs {
             ]),
         )))
     }
+}
+
+fn now_epoch_nanoseconds() -> i128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos() as i128)
 }
 
 pub(crate) fn construct_stub(
