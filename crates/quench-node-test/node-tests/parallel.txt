@@ -234,6 +234,7 @@ test-child-process-exec-kill-throws.js
 test-child-process-spawnsync-validation-errors.js
 test-child-process-spawnsync-args.js
 test-child-process-spawnsync.js
+test-child-process-spawn-event.js
 test-child-process-exec-any-shells-windows.js
 test-process-constants-noatime.js
 test-process-features.js
