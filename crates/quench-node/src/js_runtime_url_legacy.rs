@@ -88,12 +88,9 @@ fn url_parse_legacy(
     if state.is_some()
         && !matches!(vm_filename, Value::String(ref path) if path.contains("node_modules"))
     {
-        crate::modules::process::emit_warning(
-            state.expect("checked above"),
-            "DeprecationWarning",
+        schedule_process_warning(
             "`url.parse()` behavior is not standardized and prone to errors. Use the WHATWG URL API instead.",
-            Some("DEP0169"),
-            true,
+            "DEP0169",
         );
     }
     if value.contains("%E0%A4%A") {
@@ -134,7 +131,9 @@ fn url_parse_legacy(
         };
         let query = legacy_query_parse(&normalized)?;
         let query = quench_runtime::execute::get_property_result(&query, "query")?;
-        return Ok(quench_runtime::execute::set_property(parsed, "query", query));
+        return Ok(quench_runtime::execute::set_property(
+            parsed, "query", query,
+        ));
     }
     if value == "/foo/bar?baz=quux#frag" && matches!(arguments.get(1), Some(Value::Boolean(true))) {
         let query = Value::object(vec![("baz".into(), Value::String("quux".into()))]);
@@ -355,6 +354,15 @@ fn url_parse_legacy(
         ("path".into(), Value::String(pathname.into())),
         ("href".into(), Value::String(parsed.to_string().into())),
     ]))
+}
+
+fn schedule_process_warning(message: &str, code: &str) {
+    let warning = quench_runtime::host_api::object(vec![
+        ("name".into(), Value::String("DeprecationWarning".into())),
+        ("message".into(), Value::String(message.into())),
+        ("code".into(), Value::String(code.into())),
+    ]);
+    NODE_PENDING_PROCESS_WARNINGS.with(|warnings| warnings.borrow_mut().push(warning));
 }
 
 fn legacy_query_parse(value: &str) -> Result<Value, VmError> {
