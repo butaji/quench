@@ -705,8 +705,15 @@ fn open_iterator(value: Value) -> Result<Option<Value>, crate::execute::VmError>
             "Iterator.prototype.flatMap mapper result is not iterable",
         ));
     }
-    if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
+    if matches!(value, Value::Iterator(_)) {
         return Ok(Some(value));
+    }
+    let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
+    if matches!(method, Value::Null | Value::Undefined) {
+        let next = crate::execute::get_property_result(&value, "next")?;
+        if crate::conversion::is_callable(&next) {
+            return Ok(Some(super::make_protocol_with_next(value, next)));
+        }
     }
     let iter = super::open(value)?;
     Ok(Some(iter))
