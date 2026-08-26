@@ -110,17 +110,18 @@ pub(crate) fn proxy_get(
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "get") {
             let receiver = receiver.unwrap_or(target);
+            let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
             let result = call_trap(
                 &trap,
                 &[
-                    proxy.target.clone(),
+                    proxy_target.clone(),
                     crate::conversion::property_key_value(prop),
                     receiver.clone(),
                 ],
                 Some(&proxy.handler),
             )?;
             let descriptor = crate::builtins::object::descriptor(
-                Some(&proxy.target),
+                Some(&proxy_target),
                 Some(&Value::String(prop.to_string())),
             )?;
             if let Value::Object(properties) = &descriptor {
