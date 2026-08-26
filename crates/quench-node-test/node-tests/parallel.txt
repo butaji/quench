@@ -473,3 +473,5 @@ test-tls-connect-secure-context.js
 test-tls-ticket.js
 test-tls-sni-servername.js
 test-tls-client-resume.js
+test-tls-client-auth.js
+test-tls-ecdh.js
