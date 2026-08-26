@@ -156,10 +156,18 @@ fn difference(
                     Some(crate::conversion::to_string(&value)?)
                 }
             };
-            let smallest = temporal_unit_option(Some(options), "smallestUnit")?;
+            let smallest = temporal_unit_option(Some(options), "smallestUnit")?
+                .unwrap_or_else(|| "nanosecond".into());
+            let largest = largest.unwrap_or_else(|| {
+                if matches!(smallest.as_str(), "hour" | "minute") {
+                    smallest.clone()
+                } else {
+                    "second".into()
+                }
+            });
             (
-                smallest.unwrap_or_else(|| "nanosecond".into()),
-                largest.unwrap_or_else(|| "second".into()),
+                smallest,
+                largest,
                 increment.unwrap_or(1.0),
                 rounding_mode.unwrap_or_else(|| "trunc".into()),
             )
