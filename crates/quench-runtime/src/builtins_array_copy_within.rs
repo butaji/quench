@@ -98,7 +98,7 @@ fn copy_within_object(
 }
 
 fn copy_dense_property(values: &mut crate::value::ArrayData, source: usize, destination: usize) {
-    if values.has_index(source) {
+    if source < values.logical_len() && values.has_index(source) {
         if let Some(value) = values.get_index(source) {
             values.set_index(destination, value);
         }
