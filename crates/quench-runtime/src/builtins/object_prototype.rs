@@ -8,12 +8,9 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
 
 fn prototype_for_value(value: &Value) -> Value {
     if let Value::Function(function) = value {
-        if let Some((_, prototype)) = function
-            .properties
-            .borrow()
-            .iter()
-            .find(|(key, _)| key == "\0function_prototype")
-        {
+        if let Some((_, prototype)) = function.properties.borrow().iter().find(|(key, _)| {
+            key == "\0function_prototype" || (function.is_async && key == "\0prototype")
+        }) {
             return prototype.clone();
         }
     }
@@ -105,13 +102,20 @@ fn function_prototype(function: &crate::value::FunctionValue) -> Value {
             .properties
             .borrow()
             .iter()
+            .find(|(name, _)| name == "\0function_prototype")
+        {
+            return prototype.clone();
+        }
+        if let Some((_, prototype)) = function
+            .properties
+            .borrow()
+            .iter()
             .rev()
             .find(|(name, _)| name == "\0prototype")
         {
             return prototype.clone();
         }
-        let realm = crate::vm::realm_id_for_global_value(&function.captures.get(0))
-            .unwrap_or_else(|| crate::vm::current_context_or_default().realm());
+        let realm = crate::construct::function_realm_id(function);
         return crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype);
     }
     internal_prototype(

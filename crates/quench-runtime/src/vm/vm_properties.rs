@@ -487,9 +487,7 @@ fn function_realm_intrinsic(
     function: &crate::value::FunctionValue,
     builtin: crate::ops::Builtin,
 ) -> Value {
-    let global = function.captures.get(0);
-    crate::vm::realm_id_for_global_value(&global)
-        .and_then(|realm| crate::vm::realm::intrinsic(realm, builtin))
+    crate::vm::realm::intrinsic(crate::construct::function_realm_id(function), builtin)
         .unwrap_or(Value::Builtin(builtin))
 }
 
