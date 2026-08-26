@@ -39,7 +39,7 @@ fn function_metadata(
         forward_construct_call: crate::functions::forward_construct_call_fact(function, locals),
         forward_then_call: crate::functions::forward_then_call_fact(function),
         counted_method_loop: crate::functions::counted_method_loop_fact(function),
-        direct_method: crate::functions::direct_method_fact(function),
+        direct_method: crate::functions::direct_method_fact(function, locals),
     }
 }
 
