@@ -108,6 +108,10 @@ execution_events! {
     NamedSetLayoutMismatch => "named_set_layout_mismatch",
     NamedSetSlotNotCell => "named_set_slot_not_cell",
     NamedSetPromoteCell => "named_set_promote_cell",
+    NamedSetTransitionHit => "named_set_transition_hit",
+    NamedSetOwnMissing => "named_set_own_missing",
+    NamedSetOwnBlocked => "named_set_own_blocked",
+    NamedSetOwnWritable => "named_set_own_writable",
     CryptoKernelShape => "crypto_kernel_shape",
     CryptoKernelPrefix => "crypto_kernel_prefix",
     CryptoKernelProduct => "crypto_kernel_product",
@@ -154,6 +158,8 @@ struct Counters {
     leaf_rejections: HashMap<&'static str, u64>,
     call_shapes: HashMap<(usize, bool, bool), u64>,
     call_targets: HashMap<&'static str, u64>,
+    named_calls: HashMap<String, u64>,
+    named_sets: HashMap<String, u64>,
     events: Vec<u64>,
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
@@ -1311,6 +1317,53 @@ pub(crate) fn call_method(_: usize, _: bool, _: bool, _: &'static str) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
+pub(crate) fn named_call(key: &str) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            count_bounded_name(&mut counters.borrow_mut().named_calls, key);
+        });
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn count_bounded_name(names: &mut HashMap<String, u64>, key: &str) {
+    if let Some(count) = names.get_mut(key) {
+        *count += 1;
+    } else if names.len() < 64 {
+        names.insert(key.to_owned(), 1);
+    } else {
+        let (min_count, victim) = names
+            .iter()
+            .filter(|(name, _)| name.as_str() != "other")
+            .map(|(name, &count)| (count, name.clone()))
+            .min_by_key(|(count, _)| *count)
+            .expect("bounded name table has a replaceable entry");
+        names.remove(&victim);
+        names.insert(key.to_owned(), min_count.saturating_add(1));
+        *names.entry("other".into()).or_default() += 1;
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_call(_: &str) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_set(key: &str) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            count_bounded_name(&mut counters.borrow_mut().named_sets, key);
+        });
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_set(_: &str) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
 pub(crate) fn event(event: Event) {
     if enabled() {
         COUNTERS.with(|counters| {
@@ -1646,6 +1699,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "leaf_rejections": leaf_rejections,
                 "call_shapes": call_shapes,
                 "call_targets": call_targets,
+                "named_calls": top_string_map(&counters.named_calls, 32),
+                "named_sets": top_string_map(&counters.named_sets, 32),
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
@@ -1735,6 +1790,26 @@ mod lane_profile_tests {
             decode_site_for_opcode(crate::ir::Opcode::CallN, false),
             DecodeSite::Call
         ));
+    }
+
+    #[test]
+    fn ranks_named_call_properties_without_an_unbounded_map() {
+        let mut counters = Counters::default();
+        count_bounded_name(&mut counters.named_calls, "run");
+        count_bounded_name(&mut counters.named_calls, "run");
+        count_bounded_name(&mut counters.named_calls, "schedule");
+        assert_eq!(counters.named_calls.get("run"), Some(&2));
+        assert_eq!(counters.named_calls.get("schedule"), Some(&1));
+
+        for index in 0..80 {
+            count_bounded_name(&mut counters.named_calls, &format!("cold-{index}"));
+        }
+        for _ in 0..100 {
+            count_bounded_name(&mut counters.named_calls, "hot");
+        }
+        assert!(counters.named_calls.contains_key("hot"));
+        assert!(counters.named_calls.len() <= 65);
+        assert!(counters.named_calls.contains_key("other"));
     }
 
     #[test]
