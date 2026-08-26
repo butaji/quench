@@ -16,7 +16,9 @@ fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
     {
         *value = Value::Boolean(true);
     }
-    Some(Value::Object(Rc::new(ObjectData::from_shared_properties(properties))))
+    Some(Value::Object(Rc::new(ObjectData::from_shared_properties(
+        properties,
+    ))))
 }
 fn buffer_descriptor(buffer: &crate::value::ArrayBufferData, key: &str) -> Option<Value> {
     buffer
@@ -266,6 +268,7 @@ fn intrinsic_getter_extended(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match (builtin, key) {
+        (TemporalInstantPrototype, "epochNanoseconds") => TemporalInstantEpochNanosecondsGetter,
         (TemporalDurationPrototype, "years") => TemporalDurationYearsGetter,
         (TemporalDurationPrototype, "months") => TemporalDurationMonthsGetter,
         (TemporalDurationPrototype, "weeks") => TemporalDurationWeeksGetter,
@@ -322,15 +325,23 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (TemporalPlainYearMonthPrototype, "daysInMonth") => TemporalPlainYearMonthDaysInMonthGetter,
         (TemporalPlainYearMonthPrototype, "daysInYear") => TemporalPlainYearMonthDaysInYearGetter,
         (TemporalPlainYearMonthPrototype, "inLeapYear") => TemporalPlainYearMonthInLeapYearGetter,
-        (TemporalPlainYearMonthPrototype, "monthsInYear") => TemporalPlainYearMonthMonthsInYearGetter,
+        (TemporalPlainYearMonthPrototype, "monthsInYear") => {
+            TemporalPlainYearMonthMonthsInYearGetter
+        }
         (TemporalPlainYearMonthPrototype, "era") => TemporalPlainYearMonthEraGetter,
         (TemporalPlainYearMonthPrototype, "eraYear") => TemporalPlainYearMonthEraYearGetter,
-        (TemporalZonedDateTimePrototype, "epochNanoseconds") => TemporalInstantEpochNanosecondsGetter,
+        (TemporalZonedDateTimePrototype, "epochNanoseconds") => {
+            TemporalInstantEpochNanosecondsGetter
+        }
         (TemporalInstantPrototype, "epochMilliseconds") => TemporalInstantEpochMillisecondsGetter,
-        (TemporalZonedDateTimePrototype, "epochMilliseconds") => TemporalZonedDateTimeEpochMillisecondsGetter,
+        (TemporalZonedDateTimePrototype, "epochMilliseconds") => {
+            TemporalZonedDateTimeEpochMillisecondsGetter
+        }
         (TemporalZonedDateTimePrototype, "timeZoneId") => TemporalZonedDateTimeTimeZoneIdGetter,
         (TemporalZonedDateTimePrototype, "offset") => TemporalZonedDateTimeOffsetGetter,
-        (TemporalZonedDateTimePrototype, "offsetNanoseconds") => TemporalZonedDateTimeOffsetNanosecondsGetter,
+        (TemporalZonedDateTimePrototype, "offsetNanoseconds") => {
+            TemporalZonedDateTimeOffsetNanosecondsGetter
+        }
         (TemporalZonedDateTimePrototype, "hoursInDay") => TemporalZonedDateTimeHoursInDayGetter,
         (TemporalZonedDateTimePrototype, "calendarId") => TemporalPlainDateCalendarIdGetter,
         (TemporalZonedDateTimePrototype, "year") => TemporalPlainDateYearGetter,
