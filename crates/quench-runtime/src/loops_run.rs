@@ -1,3 +1,7 @@
+// L1 admission is frozen here. New fused kernels are selected from OXC AST
+// facts and emitted as KernelIds; this interpreter file only executes the
+// existing compatibility set and must not grow new recognize/admit templates.
+
 pub(crate) fn execute(
     registers: &mut crate::register_file::RegisterFile,
     op: &crate::ops::Op,
