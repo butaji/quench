@@ -91,13 +91,17 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ("env", env_object()),
         (
             "config",
-            host_api::object(vec![(
-                "variables".to_string(),
-                host_api::object(vec![(
-                    "v8_enable_i18n_support".to_string(),
-                    Value::Number(1.0),
-                )]),
-            )]),
+            crate::host::readonly_namespace_from_pairs(vec![
+                (
+                    "variables".to_string(),
+                    crate::host::readonly_namespace_from_pairs(vec![
+                        (
+                            "v8_enable_i18n_support".to_string(),
+                            Value::Number(1.0),
+                        ),
+                    ]),
+                ),
+            ]),
         ),
         ("execPath", Value::String(exec_path.to_string())),
         (
