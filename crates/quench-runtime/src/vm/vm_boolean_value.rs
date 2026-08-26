@@ -69,6 +69,10 @@ fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute:
             "Symbol description requires a symbol",
         ));
     };
+    let full = symbol.trim_end_matches('\0');
+    if crate::conversion::well_known_symbol(full).is_some() {
+        return Ok(Value::String(full.to_string()));
+    }
     let description = symbol
         .strip_prefix("Symbol.for.")
         .or_else(|| symbol.strip_prefix("Symbol."))

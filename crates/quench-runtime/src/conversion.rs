@@ -32,7 +32,7 @@ pub(crate) fn own_key_value(key: &str) -> Value {
     }
 }
 
-fn well_known_symbol(name: &str) -> Option<crate::ops::Builtin> {
+pub(crate) fn well_known_symbol(name: &str) -> Option<crate::ops::Builtin> {
     use crate::ops::Builtin::*;
     Some(match name {
         "Symbol.iterator" => SymbolIterator,
@@ -55,7 +55,16 @@ fn well_known_symbol(name: &str) -> Option<crate::ops::Builtin> {
 }
 
 pub(crate) fn property_key_value(key: &str) -> Value {
-    well_known_symbol(key).map_or_else(|| Value::String(key.to_string()), Value::Builtin)
+    well_known_symbol(key).map_or_else(
+        || Value::String(key.to_string()),
+        |_builtin| {
+            // Proxy traps observe the actual property key value. Keep the
+            // canonical symbol payload here rather than leaking the internal
+            // Builtin tag, so Symbol.prototype.description and identity work
+            // through user code as well as ordinary property lookup.
+            Value::String(format!("{key}\0"))
+        },
+    )
 }
 
 pub(crate) fn number_to_string(value: f64) -> String {

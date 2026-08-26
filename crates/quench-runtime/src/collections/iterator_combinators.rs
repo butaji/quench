@@ -287,6 +287,27 @@ pub(crate) fn return_iterator(
             "Iterator return called on incompatible receiver",
         ));
     };
+    let protocol_inner = match &*data.state.borrow() {
+        IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
+        _ => None,
+    };
+    if let Some(iterator) = protocol_inner {
+        let method = crate::execute::get_property_result(&iterator, "return")?;
+        mark_done(data);
+        if matches!(method, Value::Null | Value::Undefined) {
+            return Ok(result(value, true));
+        }
+        if !crate::conversion::is_callable(&method) {
+            return Err(crate::vm::not_callable());
+        }
+        let returned = crate::functions::execute_target(&method, &iterator, &[])?;
+        if !crate::value::is_object(&returned) {
+            return Err(crate::value::error::throw_type_error(
+                "iterator return result is not an object",
+            ));
+        }
+        return Ok(returned);
+    }
     let (already_done, inner) = inner_iterators(data);
     if already_done {
         return Ok(result(value, true));
