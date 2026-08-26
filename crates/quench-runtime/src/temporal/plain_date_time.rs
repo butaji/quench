@@ -235,15 +235,34 @@ fn difference(
     if matches!(largest.as_str(), "year" | "month" | "week") {
         return calendar_difference(&left, &right, direction, &largest);
     }
-    let left_total = date_time_total(&left);
-    let right_total = date_time_total(&right);
-    let delta = (right_total - left_total) * direction;
+    let left_total = date_time_total_nanos(&left);
+    let right_total = date_time_total_nanos(&right);
+    let delta = (right_total - left_total) * direction as i128;
+    let sign = delta.signum();
+    let mut remainder = delta.unsigned_abs();
+    let days = remainder / 86_400_000_000_000;
+    remainder %= 86_400_000_000_000;
+    let hours = remainder / 3_600_000_000_000;
+    remainder %= 3_600_000_000_000;
+    let minutes = remainder / 60_000_000_000;
+    remainder %= 60_000_000_000;
+    let seconds = remainder / 1_000_000_000;
+    remainder %= 1_000_000_000;
+    let milliseconds = remainder / 1_000_000;
+    remainder %= 1_000_000;
+    let microseconds = remainder / 1_000;
+    let nanoseconds = remainder % 1_000;
     crate::temporal::duration::construct(&[
         Value::Number(0.0),
         Value::Number(0.0),
         Value::Number(0.0),
-        Value::Number((delta / 86_400_000_000_000.0).trunc()),
-        Value::Number((delta % 86_400_000_000_000.0) / 3_600_000_000_000.0),
+        Value::Number(days as f64 * sign as f64),
+        Value::Number(hours as f64 * sign as f64),
+        Value::Number(minutes as f64 * sign as f64),
+        Value::Number(seconds as f64 * sign as f64),
+        Value::Number(milliseconds as f64 * sign as f64),
+        Value::Number(microseconds as f64 * sign as f64),
+        Value::Number(nanoseconds as f64 * sign as f64),
     ])
 }
 
@@ -310,18 +329,18 @@ fn add_months(date: NaiveDate, months: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(year, month, day).unwrap_or(date)
 }
 
-fn date_time_total(values: &[f64]) -> f64 {
+fn date_time_total_nanos(values: &[f64]) -> i128 {
     let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
         .unwrap_or(NaiveDate::MIN);
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("valid epoch");
-    let date_days = date.signed_duration_since(epoch).num_days() as f64;
-    date_days * 86_400_000_000_000.0
-        + values[3] * 3_600_000_000_000.0
-        + values[4] * 60_000_000_000.0
-        + values[5] * 1_000_000_000.0
-        + values[6] * 1_000_000.0
-        + values[7] * 1_000.0
-        + values[8]
+    let date_days = date.signed_duration_since(epoch).num_days() as i128;
+    date_days * 86_400_000_000_000
+        + values[3] as i128 * 3_600_000_000_000
+        + values[4] as i128 * 60_000_000_000
+        + values[5] as i128 * 1_000_000_000
+        + values[6] as i128 * 1_000_000
+        + values[7] as i128 * 1_000
+        + values[8] as i128
 }
 
 fn to_plain_date(receiver: Option<&Value>) -> Result<Value, VmError> {
