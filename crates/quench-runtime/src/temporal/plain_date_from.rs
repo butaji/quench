@@ -1,6 +1,16 @@
 pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     if let Some(value) = value.filter(|value| crate::value::is_object(value)) {
         if let Value::Object(object) = value {
+            let hidden = ["year", "month", "day"].map(|name| {
+                object
+                    .iter()
+                    .find(|(key, _)| key == &format!("\0temporal-slot:\0{name}"))
+                    .and_then(|(_, value)| matches!(value, Value::Number(_)).then(|| value.clone()))
+            });
+            if let [Some(year), Some(month), Some(day)] = hidden {
+                let _ = overflow_value(options)?;
+                return construct(&[year, month, day]);
+            }
             let direct = ["year", "month", "day"].map(|name| {
                 object
                     .iter()
@@ -10,9 +20,23 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
                     })
                     .map(|(_, value)| value.clone())
             });
-            if let [Some(year), Some(month), Some(day)] = direct {
-                let _ = overflow_value(options)?;
-                return construct(&[year, month, day]);
+            let has_month_code = object.iter().any(|(key, _)| key == "monthCode");
+            let temporal_date = object.iter().any(|(key, value)| {
+                key == "\0temporal-plain-date"
+                    || key == "\0prototype"
+                        && matches!(
+                            value,
+                            Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+                                | Value::Builtin(
+                                    crate::ops::Builtin::TemporalZonedDateTimePrototype
+                                )
+                        )
+            });
+            if !has_month_code || temporal_date {
+                if let [Some(year), Some(month), Some(day)] = direct {
+                    let _ = overflow_value(options)?;
+                    return construct(&[year, month, day]);
+                }
             }
         }
         return from_property_bag(value, options);
@@ -115,16 +139,31 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     let month_code = if matches!(month_code, Value::Undefined) {
         month_code
     } else {
-        Value::String(crate::conversion::to_string(&month_code)?)
+        Value::String(month_code_text(&month_code)?)
     };
     let year = crate::execute::get_property_result(value, "year")?;
-    let year = if matches!(year, Value::Undefined) {
-        year
-    } else {
-        Value::Number(crate::conversion::to_number(&year)?.trunc())
-    };
     if matches!(day, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing day"));
+    }
+    if matches!(year, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Missing year"));
+    }
+    if matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Missing month"));
+    }
+    let month_code_number = if matches!(month_code, Value::Undefined) {
+        None
+    } else {
+        Some(month_from_code(month_code.clone())?)
+    };
+    let year = Value::Number(crate::conversion::to_number(&year)?.trunc());
+    if let Some(month_number) = &month_code_number {
+        if !(1.0..=12.0).contains(&crate::conversion::to_number(month_number)?) {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+        if matches!(&month_code, Value::String(value) if value.ends_with('L')) {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
     }
     let calendar = match calendar {
         Value::Undefined => calendar,
@@ -139,8 +178,15 @@ fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, Vm
     };
     let overflow = overflow_value(options)?;
     let month = if matches!(month, Value::Undefined) {
-        month_from_code(month_code)?
+        month_code_number
+            .clone()
+            .ok_or_else(|| crate::value::error::throw_type_error("Missing month"))?
     } else {
+        if let Some(month_code) = &month_code_number {
+            if crate::conversion::to_number(&month)? != crate::conversion::to_number(month_code)? {
+                return Err(crate::value::error::throw_range_error("Month mismatch"));
+            }
+        }
         month
     };
     let year_number = crate::conversion::to_number(&year)?.trunc();
@@ -218,12 +264,12 @@ fn month_from_code(value: Value) -> Result<Value, VmError> {
     if !matches!(value, Value::String(_) | Value::StringUnits(_)) {
         return Err(crate::value::error::throw_type_error("Invalid monthCode"));
     }
-    let text = crate::conversion::to_string(&value)?;
+    let text = month_code_text(&value)?;
+    let text = text.strip_suffix('L').unwrap_or(&text);
     let month = text
         .strip_prefix('M')
         .filter(|value| value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|value| value.parse::<u8>().ok())
-        .filter(|month| (1..=12).contains(month))
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
     Ok(Value::Number(f64::from(month)))
 }
