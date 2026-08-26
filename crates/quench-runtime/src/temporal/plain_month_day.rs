@@ -1,7 +1,37 @@
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn construct(month: f64, day: f64) -> Result<Value, VmError> {
-    if !(1.0..=12.0).contains(&month) || !(1.0..=31.0).contains(&day) {
+    construct_with_year(month, day, 1972.0)
+}
+
+pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmError> {
+    let month = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    let day = crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+    let calendar = arguments.get(2).unwrap_or(&Value::Undefined);
+    if !matches!(calendar, Value::Undefined) {
+        let calendar = crate::conversion::to_string(calendar)?;
+        if !calendar.eq_ignore_ascii_case("iso8601") {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    }
+    let default_year = Value::Number(1972.0);
+    let year = crate::conversion::to_number(arguments.get(3).unwrap_or(&default_year))?;
+    if !year.is_finite() || year.fract() != 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainMonthDay",
+        ));
+    }
+    construct_with_year(month, day, year)
+}
+
+fn construct_with_year(month: f64, day: f64, year: f64) -> Result<Value, VmError> {
+    if !month.is_finite()
+        || !day.is_finite()
+        || month.fract() != 0.0
+        || day.fract() != 0.0
+        || !(1.0..=12.0).contains(&month)
+        || !(1.0..=31.0).contains(&day)
+    {
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainMonthDay",
         ));
@@ -14,7 +44,8 @@ pub(crate) fn construct(month: f64, day: f64) -> Result<Value, VmError> {
             ),
             ("day".into(), Value::Number(day)),
             ("calendarId".into(), Value::String("iso8601".into())),
-            ("referenceISODay".into(), Value::Number(1972.0)),
+            ("referenceISODay".into(), Value::Number(year)),
+            ("\0temporal-plain-month-day".into(), Value::Boolean(true)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainMonthDayPrototype),
@@ -29,7 +60,10 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     Some(match builtin {
-        crate::ops::Builtin::TemporalPlainMonthDayFrom => from(arguments.first()),
+        crate::ops::Builtin::TemporalPlainMonthDay => Err(crate::value::error::throw_type_error(
+            "Temporal.PlainMonthDay requires new",
+        )),
+        crate::ops::Builtin::TemporalPlainMonthDayFrom => from(arguments.first(), arguments.get(1)),
         crate::ops::Builtin::TemporalPlainMonthDayCompare => compare(arguments),
         crate::ops::Builtin::TemporalPlainMonthDayCalendarIdGetter => field(receiver, "calendarId"),
         crate::ops::Builtin::TemporalPlainMonthDayDayGetter => field(receiver, "day"),
@@ -41,9 +75,11 @@ pub(crate) fn execute(
             to_string(receiver, arguments.first())
         }
         crate::ops::Builtin::TemporalPlainMonthDayToPlainDate => {
-            to_plain_date(receiver, arguments.first())
+            to_plain_date(receiver, arguments.first(), arguments.get(1))
         }
-        crate::ops::Builtin::TemporalPlainMonthDayWith => with(receiver, arguments.first()),
+        crate::ops::Builtin::TemporalPlainMonthDayWith => {
+            with(receiver, arguments.first(), arguments.get(1))
+        }
         crate::ops::Builtin::TemporalPlainMonthDayValueOf => Err(
             crate::value::error::throw_type_error("Cannot convert PlainMonthDay to a number"),
         ),
@@ -51,32 +87,100 @@ pub(crate) fn execute(
     })
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let value =
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;
-    if let Value::String(text) = value {
-        let parts = text.split('-').collect::<Vec<_>>();
-        if parts.len() < 2 {
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        let text = crate::conversion::to_string(value)?;
+        if let Some(annotation) = text.split('[').skip(1).find(|part| part.contains('=')) {
+            let annotation = annotation.split(']').next().unwrap_or(annotation);
+            if let Some(calendar) = annotation.strip_prefix("u-ca=") {
+                if !calendar.eq_ignore_ascii_case("iso8601") {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid calendar annotation",
+                    ));
+                }
+            } else if annotation.to_ascii_lowercase().starts_with("u-ca=") {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid calendar annotation",
+                ));
+            }
+        }
+        let base = text.split('[').next().unwrap_or(&text);
+        let date = base
+            .split_once(['T', 't', ' '])
+            .map_or(base, |(date, _)| date);
+        let date = date.strip_prefix("--").unwrap_or(date);
+        let parts = date.split('-').collect::<Vec<_>>();
+        let (month, day) = match parts.as_slice() {
+            [month, day] => (*month, *day),
+            [year, month, day] if year.len() == 4 => (*month, *day),
+            _ => {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid PlainMonthDay",
+                ))
+            }
+        };
+        if month.is_empty() || day.is_empty() {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainMonthDay",
             ));
         }
-        return construct(
-            parts[parts.len() - 2].parse().unwrap_or(0.0),
-            parts[parts.len() - 1].parse().unwrap_or(0.0),
-        );
+        let _ = overflow_reject(options)?;
+        return construct(month.parse().unwrap_or(0.0), day.parse().unwrap_or(0.0));
     }
-    let month = crate::execute::get_property_result(value, "month")
-        .or_else(|_| crate::execute::get_property_result(value, "monthCode"))?;
+    let month = match crate::execute::get_property_result(value, "month")? {
+        Value::Undefined => crate::execute::get_property_result(value, "monthCode")?,
+        value => value,
+    };
     let month = match month {
         Value::String(code) => code.trim_start_matches('M').parse().unwrap_or(0.0),
         value => crate::conversion::to_number(&value)?,
     };
     let day = crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?;
+    if !month.is_finite()
+        || !day.is_finite()
+        || month.fract() != 0.0
+        || day.fract() != 0.0
+        || month < 0.0
+        || day < 0.0
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainMonthDay",
+        ));
+    }
+    let reject = overflow_reject(options)?;
+    if !reject {
+        return construct(month.clamp(1.0, 12.0), day.clamp(1.0, 31.0));
+    }
     construct(month, day)
 }
 
+fn overflow_reject(options: Option<&Value>) -> Result<bool, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(false);
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let value = crate::execute::get_property_result(options, "overflow")?;
+    if matches!(value, Value::Undefined) {
+        return Ok(false);
+    }
+    let text = crate::conversion::to_string(&value)?;
+    match text.as_str() {
+        "constrain" => Ok(false),
+        "reject" => Ok(true),
+        _ => Err(crate::value::error::throw_range_error("Invalid overflow")),
+    }
+}
+
 fn fields(value: &Value) -> Result<(String, f64), VmError> {
+    if !is_plain_month_day(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainMonthDay receiver",
+        ));
+    }
     let month = crate::execute::get_property_result(value, "monthCode")?;
     let day = crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?;
     Ok((crate::conversion::to_string(&month)?, day))
@@ -85,12 +189,23 @@ fn fields(value: &Value) -> Result<(String, f64), VmError> {
 fn field(receiver: Option<&Value>, name: &str) -> Result<Value, VmError> {
     let receiver = receiver
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay receiver"))?;
+    if !is_plain_month_day(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainMonthDay receiver",
+        ));
+    }
     crate::execute::get_property_result(receiver, name)
 }
 
+fn is_plain_month_day(value: &Value) -> bool {
+    matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+        key == "\0temporal-plain-month-day" && matches!(value, Value::Boolean(true))
+    }))
+}
+
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = fields(&from(arguments.first())?)?;
-    let right = fields(&from(arguments.get(1))?)?;
+    let left = fields(&from(arguments.first(), None)?)?;
+    let right = fields(&from(arguments.get(1), None)?)?;
     Ok(Value::Number(
         match (left.0.cmp(&right.0), left.1.partial_cmp(&right.1)) {
             (std::cmp::Ordering::Less, _) | (_, Some(std::cmp::Ordering::Less)) => -1.0,
@@ -103,7 +218,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::Boolean(
         fields(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?
-            == fields(&from(other)?)?,
+            == fields(&from(other, None)?)?,
     ))
 }
 
@@ -148,12 +263,17 @@ fn calendar_name(options: Option<&Value>) -> Result<String, VmError> {
     }
 }
 
-fn to_plain_date(receiver: Option<&Value>, year: Option<&Value>) -> Result<Value, VmError> {
+fn to_plain_date(
+    receiver: Option<&Value>,
+    year: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
     let year = crate::conversion::to_number(
         year.ok_or_else(|| crate::value::error::throw_type_error("Missing year"))?,
     )?;
+    let _ = overflow_reject(options)?;
     let (month, day) = fields(receiver)?;
     let month = month.trim_start_matches('M').parse().unwrap_or(0.0);
     crate::temporal::plain_date::construct(&[
@@ -163,7 +283,11 @@ fn to_plain_date(receiver: Option<&Value>, year: Option<&Value>) -> Result<Value
     ])
 }
 
-fn with(receiver: Option<&Value>, changes: Option<&Value>) -> Result<Value, VmError> {
+fn with(
+    receiver: Option<&Value>,
+    changes: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
     let (month, day) = fields(receiver)?;
@@ -179,5 +303,10 @@ fn with(receiver: Option<&Value>, changes: Option<&Value>) -> Result<Value, VmEr
         Value::String(code) => code.trim_start_matches('M').parse().unwrap_or(0.0),
         value => crate::conversion::to_number(&value)?,
     };
-    construct(month, day)
+    let reject = overflow_reject(options)?;
+    if reject {
+        construct(month, day)
+    } else {
+        construct(month.clamp(1.0, 12.0), day.clamp(1.0, 31.0))
+    }
 }
