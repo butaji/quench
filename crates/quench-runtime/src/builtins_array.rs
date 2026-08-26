@@ -173,7 +173,45 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
             Value::BoundFunction(bound)
         }
         Value::Builtin(builtin) => {
-            crate::builtins::write_intrinsic_override(builtin, key, Value::Object(Rc::new(crate::value::ObjectData::new(vec![("value".to_string(), value)]))));
+            crate::builtins::write_intrinsic_override(
+                builtin,
+                key,
+                Value::Object(Rc::new(crate::value::ObjectData::new(vec![(
+                    "value".to_string(),
+                    value,
+                )]))),
+            );
+            // Array.prototype is itself an Array exotic object.  Indexed
+            // writes therefore grow its length just like ordinary arrays;
+            // keep the intrinsic override table as the single source of
+            // truth for both the element and the derived length.
+            if builtin == crate::ops::Builtin::ArrayPrototype {
+                if let Some(index) = crate::arrays::array_index(key) {
+                    let current = crate::builtins::read_descriptor_value(builtin, "length")
+                        .and_then(|value| match value {
+                            Value::Number(value) if value.is_finite() && value >= 0.0 => {
+                                Some(value as u32)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(0);
+                    if index >= current {
+                        crate::builtins::write_intrinsic_override(
+                            builtin,
+                            "length",
+                            Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+                                (
+                                    "value".to_string(),
+                                    Value::Number(f64::from(index) + 1.0),
+                                ),
+                                ("writable".to_string(), Value::Boolean(true)),
+                                ("enumerable".to_string(), Value::Boolean(false)),
+                                ("configurable".to_string(), Value::Boolean(false)),
+                            ]))),
+                        );
+                    }
+                }
+            }
             target
         }
         target => set_property(target, key, value),
