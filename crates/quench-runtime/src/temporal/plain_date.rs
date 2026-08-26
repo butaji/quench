@@ -1276,7 +1276,10 @@ fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
             return Ok(false);
         }
     }
-    let date = base.split(['T', 't', ' ']).next().unwrap_or(base);
+    let mut date = base.split(['T', 't', ' ']).next().unwrap_or(base);
+    if date.is_empty() && base.starts_with(['T', 't']) {
+        date = &base[1..];
+    }
     let fields: Vec<_> = date.split('-').collect();
     let digits = |value: &str, min: usize, max: usize| {
         (min..=max).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
