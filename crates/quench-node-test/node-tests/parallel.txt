@@ -185,6 +185,7 @@ test-buffer-safe-unsafe.js
 test-buffer-set-inspect-max-bytes.js
 test-buffer-sharedarraybuffer.js
 test-buffer-slice.js
+test-buffer-slow.js
 test-buffer-swap.js
 test-buffer-swap-fast.js
 test-buffer-tostring-4gb.js
