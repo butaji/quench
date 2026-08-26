@@ -462,7 +462,7 @@ fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, Vm
         ));
     }
     let smallest_value = crate::execute::get_property_result(options, "smallestUnit")?;
-    let smallest = if matches!(smallest_value, Value::Undefined) {
+    let smallest: String = if matches!(smallest_value, Value::Undefined) {
         "auto".into()
     } else {
         match option_string(&smallest_value)?.as_str() {
@@ -474,6 +474,19 @@ fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, Vm
         }
         .into()
     };
+    if smallest != "auto" {
+        let rank = |unit: &str| match unit {
+            "years" => 0,
+            "months" => 1,
+            "weeks" => 2,
+            _ => 3,
+        };
+        if rank(&smallest) < rank(largest) {
+            return Err(crate::value::error::throw_range_error(
+                "smallestUnit is larger than largestUnit",
+            ));
+        }
+    }
     Ok(DifferenceSettings {
         largest: largest.into(),
         smallest,
