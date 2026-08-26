@@ -739,6 +739,60 @@
     return readableOperator(stream, callback, filtering, options);
   }
 
+  // Terminal operators consume the same source iterator as map/filter. Keep
+  // their control flow here so short-circuiting never routes through a public
+  // transform method (which is observable and may be replaced by users).
+  function readableTerminal(stream, kind, callback, initial, hasInitial, options) {
+    if (typeof callback !== "function") {
+      const error = new TypeError("The callback must be a function");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
+    }
+    let accumulator = initial;
+    let started = hasInitial;
+    let found;
+    let decided = false;
+    const operator = readableOperator(stream, async (value, context) => {
+      if (context.signal?.aborted) throw sliceAbortError();
+      if (kind === "reduce") {
+        if (!started) {
+          accumulator = value;
+          started = true;
+        } else {
+          accumulator = await callback(accumulator, value, context);
+        }
+        return value;
+      }
+      const matched = await callback(value, context);
+      if (!decided && ((kind === "some" && matched) ||
+          (kind === "every" && !matched) || (kind === "find" && matched))) {
+        decided = true;
+        found = kind === "find" ? value : kind === "some";
+        if (typeof stream.destroy === "function") stream.destroy();
+      }
+      return value;
+    }, false, { concurrency: 1, signal: options?.signal });
+    const completion = operator.toArray();
+    const result = options?.signal
+      ? Promise.race([completion, new Promise((resolve, reject) => {
+          const abort = () => reject(sliceAbortError());
+          options.signal.addEventListener?.("abort", abort, { once: true });
+          if (options.signal.aborted) abort();
+        })])
+      : completion;
+    return result.then(() => {
+      if (kind === "reduce") {
+        if (!started) {
+          const error = new TypeError("Reduce of empty stream with no initial value");
+          error.code = "ERR_MISSING_ARGS";
+          throw error;
+        }
+        return accumulator;
+      }
+      return decided ? found : kind === "some" ? false : kind === "every" ? true : undefined;
+    });
+  }
+
   function sliceCount(count) {
     const number = Number(count);
     if (!Number.isFinite(number) && number !== Infinity) return 0;
@@ -837,6 +891,20 @@
   };
   ReadableClass.prototype.filter = function (predicate, options) {
     return operatorMapper(this, predicate, true, options);
+  };
+  ReadableClass.prototype.reduce = function (reducer, initial, options) {
+    const hasInitial = arguments.length >= 2;
+    return readableTerminal(this, "reduce", reducer, initial, hasInitial,
+      hasInitial ? options : undefined);
+  };
+  ReadableClass.prototype.some = function (predicate, options) {
+    return readableTerminal(this, "some", predicate, undefined, false, options);
+  };
+  ReadableClass.prototype.every = function (predicate, options) {
+    return readableTerminal(this, "every", predicate, undefined, false, options);
+  };
+  ReadableClass.prototype.find = function (predicate, options) {
+    return readableTerminal(this, "find", predicate, undefined, false, options);
   };
   ReadableClass.prototype.toArray = async function () {
     const values = [];
