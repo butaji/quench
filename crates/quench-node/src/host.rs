@@ -78,6 +78,8 @@ pub struct HostState {
     pub os_binding: Option<Value>,
     /// Canonical `internalBinding("cares_wrap")` object for this realm.
     pub cares_binding: Option<Value>,
+    /// Composite AbortSignals keyed by each source target identity.
+    pub abort_composites: std::collections::HashMap<u64, Vec<Value>>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -118,6 +120,7 @@ impl NodeHost {
             string_decoder_next_id: 1,
             os_binding: None,
             cares_binding: None,
+            abort_composites: std::collections::HashMap::new(),
         };
         Self {
             state: Rc::new(RefCell::new(state)),

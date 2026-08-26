@@ -380,6 +380,7 @@ const CAP_ABORT_SIGNAL: u16 = 0x1F23;
 const CAP_ABORT_SIGNAL_ABORT: u16 = 0x1F24;
 const CAP_ABORT_SIGNAL_TIMEOUT: u16 = 0x1F30;
 const CAP_ABORT_SIGNAL_TIMEOUT_FIRE: u16 = 0x1F31;
+const CAP_ABORT_SIGNAL_ANY: u16 = 0x1F32;
 const CAP_ABORT_CONTROLLER_ABORT: u16 = 0x1F25;
 const CAP_ABORT_EVENT_STOP_IMMEDIATE: u16 = 0x1F26;
 const CAP_EVENT: u16 = 0x0118;
@@ -421,6 +422,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_ABORT_SIGNAL_ABORT => handlers::abort_signal_abort,
         CAP_ABORT_SIGNAL_TIMEOUT => handlers::abort_signal_timeout_call,
         CAP_ABORT_SIGNAL_TIMEOUT_FIRE => handlers::abort_signal_timeout_fire,
+        CAP_ABORT_SIGNAL_ANY => handlers::abort_signal_any_call,
         2044 => handlers::buffer_of,
         CAP_STRING_DECODER => string_decoder_invoke,
         CAP_DNS_LOOKUP_ADDRESSES => crate::modules::dns::lookup_addresses_handler,
@@ -870,6 +872,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
         CAP_ABORT_SIGNAL_TIMEOUT => abort_signal_timeout,
+        CAP_ABORT_SIGNAL_ANY => abort_signal_any,
         CAP_EVENT => handlers::event_new,
         CAP_CUSTOM_EVENT => handlers::custom_event_new,
         CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_new,
