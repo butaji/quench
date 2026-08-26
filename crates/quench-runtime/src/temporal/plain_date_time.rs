@@ -22,6 +22,13 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     while fields.len() < 9 {
         fields.push(0.0);
     }
+    crate::temporal::plain_date::construct(
+        &fields[..3]
+            .iter()
+            .copied()
+            .map(Value::Number)
+            .collect::<Vec<_>>(),
+    )?;
     validate(&fields)?;
     let month_code = format!("M{:02}", fields[1] as u32);
     let properties = NAMES
@@ -59,6 +66,13 @@ fn validate(fields: &[f64]) -> Result<(), VmError> {
         || fields[4..]
             .iter()
             .any(|value| !(0.0..=999.0).contains(value))
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    if fields[0] == -271_821.0
+        && fields[1] == 4.0
+        && fields[2] == 19.0
+        && fields[3..].iter().all(|value| *value == 0.0)
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
@@ -927,7 +941,15 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .split_once('T')
         .or_else(|| main.split_once('t'))
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
-    let date_fields = date.split('-').collect::<Vec<_>>();
+    let date_fields =
+        if date.starts_with(['+', '-']) && date.len() >= 8 && date.as_bytes().get(7) == Some(&b'-')
+        {
+            let mut fields = vec![&date[..7]];
+            fields.extend(date[8..].split('-'));
+            fields
+        } else {
+            date.split('-').collect::<Vec<_>>()
+        };
     if date_fields.len() != 3 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
