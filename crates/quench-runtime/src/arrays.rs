@@ -55,7 +55,7 @@ fn execute_builtin_match(
         ArrayAt => return Some(at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
-        ArraySplice => return Some(Ok(splice(receiver, arguments))),
+        ArraySplice => return Some(splice(receiver, arguments)),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
@@ -127,28 +127,88 @@ include!("arrays_mutation.rs");
 include!("arrays_typed_static.rs");
 include!("arrays_from.rs");
 
-fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
+fn splice(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.splice called on null or undefined",
+        ));
     };
-    let length = values.len();
-    let start = relative_index(arguments.first(), length as isize) as usize;
-    let delete_count = arguments.get(1).map_or(length - start, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-            .max(0.0)
-            .min((length - start) as f64) as usize
-    });
-    let mut updated = values.to_vec();
-    let start = start.min(updated.len());
-    let end = start.saturating_add(delete_count).min(updated.len());
-    let removed = updated
-        .splice(
-            start..end,
-            arguments.iter().skip(2).cloned(),
-        )
-        .collect();
-    crate::locals::replace_value(receiver, &Value::array(updated));
-    Value::array(removed)
+    let mut target = crate::construct::to_object(receiver)?;
+    let length = array_like_length(&target)?;
+    let start = splice_index(arguments.first(), length)?;
+    let available = length - start;
+    let delete_count = match arguments.get(1) {
+        None => available,
+        Some(value) => splice_count(value)?.min(available),
+    };
+    let mut removed = crate::builtins::array_species_create(&target, delete_count)?;
+    for offset in 0..delete_count {
+        if let Some(value) = crate::builtins::map_value(&target, start + offset)? {
+            removed = crate::builtins::create_data_property_or_throw(
+                removed,
+                &offset.to_string(),
+                value,
+            )?;
+        }
+    }
+    let items: Vec<Value> = arguments.iter().skip(2).cloned().collect();
+    let new_length = length - delete_count + items.len();
+    if items.len() < delete_count {
+        for index in start..(length - delete_count) {
+            let from = index + delete_count;
+            target = splice_move(&target, index, &target, from)?;
+        }
+        for index in (new_length..length).rev() {
+            target = splice_delete(target, index)?;
+        }
+    } else if items.len() > delete_count {
+        for index in (start..(length - delete_count)).rev() {
+            let from = index + delete_count;
+            target = splice_move(&target, index + items.len(), &target, from)?;
+        }
+    }
+    for (offset, value) in items.into_iter().enumerate() {
+        target = crate::properties::assign_set_property(&target, &(start + offset).to_string(), value)?;
+    }
+    target = crate::properties::assign_set_property(&target, "length", Value::Number(new_length as f64))?;
+    Ok(removed)
+}
+
+fn splice_index(value: Option<&Value>, length: usize) -> Result<usize, crate::execute::VmError> {
+    let number = value.map(crate::conversion::to_number).transpose()?.unwrap_or(0.0);
+    if number.is_nan() || number == 0.0 { return Ok(0); }
+    if number.is_sign_negative() { return Ok((length as f64 + number.trunc()).max(0.0) as usize); }
+    Ok(number.min(length as f64).trunc() as usize)
+}
+
+fn splice_count(value: &Value) -> Result<usize, crate::execute::VmError> {
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number <= 0.0 { return Ok(0); }
+    Ok(number.min(9_007_199_254_740_991.0).trunc() as usize)
+}
+
+fn splice_move(
+    target: &Value,
+    to: usize,
+    source: &Value,
+    from: usize,
+) -> Result<Value, crate::execute::VmError> {
+    match crate::builtins::map_value(source, from)? {
+        Some(value) => crate::properties::assign_set_property(target, &to.to_string(), value),
+        None => splice_delete(target.clone(), to),
+    }
+}
+
+fn splice_delete(
+    target: Value,
+    index: usize,
+) -> Result<Value, crate::execute::VmError> {
+    let (updated, deleted) = crate::builtins::delete_property(target, index.to_string());
+    if deleted { Ok(updated) } else { Err(crate::value::error::throw_type_error("Cannot delete array property")) }
 }
 
 pub(crate) fn reduce(
