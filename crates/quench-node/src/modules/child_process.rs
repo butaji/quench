@@ -165,7 +165,7 @@ pub fn spawn_sync(
     let executable = if command == state.borrow().process.exec_path {
         std::env::current_exe()
             .ok()
-            .and_then(|path| path.parent().map(|dir| dir.join("quench-node-cli")))
+            .and_then(|path| path.parent().map(|dir| dir.join("quench-node")))
             .filter(|path| path.is_file())
             .unwrap_or_else(|| std::path::PathBuf::from(&command))
     } else {
