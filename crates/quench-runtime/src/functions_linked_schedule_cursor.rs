@@ -12,7 +12,9 @@ fn execute_direct_schedule_cursor(
     if !table.matches_scheduler(owner) {
         return Ok(None);
     }
-    let Some(mut cursor) = table.id_for_value(start) else { return Ok(None) };
+    let Some(mut cursor) = table.id_for_value(start) else {
+        return Ok(None);
+    };
     let packet_link_cache = std::cell::Cell::new(0);
     while let Some(index) = cursor {
         let Some(task) = table.for_id(index) else {
@@ -24,7 +26,7 @@ fn execute_direct_schedule_cursor(
             };
             cursor = next;
         } else {
-            current_id.store(crate::value::Value::Number(index as f64));
+            current_id.store_number(index as f64);
             let outcome = execute_task_control_run(
                 task.tcb(),
                 run,
@@ -41,11 +43,8 @@ fn execute_direct_schedule_cursor(
                 DirectTaskOutcome::Miss(packet) => {
                     current.store(task.tcb_value.clone());
                     let run = crate::execute::get_property_result(&task.task_value, "run")?;
-                    let value = crate::functions::execute_target(
-                        &run,
-                        &task.task_value,
-                        &[packet],
-                    )?;
+                    let value =
+                        crate::functions::execute_target(&run, &task.task_value, &[packet])?;
                     let Some(next) = table.id_for_value(&value) else {
                         current.store(value);
                         return continue_linked_schedule_slow(receiver.clone(), plan).map(Some);
@@ -75,8 +74,10 @@ fn direct_schedule_slow(
     table: &DirectTaskTable,
     index: usize,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    let Some(task) = table.for_id(index) else { return Ok(None) };
+    let Some(task) = table.for_id(index) else {
+        return Ok(None);
+    };
     current.store(task.tcb_value.clone());
-    current_id.store(crate::value::Value::Number(index as f64));
+    current_id.store_number(index as f64);
     continue_linked_schedule_slow(receiver.clone(), plan).map(Some)
 }

@@ -365,6 +365,20 @@ impl SlotWord {
         unsafe { (&mut *self.0.get()).store(value) }
     }
 
+    /// Store a proven IEEE-754 payload without constructing the semantic
+    /// `Value` enum or entering generic ownership encoding.
+    #[inline(always)]
+    pub(crate) fn store_number(&self, value: f64) {
+        // SAFETY: realm execution is single-threaded and replaces the complete
+        // canonical word. Numeric hot slots normally make the release branch
+        // disappear; it remains for a guarded caller that widens a slot.
+        let previous =
+            unsafe { std::mem::replace(&mut (*self.0.get()).0, TaggedValue::number(value)) };
+        if previous.owns_rc() {
+            release(previous);
+        }
+    }
+
     /// Copy one canonical execute word between object slots without decoding
     /// it into `Value`.
     #[inline(always)]
@@ -1099,8 +1113,21 @@ impl PartialEq<Vec<Value>> for RegisterFile {
 
 #[cfg(test)]
 mod tests {
-    use super::RegisterFile;
-    use crate::{tagged_value::DecodedValue, value::Value};
+    use super::{RegisterFile, SlotWord};
+    use crate::{
+        tagged_value::DecodedValue,
+        value::{ObjectData, Value},
+    };
+    use std::rc::Rc;
+
+    #[test]
+    fn numeric_slot_store_replaces_an_owned_word_without_value_encoding() {
+        let object = Rc::new(ObjectData::new(Vec::new()));
+        let slot = SlotWord::new(Value::Object(Rc::clone(&object)));
+        slot.store_number(42.0);
+        assert_eq!(Rc::strong_count(&object), 1);
+        assert_eq!(slot.number(), Some(42.0));
+    }
 
     #[test]
     fn move_copies_one_word_without_copying_string_payload() {
