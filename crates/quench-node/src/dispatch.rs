@@ -228,6 +228,7 @@ const CAP_HTTP_REQ_RESUME: u16 = 0x0F0F;
 const CAP_HTTP_RES_SET_ENCODING: u16 = 0x0F10;
 const CAP_HTTP_RESDATA: u16 = 0x0F0B;
 const CAP_HTTP_RESEND: u16 = 0x0F0C;
+const CAP_HTTP_REQCLOSE: u16 = 0x0F11;
 const CAP_NET_CONNECT: u16 = 0x1000;
 const CAP_NET_SOCKET: u16 = 0x1013;
 const CAP_NET_SERVER: u16 = 0x1001;
@@ -762,6 +763,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_RES_SET_ENCODING => crate::modules::http_client::res_set_encoding,
         CAP_HTTP_RESDATA => crate::modules::http_client::data_handler,
         CAP_HTTP_RESEND => crate::modules::http_client::res_end_handler,
+        CAP_HTTP_REQCLOSE => crate::modules::http_client::req_close,
         CAP_NET_CONNECT => net_connect,
         CAP_NET_SOCKET => net_socket_call,
         CAP_NET_SERVER => net_create_server_call,
