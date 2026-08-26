@@ -381,6 +381,20 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
             *timer.destroyed.borrow_mut() = Value::Boolean(false);
         }
     }
+    if !destroy && result.is_ok() {
+        let disabled = matches!(
+            quench_runtime::execute::get_property(&receiver, "_onTimeout"),
+            Value::Null
+        ) || matches!(
+            quench_runtime::execute::get_property(&receiver, "_idleTimeout"),
+            Value::Number(value) if value < 0.0
+        );
+        if disabled {
+            if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
+                timer.active = false;
+            }
+        }
+    }
     if destroy && !converted {
         super::timers::async_destroy(&resource);
     }
