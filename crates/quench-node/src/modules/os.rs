@@ -234,6 +234,7 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
+    out.push(("availableParallelism".to_string(), crate::host::capability(crate::registry::SPEC_OS_AVAILABLE_PARALLELISM)));
     out.push((
         "platform".to_string(),
         crate::host::capability(crate::registry::SPEC_OS_PLATFORM),
@@ -294,6 +295,10 @@ fn os_capability_props(out: &mut Vec<(String, Value)>) {
         "setPriority".to_string(),
         crate::host::capability(crate::registry::SPEC_OS_SET_PRIORITY),
     ));
+}
+
+pub fn available_parallelism(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Number(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as f64))
 }
 
 // ---- sysinfo-backed helpers ----
