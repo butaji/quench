@@ -286,6 +286,11 @@ fn difference(
             ) {
                 return Err(crate::value::error::throw_range_error("Invalid smallestUnit"));
             }
+            if unit_rank(smallest) < unit_rank(&largest) {
+                return Err(crate::value::error::throw_range_error(
+                    "smallestUnit larger than largestUnit",
+                ));
+            }
         }
         largest
     } else {
@@ -1206,6 +1211,22 @@ fn year_text(year: i32) -> String {
         format!("+{year:06}")
     } else {
         format!("{year:04}")
+    }
+}
+
+fn unit_rank(unit: &str) -> usize {
+    match unit {
+        "year" => 0,
+        "month" => 1,
+        "week" => 2,
+        "day" => 3,
+        "hour" => 4,
+        "minute" => 5,
+        "second" => 6,
+        "millisecond" => 7,
+        "microsecond" => 8,
+        "nanosecond" => 9,
+        _ => usize::MAX,
     }
 }
 
