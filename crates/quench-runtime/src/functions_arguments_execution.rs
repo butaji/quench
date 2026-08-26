@@ -122,6 +122,9 @@ pub(crate) fn execute(
     if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
         return result;
     }
+    if let Some(result) = execute_raytrace_render_kernel(function, &receiver, arguments) {
+        return result;
+    }
     if let Some(result) = execute_raytrace_pixel_kernel(function, &receiver, arguments) {
         return result;
     }

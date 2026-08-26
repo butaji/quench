@@ -1,3 +1,37 @@
+fn render_native(scene: &NativeScene, options: NativeOptions) -> f64 {
+    let mut score = 0_i32;
+    for y in 0..options.height {
+        let yp = y as f64 / options.height as f64 * 2.0 - 1.0;
+        for x in 0..options.width {
+            let xp = x as f64 / options.width as f64 * 2.0 - 1.0;
+            let color = trace_pixel(camera_ray(scene.camera, xp, yp), scene, options);
+            if x == y {
+                score += brightness(color);
+            }
+        }
+    }
+    f64::from(score)
+}
+
+fn camera_ray(camera: NativeCamera, x: f64, y: f64) -> NativeRay {
+    let mut position = sub(
+        camera.screen,
+        sub(scale(camera.equator, x), scale(camera.up, y)),
+    );
+    position.y = -position.y;
+    NativeRay {
+        position,
+        direction: normalize(sub(position, camera.position)),
+    }
+}
+
+fn brightness(color: NativeColor) -> i32 {
+    let red = (color.r * 255.0).floor() as i32;
+    let green = (color.g * 255.0).floor() as i32;
+    let blue = (color.b * 255.0).floor() as i32;
+    (red * 77 + green * 150 + blue * 29) >> 8
+}
+
 fn trace_pixel(ray: NativeRay, scene: &NativeScene, options: NativeOptions) -> NativeColor {
     let Some(hit) = intersect(ray, scene, None) else {
         return scene.background;
@@ -173,7 +207,7 @@ fn trace_hit(
                 hit,
                 &scene.shapes[hit.shape],
                 light,
-                scene.camera,
+                scene.camera.position,
                 shininess,
             );
         }
