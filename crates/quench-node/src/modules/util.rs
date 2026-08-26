@@ -11,6 +11,9 @@ use quench_runtime::execute::VmError;
 use quench_runtime::ops::FunctionKind;
 use quench_runtime::value::{IteratorState, Value};
 
+pub const PROMISIFY_CUSTOM_KEY: &str = "Symbol.for.nodejs.util.promisify.custom\0";
+pub const PROMISIFY_CUSTOM_ARGS_KEY: &str = "Symbol.for.nodejs.util.promisify.customArgs\0";
+
 thread_local! {
     /// The live `util.inspect.defaultOptions` object; formatters read
     /// through it so JavaScript-side mutation is observed.
@@ -133,12 +136,12 @@ pub fn build() -> Vec<(String, Value)> {
     let promisify = quench_runtime::execute::set_property(
         crate::host::capability(crate::registry::SPEC_UTIL_PROMISIFY),
         "custom",
-        Value::String("Symbol.for.nodejs.util.promisify.custom\0".into()),
+        Value::String(PROMISIFY_CUSTOM_KEY.into()),
     );
     let promisify = quench_runtime::execute::set_property(
         promisify,
-        "Symbol.for.nodejs.util.promisify.custom\0",
-        Value::String("Symbol.for.nodejs.util.promisify.custom\0".into()),
+        PROMISIFY_CUSTOM_KEY,
+        Value::String(PROMISIFY_CUSTOM_KEY.into()),
     );
     let types = types_object();
     /*let type_names = [
