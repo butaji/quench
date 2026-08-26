@@ -58,8 +58,6 @@ fn write_non_ordinary(
         FunctionMetadata {
             kind,
             length,
-            raytrace_pixel: false,
-            raytrace_render: None,
             direct_constructor: function.1.facts().direct_constructor.clone(),
             linked_record_insert: function.1.facts().linked_record_insert.clone(),
             forward_construct_call: function.1.facts().forward_construct_call.clone(),
@@ -102,8 +100,6 @@ fn write_ordinary(
             is_async,
             mapped_arguments,
             length,
-            raytrace_pixel: false,
-            raytrace_render: None,
             direct_constructor: body.facts().direct_constructor.clone(),
             linked_record_insert: body.facts().linked_record_insert.clone(),
             forward_construct_call: body.facts().forward_construct_call.clone(),
