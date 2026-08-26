@@ -184,6 +184,22 @@ fn direct_constructor_value(
             }
             crate::builtins::array(&[function.captures.get(*length_slot)]).ok()
         }
+        crate::facts::DirectConstructorSource::NullishSelectCapture {
+            argument,
+            nullish_slot,
+            other_slot,
+        } => {
+            let slot = if arguments
+                .get(usize::from(*argument))
+                .unwrap_or(&crate::value::Value::Undefined)
+                .is_nullish()
+            {
+                *nullish_slot
+            } else {
+                *other_slot
+            };
+            Some(function.captures.get(slot))
+        }
     }
 }
 
