@@ -1174,7 +1174,7 @@ mod stubs {
             if largest == "hour" && matches!(smallest.as_str(), "year" | "month" | "week" | "day") {
                 largest = smallest.clone();
             }
-            let scale = match smallest.as_str() {
+            let scale: i128 = match smallest.as_str() {
                 "day" => 86_400_000_000_000,
                 "week" => 604_800_000_000_000,
                 "year" | "month" => 86_400_000_000_000,
@@ -1190,7 +1190,7 @@ mod stubs {
                     ))
                 }
             };
-            if let Some(value) = options
+            let increment = if let Some(value) = options
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::execute::get_property_result(value, "roundingIncrement"))
                 .transpose()?
@@ -1202,9 +1202,10 @@ mod stubs {
                         "Invalid roundingIncrement",
                     ));
                 }
-                let quantum = scale * increment as i128;
-                delta = delta.div_euclid(quantum) * quantum;
-            }
+                increment as i128
+            } else {
+                1
+            };
             let rounding_mode = options
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::execute::get_property_result(value, "roundingMode"))
@@ -1230,6 +1231,25 @@ mod stubs {
                     "Invalid roundingMode",
                 ));
             }
+            let quantum = scale.checked_mul(increment).ok_or_else(|| {
+                crate::value::error::throw_range_error("Invalid roundingIncrement")
+            })?;
+            let quotient = delta.div_euclid(quantum);
+            let remainder = delta.rem_euclid(quantum);
+            let round_up = match rounding_mode.as_str() {
+                "trunc" => delta < 0 && remainder != 0,
+                "floor" => false,
+                "ceil" => remainder != 0,
+                "expand" => remainder != 0,
+                "halfCeil" => remainder * 2 >= quantum,
+                "halfFloor" => remainder * 2 > quantum,
+                "halfTrunc" => remainder * 2 > quantum || (remainder * 2 == quantum && delta < 0),
+                "halfEven" => {
+                    remainder * 2 > quantum || (remainder * 2 == quantum && quotient % 2 != 0)
+                }
+                _ => remainder * 2 >= quantum,
+            };
+            delta = (quotient + i128::from(round_up)) * quantum;
             let scales = [
                 ("week", 604_800_000_000_000_i128),
                 ("day", 86_400_000_000_000),
