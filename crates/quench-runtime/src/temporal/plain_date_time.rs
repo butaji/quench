@@ -897,6 +897,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     } else {
         month
     };
+    let _ = crate::conversion::to_number(&year)?;
     if !matches!(month_code, Value::Undefined)
         && crate::conversion::to_number(&month)?
             != crate::conversion::to_number(&month_code_number(&month_code)?)?
@@ -920,13 +921,23 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn month_code_number(value: &Value) -> Result<Value, VmError> {
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+    }
     let Value::String(code) = value else {
-        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
     };
-    code.strip_prefix('M')
-        .and_then(|value| value.parse::<f64>().ok())
-        .map(Value::Number)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
+    let core = code.strip_suffix('L').unwrap_or(code);
+    if core.len() != 3
+        || !core.starts_with('M')
+        || !core[1..].bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+    }
+    if code.ends_with('L') {
+        return Ok(Value::Number(f64::NAN));
+    }
+    Ok(Value::Number(core[1..].parse::<f64>().unwrap_or(f64::NAN)))
 }
 
 fn validate_calendar(value: &Value) -> Result<(), VmError> {
