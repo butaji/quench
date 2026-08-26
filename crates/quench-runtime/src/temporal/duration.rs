@@ -301,6 +301,7 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
     let smallest = round_unit(options)?;
+    validate_largest_unit(options)?;
     let index = unit_index(&smallest)?;
     let has_calendar = ["years", "months", "weeks"]
         .iter()
@@ -612,7 +613,25 @@ fn rounding_mode(options: Option<&Value>) -> Result<String, VmError> {
     });
     match value {
         None | Some(Value::Undefined) => Ok("halfExpand".into()),
-        Some(Value::String(mode)) => Ok(mode.clone()),
+        Some(Value::String(mode))
+            if [
+                "ceil",
+                "floor",
+                "expand",
+                "trunc",
+                "halfCeil",
+                "halfFloor",
+                "halfExpand",
+                "halfTrunc",
+                "halfEven",
+            ]
+            .contains(&mode.as_str()) =>
+        {
+            Ok(mode.clone())
+        }
+        Some(Value::String(_)) => Err(crate::value::error::throw_range_error(
+            "Invalid roundingMode",
+        )),
         _ => Err(crate::value::error::throw_type_error(
             "Invalid roundingMode",
         )),
@@ -682,9 +701,10 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
                     _ => None,
                 })
                 .map_or_else(|| Ok("nanosecond".into()), Ok),
-            Some(_) => Err(crate::value::error::throw_range_error(
-                "Invalid smallestUnit",
-            )),
+            Some((_, value)) => {
+                let unit = crate::conversion::to_string(&value)?;
+                unit_index(&unit).map(|_| unit)
+            }
         },
         _ => Err(crate::value::error::throw_type_error(
             "Options must be an object",
@@ -962,10 +982,29 @@ fn largest_unit(value: Option<&Value>) -> Option<usize> {
     object
         .iter()
         .find(|(key, _)| key == "largestUnit")
-        .and_then(|(_, value)| match value {
-            Value::String(unit) => unit_index(&unit).ok(),
-            _ => None,
+        .and_then(|(_, value)| {
+            if crate::conversion::is_symbol(&value) {
+                return None;
+            }
+            crate::conversion::to_string(&value)
+                .ok()
+                .and_then(|unit| unit_index(&unit).ok())
         })
+}
+
+fn validate_largest_unit(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(options) = options.filter(|value| crate::value::is_object(value)) else {
+        return Ok(());
+    };
+    let value = crate::execute::get_property_result(options, "largestUnit")?;
+    if matches!(value, Value::Undefined) {
+        return Ok(());
+    }
+    if let Value::String(unit) = value {
+        unit_index(&unit).map(|_| ())
+    } else {
+        Ok(())
+    }
 }
 
 fn balance_time_fields(fields: &mut [Value], first: usize) {
