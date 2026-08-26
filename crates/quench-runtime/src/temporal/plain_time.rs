@@ -813,10 +813,17 @@ fn with(
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid time-like object"))?;
     if is_temporal_object(fields) {
-        return Err(crate::value::error::throw_type_error("Invalid time-like object"));
+        return Err(crate::value::error::throw_type_error(
+            "Invalid time-like object",
+        ));
     }
-    let _ = crate::execute::get_property_result(fields, "calendar")?;
-    let _ = crate::execute::get_property_result(fields, "timeZone")?;
+    let calendar = crate::execute::get_property_result(fields, "calendar")?;
+    let time_zone = crate::execute::get_property_result(fields, "timeZone")?;
+    if !matches!(calendar, Value::Undefined) || !matches!(time_zone, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid time-like object",
+        ));
+    }
     let names = [
         "hour",
         "microsecond",
