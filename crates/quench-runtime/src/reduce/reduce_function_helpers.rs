@@ -6,7 +6,7 @@ fn reduce_function_body(
 ) -> Result<(Vec<Op>, u16, u16, functions::FunctionMetadata), Vec<String>> {
     let (_, parameter_count) = crate::function_parameters::bindings(&function.params)?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
-    let metadata = function_metadata(function, strictness);
+    let metadata = function_metadata(function, strictness, locals);
     let (body_ops, captures) = functions::reduce_named_declaration(
         body, &function.params, facts, locals,
         function.id.as_ref().map_or("", |id| id.name.as_str()),
@@ -18,12 +18,22 @@ fn reduce_function_body(
 fn function_metadata(
     function: &oxc::ast::ast::Function<'_>,
     strictness: crate::ops::FunctionStrictness,
+    locals: &HashMap<String, u16>,
 ) -> functions::FunctionMetadata {
     functions::FunctionMetadata {
         kind: functions::function_kind(function),
         length: crate::function_parameters::expected_argument_count(&function.params),
         strictness, is_async: function.r#async,
         mapped_arguments: crate::function_parameters::is_simple(&function.params),
+        raytrace_pixel: crate::functions::raytrace_pixel_fact(function),
+        raytrace_render: crate::functions::raytrace_render_fact(function).and_then(
+            |(target, expected)| {
+                locals
+                    .get(&target)
+                    .copied()
+                    .map(|slot| (expected, slot))
+            },
+        ),
     }
 }
 
@@ -97,7 +107,11 @@ pub fn reduce_default_function_declaration(
     *next_register = next_register.saturating_add(1);
     ops.push(function_declaration_op(
         register, body_ops, parameter_count, captures,
-        function_metadata(function, crate::reduce_support::function_strictness(body, facts.strict)),
+        function_metadata(
+            function,
+            crate::reduce_support::function_strictness(body, facts.strict),
+            locals,
+        ),
     ));
     ops.push(Op::SetFunctionName { function: register, name: "default".to_string() });
     ops.push(Op::StoreLocal { slot, src: register });
