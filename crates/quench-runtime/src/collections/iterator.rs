@@ -500,7 +500,7 @@ pub(super) fn mark_done(data: &IteratorData) {
         IteratorState::Filtered { done, .. } => *done = true,
         IteratorState::FlatMapped { done, .. } => *done = true,
         IteratorState::Dropped { done, .. } => *done = true,
-        IteratorState::Take { remaining, .. } => *remaining = 0,
+        IteratorState::Take { remaining, .. } => *remaining = u64::MAX,
         IteratorState::Concat { done, .. } => *done = true,
         IteratorState::Zip { done, .. } => *done = true,
     }

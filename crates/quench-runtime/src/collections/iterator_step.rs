@@ -372,37 +372,35 @@ fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::ex
             mapper,
             index,
             done,
-        } => mapped_step(iterator, mapper, index, done).map(StepTarget::Value)?,
+        } => mapped_step(iterator, mapper, index, done).map(StepTarget::Value),
         Snapshot::Filtered {
             iterator,
             predicate,
             index,
             done,
-        } => filtered_step(iterator, predicate, index, done).map(StepTarget::Value)?,
+        } => filtered_step(iterator, predicate, index, done).map(StepTarget::Value),
         Snapshot::FlatMapped {
             inner,
             mapper,
             index,
             current,
             done,
-        } => flat_mapped_step(inner, mapper, index, current, done).map(StepTarget::Value)?,
+        } => flat_mapped_step(inner, mapper, index, current, done).map(StepTarget::Value),
         Snapshot::Dropped {
             inner,
             skipped,
             limit,
             done,
-        } => dropped_step(inner, skipped, *limit, done).map(StepTarget::Value)?,
-        Snapshot::Take { inner, remaining } => {
-            take_step(inner, remaining).map(StepTarget::Value)?
-        }
+        } => dropped_step(inner, skipped, *limit, done).map(StepTarget::Value),
+        Snapshot::Take { inner, remaining } => take_step(inner, remaining).map(StepTarget::Value),
         Snapshot::Zip {
             iterators,
             mode,
             done,
-        } => zip_step(iterators, *mode, done).map(StepTarget::Value)?,
+        } => zip_step(iterators, *mode, done).map(StepTarget::Value),
     };
     write_snapshot(data, &owned);
-    Ok(Some(result))
+    Ok(Some(result?))
 }
 
 fn step_target_state(
@@ -637,7 +635,8 @@ fn flat_mapped_step(
             }
             Err(error) => {
                 *done = true;
-                if let Ok(completion) = crate::completion::Completion::from_vm_error(error.clone()) {
+                if let Ok(completion) = crate::completion::Completion::from_vm_error(error.clone())
+                {
                     let _ = super::close(inner.clone(), completion);
                 }
                 return Err(error);
@@ -651,7 +650,8 @@ fn flat_mapped_step(
             Ok(value) => value,
             Err(error) => {
                 *done = true;
-                if let Ok(completion) = crate::completion::Completion::from_vm_error(error.clone()) {
+                if let Ok(completion) = crate::completion::Completion::from_vm_error(error.clone())
+                {
                     let _ = super::close(inner.clone(), completion);
                 }
                 return Err(error);
@@ -693,12 +693,26 @@ fn dropped_step(
     }
 }
 fn take_step(inner: &Value, remaining: &mut u64) -> Result<Option<Value>, crate::execute::VmError> {
-    if *remaining == 0 {
+    // The maximum safe integer is reserved as the terminal marker: take()
+    // limits are clamped below it, so this keeps a closed helper from closing
+    // its underlying iterator again on subsequent next() calls.
+    if *remaining == u64::MAX {
         return Ok(None);
+    }
+    if *remaining == 0 {
+        *remaining = u64::MAX;
+        let completion = super::close(inner.clone(), crate::completion::Completion::Normal)?;
+        return match completion {
+            crate::completion::Completion::Normal => Ok(None),
+            completion => completion.into_vm_error().map(|_| None),
+        };
     }
     let value = match super::step_value(inner) {
         Ok(Some(value)) => value,
-        Ok(None) => return Ok(None),
+        Ok(None) => {
+            *remaining = u64::MAX;
+            return Ok(None);
+        }
         Err(error) => return Err(error),
     };
     *remaining -= 1;
