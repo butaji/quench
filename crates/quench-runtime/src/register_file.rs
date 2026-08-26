@@ -415,6 +415,21 @@ impl SlotWord {
     }
 
     #[inline(always)]
+    pub(crate) fn store_from_fixed<const N: usize>(
+        &self,
+        registers: &FixedWordFile<N>,
+        index: usize,
+    ) -> Option<()> {
+        let tagged = *registers.words.get(index)?;
+        retain(tagged);
+        // SAFETY: realm execution is single-threaded; the slot is replaced as
+        // one complete tagged word while its owning object remains live.
+        let previous = unsafe { std::mem::replace(&mut (*self.0.get()).0, tagged) };
+        release(previous);
+        Some(())
+    }
+
+    #[inline(always)]
     pub(crate) fn trace_named_payload(&self, tier: &'static str) {
         #[cfg(feature = "execution-trace")]
         self.with_word(|word| {
