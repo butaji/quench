@@ -342,6 +342,22 @@ fn inner_iterators(data: &IteratorData) -> (bool, Vec<Value>) {
                 (false, inner)
             }
         }
+        IteratorState::FlatMapped {
+            inner,
+            current,
+            done,
+            ..
+        } => {
+            if *done {
+                (true, Vec::new())
+            } else {
+                let mut open = vec![inner.clone()];
+                if let Some(current) = current {
+                    open.push(current.clone());
+                }
+                (false, open)
+            }
+        }
         _ => (false, Vec::new()),
     }
 }
