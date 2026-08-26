@@ -14,7 +14,9 @@ pub(crate) struct FunctionMetadata {
     pub(crate) strictness: FunctionStrictness,
     pub(crate) is_async: bool,
     pub(crate) mapped_arguments: bool,
+    pub(crate) raytrace_pixel: bool,
 }
+include!("functions_raytrace_kernel.rs");
 pub(super) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {

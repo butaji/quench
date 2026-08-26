@@ -122,6 +122,9 @@ pub(crate) fn execute(
     if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
         return result;
     }
+    if let Some(result) = execute_raytrace_pixel_kernel(function, &receiver, arguments) {
+        return result;
+    }
 
     // Ordinary calls enter the same explicit machine loop used by top-level
     // execution.  Keeping function entry here (rather than routing through the

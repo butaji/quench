@@ -362,6 +362,17 @@ fn emit_function_op(
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
     });
+    if metadata.raytrace_pixel {
+        let marker = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::Const { dst: marker, value: crate::ops::Constant::Boolean(true) });
+        ops.push(Op::SetProperty {
+            object: register,
+            key: "\0quench:raytrace_pixel".to_string(),
+            src: marker,
+            strict: true,
+        });
+    }
     register
 }
 
@@ -413,6 +424,7 @@ pub(crate) fn reduce_expression_kind(
             strictness,
             is_async: function.r#async,
             mapped_arguments: crate::function_parameters::is_simple(&function.params),
+            raytrace_pixel: raytrace_pixel_fact(function),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
     ))
@@ -448,6 +460,7 @@ pub(crate) fn reduce_arrow(
             strictness,
             is_async: function.r#async,
             mapped_arguments: false,
+            raytrace_pixel: false,
         },
     ))
 }
