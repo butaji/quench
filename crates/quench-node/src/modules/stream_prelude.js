@@ -24,6 +24,7 @@
       if (name === "data" && this._readableState &&
                  this.listenerCount("readable") === 0) {
         this.resume();
+        flowReadable(this);
       }
       if (name === "readable" && this._readableState &&
           !this._readableState.reading && !this._readableState.ended) {
@@ -739,6 +740,60 @@
     return readableOperator(stream, callback, filtering, options);
   }
 
+  // Terminal operators consume the same source iterator as map/filter. Keep
+  // their control flow here so short-circuiting never routes through a public
+  // transform method (which is observable and may be replaced by users).
+  function readableTerminal(stream, kind, callback, initial, hasInitial, options) {
+    if (typeof callback !== "function") {
+      const error = new TypeError("The callback must be a function");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
+    }
+    let accumulator = initial;
+    let started = hasInitial;
+    let found;
+    let decided = false;
+    const operator = readableOperator(stream, async (value, context) => {
+      if (context.signal?.aborted) throw sliceAbortError();
+      if (kind === "reduce") {
+        if (!started) {
+          accumulator = value;
+          started = true;
+        } else {
+          accumulator = await callback(accumulator, value, context);
+        }
+        return value;
+      }
+      const matched = await callback(value, context);
+      if (!decided && ((kind === "some" && matched) ||
+          (kind === "every" && !matched) || (kind === "find" && matched))) {
+        decided = true;
+        found = kind === "find" ? value : kind === "some";
+        if (typeof stream.destroy === "function") stream.destroy();
+      }
+      return value;
+    }, false, { concurrency: 1, signal: options?.signal });
+    const completion = operator.toArray();
+    const result = options?.signal
+      ? Promise.race([completion, new Promise((resolve, reject) => {
+          const abort = () => reject(sliceAbortError());
+          options.signal.addEventListener?.("abort", abort, { once: true });
+          if (options.signal.aborted) abort();
+        })])
+      : completion;
+    return result.then(() => {
+      if (kind === "reduce") {
+        if (!started) {
+          const error = new TypeError("Reduce of empty stream with no initial value");
+          error.code = "ERR_MISSING_ARGS";
+          throw error;
+        }
+        return accumulator;
+      }
+      return decided ? found : kind === "some" ? false : kind === "every" ? true : undefined;
+    });
+  }
+
   function sliceCount(count) {
     const number = Number(count);
     if (!Number.isFinite(number) && number !== Infinity) return 0;
@@ -837,6 +892,20 @@
   };
   ReadableClass.prototype.filter = function (predicate, options) {
     return operatorMapper(this, predicate, true, options);
+  };
+  ReadableClass.prototype.reduce = function (reducer, initial, options) {
+    const hasInitial = arguments.length >= 2;
+    return readableTerminal(this, "reduce", reducer, initial, hasInitial,
+      hasInitial ? options : undefined);
+  };
+  ReadableClass.prototype.some = function (predicate, options) {
+    return readableTerminal(this, "some", predicate, undefined, false, options);
+  };
+  ReadableClass.prototype.every = function (predicate, options) {
+    return readableTerminal(this, "every", predicate, undefined, false, options);
+  };
+  ReadableClass.prototype.find = function (predicate, options) {
+    return readableTerminal(this, "find", predicate, undefined, false, options);
   };
   ReadableClass.prototype.toArray = async function () {
     const values = [];
@@ -970,6 +1039,7 @@
       errorEmitted: false,
       corked: 0,
       prefinished: false,
+      finishScheduled: false,
       final: options.final || null,
       endCallbacks: [],
       autoDestroy: options.autoDestroy !== false,
@@ -1007,8 +1077,6 @@
   function finishWritable(stream) {
     const st = stream._writableState;
     if (st.destroyed) return;
-    if (stream._passThrough && !stream._passThroughRead &&
-        stream.listenerCount("data") === 0) return;
     if (st.finished || st.errored || !st.ended || st.buffered > 0 || st.writing || st.prefinishing) return;
     if (!st.prefinished) {
       st.prefinishing = true;
@@ -1046,12 +1114,22 @@
     }
     st.finished = true;
     completeEndCallbacks(st);
-    nextTick(() => {
+    const emitFinish = () => nextTick(() => {
       stream._emitter.emit("finish");
       if (st.autoDestroy && (!stream._isDuplex || stream._readableState.endEmitted)) {
         stream.destroy();
       }
     });
+    // A duplex with autoDestroy cannot finish its writable side before its
+    // readable side has emitted end.  In particular, Transform.end() may
+    // queue readable completion and resume() in the same turn.
+    if (st.autoDestroy && stream._isDuplex && !stream._readableState.endEmitted &&
+        !stream._finishedWantsWritableOnly) {
+      if (!st.finishScheduled) {
+        st.finishScheduled = true;
+        stream.once("end", emitFinish);
+      }
+    } else emitFinish();
   }
 
   function flushCorked(stream) {
@@ -1466,7 +1544,10 @@
       if (options && options.transform) this._transform = options.transform;
       if (options && options.flush) this._flush = options.flush;
       // When the writable side finishes, flush then end the readable side.
-      this.once("finish", () => {
+      // Node flushes and closes the readable side during prefinish, before
+      // the writable side emits finish.  Keeping this on the shared lifecycle
+      // event preserves the observable end -> finish ordering.
+      this.once("prefinish", () => {
         const end = (error, data) => {
           if (!error && data != null) this.push(data);
           this.push(null);
@@ -1501,21 +1582,41 @@
     }
   }
 
-  function finished(stream, callback) {
+  function finished(stream, options, callback) {
     if (!stream || typeof stream.on !== "function") {
       const error = new TypeError("The \"stream\" argument must be an instance of Stream");
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (typeof options === "function") {
+      callback = options;
+      options = {};
+    }
+    options = options || {};
+    callback = callback || (() => {});
+    const wantReadable = options.readable !== false;
+    const wantWritable = options.writable !== false;
+    stream._finishedWantsWritableOnly = wantWritable && !wantReadable;
     let done = false;
-    const finish = (error) => {
+    let readableDone = !wantReadable;
+    let writableDone = !wantWritable;
+    const finish = (error, side) => {
       if (done) return;
-      done = true;
-      callback(error);
+      if (error) {
+        done = true;
+        callback(error);
+        return;
+      }
+      if (side === "readable") readableDone = true;
+      if (side === "writable") writableDone = true;
+      if (readableDone && writableDone) {
+        done = true;
+        callback();
+      }
     };
-    stream.once("end", () => finish());
-    stream.once("finish", () => finish());
-    stream.once("error", finish);
+    if (wantReadable) stream.once("end", () => finish(undefined, "readable"));
+    if (wantWritable) stream.once("finish", () => finish(undefined, "writable"));
+    stream.once("error", (error) => finish(error));
     return () => {
       done = true;
     };
@@ -1557,6 +1658,68 @@
       last.once("end", () => done());
     }
     return last;
+  }
+
+  function compose(...stages) {
+    if (stages.length === 0) {
+      const error = new TypeError("The streams argument must be an array or at least two streams");
+      error.code = "ERR_MISSING_ARGS";
+      throw error;
+    }
+    const asyncIterable = (stage) => stage && typeof stage[Symbol.asyncIterator] === "function";
+    const validStage = (stage) => typeof stage === "function" ||
+      (stage && typeof stage === "object" &&
+        (typeof stage.on === "function" || asyncIterable(stage)));
+    const readableStage = (stage) => typeof stage === "function" ||
+      (stage && ((typeof stage.pipe === "function" && typeof stage.on === "function") ||
+        asyncIterable(stage)));
+    const writableStage = (stage) => typeof stage === "function" ||
+      (stage && typeof stage.write === "function" && typeof stage.on === "function");
+    if (stages.some((stage) => !validStage(stage)) ||
+        stages.some((stage, index) => index > 0 &&
+          (!readableStage(stages[index - 1]) || !writableStage(stage)))) {
+      const error = new TypeError("The compose stages must be streams or functions");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    const first = stages[0];
+    const last = stages[stages.length - 1];
+    const streamStages = stages.every((stage) => stage && typeof stage.write === "function" &&
+      typeof stage.on === "function");
+    if (streamStages) {
+      const composed = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          first.write(chunk, encoding, callback);
+        },
+        final(callback) {
+          first.end(callback);
+        },
+        destroy(error, callback) {
+          for (const stage of stages) {
+            if (!stage.destroyed && typeof stage.destroy === "function") stage.destroy(error);
+          }
+          callback(error);
+        },
+      });
+      for (let index = 0; index + 1 < stages.length; index += 1) {
+        stages[index].pipe(stages[index + 1]);
+      }
+      last.on("data", (chunk) => composed.push(chunk));
+      last.once("end", () => composed.push(null));
+      for (const stage of stages) stage.on("error", (error) => composed.destroy(error));
+      return composed;
+    }
+    const firstIsSource = asyncIterable(first) ||
+      (typeof first === "function" && first.constructor?.name === "AsyncGeneratorFunction");
+    const singleSink = typeof first === "function" && first.constructor?.name === "AsyncFunction";
+    const result = new Duplex({ read() {}, write(_chunk, _encoding, callback) { callback(); } });
+    result.readable = stages.length === 1 && !singleSink || stages.length > 1 && !(
+      (last && typeof last.write === "function" && typeof last.read !== "function") ||
+      (typeof last === "function" && last.constructor?.name === "AsyncFunction"));
+    result.writable = stages.length === 1 || stages.length > 1 && !firstIsSource && !(first &&
+      typeof first.read === "function" && typeof first.write !== "function");
+    return result;
   }
 
   function isReadableNodeStream(o) {
@@ -1634,6 +1797,7 @@
     destroy,
     finished,
     pipeline,
+    compose,
     isReadable,
     isWritable,
     isErrored,

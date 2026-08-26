@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "metrics": {
+    "loop_rejected_from_leaf": {
+      "numerator": "leaf_rejections.Loop",
+      "min": 10000
+    }
+  }
+}

@@ -1,6 +1,8 @@
 //! Polyfill: `globals-tail`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.setImmediate = (callback, ...args) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__quench_active_domain ||= null;
+globalThis.__quench_domain_stack ||= [];
+globalThis.setImmediate = (callback, ...args) => {
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
   }
@@ -25,7 +27,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.setImmediate = (
     __immediate: true,
     _destroyed: false
   };
-  const activeDomain = globalThis.__quench_active_domain;
+  const activeDomain = globalThis.process?.domain || globalThis.__quench_active_domain;
   id.ref = () => {
     if (!id.refed && id.active && !id.counted) {
       id.refed = true;
@@ -98,7 +100,7 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   };
   id.hasRef = () => id.active && id.refed;
   const resource = globalThis.__nodeCurrentAsyncResource;
-  const activeDomain = globalThis.__quench_active_domain;
+  const activeDomain = globalThis.process?.domain || globalThis.__quench_active_domain;
   const schedule = () => {
     const generation = ++id.generation;
     queueMicrotask(() => {
@@ -175,7 +177,7 @@ globalThis.setInterval = (callback, _delay = 0, ...args) => {
   id.ref = () => ((id.refed = true), id);
   id.unref = () => ((id.refed = false), id);
   id.hasRef = () => id.active && id.refed;
-  const activeDomain = globalThis.__quench_active_domain;
+  const activeDomain = globalThis.process?.domain || globalThis.__quench_active_domain;
   const schedule = () => {
     const generation = ++id.generation;
     queueMicrotask(() => {
