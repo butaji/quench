@@ -365,14 +365,19 @@ pub(crate) fn load_binding(
     }
     let environment = current();
     if dynamic {
-        if let Some(value) = crate::with_scope::resolve_binding(name)? {
-            crate::execute::write_value(registers, dst, value);
-            return Ok(());
+        if environment.is_uninitialized(slot) {
+            return Err(crate::value::error::throw_reference_error(&format!(
+                "Cannot access '{name}' before initialization"
+            )));
         }
         if environment.is_deleted_slot(slot) {
             return Err(crate::value::error::throw_reference_error(&format!(
                 "Cannot access deleted binding '{name}'"
             )));
+        }
+        if let Some(value) = crate::with_scope::resolve_binding(name)? {
+            crate::execute::write_value(registers, dst, value);
+            return Ok(());
         }
         if environment.eval_name_aliases_slot(name, slot) {
             if let Some(value) = resolve_eval_name(name) {
@@ -380,6 +385,11 @@ pub(crate) fn load_binding(
                 return Ok(());
             }
         }
+    }
+    if environment.is_deleted_slot(slot) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access deleted binding '{name}'"
+        )));
     }
     if environment.is_uninitialized(slot) {
         return Err(crate::value::error::throw_reference_error(&format!(
@@ -517,6 +527,11 @@ pub(crate) fn load(
 ) -> Result<(), VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
     let environment = current();
+    if environment.is_deleted_slot(slot) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access deleted binding",
+        ));
+    }
     environment.load_into(registers, dst, slot);
     Ok(())
 }
@@ -531,6 +546,11 @@ pub(crate) fn load_proven(
     slot: u16,
 ) -> Result<(), VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::BindingLoad);
+    if current().is_deleted_slot(slot) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access deleted binding",
+        ));
+    }
     let loaded = CURRENT_ENVIRONMENT.with(|current| {
         current
             .borrow()
@@ -551,6 +571,11 @@ pub(crate) fn load_checked(
     name: &str,
 ) -> Result<(), VmError> {
     let environment = current();
+    if environment.is_deleted_slot(slot) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access deleted binding '{name}'"
+        )));
+    }
     if environment.is_uninitialized(slot) {
         return Err(crate::value::error::throw_reference_error(&format!(
             "Cannot access '{name}' before initialization"
@@ -735,7 +760,11 @@ pub(crate) fn set_eval_named(name: &str, value: Value) -> bool {
 
 pub(crate) fn delete_named(name: &str, slot: u16) -> bool {
     let environment = current();
-    environment.delete_eval_caller_name(name, slot)
+    let deleted = environment.delete_eval_caller_name(name, slot);
+    if deleted {
+        environment.mark_deleted_slot(slot);
+    }
+    deleted
 }
 
 pub(crate) fn capture(count: u16) -> Rc<Environment> {
