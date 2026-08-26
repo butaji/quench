@@ -55,9 +55,21 @@ fn construct_builtin_tail(
         }
         crate::ops::Builtin::TemporalPlainYearMonth => {
             let year =
-                crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+                crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?
+                    .trunc();
+            if !year.is_finite() {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid PlainYearMonth",
+                ));
+            }
             let month =
-                crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+                crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?
+                    .trunc();
+            if !month.is_finite() {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid PlainYearMonth",
+                ));
+            }
             if let Some(calendar) = arguments
                 .get(2)
                 .filter(|value| !matches!(value, Value::Undefined))
