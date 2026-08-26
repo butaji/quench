@@ -74,17 +74,17 @@ struct NativePacket {
     id: usize,
     kind: i32,
     a1: i32,
-    payload_len: usize,
 }
 
-const _: () = assert!(std::mem::size_of::<NativePacket>() == 32);
+const _: () = assert!(std::mem::size_of::<NativePacket>() == 24);
 
 struct NativePacketBacking {
     object: std::rc::Rc<crate::value::ObjectData>,
     array: std::rc::Rc<crate::value::ArrayData>,
-    payload: [f64; LINKED_PAYLOAD_LIMIT],
     payload_dirty: bool,
 }
+
+const _: () = assert!(std::mem::size_of::<NativePacketBacking>() == 24);
 
 struct NativeSchedule<'a> {
     table: &'a DirectTaskTable,
@@ -92,6 +92,8 @@ struct NativeSchedule<'a> {
     tasks: Vec<NativeTask>,
     packets: Vec<NativePacket>,
     backings: Vec<NativePacketBacking>,
+    payload_width: usize,
+    payloads: Vec<f64>,
     current: Option<usize>,
     current_id: i32,
     hold_count: i32,
@@ -140,6 +142,8 @@ impl<'a> NativeSchedule<'a> {
             tasks: Vec::with_capacity(table.runners.len()),
             packets: Vec::with_capacity(16),
             backings: Vec::with_capacity(16),
+            payload_width: usize::MAX,
+            payloads: Vec::with_capacity(16 * LINKED_PAYLOAD_LIMIT),
             current: table.id_for_value(start)?,
             current_id: 0,
             hold_count: exact_i32(scheduler.word(scheduler.hold_count).number()?)?,
@@ -271,6 +275,9 @@ impl<'a> NativeSchedule<'a> {
             return None;
         }
         let payload_len = payload.header_length();
+        if self.payload_width != usize::MAX && self.payload_width != payload_len {
+            return None;
+        }
         let mut values = [0.0; LINKED_PAYLOAD_LIMIT];
         if payload.is_numeric_packed() {
             for (index, value) in values[..payload_len].iter_mut().enumerate() {
@@ -285,14 +292,14 @@ impl<'a> NativeSchedule<'a> {
             id: exact_linked_task_id(words.id.number()?)?,
             kind: exact_i32(words.kind.number()?)?,
             a1: exact_i32(words.a1.number()?)?,
-            payload_len,
         });
         self.backings.push(NativePacketBacking {
             object: std::rc::Rc::clone(object),
             array: payload,
-            payload: values,
             payload_dirty: false,
         });
+        self.payload_width = payload_len;
+        self.payloads.extend_from_slice(&values[..payload_len]);
         let link = self.packet_from_word(words.link)?;
         self.packets[index].link = link.unwrap_or(NativeQueue::NONE);
         Some(Some(index))
@@ -435,7 +442,7 @@ impl<'a> NativeSchedule<'a> {
         else {
             return None;
         };
-        if count > self.packets.get(packet)?.payload_len {
+        if count > self.payload_width {
             return None;
         }
         let next_v1 = if v1 == handler_a {
@@ -447,7 +454,7 @@ impl<'a> NativeSchedule<'a> {
         target.id = next_v1;
         target.a1 = 0;
         self.backings.get_mut(packet)?.payload_dirty = true;
-        for value in &mut self.backings.get_mut(packet)?.payload[..count] {
+        for value in &mut self.payload_mut(packet)?[..count] {
             v2 += 1;
             if v2 > 26 {
                 v2 = 1;
@@ -516,10 +523,10 @@ impl<'a> NativeSchedule<'a> {
                     v2.tail = NativeQueue::NONE;
                 }
                 let offset = usize::try_from(self.packets.get(work)?.a1).ok()?;
-                if offset >= self.packets.get(work)?.payload_len {
+                if offset >= self.payload_width {
                     return None;
                 }
-                self.packets.get_mut(device)?.a1 = self.backings.get(work)?.payload[offset] as i32;
+                self.packets.get_mut(device)?.a1 = self.payload(work)?.get(offset).copied()? as i32;
                 self.packets.get_mut(work)?.a1 += 1;
                 let target = self.packets.get(device)?.id;
                 #[cfg(feature = "execution-trace")]
@@ -644,6 +651,20 @@ impl<'a> NativeSchedule<'a> {
         // SAFETY: identical invariant to `task`; mutation never changes the
         // table length or manufactures a task ID.
         unsafe { self.tasks.get_unchecked_mut(index) }
+    }
+
+    #[inline(always)]
+    fn payload(&self, packet: usize) -> Option<&[f64]> {
+        let start = packet.checked_mul(self.payload_width)?;
+        self.payloads
+            .get(start..start.checked_add(self.payload_width)?)
+    }
+
+    #[inline(always)]
+    fn payload_mut(&mut self, packet: usize) -> Option<&mut [f64]> {
+        let start = packet.checked_mul(self.payload_width)?;
+        self.payloads
+            .get_mut(start..start.checked_add(self.payload_width)?)
     }
 
     fn packet_link(&self, index: usize) -> Option<usize> {

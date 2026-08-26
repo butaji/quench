@@ -35,12 +35,9 @@ impl NativeSchedule<'_> {
         current: &crate::register_file::SlotWord,
         current_id: &crate::register_file::SlotWord,
     ) -> Option<()> {
-        for (packet, backing) in self.packets.iter().zip(&self.backings) {
+        for (index, (packet, backing)) in self.packets.iter().zip(&self.backings).enumerate() {
             if backing.payload_dirty {
-                apply_linked_worker_payload(
-                    &backing.array,
-                    &backing.payload[..packet.payload_len],
-                )?;
+                apply_linked_worker_payload(&backing.array, self.payload(index)?)?;
             }
             let words = self.table.packet_words(&backing.object)?;
             words.link.store(
