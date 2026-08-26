@@ -805,12 +805,11 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     let options = options
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid rounding options"))?;
-    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
-    let Value::String(unit) = unit else {
-        return Err(crate::value::error::throw_range_error(
-            "Missing smallestUnit",
-        ));
-    };
+    let unit = option_text(&crate::execute::get_property_result(
+        options,
+        "smallestUnit",
+    )?)?
+    .ok_or_else(|| crate::value::error::throw_range_error("Missing smallestUnit"))?;
     let unit = unit.trim_end_matches('s');
     let scale = match unit {
         "hour" => 3_600_000_000_000_i64,
