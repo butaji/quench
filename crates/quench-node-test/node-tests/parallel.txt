@@ -353,6 +353,9 @@ test-stream-big-packet.js
 test-stream-big-push.js
 test-stream-decoder-objectmode.js
 test-stream-destroy-event-order.js
+test-stream-duplex-readable-end.js
+test-stream-duplex-readable-writable.js
+test-stream-finished-async-local-storage.js
 test-module-create-require-multibyte.js
 test-error-format-list.js
 test-compile-cache-api-error.js
