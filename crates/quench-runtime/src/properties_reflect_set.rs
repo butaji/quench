@@ -227,7 +227,12 @@ fn set_receiver_data(
     key: &str,
     value: &crate::value::Value,
 ) -> Result<bool, crate::execute::VmError> {
-    let receiver_resolved = crate::locals::resolved_replacement(receiver.clone());
+    let receiver_resolved = match receiver {
+        crate::value::Value::BindingCell(cell) => {
+            crate::locals::resolved_replacement(cell.load())
+        }
+        _ => crate::locals::resolved_replacement(receiver.clone()),
+    };
     let current = crate::builtins::object::descriptor(
         Some(&receiver_resolved),
         Some(&crate::value::Value::String(key.to_string())),
@@ -244,7 +249,7 @@ fn set_receiver_data(
         value,
         matches!(current, crate::value::Value::Undefined),
     );
-    let updated = match crate::builtins::define_own_property(receiver, key, &descriptor) {
+    let updated = match crate::builtins::define_own_property(&receiver_resolved, key, &descriptor) {
         Err(error)
             if key == "length"
                 && matches!(receiver_resolved, crate::value::Value::Array(_))
@@ -260,6 +265,9 @@ fn set_receiver_data(
         result => result?,
     };
     crate::locals::replace_value(receiver, &updated);
+    if let crate::value::Value::BindingCell(cell) = receiver {
+        cell.replace(updated.clone());
+    }
     Ok(true)
 }
 
