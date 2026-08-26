@@ -212,6 +212,11 @@ fn difference(
     } else {
         signed_days.signum()
     };
+    let raw_sign = if raw_days == 0.0 {
+        1.0
+    } else {
+        raw_days.signum()
+    };
     let mut smallest = settings.smallest.clone();
     if smallest == "auto" && (settings.increment != 1.0 || settings.mode != "trunc") {
         smallest = "days".into();
@@ -287,21 +292,68 @@ fn difference(
         let increment = settings.increment;
         let mode = settings.mode.as_str();
         let scalar = match smallest.as_str() {
-            "years" => years + months / 12.0 + days / 365.0,
-            "months" => months + days / 31.0,
+            "years" => {
+                let magnitude = years * sign;
+                let anchor = add_calendar_months(left, (magnitude * raw_sign) as i64 * 12);
+                let remainder = (date_serial(right.0, right.1, right.2)
+                    - date_serial(anchor.0, anchor.1, anchor.2))
+                .unsigned_abs() as f64;
+                (magnitude
+                    + remainder
+                        / if is_leap_year(anchor.0 as i32) {
+                            366.0
+                        } else {
+                            365.0
+                        })
+                    * sign
+            }
+            "months" => {
+                let magnitude = months * sign;
+                let anchor = add_calendar_months(left, (magnitude * raw_sign) as i64);
+                let remainder = (date_serial(right.0, right.1, right.2)
+                    - date_serial(anchor.0, anchor.1, anchor.2))
+                .unsigned_abs() as f64;
+                let span = if raw_sign > 0.0 {
+                    anchor
+                } else {
+                    add_calendar_months(anchor, -1)
+                };
+                (magnitude + remainder / days_in_month(span.0, span.1)) * sign
+            }
             "weeks" => weeks + days / 7.0,
             _ => days,
         };
         let rounded = round_difference(scalar, increment, mode);
-        years = 0.0;
-        months = 0.0;
-        weeks = 0.0;
-        days = 0.0;
         match smallest.as_str() {
-            "years" => years = rounded,
-            "months" => months = rounded,
-            "weeks" => weeks = rounded,
+            "years" => {
+                years = rounded;
+                months = 0.0;
+                weeks = 0.0;
+                days = 0.0;
+            }
+            "months" => {
+                months = rounded;
+                weeks = 0.0;
+                days = 0.0;
+            }
+            "weeks" => {
+                weeks = rounded;
+                days = 0.0;
+            }
             _ => days = rounded,
+        }
+        if smallest == "months" && largest == "years" {
+            years = (months / 12.0).trunc();
+            months -= years * 12.0;
+            if years == 0.0
+                && months.signum() == sign
+                && days == 0.0
+                && left.2 == right.2
+                && left.0 != right.0
+            {
+                years = sign;
+                months = 0.0;
+            }
         }
     }
     crate::temporal::duration::construct(&[
@@ -379,6 +431,22 @@ fn difference_settings(options: Option<&Value>) -> Result<DifferenceSettings, Vm
     } else {
         option_string(&mode_value)?
     };
+    if !matches!(
+        mode.as_str(),
+        "ceil"
+            | "floor"
+            | "expand"
+            | "halfCeil"
+            | "halfFloor"
+            | "halfEven"
+            | "halfExpand"
+            | "halfTrunc"
+            | "trunc"
+    ) {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingMode",
+        ));
+    }
     let smallest_value = crate::execute::get_property_result(options, "smallestUnit")?;
     let smallest = if matches!(smallest_value, Value::Undefined) {
         "auto".into()
