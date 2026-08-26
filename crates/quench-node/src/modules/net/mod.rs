@@ -515,6 +515,10 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_NET_SERVER),
         ),
         (
+            "BlockList",
+            crate::host::capability(crate::registry::NodeSpec::new("net:BlockList", 2292)),
+        ),
+        (
             "isIP",
             crate::host::capability(crate::registry::SPEC_NET_ISIP),
         ),
@@ -536,4 +540,34 @@ pub fn build() -> Value {
         ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
+}
+
+pub fn block_list_construct(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(host_api::object(vec![(
+        "addSubnet".into(),
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "net:BlockList:addSubnet",
+            2293,
+        )),
+    )]))
+}
+
+pub fn block_list_add_subnet(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(prefix) = args.get(1) else {
+        return Err(execute::type_error("prefix must be a number"));
+    };
+    if !matches!(prefix, Value::Number(value) if value.is_finite() && *value >= 0.0) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("RangeError".into())),
+            ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+        ])));
+    }
+    Ok(Value::Undefined)
 }
