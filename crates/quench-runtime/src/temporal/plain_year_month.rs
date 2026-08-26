@@ -1,6 +1,22 @@
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn construct(year: f64, month: f64) -> Result<Value, VmError> {
+    construct_inner(year, month, None)
+}
+
+pub(crate) fn construct_with_reference(
+    year: f64,
+    month: f64,
+    reference_iso_day: f64,
+) -> Result<Value, VmError> {
+    construct_inner(year, month, Some(reference_iso_day))
+}
+
+fn construct_inner(
+    year: f64,
+    month: f64,
+    reference_iso_day: Option<f64>,
+) -> Result<Value, VmError> {
     if !year.is_finite()
         || !(-271_821.0..=275_760.0).contains(&year)
         || !(1.0..=12.0).contains(&month)
@@ -11,6 +27,22 @@ pub(crate) fn construct(year: f64, month: f64) -> Result<Value, VmError> {
             "Invalid PlainYearMonth",
         ));
     }
+    if let Some(day) = reference_iso_day {
+        if !day.is_finite() || !(1.0..=31.0).contains(&day) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainYearMonth",
+            ));
+        }
+        if day > iso_days_in_month(year, month)
+            || (year == -271_821.0 && month == 4.0 && day < 19.0)
+            || (year == 275_760.0 && month == 9.0 && day > 13.0)
+        {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid PlainYearMonth",
+            ));
+        }
+    }
+    let reference_iso_day = reference_iso_day.unwrap_or(1.0);
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             ("year".into(), Value::Number(year)),
@@ -20,6 +52,7 @@ pub(crate) fn construct(year: f64, month: f64) -> Result<Value, VmError> {
                 Value::String(format!("M{:02}", month as u32)),
             ),
             ("calendarId".into(), Value::String("iso8601".into())),
+            ("referenceISODay".into(), Value::Number(reference_iso_day)),
             ("\0temporal-plain-year-month".into(), Value::Boolean(true)),
             (
                 "\0prototype".into(),
@@ -27,6 +60,19 @@ pub(crate) fn construct(year: f64, month: f64) -> Result<Value, VmError> {
             ),
         ]),
     )))
+}
+
+fn iso_days_in_month(year: f64, month: f64) -> f64 {
+    match month as u32 {
+        2 if year.rem_euclid(4.0) == 0.0
+            && (year.rem_euclid(100.0) != 0.0 || year.rem_euclid(400.0) == 0.0) =>
+        {
+            29.0
+        }
+        2 => 28.0,
+        4 | 6 | 9 | 11 => 30.0,
+        _ => 31.0,
+    }
 }
 
 pub(crate) fn execute(
@@ -200,6 +246,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             "Invalid PlainYearMonth",
         ));
     }
+    if is_plain_year_month(value) {
+        let _ = overflow_option(options)?;
+        let year = crate::conversion::to_number(&field(Some(value), "year")?)?;
+        let month = crate::conversion::to_number(&field(Some(value), "month")?)?;
+        let day = crate::conversion::to_number(&field(Some(value), "referenceISODay")?)?;
+        return construct_with_reference(year, month, day);
+    }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     if !matches!(calendar, Value::Undefined) {
         if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
@@ -323,8 +376,12 @@ fn values(value: &Value) -> Result<(f64, f64), VmError> {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = values(&from(arguments.first(), None)?)?;
-    let right = values(&from(arguments.get(1), None)?)?;
+    let left_value = from(arguments.first(), None)?;
+    let right_value = from(arguments.get(1), None)?;
+    let left = (values(&left_value)?, reference_day(&left_value));
+    let right = (values(&right_value)?, reference_day(&right_value));
+    let left = (left.0 .0, left.0 .1, left.1);
+    let right = (right.0 .0, right.0 .1, right.1);
     Ok(Value::Number(match left.partial_cmp(&right) {
         Some(std::cmp::Ordering::Less) => -1.0,
         Some(std::cmp::Ordering::Greater) => 1.0,
@@ -333,10 +390,19 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
+    let other = from(other, None)?;
     Ok(Value::Boolean(
-        values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?
-            == values(&from(other, None)?)?,
+        values(receiver)? == values(&other)? && reference_day(receiver) == reference_day(&other),
     ))
+}
+
+fn reference_day(value: &Value) -> f64 {
+    crate::execute::get_property_result(value, "referenceISODay")
+        .ok()
+        .and_then(|value| crate::conversion::to_number(&value).ok())
+        .unwrap_or(1.0)
 }
 
 fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
@@ -356,7 +422,12 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         } else {
             "[u-ca=iso8601]"
         };
-        return Ok(Value::String(format!("{year_text}-{month:02}-01{marker}")));
+        let day = reference_day(receiver.ok_or_else(|| {
+            crate::value::error::throw_type_error("Invalid PlainYearMonth receiver")
+        })?);
+        return Ok(Value::String(format!(
+            "{year_text}-{month:02}-{day:02}{marker}"
+        )));
     }
     Ok(Value::String(format!("{year_text}-{month:02}")))
 }
