@@ -48,7 +48,7 @@ pub(crate) fn hash_value(value: &Value) -> Option<u64> {
 /// dropped on conversion failure. A result is invalid if its checked UTF-16
 /// byte size exceeds this limit; the operation returns a RangeError before
 /// appending the offending argument.
-pub(crate) const MAX_STRING_BYTES: usize = 256 * 1024 * 1024;
+pub(crate) const MAX_STRING_BYTES: usize = MAX_STRING_UNITS * std::mem::size_of::<u16>();
 /// V8 exposes this UTF-16-unit limit through `buffer.constants`.
 const MAX_STRING_UNITS: usize = 536_870_888;
 
