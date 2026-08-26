@@ -2499,6 +2499,14 @@ pub fn process_setegid(
     crate::modules::process::set_credential("gid", args)
 }
 
+pub fn process_active_resources(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::process::active_resources_info(state))
+}
+
 pub fn test_run(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
