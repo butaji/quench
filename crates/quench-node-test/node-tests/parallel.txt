@@ -232,6 +232,7 @@ test-process-constants-noatime.js
 test-process-features.js
 test-process-default.js
 test-process-env-delete.js
+test-process-exit-handler.js
 test-process-cpuUsage.js
 test-process-hrtime-bigint.js
 test-process-hrtime.js
