@@ -342,6 +342,15 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             "largestUnit must not be smaller than smallestUnit",
         ));
     }
+    if largest_unit(options).is_some()
+        && largest < index
+        && largest <= 2
+        && rounding_increment(options, index)? > 1.0
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Cannot round calendar units while balancing to a larger unit",
+        ));
+    }
     let no_smallest = options.is_some_and(|value| match value {
         Value::Object(object) => object
             .iter()
@@ -589,7 +598,13 @@ fn rounding_increment(options: Option<&Value>, index: usize) -> Result<f64, VmEr
         .map(|value| crate::conversion::to_number(&value))
         .transpose()?
         .unwrap_or(1.0);
-    if !value.is_finite() || value <= 0.0 || value.fract() != 0.0 {
+    let value = value.trunc();
+    if !value.is_finite() || value <= 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    if value > 1_000_000_000.0 {
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
         ));
@@ -770,8 +785,14 @@ fn calendar_round(
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
     let target_distance = (target - start).num_days() as f64 + subday.fract();
     let total = target_distance * sign;
+    let preserve_calendar = preserve_larger
+        && (0..unit).any(|index| {
+            ["years", "months", "weeks"]
+                .get(index)
+                .is_some_and(|name| duration_field(object, name) != 0)
+        });
     let mut cursor = start;
-    if preserve_larger {
+    if preserve_calendar {
         for larger_unit in 0..unit {
             if larger_unit == 2 && unit >= 3 {
                 continue;
@@ -807,7 +828,26 @@ fn calendar_round(
     }
     let next = shift_calendar(cursor, unit, sign as i32)?;
     let elapsed = (cursor - start).num_days().unsigned_abs() as f64;
-    let remainder = (total.abs() - elapsed).max(0.0);
+    let only_months = unit == 1
+        && duration_field(object, "months") != 0
+        && [
+            "years",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ]
+        .iter()
+        .all(|name| duration_field(object, name) == 0);
+    let remainder = if (cursor == target && subday == 0.0) || only_months {
+        0.0
+    } else {
+        (total.abs() - elapsed).max(0.0)
+    };
     let span = (next - cursor).num_days().abs() as f64;
     let has_smallest = options.is_some_and(|value| match value {
         Value::Object(object) => object
@@ -816,8 +856,26 @@ fn calendar_round(
         _ => false,
     });
     let unrounded_count = count;
-    if has_smallest && span > 0.0 && remainder * 2.0 >= span {
-        count += sign as i64;
+    if has_smallest && span > 0.0 && remainder > 0.0 {
+        let mode = rounding_mode(options)?;
+        let adjust = match mode.as_str() {
+            "ceil" => sign > 0.0,
+            "floor" => sign < 0.0,
+            "expand" => true,
+            "trunc" => false,
+            "halfCeil" => {
+                (sign > 0.0 && remainder * 2.0 >= span) || (sign < 0.0 && remainder * 2.0 > span)
+            }
+            "halfFloor" => {
+                (sign > 0.0 && remainder * 2.0 > span) || (sign < 0.0 && remainder * 2.0 >= span)
+            }
+            "halfTrunc" => remainder * 2.0 > span,
+            "halfEven" | "halfExpand" => remainder * 2.0 >= span,
+            _ => false,
+        };
+        if adjust {
+            count += sign as i64;
+        }
     }
     let increment = if has_smallest {
         rounding_increment(options, unit)? as i128
@@ -829,7 +887,7 @@ fn calendar_round(
             (round_integer(count as i128, increment, &rounding_mode(options)?) * increment) as i64;
     }
     let mut fields = vec![Value::Number(0.0); 10];
-    if preserve_larger {
+    if preserve_calendar {
         let mut larger_cursor = start;
         for index in 0..unit {
             if index == 2 && unit >= 3 {
@@ -852,8 +910,9 @@ fn calendar_round(
             fields[index] = Value::Number(larger_count as f64);
         }
     }
-    if unit == 1 && preserve_larger {
-        fields[1] = Value::Number(count as f64);
+    if unit == 1 && preserve_calendar && duration_field(object, "years") != 0 {
+        fields[0] = Value::Number(fields[0].as_number().unwrap_or(0.0) + (count / 12) as f64);
+        fields[1] = Value::Number((count % 12) as f64);
     } else {
         fields[unit] = Value::Number(count as f64);
     }
@@ -877,7 +936,20 @@ fn calendar_round(
                 }
                 fields[larger_unit] = Value::Number(larger_count as f64);
             }
-            fields[unit] = Value::Number(0.0);
+            fields[unit] = Value::Number(if larger_cursor == target {
+                0.0
+            } else {
+                count as f64
+            });
+            if unit == 2 && largest == 1 {
+                let residual_days = (target - larger_cursor).num_days() as i128 * sign as i128;
+                fields[2] =
+                    Value::Number(round_integer(residual_days, 7, &rounding_mode(options)?) as f64);
+            }
+            if unit == 3 && largest == 2 {
+                fields[2] = Value::Number((count / 7) as f64);
+                fields[3] = Value::Number((count % 7) as f64);
+            }
         }
     }
     let has_higher = (0..unit).any(|index| {
@@ -904,7 +976,8 @@ fn calendar_round(
         .is_some_and(|name| duration_field(object, name) != 0)
     });
     let balanced_to_larger = largest_unit(options).is_some_and(|largest| largest < unit);
-    if count == unrounded_count && (has_higher || has_lower) && !balanced_to_larger {
+    if count == unrounded_count && !has_smallest && (has_higher || has_lower) && !balanced_to_larger
+    {
         let mut lower_cursor = cursor;
         for lower_unit in (unit + 1)..=3 {
             if lower_unit == 2 && unit < 2 {
@@ -1001,6 +1074,9 @@ fn validate_largest_unit(options: Option<&Value>) -> Result<(), VmError> {
         return Ok(());
     }
     if let Value::String(unit) = value {
+        if unit == "auto" {
+            return Ok(());
+        }
         unit_index(&unit).map(|_| ())
     } else {
         Ok(())
