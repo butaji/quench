@@ -62,6 +62,14 @@ struct NativeSchedule<'a> {
     current_id: i32,
     hold_count: i32,
     queue_count: i32,
+    #[cfg(feature = "execution-trace")]
+    task_iterations: [usize; 4],
+    #[cfg(feature = "execution-trace")]
+    queue_iterations: usize,
+    #[cfg(feature = "execution-trace")]
+    append_steps: usize,
+    #[cfg(feature = "execution-trace")]
+    direct_branches: [usize; 12],
 }
 
 fn execute_linked_schedule_state(
@@ -73,6 +81,7 @@ fn execute_linked_schedule_state(
 ) -> Option<crate::value::Value> {
     let mut state = NativeSchedule::new(start, table, scheduler)?;
     let iterations = state.run()?;
+    state.trace_direct_work();
     state.commit(current, current_id)?;
     crate::execution_trace::kernel("linked_schedule_native_state", false);
     crate::execution_trace::numeric_kernel_iterations(
@@ -101,6 +110,14 @@ impl<'a> NativeSchedule<'a> {
             current_id: 0,
             hold_count: exact_i32(scheduler.word(scheduler.hold_count).number()?)?,
             queue_count: exact_i32(scheduler.word(scheduler.queue_count).number()?)?,
+            #[cfg(feature = "execution-trace")]
+            task_iterations: [0; 4],
+            #[cfg(feature = "execution-trace")]
+            queue_iterations: 0,
+            #[cfg(feature = "execution-trace")]
+            append_steps: 0,
+            #[cfg(feature = "execution-trace")]
+            direct_branches: [0; 12],
         };
         state.current?;
         for index in 0..table.runners.len() {
@@ -244,6 +261,16 @@ impl<'a> NativeSchedule<'a> {
     }
 
     fn run_task(&mut self, current: usize, packet: Option<usize>) -> Option<Option<usize>> {
+        #[cfg(feature = "execution-trace")]
+        {
+            let kind = match self.task(current).kind {
+                NativeTaskKind::Idle { .. } => 0,
+                NativeTaskKind::Device { .. } => 1,
+                NativeTaskKind::Worker { .. } => 2,
+                NativeTaskKind::Handler { .. } => 3,
+            };
+            self.task_iterations[kind] += 1;
+        }
         match self.task(current).kind {
             NativeTaskKind::Idle { .. } => self.run_idle(current),
             NativeTaskKind::Device { .. } => self.run_device(current, packet),
@@ -288,13 +315,25 @@ impl<'a> NativeSchedule<'a> {
             return None;
         };
         let (next_v1, next) = if let Some(packet) = packet {
+            #[cfg(feature = "execution-trace")]
+            {
+                self.direct_branches[0] += 1;
+            }
             (Some(packet), self.hold(current)?)
         } else if let Some(queued) = v1 {
+            #[cfg(feature = "execution-trace")]
+            {
+                self.direct_branches[1] += 1;
+            }
             (
                 None,
                 Some(self.queue_packet(current, queued, self.packets.get(queued)?.id)?),
             )
         } else {
+            #[cfg(feature = "execution-trace")]
+            {
+                self.direct_branches[2] += 1;
+            }
             (None, self.suspend(current)?)
         };
         self.task_mut(current).kind = NativeTaskKind::Device { v1: next_v1 };
@@ -356,15 +395,33 @@ impl<'a> NativeSchedule<'a> {
         };
         if let Some(packet) = incoming {
             if self.packets.get(packet)?.kind == work_kind {
+                #[cfg(feature = "execution-trace")]
+                {
+                    self.direct_branches[3] += 1;
+                }
                 v1 = Some(self.append_packet(v1, packet)?);
             } else {
+                #[cfg(feature = "execution-trace")]
+                {
+                    self.direct_branches[4] += 1;
+                }
                 v2 = Some(self.append_packet(v2, packet)?);
             }
         }
         let next = match v1 {
-            None => self.suspend(current)?,
+            None => {
+                #[cfg(feature = "execution-trace")]
+                {
+                    self.direct_branches[5] += 1;
+                }
+                self.suspend(current)?
+            }
             Some(work) if usize::try_from(self.packets.get(work)?.a1).ok()? < data_size => {
                 let Some(device) = v2 else {
+                    #[cfg(feature = "execution-trace")]
+                    {
+                        self.direct_branches[6] += 1;
+                    }
                     self.task_mut(current).kind = NativeTaskKind::Handler {
                         v1,
                         v2,
@@ -381,9 +438,17 @@ impl<'a> NativeSchedule<'a> {
                 self.packets.get_mut(device)?.a1 = self.packets.get(work)?.payload[offset] as i32;
                 self.packets.get_mut(work)?.a1 += 1;
                 let target = self.packets.get(device)?.id;
+                #[cfg(feature = "execution-trace")]
+                {
+                    self.direct_branches[7] += 1;
+                }
                 Some(self.queue_packet(current, device, target)?)
             }
             Some(work) => {
+                #[cfg(feature = "execution-trace")]
+                {
+                    self.direct_branches[8] += 1;
+                }
                 v1 = self.packets.get(work)?.link;
                 let target = self.packets.get(work)?.id;
                 Some(self.queue_packet(current, work, target)?)
@@ -404,6 +469,10 @@ impl<'a> NativeSchedule<'a> {
             return Some(packet);
         };
         for _ in 0..self.packets.len() {
+            #[cfg(feature = "execution-trace")]
+            {
+                self.append_steps += 1;
+            }
             match self.packets.get(tail)?.link {
                 Some(next) => tail = next,
                 None => {
@@ -416,6 +485,10 @@ impl<'a> NativeSchedule<'a> {
     }
 
     fn queue_packet(&mut self, current: usize, packet: usize, target: usize) -> Option<usize> {
+        #[cfg(feature = "execution-trace")]
+        {
+            self.queue_iterations += 1;
+        }
         self.queue_count = self.queue_count.checked_add(1)?;
         self.packets.get_mut(packet)?.link = None;
         self.packets.get_mut(packet)?.id = current;
@@ -425,13 +498,22 @@ impl<'a> NativeSchedule<'a> {
         if target_task.queue.is_none() {
             target_task.queue = Some(packet);
             target_task.state |= runnable;
-            return Some(if target_task.priority > current_priority {
+            let next = if target_task.priority > current_priority {
                 target
             } else {
                 current
-            });
+            };
+            #[cfg(feature = "execution-trace")]
+            {
+                self.direct_branches[9] += 1;
+            }
+            return Some(next);
         }
         let head = target_task.queue;
+        #[cfg(feature = "execution-trace")]
+        {
+            self.direct_branches[10] += 1;
+        }
         self.append_packet(head, packet)?;
         Some(current)
     }
