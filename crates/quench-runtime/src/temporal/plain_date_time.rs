@@ -173,13 +173,34 @@ fn difference(
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
     )?;
     let right = fields(&from(other)?)?;
-    let largest = options
-        .and_then(|value| crate::execute::get_property_result(value, "largestUnit").ok())
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "day".into());
+    let largest = if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined))
+    {
+        if !crate::value::is_object(options) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
+        let largest_value = crate::execute::get_property_result(options, "largestUnit")?;
+        let largest = if matches!(largest_value, Value::Undefined) {
+            "day".into()
+        } else {
+            let text = crate::conversion::to_string(&largest_value)?;
+            text.strip_suffix('s').unwrap_or(&text).to_string()
+        };
+        let increment = crate::execute::get_property_result(options, "roundingIncrement")?;
+        if !matches!(increment, Value::Undefined) {
+            let _ = crate::conversion::to_number(&increment)?;
+        }
+        let mode = crate::execute::get_property_result(options, "roundingMode")?;
+        if !matches!(mode, Value::Undefined) {
+            let _ = crate::conversion::to_string(&mode)?;
+        }
+        let smallest = crate::execute::get_property_result(options, "smallestUnit")?;
+        if !matches!(smallest, Value::Undefined) {
+            let _ = crate::conversion::to_string(&smallest)?;
+        }
+        largest
+    } else {
+        "day".into()
+    };
     if matches!(largest.as_str(), "year" | "month" | "week") {
         return calendar_difference(&left, &right, direction, &largest);
     }
@@ -235,7 +256,7 @@ fn calendar_difference(
     if largest == "week" {
         days %= 7;
     }
-    let sign = direction as i64;
+    let sign = 1_i64;
     crate::temporal::duration::construct(&[
         Value::Number((years * sign) as f64),
         Value::Number((months * sign) as f64),
@@ -604,11 +625,12 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid rounding options"))?;
     let unit = crate::execute::get_property_result(options, "smallestUnit")?;
-    let Value::String(unit) = unit else {
-        return Err(crate::value::error::throw_range_error(
+    if crate::conversion::is_symbol(&unit) {
+        return Err(crate::value::error::throw_type_error(
             "Invalid smallestUnit",
         ));
-    };
+    }
+    let unit = crate::conversion::to_string(&unit)?;
     let quantum = match unit.as_str() {
         "hour" => 3_600_000_000_000.0,
         "minute" => 60_000_000_000.0,
@@ -622,10 +644,37 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             ))
         }
     };
-    let increment = crate::execute::get_property_result(options, "roundingIncrement")
-        .ok()
-        .and_then(|value| crate::conversion::to_number(&value).ok())
-        .unwrap_or(1.0);
+    let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
+    let increment = if matches!(increment_value, Value::Undefined) {
+        1.0
+    } else {
+        crate::conversion::to_number(&increment_value)?
+    };
+    let mode_value = crate::execute::get_property_result(options, "roundingMode")?;
+    if !matches!(mode_value, Value::Undefined) {
+        if crate::conversion::is_symbol(&mode_value) {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid roundingMode",
+            ));
+        }
+        let mode = crate::conversion::to_string(&mode_value)?;
+        if !matches!(
+            mode.as_str(),
+            "ceil"
+                | "floor"
+                | "expand"
+                | "halfCeil"
+                | "halfFloor"
+                | "halfEven"
+                | "halfExpand"
+                | "halfTrunc"
+                | "trunc"
+        ) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid roundingMode",
+            ));
+        }
+    }
     round_values(fields(receiver)?, quantum, increment)
 }
 
