@@ -517,3 +517,5 @@ test-https-agent-unref-socket.js
 test-https-agent-sockets-leak.js
 test-https-agent-session-eviction.js
 test-https-agent-session-injection.js
+test-https-argument-of-creating.js
+test-https-client-override-global-agent.js
