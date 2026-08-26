@@ -77,6 +77,7 @@ pub struct NetState {
     next: u64,
     pub servers: HashMap<u64, Rc<RefCell<NetServer>>>,
     pub sockets: HashMap<u64, Rc<RefCell<NetSocket>>>,
+    pub pending_errors: Vec<(Value, Value)>,
 }
 
 impl Default for NetState {
@@ -91,6 +92,7 @@ impl NetState {
             next: 1,
             servers: HashMap::new(),
             sockets: HashMap::new(),
+            pending_errors: Vec::new(),
         }
     }
 }
@@ -98,13 +100,10 @@ impl NetState {
 /// Does any live net object keep the event loop alive?
 pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
     let host = state.borrow();
-    host.net
-        .servers
-        .values()
-        .any(|s| {
-            let server = s.borrow();
-            server.listening && server.refed && !server.closed
-        })
+    host.net.servers.values().any(|s| {
+        let server = s.borrow();
+        server.listening && server.refed && !server.closed
+    }) || !host.net.pending_errors.is_empty()
         || host
             .net
             .sockets

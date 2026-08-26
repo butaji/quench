@@ -210,7 +210,14 @@ pub fn server_listen(
     let (port, host) = listen_target(state, args)?;
     let listener = match bind_listener(port, host.as_deref()) {
         Ok(listener) => listener,
-        Err(error) => return Err(server_bind_error(&error)),
+        Err(error) => {
+            state
+                .borrow_mut()
+                .net
+                .pending_errors
+                .push((receiver.clone(), server_bind_error(&error)));
+            return Ok(receiver);
+        }
     };
     register_server(state, &receiver, Some(listener))?;
     super::set_server_connection_key(&receiver, port, host.as_deref())?;
@@ -261,7 +268,7 @@ fn add_listener_cb(
     Ok(())
 }
 
-fn server_bind_error(error: &std::io::Error) -> VmError {
+fn server_bind_error(error: &std::io::Error) -> Value {
     let code = bind_code(error);
     let message = format!("{code}: Another server is running on port");
     let props = vec![
@@ -269,7 +276,7 @@ fn server_bind_error(error: &std::io::Error) -> VmError {
         ("message".to_string(), Value::String(message)),
         ("code".to_string(), Value::String(code.to_string())),
     ];
-    VmError::Thrown(host_api::object(props))
+    host_api::object(props)
 }
 
 fn bind_code(error: &std::io::Error) -> &'static str {
