@@ -130,7 +130,8 @@ pub(crate) fn execute(
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
     let left = date_parts(receiver)?;
-    let right = date_parts(other)?;
+    let right_value = from(other, None)?;
+    let right = date_parts(Some(&right_value))?;
     Ok(Value::Boolean(left == right))
 }
 
