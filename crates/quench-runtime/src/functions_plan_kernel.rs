@@ -1,4 +1,4 @@
-fn execute_plan_loop(
+fn execute_counted_method_loop(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
@@ -11,7 +11,7 @@ fn execute_plan_loop(
         return Ok(None);
     };
     if let Some(result) =
-        execute_direct_plan_loop(receiver, length_method, element_method, body_method)
+        execute_direct_method_loop(receiver, length_method, element_method, body_method)
     {
         return Ok(Some(result));
     }
@@ -36,28 +36,28 @@ fn execute_plan_loop(
         if execute_direct_counted_method(&body, &constraint).is_none() {
             let _ = crate::functions::execute_target(&body, &constraint, &[])?;
         }
-        crate::execution_trace::kernel("plan_execute_loop", false);
+        crate::execution_trace::kernel("F|C|S", false);
         index += 1.0;
     }
     Ok(Some(crate::value::Value::Undefined))
 }
 
-fn execute_recalculate_method(
+fn execute_select_update_call(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    let Some(crate::facts::DirectMethodFact::Recalculate {
+    let Some(crate::facts::DirectMethodFact::SelectUpdateCall {
         input_method,
         output_method,
-        strength_slot,
-        weakest_method,
-        receiver_strength,
-        input_strength,
-        output_strength,
-        input_stay,
-        output_stay,
-        extra_stay_objects,
-        execute_method,
+        namespace_slot,
+        combine_method,
+        receiver_value,
+        input_value,
+        output_value,
+        input_flag,
+        output_flag,
+        extra_flag_objects,
+        conditional_method,
     }) = function.code.facts().direct_method.as_deref()
     else {
         return Ok(None);
@@ -68,63 +68,59 @@ fn execute_recalculate_method(
     let Some(output) = plain_property_select(receiver, output_method) else {
         return Ok(None);
     };
-    let Some(strength) = plain_data_property(receiver, receiver_strength) else {
+    let Some(receiver_value) = plain_data_property(receiver, receiver_value) else {
         return Ok(None);
     };
-    let Some(input_strength) = plain_data_property(
+    let Some(input_value) = plain_data_property(
         &crate::value::Value::Object(std::rc::Rc::clone(&input)),
-        input_strength,
+        input_value,
     ) else {
         return Ok(None);
     };
-    let strength_namespace = function.captures.get(*strength_slot);
-    let weakest = call_fact_named(
-        &strength_namespace,
-        weakest_method,
-        &[strength, input_strength],
-    )?;
+    let namespace = function.captures.get(*namespace_slot);
+    let combined = call_fact_named(&namespace, combine_method, &[receiver_value, input_value])?;
 
     // The weakest call is observable.  From this point onward the kernel must
     // complete through ordinary JS operations on a missed word guard rather
     // than return None and replay the method in the interpreter.
     let input_value = crate::value::Value::Object(std::rc::Rc::clone(&input));
-    let mut stay = crate::vm::is_truthy(&crate::execute::get_property_result(
+    let mut flag = crate::vm::is_truthy(&crate::execute::get_property_result(
         &input_value,
-        input_stay,
+        input_flag,
     )?);
-    for property in extra_stay_objects {
+    for property in extra_flag_objects {
         let owner = crate::execute::get_property_result(receiver, property)?;
-        let value = crate::execute::get_property_result(&owner, input_stay)?;
-        stay &= crate::vm::is_truthy(&value);
+        let value = crate::execute::get_property_result(&owner, input_flag)?;
+        flag &= crate::vm::is_truthy(&value);
     }
 
-    let mut output_value = crate::value::Value::Object(std::rc::Rc::clone(&output));
-    if let (Some(strength_word), Some(stay_word)) = (
-        plain_own_word(&output, output_strength),
-        plain_own_word(&output, output_stay),
+    let mut output_object = crate::value::Value::Object(std::rc::Rc::clone(&output));
+    if let (Some(value_word), Some(flag_word)) = (
+        plain_own_word(&output, output_value),
+        plain_own_word(&output, output_flag),
     ) {
-        strength_word.store(weakest);
-        stay_word.store(crate::value::Value::Boolean(stay));
+        value_word.store(combined);
+        flag_word.store(crate::value::Value::Boolean(flag));
     } else {
-        output_value =
-            crate::properties::assign_set_property(&output_value, output_strength, weakest)?;
+        output_object =
+            crate::properties::assign_set_property(&output_object, output_value, combined)?;
         let _ = crate::properties::assign_set_property(
-            &output_value,
-            output_stay,
-            crate::value::Value::Boolean(stay),
+            &output_object,
+            output_flag,
+            crate::value::Value::Boolean(flag),
         )?;
     }
-    if stay {
-        let execute = crate::execute::get_property_result(receiver, execute_method)?;
+    if flag {
+        let execute = crate::execute::get_property_result(receiver, conditional_method)?;
         if execute_direct_counted_method(&execute, receiver).is_none() {
             let _ = crate::functions::execute_target(&execute, receiver, &[])?;
         }
     }
-    crate::execution_trace::kernel("recalculate_method", false);
+    crate::execution_trace::kernel("S|C", false);
     Ok(Some(crate::value::Value::Undefined))
 }
 
-enum DirectPlanAction {
+enum DirectMethodAction {
     Noop,
     Copy {
         target: *const crate::register_file::SlotWord,
@@ -134,23 +130,22 @@ enum DirectPlanAction {
     },
 }
 
-impl DirectPlanAction {
+impl DirectMethodAction {
     fn execute(&self) {
         match self {
-            Self::Noop => crate::execution_trace::kernel("counted_method_noop", false),
+            Self::Noop => crate::execution_trace::kernel("S|C", false),
             Self::Copy { target, source, .. } => {
                 // SAFETY: admission roots both owners in this action and
                 // ordinary own-slot mutation cannot relocate either word.
                 unsafe { &**target }.copy_from(unsafe { &**source });
-                crate::execution_trace::kernel("counted_method_copy_property", false);
+                crate::execution_trace::kernel("S|C", false);
             }
         }
-        crate::execution_trace::kernel("plan_execute_loop", false);
-        crate::execution_trace::kernel("plan_execute_direct", false);
+        crate::execution_trace::kernel("F|C|S", false);
     }
 }
 
-fn execute_direct_plan_loop(
+fn execute_direct_method_loop(
     receiver: &crate::value::Value,
     length_method: &str,
     element_method: &str,
@@ -166,7 +161,7 @@ fn execute_direct_plan_loop(
     for index in 0..input.logical_len() {
         let constraint = crate::locals::resolved_replacement(input.dense_value_at(index)?);
         let body = plain_method(&constraint, body_method)?;
-        actions.push(admit_direct_plan_action(&body, &constraint)?);
+        actions.push(admit_direct_method_action(&body, &constraint)?);
     }
     for action in &actions {
         action.execute();
@@ -215,12 +210,12 @@ fn collection_array_for_methods(
     nested_array_for_methods(&nested, &nested_length, &nested_element)
 }
 
-fn admit_direct_plan_action(
+fn admit_direct_method_action(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     receiver: &crate::value::Value,
-) -> Option<DirectPlanAction> {
+) -> Option<DirectMethodAction> {
     match function.code.facts().direct_method.as_deref()? {
-        crate::facts::DirectMethodFact::Noop => Some(DirectPlanAction::Noop),
+        crate::facts::DirectMethodFact::Noop => Some(DirectMethodAction::Noop),
         crate::facts::DirectMethodFact::CopyMethodProperty {
             target_method,
             source_method,
@@ -231,7 +226,7 @@ fn admit_direct_plan_action(
             let target = plain_own_word(&target_owner, property).map(std::ptr::from_ref)?;
             let source =
                 crate::vm::proven_own_word(&source_owner, property).map(std::ptr::from_ref)?;
-            Some(DirectPlanAction::Copy {
+            Some(DirectMethodAction::Copy {
                 target,
                 source,
                 _target_owner: target_owner,
@@ -266,7 +261,7 @@ fn execute_direct_counted_method(
     };
     match function.code.facts().direct_method.as_deref()? {
         crate::facts::DirectMethodFact::Noop => {
-            crate::execution_trace::kernel("counted_method_noop", false);
+            crate::execution_trace::kernel("S|C", false);
             Some(())
         }
         crate::facts::DirectMethodFact::CopyMethodProperty {
@@ -285,7 +280,7 @@ fn execute_direct_counted_method(
             let target = plain_own_word(&target, property)?;
             let source = crate::vm::proven_own_word(&source, property)?;
             target.copy_from(source);
-            crate::execution_trace::kernel("counted_method_copy_property", false);
+            crate::execution_trace::kernel("S|C", false);
             Some(())
         }
         crate::facts::DirectMethodFact::PropertyLoad { property } => {
@@ -308,7 +303,7 @@ fn execute_direct_counted_method(
         }
         crate::facts::DirectMethodFact::AppendArray { .. }
         | crate::facts::DirectMethodFact::SlotDot3 { .. }
-        | crate::facts::DirectMethodFact::Recalculate { .. } => None,
+        | crate::facts::DirectMethodFact::SelectUpdateCall { .. } => None,
     }
 }
 
@@ -386,11 +381,11 @@ fn execute_constraint_collection_loop(
     let variable = crate::locals::resolved_replacement(variable.clone());
     let collection = crate::locals::resolved_replacement(collection.clone());
     macro_rules! admit {
-        ($value:expr, $reason:literal) => {
+        ($value:expr, $_reason:literal) => {
             match $value {
                 Some(value) => value,
                 None => {
-                    crate::execution_trace::kernel(concat!("filtered_reject_", $reason), true);
+                    crate::execution_trace::kernel("F|C|S", true);
                     return Ok(None);
                 }
             }
@@ -414,12 +409,12 @@ fn execute_constraint_collection_loop(
     let Some(crate::facts::DirectMethodFact::AppendArray { property }) =
         append.code.facts().direct_method.as_deref()
     else {
-        crate::execution_trace::kernel("filtered_reject_append_fact", true);
+        crate::execution_trace::kernel("F|C|S", true);
         return Ok(None);
     };
     let Some(crate::value::Value::Array(output)) = plain_data_property(&collection, property)
     else {
-        crate::execution_trace::kernel("filtered_reject_output_array", true);
+        crate::execution_trace::kernel("F|C|S", true);
         return Ok(None);
     };
     if !input.is_packed_ordinary()
@@ -428,7 +423,7 @@ fn execute_constraint_collection_loop(
         || !crate::locals::array_word_is_current(&output)
         || std::rc::Rc::ptr_eq(&input, &output)
     {
-        crate::execution_trace::kernel("filtered_reject_array_guard", true);
+        crate::execution_trace::kernel("F|C|S", true);
         return Ok(None);
     }
 
@@ -439,7 +434,7 @@ fn execute_constraint_collection_loop(
     let iterations = input.logical_len();
     for index in 0..iterations {
         let Some(constraint) = input.dense_value_at(index) else {
-            crate::execution_trace::kernel("filtered_reject_input_hole", true);
+            crate::execution_trace::kernel("F|C|S", true);
             return Ok(None);
         };
         let constraint = crate::locals::resolved_replacement(constraint);
@@ -447,11 +442,11 @@ fn execute_constraint_collection_loop(
             continue;
         }
         let Some(predicate) = plain_method(&constraint, predicate_method) else {
-            crate::execution_trace::kernel("filtered_reject_predicate_method", true);
+            crate::execution_trace::kernel("F|C|S", true);
             return Ok(None);
         };
         let Some(satisfied) = execute_direct_predicate(&predicate, &constraint) else {
-            crate::execution_trace::kernel("filtered_reject_predicate_fact", true);
+            crate::execution_trace::kernel("F|C|S", true);
             return Ok(None);
         };
         if satisfied {
@@ -463,8 +458,7 @@ fn execute_constraint_collection_loop(
         let _ = crate::builtins::array_push(Some(&receiver), &selected);
     }
     for _ in 0..iterations {
-        crate::execution_trace::kernel("constraint_collection_loop", false);
-        crate::execution_trace::kernel("filtered_method_loop_direct", false);
+        crate::execution_trace::kernel("F|C|S", false);
     }
     Ok(Some(crate::value::Value::Undefined))
 }

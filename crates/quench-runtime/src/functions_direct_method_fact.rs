@@ -7,7 +7,7 @@ pub(crate) fn direct_method_fact(
     if body.statements.is_empty() {
         return Some(std::rc::Rc::new(crate::facts::DirectMethodFact::Noop));
     }
-    if let Some(fact) = recalculate_fact(body.statements.as_slice(), locals) {
+    if let Some(fact) = select_update_call_fact(body.statements.as_slice(), locals) {
         return Some(std::rc::Rc::new(fact));
     }
     if let Some(fact) = direct_return_fact(function, body.statements.as_slice(), locals) {
@@ -49,12 +49,12 @@ pub(crate) fn direct_method_fact(
     ))
 }
 
-fn recalculate_fact(
+fn select_update_call_fact(
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &std::collections::HashMap<String, u16>,
 ) -> Option<crate::facts::DirectMethodFact> {
     use oxc::ast::ast::{AssignmentTarget, Expression, Statement};
-    let [Statement::VariableDeclaration(bindings), strength, stay, Statement::IfStatement(run)] =
+    let [Statement::VariableDeclaration(bindings), value_update, flag_update, Statement::IfStatement(run)] =
         statements
     else {
         return None;
@@ -67,77 +67,75 @@ fn recalculate_fact(
     let input_method = zero_argument_this_call(input.init.as_ref()?)?;
     let output_method = zero_argument_this_call(output.init.as_ref()?)?;
 
-    let Statement::ExpressionStatement(strength) = strength else {
+    let Statement::ExpressionStatement(value_update) = value_update else {
         return None;
     };
-    let Expression::AssignmentExpression(strength) = &strength.expression else {
+    let Expression::AssignmentExpression(value_update) = &value_update.expression else {
         return None;
     };
-    if strength.operator != oxc::syntax::operator::AssignmentOperator::Assign {
+    if value_update.operator != oxc::syntax::operator::AssignmentOperator::Assign {
         return None;
     }
-    let AssignmentTarget::StaticMemberExpression(output_strength_target) = &strength.left else {
+    let AssignmentTarget::StaticMemberExpression(output_value_target) = &value_update.left else {
         return None;
     };
-    let Expression::Identifier(output_strength_object) = &output_strength_target.object else {
+    let Expression::Identifier(output_value_object) = &output_value_target.object else {
         return None;
     };
-    (output_strength_object.name == output_local).then_some(())?;
-    let Expression::CallExpression(weakest) = &strength.right else {
+    (output_value_object.name == output_local).then_some(())?;
+    let Expression::CallExpression(combine) = &value_update.right else {
         return None;
     };
-    let Expression::StaticMemberExpression(weakest_member) = &weakest.callee else {
+    let Expression::StaticMemberExpression(combine_member) = &combine.callee else {
         return None;
     };
-    let Expression::Identifier(strength_object) = &weakest_member.object else {
+    let Expression::Identifier(namespace_object) = &combine_member.object else {
         return None;
     };
-    let [receiver_strength, input_strength] = weakest.arguments.as_slice() else {
+    let [receiver_value, input_value] = combine.arguments.as_slice() else {
         return None;
     };
-    let receiver_strength = receiver_strength.as_expression()?;
-    let receiver_strength = direct_this_member(receiver_strength)?;
-    let input_strength = input_strength.as_expression()?;
-    let Expression::StaticMemberExpression(input_strength) = input_strength else {
+    let receiver_value = direct_this_member(receiver_value.as_expression()?)?;
+    let Expression::StaticMemberExpression(input_value) = input_value.as_expression()? else {
         return None;
     };
-    let Expression::Identifier(input_strength_object) = &input_strength.object else {
+    let Expression::Identifier(input_value_object) = &input_value.object else {
         return None;
     };
-    (input_strength_object.name == input_local).then_some(())?;
+    (input_value_object.name == input_local).then_some(())?;
 
-    let Statement::ExpressionStatement(stay) = stay else {
+    let Statement::ExpressionStatement(flag_update) = flag_update else {
         return None;
     };
-    let Expression::AssignmentExpression(stay) = &stay.expression else {
+    let Expression::AssignmentExpression(flag_update) = &flag_update.expression else {
         return None;
     };
-    if stay.operator != oxc::syntax::operator::AssignmentOperator::Assign {
+    if flag_update.operator != oxc::syntax::operator::AssignmentOperator::Assign {
         return None;
     }
-    let AssignmentTarget::StaticMemberExpression(output_stay_target) = &stay.left else {
+    let AssignmentTarget::StaticMemberExpression(output_flag_target) = &flag_update.left else {
         return None;
     };
-    let Expression::Identifier(output_stay_object) = &output_stay_target.object else {
+    let Expression::Identifier(output_flag_object) = &output_flag_target.object else {
         return None;
     };
-    (output_stay_object.name == output_local).then_some(())?;
-    let mut stay_terms = Vec::new();
-    flatten_and_terms(&stay.right, &mut stay_terms);
-    let mut input_stay = None;
-    let mut extra_stay_fields = Vec::new();
-    for term in stay_terms {
+    (output_flag_object.name == output_local).then_some(())?;
+    let mut flag_terms = Vec::new();
+    flatten_and_terms(&flag_update.right, &mut flag_terms);
+    let mut input_flag = None;
+    let mut extra_flag_fields = Vec::new();
+    for term in flag_terms {
         let Expression::StaticMemberExpression(member) = term else {
             return None;
         };
         match &member.object {
             Expression::Identifier(identifier) if identifier.name == input_local => {
-                input_stay = Some(member.property.name.to_string());
+                input_flag = Some(member.property.name.to_string());
             }
             Expression::StaticMemberExpression(owner)
                 if matches!(owner.object, Expression::ThisExpression(_)) =>
             {
-                extra_stay_fields.push((
+                extra_flag_fields.push((
                     owner.property.name.to_string(),
                     member.property.name.to_string(),
                 ));
@@ -145,14 +143,14 @@ fn recalculate_fact(
             _ => return None,
         }
     }
-    let input_stay = input_stay?;
-    if extra_stay_fields
+    let input_flag = input_flag?;
+    if extra_flag_fields
         .iter()
-        .any(|(_, property)| property != &input_stay)
+        .any(|(_, property)| property != &input_flag)
     {
         return None;
     }
-    let extra_stay_objects = extra_stay_fields
+    let extra_flag_objects = extra_flag_fields
         .into_iter()
         .map(|(owner, _)| owner)
         .collect();
@@ -163,26 +161,26 @@ fn recalculate_fact(
     let Expression::Identifier(test_object) = &test.object else {
         return None;
     };
-    (test_object.name == output_local && test.property.name == output_stay_target.property.name)
+    (test_object.name == output_local && test.property.name == output_flag_target.property.name)
         .then_some(())?;
     let Statement::ExpressionStatement(execute) = &run.consequent else {
         return None;
     };
-    let execute_method = zero_argument_this_call(&execute.expression)?;
+    let conditional_method = zero_argument_this_call(&execute.expression)?;
     run.alternate.is_none().then_some(())?;
 
-    Some(crate::facts::DirectMethodFact::Recalculate {
+    Some(crate::facts::DirectMethodFact::SelectUpdateCall {
         input_method: input_method.to_string(),
         output_method: output_method.to_string(),
-        strength_slot: *locals.get(strength_object.name.as_str())?,
-        weakest_method: weakest_member.property.name.to_string(),
-        receiver_strength: receiver_strength.to_string(),
-        input_strength: input_strength.property.name.to_string(),
-        output_strength: output_strength_target.property.name.to_string(),
-        input_stay,
-        output_stay: output_stay_target.property.name.to_string(),
-        extra_stay_objects,
-        execute_method: execute_method.to_string(),
+        namespace_slot: *locals.get(namespace_object.name.as_str())?,
+        combine_method: combine_member.property.name.to_string(),
+        receiver_value: receiver_value.to_string(),
+        input_value: input_value.property.name.to_string(),
+        output_value: output_value_target.property.name.to_string(),
+        input_flag,
+        output_flag: output_flag_target.property.name.to_string(),
+        extra_flag_objects,
+        conditional_method: conditional_method.to_string(),
     })
 }
 
@@ -405,7 +403,7 @@ mod direct_method_fact_tests {
     }
 
     #[test]
-    fn records_recalculate_shape_with_optional_stay_dependencies() {
+    fn records_select_update_call_with_optional_flag_dependencies() {
         let allocator = Allocator::default();
         let parsed = Parser::new(
             &allocator,
@@ -419,15 +417,15 @@ mod direct_method_fact_tests {
         let locals = std::collections::HashMap::from([("Rank".to_string(), 7)]);
         assert!(matches!(
             direct_method_fact(function, &locals).as_deref(),
-            Some(crate::facts::DirectMethodFact::Recalculate {
-                strength_slot: 7,
+            Some(crate::facts::DirectMethodFact::SelectUpdateCall {
+                namespace_slot: 7,
                 input_method,
                 output_method,
-                extra_stay_objects,
+                extra_flag_objects,
                 ..
             }) if input_method == "input"
                 && output_method == "output"
-                && extra_stay_objects == &["scale"]
+                && extra_flag_objects == &["scale"]
         ));
     }
 }
