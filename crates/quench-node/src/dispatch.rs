@@ -846,6 +846,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_CUSTOM_EVENT => handlers::custom_event_new,
         CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_new,
         CAP_ASSERTION_ERROR_CONSTRUCTOR => crate::modules::assert::assertion_error_constructor,
+        0x0E03 => crate::modules::dns::dns_exception,
         _ => return None,
     })
 }
