@@ -481,3 +481,9 @@ test-tls-clientcertengine-unsupported.js
 test-tls-getcipher.js
 test-tls-getprotocol.js
 test-tls-no-cert-required.js
+test-tls-get-ca-certificates-default.js
+test-tls-get-ca-certificates-error.js
+test-tls-get-ca-certificates-extra-empty.js
+test-tls-get-ca-certificates-bundled.js
+test-tls-get-ca-certificates-bundled-subset.js
+test-tls-empty-sni-context.js
