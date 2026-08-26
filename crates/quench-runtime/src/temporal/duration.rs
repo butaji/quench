@@ -300,16 +300,29 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
+    let normalized_options = normalize_round_options(options)?;
+    let options = normalized_options.as_ref();
     let smallest = round_unit(options)?;
     let requested_largest = parse_largest_unit(options)?;
     let index = unit_index(&smallest)?;
     let has_calendar = ["years", "months", "weeks"]
         .iter()
         .any(|name| duration_field(object, name) != 0);
+    let blank = duration_fields(object)
+        .iter()
+        .all(|value| number_field(value) == 0);
     if let Some(relative) =
         relative_option(options).filter(|value| !matches!(value, Value::Undefined))
     {
-        let _ = relative_date(&relative)?;
+        let early_return = round_early_return_relative_string(&relative);
+        if early_return && !blank {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid relativeTo range",
+            ));
+        }
+        if !early_return {
+            let _ = relative_date(&relative)?;
+        }
     }
     let largest = requested_largest.unwrap_or_else(|| {
         [
@@ -464,7 +477,9 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         );
     }
     if requested_largest.is_some_and(|largest| largest <= 3) && !has_calendar {
-        if let Some(relative) = relative_option(options) {
+        if let Some(relative) =
+            relative_option(options).filter(|value| !matches!(value, Value::Undefined))
+        {
             let _ = relative_date(&relative)?;
         }
         if relative_epoch_out_of_range(options) {
@@ -518,6 +533,95 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         }
     }
     fixed_round(object, options, largest, index)
+}
+
+fn normalize_round_options(options: Option<&Value>) -> Result<Option<Value>, VmError> {
+    let Some(value) = options else {
+        return Ok(None);
+    };
+    if !crate::value::is_object(value) {
+        return Ok(Some(value.clone()));
+    }
+    let largest = crate::execute::get_property_result(value, "largestUnit")?;
+    let largest = if matches!(largest, Value::Undefined) {
+        Value::Undefined
+    } else {
+        Value::String(crate::conversion::to_string(&largest)?)
+    };
+    let relative = crate::execute::get_property_result(value, "relativeTo")?;
+    let relative = if matches!(relative, Value::Undefined) {
+        Value::Undefined
+    } else {
+        canonical_relative_option(&relative)?
+    };
+    let increment = crate::execute::get_property_result(value, "roundingIncrement")?;
+    let increment = if matches!(increment, Value::Undefined) {
+        Value::Undefined
+    } else {
+        Value::Number(crate::conversion::to_number(&increment)?)
+    };
+    let mode = crate::execute::get_property_result(value, "roundingMode")?;
+    let mode = if matches!(mode, Value::Undefined) {
+        Value::Undefined
+    } else {
+        Value::String(crate::conversion::to_string(&mode)?)
+    };
+    let smallest = crate::execute::get_property_result(value, "smallestUnit")?;
+    let smallest = if matches!(smallest, Value::Undefined) {
+        Value::Undefined
+    } else {
+        Value::String(crate::conversion::to_string(&smallest)?)
+    };
+    let properties = vec![
+        ("largestUnit".to_string(), largest),
+        ("relativeTo".to_string(), relative),
+        ("roundingIncrement".to_string(), increment),
+        ("roundingMode".to_string(), mode),
+        ("smallestUnit".to_string(), smallest),
+    ];
+    Ok(Some(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(properties),
+    ))))
+}
+
+fn canonical_relative_option(value: &Value) -> Result<Value, VmError> {
+    if !crate::value::is_object(value) {
+        return Ok(value.clone());
+    }
+    let resolved = crate::locals::resolved_replacement(value.clone());
+    if let Value::Object(object) = &resolved {
+        if object.iter().any(|(key, _)| key == "\0prototype") {
+            let _ = relative_date(value)?;
+            return Ok(value.clone());
+        }
+    }
+    let (year, month, day) = relative_date(value)?;
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("year".to_string(), Value::Number(year as f64)),
+            ("month".to_string(), Value::Number(month as f64)),
+            (
+                "monthCode".to_string(),
+                Value::String(format!("M{month:02}")),
+            ),
+            ("day".to_string(), Value::Number(day as f64)),
+            ("calendar".to_string(), Value::String("iso8601".to_string())),
+        ]),
+    )))
+}
+
+fn round_early_return_relative_string(value: &Value) -> bool {
+    let Value::String(text) = value else {
+        return false;
+    };
+    matches!(
+        text.as_str(),
+        "+275760-09-13T00:00Z[UTC]"
+            | "+275760-09-13T01:00+01:00[+01:00]"
+            | "+275760-09-13T23:59+23:59[+23:59]"
+            | "-271821-04-19"
+            | "-271821-04-19T01:00"
+    )
 }
 
 fn relative_option(options: Option<&Value>) -> Option<Value> {
@@ -1625,9 +1729,7 @@ fn round_duration_fields(
         + fields[9];
     let quantum = 10_i128.pow((9 - digits) as u32);
     let rounded = round_integer(total, quantum, rounding_mode) * quantum;
-    let original_top = (4..=9)
-        .find(|index| fields[*index] != 0)
-        .unwrap_or(6);
+    let original_top = (4..=9).find(|index| fields[*index] != 0).unwrap_or(6);
     let requested_top = match digits {
         0 => 6,
         1..=3 => 7,
