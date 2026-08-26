@@ -192,7 +192,7 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
         .iter()
         .find(|(from, target, _)| href.as_deref() == Some(*from) && relative == *target)
     {
-        return Some(url_parse_legacy(&[Value::String((*resolved).into())]));
+        return Some(url_parse_legacy(None, &[Value::String((*resolved).into())]));
     }
     if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg") {
         const RESOLUTIONS: &[(&str, &str)] = &[
@@ -205,16 +205,16 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
             ),
         ];
         if let Some((_, resolved)) = RESOLUTIONS.iter().find(|(target, _)| *target == relative) {
-            return Some(url_parse_legacy(&[Value::String((*resolved).into())]));
+            return Some(url_parse_legacy(None, &[Value::String((*resolved).into())]));
         }
         if relative.starts_with("https://") || relative.starts_with("http://") {
-            return Some(url_parse_legacy(&[Value::String(relative.clone().into())]));
+            return Some(url_parse_legacy(None, &[Value::String(relative.clone().into())]));
         }
     }
     if let Some(href) = href.as_deref().filter(|value| value.starts_with("http")) {
         if let Ok(base) = url::Url::parse(href) {
             if let Ok(resolved) = base.join(relative) {
-                return Some(url_parse_legacy(&[Value::String(
+                return Some(url_parse_legacy(None, &[Value::String(
                     resolved.to_string().into(),
                 )]));
             }
@@ -249,8 +249,8 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
     if let Some((_, _, _, resolved)) = PATH_RESOLUTIONS.iter().find(|(scheme, path, target, _)| {
         protocol.as_deref() == Some(*scheme) && pathname == *path && relative == *target
     }) {
-        return Some(url_parse_legacy(&[Value::String((*resolved).into())]));
+        return Some(url_parse_legacy(None, &[Value::String((*resolved).into())]));
     }
     let resolved = resolve_legacy_path(&pathname, relative);
-    Some(url_parse_legacy(&[Value::String(resolved.into())]))
+    Some(url_parse_legacy(None, &[Value::String(resolved.into())]))
 }
