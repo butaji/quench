@@ -71,6 +71,9 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
             Some("Temporal.ZonedDateTime.prototype.toPlainTime")
         }
         Builtin::TemporalZonedDateTimeEquals => Some("Temporal.ZonedDateTime.prototype.equals"),
+        Builtin::TemporalZonedDateTimeWithTimeZone => {
+            Some("Temporal.ZonedDateTime.prototype.withTimeZone")
+        }
         Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => Some("get epochMilliseconds"),
         Builtin::TemporalZonedDateTimeTimeZoneIdGetter => Some("get timeZoneId"),
         Builtin::TemporalZonedDateTimeOffsetGetter => Some("get offset"),
@@ -295,6 +298,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalZonedDateTimeToPlainDate => Some("toPlainDate"),
         Builtin::TemporalZonedDateTimeToPlainTime => Some("toPlainTime"),
         Builtin::TemporalZonedDateTimeEquals => Some("equals"),
+        Builtin::TemporalZonedDateTimeWithTimeZone => Some("withTimeZone"),
         Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => Some("epochMilliseconds"),
         Builtin::TemporalZonedDateTimeTimeZoneIdGetter => Some("timeZoneId"),
         Builtin::TemporalZonedDateTimeOffsetGetter => Some("offset"),
@@ -470,6 +474,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalZonedDateTimeToPlainDate
         | Builtin::TemporalZonedDateTimeToPlainTime => Some(0.0),
         Builtin::TemporalZonedDateTimeEquals => Some(1.0),
+        Builtin::TemporalZonedDateTimeWithTimeZone => Some(1.0),
         Builtin::TemporalZonedDateTimeEpochMillisecondsGetter
         | Builtin::TemporalZonedDateTimeTimeZoneIdGetter
         | Builtin::TemporalZonedDateTimeOffsetGetter
