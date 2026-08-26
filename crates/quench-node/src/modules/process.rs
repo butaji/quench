@@ -449,11 +449,8 @@ pub fn umask(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
             ));
         }
     };
-    if mask > 0o777 {
-        return Err(crate::modules::buffer_enc::invalid_arg_value(
-            format!("The \"mask\" argument is invalid. Received {mask}"),
-        ));
-    }
+    // POSIX umask uses only the permission bits; Node ignores higher bits.
+    let mask = mask & 0o777;
     let mut guard = state.borrow_mut();
     let previous = guard.process.umask;
     guard.process.umask = mask;
