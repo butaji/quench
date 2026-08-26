@@ -77,6 +77,7 @@ pub(crate) fn weak_property(key: &str) -> Value {
 pub(crate) fn set_new(arguments: &[Value]) -> Result<Value, VmError> {
     let set = Value::Set(Rc::new(SetData {
         weak: false,
+        frozen: std::cell::Cell::new(false),
         values: std::cell::RefCell::new(VecDeque::new()),
         properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
@@ -107,6 +108,7 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
     match arguments.first() {
         None | Some(Value::Undefined | Value::Null) => Ok(Value::Set(Rc::new(SetData {
             weak: true,
+            frozen: std::cell::Cell::new(false),
             values: std::cell::RefCell::new(VecDeque::new()),
             properties: std::cell::RefCell::new(Vec::new()),
             prototype: std::cell::RefCell::new(None),
@@ -121,6 +123,7 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
 fn weak_set_from_iterable(iterable: Value) -> Result<Value, VmError> {
     let set = Value::Set(Rc::new(SetData {
         weak: true,
+        frozen: std::cell::Cell::new(false),
         values: std::cell::RefCell::new(VecDeque::new()),
         properties: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
@@ -217,6 +220,9 @@ pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 fn set_add_value(data: &Rc<SetData>, arguments: &[Value]) -> Result<Value, VmError> {
+    if data.is_frozen() {
+        return Ok(Value::Set(Rc::clone(data)));
+    }
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
@@ -250,6 +256,9 @@ pub(crate) fn set_delete(receiver: Option<&Value>, arguments: &[Value]) -> Resul
 }
 
 fn set_delete_value(data: &Rc<SetData>, arguments: &[Value]) -> Value {
+    if data.is_frozen() {
+        return Value::Boolean(false);
+    }
     let Some(value) = arguments.first() else {
         return Value::Boolean(false);
     };
@@ -264,6 +273,9 @@ fn set_delete_value(data: &Rc<SetData>, arguments: &[Value]) -> Value {
 
 pub(crate) fn set_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
     let data = require_set(receiver)?;
+    if data.is_frozen() {
+        return Ok(Value::Undefined);
+    }
     data.values.borrow_mut().clear();
     Ok(Value::Undefined)
 }

@@ -319,6 +319,7 @@ fn close_iterator(
 fn new_set(values: Vec<Value>) -> Value {
     Value::Set(Rc::new(SetData {
         weak: false,
+        frozen: std::cell::Cell::new(false),
         values: std::cell::RefCell::new(
             values
                 .into_iter()
