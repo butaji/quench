@@ -1333,6 +1333,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         let critical = annotation.starts_with('!');
         let annotation = annotation.strip_prefix('!').unwrap_or(annotation);
         if let Some((key, value)) = annotation.split_once('=') {
+            if key.chars().any(|character| character.is_ascii_uppercase()) {
+                return Err(crate::value::error::throw_range_error("Invalid annotation"));
+            }
             if key == "u-ca" && calendar_annotation {
                 if critical || calendar_critical {
                     return Err(crate::value::error::throw_range_error("Invalid annotation"));
@@ -1340,9 +1343,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
                 continue;
             }
             if key == "u-ca" {
-                if value.is_empty()
-                    || key.chars().any(|character| character.is_ascii_uppercase())
-                    || !value.eq_ignore_ascii_case("iso8601")
+                if value.is_empty() || !value.eq_ignore_ascii_case("iso8601")
                 {
                     return Err(crate::value::error::throw_range_error("Invalid annotation"));
                 }
