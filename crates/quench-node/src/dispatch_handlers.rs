@@ -1886,6 +1886,35 @@ pub fn cp_spawn_sync(
     crate::modules::child_process::spawn_sync(_state, args)
 }
 
+pub fn cp_spawn(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let command = args
+        .first()
+        .map(|value| execute::to_js_string(value).unwrap_or_default())
+        .unwrap_or_default();
+    let spawnargs = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| host_api::array(vec![]));
+    let stdin = host_api::object(vec![]);
+    let stdout = host_api::object(vec![]);
+    let stderr = host_api::object(vec![]);
+    Ok(host_api::object(vec![
+        ("pid".into(), Value::Undefined),
+        ("on".into(), host_api::custom_function(quench_runtime::ops::RealmId::ROOT, 2195)),
+        ("\0childCommand".into(), Value::String(command)),
+        ("\0childArgs".into(), spawnargs.clone()),
+        ("stdin".into(), stdin.clone()),
+        ("stdout".into(), stdout.clone()),
+        ("stderr".into(), stderr.clone()),
+        ("stdio".into(), host_api::array(vec![stdin, stdout, stderr])),
+        ("spawnargs".into(), spawnargs),
+    ]))
+}
+
 pub fn cp_exec_sync(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
