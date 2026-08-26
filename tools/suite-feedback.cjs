@@ -25,7 +25,7 @@ const floors = Object.freeze({
   "navier-stokes": 34337
 });
 const expectedKernels = Object.freeze({
-  richards: ["linked_schedule", "linked_task_direct"],
+  richards: ["L|S|C"],
   deltablue: [
     "plan_execute_direct",
     "plan_execute_loop",
@@ -45,7 +45,7 @@ const expectedKernels = Object.freeze({
 });
 const microContracts = Object.freeze({
   deltablue: ["affine-plan.want.json", "plan-execute-loop.want.json"],
-  richards: ["linked-run.want.json"],
+  richards: ["linked-shape-call.want.json"],
   crypto: ["limb-fill.want.json"],
   raytrace: ["vec3-dot-add.want.json"],
   "earley-boyer": ["pair-car-cdr.want.json"],
