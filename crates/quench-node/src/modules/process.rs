@@ -241,6 +241,11 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
 
 pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
+    if !quench_runtime::is_callable(&cb) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"callback\" argument must be of type function".into(),
+        ));
+    }
     let rest = args.get(1..).unwrap_or(&[]).to_vec();
     let resource = crate::modules::async_hooks::new_resource(
         state,
