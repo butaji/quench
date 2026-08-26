@@ -108,6 +108,10 @@ execution_events! {
     NamedSetLayoutMismatch => "named_set_layout_mismatch",
     NamedSetSlotNotCell => "named_set_slot_not_cell",
     NamedSetPromoteCell => "named_set_promote_cell",
+    NamedSetTransitionHit => "named_set_transition_hit",
+    NamedSetOwnMissing => "named_set_own_missing",
+    NamedSetOwnBlocked => "named_set_own_blocked",
+    NamedSetOwnWritable => "named_set_own_writable",
     CryptoKernelShape => "crypto_kernel_shape",
     CryptoKernelPrefix => "crypto_kernel_prefix",
     CryptoKernelProduct => "crypto_kernel_product",
@@ -143,6 +147,17 @@ struct CompactSiteKey {
 }
 
 #[cfg(feature = "execution-trace")]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct FunctionCallSiteKey {
+    store: usize,
+    code: u32,
+    source: u32,
+    params: u16,
+    captures: u16,
+    length: u16,
+}
+
+#[cfg(feature = "execution-trace")]
 #[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
@@ -154,6 +169,8 @@ struct Counters {
     leaf_rejections: HashMap<&'static str, u64>,
     call_shapes: HashMap<(usize, bool, bool), u64>,
     call_targets: HashMap<&'static str, u64>,
+    named_calls: HashMap<String, u64>,
+    named_sets: HashMap<String, u64>,
     events: Vec<u64>,
     transitions: HashMap<(&'static str, &'static str), u64>,
     previous: Option<&'static str>,
@@ -163,6 +180,7 @@ struct Counters {
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
     function_call_shapes: HashMap<(u16, usize, usize), u64>,
+    function_call_sites: HashMap<FunctionCallSiteKey, u64>,
     function_opcode_shapes: HashMap<(u64, u16, u8, [u8; 32]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     descriptor_views_by_op: HashMap<&'static str, u64>,
@@ -528,6 +546,25 @@ pub(crate) fn function_call_shape(
     if enabled() {
         if let Some(code) = code {
             dump_function_shape(params, captures, code);
+            let (store, code_id) = code.trace_identity();
+            let source = (0..code.len())
+                .find_map(|pc| code.metadata_at(pc).and_then(|metadata| metadata.source))
+                .unwrap_or(u32::MAX);
+            let key = FunctionCallSiteKey {
+                store,
+                code: code_id,
+                source,
+                params,
+                captures: u16::try_from(captures).unwrap_or(u16::MAX),
+                length: u16::try_from(code.len()).unwrap_or(u16::MAX),
+            };
+            COUNTERS.with(|counters| {
+                *counters
+                    .borrow_mut()
+                    .function_call_sites
+                    .entry(key)
+                    .or_default() += 1;
+            });
         }
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
@@ -1311,6 +1348,53 @@ pub(crate) fn call_method(_: usize, _: bool, _: bool, _: &'static str) {}
 
 #[inline(always)]
 #[cfg(feature = "execution-trace")]
+pub(crate) fn named_call(key: &str) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            count_bounded_name(&mut counters.borrow_mut().named_calls, key);
+        });
+    }
+}
+
+#[cfg(feature = "execution-trace")]
+fn count_bounded_name(names: &mut HashMap<String, u64>, key: &str) {
+    if let Some(count) = names.get_mut(key) {
+        *count += 1;
+    } else if names.len() < 64 {
+        names.insert(key.to_owned(), 1);
+    } else {
+        let (min_count, victim) = names
+            .iter()
+            .filter(|(name, _)| name.as_str() != "other")
+            .map(|(name, &count)| (count, name.clone()))
+            .min_by_key(|(count, _)| *count)
+            .expect("bounded name table has a replaceable entry");
+        names.remove(&victim);
+        names.insert(key.to_owned(), min_count.saturating_add(1));
+        *names.entry("other".into()).or_default() += 1;
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_call(_: &str) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
+pub(crate) fn named_set(key: &str) {
+    if enabled() {
+        COUNTERS.with(|counters| {
+            count_bounded_name(&mut counters.borrow_mut().named_sets, key);
+        });
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "execution-trace"))]
+pub(crate) fn named_set(_: &str) {}
+
+#[inline(always)]
+#[cfg(feature = "execution-trace")]
 pub(crate) fn event(event: Event) {
     if enabled() {
         COUNTERS.with(|counters| {
@@ -1450,6 +1534,17 @@ pub(crate) fn kernel(id: &'static str, deopt: bool) {
         });
     }
     let _ = (id, deopt);
+}
+
+#[inline(always)]
+pub(crate) fn kernel_iterations(id: &'static str, iterations: usize) {
+    #[cfg(feature = "execution-trace")]
+    if enabled() && iterations != 0 {
+        COUNTERS.with(|counters| {
+            counters.borrow_mut().kernels.entry(id).or_default().0 += iterations as u64;
+        });
+    }
+    let _ = (id, iterations);
 }
 
 #[cfg(feature = "execution-trace")]
@@ -1594,6 +1689,19 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     })
                 },
             ).collect::<Vec<_>>();
+            let mut function_call_sites = counters.function_call_sites.iter().collect::<Vec<_>>();
+            function_call_sites.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
+            let function_call_sites = function_call_sites.into_iter().take(32).map(
+                |(site, &count)| serde_json::json!({
+                    "store": format!("{:x}", site.store),
+                    "code": site.code,
+                    "source": site.source,
+                    "params": site.params,
+                    "captures": site.captures,
+                    "code_len": site.length,
+                    "count": count,
+                }),
+            ).collect::<Vec<_>>();
             let mut function_opcode_shapes: Vec<_> = counters.function_opcode_shapes.iter().collect();
             function_opcode_shapes.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
             let function_opcode_shapes = function_opcode_shapes.into_iter().take(64).map(
@@ -1635,6 +1743,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "leaf_rejections": leaf_rejections,
                 "call_shapes": call_shapes,
                 "call_targets": call_targets,
+                "named_calls": top_string_map(&counters.named_calls, 32),
+                "named_sets": top_string_map(&counters.named_sets, 32),
                 "events": events,
                 "transitions": transitions,
                 "operand_transitions": operand_transitions,
@@ -1642,6 +1752,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "object_shapes": object_shapes,
                 "function_shapes": function_shapes,
                 "function_call_shapes": function_call_shapes,
+                "function_call_sites": function_call_sites,
                 "function_opcode_shapes": function_opcode_shapes,
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
@@ -1724,6 +1835,26 @@ mod lane_profile_tests {
             decode_site_for_opcode(crate::ir::Opcode::CallN, false),
             DecodeSite::Call
         ));
+    }
+
+    #[test]
+    fn ranks_named_call_properties_without_an_unbounded_map() {
+        let mut counters = Counters::default();
+        count_bounded_name(&mut counters.named_calls, "run");
+        count_bounded_name(&mut counters.named_calls, "run");
+        count_bounded_name(&mut counters.named_calls, "schedule");
+        assert_eq!(counters.named_calls.get("run"), Some(&2));
+        assert_eq!(counters.named_calls.get("schedule"), Some(&1));
+
+        for index in 0..80 {
+            count_bounded_name(&mut counters.named_calls, &format!("cold-{index}"));
+        }
+        for _ in 0..100 {
+            count_bounded_name(&mut counters.named_calls, "hot");
+        }
+        assert!(counters.named_calls.contains_key("hot"));
+        assert!(counters.named_calls.len() <= 65);
+        assert!(counters.named_calls.contains_key("other"));
     }
 
     #[test]

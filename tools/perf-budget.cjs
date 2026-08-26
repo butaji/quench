@@ -11,7 +11,7 @@
 // keys and non-numeric, non-null values are invalid; null remains unsupported.
 // The gate derives wall_ms at the host boundary when the sample omits it.
 const fs = require("fs");
-const cp = require("child_process");
+const bounded = require("./lib/bounded-process.cjs");
 
 const [budgetFile, command, ...args] = process.argv.slice(2);
 if (!budgetFile || !command) {
@@ -35,13 +35,20 @@ if (!budgetEntries.length) {
   process.exit(1);
 }
 for (const [name, limit] of budgetEntries) {
-  if (!name || typeof limit !== "number" || !Number.isFinite(limit) || limit < 0) {
-    console.error(`invalid performance budget limit for ${name || "<unnamed>"}`);
+  if (
+    !name ||
+    typeof limit !== "number" ||
+    !Number.isFinite(limit) ||
+    limit < 0
+  ) {
+    console.error(
+      `invalid performance budget limit for ${name || "<unnamed>"}`
+    );
     process.exit(1);
   }
 }
 const started = process.hrtime.bigint();
-const result = cp.spawnSync(command, args, { encoding: "utf8" });
+const result = bounded.spawnSync(command, args, { encoding: "utf8" });
 const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
 if (result.error) throw result.error;
 if (result.status !== 0) {
@@ -84,5 +91,7 @@ for (const [name, limit] of Object.entries(budget)) {
     failures.push(`${name}: ${value} > ${limit}`);
   }
 }
-console.log(JSON.stringify({ metrics, budget, ok: failures.length === 0, failures }));
+console.log(
+  JSON.stringify({ metrics, budget, ok: failures.length === 0, failures })
+);
 if (failures.length) process.exit(1);

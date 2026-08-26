@@ -26,9 +26,100 @@ pub(crate) enum DirectConstructorSource {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LinkedRecordInsertFact {
+    pub(crate) constructor_slot: u16,
+    pub(crate) current: String,
+    pub(crate) list: String,
+    pub(crate) index: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ForwardValueSource {
+    Receiver,
+    Argument(u16),
+    Integer(i32),
+    Capture(u16),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForwardConstructCallFact {
+    pub(crate) method: String,
+    pub(crate) constructor_slot: u16,
+    pub(crate) forwarded_arguments: Rc<[u16]>,
+    pub(crate) constructor_arguments: Rc<[ForwardValueSource]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForwardThenCallFact {
+    pub(crate) first_method: String,
+    pub(crate) nested_property: String,
+    pub(crate) nested_method: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CountedMethodLoopFact {
+    Visit {
+        length_method: String,
+        element_method: String,
+        body_method: String,
+    },
+    Filter {
+        determining_property: String,
+        collection_property: String,
+        length_method: String,
+        element_method: String,
+        predicate_method: String,
+        append_method: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DirectMethodFact {
+    Noop,
+    CopyMethodProperty {
+        target_method: String,
+        source_method: String,
+        property: String,
+    },
+    PropertyLoad {
+        property: String,
+    },
+    PropertyNotEqualCapture {
+        property: String,
+        capture_slot: u16,
+        capture_property: String,
+    },
+    AppendArray {
+        property: String,
+    },
+    SlotDot3 {
+        receiver: [String; 3],
+        argument: [String; 3],
+    },
+    SelectUpdateCall {
+        input_method: String,
+        output_method: String,
+        namespace_slot: u16,
+        combine_method: String,
+        receiver_value: String,
+        input_value: String,
+        output_value: String,
+        input_flag: String,
+        output_flag: String,
+        extra_flag_objects: Vec<String>,
+        conditional_method: String,
+    },
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FunctionFacts {
     pub(crate) direct_constructor: Rc<[DirectConstructorField]>,
+    pub(crate) linked_record_insert: Option<Rc<LinkedRecordInsertFact>>,
+    pub(crate) forward_construct_call: Option<Rc<ForwardConstructCallFact>>,
+    pub(crate) forward_then_call: Option<Rc<ForwardThenCallFact>>,
+    pub(crate) counted_method_loop: Option<Rc<CountedMethodLoopFact>>,
+    pub(crate) direct_method: Option<Rc<DirectMethodFact>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -329,10 +420,12 @@ mod tests {
             .keys()
             .next()
             .expect("literal fact");
-        assert!(program
-            .facts
-            .query_fact_in_context(*site, ReduceContext::Value)
-            .is_known());
+        assert!(
+            program
+                .facts
+                .query_fact_in_context(*site, ReduceContext::Value)
+                .is_known()
+        );
         assert_eq!(
             program.facts.query_fact(FactSiteId(u32::MAX)),
             super::Fact::Unknown

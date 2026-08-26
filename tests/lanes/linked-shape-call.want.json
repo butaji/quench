@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "metrics": {
+    "linked_shape_call_hits": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "L|S|C",
+          "field": "hits"
+        }
+      },
+      "min": 140000
+    },
+    "linked_shape_call_deopts": {
+      "numerator": {
+        "top": {
+          "path": "lanes.l1.kernels",
+          "key": "id",
+          "value": "L|S|C",
+          "field": "deopts"
+        }
+      },
+      "max": 0
+    }
+  }
+}
