@@ -137,7 +137,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?;
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
         let text = crate::conversion::to_string(value)?;
-        if text.contains(['\u{2212}', 'Z', 'z']) {
+        if text.contains(['\u{2212}', 'Z', 'z']) || text.starts_with("-000000") {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
             ));
@@ -196,6 +196,19 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             if time.contains('Z') || time.contains('z') {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid PlainYearMonth",
+                ));
+            }
+            let clock = time.find(['+', '-']).map_or(time, |offset| &time[..offset]);
+            let parts = clock.split(':').collect::<Vec<_>>();
+            if (parts.len() == 1
+                && parts[0].contains(['.', ','])
+                && parts[0]
+                    .split_once(['.', ','])
+                    .is_some_and(|(whole, _)| whole.len() <= 2))
+                || parts.get(1).is_some_and(|part| part.contains(['.', ',']))
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Fractional minutes or hours are not allowed",
                 ));
             }
             date
@@ -313,6 +326,9 @@ fn validate_property_calendar(value: &Value) -> Result<(), VmError> {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
     let calendar = crate::conversion::to_string(value)?;
+    if calendar.starts_with("-000000") {
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    }
     if calendar.eq_ignore_ascii_case("iso8601")
         || (calendar.contains('-')
             && calendar.chars().next().is_some_and(|character| {
