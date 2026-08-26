@@ -1375,6 +1375,37 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
+    if let Value::Object(object) = value {
+        let is_plain_date = object.iter().any(|(key, value)| {
+            key == "\0temporal-plain-date" && value == Value::Boolean(true)
+                || key == "\0prototype"
+                    && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype)
+        });
+        if is_plain_date {
+            let hidden = ["year", "month", "day"].map(|name| {
+                object
+                    .iter()
+                    .find(|(key, value)| {
+                        key == &format!("\0temporal-slot:\0{name}")
+                            && matches!(value, Value::Number(_))
+                    })
+                    .map(|(_, value)| value.clone())
+            });
+            if let [Some(year), Some(month), Some(day)] = hidden {
+                return construct(&[
+                    year,
+                    month,
+                    day,
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                ]);
+            }
+        }
+    }
     let year = crate::execute::get_property_result(value, "year")?;
     let day = crate::execute::get_property_result(value, "day")?;
     let month = crate::execute::get_property_result(value, "month")?;

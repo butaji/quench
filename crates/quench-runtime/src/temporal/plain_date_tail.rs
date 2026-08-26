@@ -11,11 +11,19 @@ pub(super) fn number(value: Option<&Value>) -> Result<f64, VmError> {
 }
 
 pub(super) fn date_object(year: f64, month: f64, day: f64) -> Value {
+    let month_code = format!("M{month:02.0}");
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("year".into(), Value::Number(year)),
+        ("\0temporal-slot:\0year".into(), Value::Number(year)),
         ("month".into(), Value::Number(month)),
-        ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
+        ("\0temporal-slot:\0month".into(), Value::Number(month)),
+        ("monthCode".into(), Value::String(month_code.clone())),
+        (
+            "\0temporal-slot:\0monthCode".into(),
+            Value::String(month_code),
+        ),
         ("day".into(), Value::Number(day)),
+        ("\0temporal-slot:\0day".into(), Value::Number(day)),
         ("calendarId".into(), Value::String("iso8601".into())),
         ("\0temporal-plain-date".into(), Value::Boolean(true)),
         (
