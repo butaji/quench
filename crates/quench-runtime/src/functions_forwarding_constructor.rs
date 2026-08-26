@@ -1,5 +1,21 @@
 struct ForwardingConstructorFact;
 
+const DIRECT_CONSTRUCTOR_SLOTS: usize = 64;
+
+#[derive(Clone)]
+struct DirectConstructorPlan {
+    function: std::rc::Weak<crate::value::FunctionValue>,
+    prototype: std::rc::Weak<crate::value::ObjectData>,
+    prototype_layout: u32,
+    intrinsic_generation: u64,
+    fields: std::rc::Rc<[(crate::value::PropertyName, i16)]>,
+}
+
+thread_local! {
+    static DIRECT_CONSTRUCTORS: std::cell::RefCell<Vec<Option<DirectConstructorPlan>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl ForwardingConstructorFact {
     fn recognize(function: &crate::value::FunctionValue) -> Option<Self> {
         use crate::ir::Opcode::*;
@@ -81,6 +97,10 @@ fn forward_constructor(
         apply,
         crate::value::Value::Builtin(crate::ops::Builtin::FunctionApply)
     ) {
+        if let Some(receiver) = direct_forward_receiver(&initializer, this_value, arguments) {
+            crate::execution_trace::kernel("direct_forward_constructor", false);
+            return Ok((crate::value::Value::Undefined, receiver));
+        }
         crate::functions::execute_target(&initializer, this_value, arguments)?;
     } else {
         forward_custom_apply(function, &initializer, &apply, this_value, arguments)?;
@@ -88,6 +108,157 @@ fn forward_constructor(
     crate::execution_trace::kernel("forwarding_constructor", false);
     let final_this = crate::locals::resolved_replacement(this_value.clone());
     Ok((crate::value::Value::Undefined, final_this))
+}
+
+fn direct_forward_receiver(
+    initializer: &crate::value::Value,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Option<crate::value::Value> {
+    let crate::value::Value::Function(function) = initializer else {
+        return None;
+    };
+    let crate::value::Value::Object(receiver) = receiver else {
+        return None;
+    };
+    if receiver.has_replacement() || receiver.hot_properties().len() != 1 {
+        return None;
+    }
+    let prototype = receiver.hot_properties().slot_value(0)?;
+    let fields = direct_constructor_plan(function, &prototype)?;
+    let mut properties = crate::value::ObjectProperties::with_capacity(fields.len() + 1);
+    properties.push(("\0prototype".into(), prototype));
+    for (name, source) in fields.iter() {
+        properties.push((name.clone(), direct_constructor_value(*source, arguments)?));
+    }
+    Some(crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::from_shared_properties(properties),
+    )))
+}
+
+fn direct_constructor_value(
+    source: i16,
+    arguments: &[crate::value::Value],
+) -> Option<crate::value::Value> {
+    match source {
+        DIRECT_FALSE => Some(crate::value::Value::Boolean(false)),
+        DIRECT_TRUE => Some(crate::value::Value::Boolean(true)),
+        source if source >= 0 => Some(
+            arguments
+                .get(source as usize)
+                .cloned()
+                .unwrap_or(crate::value::Value::Undefined),
+        ),
+        _ => None,
+    }
+}
+
+fn direct_constructor_plan(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    prototype: &crate::value::Value,
+) -> Option<std::rc::Rc<[(crate::value::PropertyName, i16)]>> {
+    let crate::value::Value::Object(prototype) = prototype else {
+        return None;
+    };
+    let slot = (std::rc::Rc::as_ptr(function) as usize >> 4) & (DIRECT_CONSTRUCTOR_SLOTS - 1);
+    if let Some(fields) = cached_direct_constructor(slot, function, prototype) {
+        return Some(fields);
+    }
+    let fields = direct_constructor_fields(function);
+    if fields.len() < 3 {
+        return None;
+    }
+    direct_constructor_prototype(prototype, &fields)?;
+    let fields: std::rc::Rc<[_]> = fields.into();
+    install_direct_constructor(slot, function, prototype, fields.clone());
+    Some(fields)
+}
+
+fn direct_constructor_fields(
+    function: &crate::value::FunctionValue,
+) -> Vec<(crate::value::PropertyName, i16)> {
+    const PREFIX: &str = "\0quench:direct_constructor:";
+    function
+        .properties
+        .borrow()
+        .iter()
+        .filter_map(|(key, value)| {
+            let name = key.strip_prefix(PREFIX)?;
+            let source = value.as_number()?;
+            (source.fract() == 0.0 && (f64::from(i16::MIN)..=f64::from(i16::MAX)).contains(&source))
+                .then(|| (name.to_owned().into(), source as i16))
+        })
+        .collect()
+}
+
+fn direct_constructor_prototype(
+    prototype: &std::rc::Rc<crate::value::ObjectData>,
+    fields: &[(crate::value::PropertyName, i16)],
+) -> Option<()> {
+    if prototype.has_replacement() || !direct_constructor_plain_parent(prototype) {
+        return None;
+    }
+    let prototype = crate::value::Value::Object(prototype.clone());
+    for (field, _) in fields {
+        crate::property_define::accessor(&prototype, field, "set")
+            .is_none()
+            .then_some(())?;
+        (!crate::properties::inherited_write_blocked(&prototype, field)).then_some(())?;
+    }
+    Some(())
+}
+
+fn direct_constructor_plain_parent(prototype: &crate::value::ObjectData) -> bool {
+    let parent = prototype
+        .hot_properties()
+        .position_rev("\0prototype")
+        .and_then(|slot| prototype.hot_properties().slot_value(slot));
+    parent.is_none_or(|value| {
+        matches!(
+            value,
+            crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+        )
+    })
+}
+
+fn cached_direct_constructor(
+    slot: usize,
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    prototype: &std::rc::Rc<crate::value::ObjectData>,
+) -> Option<std::rc::Rc<[(crate::value::PropertyName, i16)]>> {
+    DIRECT_CONSTRUCTORS.with(|plans| {
+        let plans = plans.borrow();
+        let plan = plans.get(slot)?.as_ref()?;
+        let stored_function = plan.function.upgrade()?;
+        let stored_prototype = plan.prototype.upgrade()?;
+        (std::rc::Rc::ptr_eq(&stored_function, function)
+            && std::rc::Rc::ptr_eq(&stored_prototype, prototype)
+            && !prototype.has_replacement()
+            && prototype.semantic_layout_id() == plan.prototype_layout
+            && crate::builtins::intrinsic_override_generation() == plan.intrinsic_generation)
+            .then(|| plan.fields.clone())
+    })
+}
+
+fn install_direct_constructor(
+    slot: usize,
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    prototype: &std::rc::Rc<crate::value::ObjectData>,
+    fields: std::rc::Rc<[(crate::value::PropertyName, i16)]>,
+) {
+    DIRECT_CONSTRUCTORS.with(|plans| {
+        let mut plans = plans.borrow_mut();
+        if plans.is_empty() {
+            plans.resize_with(DIRECT_CONSTRUCTOR_SLOTS, || None);
+        }
+        plans[slot] = Some(DirectConstructorPlan {
+            function: std::rc::Rc::downgrade(function),
+            prototype: std::rc::Rc::downgrade(prototype),
+            prototype_layout: prototype.semantic_layout_id(),
+            intrinsic_generation: crate::builtins::intrinsic_override_generation(),
+            fields,
+        });
+    });
 }
 
 fn forward_custom_apply(
