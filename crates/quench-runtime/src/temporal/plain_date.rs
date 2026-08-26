@@ -153,6 +153,9 @@ fn add(
     let Value::Object(date) = receiver.ok_or_else(invalid_receiver)? else {
         return Err(invalid_receiver());
     };
+    if !has_date_fields(&date) {
+        return Err(invalid_receiver());
+    }
     let Value::Object(duration) = crate::temporal::duration::from(duration)? else {
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
@@ -988,6 +991,9 @@ fn calendar_name_option(options: Option<&Value>) -> Result<String, VmError> {
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok("auto".into());
     };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
     let object = crate::construct::to_object(options)?;
     let value = crate::execute::get_property_result(&object, "calendarName")?;
     if matches!(value, Value::Undefined) {
