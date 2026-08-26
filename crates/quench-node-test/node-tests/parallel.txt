@@ -424,3 +424,5 @@ test-crypto-dh.js
 test-crypto-dh-shared.js
 test-crypto-x509.js
 test-dns-memory-error.js
+test-dns-resolvesrv.js
+test-dns-resolvesrv-econnrefused.js
