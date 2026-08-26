@@ -1710,11 +1710,23 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .get(1..)
         .and_then(|value| value.find(['+', '-']).map(|index| &value[index + 1..]));
     if let Some(offset) = time_offset {
-        let valid = (offset.len() == 5
-            && offset.as_bytes().get(2) == Some(&b':')
-            && offset[..2].bytes().all(|byte| byte.is_ascii_digit())
-            && offset[3..].bytes().all(|byte| byte.is_ascii_digit()))
-            || (offset.len() == 4 && offset.bytes().all(|byte| byte.is_ascii_digit()));
+        let (core, fraction) = offset
+            .split_once(['.', ','])
+            .map_or((offset, None), |(core, fraction)| (core, Some(fraction)));
+        let compact = core.replace(':', "");
+        let valid_shape = matches!(compact.len(), 2 | 4 | 6)
+            && compact.bytes().all(|byte| byte.is_ascii_digit())
+            && (core.matches(':').count() == 0
+                || (core.matches(':').count() == 1 && core.len() == 5)
+                || (core.matches(':').count() == 2 && core.len() == 8));
+        let valid_fraction = fraction.is_none_or(|fraction| {
+            !fraction.is_empty() && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        });
+        let clock_has_minutes = time
+            .split(['.', ','])
+            .next()
+            .is_some_and(|clock| clock.matches(':').count() >= 1 || clock.len() >= 4);
+        let valid = valid_shape && valid_fraction && clock_has_minutes;
         if !valid {
             return Err(crate::value::error::throw_range_error("Invalid date-time"));
         }
