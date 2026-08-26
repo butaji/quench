@@ -1530,6 +1530,22 @@ pub fn process_uptime(
     ))
 }
 
+pub fn process_available_memory(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(f64::MAX))
+}
+
+pub fn process_constrained_memory(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(f64::MAX))
+}
+
 // ---- os ----
 pub fn os_platform(
     _state: &Rc<RefCell<HostState>>,
