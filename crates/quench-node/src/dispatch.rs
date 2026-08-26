@@ -177,6 +177,7 @@ const CAP_PROCESS_SETUID: u16 = 0x0A16;
 const CAP_PROCESS_SETGID: u16 = 0x0A17;
 const CAP_PROCESS_SETEUID: u16 = 0x0A18;
 const CAP_PROCESS_SETEGID: u16 = 0x0A19;
+const CAP_PROCESS_ACTIVE_RESOURCES: u16 = 0x0A1A;
 const CAP_OS_PLATFORM: u16 = 0x0B00;
 const CAP_OS_ARCH: u16 = 0x0B01;
 const CAP_OS_HOSTNAME: u16 = 0x0B02;
@@ -670,6 +671,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_SETGID => process_setgid,
         CAP_PROCESS_SETEUID => process_seteuid,
         CAP_PROCESS_SETEGID => process_setegid,
+        CAP_PROCESS_ACTIVE_RESOURCES => process_active_resources,
         CAP_PROCESS_UMASK => process_umask,
         CAP_PROCESS_ON => process_on,
         CAP_PROCESS_ONCE => process_once,

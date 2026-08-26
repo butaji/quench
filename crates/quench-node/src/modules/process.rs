@@ -256,7 +256,27 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "setegid",
             crate::host::capability(crate::registry::SPEC_PROCESS_SETEGID),
         ),
+        (
+            "getActiveResourcesInfo",
+            crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
+        ),
     ]
+}
+
+pub fn active_resources_info(state: &Rc<RefCell<HostState>>) -> Value {
+    let resources = state
+        .borrow()
+        .timers
+        .timers
+        .values()
+        .filter(|timer| timer.active)
+        .map(|timer| match timer.kind {
+            crate::modules::timers::TimerKind::Timeout
+            | crate::modules::timers::TimerKind::Interval => Value::String("Timeout".into()),
+            crate::modules::timers::TimerKind::Immediate => Value::String("Immediate".into()),
+        })
+        .collect();
+    host_api::array(resources)
 }
 
 pub fn credential(kind: &str) -> Value {
