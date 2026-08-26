@@ -375,7 +375,8 @@ pub(crate) fn flat_map(
     let receiver = receiver.ok_or_else(not_iterable)?;
     let mapper = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&mapper) {
-        return Err(crate::value::error::throw_type_error(
+        return Err(close_invalid_helper_argument(
+            receiver,
             "Iterator.prototype.flatMap mapper is not callable",
         ));
     }
