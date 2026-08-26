@@ -78,6 +78,10 @@ fn set_proven_own_data(
         return false;
     }
     if let Some(slot) = target.hot_properties().position_rev(key) {
+        if let Some(crate::value::Value::BindingCell(cell)) = target.hot_properties().slot_value(slot) {
+            cell.store(value.clone());
+            return true;
+        }
         target.hot_properties().store_slot(slot, value.clone());
         return true;
     }
