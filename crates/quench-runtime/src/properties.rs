@@ -221,7 +221,6 @@ pub(crate) fn execute_set_named_cached(
     strict: bool,
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), crate::execute::VmError> {
-    crate::execution_trace::named_set(key);
     if transition_index(cache.get()).is_some()
         && try_named_write_transition_attributed(registers, object, src, key, cache)?
     {
@@ -238,7 +237,6 @@ pub(crate) fn execute_set_named_cached(
                 crate::execution_trace::event(
                     crate::execution_trace::Event::NamedSetLayoutMismatch,
                 );
-                trace_named_set_own_candidate(data, key);
             } else if let Some(word) = data.hot_properties().slot_word(slot as usize) {
                 crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
                 word.store_from_register(registers, usize::from(src))
@@ -299,22 +297,6 @@ fn cacheable_named_write_slot(data: &crate::value::ObjectData, key: &str) -> Opt
         .position_rev(key)
         .and_then(|slot| u32::try_from(slot).ok())
 }
-
-#[cfg(feature = "execution-trace")]
-fn trace_named_set_own_candidate(data: &crate::value::ObjectData, key: &str) {
-    let event = if data.hot_properties().position_rev(key).is_none() {
-        crate::execution_trace::Event::NamedSetOwnMissing
-    } else if plain_writable_own_data(data, key) {
-        crate::execution_trace::Event::NamedSetOwnWritable
-    } else {
-        crate::execution_trace::Event::NamedSetOwnBlocked
-    };
-    crate::execution_trace::event(event);
-}
-
-#[cfg(not(feature = "execution-trace"))]
-#[inline(always)]
-fn trace_named_set_own_candidate(_: &crate::value::ObjectData, _: &str) {}
 
 fn finish_set_property(
     registers: &mut crate::register_file::RegisterFile,

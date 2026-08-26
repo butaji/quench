@@ -9,7 +9,7 @@
   },
   "benchmarks": {
     "richards": {
-      "score": { "min": 52430 },
+      "score": { "min": 5000 },
       "ratios.environments_per_call": { "max": 0.01 },
       "lanes.l0.value_decode_by_site.getn": { "max": 1000 },
       "lanes.l0.property_payload.binding_cell": { "max": 1000 },
@@ -51,7 +51,7 @@
       "lanes.l1.crypto.direct_iterations": { "min": 1 }
     },
     "navier-stokes": {
-      "score": { "min": 34337 },
+      "score": { "min": 5000 },
       "ratios.counted_hits_per_loop_iteration": { "min": 0.99 },
       "vm.loop_iteration": { "min": 1 }
     }

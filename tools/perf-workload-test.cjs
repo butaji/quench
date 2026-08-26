@@ -1,40 +1,22 @@
 #!/usr/bin/env node
 "use strict";
 const assert = require("assert");
+const cp = require("child_process");
 const path = require("path");
-const bounded = require("./lib/bounded-process.cjs");
 
 const workload = path.join(__dirname, "perf-workload.cjs");
-const result = bounded.spawnSync(process.execPath, [workload], {
+const result = cp.spawnSync(process.execPath, [workload], {
   env: { ...process.env, QUENCH_PERF_ITERATIONS: "32" },
-  encoding: "utf8"
+  encoding: "utf8",
 });
 assert.strictEqual(result.status, 0, result.stderr);
 const lines = result.stdout.trim().split(/\n/).filter(Boolean);
 assert.strictEqual(lines.length, 1, "workload owns exactly one final snapshot");
 const snapshot = JSON.parse(lines[0]);
-const expected = [
-  "iterations",
-  "checksum",
-  "allocations",
-  "copies",
-  "bytes",
-  "peak_rss",
-  "wall_ms"
-];
+const expected = ["iterations", "checksum", "allocations", "copies", "bytes", "peak_rss", "wall_ms"];
 assert.deepStrictEqual(Object.keys(snapshot).sort(), expected.sort());
-for (const key of [
-  "iterations",
-  "checksum",
-  "allocations",
-  "copies",
-  "bytes",
-  "peak_rss"
-]) {
-  assert.ok(
-    Number.isInteger(snapshot[key]) && snapshot[key] >= 0,
-    `${key} must be a non-negative integer`
-  );
+for (const key of ["iterations", "checksum", "allocations", "copies", "bytes", "peak_rss"]) {
+  assert.ok(Number.isInteger(snapshot[key]) && snapshot[key] >= 0, `${key} must be a non-negative integer`);
 }
 assert.ok(snapshot.peak_rss > 0);
 assert.ok(Number.isFinite(snapshot.wall_ms) && snapshot.wall_ms >= 0);
