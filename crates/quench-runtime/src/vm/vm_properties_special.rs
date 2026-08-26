@@ -205,7 +205,15 @@ fn bound_function_property(
         return Value::Builtin(Builtin::FunctionPrototypeValueOf);
     }
     if key == "prototype" {
-        bound_constructor_prototype(bound)
+        match bound.target {
+            Value::Builtin(Builtin::AsyncGeneratorFunctionPrototype) => {
+                crate::builtins::async_generator_prototype_in(bound.realm)
+            }
+            Value::Builtin(Builtin::GeneratorFunctionPrototype) => {
+                crate::builtins::generator_prototype_in(bound.realm)
+            }
+            _ => bound_constructor_prototype(bound),
+        }
     } else if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
