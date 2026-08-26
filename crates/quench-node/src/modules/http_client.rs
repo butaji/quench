@@ -532,6 +532,13 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
             "setEncoding".to_string(),
             crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
         ),
+        // Resuming an IncomingMessage only switches it into flowing mode;
+        // the host already drains response bytes eagerly, so the same
+        // identity-preserving capability is sufficient here.
+        (
+            "resume".to_string(),
+            crate::host::capability(crate::registry::SPEC_HTTP_RES_SET_ENCODING),
+        ),
     ];
     install_methods(res, props)
 }
