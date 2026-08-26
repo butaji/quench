@@ -26,6 +26,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ("millisecond".into(), Value::Number(values[3])),
             ("microsecond".into(), Value::Number(values[4])),
             ("nanosecond".into(), Value::Number(values[5])),
+            ("\0temporal-plain-time".into(), Value::Boolean(true)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainTimePrototype),
@@ -40,6 +41,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        crate::ops::Builtin::TemporalPlainTime => Some(Err(crate::value::error::throw_type_error(
+            "Temporal.PlainTime requires new",
+        ))),
         crate::ops::Builtin::TemporalPlainTimeFrom => {
             Some(from(arguments.first(), arguments.get(1)))
         }
@@ -56,9 +60,7 @@ pub(crate) fn execute(
             Some(to_string(_receiver, arguments.first()))
         }
         crate::ops::Builtin::TemporalPlainTimeToJSON => Some(to_string(_receiver, None)),
-        crate::ops::Builtin::TemporalPlainTimeToLocaleString => {
-            Some(to_string(_receiver, arguments.first()))
-        }
+        crate::ops::Builtin::TemporalPlainTimeToLocaleString => Some(to_string(_receiver, None)),
         crate::ops::Builtin::TemporalPlainTimeValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert PlainTime to a number"),
         )),
@@ -67,14 +69,22 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainTimeSubtract => {
             Some(add(_receiver, arguments.first(), -1))
         }
-        crate::ops::Builtin::TemporalPlainTimeWith => Some(with(_receiver, arguments.first())),
+        crate::ops::Builtin::TemporalPlainTimeWith => {
+            Some(with(_receiver, arguments.first(), arguments.get(1)))
+        }
         crate::ops::Builtin::TemporalPlainTimeRound => Some(round(_receiver, arguments.first())),
-        crate::ops::Builtin::TemporalPlainTimeUntil => {
-            Some(difference(_receiver, arguments.first(), 1))
-        }
-        crate::ops::Builtin::TemporalPlainTimeSince => {
-            Some(difference(_receiver, arguments.first(), -1))
-        }
+        crate::ops::Builtin::TemporalPlainTimeUntil => Some(difference(
+            _receiver,
+            arguments.first(),
+            1,
+            arguments.get(1),
+        )),
+        crate::ops::Builtin::TemporalPlainTimeSince => Some(difference(
+            _receiver,
+            arguments.first(),
+            -1,
+            arguments.get(1),
+        )),
         _ => None,
     }
 }
@@ -82,6 +92,9 @@ pub(crate) fn execute(
 fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    if !is_plain_time(receiver) {
+        return Err(crate::value::error::throw_type_error("Not a PlainTime"));
+    }
     let names = match builtin {
         crate::ops::Builtin::TemporalPlainTimeHourGetter => "hour",
         crate::ops::Builtin::TemporalPlainTimeMinuteGetter => "minute",
@@ -96,6 +109,9 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
 fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    if !is_plain_time(receiver) {
+        return Err(crate::value::error::throw_type_error("Not a PlainTime"));
+    }
     let options = time_string_options(options)?;
     let values = [
         "hour",
@@ -376,7 +392,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         if crate::conversion::is_symbol(value) {
             return Err(crate::value::error::throw_type_error("Invalid time"));
         }
-        return parse_string(text);
+        let parsed = parse_string(text)?;
+        let _ = overflow_reject(options)?;
+        return Ok(parsed);
     }
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid time"));
@@ -390,36 +408,67 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     }
     let values = [
         "hour",
-        "minute",
-        "second",
-        "millisecond",
         "microsecond",
+        "millisecond",
+        "minute",
         "nanosecond",
+        "second",
     ]
     .iter()
-    .map(|name| temporal_field(value, name))
+    .map(|name| temporal_field(value, name).and_then(number_or_undefined))
     .collect::<Result<Vec<_>, _>>()?;
     if values.iter().all(|value| matches!(value, Value::Undefined)) {
         return Err(crate::value::error::throw_type_error("Missing hour"));
     }
+    let overflow_reject = overflow_reject(options)?;
     let mut values = values;
-    if let Value::Number(second) = values[2] {
+    if let Value::Number(second) = values[5] {
         if second == 60.0 {
-            if overflow_reject(options) {
+            if overflow_reject {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid leap second",
                 ));
             }
-            values[2] = Value::Number(59.0);
+            values[5] = Value::Number(59.0);
         }
     }
-    construct(&values)
+    if !overflow_reject {
+        for (index, maximum) in [23.0, 999.0, 999.0, 59.0, 999.0, 59.0]
+            .into_iter()
+            .enumerate()
+        {
+            if let Value::Number(value) = values[index] {
+                if !value.is_finite() {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+                values[index] = Value::Number(value.clamp(0.0, maximum));
+            }
+        }
+    }
+    construct(&[
+        values[0].clone(),
+        values[3].clone(),
+        values[5].clone(),
+        values[2].clone(),
+        values[1].clone(),
+        values[4].clone(),
+    ])
 }
 
-fn overflow_reject(options: Option<&Value>) -> bool {
-    options
-        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
-        .is_some_and(|value| matches!(value, Value::String(value) if value == "reject"))
+fn overflow_reject(options: Option<&Value>) -> Result<bool, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(false);
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let value = crate::execute::get_property_result(options, "overflow")?;
+    let text = option_text(&value)?.unwrap_or_else(|| "constrain".into());
+    match text.as_str() {
+        "constrain" => Ok(false),
+        "reject" => Ok(true),
+        _ => Err(crate::value::error::throw_range_error("Invalid overflow")),
+    }
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
@@ -464,11 +513,6 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if text.contains('−') {
         return Err(crate::value::error::throw_range_error("Invalid time"));
     }
-    if let Some(index) = main.find('-') {
-        if index > 0 && !main[..index].contains(':') && !main.contains('T') && !main.contains('t') {
-            return Err(crate::value::error::throw_range_error("Invalid time"));
-        }
-    }
     if !main.contains('T')
         && !main.contains('t')
         && !main.contains(' ')
@@ -496,7 +540,11 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         validate_offset(offset)?;
     } else if let Some(index) = text.rfind('-') {
         let offset = text[index + 1..].split(['[', ']']).next().unwrap_or("");
-        if offset.contains(':') && !offset.contains('T') && !offset.contains('t') {
+        if offset.contains(':')
+            && !offset.contains('T')
+            && !offset.contains('t')
+            && !offset.contains(' ')
+        {
             validate_offset(offset)?;
         }
     }
@@ -705,14 +753,8 @@ fn add(
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     }
     let duration = crate::temporal::duration::from(duration)?;
-    let names = ["years", "months", "weeks"];
-    for name in names {
-        if duration_number(&duration, name)? != 0 {
-            return Err(crate::value::error::throw_range_error("Invalid duration"));
-        }
-    }
     let delta = [
-        ("days", 86_400_000_000_000_i64),
+        ("days", 86_400_000_000_000_i128),
         ("hours", 3_600_000_000_000),
         ("minutes", 60_000_000_000),
         ("seconds", 1_000_000_000),
@@ -730,11 +772,11 @@ fn add(
     })
     .collect::<Result<Vec<_>, _>>()?
     .into_iter()
-    .try_fold(0_i64, |sum, value| {
+    .try_fold(0_i128, |sum, value| {
         sum.checked_add(value)
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration"))
-    })? * direction;
-    let total = (time_fields(receiver)? + delta).rem_euclid(86_400_000_000_000);
+    })? * i128::from(direction);
+    let total = (i128::from(time_fields(receiver)?) + delta).rem_euclid(86_400_000_000_000);
     let hour = total / 3_600_000_000_000;
     let remainder = total % 3_600_000_000_000;
     let minute = remainder / 60_000_000_000;
@@ -751,25 +793,34 @@ fn add(
     ])
 }
 
-fn duration_number(value: &Value, name: &str) -> Result<i64, VmError> {
+fn duration_number(value: &Value, name: &str) -> Result<i128, VmError> {
     crate::execute::get_property_result(value, name)
         .and_then(|value| crate::conversion::to_number(&value))
-        .map(|value| value as i64)
+        .map(|value| value as i128)
 }
 
-fn with(receiver: Option<&Value>, fields: Option<&Value>) -> Result<Value, VmError> {
+fn with(
+    receiver: Option<&Value>,
+    fields: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    if !is_plain_time(receiver) {
+        return Err(crate::value::error::throw_type_error("Not a PlainTime"));
+    }
     let fields = fields
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid time-like object"))?;
+    let _ = crate::execute::get_property_result(fields, "calendar")?;
+    let _ = crate::execute::get_property_result(fields, "timeZone")?;
     let names = [
         "hour",
-        "minute",
-        "second",
-        "millisecond",
         "microsecond",
+        "millisecond",
+        "minute",
         "nanosecond",
+        "second",
     ];
     let current = names
         .iter()
@@ -777,7 +828,7 @@ fn with(receiver: Option<&Value>, fields: Option<&Value>) -> Result<Value, VmErr
         .collect::<Result<Vec<_>, _>>()?;
     let replacements = names
         .iter()
-        .map(|name| crate::execute::get_property_result(fields, name))
+        .map(|name| crate::execute::get_property_result(fields, name).and_then(number_or_undefined))
         .collect::<Result<Vec<_>, _>>()?;
     if replacements
         .iter()
@@ -785,7 +836,8 @@ fn with(receiver: Option<&Value>, fields: Option<&Value>) -> Result<Value, VmErr
     {
         return Err(crate::value::error::throw_type_error("No time fields"));
     }
-    let values = current
+    let overflow_reject = overflow_reject(options)?;
+    let mut values = current
         .into_iter()
         .zip(replacements)
         .map(|(old, new)| {
@@ -796,20 +848,56 @@ fn with(receiver: Option<&Value>, fields: Option<&Value>) -> Result<Value, VmErr
             }
         })
         .collect::<Vec<_>>();
-    construct(&values)
+    if !overflow_reject {
+        let maxima = [23.0, 999.0, 999.0, 59.0, 999.0, 59.0];
+        for (value, maximum) in values.iter_mut().zip(maxima) {
+            if let Value::Number(value) = value {
+                if !value.is_finite() {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+                *value = value.clamp(0.0, maximum);
+            }
+        }
+    }
+    construct(&[
+        values[0].clone(),
+        values[3].clone(),
+        values[5].clone(),
+        values[2].clone(),
+        values[1].clone(),
+        values[4].clone(),
+    ])
 }
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    if !is_plain_time(receiver) {
+        return Err(crate::value::error::throw_type_error("Not a PlainTime"));
+    }
+    let shorthand = options.filter(|value| matches!(value, Value::String(_)));
     let options = options
         .filter(|value| crate::value::is_object(value))
+        .or(shorthand)
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid rounding options"))?;
-    let unit = option_text(&crate::execute::get_property_result(
-        options,
-        "smallestUnit",
-    )?)?
-    .ok_or_else(|| crate::value::error::throw_range_error("Missing smallestUnit"))?;
+    let (increment, rounding_mode, unit_value) = if matches!(options, Value::String(_)) {
+        (1_i64, "halfExpand".into(), options.clone())
+    } else {
+        let value = crate::execute::get_property_result(options, "roundingIncrement")?;
+        let increment = match value {
+            Value::Undefined => 1,
+            value => crate::conversion::to_number(&value)? as i64,
+        };
+        let rounding_mode = option_text(&crate::execute::get_property_result(
+            options,
+            "roundingMode",
+        )?)?
+        .unwrap_or_else(|| "halfExpand".into());
+        let unit_value = crate::execute::get_property_result(options, "smallestUnit")?;
+        (increment, rounding_mode, unit_value)
+    };
+    let unit = option_text(&unit_value)?
+        .ok_or_else(|| crate::value::error::throw_range_error("Missing smallestUnit"))?;
     let unit = unit.trim_end_matches('s');
     let scale = match unit {
         "hour" => 3_600_000_000_000_i64,
@@ -824,10 +912,6 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             ))
         }
     };
-    let increment = match crate::execute::get_property_result(options, "roundingIncrement")? {
-        Value::Undefined => 1,
-        value => crate::conversion::to_number(&value)? as i64,
-    };
     let increment_maximum = match unit {
         "hour" => 24,
         "minute" | "second" => 60,
@@ -839,11 +923,6 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             "Invalid roundingIncrement",
         ));
     }
-    let rounding_mode = option_text(&crate::execute::get_property_result(
-        options,
-        "roundingMode",
-    )?)?
-    .unwrap_or_else(|| "halfExpand".into());
     if ![
         "ceil",
         "floor",
@@ -890,31 +969,178 @@ fn difference(
     receiver: Option<&Value>,
     other: Option<&Value>,
     direction: i64,
+    options: Option<&Value>,
 ) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
-    let delta = (time_fields(&from(other, None)?)? - time_fields(receiver)?) * direction;
-    let hours = delta / 3_600_000_000_000;
-    let remainder = delta % 3_600_000_000_000;
-    let minutes = remainder / 60_000_000_000;
-    let remainder = remainder % 60_000_000_000;
-    let seconds = remainder / 1_000_000_000;
-    let remainder = remainder % 1_000_000_000;
+    if !is_plain_time(receiver) {
+        return Err(crate::value::error::throw_type_error("Not a PlainTime"));
+    }
+    let delta = i128::from(time_fields(&from(other, None)?)? - time_fields(receiver)?)
+        * i128::from(direction);
+    let (largest, smallest, increment, rounding_mode) = difference_options(options)?;
+    let smallest_scale = plain_time_unit_scale(&smallest).unwrap();
+    let rounded = round_difference(delta, smallest_scale * increment, &rounding_mode);
+    let scales = [
+        ("hour", 3_600_000_000_000_i128),
+        ("minute", 60_000_000_000),
+        ("second", 1_000_000_000),
+        ("millisecond", 1_000_000),
+        ("microsecond", 1_000),
+        ("nanosecond", 1),
+    ];
+    let largest_index = scales
+        .iter()
+        .position(|(unit, _)| *unit == largest)
+        .unwrap();
+    let smallest_index = scales
+        .iter()
+        .position(|(unit, _)| *unit == smallest)
+        .unwrap();
+    let mut fields = [0_i128; 6];
+    let mut remainder = rounded;
+    for (index, (_, scale)) in scales
+        .iter()
+        .enumerate()
+        .skip(largest_index)
+        .take(smallest_index - largest_index + 1)
+    {
+        fields[index] = remainder / scale;
+        remainder %= scale;
+    }
     crate::temporal::duration::construct(&[
         Value::Number(0.0),
         Value::Number(0.0),
         Value::Number(0.0),
         Value::Number(0.0),
-        Value::Number(hours as f64),
-        Value::Number(minutes as f64),
-        Value::Number(seconds as f64),
-        Value::Number((remainder / 1_000_000) as f64),
-        Value::Number((remainder / 1_000 % 1_000) as f64),
-        Value::Number((remainder % 1_000) as f64),
+        Value::Number(fields[0] as f64),
+        Value::Number(fields[1] as f64),
+        Value::Number(fields[2] as f64),
+        Value::Number(fields[3] as f64),
+        Value::Number(fields[4] as f64),
+        Value::Number(fields[5] as f64),
     ])
 }
 
+fn difference_options(options: Option<&Value>) -> Result<(String, String, i128, String), VmError> {
+    if options
+        .is_some_and(|value| !matches!(value, Value::Undefined) && !crate::value::is_object(value))
+    {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let Some(options) = options.filter(|value| crate::value::is_object(value)) else {
+        return Ok(("hour".into(), "nanosecond".into(), 1, "trunc".into()));
+    };
+    let largest = option_text(&crate::execute::get_property_result(
+        options,
+        "largestUnit",
+    )?)?
+    .map(|value| value.strip_suffix('s').unwrap_or(&value).to_string())
+    .unwrap_or_else(|| "hour".into());
+    let increment = match crate::execute::get_property_result(options, "roundingIncrement")? {
+        Value::Undefined => 1,
+        value => crate::conversion::to_number(&value)?.trunc() as i128,
+    };
+    let rounding_mode = option_text(&crate::execute::get_property_result(
+        options,
+        "roundingMode",
+    )?)?
+    .unwrap_or_else(|| "trunc".into());
+    let smallest = option_text(&crate::execute::get_property_result(
+        options,
+        "smallestUnit",
+    )?)?
+    .map(|value| value.strip_suffix('s').unwrap_or(&value).to_string())
+    .unwrap_or_else(|| "nanosecond".into());
+    let largest = if largest == "auto" {
+        "hour".into()
+    } else {
+        largest
+    };
+    let allowed = [
+        "hour",
+        "minute",
+        "second",
+        "millisecond",
+        "microsecond",
+        "nanosecond",
+    ];
+    if !allowed.contains(&largest.as_str()) || !allowed.contains(&smallest.as_str()) {
+        return Err(crate::value::error::throw_range_error("Invalid time unit"));
+    }
+    let maximum = match smallest.as_str() {
+        "hour" => 24,
+        "minute" | "second" => 60,
+        _ => 1_000,
+    };
+    if increment <= 0 || increment >= maximum || maximum % increment != 0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    if plain_time_unit_scale(&largest).unwrap() < plain_time_unit_scale(&smallest).unwrap() {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid unit relationship",
+        ));
+    }
+    if ![
+        "ceil",
+        "floor",
+        "expand",
+        "trunc",
+        "halfCeil",
+        "halfFloor",
+        "halfExpand",
+        "halfTrunc",
+        "halfEven",
+    ]
+    .contains(&rounding_mode.as_str())
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingMode",
+        ));
+    }
+    Ok((largest, smallest, increment, rounding_mode))
+}
+
+fn plain_time_unit_scale(unit: &str) -> Option<i128> {
+    Some(match unit {
+        "hour" => 3_600_000_000_000,
+        "minute" => 60_000_000_000,
+        "second" => 1_000_000_000,
+        "millisecond" => 1_000_000,
+        "microsecond" => 1_000,
+        "nanosecond" => 1,
+        _ => return None,
+    })
+}
+
+fn round_difference(value: i128, quantum: i128, mode: &str) -> i128 {
+    let sign = value.signum();
+    let absolute = value.abs();
+    let mut units = absolute / quantum;
+    let remainder = absolute % quantum;
+    let increment = match mode {
+        "ceil" => sign > 0 && remainder != 0,
+        "floor" => sign < 0 && remainder != 0,
+        "expand" => remainder != 0,
+        "trunc" => false,
+        "halfEven" => remainder * 2 > quantum || remainder * 2 == quantum && units % 2 != 0,
+        "halfCeil" => remainder * 2 >= quantum && sign > 0 || remainder * 2 > quantum && sign < 0,
+        "halfFloor" => remainder * 2 > quantum && sign > 0 || remainder * 2 >= quantum && sign < 0,
+        "halfTrunc" => remainder * 2 > quantum,
+        _ => remainder * 2 >= quantum,
+    };
+    if increment {
+        units += 1;
+    }
+    units * sign * quantum
+}
+
 fn time_fields(value: &Value) -> Result<i64, VmError> {
+    if !is_plain_time(value) {
+        return Err(crate::value::error::throw_type_error("Not a PlainTime"));
+    }
     let names = [
         "hour",
         "minute",
@@ -939,6 +1165,12 @@ fn time_fields(value: &Value) -> Result<i64, VmError> {
         + values[5])
 }
 
+fn is_plain_time(value: &Value) -> bool {
+    matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+        key == "\0temporal-plain-time" && matches!(value, Value::Boolean(true))
+    }))
+}
+
 fn temporal_field(value: &Value, name: &str) -> Result<Value, VmError> {
     if let Value::Object(object) = value {
         if let Some((_, value)) = object.iter().find(|(key, value)| {
@@ -949,6 +1181,18 @@ fn temporal_field(value: &Value, name: &str) -> Result<Value, VmError> {
         }
     }
     crate::execute::get_property_result(value, name)
+}
+
+fn number_or_undefined(value: Value) -> Result<Value, VmError> {
+    if matches!(value, Value::Undefined) {
+        Ok(value)
+    } else {
+        let value = crate::conversion::to_number(&value)?;
+        if !value.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid time"));
+        }
+        Ok(Value::Number(value))
+    }
 }
 
 fn number(value: Option<&Value>) -> Result<f64, VmError> {
