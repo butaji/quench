@@ -59,11 +59,21 @@ pub(crate) fn prototype_to_string_result(
     if is_callable_builtin(value) {
         return Ok(Value::String("[object Function]".into()));
     }
+    if let Value::Builtin(builtin) = value {
+        if matches!(builtin, Builtin::Math | Builtin::Json)
+            && crate::builtins::read_intrinsic_override(*builtin, "Symbol.toStringTag").is_none()
+            && !crate::builtins::builtin_prototype_property_is_removed(*builtin, "Symbol.toStringTag")
+        {
+            let tag = if *builtin == Builtin::Math { "Math" } else { "JSON" };
+            return Ok(Value::String(format!("[object {tag}]")));
+        }
+    }
     if let Value::BoundFunction(bound) = value {
         if let Value::Builtin(builtin) = bound.target {
-            if matches!(builtin, Builtin::Math | Builtin::Json) {
-                let tag = if builtin == Builtin::Math { "Math" } else { "JSON" };
-                return Ok(Value::String(format!("[object {tag}]")));
+            if crate::builtin_meta::is_prototype(builtin) {
+                if let Some(tag) = prototype_builtin_tag(&Value::Builtin(builtin)) {
+                    return Ok(Value::String(format!("[object {tag}]")));
+                }
             }
         }
     }
@@ -417,17 +427,12 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
 }
 
 fn is_callable_builtin(value: &Value) -> bool {
-    if let Value::Builtin(builtin) = value {
-        return crate::builtin_meta::constructor_name(*builtin).is_some()
-            || matches!(
-                *builtin,
-                crate::ops::Builtin::Function
-                    | crate::ops::Builtin::AsyncFunction
-                    | crate::ops::Builtin::GeneratorFunction
-                    | crate::ops::Builtin::AsyncGeneratorFunction
-            );
+    match value {
+        Value::Builtin(builtin) => {
+            crate::conversion::is_callable(value) && !crate::builtin_meta::is_prototype(*builtin)
+        }
+        _ => false,
     }
-    false
 }
 
 fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static str> {
