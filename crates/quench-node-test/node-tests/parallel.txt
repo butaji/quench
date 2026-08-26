@@ -383,3 +383,6 @@ test-util-internal.js
 test-assert-myers-diff.js
 test-timers-nan-duration-warning.js
 test-timers-negative-duration-warning.js
+test-timers-async-store-leak.js
+test-timers-nan-duration-warning-promises.js
+test-timers-process-tampering.js
