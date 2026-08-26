@@ -13,6 +13,54 @@ fn collect_zip_iterators(inputs: Value) -> Result<Vec<Value>, crate::execute::Vm
     }
 }
 
+fn collect_zip_keyed_iterators(
+    inputs: Value,
+) -> Result<(Vec<String>, Vec<Value>), crate::execute::VmError> {
+    let all_keys = crate::proxy::proxy_own_keys(&inputs)?;
+    let Value::Array(all_keys) = all_keys else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let mut keys = Vec::new();
+    let mut iterators = Vec::new();
+    for key_value in all_keys.snapshot() {
+        let key = match crate::conversion::to_property_key(&key_value) {
+            Ok(key) => key,
+            Err(error) => return Err(close_zip_iterators(iterators, error)),
+        };
+        let descriptor = match crate::proxy::proxy_get_own_property_descriptor(&inputs, &key) {
+            Ok(descriptor) => descriptor,
+            Err(error) => return Err(close_zip_iterators(iterators, error)),
+        };
+        if !descriptor_is_enumerable(&descriptor) {
+            continue;
+        }
+        let value = match crate::execute::get_property_result(&inputs, &key) {
+            Ok(value) => value,
+            Err(error) => return Err(close_zip_iterators(iterators, error)),
+        };
+        if matches!(value, Value::Undefined) {
+            continue;
+        }
+        match zip_flattenable(value) {
+            Ok(iterator) => {
+                keys.push(key);
+                iterators.push(iterator);
+            }
+            Err(error) => return Err(close_zip_iterators(iterators, error)),
+        }
+    }
+    Ok((keys, iterators))
+}
+
+fn descriptor_is_enumerable(descriptor: &Value) -> bool {
+    let Value::Object(properties) = descriptor else {
+        return false;
+    };
+    properties
+        .iter()
+        .any(|(name, value)| name == "enumerable" && matches!(value, Value::Boolean(true)))
+}
+
 fn zip_flattenable(value: Value) -> Result<Value, crate::execute::VmError> {
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
         return Err(crate::value::error::throw_type_error(
