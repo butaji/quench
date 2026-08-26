@@ -265,6 +265,9 @@ pub(crate) fn instantiate_script_declarations(
             let slot = *next_slot;
             *next_slot = next_slot.saturating_add(1);
             locals.insert(name.clone(), slot);
+            // Keep a lowering-only marker so nested functions that reference
+            // this binding retain its pre-initialization state.
+            locals.insert(format!("\0lexical-predeclared:{name}"), slot);
             ops.push(Op::MarkUninitialized { slot, shared: true });
             lexical.push((name, immutable));
         }
