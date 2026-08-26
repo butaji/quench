@@ -149,6 +149,8 @@ test-buffer-swap.js
 test-buffer-tostring-4gb.js
 test-buffer-tostring.js
 test-buffer-write.js
+test-buffer-writeint.js
+test-buffer-writeuint.js
 test-buffer-tojson.js
 test-buffer-writedouble.js
 test-buffer-writefloat.js
