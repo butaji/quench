@@ -302,6 +302,7 @@ thread_local! {
 }
 
 fn drain_scheduled_callbacks() -> Result<(), VmError> {
+    drain_pending_process_warnings()?;
     loop {
         let callback = NODE_MICROTASKS.with(|queue| queue.borrow_mut().pop());
         if let Some(callback) = callback {
@@ -309,12 +310,16 @@ fn drain_scheduled_callbacks() -> Result<(), VmError> {
             continue;
         }
         let callback = NODE_TIMERS.with(|queue| queue.borrow_mut().pop());
-        let Some(callback) = callback else { return Ok(()) };
+        let Some(callback) = callback else {
+            drain_pending_process_warnings()?;
+            return Ok(())
+        };
         quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
     }
 }
 
 fn next_tick(arguments: &[Value]) -> Result<Value, VmError> {
+    drain_pending_process_warnings()?;
     let Some(callback) = arguments.first() else {
         return Err(VmError::EvalError("nextTick expects a callback".into()));
     };

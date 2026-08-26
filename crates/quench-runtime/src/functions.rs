@@ -16,12 +16,7 @@ pub(crate) struct FunctionMetadata {
     pub(crate) mapped_arguments: bool,
     pub(crate) raytrace_pixel: bool,
     pub(crate) raytrace_render: Option<(f64, u16)>,
-    pub(crate) direct_constructor: Vec<DirectConstructorField>,
-}
-#[derive(Clone)]
-pub(crate) struct DirectConstructorField {
-    pub(crate) name: String,
-    pub(crate) source: i16,
+    pub(crate) direct_constructor: std::rc::Rc<[crate::facts::DirectConstructorField]>,
 }
 include!("functions_raytrace_kernel.rs");
 include!("functions_direct_constructor_fact.rs");
