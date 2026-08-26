@@ -63,9 +63,11 @@ pub(crate) fn execute_delete_property(
             "Cannot delete non-configurable property",
         ));
     }
-    crate::locals::replace_value(&target, &result);
-    crate::vm::synchronize_global_object(registers, &raw_target, &result);
-    crate::execute::write_value(registers, *object, result);
+    if deleted {
+        crate::locals::replace_value(&target, &result);
+        crate::vm::synchronize_global_object(registers, &raw_target, &result);
+        crate::execute::write_value(registers, *object, result);
+    }
     crate::execute::write_value(registers, *dst, crate::value::Value::Boolean(deleted));
     Ok(())
 }
