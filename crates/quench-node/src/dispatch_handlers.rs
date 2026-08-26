@@ -3,12 +3,12 @@
 //! The handlers table is the single canonical place where the
 //! capability id resolves to a Rust function.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Instant;
-use std::cell::Cell;
 
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
@@ -193,11 +193,11 @@ pub fn util_inspect(
                 options.clone()
             };
             match options {
-            Value::Null => Some(usize::MAX / 2),
-            Value::Number(value) if value.is_finite() && value >= 0.0 => {
-                Some(value.floor() as usize + 1)
-            }
-            _ => None,
+                Value::Null => Some(usize::MAX / 2),
+                Value::Number(value) if value.is_finite() && value >= 0.0 => {
+                    Some(value.floor() as usize + 1)
+                }
+                _ => None,
             }
         });
     let show_hidden = matches!(args.get(1), Some(Value::Boolean(true)))
@@ -207,15 +207,19 @@ pub fn util_inspect(
                 Value::Boolean(true)
             )
         });
-    let show_proxy = args.get(1).is_some_and(|options| {
-        match execute::get_property(options, "showProxy") {
-            Value::Boolean(value) => value,
-            Value::Number(value) => value != 0.0 && !value.is_nan(),
-            _ => false,
-        }
-    });
+    let show_proxy =
+        args.get(1).is_some_and(
+            |options| match execute::get_property(options, "showProxy") {
+                Value::Boolean(value) => value,
+                Value::Number(value) => value != 0.0 && !value.is_nan(),
+                _ => false,
+            },
+        );
     let colors = args.get(1).is_some_and(|options| {
-        matches!(execute::get_property(options, "colors"), Value::Boolean(true))
+        matches!(
+            execute::get_property(options, "colors"),
+            Value::Boolean(true)
+        )
     });
     let break_length_one = args.get(1).is_some_and(|options| {
         matches!(
@@ -228,7 +232,9 @@ pub fn util_inspect(
             return Ok(Value::String(rendered));
         }
     }
-    if let Some(rendered) = crate::modules::util::inspect_proxy(&arg, depth.unwrap_or(3), show_proxy) {
+    if let Some(rendered) =
+        crate::modules::util::inspect_proxy(&arg, depth.unwrap_or(3), show_proxy)
+    {
         return Ok(Value::String(rendered));
     }
     let max_array_length = args
@@ -367,7 +373,11 @@ pub fn util_deprecated_call(
     let Some(callback) = args.first() else {
         return Err(VmError::NotCallable);
     };
-    quench_runtime::execute::call(callback, &Value::Undefined, args.get(1..).unwrap_or_default())
+    quench_runtime::execute::call(
+        callback,
+        &Value::Undefined,
+        args.get(1..).unwrap_or_default(),
+    )
 }
 
 pub fn util_system_error_name(
@@ -424,7 +434,10 @@ pub fn util_exception_with_host_port(
         message.push_str(&format!(" - Local ({})", value_text(additional)));
     }
     let mut properties = vec![
-        ("\0prototype".into(), Value::Builtin(quench_runtime::ops::Builtin::ErrorPrototype)),
+        (
+            "\0prototype".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::ErrorPrototype),
+        ),
         ("name".into(), Value::String("Error".into())),
         ("message".into(), Value::String(message)),
         ("stack".into(), Value::String("Error".into())),
@@ -432,10 +445,7 @@ pub fn util_exception_with_host_port(
         ("code".into(), Value::String(code.into())),
         ("syscall".into(), Value::String(syscall)),
     ];
-    properties.push((
-        "address".into(),
-        address.map_or(Value::Null, Value::String),
-    ));
+    properties.push(("address".into(), address.map_or(Value::Null, Value::String)));
     if let Some(port) = port {
         properties.push(("port".into(), Value::Number(port as f64)));
     }
@@ -451,13 +461,7 @@ pub fn internal_util_emit_warning(
         return Err(VmError::NotCallable);
     };
     let message = format!("{feature} is an experimental feature");
-    crate::modules::process::emit_warning(
-        state,
-        "ExperimentalWarning",
-        &message,
-        None,
-        true,
-    );
+    crate::modules::process::emit_warning(state, "ExperimentalWarning", &message, None, true);
     Ok(Value::Undefined)
 }
 
@@ -484,7 +488,10 @@ fn os_pid(arguments: &[Value]) -> Result<u32, VmError> {
         return Err(VmError::Thrown(Value::object(vec![
             ("name".into(), Value::String("RangeError".into())),
             ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
-            ("message".into(), Value::String("The value of \"pid\" is out of range.".into())),
+            (
+                "message".into(),
+                Value::String("The value of \"pid\" is out of range.".into()),
+            ),
         ])));
     }
     Ok(pid as u32)
@@ -526,21 +533,19 @@ pub fn os_set_priority(
             "The \"priority\" argument must be of type number.",
         ));
     };
-    if !priority.is_finite()
-        || priority.fract() != 0.0
-        || priority < -20.0
-        || priority > 19.0
-    {
+    if !priority.is_finite() || priority.fract() != 0.0 || priority < -20.0 || priority > 19.0 {
         return Err(VmError::Thrown(Value::object(vec![
             ("name".into(), Value::String("RangeError".into())),
             ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
-            ("message".into(), Value::String("The value of \"priority\" is out of range.".into())),
+            (
+                "message".into(),
+                Value::String("The value of \"priority\" is out of range.".into()),
+            ),
         ])));
     }
     OS_PRIORITY.with(|value| value.set(priority as i32));
     Ok(Value::Undefined)
 }
-
 
 fn timer_promise_alias(value: &Value) -> Option<&'static str> {
     let capability = match value {
@@ -847,11 +852,8 @@ pub fn internal_util_assert_crypto(
         quench_runtime::ops::Builtin::Error,
         &[Value::String("Crypto is not available".into())],
     );
-    let error = quench_runtime::execute::set_property(
-        error,
-        "code",
-        Value::String("ERR_NO_CRYPTO".into()),
-    );
+    let error =
+        quench_runtime::execute::set_property(error, "code", Value::String("ERR_NO_CRYPTO".into()));
     Err(VmError::Thrown(error))
 }
 
@@ -896,28 +898,25 @@ pub fn internal_binding(
             Value::Undefined,
         );
         let channel = quench_runtime::execute::set_property(channel, "prototype", prototype);
-        let binding = crate::host::namespace_object_from_pairs(vec![(
-            "ChannelWrap".to_string(),
-            channel,
-        )]);
+        let binding =
+            crate::host::namespace_object_from_pairs(vec![("ChannelWrap".to_string(), channel)]);
         state.borrow_mut().cares_binding = Some(binding.clone());
         return Ok(binding);
     }
     if name == "uv" {
-        return Ok(crate::host::namespace_object_from_pairs(vec![
-            ("UV_EAI_MEMORY".to_string(), Value::Number(-3001.0)),
-        ]));
+        return Ok(crate::host::namespace_object_from_pairs(vec![(
+            "UV_EAI_MEMORY".to_string(),
+            Value::Number(-3001.0),
+        )]));
     }
     if name == "util" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
             (
                 "privateSymbols".to_string(),
-                crate::host::namespace_object_from_pairs(vec![
-                    (
-                        "arrow_message_private_symbol".to_string(),
-                        Value::String("Symbol.node:arrowMessage\0".into()),
-                    ),
-                ]),
+                crate::host::namespace_object_from_pairs(vec![(
+                    "arrow_message_private_symbol".to_string(),
+                    Value::String("Symbol.node:arrowMessage\0".into()),
+                )]),
             ),
             (
                 "arrayBufferViewHasBuffer".to_string(),
@@ -1200,7 +1199,6 @@ pub fn internal_get_proxy_details(
     })
 }
 
-
 fn sleep_error(name: &str, message: &str) -> VmError {
     VmError::Thrown(quench_runtime::host_api::object(vec![
         ("name".to_string(), Value::String(name.to_string())),
@@ -1427,10 +1425,13 @@ pub fn process_cpu_usage(
                 return Err(VmError::Thrown(host_api::object(vec![
                     ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
                     ("name".into(), Value::String("RangeError".into())),
-                    ("message".into(), Value::String(format!(
-                        "The property 'prevValue.{field}' is invalid. Received {}",
-                        execute::number_to_js_string(number)
-                    ))),
+                    (
+                        "message".into(),
+                        Value::String(format!(
+                            "The property 'prevValue.{field}' is invalid. Received {}",
+                            execute::number_to_js_string(number)
+                        )),
+                    ),
                 ])));
             }
         }
@@ -1447,7 +1448,10 @@ pub fn process_uptime(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     Ok(Value::Number(
-        PROCESS_START.get_or_init(Instant::now).elapsed().as_secs_f64(),
+        PROCESS_START
+            .get_or_init(Instant::now)
+            .elapsed()
+            .as_secs_f64(),
     ))
 }
 
@@ -1501,7 +1505,9 @@ pub fn os_homedir(
 ) -> Result<Value, VmError> {
     if let Some(binding) = state.borrow().os_binding.clone() {
         let context = host_api::object(Vec::new());
-        if let Ok(get_home) = quench_runtime::execute::get_property_result(&binding, "getHomeDirectory") {
+        if let Ok(get_home) =
+            quench_runtime::execute::get_property_result(&binding, "getHomeDirectory")
+        {
             let _ = quench_runtime::execute::call(
                 &get_home,
                 &Value::Undefined,
@@ -1851,7 +1857,11 @@ pub fn cp_exec_file(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(callback) = args.iter().rev().find(|value| quench_runtime::is_callable(value)) else {
+    let Some(callback) = args
+        .iter()
+        .rev()
+        .find(|value| quench_runtime::is_callable(value))
+    else {
         return Ok(Value::Undefined);
     };
     let command = args.first().and_then(|value| match value {
@@ -1862,9 +1872,13 @@ pub fn cp_exec_file(
     let mut stderr = String::new();
     if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
         if let Some(Value::Array(values)) = args.get(1) {
-            if let Ok(Value::String(flag)) = execute::get_property_result(&Value::Array(values.clone()), "0") {
+            if let Ok(Value::String(flag)) =
+                execute::get_property_result(&Value::Array(values.clone()), "0")
+            {
                 if flag == "-e" {
-                    if let Ok(Value::String(source)) = execute::get_property_result(&Value::Array(values.clone()), "1") {
+                    if let Ok(Value::String(source)) =
+                        execute::get_property_result(&Value::Array(values.clone()), "1")
+                    {
                         if let Some(message) = source
                             .split("throw new Error('")
                             .nth(1)
@@ -1873,7 +1887,13 @@ pub fn cp_exec_file(
                             stderr = format!("Error: {message}\n");
                             error = host_api::object(vec![(
                                 "message".into(),
-                                Value::String(format!("Command failed: {}", command.as_deref().unwrap_or_default()).into()),
+                                Value::String(
+                                    format!(
+                                        "Command failed: {}",
+                                        command.as_deref().unwrap_or_default()
+                                    )
+                                    .into(),
+                                ),
                             )]);
                         }
                     }
@@ -1883,7 +1903,11 @@ pub fn cp_exec_file(
     }
     state.borrow_mut().event_loop.queue_microtask(
         callback.clone(),
-        vec![error, Value::String(String::new().into()), Value::String(stderr.into())],
+        vec![
+            error,
+            Value::String(String::new().into()),
+            Value::String(stderr.into()),
+        ],
     );
     Ok(Value::Undefined)
 }
@@ -2418,6 +2442,63 @@ pub fn process_emit_warning(
     Ok(Value::Undefined)
 }
 
+pub fn process_getuid(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::process::credential("uid"))
+}
+pub fn process_getgid(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::process::credential("gid"))
+}
+pub fn process_geteuid(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::process::credential("euid"))
+}
+pub fn process_getegid(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::process::credential("egid"))
+}
+pub fn process_setuid(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::set_credential("uid", args)
+}
+pub fn process_setgid(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::set_credential("gid", args)
+}
+pub fn process_seteuid(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::set_credential("uid", args)
+}
+pub fn process_setegid(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::set_credential("gid", args)
+}
+
 pub fn test_run(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -2469,8 +2550,7 @@ pub fn util_format_with_options(
         "numericSeparator",
     ));
     let colors = quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
-        options,
-        "colors",
+        options, "colors",
     ));
     let compact = !matches!(
         quench_runtime::execute::get_property(options, "compact"),
