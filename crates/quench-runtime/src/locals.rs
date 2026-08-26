@@ -423,13 +423,12 @@ pub(crate) fn initialize_resolved(
 ) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, source)?;
     let target = crate::execute::read_register(registers, target)?;
-    current().set(slot, value.clone());
-    current().initialize(slot);
     if matches!(target, Value::Undefined) {
+        current().set(slot, value);
+        current().initialize(slot);
         return Ok(());
-    } else {
-        crate::proxy::proxy_set(&target, name, &value, None)?;
     }
+    crate::proxy::proxy_set(&target, name, &value, None)?;
     Ok(())
 }
 
