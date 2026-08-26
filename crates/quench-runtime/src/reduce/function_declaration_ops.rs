@@ -35,6 +35,7 @@ fn function_declaration_op(
             direct_constructor: metadata.direct_constructor.clone(),
             linked_record_insert: metadata.linked_record_insert.clone(),
             forward_construct_call: metadata.forward_construct_call.clone(),
+            forward_then_call: metadata.forward_then_call.clone(),
         }),
         params,
         captures,

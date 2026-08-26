@@ -63,6 +63,7 @@ fn write_non_ordinary(
             direct_constructor: function.1.facts().direct_constructor.clone(),
             linked_record_insert: function.1.facts().linked_record_insert.clone(),
             forward_construct_call: function.1.facts().forward_construct_call.clone(),
+            forward_then_call: function.1.facts().forward_then_call.clone(),
             strictness,
             is_async,
             mapped_arguments,
@@ -104,6 +105,7 @@ fn write_ordinary(
             direct_constructor: body.facts().direct_constructor.clone(),
             linked_record_insert: body.facts().linked_record_insert.clone(),
             forward_construct_call: body.facts().forward_construct_call.clone(),
+            forward_then_call: body.facts().forward_then_call.clone(),
         },
     );
 }
