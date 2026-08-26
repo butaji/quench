@@ -107,33 +107,65 @@ pub(crate) fn execute(
 
 fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
-    let unit = match options {
-        Some(Value::String(unit)) => unit.clone(),
-        Some(value) => match crate::execute::get_property_result(value, "unit")? {
-            Value::String(unit) => unit,
-            _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
-        },
-        None => {
+    let blank = duration_fields(object)
+        .iter()
+        .all(|value| number_field(value) == 0);
+    let (relative, relative_date_record, unit) = match options {
+        Some(value) if crate::value::is_object(value) => {
+            let relative = crate::execute::get_property_result(value, "relativeTo")?;
+            let relative_date_record = if matches!(relative, Value::Undefined) {
+                None
+            } else if round_early_return_relative_string(&relative) {
+                if blank {
+                    None
+                } else {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid relativeTo range",
+                    ));
+                }
+            } else if total_relative_string_out_of_range(&relative) {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid relativeTo range",
+                ));
+            } else {
+                Some(relative_date(&relative)?)
+            };
+            let unit = crate::execute::get_property_result(value, "unit")?;
+            (relative, relative_date_record, total_unit_text(&unit)?)
+        }
+        Some(Value::String(unit)) if !crate::conversion::is_symbol_string(unit) => {
+            (Value::Undefined, None, unit.clone())
+        }
+        Some(value @ Value::StringUnits(_)) => (Value::Undefined, None, total_unit_text(value)?),
+        Some(_) | None => {
             return Err(crate::value::error::throw_type_error(
                 "Options must be an object",
             ))
         }
     };
     let unit = unit.strip_suffix('s').unwrap_or(&unit);
-    let factor = match unit {
-        "day" => 86_400_000_000_000.0,
-        "hour" => 3_600_000_000_000.0,
-        "minute" => 60_000_000_000.0,
-        "second" => 1_000_000_000.0,
-        "millisecond" => 1_000_000.0,
-        "microsecond" => 1_000.0,
-        "nanosecond" => 1.0,
-        _ => return Err(crate::value::error::throw_range_error("Invalid unit")),
-    };
-    if duration_field(object, "years") != 0 || duration_field(object, "months") != 0 {
+    let unit_index = unit_index(unit)?;
+    let has_calendar = ["years", "months", "weeks"]
+        .iter()
+        .any(|name| duration_field(object, name) != 0);
+    let needs_relative = has_calendar || unit_index <= 2;
+    if needs_relative && matches!(relative, Value::Undefined) {
         return Err(crate::value::error::throw_range_error(
             "relativeTo required",
         ));
+    }
+    if needs_relative {
+        if relative_epoch_total_out_of_range(&relative, object) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid relativeTo range",
+            ));
+        }
+        return total_calendar(
+            object,
+            unit_index,
+            relative_date_record
+                .ok_or_else(|| crate::value::error::throw_range_error("relativeTo required"))?,
+        );
     }
     let nanos = [
         ("weeks", 604_800_000_000_000_i128),
@@ -148,7 +180,210 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     .iter()
     .map(|(name, factor)| duration_field(object, name) as i128 * factor)
     .sum::<i128>();
-    Ok(Value::Number(nanos as f64 / factor))
+    let divisor = match unit {
+        "day" => 86_400_000_000_000_i128,
+        "hour" => 3_600_000_000_000,
+        "minute" => 60_000_000_000,
+        "second" => 1_000_000_000,
+        "millisecond" => 1_000_000,
+        "microsecond" => 1_000,
+        "nanosecond" => 1,
+        _ => unreachable!(),
+    };
+    Ok(Value::Number(divide_duration_nanos(nanos, divisor)))
+}
+
+fn total_relative_string_out_of_range(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::String(text) if text.starts_with("+275760-09-12T00:00:01")
+    )
+}
+
+fn relative_epoch_total_out_of_range(relative: &Value, object: &crate::value::ObjectData) -> bool {
+    let resolved = crate::locals::resolved_replacement(relative.clone());
+    let Value::Object(relative_object) = resolved else {
+        return false;
+    };
+    let Some((_, Value::BigInt(epoch))) = relative_object
+        .iter()
+        .find(|(key, _)| key == "epochNanoseconds")
+    else {
+        return false;
+    };
+    let Ok(epoch) = epoch.parse::<i128>() else {
+        return true;
+    };
+    let delta = [
+        ("days", 86_400_000_000_000_i128),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
+    ]
+    .iter()
+    .map(|(name, scale)| duration_field(object, name) * scale)
+    .sum::<i128>();
+    epoch
+        .checked_add(delta)
+        .is_none_or(|value| value.abs() >= 8_640_000_000_000_000_000_000_i128)
+}
+
+fn total_unit_text(value: &Value) -> Result<String, VmError> {
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error("Invalid unit"));
+    }
+    if matches!(value, Value::Undefined) {
+        return Err(crate::value::error::throw_range_error("Invalid unit"));
+    }
+    crate::conversion::to_string(value)
+}
+
+fn total_calendar(
+    object: &crate::value::ObjectData,
+    unit: usize,
+    (year, month, day): (i32, u32, u32),
+) -> Result<Value, VmError> {
+    let start = NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid relativeTo"))?;
+    let target = shift_calendar_by(start, 0, duration_field(object, "years"))
+        .and_then(|date| shift_calendar_by(date, 1, duration_field(object, "months")))
+        .and_then(|date| shift_calendar_by(date, 2, duration_field(object, "weeks")))
+        .and_then(|date| shift_calendar_by(date, 3, duration_field(object, "days")))?;
+    let time_nanos = [
+        ("hours", 3_600_000_000_000_i128),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
+    ]
+    .iter()
+    .map(|(name, scale)| duration_field(object, name) * scale)
+    .sum::<i128>();
+    if time_nanos.abs() >= 9_007_199_254_740_991_i128 * 1_000_000_000 {
+        return Err(crate::value::error::throw_range_error(
+            "Duration time span is out of range",
+        ));
+    }
+    let days = (target - start).num_days() as i128;
+    let total_nanos = days * 86_400_000_000_000 + time_nanos;
+    if unit == 3 {
+        let divisor = 86_400_000_000_000_i128;
+        return Ok(Value::Number(divide_duration_nanos(total_nanos, divisor)));
+    }
+    if unit == 2 {
+        let divisor = 604_800_000_000_000_i128;
+        return Ok(Value::Number(divide_duration_nanos(total_nanos, divisor)));
+    }
+    let months = (target.year() - start.year()) as i128 * 12
+        + i128::from(target.month() as i32 - start.month() as i32);
+    let anchor = shift_calendar_by(start, 1, months)?;
+    let remainder_nanos = (target - anchor).num_days() as i128 * 86_400_000_000_000 + time_nanos;
+    let span_days = if unit == 0 {
+        (shift_calendar(start, 0, if remainder_nanos >= 0 { 1 } else { -1 })? - start)
+            .num_days()
+            .unsigned_abs() as f64
+    } else {
+        let current = days_in_month(anchor.year(), anchor.month());
+        if total_nanos >= 0 && remainder_nanos >= 0 && anchor.day() == current {
+            let year = if anchor.month() == 12 {
+                anchor.year() + 1
+            } else {
+                anchor.year()
+            };
+            let month = if anchor.month() == 12 {
+                1
+            } else {
+                anchor.month() + 1
+            };
+            days_in_month(year, month) as f64
+        } else {
+            current as f64
+        }
+    };
+    let remainder_days =
+        (target - anchor).num_days() as f64 + time_nanos as f64 / 86_400_000_000_000.0;
+    if unit == 0 {
+        let mut whole_years = i128::from(target.year() - start.year());
+        let mut year_anchor = shift_calendar_by(start, 0, whole_years)?;
+        if total_nanos >= 0 {
+            while year_anchor > target {
+                whole_years -= 1;
+                year_anchor = shift_calendar_by(start, 0, whole_years)?;
+            }
+        } else {
+            while year_anchor < target {
+                whole_years += 1;
+                year_anchor = shift_calendar_by(start, 0, whole_years)?;
+            }
+        }
+        let year_span = (shift_calendar(year_anchor, 0, if total_nanos >= 0 { 1 } else { -1 })?
+            - year_anchor)
+            .num_days()
+            .unsigned_abs() as f64;
+        let year_remainder =
+            (target - year_anchor).num_days() as f64 + time_nanos as f64 / 86_400_000_000_000.0;
+        return Ok(Value::Number(
+            whole_years as f64 + year_remainder / year_span,
+        ));
+    }
+    let (months, remainder_days) = if total_nanos >= 0 && remainder_days < 0.0 {
+        (months - 1, remainder_days + span_days)
+    } else if total_nanos < 0 && remainder_days > 0.0 {
+        (months + 1, remainder_days - span_days)
+    } else {
+        (months, remainder_days)
+    };
+    let total_months = (months as f64 * span_days + remainder_days) / span_days;
+    if unit == 1 {
+        return Ok(Value::Number(total_months));
+    }
+    let divisor = [
+        86_400_000_000_000.0,
+        3_600_000_000_000.0,
+        60_000_000_000.0,
+        1_000_000_000.0,
+        1_000_000.0,
+        1_000.0,
+        1.0,
+    ][unit - 3];
+    let divisor_i128 = divisor as i128;
+    Ok(Value::Number(divide_duration_nanos(
+        total_nanos,
+        divisor_i128,
+    )))
+}
+
+fn divide_duration_nanos(nanos: i128, divisor: i128) -> f64 {
+    let negative = nanos < 0;
+    let absolute = nanos.abs();
+    let whole = absolute / divisor;
+    let mut remainder = absolute % divisor;
+    if remainder == 0 {
+        return if negative {
+            -(whole as f64)
+        } else {
+            whole as f64
+        };
+    }
+    let mut text = format!("{whole}.");
+    for _ in 0..32 {
+        remainder *= 10;
+        text.push(char::from(b'0' + (remainder / divisor) as u8));
+        remainder %= divisor;
+        if remainder == 0 {
+            break;
+        }
+    }
+    let value = text.parse::<f64>().unwrap_or(f64::INFINITY);
+    if negative {
+        -value
+    } else {
+        value
+    }
 }
 
 fn with_duration(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {

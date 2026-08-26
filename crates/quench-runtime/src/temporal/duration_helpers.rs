@@ -483,11 +483,6 @@ fn validate_date_limits(text: &str, date: &Value) -> Result<(), VmError> {
     }
     if (year, month, day) == (275_760, 9, 13) {
         let clock = base.split_once(['+', '-']).map_or(base, |(clock, _)| clock);
-        if base.ends_with('Z') {
-            return Err(crate::value::error::throw_range_error(
-                "Invalid relativeTo range",
-            ));
-        }
         if clock.matches(':').count() > 1 {
             return Err(crate::value::error::throw_range_error(
                 "Invalid relativeTo range",
