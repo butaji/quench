@@ -520,3 +520,6 @@ test-https-agent-session-injection.js
 test-https-argument-of-creating.js
 test-https-client-override-global-agent.js
 test-https-timeout.js
+test-https-agent-abort-controller.js
+test-https-agent-checkserveridentity-reuse.js
+test-https-agent-create-connection.js
