@@ -24,7 +24,7 @@ thread_local! {
     static LEGACY_URL_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
-fn legacy_url_prototype() -> Value {
+pub(crate) fn legacy_url_prototype() -> Value {
     LEGACY_URL_PROTOTYPE.with(|slot| {
         if let Some(value) = slot.borrow().clone() { return value; }
         let value = host_api::object(vec![
@@ -92,14 +92,14 @@ pub fn parse(
     };
     if url.starts_with('<') {
         let pathname = encode_path_component(&url);
-        return Ok(legacy_plain_object(vec![
+        return Ok(legacy_object(vec![
             ("href".into(), Value::String(pathname.clone())),
             ("pathname".into(), Value::String(pathname.clone())),
             ("path".into(), Value::String(pathname)),
         ]));
     }
     if url.starts_with('[') && url.ends_with(']') {
-        return Ok(legacy_plain_object(vec![
+        return Ok(legacy_object(vec![
             ("pathname".into(), Value::String(url.clone())),
             ("path".into(), Value::String(url.clone())),
             ("href".into(), Value::String(url)),
@@ -107,7 +107,7 @@ pub fn parse(
     }
     if let Some(rest) = url.strip_prefix("//") {
         if !rest.contains('@') && !rest.contains(':') && !rest.contains('/') {
-            return Ok(legacy_plain_object(vec![
+            return Ok(legacy_object(vec![
                 ("href".into(), Value::String(url.clone())),
                 ("pathname".into(), Value::String(url.clone())),
                 ("path".into(), Value::String(url)),
