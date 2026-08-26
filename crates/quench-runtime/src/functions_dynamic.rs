@@ -303,9 +303,6 @@ fn dynamic_value(
     );
     if let Value::Function(function) = &value {
         let mut properties = function.properties.borrow_mut();
-        if let Some(token) = crate::vm::realm_token(realm) {
-            properties.push(("\0realm".to_string(), token));
-        }
         let prototype = match (kind, is_async) {
             (FunctionKind::Generator, true) => crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
             (FunctionKind::Generator, false) => crate::ops::Builtin::GeneratorFunctionPrototype,
@@ -381,10 +378,6 @@ fn mark_dynamic(value: &Value, source: &str) {
             "\0dynamic_source".to_string(),
             Value::String(source.to_string()),
         ));
-        if let Some(token) = crate::vm::realm_token(crate::vm::current_context_or_default().realm())
-        {
-            properties.push(("\0realm".to_string(), token));
-        }
     }
 }
 

@@ -205,7 +205,7 @@ fn execute_bound_function(
     let result = execute_bound_function_in_realm(function, bound, &call_arguments, realm);
     let result = match result {
         Ok(result) => result,
-        Err(error) if realm.is_some() && !bound_target_is_class(bound) => {
+        Err(_error) if realm.is_some() && !bound_target_is_class(bound) => {
             return Err(crate::reflect::shadow_wrapped_exception_error_for_realm(
                 wrapper_caller_realm(bound).unwrap_or(crate::ops::RealmId::ROOT),
             ))
@@ -442,7 +442,8 @@ fn execute_function_call(
     let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
     let realm = match receiver {
         crate::value::Value::Function(function) => {
-            Some(crate::construct::function_realm_id(function))
+            let realm = crate::construct::function_realm_id(function);
+            Some(realm)
         }
         crate::value::Value::BoundFunction(bound) => Some(bound.realm),
         _ => None,

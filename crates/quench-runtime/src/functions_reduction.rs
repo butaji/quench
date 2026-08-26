@@ -614,7 +614,10 @@ fn make_function_value(
 ) -> crate::value::Value {
     crate::execution_trace::function_lifecycle(true);
     crate::execution_trace::function_shape(code.capture_slots().len(), code.len(), true);
-    crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
+    let function_realm = crate::vm::realm_id_for_global_value(&captures.get(0))
+        .or_else(|| crate::vm::realm_id_for_global_value(&crate::locals::current().get(0)))
+        .unwrap_or_else(|| crate::vm::current_context_or_default().realm());
+    let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         code,
         params,
         captures,
@@ -627,7 +630,16 @@ fn make_function_value(
         strictness: metadata.strictness,
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
-    }))
+    }));
+    if let crate::value::Value::Function(function) = &value {
+        if let Some(token) = crate::vm::realm_token(function_realm) {
+            function
+                .properties
+                .borrow_mut()
+                .push(("\0realm".to_string(), token));
+        }
+    }
+    value
 }
 
 include!("functions_reduction_tail.rs");
