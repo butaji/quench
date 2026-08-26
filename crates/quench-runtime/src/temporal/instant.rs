@@ -137,26 +137,9 @@ fn difference(
     {
         return Err(crate::value::error::throw_type_error("Invalid options"));
     }
-    let smallest = options
-        .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "nanosecond".into());
-    let largest = options
-        .and_then(|value| crate::execute::get_property_result(value, "largestUnit").ok())
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(|| {
-            if options.is_some_and(crate::value::is_object) && smallest != "nanosecond" {
-                smallest.clone()
-            } else {
-                "second".into()
-            }
-        });
+    let smallest =
+        temporal_unit_option(options, "smallestUnit")?.unwrap_or_else(|| "nanosecond".into());
+    let largest = temporal_unit_option(options, "largestUnit")?.unwrap_or_else(|| "second".into());
     if !matches!(
         smallest.as_str(),
         "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
@@ -249,6 +232,18 @@ fn difference(
         fields[largest_index] = Value::Number((delta / scale) as f64);
     }
     crate::temporal::duration::construct(&fields)
+}
+
+fn temporal_unit_option(options: Option<&Value>, key: &str) -> Result<Option<String>, VmError> {
+    let Some(options) = options.filter(|value| crate::value::is_object(value)) else {
+        return Ok(None);
+    };
+    let value = crate::execute::get_property_result(options, key)?;
+    if matches!(value, Value::Undefined) {
+        return Ok(None);
+    }
+    let value = crate::conversion::to_string(&value)?;
+    Ok(Some(value.strip_suffix('s').unwrap_or(&value).to_string()))
 }
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
