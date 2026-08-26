@@ -14,16 +14,19 @@ const NAMES: [&str; 9] = [
 ];
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let fields = (0..9)
-        .map(|index| {
+    let mut fields = Vec::with_capacity(9);
+    for index in 0..9 {
             let value = arguments.get(index).unwrap_or(&Value::Undefined);
-            if index >= 3 && matches!(value, Value::Undefined) {
+            let number = if index >= 3 && matches!(value, Value::Undefined) {
                 Ok(0.0)
             } else {
                 Ok(crate::conversion::to_number(value)?.trunc())
+            }?;
+            if !number.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid date-time"));
             }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+            fields.push(number);
+    }
     crate::temporal::plain_date::construct(
         &fields[..3]
             .iter()
