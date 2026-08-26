@@ -58,19 +58,28 @@ fn execute_linked_idle(
     let next_count = count.number()? - 1.0;
     if next_count == 0.0 {
         let transition = LinkedHoldTransition::new(current, table, scheduler)?;
-        count.store(crate::value::Value::Number(next_count));
+        count.store_number(next_count);
         crate::execution_trace::kernel("linked_idle_hold", false);
         return Some(DirectTaskStep::new(transition.execute()));
     }
     let v1 = current.word(current.task_v1);
     let value = crate::vm::vm_arithmetic::numeric_to_int32(v1.number()?);
     let even = value & 1 == 0;
-    let next_v1 = if even { value >> 1 } else { (value >> 1) ^ 0xD008 };
-    let slot = if even { plan.device_a_slot } else { plan.device_b_slot };
+    let next_v1 = if even {
+        value >> 1
+    } else {
+        (value >> 1) ^ 0xD008
+    };
+    let slot = if even {
+        plan.device_a_slot
+    } else {
+        plan.device_b_slot
+    };
     let id = current.function.captures.get_number(slot)?;
-    let transition = LinkedReleaseTransition::new(current, table.for_id(exact_linked_task_id(id)?)?)?;
-    count.store(crate::value::Value::Number(next_count));
-    v1.store(crate::value::Value::Number(f64::from(next_v1)));
+    let transition =
+        LinkedReleaseTransition::new(current, table.for_id(exact_linked_task_id(id)?)?)?;
+    count.store_number(next_count);
+    v1.store_number(f64::from(next_v1));
     crate::execution_trace::kernel("linked_idle_release", false);
     Some(DirectTaskStep::new(Some(transition.execute())))
 }
@@ -87,41 +96,43 @@ fn execute_linked_worker(
         crate::execution_trace::kernel("linked_worker_suspend", false);
         return Some(DirectTaskStep::new(Some(next)));
     }
-    let crate::value::Value::Object(packet_object) = packet else { return None };
-    if packet_object.has_replacement() { return None; }
+    let crate::value::Value::Object(packet_object) = packet else {
+        return None;
+    };
+    if packet_object.has_replacement() {
+        return None;
+    }
     let packet_words = table.packet_words(packet_object)?;
     let v1 = current.word(current.task_v1);
     let v2 = current.word(current.task_v2?);
     let handler_a = current.function.captures.get_number(plan.handler_a_slot)?;
     let handler_b = current.function.captures.get_number(plan.handler_b_slot)?;
-    let next_id = if v1.number()? == handler_a { handler_b } else { handler_a };
+    let next_id = if v1.number()? == handler_a {
+        handler_b
+    } else {
+        handler_a
+    };
     let count = exact_worker_count(current.function.captures.get_number(plan.data_size_slot)?)?;
     let (values, next_v2) = worker_values(v2.number()?, count);
     let payload = linked_worker_payload(packet_words.a2, count)?;
     let target_id = exact_linked_task_id(next_id)?;
-    let queue = LinkedQueueTransition::new_for_id(
-        current,
-        table,
-        scheduler,
-        packet.clone(),
-        target_id,
-    )?;
+    let queue =
+        LinkedQueueTransition::new_for_id(current, table, scheduler, packet.clone(), target_id)?;
     apply_linked_worker_payload(&payload, &values[..count])?;
-    v1.store(crate::value::Value::Number(next_id));
-    v2.store(crate::value::Value::Number(next_v2));
-    packet_words.id.store(crate::value::Value::Number(next_id));
-    packet_words.a1.store(crate::value::Value::Number(0.0));
+    v1.store_number(next_id);
+    v2.store_number(next_v2);
+    packet_words.id.store_number(next_id);
+    packet_words.a1.store_number(0.0);
     crate::execution_trace::kernel("linked_worker_task", false);
     Some(DirectTaskStep::new(Some(queue.execute())))
 }
 
-fn apply_linked_worker_payload(
-    payload: &crate::value::ArrayData,
-    values: &[f64],
-) -> Option<()> {
+fn apply_linked_worker_payload(payload: &crate::value::ArrayData, values: &[f64]) -> Option<()> {
     if payload.is_holey() {
         for (index, value) in values.iter().copied().enumerate() {
-            if !payload.append_preallocated_f64(index, value) { return None; }
+            if !payload.append_preallocated_f64(index, value) {
+                return None;
+            }
         }
     } else {
         payload.numeric_kernel_words_mut()?[..values.len()].copy_from_slice(values);
@@ -133,7 +144,9 @@ fn linked_worker_payload(
     payload: &crate::register_file::SlotWord,
     count: usize,
 ) -> Option<std::rc::Rc<crate::value::ArrayData>> {
-    let crate::value::Value::Array(payload) = payload.load() else { return None };
+    let crate::value::Value::Array(payload) = payload.load() else {
+        return None;
+    };
     (crate::locals::array_word_is_current(&payload)
         && payload.header_length() == count
         && ((payload.is_packed_ordinary() && payload.is_numeric_packed())
@@ -152,14 +165,8 @@ fn execute_linked_handler(
     let task_v2 = current.word(current.task_v2?);
     let mut v1 = task_v1.load();
     let mut v2 = task_v2.load();
-    let incoming = linked_incoming_packet(
-        &current.function,
-        packet,
-        plan,
-        task_v1,
-        task_v2,
-        table,
-    )?;
+    let incoming =
+        linked_incoming_packet(&current.function, packet, plan, task_v1, task_v2, table)?;
     if let Some(incoming) = &incoming {
         let appended = predicted_append(&incoming.packet, &incoming.queue)?;
         if std::ptr::eq(incoming.target, task_v1) {
@@ -184,19 +191,24 @@ fn linked_incoming_packet<'a>(
     task_v2: &'a crate::register_file::SlotWord,
     table: &DirectTaskTable,
 ) -> Option<Option<IncomingPacket<'a>>> {
-    if packet.is_nullish() { return Some(None); }
-    let crate::value::Value::Object(object) = packet else { return None };
+    if packet.is_nullish() {
+        return Some(None);
+    }
+    let crate::value::Value::Object(object) = packet else {
+        return None;
+    };
     let words = table.packet_words(object)?;
     let kind = words.kind.number()?;
     let work_kind = function.captures.get_number(plan.work_kind_slot)?;
     let target = if kind == work_kind { task_v1 } else { task_v2 };
     let queue = target.load();
-    if !queue.is_nullish() && !matches!(queue, crate::value::Value::Object(_)) { return None; }
+    if !queue.is_nullish() && !matches!(queue, crate::value::Value::Object(_)) {
+        return None;
+    }
     let tail_link = match &queue {
-        crate::value::Value::Object(head) => Some(table.packet_tail_link(
-            std::rc::Rc::as_ptr(head),
-            std::rc::Rc::as_ptr(object),
-        )?),
+        crate::value::Value::Object(head) => {
+            Some(table.packet_tail_link(std::rc::Rc::as_ptr(head), std::rc::Rc::as_ptr(object))?)
+        }
         _ => None,
     };
     handler_packet_add_callee(function, object, kind == work_kind)?;
@@ -242,13 +254,25 @@ impl LinkedHandlerRoute<'_> {
     fn execute(self) -> usize {
         match self {
             Self::Suspend(result) => result,
-            Self::Work { task_v2, next_v2, packet_a1, work_a1, value, count, queue } => {
+            Self::Work {
+                task_v2,
+                next_v2,
+                packet_a1,
+                work_a1,
+                value,
+                count,
+                queue,
+            } => {
                 task_v2.store(next_v2);
-                unsafe { &*packet_a1 }.store(crate::value::Value::Number(value));
-                unsafe { &*work_a1 }.store(crate::value::Value::Number(count + 1.0));
+                unsafe { &*packet_a1 }.store_number(value);
+                unsafe { &*work_a1 }.store_number(count + 1.0);
                 queue.execute()
             }
-            Self::Complete { task_v1, next_v1, queue } => {
+            Self::Complete {
+                task_v1,
+                next_v1,
+                queue,
+            } => {
                 task_v1.store(next_v1);
                 queue.execute()
             }
@@ -269,8 +293,12 @@ fn linked_handler_route<'a>(
     if v1.is_nullish() {
         return linked_suspend(current).map(LinkedHandlerRoute::Suspend);
     }
-    let crate::value::Value::Object(work) = v1 else { return None };
-    if work.has_replacement() { return None; }
+    let crate::value::Value::Object(work) = v1 else {
+        return None;
+    };
+    if work.has_replacement() {
+        return None;
+    }
     let work_words = table.packet_words(&work)?;
     let count = work_words.a1.number()?;
     let data_size = current.function.captures.get_number(plan.data_size_slot)?;
@@ -298,13 +326,21 @@ fn linked_handler_work<'a>(
     if v2.is_nullish() {
         return linked_suspend(current).map(LinkedHandlerRoute::Suspend);
     }
-    let crate::value::Value::Object(packet) = v2 else { return None };
-    if packet.has_replacement() || count < 0.0 || count.fract() != 0.0 { return None; }
+    let crate::value::Value::Object(packet) = v2 else {
+        return None;
+    };
+    if packet.has_replacement() || count < 0.0 || count.fract() != 0.0 {
+        return None;
+    }
     let packet_words = table.packet_words(&packet)?;
     let work_words = table.packet_words(&work)?;
     let next_v2 = packet_words.link.load();
-    let crate::value::Value::Array(payload) = work_words.a2.load() else { return None };
-    if !crate::locals::array_word_is_current(&payload) || !payload.is_packed_ordinary() { return None; }
+    let crate::value::Value::Array(payload) = work_words.a2.load() else {
+        return None;
+    };
+    if !crate::locals::array_word_is_current(&payload) || !payload.is_packed_ordinary() {
+        return None;
+    }
     let value = payload.dense_number_at(count as usize)?;
     let packet_value = crate::value::Value::Object(packet.clone());
     Some(LinkedHandlerRoute::Work {
@@ -337,7 +373,7 @@ impl LinkedReleaseTransition {
 
     fn execute(self) -> usize {
         // SAFETY: the retained target TCB owns the canonical state word.
-        unsafe { &*self.state }.store(crate::value::Value::Number(self.next_state));
+        unsafe { &*self.state }.store_number(self.next_state);
         self.result
     }
 }
@@ -372,8 +408,8 @@ impl LinkedHoldTransition {
     fn execute(self) -> Option<usize> {
         // SAFETY: admission retains the scheduler and current TCB, and every
         // pointer names a canonical ordinary own word proved before mutation.
-        unsafe { &*self.hold_count }.store(crate::value::Value::Number(self.next_count));
-        unsafe { &*self.state }.store(crate::value::Value::Number(self.next_state));
+        unsafe { &*self.hold_count }.store_number(self.next_count);
+        unsafe { &*self.state }.store_number(self.next_state);
         self.next
     }
 }
@@ -381,7 +417,7 @@ impl LinkedHoldTransition {
 fn linked_suspend(current: &DirectTaskRunner) -> Option<usize> {
     let state = current.word(current.state);
     let next = exact_i32(state.number()?)? | current.suspended;
-    state.store(crate::value::Value::Number(f64::from(next)));
+    state.store_number(f64::from(next));
     Some(current.index)
 }
 
@@ -447,9 +483,9 @@ impl LinkedQueueTransition {
 
     fn execute(self) -> usize {
         let packet_link = unsafe { &*self.packet_link };
-        unsafe { &*self.queue_count }.store(crate::value::Value::Number(self.next_count));
+        unsafe { &*self.queue_count }.store_number(self.next_count);
         packet_link.store(crate::value::Value::Null);
-        unsafe { &*self.packet_id }.store(crate::value::Value::Number(self.current_id));
+        unsafe { &*self.packet_id }.store_number(self.current_id);
         self.target.apply(packet_link, self.packet)
     }
 }
@@ -486,10 +522,7 @@ fn linked_priority_transition(
     })
 }
 
-fn linked_priority_result(
-    current: &DirectTaskRunner,
-    target: &DirectTaskRunner,
-) -> Option<usize> {
+fn linked_priority_result(current: &DirectTaskRunner, target: &DirectTaskRunner) -> Option<usize> {
     let target_priority = target.word(target.priority).number()?;
     let current_priority = current.word(current.priority).number()?;
     Some(if target_priority > current_priority {
