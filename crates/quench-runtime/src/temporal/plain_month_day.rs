@@ -15,6 +15,7 @@ pub(crate) fn construct(month: f64, day: f64) -> Result<Value, VmError> {
             ("day".into(), Value::Number(day)),
             ("calendarId".into(), Value::String("iso8601".into())),
             ("referenceISODay".into(), Value::Number(1972.0)),
+            ("\0temporal-plain-month-day".into(), Value::Boolean(true)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainMonthDayPrototype),
@@ -29,6 +30,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     Some(match builtin {
+        crate::ops::Builtin::TemporalPlainMonthDay => Err(crate::value::error::throw_type_error(
+            "Temporal.PlainMonthDay requires new",
+        )),
         crate::ops::Builtin::TemporalPlainMonthDayFrom => from(arguments.first()),
         crate::ops::Builtin::TemporalPlainMonthDayCompare => compare(arguments),
         crate::ops::Builtin::TemporalPlainMonthDayCalendarIdGetter => field(receiver, "calendarId"),
@@ -77,6 +81,11 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn fields(value: &Value) -> Result<(String, f64), VmError> {
+    if !is_plain_month_day(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainMonthDay receiver",
+        ));
+    }
     let month = crate::execute::get_property_result(value, "monthCode")?;
     let day = crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?;
     Ok((crate::conversion::to_string(&month)?, day))
@@ -85,7 +94,18 @@ fn fields(value: &Value) -> Result<(String, f64), VmError> {
 fn field(receiver: Option<&Value>, name: &str) -> Result<Value, VmError> {
     let receiver = receiver
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay receiver"))?;
+    if !is_plain_month_day(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainMonthDay receiver",
+        ));
+    }
     crate::execute::get_property_result(receiver, name)
+}
+
+fn is_plain_month_day(value: &Value) -> bool {
+    matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
+        key == "\0temporal-plain-month-day" && matches!(value, Value::Boolean(true))
+    }))
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
