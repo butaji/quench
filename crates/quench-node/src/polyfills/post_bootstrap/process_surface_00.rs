@@ -124,7 +124,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     globalThis.process.allowedNodeEnvironmentFlags =
       Object.freeze(allowedFlags);
     globalThis.process.execArgv = [];
-    globalThis.process.argv0 = "node";
+    globalThis.process.argv0 ||= "node";
     globalThis.process.features ||= {};
     globalThis.process.features.inspector ??= false;
     globalThis.process.noDeprecation ??= false;
