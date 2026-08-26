@@ -347,6 +347,9 @@ test-fs-promises-mkdtempDisposable.js
 test-fs-promises-watch-iterator.js
 test-fs-promises-watch.js
 test-fs-write-stream-flush.js
+test-fs-filehandle.js
+test-fs-internal-assertencoding.js
+test-fs-open-flags.js
 test-readable-large-hwm.js
 test-stream-await-drain-writers-in-synchronously-recursion-write.js
 test-stream-big-packet.js
