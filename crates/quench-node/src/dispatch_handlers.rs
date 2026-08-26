@@ -2205,6 +2205,12 @@ pub fn abort_controller_abort(
         return Ok(Value::Undefined);
     };
     let original_signal = quench_runtime::execute::get_property(controller, "signal");
+    if matches!(
+        quench_runtime::execute::get_property(&original_signal, "aborted"),
+        Value::Boolean(true)
+    ) {
+        return Ok(Value::Undefined);
+    }
     let reason = args.first().cloned().unwrap_or_else(|| {
         quench_runtime::host_api::object(vec![
             ("name".into(), Value::String("AbortError".into())),
