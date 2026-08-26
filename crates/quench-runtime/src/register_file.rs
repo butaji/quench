@@ -365,6 +365,21 @@ impl SlotWord {
         unsafe { (&mut *self.0.get()).store(value) }
     }
 
+    /// Copy one canonical execute word between object slots without decoding
+    /// it into `Value`.
+    #[inline(always)]
+    pub(crate) fn copy_from(&self, source: &Self) {
+        if std::ptr::eq(self, source) {
+            return;
+        }
+        let tagged = source.with_word(OwnedWord::tagged);
+        retain(tagged);
+        // SAFETY: realm execution is single-threaded and both slots retain
+        // complete owning words throughout the replacement.
+        let previous = unsafe { std::mem::replace(&mut (*self.0.get()).0, tagged) };
+        release(previous);
+    }
+
     #[inline(always)]
     pub(crate) fn number(&self) -> Option<f64> {
         // SAFETY: this is a read-only tag inspection during single-threaded
