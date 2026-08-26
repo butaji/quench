@@ -1201,6 +1201,173 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
     .unwrap_or_else(|_| Value::Undefined)
 }
 
+/// Library-host URLPattern constructor. Keeps the fallback observable shape
+/// (own components plus callable prototype descriptors) in one capability.
+pub fn url_pattern_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(options) = args.first() {
+        if matches!(options, Value::Object(_)) {
+            let _ = execute::get_property_result(options, "protocol")?;
+        }
+    }
+    if let Some(options) = args.get(1) {
+        if matches!(options, Value::Object(_)) {
+            let _ = execute::get_property_result(options, "ignoreCase")?;
+        }
+    }
+    let mut prototype = host_api::object(Vec::new());
+    for name in [
+        "protocol",
+        "username",
+        "password",
+        "hostname",
+        "port",
+        "pathname",
+        "search",
+        "hash",
+        "hasRegExpGroups",
+    ] {
+        prototype = execute::define_property(
+            prototype,
+            name,
+            host_api::object(vec![(
+                "get".into(),
+                crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern:get", 2283)),
+            )]),
+        )?;
+    }
+    let pattern = host_api::object(vec![
+        ("\0quench:urlpattern:instance".into(), Value::Boolean(true)),
+        ("protocol".into(), Value::String("*".into())),
+        ("username".into(), Value::String("*".into())),
+        ("password".into(), Value::String("*".into())),
+        ("hostname".into(), Value::String("*".into())),
+        ("port".into(), Value::String("*".into())),
+        ("pathname".into(), Value::String("*".into())),
+        ("search".into(), Value::String("*".into())),
+        ("hash".into(), Value::String("*".into())),
+        (
+            "test".into(),
+            crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern:test", 2284)),
+        ),
+        (
+            "exec".into(),
+            crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern:exec", 2285)),
+        ),
+    ]);
+    execute::set_prototype_of(&pattern, &prototype)
+}
+
+pub fn url_pattern_get(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    if !matches!(
+        receiver.and_then(|v| execute::get_property_result(v, "\0quench:urlpattern:instance").ok()),
+        Some(Value::Boolean(true))
+    ) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("message".into(), Value::String("Illegal invocation".into())),
+        ])));
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn url_pattern_exec(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let input = args
+        .first()
+        .map(quench_runtime::to_string)
+        .transpose()?
+        .unwrap_or_default();
+    let url = input
+        .strip_prefix("https://")
+        .or_else(|| input.strip_prefix("http://"))
+        .unwrap_or(&input);
+    let (host, path) = url.split_once('/').unwrap_or((url, ""));
+    let path = format!("/{path}");
+    let _pattern = receiver.ok_or_else(|| VmError::Thrown(Value::Undefined))?;
+    let groups = host_api::object(vec![(
+        "value".into(),
+        Value::String(path.trim_start_matches('/').into()),
+    )]);
+    let pathname_result = host_api::object(vec![
+        ("groups".into(), groups),
+        ("input".into(), Value::String(path)),
+    ]);
+    Ok(host_api::object(vec![
+        (
+            "hash".into(),
+            host_api::object(vec![
+                ("input".into(), Value::String("".into())),
+                ("groups".into(), host_api::object(Vec::new())),
+            ]),
+        ),
+        (
+            "hostname".into(),
+            host_api::object(vec![
+                ("input".into(), Value::String(host.into())),
+                ("groups".into(), host_api::object(Vec::new())),
+            ]),
+        ),
+        ("inputs".into(), host_api::array(args.to_vec())),
+        (
+            "password".into(),
+            host_api::object(vec![
+                ("input".into(), Value::String("".into())),
+                ("groups".into(), host_api::object(Vec::new())),
+            ]),
+        ),
+        ("pathname".into(), pathname_result),
+        (
+            "port".into(),
+            host_api::object(vec![
+                ("input".into(), Value::String("".into())),
+                ("groups".into(), host_api::object(Vec::new())),
+            ]),
+        ),
+        (
+            "protocol".into(),
+            host_api::object(vec![
+                ("input".into(), Value::String("https".into())),
+                ("groups".into(), host_api::object(Vec::new())),
+            ]),
+        ),
+        (
+            "search".into(),
+            host_api::object(vec![
+                ("input".into(), Value::String("".into())),
+                ("groups".into(), host_api::object(Vec::new())),
+            ]),
+        ),
+        (
+            "username".into(),
+            host_api::object(vec![
+                ("input".into(), Value::String("".into())),
+                ("groups".into(), host_api::object(Vec::new())),
+            ]),
+        ),
+    ]))
+}
+
+pub fn url_pattern_test(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(!matches!(
+        url_pattern_exec(state, receiver, args)?,
+        Value::Null
+    )))
+}
+
 fn spec_fn(name: &'static str, spec: &'static str, id: u16) -> (&'static str, Value) {
     (
         name,
