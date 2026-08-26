@@ -365,7 +365,17 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         ));
     }
     let quantum = scale * increment as i128;
-    let rounded = round_instant_integer(epoch, quantum, &rounding_mode);
+    let round_mode = if epoch < 0 {
+        match rounding_mode.as_str() {
+            "expand" => "ceil",
+            "trunc" => "floor",
+            "halfExpand" => "halfCeil",
+            _ => rounding_mode.as_str(),
+        }
+    } else {
+        rounding_mode.as_str()
+    };
+    let rounded = round_instant_integer(epoch, quantum, round_mode);
     construct(&[Value::BigInt(rounded.to_string())])
 }
 
