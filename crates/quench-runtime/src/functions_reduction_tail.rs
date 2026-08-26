@@ -65,14 +65,8 @@ fn constructor_descriptor(value: crate::value::Value) -> crate::value::Value {
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("value".to_string(), value),
         ("writable".to_string(), crate::value::Value::Boolean(true)),
-        (
-            "enumerable".to_string(),
-            crate::value::Value::Boolean(false),
-        ),
-        (
-            "configurable".to_string(),
-            crate::value::Value::Boolean(true),
-        ),
+        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+        ("configurable".to_string(), crate::value::Value::Boolean(true)),
     ])))
 }
 
@@ -123,15 +117,19 @@ pub(crate) fn write(
     captures: u16,
     metadata: FunctionMetadata,
 ) {
-    let captures = crate::environment::Environment::capture(&crate::locals::current(), captures);
+    let kind = metadata.kind;
     let value = make(
         body.clone(),
         params,
         metadata.length,
-        captures,
+        crate::environment::Environment::capture_selected(
+            &crate::locals::current(),
+            captures,
+            body.capture_slots(),
+        ),
         metadata,
     );
-    if matches!(metadata.kind, FunctionKind::Ordinary) {
+    if matches!(kind, FunctionKind::Ordinary) {
         if let crate::value::Value::Function(function) = &value {
             function.properties.borrow_mut().push((
                 "\0ordinary_function".to_string(),
