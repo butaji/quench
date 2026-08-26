@@ -14,20 +14,16 @@ const NAMES: [&str; 9] = [
 ];
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let mut fields = arguments
-        .iter()
-        .take(9)
-        .map(|value| {
-            if matches!(value, Value::Undefined) {
+    let fields = (0..9)
+        .map(|index| {
+            let value = arguments.get(index).unwrap_or(&Value::Undefined);
+            if index >= 3 && matches!(value, Value::Undefined) {
                 Ok(0.0)
             } else {
-                crate::conversion::to_number(value)
+                Ok(crate::conversion::to_number(value)?.trunc())
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    while fields.len() < 9 {
-        fields.push(0.0);
-    }
     crate::temporal::plain_date::construct(
         &fields[..3]
             .iter()
@@ -101,7 +97,9 @@ fn validate(fields: &[f64]) -> Result<(), VmError> {
     if !(1.0..=12.0).contains(&fields[1])
         || !(1.0..=31.0).contains(&fields[2])
         || !(0.0..=23.0).contains(&fields[3])
-        || fields[4..]
+        || !(0.0..=59.0).contains(&fields[4])
+        || !(0.0..=59.0).contains(&fields[5])
+        || fields[6..]
             .iter()
             .any(|value| !(0.0..=999.0).contains(value))
     {
@@ -123,6 +121,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        crate::ops::Builtin::TemporalPlainDateTime => Some(Err(
+            crate::value::error::throw_type_error("Temporal.PlainDateTime requires 'new'"),
+        )),
         crate::ops::Builtin::TemporalPlainDateTimeFrom => {
             Some(from(arguments.first(), arguments.get(1)))
         }
