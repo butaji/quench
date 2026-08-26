@@ -126,7 +126,7 @@ pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
     if is_symbol(&primitive) {
         let description = match &primitive {
             Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin)
-                .map(|name| name.strip_prefix("Symbol.").unwrap_or(name).to_string())
+                .map(str::to_string)
                 .unwrap_or_default(),
             Value::String(value) => value
                 .strip_prefix("Symbol.")
