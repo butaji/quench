@@ -118,7 +118,7 @@ const __quenchDnsLookup = (hostname, options, callback) => {
   queueMicrotask(() => {
     try {
       const cares = __quenchDnsCares();
-      if (!__quenchDnsIsIP(hostname) && cares && typeof cares.getaddrinfo === "function") {
+      if (!__quenchDnsIsIP(hostname) && cares && Object.prototype.hasOwnProperty.call(cares, "getaddrinfo") && typeof cares.getaddrinfo === "function") {
         try {
           cares.getaddrinfo(hostname);
           const error = new Error(`getaddrinfo ENOMEM ${hostname}`);
@@ -135,10 +135,11 @@ const __quenchDnsLookup = (hostname, options, callback) => {
         ? [hostname]
         : globalThis.__quench_dns_lookup(hostname, 0);
       const family = options?.family === 6 ? 6 : options?.family === 4 ? 4 : 0;
-      const filtered = addresses.filter((value) => {
+      const filtered = [];
+      for (const value of addresses) {
         const detected = value.indexOf(":") >= 0 ? 6 : 4;
-        return family === 0 || detected === family;
-      });
+        if (family === 0 || detected === family) filtered.push(value);
+      }
       if (options?.all) {
         const result = [];
         for (const value of filtered) {
