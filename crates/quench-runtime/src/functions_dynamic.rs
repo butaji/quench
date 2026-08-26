@@ -332,6 +332,18 @@ fn function_source(
         .collect::<Result<Vec<_>, _>>()?
         .join(",");
     let parameters = normalize_annex_b_comments(&parameters, false);
+    // The Function constructor joins parameter strings with commas. A
+    // trailing line comment would otherwise consume the generated closing
+    // parenthesis; ECMAScript inserts a line terminator before it.
+    let parameter_terminator = parameters
+        .rsplit('\n')
+        .next()
+        .is_some_and(|line| line.contains("//"));
+    let parameters = if parameter_terminator {
+        format!("{parameters}\n")
+    } else {
+        parameters
+    };
     let body = arguments
         .last()
         .map_or_else(|| Ok(String::new()), to_string)?;
