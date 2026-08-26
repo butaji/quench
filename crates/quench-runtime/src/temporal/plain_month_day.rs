@@ -1,7 +1,37 @@
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn construct(month: f64, day: f64) -> Result<Value, VmError> {
-    if !(1.0..=12.0).contains(&month) || !(1.0..=31.0).contains(&day) {
+    construct_with_year(month, day, 1972.0)
+}
+
+pub(crate) fn construct_from_arguments(arguments: &[Value]) -> Result<Value, VmError> {
+    let month = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    let day = crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+    let calendar = arguments.get(2).unwrap_or(&Value::Undefined);
+    if !matches!(calendar, Value::Undefined) {
+        let calendar = crate::conversion::to_string(calendar)?;
+        if !calendar.eq_ignore_ascii_case("iso8601") {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    }
+    let default_year = Value::Number(1972.0);
+    let year = crate::conversion::to_number(arguments.get(3).unwrap_or(&default_year))?;
+    if !year.is_finite() || year.fract() != 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainMonthDay",
+        ));
+    }
+    construct_with_year(month, day, year)
+}
+
+fn construct_with_year(month: f64, day: f64, year: f64) -> Result<Value, VmError> {
+    if !month.is_finite()
+        || !day.is_finite()
+        || month.fract() != 0.0
+        || day.fract() != 0.0
+        || !(1.0..=12.0).contains(&month)
+        || !(1.0..=31.0).contains(&day)
+    {
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainMonthDay",
         ));
@@ -14,7 +44,7 @@ pub(crate) fn construct(month: f64, day: f64) -> Result<Value, VmError> {
             ),
             ("day".into(), Value::Number(day)),
             ("calendarId".into(), Value::String("iso8601".into())),
-            ("referenceISODay".into(), Value::Number(1972.0)),
+            ("referenceISODay".into(), Value::Number(year)),
             ("\0temporal-plain-month-day".into(), Value::Boolean(true)),
             (
                 "\0prototype".into(),
@@ -108,6 +138,17 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         value => crate::conversion::to_number(&value)?,
     };
     let day = crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?;
+    if !month.is_finite()
+        || !day.is_finite()
+        || month.fract() != 0.0
+        || day.fract() != 0.0
+        || month < 0.0
+        || day < 0.0
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainMonthDay",
+        ));
+    }
     let reject = overflow_reject(options)?;
     if !reject {
         return construct(month.clamp(1.0, 12.0), day.clamp(1.0, 31.0));
