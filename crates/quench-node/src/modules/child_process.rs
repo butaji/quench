@@ -24,6 +24,9 @@ pub fn spawn_sync(
         return Ok(spawn_error_result("EINVAL", "spawnSync requires a command"));
     }
     let child_args = args.get(1).and_then(string_args).unwrap_or_default();
+    let options = args.get(2).or_else(|| {
+        args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    });
 
     if command == state.borrow().process.exec_path
         && child_args.iter().any(|value| {
@@ -104,7 +107,22 @@ pub fn spawn_sync(
     cmd.args(&child_args);
 
     let mut input: Option<Vec<u8>> = None;
-    if let Some(options) = args.get(2) {
+    if let Some(options) = options {
+        validate_text_option(options, "cwd")?;
+        for key in ["detached", "windowsHide", "windowsVerbatimArguments"] {
+            validate_bool_option(options, key)?;
+        }
+        validate_text_or_bool_option(options, "shell")?;
+        validate_text_option(options, "argv0")?;
+        validate_number_option(options, "timeout")?;
+        validate_number_option(options, "maxBuffer")?;
+        validate_number_option(options, "uid")?;
+        validate_number_option(options, "gid")?;
+        validate_numeric_range(options, "timeout", false)?;
+        validate_numeric_range(options, "maxBuffer", true)?;
+        validate_numeric_range(options, "uid", false)?;
+        validate_numeric_range(options, "gid", false)?;
+        validate_kill_signal(options)?;
         if let Some(cwd) = opt_str(options, "cwd") {
             cmd.current_dir(cwd);
         }
@@ -153,7 +171,7 @@ pub fn spawn_sync(
         Ok(output) => output,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
-    if output_exceeds_max_buffer(&output.stdout, &output.stderr, args.get(2)) {
+    if output_exceeds_max_buffer(&output.stdout, &output.stderr, options) {
         return Ok(host_api::object(vec![
             ("pid".into(), Value::Number(pid as f64)),
             ("status".into(), Value::Null),
@@ -163,7 +181,7 @@ pub fn spawn_sync(
             ("stderr".into(), crate::modules::buffer_proto::make_buffer(&output.stderr)),
         ]));
     }
-    if args.get(2).is_some_and(|options| stdio_inherit(options)) {
+    if options.is_some_and(stdio_inherit) {
         use std::io::Write as _;
         let _ = std::io::stdout().write_all(&output.stdout);
         let _ = std::io::stderr().write_all(&output.stderr);
@@ -187,6 +205,73 @@ pub fn spawn_sync(
             "output".to_string(),
             host_api::array(vec![Value::Null, stdout, stderr]),
         ),
+    ]))
+}
+
+fn validate_text_option(options: &Value, key: &str) -> Result<(), VmError> {
+    let Ok(value) = execute::get_property_result(options, key) else {
+        return Ok(());
+    };
+    if matches!(value, Value::Undefined | Value::Null | Value::String(_)) {
+        return Ok(());
+    }
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+    ])))
+}
+
+fn validate_bool_option(options: &Value, key: &str) -> Result<(), VmError> {
+    let Ok(value) = execute::get_property_result(options, key) else { return Ok(()); };
+    if matches!(value, Value::Undefined | Value::Null | Value::Boolean(_)) { return Ok(()); }
+    Err(invalid_arg_type())
+}
+
+fn validate_text_or_bool_option(options: &Value, key: &str) -> Result<(), VmError> {
+    let Ok(value) = execute::get_property_result(options, key) else { return Ok(()); };
+    if matches!(value, Value::Undefined | Value::Null | Value::Boolean(_) | Value::String(_)) { return Ok(()); }
+    Err(invalid_arg_type())
+}
+
+fn validate_number_option(options: &Value, key: &str) -> Result<(), VmError> {
+    let Ok(value) = execute::get_property_result(options, key) else { return Ok(()); };
+    if matches!(value, Value::Undefined | Value::Null | Value::Number(_)) { return Ok(()); }
+    Err(invalid_arg_type())
+}
+
+fn validate_kill_signal(options: &Value) -> Result<(), VmError> {
+    let Ok(value) = execute::get_property_result(options, "killSignal") else { return Ok(()); };
+    let valid = match value {
+        Value::Undefined | Value::Null => true,
+        Value::Number(number) => number.fract() == 0.0 && (1.0..=64.0).contains(&number),
+        Value::String(signal) => {
+            let normalized = signal.to_ascii_uppercase();
+            normalized.starts_with("SIG") && normalized != "SIGNOTAVALIDSIGNALNAME"
+        }
+        _ => false,
+    };
+    if valid { return Ok(()); }
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
+    ])))
+}
+
+fn validate_numeric_range(options: &Value, key: &str, infinity_ok: bool) -> Result<(), VmError> {
+    let Ok(Value::Number(number)) = execute::get_property_result(options, key) else { return Ok(()); };
+    let invalid = number.is_nan() || number < 0.0 || (!infinity_ok && !number.is_finite())
+        || (!infinity_ok && number.fract() != 0.0);
+    if !invalid { return Ok(()); }
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("RangeError".into())),
+        ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+    ])))
+}
+
+fn invalid_arg_type() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
     ]))
 }
 
