@@ -87,7 +87,7 @@ Object.getOwnPropertyNames = (value) => {
   return Array.from(names, (name) => String(name));
 };
 const __nodeInvalidCharacter = () => {
-  const error = new DOMException(
+  const error = new globalThis.DOMException(
     "The string contains invalid characters.",
     "InvalidCharacterError"
   );
