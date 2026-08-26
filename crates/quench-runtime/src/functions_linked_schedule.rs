@@ -49,6 +49,9 @@ fn execute_linked_schedule(
         return Ok(None);
     }
     let task_runners = linked_task_runners(&list_value);
+    let linked_scheduler = task_runners
+        .as_ref()
+        .and_then(|_| LinkedSchedulerWords::new(scheduler, &task_control_plan));
     let packet_link_cache = std::cell::Cell::new(0);
     current.copy_from(list);
 
@@ -103,6 +106,8 @@ fn execute_linked_schedule(
                 &task_control_plan,
                 direct,
                 &packet_link_cache,
+                task_runners.as_ref(),
+                linked_scheduler.as_ref(),
             )? {
                 Some(value) => value,
                 None => {
@@ -133,6 +138,8 @@ fn execute_task_control_run(
     plan: &TaskControlRunPlan,
     direct: Option<&DirectTaskRunner>,
     packet_link_cache: &std::cell::Cell<u64>,
+    task_runners: Option<&DirectTaskTable>,
+    linked_scheduler: Option<&LinkedSchedulerWords>,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     if tcb.has_replacement() {
         return Ok(None);
@@ -194,7 +201,11 @@ fn execute_task_control_run(
         crate::value::Value::Null
     };
     let result = match direct {
-        Some(runner) => match runner.execute(&packet)? {
+        Some(runner) => match runner.execute(
+            &packet,
+            task_runners.expect("direct runner table retained"),
+            linked_scheduler,
+        )? {
             Some(result) => {
                 crate::execution_trace::kernel("linked_task_direct", false);
                 result
