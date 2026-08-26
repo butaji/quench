@@ -69,7 +69,10 @@ test-timers-immediate-unref.js
 test-timers-immediate-queue.js
 test-timers-immediate-unref-simple.js
 test-timers-immediate.js
+test-timers-dispose.js
+test-timers-fast-calls.js
 test-timers-interval-throw.js
+test-timers-linked-list.js
 test-timers-invalid-clear.js
 test-timers-max-duration-warning.js
 test-timers-nested.js
@@ -85,6 +88,7 @@ test-timers-setimmediate-infinite-loop.js
 test-timers-this.js
 test-timers-throw-when-cb-not-function.js
 test-timers-timeout-with-non-integer.js
+test-timers-timeout-to-interval.js
 test-timers-uncaught-exception.js
 test-timers-unref-throw-then-ref.js
 test-timers-unenroll-unref-interval.js
@@ -234,6 +238,8 @@ test-child-process-exec-kill-throws.js
 test-child-process-spawnsync-validation-errors.js
 test-child-process-spawnsync-args.js
 test-child-process-spawnsync.js
+test-child-process-spawnsync-non-string-args.js
+test-child-process-spawnsync-shell.js
 test-child-process-spawn-event.js
 test-child-process-exec-any-shells-windows.js
 test-process-constants-noatime.js
