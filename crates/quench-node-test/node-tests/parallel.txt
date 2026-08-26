@@ -391,3 +391,4 @@ test-diagnostics-channel-has-subscribers.js
 test-process-euid-egid.js
 test-stream-finished.js
 test-stream-construct.js
+test-async-hooks-enable-disable.js
