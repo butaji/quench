@@ -756,8 +756,12 @@ fn rounding_mode(options: Option<&Value>) -> Result<String, VmError> {
     });
     match value {
         None | Some(Value::Undefined) => Ok("halfExpand".into()),
-        Some(Value::String(mode))
-            if [
+        Some(value) if crate::conversion::is_symbol(&value) => Err(
+            crate::value::error::throw_type_error("Invalid roundingMode"),
+        ),
+        Some(value) => {
+            let mode = crate::conversion::to_string(&value)?;
+            [
                 "ceil",
                 "floor",
                 "expand",
@@ -768,16 +772,10 @@ fn rounding_mode(options: Option<&Value>) -> Result<String, VmError> {
                 "halfTrunc",
                 "halfEven",
             ]
-            .contains(&mode.as_str()) =>
-        {
-            Ok(mode.clone())
+            .contains(&mode.as_str())
+            .then_some(mode)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid roundingMode"))
         }
-        Some(Value::String(_)) => Err(crate::value::error::throw_range_error(
-            "Invalid roundingMode",
-        )),
-        _ => Err(crate::value::error::throw_type_error(
-            "Invalid roundingMode",
-        )),
     }
 }
 
