@@ -346,6 +346,7 @@ test-fs-promises-file-handle-writer.js
 test-fs-promises-mkdtempDisposable.js
 test-fs-promises-watch-iterator.js
 test-fs-promises-watch.js
+test-fs-write-stream-flush.js
 test-module-create-require-multibyte.js
 test-error-format-list.js
 test-compile-cache-api-error.js
