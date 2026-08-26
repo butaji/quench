@@ -257,13 +257,11 @@ var port = emitter({ _queueEvents: true, _peer: null, close: function (callback)
     if (!this._closed && this._peer && !this._peer._closed) {
       var peer = this._peer;
       messageQueueFor(peer).push([cloned, transferredPorts]);
-      queueMicrotask(function () {
-        var queued = messageQueueFor(peer);
-        if (queued.length > 0 && !peer._closed) {
-          var next = queued.shift();
-          peer.emit('message', next[0], next[1]);
-        }
-      });
+      var queued = messageQueueFor(peer);
+      if (queued.length > 0 && !peer._closed) {
+        var next = queued.shift();
+        peer.emit('message', next[0], next[1]);
+      }
     }
   };
   port.start = function () { return this; };
