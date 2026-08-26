@@ -326,13 +326,10 @@ fn prepare_array_length_definition(
     key: &str,
     descriptor: &[(String, Value)],
 ) -> Result<Option<Value>, crate::execute::VmError> {
-    let Value::Array(values) = target else {
-        return Ok(None);
-    };
-    if key != "length" {
+    if !matches!(target, Value::Array(_)) || key != "length" {
         return Ok(None);
     }
-    if values.is_arguments() {
+    if matches!(target, Value::Array(values) if values.is_arguments()) {
         return Ok(None);
     }
     let Some(value) = array_descriptor_value(descriptor, "value") else {
@@ -342,6 +339,12 @@ fn prepare_array_length_definition(
     // coercion is done by validate_array_length_descriptor; repeat it here
     // for the NumberLen value used by the rest of the algorithm.
     let new_length = crate::conversion::to_number(&value)?;
+    // User code during this second coercion may have replaced the array's
+    // structural representative. Read the current one before validation.
+    let target = crate::locals::resolved_replacement(target.clone());
+    let Value::Array(values) = &target else {
+        return Ok(None);
+    };
     if !new_length.is_finite()
         || new_length < 0.0
         || new_length.fract() != 0.0
@@ -354,6 +357,19 @@ fn prepare_array_length_definition(
     let new_length = new_length as usize;
     // Bound deletion by physically stored elements, not the logical length.
     let old_length = values.physical_len();
+    // OrdinaryDefineOwnProperty still validates the current length
+    // descriptor when the coerced value does not shrink the array.  In
+    // particular, user code during ToNumber may have made length
+    // non-writable; restoring writable: true must then fail even for an
+    // unchanged length.
+    if array_descriptor_flag(values, key, "writable") == Some(false)
+        && (new_length != old_length
+            || array_descriptor_value(descriptor, "writable") == Some(Value::Boolean(true)))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to read only array length",
+        ));
+    }
     if new_length >= old_length {
         // Restoration may widen a length that was temporarily made
         // non-writable by verifyWritable.  The descriptor being applied is
@@ -365,7 +381,7 @@ fn prepare_array_length_definition(
             let mut partial = Value::Array(values);
             store_descriptor_metadata(&mut partial, key, descriptor);
             define_array_descriptor(&mut partial, key, descriptor.to_vec());
-            crate::locals::replace_value(target, &partial);
+            crate::locals::replace_value(&target, &partial);
         }
         return Ok(None);
     }
@@ -384,7 +400,7 @@ fn prepare_array_length_definition(
         if array_descriptor_flag(data, &index_key, "configurable") == Some(false) {
             data.set_length(index + 1);
             return Err(commit_failed_array_length(
-                target,
+                &target,
                 values,
                 descriptor,
                 index + 1,
@@ -441,10 +457,12 @@ fn array_descriptor_flag(values: &crate::value::ArrayData, key: &str, flag: &str
 }
 
 fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value: Value) -> Value {
+    let original = Rc::clone(&values);
     if key == "\0prototype" {
         let data = Rc::make_mut(&mut values);
         data.set_prototype(value.clone());
         data.set_property(key, value);
+        publish_array_replacement(&original, &values);
         return Value::Array(values);
     }
     if key == "length" {
@@ -457,10 +475,12 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         let length = array_length_number(&value) as usize;
         let data = Rc::make_mut(&mut values);
         data.set_length(length);
+        publish_array_replacement(&original, &values);
         return Value::Array(values);
     }
     let Some(index) = crate::arrays::array_index(key) else {
         Rc::make_mut(&mut values).set_property(key, value);
+        publish_array_replacement(&original, &values);
         return Value::Array(values);
     };
     let index = index as usize;
@@ -468,6 +488,7 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
     // new numeric property must not grow it (unlike an actual Array index).
     if values.is_arguments() && index >= values.logical_len() {
         Rc::make_mut(&mut values).set_property(key, value);
+        publish_array_replacement(&original, &values);
         return Value::Array(values);
     }
     let existing_number = values.set_existing_number(index, &value);
@@ -486,7 +507,21 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
     } else {
         Rc::make_mut(&mut values).set_index(index, value);
     }
+    publish_array_replacement(&original, &values);
     Value::Array(values)
+}
+
+#[inline]
+fn publish_array_replacement(
+    original: &Rc<crate::value::ArrayData>,
+    current: &Rc<crate::value::ArrayData>,
+) {
+    if !Rc::ptr_eq(original, current) {
+        crate::locals::replace_value(
+            &Value::Array(Rc::clone(original)),
+            &Value::Array(Rc::clone(current)),
+        );
+    }
 }
 
 fn array_length_number(value: &Value) -> f64 {
