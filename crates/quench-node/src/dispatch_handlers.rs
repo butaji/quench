@@ -1902,9 +1902,13 @@ pub fn cp_spawn(
     let stdin = host_api::object(vec![]);
     let stdout = host_api::object(vec![]);
     let stderr = host_api::object(vec![]);
+    let prototype = crate::modules::events::emitter_prototype()?;
+    let on = execute::get_property(&prototype, "on");
+    let emit = execute::get_property(&prototype, "emit");
     Ok(host_api::object(vec![
         ("pid".into(), Value::Undefined),
-        ("on".into(), host_api::custom_function(quench_runtime::ops::RealmId::ROOT, 2195)),
+        ("on".into(), on),
+        ("emit".into(), emit),
         ("\0childCommand".into(), Value::String(command)),
         ("\0childArgs".into(), spawnargs.clone()),
         ("stdin".into(), stdin.clone()),
