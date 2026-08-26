@@ -7,7 +7,9 @@ impl QuenchNodeHost {
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
             match capability.kind {
-            HostCapabilityKind::Custom(CapabilityName::UrlParse) => url_parse_legacy(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UrlParse) => {
+                url_parse_legacy(Some(&self.state), arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::UrlFormat) => url_format_legacy(arguments),
             HostCapabilityKind::Custom(CapabilityName::UrlCanParse) => {
                 if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {

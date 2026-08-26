@@ -304,7 +304,24 @@ fn buffer_search(
     let haystack = string_or_bytes(receiver)?;
     let needle = match arguments.first() {
         Some(Value::Number(value)) => vec![*value as u8],
-        value => string_or_bytes(value)?,
+        Some(Value::String(_) | Value::Uint8Array(_) | Value::DataView(_)) => {
+            string_or_bytes(arguments.first())?
+        }
+        Some(value) => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                &format!(
+                    "The \"value\" argument must be one of type number or string or an instance of Buffer or Uint8Array.{}",
+                    crate::modules::util::invalid_arg_received(value)
+                ),
+            )))
+        }
+        None => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "The \"value\" argument must be one of type number or string or an instance of Buffer or Uint8Array. Received undefined",
+            )))
+        }
     };
     let offset = arguments
         .get(1)
