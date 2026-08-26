@@ -54,9 +54,9 @@ pub fn run_script_with_sink(
     source: &str,
     sink: OutputSink,
 ) -> RunOutcome {
-    let exec = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "quench-node".to_string());
+    // Compatibility tests model the Node executable, not the test harness
+    // binary that happens to host it.
+    let exec = "quench-node".to_string();
     let script_str = script.to_string_lossy().into_owned();
     let mut argv = vec![exec, script_str.clone()];
     argv.extend(script_args.iter().cloned());
