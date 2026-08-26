@@ -1274,33 +1274,45 @@ fn with(
     if !matches!(time_zone, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid time zone"));
     }
-    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
-    let month = crate::execute::get_property_result(changes, "month")?;
-    if !matches!(month_code, Value::Undefined) {
-        values[1] = crate::conversion::to_number(&month_code_number(&month_code)?)?;
-    }
-    for (index, name) in NAMES.iter().enumerate() {
+    let mut month_input = None;
+    let mut month_code_input = None;
+    let mut recognized = false;
+    for name in [
+        "day",
+        "hour",
+        "microsecond",
+        "millisecond",
+        "minute",
+        "month",
+        "monthCode",
+        "nanosecond",
+        "second",
+        "year",
+    ] {
         let value = crate::execute::get_property_result(changes, name)?;
-        if !matches!(value, Value::Undefined) {
-            values[index] = if *name == "monthCode" {
-                crate::conversion::to_number(&month_code_number(&value)?)?
-            } else {
-                crate::conversion::to_number(&value)?.trunc()
-            };
+        if matches!(value, Value::Undefined) {
+            continue;
+        }
+        recognized = true;
+        if name == "monthCode" {
+            let month = crate::conversion::to_number(&month_code_number(&value)?)?;
+            values[1] = month;
+            month_code_input = Some(month);
+            continue;
+        }
+        let index = NAMES.iter().position(|field| *field == name).unwrap();
+        let raw_number = crate::conversion::to_number(&value)?;
+        let number = raw_number.trunc();
+        values[index] = number;
+        if name == "month" {
+            month_input = Some(raw_number);
         }
     }
-    values[1] = values[1].trunc();
-    if !matches!(month_code, Value::Undefined) && month != Value::Undefined {
-        let month_number = crate::conversion::to_number(&month)?;
-        let month_code_number = crate::conversion::to_number(&month_code_number(&month_code)?)?;
-        if month_number.fract() == 0.0 && month_number != month_code_number {
+    if let (Some(month), Some(month_code)) = (month_input, month_code_input) {
+        if month.fract() == 0.0 && month != month_code {
             return Err(crate::value::error::throw_range_error("Month mismatch"));
         }
     }
-    let recognized = NAMES.iter().any(|name| {
-        crate::execute::get_property_result(changes, name)
-            .is_ok_and(|value| !matches!(value, Value::Undefined))
-    }) || !matches!(month_code, Value::Undefined);
     if !recognized {
         return Err(crate::value::error::throw_type_error(
             "Insufficient date-time data",
@@ -1315,10 +1327,7 @@ fn with(
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     if let Some(value) = options {
-        if !matches!(
-            value,
-            Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
-        ) {
+        if !matches!(value, Value::Undefined) && !crate::value::is_object(value) {
             return Err(crate::value::error::throw_type_error("Invalid options"));
         }
     }
