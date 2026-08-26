@@ -404,6 +404,18 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "withTimeZone") => {
             Some(Value::Builtin(TemporalZonedDateTimeWithTimeZone))
         }
+        (TemporalZonedDateTimePrototype, "withCalendar") => {
+            Some(Value::Builtin(TemporalZonedDateTimeWithCalendar))
+        }
+        (TemporalZonedDateTimePrototype, "withPlainTime") => {
+            Some(Value::Builtin(TemporalZonedDateTimeWithPlainTime))
+        }
+        (TemporalZonedDateTimePrototype, "startOfDay") => {
+            Some(Value::Builtin(TemporalZonedDateTimeStartOfDay))
+        }
+        (TemporalZonedDateTimePrototype, "getTimeZoneTransition") => {
+            Some(Value::Builtin(TemporalZonedDateTimeGetTimeZoneTransition))
+        }
         (TemporalZonedDateTimePrototype, "valueOf") => {
             Some(Value::Builtin(TemporalDurationValueOf))
         }
@@ -421,6 +433,12 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (TemporalZonedDateTimePrototype, "hoursInDay") => {
             Some(Value::Builtin(TemporalZonedDateTimeHoursInDayGetter))
+        }
+        (TemporalZonedDateTimePrototype, "weekOfYear") => {
+            Some(Value::Builtin(TemporalZonedDateTimeWeekOfYearGetter))
+        }
+        (TemporalZonedDateTimePrototype, "yearOfWeek") => {
+            Some(Value::Builtin(TemporalZonedDateTimeYearOfWeekGetter))
         }
         (TemporalPlainTimePrototype, "toString") => Some(Value::Builtin(TemporalPlainTimeToString)),
         (TemporalPlainTimePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainTimeToJSON)),
