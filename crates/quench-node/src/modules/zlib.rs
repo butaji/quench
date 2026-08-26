@@ -17,8 +17,8 @@ fn bytes_of(value: &Value) -> Result<Vec<u8>, VmError> {
         Value::Uint8Array(view) => Ok(view.buffer.bytes.borrow()
             [view.byte_offset..view.byte_offset + view.length]
             .to_vec()),
-        other => Err(execute::type_error(&format!(
-            "zlib: expected Buffer or string, got {}",
+        other => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer.{}",
             crate::modules::util::invalid_arg_received(other)
         ))),
     }
