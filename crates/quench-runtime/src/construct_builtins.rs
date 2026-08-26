@@ -51,18 +51,16 @@ fn construct_builtin_tail(
             crate::temporal::plain_date_time::construct(arguments)
         }
         crate::ops::Builtin::TemporalPlainMonthDay => {
-            let month = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
-            let day = crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
-            crate::temporal::plain_month_day::construct(month, day)
+            crate::temporal::plain_month_day::construct_from_arguments(arguments)
         }
         crate::ops::Builtin::TemporalPlainYearMonth => {
-            let year = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
-            let month = crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+            let year =
+                crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+            let month =
+                crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
             crate::temporal::plain_year_month::construct(year, month)
         }
-        crate::ops::Builtin::TemporalZonedDateTime => {
-            crate::temporal::zoned_construct(arguments)
-        }
+        crate::ops::Builtin::TemporalZonedDateTime => crate::temporal::zoned_construct(arguments),
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         crate::ops::Builtin::ShadowRealm => {
             let realm = crate::vm::create_shadow_realm_value();
@@ -145,10 +143,7 @@ pub(crate) fn construct_float16_array(
         return Ok(value);
     };
     for index in 0..source.logical_len() {
-        let item = crate::execute::get_property(
-            &Value::Array(source.clone()),
-            &index.to_string(),
-        );
+        let item = crate::execute::get_property(&Value::Array(source.clone()), &index.to_string());
         if matches!(item, Value::Number(number) if number == 0.0 && number.is_sign_negative()) {
             target.set(index, 0x8000);
         }
