@@ -344,6 +344,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     }
     if largest_unit(options).is_some()
         && largest < index
+        && largest <= 2
         && rounding_increment(options, index)? > 1.0
     {
         return Err(crate::value::error::throw_range_error(
