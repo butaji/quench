@@ -35,7 +35,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     Some(match builtin {
-        crate::ops::Builtin::TemporalPlainYearMonthFrom => from(arguments.first()),
+        crate::ops::Builtin::TemporalPlainYearMonthFrom => {
+            from(arguments.first(), arguments.get(1))
+        }
         crate::ops::Builtin::TemporalPlainYearMonthCompare => compare(arguments),
         crate::ops::Builtin::TemporalPlainYearMonthCalendarIdGetter => {
             field(receiver, "calendarId")
@@ -80,7 +82,7 @@ pub(crate) fn execute(
     })
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let value =
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainYearMonth"))?;
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
@@ -137,6 +139,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         if base.len() == 9 && base.starts_with('+') {
             let year = base[0..7].parse().unwrap_or(0.0);
             let month = base[7..9].parse().unwrap_or(0.0);
+            let _ = overflow_option(options)?;
             return construct(year, month);
         }
         let date = if let Some((date, time)) = base.split_once(['T', 't', ' ']) {
@@ -184,6 +187,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
                 "Invalid PlainYearMonth",
             ));
         }
+        let _ = overflow_option(options)?;
         return construct(year, month);
     }
     if !crate::value::is_object(value) {
@@ -206,17 +210,80 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
-    let year = crate::conversion::to_number(&crate::execute::get_property_result(value, "year")?)?;
-    let month = match crate::execute::get_property_result(value, "month")? {
-        Value::Undefined => {
-            crate::conversion::to_string(&crate::execute::get_property_result(value, "monthCode")?)?
-                .trim_start_matches('M')
-                .parse()
-                .unwrap_or(0.0)
+    let year_value = crate::execute::get_property_result(value, "year")?;
+    if matches!(year_value, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Missing year"));
+    }
+    let year = crate::conversion::to_number(&year_value)?;
+    let month_value = crate::execute::get_property_result(value, "month")?;
+    let month_code_value = crate::execute::get_property_result(value, "monthCode")?;
+    if matches!(month_value, Value::Undefined) && matches!(month_code_value, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Missing month"));
+    }
+    let month_code = if matches!(month_code_value, Value::Undefined) {
+        None
+    } else {
+        let text = crate::conversion::to_string(&month_code_value)?;
+        Some(parse_month_code(&text)?)
+    };
+    let month_number = if matches!(month_value, Value::Undefined) {
+        None
+    } else {
+        Some(crate::conversion::to_number(&month_value)?)
+    };
+    if let (Some(month), Some(code)) = (month_number, month_code) {
+        if month.trunc() != code {
+            return Err(crate::value::error::throw_range_error(
+                "Conflicting month fields",
+            ));
         }
-        value => crate::conversion::to_number(&value)?,
+    }
+    let month = month_number.or(month_code).unwrap_or(0.0);
+    let constrain = overflow_option(options)?;
+    let month = if month <= 0.0 || !month.is_finite() {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainYearMonth",
+        ));
+    } else if constrain {
+        month.min(12.0)
+    } else {
+        month
     };
     construct(year, month)
+}
+
+fn parse_month_code(value: &str) -> Result<f64, VmError> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 3
+        || bytes[0] != b'M'
+        || !bytes[1].is_ascii_digit()
+        || !bytes[2].is_ascii_digit()
+    {
+        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+    }
+    let month = value[1..3].parse::<f64>().unwrap_or(0.0);
+    if !(1.0..=12.0).contains(&month) {
+        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+    }
+    Ok(month)
+}
+
+fn overflow_option(options: Option<&Value>) -> Result<bool, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(true);
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let value = crate::execute::get_property_result(options, "overflow")?;
+    if matches!(value, Value::Undefined) {
+        return Ok(true);
+    }
+    match crate::conversion::to_string(&value)?.as_str() {
+        "constrain" => Ok(true),
+        "reject" => Ok(false),
+        _ => Err(crate::value::error::throw_range_error("Invalid overflow")),
+    }
 }
 
 fn field(receiver: Option<&Value>, name: &str) -> Result<Value, VmError> {
@@ -256,8 +323,8 @@ fn values(value: &Value) -> Result<(f64, f64), VmError> {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = values(&from(arguments.first())?)?;
-    let right = values(&from(arguments.get(1))?)?;
+    let left = values(&from(arguments.first(), None)?)?;
+    let right = values(&from(arguments.get(1), None)?)?;
     Ok(Value::Number(match left.partial_cmp(&right) {
         Some(std::cmp::Ordering::Less) => -1.0,
         Some(std::cmp::Ordering::Greater) => 1.0,
@@ -268,7 +335,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::Boolean(
         values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?
-            == values(&from(other)?)?,
+            == values(&from(other, None)?)?,
     ))
 }
 
@@ -373,7 +440,7 @@ fn difference(
 ) -> Result<Value, VmError> {
     let left =
         values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
-    let right = values(&from(other)?)?;
+    let right = values(&from(other, None)?)?;
     crate::temporal::duration::construct(&[
         Value::Number(0.0),
         Value::Number(((right.0 - left.0) * 12.0 + right.1 - left.1) * direction),
