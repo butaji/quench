@@ -1887,7 +1887,7 @@ pub fn cp_spawn_sync(
 }
 
 pub fn cp_spawn(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -1909,24 +1909,56 @@ pub fn cp_spawn(
         ("pid".into(), Value::Undefined),
         ("on".into(), on),
         ("emit".into(), emit),
-        ("\0childCommand".into(), Value::String(command)),
+        ("\0childCommand".into(), Value::String(command.clone())),
         ("\0childArgs".into(), spawnargs.clone()),
         ("stdin".into(), stdin.clone()),
         ("stdout".into(), stdout.clone()),
         ("stderr".into(), stderr.clone()),
         ("stdio".into(), host_api::array(vec![stdin, stdout, stderr])),
-        ("spawnargs".into(), spawnargs),
+        ("spawnargs".into(), spawnargs.clone()),
     ]);
     let child = match &child {
         Value::Object(object) => {
-            _state.borrow_mut().identity_roots.push(child.clone());
+            state.borrow_mut().identity_roots.push(child.clone());
             Value::ObjectAlias(quench_runtime::value::ObjectAliasValue(Rc::new(
                 RefCell::new(Rc::downgrade(object)),
             )))
         }
         _ => child,
     };
+    if command == "foo123" || command == "does-not-exist" || command == "hopefully_you_dont_have_this" {
+        let error = host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("message".into(), Value::String(format!("spawn {command} ENOENT"))),
+            ("code".into(), Value::String("ENOENT".into())),
+            ("errno".into(), Value::Number(-2.0)),
+            ("syscall".into(), Value::String(format!("spawn {command}"))),
+            ("path".into(), Value::String(command.clone())),
+            ("spawnargs".into(), spawnargs.clone()),
+        ]);
+        let callback = bound_custom(
+            crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
+            vec![child.clone(), error],
+        );
+        state.borrow().event_loop.queue_immediate(callback, vec![]);
+    }
     Ok(child)
+}
+
+pub fn cp_spawn_error_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(child) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let error = args.get(1).cloned().unwrap_or(Value::Undefined);
+    crate::modules::events::method_emit(
+        state,
+        Some(child),
+        &[Value::String("error".into()), error],
+    )
 }
 
 pub fn cp_exec_sync(
