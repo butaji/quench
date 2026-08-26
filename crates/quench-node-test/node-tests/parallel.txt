@@ -330,6 +330,8 @@ test-console-log-stdio-broken-dest.js
 test-console-log-throw-primitive.js
 test-console-not-call-toString.js
 test-console-self-assign.js
+test-process-dlopen-undefined-exports.js
+test-process-domain-segfault.js
 test-module-create-require-multibyte.js
 test-error-format-list.js
 test-compile-cache-api-error.js
