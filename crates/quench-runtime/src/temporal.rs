@@ -380,6 +380,8 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition
                 | crate::ops::Builtin::TemporalZonedDateTimeAdd
                 | crate::ops::Builtin::TemporalZonedDateTimeSubtract
+                | crate::ops::Builtin::TemporalZonedDateTimeUntil
+                | crate::ops::Builtin::TemporalZonedDateTimeSince
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -1092,6 +1094,158 @@ mod stubs {
                 timezone,
                 crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
+        }
+        if matches!(
+            builtin,
+            crate::ops::Builtin::TemporalZonedDateTimeUntil
+                | crate::ops::Builtin::TemporalZonedDateTimeSince
+        ) {
+            let other = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing ZonedDateTime"))?;
+            let other = zoned_from(Some(other))?;
+            let options = arguments.get(1);
+            if options.is_some_and(|value| {
+                !matches!(value, Value::Undefined) && !crate::value::is_object(value)
+            }) {
+                return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+            let largest = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "largestUnit"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::conversion::to_string(&value))
+                .transpose()?
+                .unwrap_or_else(|| "second".into())
+                .strip_suffix('s')
+                .unwrap_or("second")
+                .to_string();
+            if !matches!(
+                largest.as_str(),
+                "year"
+                    | "month"
+                    | "week"
+                    | "day"
+                    | "hour"
+                    | "minute"
+                    | "second"
+                    | "millisecond"
+                    | "microsecond"
+                    | "nanosecond"
+            ) {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid largestUnit",
+                ));
+            }
+            let left_epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let right_epoch = match crate::execute::get_property_result(&other, "epochNanoseconds")?
+            {
+                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let direction = if builtin == crate::ops::Builtin::TemporalZonedDateTimeSince {
+                -1_i128
+            } else {
+                1
+            };
+            let mut delta = (right_epoch - left_epoch) * direction;
+            let smallest = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "smallestUnit"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::conversion::to_string(&value))
+                .transpose()?
+                .unwrap_or_else(|| "nanosecond".into())
+                .strip_suffix('s')
+                .unwrap_or("nanosecond")
+                .to_string();
+            let scale = match smallest.as_str() {
+                "hour" => 3_600_000_000_000,
+                "minute" => 60_000_000_000,
+                "second" => 1_000_000_000,
+                "millisecond" => 1_000_000,
+                "microsecond" => 1_000,
+                "nanosecond" => 1,
+                _ => {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid smallestUnit",
+                    ))
+                }
+            };
+            if let Some(value) = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "roundingIncrement"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined))
+            {
+                let increment = crate::conversion::to_number(&value)?;
+                if !increment.is_finite() || increment <= 0.0 || increment.fract() != 0.0 {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid roundingIncrement",
+                    ));
+                }
+                let quantum = scale * increment as i128;
+                delta = delta.div_euclid(quantum) * quantum;
+            }
+            let scales = [
+                ("week", 604_800_000_000_000_i128),
+                ("day", 86_400_000_000_000),
+                ("hour", 3_600_000_000_000),
+                ("minute", 60_000_000_000),
+                ("second", 1_000_000_000),
+                ("millisecond", 1_000_000),
+                ("microsecond", 1_000),
+                ("nanosecond", 1),
+            ];
+            let largest_scale = scales
+                .iter()
+                .find(|(name, _)| *name == largest)
+                .map_or(1_000_000_000, |(_, scale)| *scale);
+            let mut fields = vec![Value::Number(0.0); 10];
+            let mut remainder = delta;
+            let largest_index: usize = match largest.as_str() {
+                "week" => 2,
+                "day" => 3,
+                "hour" => 4,
+                "minute" => 5,
+                "second" => 6,
+                "millisecond" => 7,
+                "microsecond" => 8,
+                _ => 9,
+            };
+            for (name, unit_scale) in scales.iter().skip(largest_index.saturating_sub(2)) {
+                if *unit_scale < scale {
+                    continue;
+                }
+                let value = remainder / *unit_scale;
+                let index = match *name {
+                    "week" => 2,
+                    "day" => 3,
+                    "hour" => 4,
+                    "minute" => 5,
+                    "second" => 6,
+                    "millisecond" => 7,
+                    "microsecond" => 8,
+                    _ => 9,
+                };
+                fields[index] = Value::Number(value as f64);
+                remainder %= *unit_scale;
+            }
+            let _ = largest_scale;
+            return crate::temporal::duration::construct(&fields);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition {
             let options = arguments
