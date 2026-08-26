@@ -1,5 +1,5 @@
 use crate::{execute::VmError, value::Value};
-use chrono::{Datelike, Timelike};
+use chrono::Datelike;
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let epoch = parse_epoch_argument(arguments.first())?;
@@ -23,7 +23,6 @@ fn parse_epoch_argument(value: Option<&Value>) -> Result<Value, VmError> {
         _ => return Err(crate::value::error::throw_type_error("Invalid instant")),
     };
     if text.contains('\u{2212}') {
-        eprintln!("MINUSDBG");
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
     let epoch = match text.parse::<i128>() {
@@ -54,6 +53,13 @@ pub(crate) fn execute(
             "Temporal.Instant constructor cannot be called without new",
         ))),
         crate::ops::Builtin::TemporalInstantFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalInstantCompare => Some(compare(arguments)),
+        crate::ops::Builtin::TemporalInstantFromEpochMilliseconds => {
+            Some(from_epoch_milliseconds(arguments.first()))
+        }
+        crate::ops::Builtin::TemporalInstantFromEpochNanoseconds => {
+            Some(from_epoch_nanoseconds(arguments.first()))
+        }
         crate::ops::Builtin::TemporalInstantEpochNanosecondsGetter => Some(get_epoch(receiver)),
         crate::ops::Builtin::TemporalInstantEpochMillisecondsGetter => {
             Some(get_epoch_milliseconds(receiver))
@@ -83,6 +89,32 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalInstantRound => Some(round(receiver, arguments.first())),
         _ => None,
     }
+}
+
+fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    let left = epoch_number(get_epoch(Some(&from(arguments.first())?))?)?;
+    let right = epoch_number(get_epoch(Some(&from(arguments.get(1))?))?)?;
+    Ok(Value::Number(left.cmp(&right) as i8 as f64))
+}
+
+fn from_epoch_milliseconds(value: Option<&Value>) -> Result<Value, VmError> {
+    let number = match value {
+        Some(value) => crate::conversion::to_number(value)?,
+        None => f64::NAN,
+    };
+    if !number.is_finite() || number.fract() != 0.0 {
+        return Err(crate::value::error::throw_range_error("Invalid epoch"));
+    }
+    let epoch = number as i128 * 1_000_000;
+    construct(&[Value::BigInt(epoch.to_string())])
+}
+
+fn from_epoch_nanoseconds(value: Option<&Value>) -> Result<Value, VmError> {
+    let value = value.ok_or_else(|| crate::value::error::throw_type_error("Invalid epoch"))?;
+    let Value::BigInt(_) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid epoch"));
+    };
+    construct(std::slice::from_ref(value))
 }
 
 fn difference(
@@ -251,6 +283,14 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
 fn get_epoch(receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not an Instant"))?;
+    let Value::Object(object) = receiver else {
+        return Err(crate::value::error::throw_type_error("Not an Instant"));
+    };
+    if !object.iter().any(|(key, value)| {
+        key == "epochNanoseconds" && matches!(value, Value::BigInt(_))
+    }) {
+        return Err(crate::value::error::throw_type_error("Not an Instant"));
+    }
     crate::execute::get_property_result(receiver, "epochNanoseconds")
 }
 
@@ -385,7 +425,8 @@ fn fixed_offset(zone: &str) -> Option<i64> {
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
     let left = get_epoch(receiver)?;
-    let right = get_epoch(other)?;
+    let right = from(other)?;
+    let right = get_epoch(Some(&right))?;
     Ok(Value::Boolean(left == right))
 }
 

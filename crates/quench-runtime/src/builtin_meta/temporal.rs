@@ -84,6 +84,13 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalNowZonedDateTimeISO => Some("Temporal.Now.zonedDateTimeISO"),
         Builtin::TemporalInstant => Some("Temporal.Instant"),
         Builtin::TemporalInstantFrom => Some("Temporal.Instant.from"),
+        Builtin::TemporalInstantCompare => Some("Temporal.Instant.compare"),
+        Builtin::TemporalInstantFromEpochMilliseconds => {
+            Some("Temporal.Instant.fromEpochMilliseconds")
+        }
+        Builtin::TemporalInstantFromEpochNanoseconds => {
+            Some("Temporal.Instant.fromEpochNanoseconds")
+        }
         Builtin::TemporalInstantEpochNanosecondsGetter => Some("get epochNanoseconds"),
         Builtin::TemporalInstantEpochMillisecondsGetter => Some("get epochMilliseconds"),
         Builtin::TemporalInstantToString => Some("Temporal.Instant.prototype.toString"),
@@ -301,6 +308,9 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalNowZonedDateTimeISO => Some("zonedDateTimeISO"),
         Builtin::TemporalInstant => Some("Instant"),
         Builtin::TemporalInstantFrom => Some("from"),
+        Builtin::TemporalInstantCompare => Some("compare"),
+        Builtin::TemporalInstantFromEpochMilliseconds => Some("fromEpochMilliseconds"),
+        Builtin::TemporalInstantFromEpochNanoseconds => Some("fromEpochNanoseconds"),
         Builtin::TemporalInstantEpochNanosecondsGetter => Some("epochNanoseconds"),
         Builtin::TemporalInstantEpochMillisecondsGetter => Some("epochMilliseconds"),
         Builtin::TemporalInstantToString => Some("toString"),
@@ -473,6 +483,9 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalNowZonedDateTimeISO => Some(0.0),
         Builtin::TemporalInstant => Some(1.0),
         Builtin::TemporalInstantFrom => Some(1.0),
+        Builtin::TemporalInstantCompare => Some(2.0),
+        Builtin::TemporalInstantFromEpochMilliseconds
+        | Builtin::TemporalInstantFromEpochNanoseconds => Some(1.0),
         Builtin::TemporalInstantEpochNanosecondsGetter
         | Builtin::TemporalInstantEpochMillisecondsGetter => Some(0.0),
         Builtin::TemporalInstantToString
