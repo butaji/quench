@@ -219,7 +219,8 @@ fn difference(
             return Err(crate::value::error::throw_type_error("Invalid options"));
         }
         let largest_value = crate::execute::get_property_result(options, "largestUnit")?;
-        let largest = if matches!(largest_value, Value::Undefined) {
+        let largest_was_default = matches!(largest_value, Value::Undefined);
+        let mut largest = if largest_was_default {
             "day".into()
         } else {
             let text = crate::conversion::to_string(&largest_value)?;
@@ -286,7 +287,9 @@ fn difference(
             ) {
                 return Err(crate::value::error::throw_range_error("Invalid smallestUnit"));
             }
-            if unit_rank(smallest) < unit_rank(&largest) {
+            if largest_was_default && unit_rank(smallest) < unit_rank(&largest) {
+                largest = smallest.to_string();
+            } else if unit_rank(smallest) < unit_rank(&largest) {
                 return Err(crate::value::error::throw_range_error(
                     "smallestUnit larger than largestUnit",
                 ));
