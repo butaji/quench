@@ -150,6 +150,7 @@ pub(crate) fn property(key: &str) -> Value {
         "toArray" => Value::Builtin(crate::ops::Builtin::IteratorToArray),
         "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
         "filter" => Value::Builtin(crate::ops::Builtin::IteratorFilter),
+        "some" => Value::Builtin(crate::ops::Builtin::IteratorSome),
         "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
         "flatMap" => Value::Builtin(crate::ops::Builtin::IteratorFlatMap),
         "drop" => Value::Builtin(crate::ops::Builtin::IteratorDrop),
