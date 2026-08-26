@@ -137,9 +137,35 @@ fn difference(
     {
         return Err(crate::value::error::throw_type_error("Invalid options"));
     }
-    let smallest =
-        temporal_unit_option(options, "smallestUnit")?.unwrap_or_else(|| "nanosecond".into());
-    let largest = temporal_unit_option(options, "largestUnit")?.unwrap_or_else(|| "second".into());
+    let (smallest, largest, increment, rounding_mode) =
+        if let Some(options) = options.filter(|value| crate::value::is_object(value)) {
+            let largest = temporal_unit_option(Some(options), "largestUnit")?;
+            let increment = {
+                let value = crate::execute::get_property_result(options, "roundingIncrement")?;
+                if matches!(value, Value::Undefined) {
+                    None
+                } else {
+                    Some(crate::conversion::to_number(&value)?.trunc())
+                }
+            };
+            let rounding_mode = {
+                let value = crate::execute::get_property_result(options, "roundingMode")?;
+                if matches!(value, Value::Undefined) {
+                    None
+                } else {
+                    Some(crate::conversion::to_string(&value)?)
+                }
+            };
+            let smallest = temporal_unit_option(Some(options), "smallestUnit")?;
+            (
+                smallest.unwrap_or_else(|| "nanosecond".into()),
+                largest.unwrap_or_else(|| "second".into()),
+                increment.unwrap_or(1.0),
+                rounding_mode.unwrap_or_else(|| "trunc".into()),
+            )
+        } else {
+            ("nanosecond".into(), "second".into(), 1.0, "trunc".into())
+        };
     if !matches!(
         smallest.as_str(),
         "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
@@ -151,13 +177,6 @@ fn difference(
     }
     let scale = unit_scale(&smallest)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))?;
-    let increment = options
-        .and_then(|value| crate::execute::get_property_result(value, "roundingIncrement").ok())
-        .filter(|value| !matches!(value, Value::Undefined))
-        .map(|value| crate::conversion::to_number(&value))
-        .transpose()?
-        .unwrap_or(1.0)
-        .trunc();
     if !increment.is_finite() || increment <= 0.0 {
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
@@ -179,12 +198,6 @@ fn difference(
             "Invalid unit relationship",
         ));
     }
-    let rounding_mode = options
-        .and_then(|value| crate::execute::get_property_result(value, "roundingMode").ok())
-        .filter(|value| !matches!(value, Value::Undefined))
-        .map(|value| crate::conversion::to_string(&value))
-        .transpose()?
-        .unwrap_or_else(|| "trunc".into());
     if ![
         "ceil",
         "floor",
