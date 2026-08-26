@@ -778,7 +778,9 @@ pub fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
-        Builtin::Promise => Err(VmError::NotCallable),
+        Builtin::Promise => Err(crate::value::error::throw_type_error(
+            "Promise constructor cannot be called without new",
+        )),
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
         Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, receiver, arguments),
