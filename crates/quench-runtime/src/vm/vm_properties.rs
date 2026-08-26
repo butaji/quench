@@ -211,6 +211,15 @@ fn get_property_value_collection_tail(value: &Value, key: &str) -> Value {
 }
 
 fn set_property(data: &crate::value::SetData, key: &str) -> Value {
+    if key == "Symbol.toStringTag" {
+        let prototype = if data.weak {
+            Builtin::WeakSetPrototype
+        } else {
+            Builtin::SetPrototype
+        };
+        return intrinsic_override_property(prototype, key, &Value::Builtin(prototype))
+            .unwrap_or_else(|| crate::builtins::property(prototype, key));
+    }
     let own = data.property(key);
     if !matches!(own, Value::Undefined) {
         return own;
@@ -237,6 +246,18 @@ fn get_property_value_async_tail(value: &Value, key: &str) -> Value {
 }
 
 fn iterator_property(value: &Value, key: &str) -> Value {
+    if key == "Symbol.toStringTag" {
+        let Value::Iterator(data) = value else {
+            return Value::Undefined;
+        };
+        let prototype = crate::collections::iterator::builtin_for(data);
+        let tag = intrinsic_override_property(prototype, key, value)
+            .unwrap_or_else(|| crate::builtins::property(prototype, key));
+        if !matches!(tag, Value::Undefined) {
+            return tag;
+        }
+        return get_property(&Value::Builtin(Builtin::IteratorPrototype), key);
+    }
     if key == "constructor" {
         return Value::Builtin(match crate::collections::iterator::builtin_for(
             match value { Value::Iterator(data) => data, _ => unreachable!() },
@@ -265,8 +286,38 @@ fn iterator_property_value(value: &Value, property: Value) -> Value {
     }
     bind_method(value, property)
 }
+
+fn intrinsic_override_property(builtin: Builtin, key: &str, receiver: &Value) -> Option<Value> {
+    let descriptor = crate::builtins::read_intrinsic_override(builtin, key)?;
+    if let Some(value) = crate::builtins::read_descriptor_value(builtin, key) {
+        return Some(value);
+    }
+    let Value::Object(fields) = descriptor else {
+        return Some(Value::Undefined);
+    };
+    let getter = fields
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "get").then_some(value.clone()))?;
+    if matches!(getter, Value::Undefined) {
+        return Some(Value::Undefined);
+    }
+    let result = match getter {
+        Value::Builtin(builtin) => {
+            crate::vm::execute_builtin_with_receiver(builtin, &[], Some(receiver))
+        }
+        getter => crate::functions::execute_target(&getter, receiver, &[]),
+    };
+    Some(result.unwrap_or(Value::Undefined))
+}
+
 fn promise_value_property(promise: &crate::value::PromiseData, value: &Value, key: &str) -> Value {
-    let result = promise_property_value(promise, key).unwrap_or_else(|| promise_property(value, key));
+    if key == "Symbol.toStringTag" {
+        return intrinsic_override_property(Builtin::PromisePrototype, key, value)
+            .unwrap_or_else(|| crate::builtins::property(Builtin::PromisePrototype, key));
+    }
+    let result =
+        promise_property_value(promise, key).unwrap_or_else(|| promise_property(value, key));
     result
 }
 
@@ -290,6 +341,15 @@ fn map_constructor(weak: bool) -> Value {
 }
 
 fn map_collection_property(data: &crate::value::MapData, key: &str) -> Value {
+    if key == "Symbol.toStringTag" {
+        let prototype = if data.weak {
+            Builtin::WeakMapPrototype
+        } else {
+            Builtin::MapPrototype
+        };
+        return intrinsic_override_property(prototype, key, &Value::Builtin(prototype))
+            .unwrap_or_else(|| crate::builtins::property(prototype, key));
+    }
     let own = data.property(key);
     if !matches!(own, Value::Undefined) {
         return own;
@@ -395,7 +455,8 @@ fn generator_property(value: &Value, key: &str) -> Value {
             } else {
                 crate::builtins::generator_prototype()
             };
-            return get_property(&prototype, key);
+            return crate::execute::get_property_result(&prototype, key)
+                .unwrap_or(Value::Undefined);
         }
     };
     bind_method(value, Value::Builtin(builtin))
