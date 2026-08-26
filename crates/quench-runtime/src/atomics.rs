@@ -121,8 +121,8 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
         Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
     ) {
         let view = bigint_view(arguments.first())?;
-        let index = atomic_index(arguments.get(1))?;
         if builtin == Builtin::AtomicsLoad {
+            let index = atomic_index(arguments.get(1))?;
             return Ok(Value::BigInt(bigint_old(view, index)?));
         }
         if bigint_view_immutable(view) {
@@ -130,6 +130,7 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
                 "Atomics operation requires a writable buffer",
             ));
         }
+        let index = atomic_index(arguments.get(1))?;
         let value = bigint_argument(arguments.get(2))?;
         let bits = crate::construct::bigint_bits(&Value::BigInt(value.to_string()))?;
         let ok = match view {
@@ -149,8 +150,8 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
             "Atomics operation requires an Int32Array",
         ));
     };
-    let index = atomic_index(arguments.get(1))?;
     if builtin == Builtin::AtomicsLoad {
+        let index = atomic_index(arguments.get(1))?;
         return view.get_number(index).map(Value::Number).ok_or_else(|| {
             crate::value::error::throw_range_error("Atomics index is out of range")
         });
@@ -160,6 +161,7 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
             "Atomics operation requires a writable buffer",
         ));
     }
+    let index = atomic_index(arguments.get(1))?;
     let value = atomic_value(arguments.get(2))?;
     if !view.set(index, value) {
         return Err(crate::value::error::throw_range_error(
