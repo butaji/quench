@@ -247,8 +247,11 @@ test-process-features.js
 test-process-getgroups.js
 test-process-default.js
 test-process-env-delete.js
+test-process-env-allowed-flags-are-documented.js
 test-process-exit-handler.js
 test-process-exit-from-before-exit.js
+test-process-exit-recursive.js
+test-process-exit.js
 test-process-cpuUsage.js
 test-process-hrtime-bigint.js
 test-process-hrtime.js
