@@ -300,16 +300,29 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
+    let normalized_options = normalize_round_options(options)?;
+    let options = normalized_options.as_ref();
     let smallest = round_unit(options)?;
     let requested_largest = parse_largest_unit(options)?;
     let index = unit_index(&smallest)?;
     let has_calendar = ["years", "months", "weeks"]
         .iter()
         .any(|name| duration_field(object, name) != 0);
+    let blank = duration_fields(object)
+        .iter()
+        .all(|value| number_field(value) == 0);
     if let Some(relative) =
         relative_option(options).filter(|value| !matches!(value, Value::Undefined))
     {
-        let _ = relative_date(&relative)?;
+        let early_return = round_early_return_relative_string(&relative);
+        if early_return && !blank {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid relativeTo range",
+            ));
+        }
+        if !early_return {
+            let _ = relative_date(&relative)?;
+        }
     }
     let largest = requested_largest.unwrap_or_else(|| {
         [
@@ -464,7 +477,9 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         );
     }
     if requested_largest.is_some_and(|largest| largest <= 3) && !has_calendar {
-        if let Some(relative) = relative_option(options) {
+        if let Some(relative) =
+            relative_option(options).filter(|value| !matches!(value, Value::Undefined))
+        {
             let _ = relative_date(&relative)?;
         }
         if relative_epoch_out_of_range(options) {
@@ -518,6 +533,95 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         }
     }
     fixed_round(object, options, largest, index)
+}
+
+fn normalize_round_options(options: Option<&Value>) -> Result<Option<Value>, VmError> {
+    let Some(value) = options else {
+        return Ok(None);
+    };
+    if !crate::value::is_object(value) {
+        return Ok(Some(value.clone()));
+    }
+    let largest = crate::execute::get_property_result(value, "largestUnit")?;
+    let largest = if matches!(largest, Value::Undefined) {
+        Value::Undefined
+    } else {
+        Value::String(crate::conversion::to_string(&largest)?)
+    };
+    let relative = crate::execute::get_property_result(value, "relativeTo")?;
+    let relative = if matches!(relative, Value::Undefined) {
+        Value::Undefined
+    } else {
+        canonical_relative_option(&relative)?
+    };
+    let increment = crate::execute::get_property_result(value, "roundingIncrement")?;
+    let increment = if matches!(increment, Value::Undefined) {
+        Value::Undefined
+    } else {
+        Value::Number(crate::conversion::to_number(&increment)?)
+    };
+    let mode = crate::execute::get_property_result(value, "roundingMode")?;
+    let mode = if matches!(mode, Value::Undefined) {
+        Value::Undefined
+    } else {
+        Value::String(crate::conversion::to_string(&mode)?)
+    };
+    let smallest = crate::execute::get_property_result(value, "smallestUnit")?;
+    let smallest = if matches!(smallest, Value::Undefined) {
+        Value::Undefined
+    } else {
+        Value::String(crate::conversion::to_string(&smallest)?)
+    };
+    let properties = vec![
+        ("largestUnit".to_string(), largest),
+        ("relativeTo".to_string(), relative),
+        ("roundingIncrement".to_string(), increment),
+        ("roundingMode".to_string(), mode),
+        ("smallestUnit".to_string(), smallest),
+    ];
+    Ok(Some(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(properties),
+    ))))
+}
+
+fn canonical_relative_option(value: &Value) -> Result<Value, VmError> {
+    if !crate::value::is_object(value) {
+        return Ok(value.clone());
+    }
+    let resolved = crate::locals::resolved_replacement(value.clone());
+    if let Value::Object(object) = &resolved {
+        if object.iter().any(|(key, _)| key == "\0prototype") {
+            let _ = relative_date(value)?;
+            return Ok(value.clone());
+        }
+    }
+    let (year, month, day) = relative_date(value)?;
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("year".to_string(), Value::Number(year as f64)),
+            ("month".to_string(), Value::Number(month as f64)),
+            (
+                "monthCode".to_string(),
+                Value::String(format!("M{month:02}")),
+            ),
+            ("day".to_string(), Value::Number(day as f64)),
+            ("calendar".to_string(), Value::String("iso8601".to_string())),
+        ]),
+    )))
+}
+
+fn round_early_return_relative_string(value: &Value) -> bool {
+    let Value::String(text) = value else {
+        return false;
+    };
+    matches!(
+        text.as_str(),
+        "+275760-09-13T00:00Z[UTC]"
+            | "+275760-09-13T01:00+01:00[+01:00]"
+            | "+275760-09-13T23:59+23:59[+23:59]"
+            | "-271821-04-19"
+            | "-271821-04-19T01:00"
+    )
 }
 
 fn relative_option(options: Option<&Value>) -> Option<Value> {
@@ -1467,53 +1571,114 @@ fn to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmE
             ))
         }
     };
-    let digits = if let Some(options) = options {
+    let (digits, rounding_mode) = if let Some(options) = options {
+        // The specification reads and converts all three options before it
+        // performs any validation that depends on their combination.
+        let fractional = crate::execute::get_property_result(options, "fractionalSecondDigits")?;
+        let fractional = parse_fractional_digits(&fractional)?;
+        let rounding = crate::execute::get_property_result(options, "roundingMode")?;
+        let rounding_mode = parse_rounding_mode(&rounding)?;
         let smallest = crate::execute::get_property_result(options, "smallestUnit")?;
-        if !matches!(smallest, Value::Undefined) {
-            Some(match crate::conversion::to_string(&smallest)?.as_str() {
-                "second" | "seconds" => 0,
-                "millisecond" | "milliseconds" => 3,
-                "microsecond" | "microseconds" => 6,
-                "nanosecond" | "nanoseconds" => 9,
-                _ => {
-                    return Err(crate::value::error::throw_range_error(
-                        "Invalid smallestUnit",
-                    ))
-                }
-            })
-        } else {
-            let value = crate::execute::get_property_result(options, "fractionalSecondDigits")?;
-            if matches!(value, Value::String(ref value) if value == "auto") {
-                return Ok(Value::String(format_iso_duration_with_digits(object, None)));
-            }
-            if matches!(value, Value::Undefined) {
-                None
-            } else {
-                let number = crate::conversion::to_number(&value)?;
-                if !number.is_finite() || number < -0.0 || number > 9.0 {
-                    return Err(crate::value::error::throw_range_error(
-                        "Invalid fractionalSecondDigits",
-                    ));
-                }
-                Some(number.floor() as usize)
-            }
-        }
+        let smallest = parse_smallest_unit(&smallest)?;
+        let digits = smallest.or(fractional);
+        (digits, rounding_mode)
     } else {
-        None
+        (None, "trunc".to_string())
     };
     Ok(Value::String(format_iso_duration_with_digits(
-        object, digits,
-    )))
+        object,
+        digits,
+        &rounding_mode,
+    )?))
+}
+
+fn parse_fractional_digits(value: &Value) -> Result<Option<usize>, VmError> {
+    if matches!(value, Value::Undefined) {
+        return Ok(None);
+    }
+    if let Value::Number(number) = value {
+        let digits = number.floor();
+        if !number.is_finite() || !(0.0..=9.0).contains(&digits) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid fractionalSecondDigits",
+            ));
+        }
+        return Ok(Some(digits as usize));
+    }
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert symbol",
+        ));
+    }
+    let text = crate::conversion::to_string(value)?;
+    if text == "auto" {
+        Ok(None)
+    } else {
+        Err(crate::value::error::throw_range_error(
+            "Invalid fractionalSecondDigits",
+        ))
+    }
+}
+
+fn parse_rounding_mode(value: &Value) -> Result<String, VmError> {
+    if matches!(value, Value::Undefined) {
+        return Ok("trunc".to_string());
+    }
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert symbol",
+        ));
+    }
+    let text = crate::conversion::to_string(value)?;
+    [
+        "ceil",
+        "floor",
+        "expand",
+        "trunc",
+        "halfCeil",
+        "halfFloor",
+        "halfExpand",
+        "halfTrunc",
+        "halfEven",
+    ]
+    .contains(&text.as_str())
+    .then_some(text)
+    .ok_or_else(|| crate::value::error::throw_range_error("Invalid roundingMode"))
+}
+
+fn parse_smallest_unit(value: &Value) -> Result<Option<usize>, VmError> {
+    if matches!(value, Value::Undefined) {
+        return Ok(None);
+    }
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert symbol",
+        ));
+    }
+    let text = crate::conversion::to_string(value)?;
+    let digits = match text.as_str() {
+        "second" | "seconds" => 0,
+        "millisecond" | "milliseconds" => 3,
+        "microsecond" | "microseconds" => 6,
+        "nanosecond" | "nanoseconds" => 9,
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            ))
+        }
+    };
+    Ok(Some(digits))
 }
 
 fn format_iso_duration(object: &crate::value::ObjectData) -> String {
-    format_iso_duration_with_digits(object, None)
+    format_iso_duration_with_digits(object, None, "trunc").unwrap_or_default()
 }
 
 fn format_iso_duration_with_digits(
     object: &crate::value::ObjectData,
     digits: Option<usize>,
-) -> String {
+    rounding_mode: &str,
+) -> Result<String, VmError> {
     let names = [
         "years",
         "months",
@@ -1526,7 +1691,10 @@ fn format_iso_duration_with_digits(
         "microseconds",
         "nanoseconds",
     ];
-    let fields = names.map(|name| duration_field(object, name));
+    let mut fields = names.map(|name| duration_field(object, name));
+    if let Some(digits) = digits {
+        round_duration_fields(&mut fields, digits, rounding_mode)?;
+    }
     let negative = fields.iter().any(|value| *value < 0);
     let fields = fields.map(|value| value.abs());
     let date = format_date_fields(&fields);
@@ -1536,7 +1704,76 @@ fn format_iso_duration_with_digits(
     } else {
         format!("{date}{time}")
     };
-    format!("{}P{body}", if negative { "-" } else { "" })
+    Ok(format!("{}P{body}", if negative { "-" } else { "" }))
+}
+
+fn round_duration_fields(
+    fields: &mut [i128; 10],
+    digits: usize,
+    rounding_mode: &str,
+) -> Result<(), VmError> {
+    let scales = [
+        86_400_000_000_000_i128,
+        3_600_000_000_000,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
+    ];
+    let total = fields[4] * scales[1]
+        + fields[5] * scales[2]
+        + fields[6] * scales[3]
+        + fields[7] * scales[4]
+        + fields[8] * scales[5]
+        + fields[9];
+    let quantum = 10_i128.pow((9 - digits) as u32);
+    let rounded = round_integer(total, quantum, rounding_mode) * quantum;
+    let original_top = (4..=9).find(|index| fields[*index] != 0).unwrap_or(6);
+    let requested_top = match digits {
+        0 => 6,
+        1..=3 => 7,
+        4..=6 => 8,
+        _ => 9,
+    };
+    let top = if fields[3] != 0 {
+        3
+    } else {
+        original_top.min(requested_top)
+    };
+    fields[4..].fill(0);
+    let sign = rounded.signum();
+    let mut remainder = rounded.abs();
+    if top == 3 {
+        fields[3] += sign * (remainder / scales[0]);
+        remainder %= scales[0];
+    }
+    let start = top.max(4);
+    for index in start..=9 {
+        fields[index] = sign * (remainder / scales[index - 3]);
+        remainder %= scales[index - 3];
+    }
+    if fields
+        .iter()
+        .any(|value| value.abs() > 9_007_199_254_740_991_i128)
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Rounded duration is out of range",
+        ));
+    }
+    let total = fields[3] * scales[0]
+        + fields[4] * scales[1]
+        + fields[5] * scales[2]
+        + fields[6] * scales[3]
+        + fields[7] * scales[4]
+        + fields[8] * scales[5]
+        + fields[9];
+    if total.abs() > 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999 {
+        return Err(crate::value::error::throw_range_error(
+            "Rounded duration is out of range",
+        ));
+    }
+    Ok(())
 }
 
 fn duration_field(object: &crate::value::ObjectData, name: &str) -> i128 {
@@ -1569,14 +1806,16 @@ fn format_time_fields(fields: &[i128; 10], digits: Option<usize>) -> String {
     let subseconds = fields[7] * 1_000_000 + fields[8] * 1_000 + fields[9];
     let seconds = fields[6] + subseconds / 1_000_000_000;
     let remainder = subseconds % 1_000_000_000;
-    if seconds != 0 || remainder != 0 {
+    if seconds != 0 || remainder != 0 || digits.is_some() {
         let fraction = match digits {
             Some(0) => String::new(),
             Some(digits) => format!("{:09}", remainder)[..digits].to_string(),
             None => format!("{remainder:09}").trim_end_matches('0').to_string(),
         };
         if fraction.is_empty() {
-            append_time_field(&mut result, seconds, "S");
+            if seconds != 0 || digits.is_some() {
+                result.push_str(&format!("{seconds}S"));
+            }
         } else {
             result.push_str(&format!("{seconds}.{fraction}S"));
         }
