@@ -2,10 +2,113 @@ fn validate_named_groups(body: &str) -> Result<(), String> {
     if has_unqualified_k(body) {
         return Err(syntax_error());
     }
+    validate_duplicate_group_names(body)?;
     let Some(seen) = collect_group_names(body)? else {
         return Ok(());
     };
     validate_group_references(body, &seen)
+}
+
+#[derive(Clone)]
+struct GroupAlternative {
+    id: usize,
+    branch: usize,
+}
+
+fn validate_duplicate_group_names(body: &str) -> Result<(), String> {
+    let occurrences = named_group_occurrences(body)?;
+    for (index, (name, path)) in occurrences.iter().enumerate() {
+        if occurrences[index + 1..]
+            .iter()
+            .any(|(other, other_path)| name == other && paths_can_coexist(path, other_path))
+        {
+            return Err(syntax_error());
+        }
+    }
+    Ok(())
+}
+
+fn named_group_occurrences(body: &str) -> Result<Vec<(String, Vec<(usize, usize)>)>, String> {
+    let bytes = body.as_bytes();
+    let mut stack = vec![GroupAlternative { id: 0, branch: 0 }];
+    let mut occurrences = Vec::new();
+    let mut next_id = 1;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index = index.saturating_add(2),
+            b'[' => index = skip_character_class(bytes, index),
+            b'|' => {
+                if let Some(frame) = stack.last_mut() {
+                    frame.branch = frame.branch.saturating_add(1);
+                }
+                index += 1;
+            }
+            b'(' => {
+                if let Some(name) = named_group_name(body, index)? {
+                    let path = stack.iter().map(|frame| (frame.id, frame.branch)).collect();
+                    occurrences.push((name, path));
+                }
+                stack.push(GroupAlternative {
+                    id: next_id,
+                    branch: 0,
+                });
+                next_id += 1;
+                index += 1;
+            }
+            b')' => {
+                if stack.len() > 1 {
+                    stack.pop();
+                }
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    Ok(occurrences)
+}
+
+fn named_group_name(body: &str, open: usize) -> Result<Option<String>, String> {
+    let Some(rest) = body.get(open + 1..) else {
+        return Ok(None);
+    };
+    if !rest.starts_with("?<")
+        || rest
+            .as_bytes()
+            .get(2)
+            .is_some_and(|byte| *byte == b'=' || *byte == b'!')
+    {
+        return Ok(None);
+    }
+    let start = open + 3;
+    let close = body[start..]
+        .find('>')
+        .map(|offset| start + offset)
+        .ok_or_else(syntax_error)?;
+    Ok(Some(body[start..close].to_string()))
+}
+
+fn skip_character_class(bytes: &[u8], mut index: usize) -> usize {
+    index += 1;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            index = index.saturating_add(2);
+        } else if bytes[index] == b']' {
+            return index + 1;
+        } else {
+            index += 1;
+        }
+    }
+    index
+}
+
+fn paths_can_coexist(left: &[(usize, usize)], right: &[(usize, usize)]) -> bool {
+    left.iter().all(|(id, branch)| {
+        right
+            .iter()
+            .find(|(other_id, _)| other_id == id)
+            .is_none_or(|(_, other_branch)| other_branch == branch)
+    })
 }
 
 fn collect_group_names(body: &str) -> Result<Option<Vec<String>>, String> {
