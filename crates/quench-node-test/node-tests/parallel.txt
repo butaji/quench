@@ -506,6 +506,10 @@ test-https-byteswritten.js
 test-https-client-get-url.js
 test-https-client-reject.js
 test-net-isip.js
+test-worker-event.js
+test-worker-process-env.js
+test-worker-hasref.js
+test-worker-resource-limits.js
 test-https-agent-additional-options.js
 test-https-agent-servername.js
 test-https-agent-sni.js
