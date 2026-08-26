@@ -395,6 +395,14 @@ pub fn util_deprecate(
     ))
 }
 
+pub fn util_debuglog(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(bound_custom(crate::registry::SPEC_UTIL_DEBUGLOG.cap, vec![]))
+}
+
 pub fn util_deprecated_call(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -424,6 +432,7 @@ pub fn util_system_error_name(
         -17 => "EEXIST",
         -32 => "EPIPE",
         -105 => "ENOBUFS",
+        -110 => "ETIMEDOUT",
         _ => return Ok(Value::String(format!("Unknown system error {errno}"))),
     };
     Ok(Value::String(name.into()))
