@@ -305,6 +305,24 @@ fn difference(
     } else {
         "day".into()
     };
+    let increment_max = match smallest_unit.as_str() {
+        "day" => 1_u64,
+        "hour" => 24,
+        "minute" | "second" => 60,
+        "millisecond" | "microsecond" | "nanosecond" => 1_000,
+        _ => 0,
+    };
+    if increment_max > 0
+        && (rounding_increment as u64) > increment_max
+        || increment_max > 1
+            && (rounding_increment as u64) >= increment_max
+        || increment_max > 1
+            && increment_max % (rounding_increment as u64) != 0
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
     if matches!(largest.as_str(), "year" | "month" | "week") {
         return calendar_difference(
             &left,
