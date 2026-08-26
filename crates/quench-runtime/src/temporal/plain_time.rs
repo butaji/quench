@@ -828,16 +828,44 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         Value::Undefined => 1,
         value => crate::conversion::to_number(&value)? as i64,
     };
-    if increment <= 0 || increment * scale > 86_400_000_000_000 {
+    let increment_maximum = match unit {
+        "hour" => 24,
+        "minute" | "second" => 60,
+        "millisecond" | "microsecond" | "nanosecond" => 1_000,
+        _ => 0,
+    };
+    if increment <= 0 || increment >= increment_maximum || increment_maximum % increment != 0 {
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
+        ));
+    }
+    let rounding_mode = option_text(&crate::execute::get_property_result(
+        options,
+        "roundingMode",
+    )?)?
+    .unwrap_or_else(|| "halfExpand".into());
+    if ![
+        "ceil",
+        "floor",
+        "expand",
+        "trunc",
+        "halfCeil",
+        "halfFloor",
+        "halfExpand",
+        "halfTrunc",
+        "halfEven",
+    ]
+    .contains(&rounding_mode.as_str())
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingMode",
         ));
     }
     let total = time_fields(receiver)?;
     let quantum = increment * scale;
     let rounded =
-        ((total as f64 / quantum as f64).round() as i64 * quantum).rem_euclid(86_400_000_000_000);
-    let values = time_parts(rounded);
+        round_time(total as i128, quantum as i128, &rounding_mode).rem_euclid(86_400_000_000_000);
+    let values = time_parts(rounded as i64);
     construct(&values)
 }
 
