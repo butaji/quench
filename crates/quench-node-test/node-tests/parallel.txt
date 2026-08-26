@@ -4,10 +4,13 @@
 test-assert-fail.js
 test-assert-if-error.js
 test-events-getmaxlisteners.js
+test-events-customevent.js
 test-events-list.js
 test-events-listener-count-with-listener.js
 test-events-static-geteventlisteners.js
 test-events-uncaught-exception-stack.js
+test-events-once.js
+test-eventsource.js
 test-eventsource-disabled.js
 test-fs-exists.js
 test-fs-assert-encoding-error.js
