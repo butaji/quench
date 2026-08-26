@@ -260,6 +260,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
         Builtin::TemporalPlainMonthDay => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainMonthDayPrototype => &[
             "constructor",
+            "Symbol.toStringTag",
             "calendarId",
             "monthCode",
             "day",
