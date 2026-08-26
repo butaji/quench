@@ -22,6 +22,24 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         NODE_OS_BINDING.with(|stored| stored.replace(Some(binding.clone())));
         return Ok(binding);
     }
+    if name == "constants" {
+        let empty = || crate::host::null_namespace(Vec::new());
+        let os = crate::host::null_namespace(vec![
+            ("UV_UDP_REUSEADDR".into(), Value::Number(1.0)),
+            ("dlopen".into(), empty()),
+            ("errno".into(), empty()),
+            ("priority".into(), empty()),
+            ("signals".into(), empty()),
+        ]);
+        return Ok(crate::host::null_namespace(vec![
+            ("crypto".into(), empty()),
+            ("fs".into(), empty()),
+            ("internal".into(), empty()),
+            ("os".into(), os),
+            ("trace".into(), empty()),
+            ("zlib".into(), empty()),
+        ]));
+    }
     if name == "buffer" {
         return Ok(quench_runtime::host_api::object(vec![
             (
@@ -34,6 +52,14 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
                     CapabilityName::BufferArrayBufferAlignedOffset,
                 )),
             ),
+        ]));
+    }
+    if name == "tcp_wrap" {
+        let prototype = quench_runtime::host_api::object(vec![
+            ("setNoDelay".into(), crate::host::capability(crate::registry::SPEC_CLUSTER_DISCONNECT)),
+        ]);
+        return Ok(quench_runtime::host_api::object(vec![
+            ("TCPWrap".into(), quench_runtime::host_api::object(vec![("prototype".into(), prototype)])),
         ]));
     }
     if [
@@ -67,6 +93,7 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         "Unknown internal builtin module",
     )))
 }
+
 
 pub(crate) fn util_types_module() -> Value {
     crate::modules::util::types_object()
