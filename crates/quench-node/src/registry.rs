@@ -693,6 +693,11 @@ pub fn namespace_bindings(
         "name",
         quench_runtime::value::Value::String("Float16Array".into()),
     );
+    let float16_constructor = quench_runtime::execute::set_property(
+        float16_constructor,
+        "BYTES_PER_ELEMENT",
+        quench_runtime::value::Value::Number(2.0),
+    );
     let _ = quench_runtime::execute::set_property(
         float16_prototype,
         "constructor",
