@@ -147,6 +147,17 @@ struct CompactSiteKey {
 }
 
 #[cfg(feature = "execution-trace")]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct FunctionCallSiteKey {
+    store: usize,
+    code: u32,
+    source: u32,
+    params: u16,
+    captures: u16,
+    length: u16,
+}
+
+#[cfg(feature = "execution-trace")]
 #[derive(Default)]
 struct Counters {
     compact: [u64; crate::ir::Opcode::COUNT as usize + 1],
@@ -169,6 +180,7 @@ struct Counters {
     object_shapes: HashMap<String, u64>,
     function_shapes: HashMap<(usize, usize), (u64, u64)>,
     function_call_shapes: HashMap<(u16, usize, usize), u64>,
+    function_call_sites: HashMap<FunctionCallSiteKey, u64>,
     function_opcode_shapes: HashMap<(u64, u16, u8, [u8; 32]), u64>,
     descriptor_objects: HashMap<&'static str, u64>,
     descriptor_views_by_op: HashMap<&'static str, u64>,
@@ -534,6 +546,25 @@ pub(crate) fn function_call_shape(
     if enabled() {
         if let Some(code) = code {
             dump_function_shape(params, captures, code);
+            let (store, code_id) = code.trace_identity();
+            let source = (0..code.len())
+                .find_map(|pc| code.metadata_at(pc).and_then(|metadata| metadata.source))
+                .unwrap_or(u32::MAX);
+            let key = FunctionCallSiteKey {
+                store,
+                code: code_id,
+                source,
+                params,
+                captures: u16::try_from(captures).unwrap_or(u16::MAX),
+                length: u16::try_from(code.len()).unwrap_or(u16::MAX),
+            };
+            COUNTERS.with(|counters| {
+                *counters
+                    .borrow_mut()
+                    .function_call_sites
+                    .entry(key)
+                    .or_default() += 1;
+            });
         }
         COUNTERS.with(|counters| {
             let mut counters = counters.borrow_mut();
@@ -1658,6 +1689,19 @@ pub fn snapshot() -> Option<serde_json::Value> {
                     })
                 },
             ).collect::<Vec<_>>();
+            let mut function_call_sites = counters.function_call_sites.iter().collect::<Vec<_>>();
+            function_call_sites.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
+            let function_call_sites = function_call_sites.into_iter().take(32).map(
+                |(site, &count)| serde_json::json!({
+                    "store": format!("{:x}", site.store),
+                    "code": site.code,
+                    "source": site.source,
+                    "params": site.params,
+                    "captures": site.captures,
+                    "code_len": site.length,
+                    "count": count,
+                }),
+            ).collect::<Vec<_>>();
             let mut function_opcode_shapes: Vec<_> = counters.function_opcode_shapes.iter().collect();
             function_opcode_shapes.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
             let function_opcode_shapes = function_opcode_shapes.into_iter().take(64).map(
@@ -1708,6 +1752,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
                 "object_shapes": object_shapes,
                 "function_shapes": function_shapes,
                 "function_call_shapes": function_call_shapes,
+                "function_call_sites": function_call_sites,
                 "function_opcode_shapes": function_opcode_shapes,
                 "descriptor_objects": counters.descriptor_objects,
                 "named_property_results": counters.named_property_results,
