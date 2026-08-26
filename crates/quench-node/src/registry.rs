@@ -93,16 +93,16 @@ node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL_PUBLISH, "diagnostics_channel:Channel:publish", 0x1F07),
     (SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE, "diagnostics_channel:Channel:bindStore", 0x1F08),
     (SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE, "diagnostics_channel:Channel:unbindStore", 0x1F09),
-    (SPEC_DOMAIN_CREATE, "domain:create", 0x1F20),
-    (SPEC_DOMAIN_CONSTRUCTOR, "domain:Domain", 0x1F21),
-    (SPEC_DOMAIN_ENTER, "domain:enter", 0x1F22),
-    (SPEC_DOMAIN_EXIT, "domain:exit", 0x1F23),
-    (SPEC_DOMAIN_ADD, "domain:add", 0x1F24),
-    (SPEC_DOMAIN_REMOVE, "domain:remove", 0x1F25),
-    (SPEC_DOMAIN_RUN, "domain:run", 0x1F26),
-    (SPEC_DOMAIN_DISPOSE, "domain:dispose", 0x1F27),
-    (SPEC_DOMAIN_ON, "domain:on", 0x1F28),
-    (SPEC_DOMAIN_ADD_EMITTER, "domain:addEmitter", 0x1F29),
+    (SPEC_DOMAIN_CREATE, "domain:create", 0x1F50),
+    (SPEC_DOMAIN_CONSTRUCTOR, "domain:Domain", 0x1F51),
+    (SPEC_DOMAIN_ENTER, "domain:enter", 0x1F52),
+    (SPEC_DOMAIN_EXIT, "domain:exit", 0x1F53),
+    (SPEC_DOMAIN_ADD, "domain:add", 0x1F54),
+    (SPEC_DOMAIN_REMOVE, "domain:remove", 0x1F55),
+    (SPEC_DOMAIN_RUN, "domain:run", 0x1F56),
+    (SPEC_DOMAIN_DISPOSE, "domain:dispose", 0x1F57),
+    (SPEC_DOMAIN_ON, "domain:on", 0x1F58),
+    (SPEC_DOMAIN_ADD_EMITTER, "domain:addEmitter", 0x1F59),
     (SPEC_CLUSTER_FORK, "cluster:fork", 0x1F40),
     (SPEC_CLUSTER_DISCONNECT, "cluster:disconnect", 0x1F41),
     (SPEC_CLUSTER_WORKER_IS_DEAD, "cluster:Worker:isDead", 0x1F42),
@@ -443,6 +443,7 @@ pub const SPEC_FS_MKDTEMPSYNC: NodeSpec = NodeSpec::new("fs:mkdtempSync", 0x111F
 pub const SPEC_FS_READLINKSYNC: NodeSpec = NodeSpec::new("fs:readlinkSync", 0x1120);
 pub const SPEC_FS_CHMODSYNC: NodeSpec = NodeSpec::new("fs:chmodSync", 0x1121);
 pub const SPEC_FS_TRUNCATESYNC: NodeSpec = NodeSpec::new("fs:truncateSync", 0x1122);
+pub const SPEC_FS_SYMLINKSYNC: NodeSpec = NodeSpec::new("fs:symlinkSync", 0x1125);
 pub const SPEC_FS_MKDIRSYNC: NodeSpec = NodeSpec::new("fs:mkdirSync", 0x1123);
 pub const SPEC_FS_UNLINKSYNC: NodeSpec = NodeSpec::new("fs:unlinkSync", 0x1124);
 pub const SPEC_FS_STAT_ISFILE: NodeSpec = NodeSpec::new("fs:Stats:isFile", 0x1130);
