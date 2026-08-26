@@ -28,14 +28,27 @@ const __quenchDnsNormalizeServer = (server) => {
     ? `${address}:${port}`
     : address;
 };
-const __quenchDnsNormalizeServers = (servers) =>
-  [...servers]
-    .filter((server) => server !== undefined)
-    .map(__quenchDnsNormalizeServer)
-    .filter((server) => server !== null);
+const __quenchDnsNormalizeServers = (servers) => {
+  const normalized = [];
+  for (let index = 0; index < servers.length; index += 1) {
+    if (servers[index] === undefined) continue;
+    const server = __quenchDnsNormalizeServer(servers[index]);
+    if (server !== null) normalized.push(server);
+  }
+  return normalized;
+};
 const __quenchDnsValidateServers = (servers) => {
+  if (!Array.isArray(servers)) {
+    throw Object.assign(new TypeError('The "servers" argument must be an instance of Array.'), { code: "ERR_INVALID_ARG_TYPE" });
+  }
+  for (let index = 0; index < servers.length; index += 1) {
+    if (typeof servers[index] !== "string") {
+      throw Object.assign(new TypeError(`The "servers[${index}]" argument must be of type string.`), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+  }
   const normalized = __quenchDnsNormalizeServers(servers);
-  for (const server of normalized) {
+  for (let index = 0; index < normalized.length; index += 1) {
+    const server = normalized[index];
     const address = typeof server === "string" && __quenchDnsIsIP(server) === 0
       ? server.replace(/:\d+$/, "")
       : server;
