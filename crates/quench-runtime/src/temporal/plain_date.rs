@@ -1071,8 +1071,25 @@ fn with(
     let changes = changes
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
-    let _ = crate::execute::get_property_result(changes, "calendar")?;
-    let _ = crate::execute::get_property_result(changes, "timeZone")?;
+    if is_temporal_date_like(changes) {
+        return Err(crate::value::error::throw_type_error("Invalid fields"));
+    }
+    if matches!(changes, Value::Array(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid fields"));
+    }
+    if let Value::Object(object) = changes {
+        let has_date_field = object
+            .iter()
+            .any(|(key, _)| matches!(key.as_str(), "year" | "month" | "monthCode" | "day"));
+        if !has_date_field {
+            return Err(crate::value::error::throw_type_error("Invalid fields"));
+        }
+    }
+    let calendar = crate::execute::get_property_result(changes, "calendar")?;
+    let time_zone = crate::execute::get_property_result(changes, "timeZone")?;
+    if !matches!(calendar, Value::Undefined) || !matches!(time_zone, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Invalid fields"));
+    }
     let mut day = number_or_field(changes, "day", day)?;
     let explicit_month = number_or_field(changes, "month", month)?;
     let month_code = crate::execute::get_property_result(changes, "monthCode")?;
@@ -1082,10 +1099,9 @@ fn with(
         Some(month_code_text(&month_code)?)
     };
     let year = number_or_field(changes, "year", year)?;
-    let overflow = if let Some(value) = options {
-        if !matches!(value, Value::Undefined) && !crate::value::is_object(value) {
-            return Err(crate::value::error::throw_type_error("Invalid options"));
-        }
+    let primitive_options = options
+        .is_some_and(|value| !matches!(value, Value::Undefined) && !crate::value::is_object(value));
+    let overflow = if let Some(value) = options.filter(|value| !primitive_options) {
         value
     } else {
         &Value::Undefined
@@ -1095,7 +1111,11 @@ fn with(
     } else {
         crate::execute::get_property_result(overflow, "overflow")?
     };
-    let overflow = option_string(&overflow)?;
+    let overflow = if matches!(overflow, Value::Undefined) {
+        "constrain".to_owned()
+    } else {
+        option_string(&overflow)?
+    };
     let month = if month_code_text.is_none() {
         explicit_month
     } else {
@@ -1124,6 +1144,9 @@ fn with(
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
+    if primitive_options {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
     let month = month.min(12.0);
     let max_day = days_in_month(year, month);
     if day > max_day {
@@ -1138,6 +1161,25 @@ fn with(
         Value::Number(month),
         Value::Number(day),
     ])
+}
+
+fn is_temporal_date_like(value: &Value) -> bool {
+    let Value::Object(object) = value else {
+        return false;
+    };
+    object.iter().any(|(key, value)| {
+        (key == "\0temporal-plain-date" || key == "\0temporal-plain-time" || key == "\0prototype")
+            && matches!(
+                value,
+                Value::Boolean(true)
+                    | Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype)
+                    | Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+                    | Value::Builtin(crate::ops::Builtin::TemporalPlainMonthDayPrototype)
+                    | Value::Builtin(crate::ops::Builtin::TemporalPlainTimePrototype)
+                    | Value::Builtin(crate::ops::Builtin::TemporalPlainYearMonthPrototype)
+                    | Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+            )
+    })
 }
 
 fn number_or_field(object: &Value, name: &str, default: f64) -> Result<f64, VmError> {
