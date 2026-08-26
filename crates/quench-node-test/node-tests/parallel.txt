@@ -298,3 +298,8 @@ test-net-isipv4.js
 test-net-isipv6.js
 test-net-server-close.js
 test-os-constants-signals.js
+test-dgram-address.js
+test-dgram-bind-sync.js
+test-dgram-createSocket-type.js
+test-dgram-close-is-not-callback.js
+test-dgram-error-message-address.js
