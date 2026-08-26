@@ -48,6 +48,57 @@ fn execute_linked_device(
     Some(transition.execute())
 }
 
+fn execute_linked_idle(
+    current: &DirectTaskRunner,
+    table: &DirectTaskTable,
+    scheduler: &LinkedSchedulerWords,
+    plan: IdleTaskPlan,
+) -> Option<crate::value::Value> {
+    let count = current.word(current.task_count?);
+    let next_count = count.number()? - 1.0;
+    if next_count == 0.0 {
+        let transition = LinkedHoldTransition::new(current, scheduler)?;
+        count.store(crate::value::Value::Number(next_count));
+        crate::execution_trace::kernel("linked_idle_hold", false);
+        return Some(transition.execute());
+    }
+    let v1 = current.word(current.task_v1);
+    let value = crate::vm::vm_arithmetic::numeric_to_int32(v1.number()?);
+    let even = value & 1 == 0;
+    let next_v1 = if even { value >> 1 } else { (value >> 1) ^ 0xD008 };
+    let slot = if even { plan.device_a_slot } else { plan.device_b_slot };
+    let id = current.function.captures.get_number(slot)?;
+    let transition = LinkedReleaseTransition::new(current, table.for_id(exact_linked_task_id(id)?)?)?;
+    count.store(crate::value::Value::Number(next_count));
+    v1.store(crate::value::Value::Number(f64::from(next_v1)));
+    crate::execution_trace::kernel("linked_idle_release", false);
+    Some(transition.execute())
+}
+
+struct LinkedReleaseTransition {
+    state: *const crate::register_file::SlotWord,
+    next_state: f64,
+    result: crate::value::Value,
+}
+
+impl LinkedReleaseTransition {
+    fn new(current: &DirectTaskRunner, target: &DirectTaskRunner) -> Option<Self> {
+        let state = target.word(target.state);
+        let next_state = exact_i32(state.number()?)? & !target.held_mask;
+        Some(Self {
+            state: target.state,
+            next_state: f64::from(next_state),
+            result: linked_priority_result(current, target)?,
+        })
+    }
+
+    fn execute(self) -> crate::value::Value {
+        // SAFETY: the retained target TCB owns the canonical state word.
+        unsafe { &*self.state }.store(crate::value::Value::Number(self.next_state));
+        self.result
+    }
+}
+
 struct LinkedHoldTransition {
     hold_count: *const crate::register_file::SlotWord,
     next_count: f64,
