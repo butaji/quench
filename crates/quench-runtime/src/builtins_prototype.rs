@@ -47,6 +47,121 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
     Value::String(format!("[object {}]", prototype_tag(receiver)))
 }
 
+pub(crate) fn prototype_to_string_result(
+    receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let Some(value) = receiver else {
+        return Ok(Value::String("[object Undefined]".into()));
+    };
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Ok(prototype_to_string(Some(value)));
+    }
+    if let Value::Generator(_) = value {
+        if let Ok(prototype) = crate::builtins::object::get_prototype_of(Some(value)) {
+            if let Some(getter) =
+                crate::property_define::accessor(&prototype, "Symbol.toStringTag", "get")
+            {
+                let tag = match getter {
+                    Value::Builtin(builtin) => {
+                        crate::vm::execute_builtin_with_receiver(builtin, &[], Some(value))?
+                    }
+                    getter => crate::functions::execute_target(&getter, value, &[])?,
+                };
+                return Ok(match tag {
+                    Value::String(tag) => Value::String(format!("[object {tag}]")),
+                    _ => Value::String("[object Object]".into()),
+                });
+            }
+        }
+    }
+    let tag = crate::execute::get_property_result(value, "Symbol.toStringTag")?;
+    if let Some(descriptor_value) = intrinsic_tag_data_value(value) {
+        return match descriptor_value {
+            Value::String(tag) if !crate::conversion::is_symbol_string(&tag) => {
+                Ok(Value::String(format!("[object {tag}]")))
+            }
+            _ => Ok(Value::String("[object Object]".into())),
+        };
+    }
+    if intrinsic_tag_is_removed(value) {
+        return Ok(Value::String("[object Object]".into()));
+    }
+    if let Value::String(tag) = tag {
+        if !crate::conversion::is_symbol_string(&tag) {
+            return Ok(Value::String(format!("[object {tag}]")));
+        }
+    }
+    if intrinsic_tag_is_overridden(value) || intrinsic_tag_is_removed(value) {
+        return Ok(Value::String("[object Object]".into()));
+    }
+    Ok(prototype_to_string(Some(value)))
+}
+
+fn intrinsic_tag_data_value(value: &Value) -> Option<Value> {
+    let builtin = match value {
+        Value::Builtin(builtin) => *builtin,
+        Value::String(text) if crate::conversion::is_symbol_string(text) => {
+            Builtin::SymbolPrototype
+        }
+        Value::BigInt(_) => Builtin::BigIntPrototype,
+        Value::Object(properties)
+            if properties
+                .iter()
+                .any(|(key, value)| key == "_value" && matches!(value, Value::BigInt(_))) =>
+        {
+            Builtin::BigIntPrototype
+        }
+        _ => return None,
+    };
+    crate::builtins::read_descriptor_value(builtin, "Symbol.toStringTag")
+}
+
+fn intrinsic_tag_is_overridden(value: &Value) -> bool {
+    let builtin = match value {
+        Value::Builtin(builtin) => *builtin,
+        Value::String(text) if crate::conversion::is_symbol_string(text) => {
+            Builtin::SymbolPrototype
+        }
+        Value::BigInt(_) => Builtin::BigIntPrototype,
+        _ => return false,
+    };
+    crate::builtins::read_intrinsic_override(builtin, "Symbol.toStringTag").is_some()
+}
+
+fn intrinsic_tag_is_removed(value: &Value) -> bool {
+    let builtin = match value {
+        Value::Builtin(builtin) => *builtin,
+        Value::String(text) if crate::conversion::is_symbol_string(text) => {
+            Builtin::SymbolPrototype
+        }
+        Value::BigInt(_) => Builtin::BigIntPrototype,
+        Value::Object(properties)
+            if properties
+                .iter()
+                .any(|(key, value)| key == "_value" && matches!(value, Value::BigInt(_))) =>
+        {
+            Builtin::BigIntPrototype
+        }
+        Value::Promise(_) => Builtin::PromisePrototype,
+        Value::Map(data) => {
+            if data.weak {
+                Builtin::WeakMapPrototype
+            } else {
+                Builtin::MapPrototype
+            }
+        }
+        Value::Set(data) => {
+            if data.weak {
+                Builtin::WeakSetPrototype
+            } else {
+                Builtin::SetPrototype
+            }
+        }
+        _ => return false,
+    };
+    crate::builtins::builtin_prototype_property_is_removed(builtin, "Symbol.toStringTag")
+}
+
 fn prototype_builtin_tag(receiver: &Value) -> Option<&'static str> {
     let Value::Builtin(builtin) = receiver else {
         return None;
@@ -224,6 +339,21 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
                     *builtin,
                     "Symbol.toStringTag",
                 ) {
+                    // A runtime-defined descriptor replaces the intrinsic
+                    // value, including when its value is non-string. Do not
+                    // fall through to the generated default tag in that case.
+                    if crate::builtins::read_intrinsic_override(*builtin, "Symbol.toStringTag")
+                        .is_some()
+                    {
+                        if let Some(Value::String(tag)) =
+                            crate::builtins::read_descriptor_value(*builtin, "Symbol.toStringTag")
+                        {
+                            if !crate::conversion::is_symbol_string(&tag) {
+                                return Some(tag);
+                            }
+                        }
+                        return None;
+                    }
                     if let Some(Value::String(tag)) =
                         crate::builtins::read_descriptor_value(*builtin, "Symbol.toStringTag")
                     {
