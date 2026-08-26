@@ -1,6 +1,8 @@
 //! Polyfill: `dgram-tail`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDgramOnce = (socket, listeners, event, callback) => {
+globalThis.queueMicrotask ||= (callback) => Promise.resolve().then(callback);
+globalThis.setImmediate ||= (callback, ...args) => Promise.resolve().then(() => callback(...args));
   const wrapper = (...args) => {
     listeners[event] = (listeners[event] || []).filter(
       (listener) => listener !== wrapper,
@@ -15,6 +17,7 @@ const __quenchDgramEmit = (socket, listeners, event, args) => {
   return socket;
 };
 const __quenchDgramSocket = (type = "udp4", options = {}) => {
+  Symbol.asyncDispose ||= Symbol("Symbol.asyncDispose");
   const listeners = {};
   const socket = {
     type,
@@ -330,6 +333,13 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       return value;
     },
     close: (callback) => __quenchDgramClose(socket, callback),
+    [Symbol.asyncDispose]: () => {
+      if (socket._closed) return Promise.resolve();
+      return new Promise((resolve) => {
+        socket.close();
+        setImmediate(resolve);
+      });
+    },
     address: () => __quenchDgramAddress(socket, type),
     on: (event, callback) =>
       __quenchDgramOn(socket, listeners, event, callback),
