@@ -366,11 +366,7 @@ pub(crate) fn get_property_with_receiver(
     if let Some(value) = proven_own_data(&value, key) {
         return Ok(value);
     }
-    if matches!(
-        &value,
-        Value::BoundFunction(bound)
-            if bound.target == Value::Builtin(crate::ops::Builtin::AbstractModuleSource)
-    ) {
+    if matches!(&value, Value::BoundFunction(_)) {
         return Ok(crate::execute::get_property(&value, key));
     }
     if let Some(result) = early_property_result(&value, key, receiver) {
