@@ -166,6 +166,9 @@ test-bad-unicode.js
 test-blob.js
 test-blob-file-backed.js
 test-blob-createobjecturl.js
+test-beforeexit-event-exit.js
+test-atomics-wake.js
+test-benchmark-cli.js
 test-net-connect-after-destroy.js
 test-dns-get-server.js
 test-dns-negative-zero.js
