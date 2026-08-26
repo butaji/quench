@@ -112,10 +112,10 @@ pub(crate) fn execute(
             crate::value::error::throw_type_error("Cannot convert PlainDateTime to a number"),
         )),
         crate::ops::Builtin::TemporalPlainDateTimeAdd => {
-            Some(add(_receiver, arguments.first(), 1.0))
+            Some(add(_receiver, arguments.first(), arguments.get(1), 1.0))
         }
         crate::ops::Builtin::TemporalPlainDateTimeSubtract => {
-            Some(add(_receiver, arguments.first(), -1.0))
+            Some(add(_receiver, arguments.first(), arguments.get(1), -1.0))
         }
         crate::ops::Builtin::TemporalPlainDateTimeWith => {
             Some(with(_receiver, arguments.first(), arguments.get(1)))
@@ -557,11 +557,13 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
 fn add(
     receiver: Option<&Value>,
     duration: Option<&Value>,
+    options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let duration = crate::temporal::duration::from(duration)?;
+    let overflow = overflow_option(options)?;
     let mut values = fields(receiver)?;
     let months = (number_property(&duration, "years") * 12.0
         + number_property(&duration, "months"))
@@ -569,6 +571,11 @@ fn add(
     let total = values[0] * 12.0 + values[1] - 1.0 + months;
     values[0] = (total / 12.0).floor();
     values[1] = total.rem_euclid(12.0) + 1.0;
+    let original_day = values[2];
+    values[2] = values[2].min(days_in_month(values[0] as i32, values[1] as u32) as f64);
+    if overflow == "reject" && values[2] != original_day {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     let days = (number_property(&duration, "weeks") * 7.0 + number_property(&duration, "days"))
         * direction;
     let current_time = values[3] * 3_600_000_000_000.0
@@ -616,6 +623,25 @@ fn number_property(value: &Value, name: &str) -> f64 {
         .ok()
         .and_then(|value| crate::conversion::to_number(&value).ok())
         .unwrap_or(0.0)
+}
+
+fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("constrain".into());
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let value = crate::execute::get_property_result(options, "overflow")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("constrain".into());
+    }
+    let value = crate::conversion::to_string(&value)?;
+    if matches!(value.as_str(), "constrain" | "reject") {
+        Ok(value)
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid overflow"))
+    }
 }
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
