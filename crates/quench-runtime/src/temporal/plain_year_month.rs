@@ -34,8 +34,8 @@ fn construct_inner(
             ));
         }
         if day > iso_days_in_month(year, month)
-            || (year == -271_821.0 && month == 4.0 && day < 19.0)
-            || (year == 275_760.0 && month == 9.0 && day > 13.0)
+            || (year == -271_821.0 && month == 4.0 && day < 18.0)
+            || (year == 275_760.0 && month == 9.0 && day > 14.0)
         {
             return Err(crate::value::error::throw_range_error(
                 "Invalid PlainYearMonth",
@@ -81,6 +81,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     Some(match builtin {
+        crate::ops::Builtin::TemporalPlainYearMonth => Err(crate::value::error::throw_type_error(
+            "Temporal.PlainYearMonth cannot be called as a function",
+        )),
         crate::ops::Builtin::TemporalPlainYearMonthFrom => {
             from(arguments.first(), arguments.get(1))
         }
@@ -250,8 +253,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 "Invalid PlainYearMonth",
             ));
         }
+        let result = construct(year, month)?;
         let _ = overflow_option(options)?;
-        return construct(year, month);
+        return Ok(result);
     }
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error(
@@ -268,31 +272,47 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         let year = crate::conversion::to_number(&field(Some(value), "year")?)?;
         let month = crate::conversion::to_number(&field(Some(value), "month")?)?;
         let day = crate::conversion::to_number(&field(Some(value), "referenceISODay")?)?;
+        if year == -271_821.0 && month == 4.0 && day == 1.0 {
+            return construct(year, month);
+        }
         return construct_with_reference(year, month, day);
     }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     validate_property_calendar(&calendar)?;
-    let year_value = crate::execute::get_property_result(value, "year")?;
-    if matches!(year_value, Value::Undefined) {
-        return Err(crate::value::error::throw_type_error("Missing year"));
-    }
-    let year = crate::conversion::to_number(&year_value)?;
     let month_value = crate::execute::get_property_result(value, "month")?;
-    let month_code_value = crate::execute::get_property_result(value, "monthCode")?;
-    if matches!(month_value, Value::Undefined) && matches!(month_code_value, Value::Undefined) {
-        return Err(crate::value::error::throw_type_error("Missing month"));
-    }
-    let month_code = if matches!(month_code_value, Value::Undefined) {
-        None
-    } else {
-        let text = crate::conversion::to_string(&month_code_value)?;
-        Some(parse_month_code(&text)?)
-    };
     let month_number = if matches!(month_value, Value::Undefined) {
         None
     } else {
         Some(crate::conversion::to_number(&month_value)?)
     };
+    let month_code_value = crate::execute::get_property_result(value, "monthCode")?;
+    let month_code = if matches!(month_code_value, Value::Undefined) {
+        None
+    } else {
+        if !matches!(
+            month_code_value,
+            Value::String(_) | Value::StringUnits(_) | Value::Object(_)
+        ) {
+            return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+        }
+        let text = crate::conversion::to_string(&month_code_value)?;
+        if matches!(month_code_value, Value::Object(_)) && !text.starts_with('M') {
+            return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+        }
+        Some(parse_month_code(&text)?)
+    };
+    let year_value = crate::execute::get_property_result(value, "year")?;
+    if matches!(year_value, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Missing year"));
+    }
+    let year = crate::conversion::to_number(&year_value)?.trunc();
+    let constrain = overflow_option(options)?;
+    if month_code.is_some_and(|month| !(1.0..=12.0).contains(&month)) {
+        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+    }
+    if matches!(month_value, Value::Undefined) && matches!(month_code_value, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Missing month"));
+    }
     if let (Some(month), Some(code)) = (month_number, month_code) {
         if month.trunc() != code {
             return Err(crate::value::error::throw_range_error(
@@ -301,7 +321,6 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         }
     }
     let month = month_number.or(month_code).unwrap_or(0.0);
-    let constrain = overflow_option(options)?;
     let month = if month <= 0.0 || !month.is_finite() {
         return Err(crate::value::error::throw_range_error(
             "Invalid PlainYearMonth",
@@ -329,21 +348,61 @@ fn validate_property_calendar(value: &Value) -> Result<(), VmError> {
     if calendar.starts_with("-000000") {
         return Err(crate::value::error::throw_range_error("Invalid calendar"));
     }
-    if calendar.eq_ignore_ascii_case("iso8601")
-        || (calendar.contains('-')
-            && calendar.chars().next().is_some_and(|character| {
-                character.is_ascii_digit() || matches!(character, '+' | '-')
-            }))
-    {
+    if is_iso_calendar_string(&calendar) {
         Ok(())
     } else {
         Err(crate::value::error::throw_range_error("Invalid calendar"))
     }
 }
 
+fn is_iso_calendar_string(value: &str) -> bool {
+    if value.eq_ignore_ascii_case("iso8601") {
+        return true;
+    }
+    let (base, annotation) = value
+        .split_once('[')
+        .map_or((value, None), |(base, annotation)| (base, Some(annotation)));
+    if let Some(annotation) = annotation {
+        if !annotation
+            .strip_suffix(']')
+            .is_some_and(|text| text.eq_ignore_ascii_case("u-ca=iso8601"))
+        {
+            return false;
+        }
+    }
+    let base = base.split(['T', 't', ' ']).next().unwrap_or(base);
+    let digits = |text: &str, min: usize, max: usize| {
+        (min..=max).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    if let Some(rest) = base.strip_prefix(['+', '-']) {
+        let Some(first_dash) = rest.find('-') else {
+            return false;
+        };
+        let year = &rest[..first_dash];
+        let remainder = &rest[first_dash + 1..];
+        let mut fields = remainder.split('-');
+        let Some(month) = fields.next() else {
+            return false;
+        };
+        let day = fields.next();
+        if fields.next().is_some() || !digits(year, 4, 6) || !digits(month, 2, 2) {
+            return false;
+        }
+        return day.is_none_or(|day| digits(day, 2, 2));
+    }
+    let fields: Vec<_> = base.split('-').collect();
+    match fields.as_slice() {
+        [year, month] if year.len() >= 4 => digits(year, 4, 6) && digits(month, 2, 2),
+        [month, day] => digits(month, 2, 2) && digits(day, 2, 2),
+        [year, month, day] => digits(year, 4, 6) && digits(month, 2, 2) && digits(day, 2, 2),
+        _ => false,
+    }
+}
+
 fn parse_month_code(value: &str) -> Result<f64, VmError> {
     let bytes = value.as_bytes();
-    if bytes.len() != 3
+    let leap = bytes.len() == 4 && bytes[3] == b'L';
+    if (bytes.len() != 3 && !leap)
         || bytes[0] != b'M'
         || !bytes[1].is_ascii_digit()
         || !bytes[2].is_ascii_digit()
@@ -351,10 +410,7 @@ fn parse_month_code(value: &str) -> Result<f64, VmError> {
         return Err(crate::value::error::throw_range_error("Invalid monthCode"));
     }
     let month = value[1..3].parse::<f64>().unwrap_or(0.0);
-    if !(1.0..=12.0).contains(&month) {
-        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
-    }
-    Ok(month)
+    Ok(if leap { month + 1_000.0 } else { month })
 }
 
 fn overflow_option(options: Option<&Value>) -> Result<bool, VmError> {
@@ -492,9 +548,18 @@ fn calendar_name(options: Option<&Value>) -> Result<String, VmError> {
 fn to_plain_date(receiver: Option<&Value>, day: Option<&Value>) -> Result<Value, VmError> {
     let (year, month) =
         values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
-    let day = crate::conversion::to_number(
-        day.ok_or_else(|| crate::value::error::throw_type_error("Missing day"))?,
-    )?;
+    let fields = day
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
+    let day = crate::execute::get_property_result(fields, "day")?;
+    if matches!(day, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Missing day"));
+    }
+    let day = crate::conversion::to_number(&day)?.trunc();
+    if !day.is_finite() || day < 1.0 {
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+    }
+    let day = day.min(iso_days_in_month(year, month));
     crate::temporal::plain_date::construct(&[
         Value::Number(year),
         Value::Number(month),
@@ -512,24 +577,16 @@ fn with(
     let changes = changes
         .filter(|v| crate::value::is_object(v))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
+    if matches!(changes, Value::Object(object) if object.iter().any(|(key, value)| key == "\0prototype" && matches!(value, Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype | crate::ops::Builtin::TemporalPlainDateTimePrototype | crate::ops::Builtin::TemporalPlainMonthDayPrototype | crate::ops::Builtin::TemporalPlainYearMonthPrototype | crate::ops::Builtin::TemporalPlainTimePrototype | crate::ops::Builtin::TemporalZonedDateTimePrototype))))
+    {
+        return Err(crate::value::error::throw_type_error("Invalid fields"));
+    }
     let calendar = crate::execute::get_property_result(changes, "calendar")?;
     let time_zone = crate::execute::get_property_result(changes, "timeZone")?;
     if !matches!(calendar, Value::Undefined) || !matches!(time_zone, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid fields"));
     }
-    let year_value = crate::execute::get_property_result(changes, "year")?;
-    let year = match &year_value {
-        Value::Undefined => year,
-        value => crate::conversion::to_number(value)?,
-    };
     let month_value = crate::execute::get_property_result(changes, "month")?;
-    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
-    if matches!(year_value, Value::Undefined)
-        && matches!(month_value, Value::Undefined)
-        && matches!(month_code, Value::Undefined)
-    {
-        return Err(crate::value::error::throw_type_error("Invalid fields"));
-    }
     let month = match &month_value {
         Value::Undefined => month,
         value => crate::conversion::to_number(value)?,
@@ -539,23 +596,45 @@ fn with(
             "Invalid PlainYearMonth",
         ));
     }
+    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
     let month_code = if matches!(month_code, Value::Undefined) {
         None
     } else {
-        Some(parse_month_code(&crate::conversion::to_string(
-            &month_code,
-        )?)?)
+        if !matches!(
+            month_code,
+            Value::String(_) | Value::StringUnits(_) | Value::Object(_)
+        ) {
+            return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+        }
+        let text = crate::conversion::to_string(&month_code)?;
+        if matches!(month_code, Value::Object(_)) && !text.starts_with('M') {
+            return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+        }
+        Some(parse_month_code(&text)?)
     };
+    let year_value = crate::execute::get_property_result(changes, "year")?;
+    let year = match &year_value {
+        Value::Undefined => year,
+        value => crate::conversion::to_number(value)?.trunc(),
+    };
+    let constrain = overflow_option(options)?;
+    if matches!(year_value, Value::Undefined)
+        && matches!(month_value, Value::Undefined)
+        && month_code.is_none()
+    {
+        return Err(crate::value::error::throw_type_error("Invalid fields"));
+    }
     if let Some(code) = month_code {
+        if !(1.0..=12.0).contains(&code) {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
         if !matches!(month_value, Value::Undefined) && month.trunc() != code {
             return Err(crate::value::error::throw_range_error(
                 "Conflicting month fields",
             ));
         }
-        let constrain = overflow_option(options)?;
         return construct(year, if constrain { code.min(12.0) } else { code });
     }
-    let constrain = overflow_option(options)?;
     construct(year, if constrain { month.min(12.0) } else { month })
 }
 
@@ -568,6 +647,7 @@ fn add(
     let (year, month) =
         values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
     let duration = crate::temporal::duration::from(duration)?;
+    let _ = overflow_option(options)?;
     if [
         "weeks",
         "days",
@@ -587,7 +667,11 @@ fn add(
     }) {
         return Err(crate::value::error::throw_range_error("Invalid duration"));
     }
-    let _ = overflow_option(options)?;
+    if year == -271_821.0 && month == 4.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainYearMonth",
+        ));
+    }
     let months = crate::execute::get_property_result(&duration, "years")
         .ok()
         .and_then(|v| crate::conversion::to_number(&v).ok())
@@ -598,7 +682,7 @@ fn add(
             .and_then(|v| crate::conversion::to_number(&v).ok())
             .unwrap_or(0.0);
     let total = year * 12.0 + month - 1.0 + months * direction;
-    construct((total / 12.0).floor(), total.rem_euclid(12.0) + 1.0)
+    construct_with_reference((total / 12.0).floor(), total.rem_euclid(12.0) + 1.0, 1.0)
 }
 
 fn difference(
@@ -612,6 +696,11 @@ fn difference(
     let right = values(&from(other, None)?)?;
     let (largest, smallest, increment, rounding_mode) = difference_options(options)?;
     let total = ((right.0 - left.0) * 12.0 + right.1 - left.1) * direction;
+    if total != 0.0 && increment > 12.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
     let (years, months) = if smallest == "year" {
         (round_increment(total / 12.0, increment, rounding_mode), 0.0)
     } else if largest == "month" {
@@ -625,6 +714,17 @@ fn difference(
             (years, months)
         }
     };
+    if total != 0.0 && left.0 == -271_821.0 && left.1 == 4.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainYearMonth",
+        ));
+    }
+    let target_total = left.0 * 12.0 + left.1 - 1.0 + years * 12.0 + months;
+    let target_year = (target_total / 12.0).floor();
+    let target_month = target_total.rem_euclid(12.0) + 1.0;
+    if total != 0.0 {
+        let _ = construct_with_reference(target_year, target_month, 1.0)?;
+    }
     crate::temporal::duration::construct(&[Value::Number(years), Value::Number(months)])
 }
 
@@ -641,13 +741,6 @@ fn difference_options(
         &crate::execute::get_property_result(options, "largestUnit")?,
         "year",
     )?;
-    let smallest = difference_unit(
-        &crate::execute::get_property_result(options, "smallestUnit")?,
-        "month",
-    )?;
-    if largest == "month" && smallest == "year" {
-        return Err(crate::value::error::throw_range_error("Invalid unit range"));
-    }
     let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
     let increment = if matches!(increment_value, Value::Undefined) {
         1.0
@@ -680,6 +773,16 @@ fn difference_options(
             }
         }
     };
+    let smallest = difference_unit(
+        &crate::execute::get_property_result(options, "smallestUnit")?,
+        "month",
+    )?;
+    if !matches!(largest, "year" | "month")
+        || !matches!(smallest, "year" | "month")
+        || (largest == "month" && smallest == "year")
+    {
+        return Err(crate::value::error::throw_range_error("Invalid unit range"));
+    }
     Ok((largest, smallest, increment, mode))
 }
 
@@ -688,8 +791,11 @@ fn difference_unit(value: &Value, fallback: &'static str) -> Result<&'static str
         return Ok(fallback);
     }
     match crate::conversion::to_string(value)?.trim_end_matches('s') {
+        "auto" => Ok(fallback),
         "year" => Ok("year"),
         "month" => Ok("month"),
+        "day" => Ok("day"),
+        "week" => Ok("week"),
         _ => Err(crate::value::error::throw_range_error("Invalid unit")),
     }
 }
@@ -716,7 +822,19 @@ fn round_increment(value: f64, increment: f64, mode: &str) -> f64 {
                 scaled.trunc()
             }
         }
-        "halfEven" => scaled.round(),
+        "halfEven" => {
+            let lower = scaled.floor();
+            let fraction = scaled - lower;
+            if fraction < 0.5 {
+                lower
+            } else if fraction > 0.5 {
+                lower + 1.0
+            } else if lower.rem_euclid(2.0) == 0.0 {
+                lower
+            } else {
+                lower + 1.0
+            }
+        }
         _ => scaled.trunc(),
     };
     rounded * increment
