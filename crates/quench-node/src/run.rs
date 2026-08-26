@@ -66,6 +66,11 @@ pub fn run_script_with_sink(
     }
 
     let wrapped = crate::modules::require::wrap_cjs(&host.state(), &script_str, source);
+    let url_pattern_surface =
+        crate::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
+    let wrapped = format!(
+        "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_surface}\nObject.defineProperty(globalThis, '__quenchURLPattern', {{ value: globalThis.__quenchURLPatternFactory?.(), configurable: true }}); delete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter;\n{wrapped}"
+    );
     let ops = match reduce(&wrapped) {
         Ok(ops) => ops,
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),

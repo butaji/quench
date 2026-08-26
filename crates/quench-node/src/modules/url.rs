@@ -27,7 +27,16 @@ thread_local! {
 fn legacy_url_prototype() -> Value {
     LEGACY_URL_PROTOTYPE.with(|slot| {
         if let Some(value) = slot.borrow().clone() { return value; }
-        let value = host_api::object(Vec::new());
+        let value = host_api::object(vec![
+            (
+                "resolveObject".into(),
+                crate::host::capability(crate::registry::SPEC_URL_RESOLVE_OBJECT),
+            ),
+            (
+                "resolve".into(),
+                crate::host::capability(crate::registry::SPEC_URL_RESOLVE),
+            ),
+        ]);
         *slot.borrow_mut() = Some(value.clone());
         value
     })
@@ -70,14 +79,14 @@ pub fn parse(
     };
     if url.starts_with('<') {
         let pathname = encode_path_component(&url);
-        return Ok(legacy_object(vec![
+        return Ok(legacy_plain_object(vec![
             ("href".into(), Value::String(pathname.clone())),
             ("pathname".into(), Value::String(pathname.clone())),
             ("path".into(), Value::String(pathname)),
         ]));
     }
     if url.starts_with('[') && url.ends_with(']') {
-        return Ok(legacy_object(vec![
+        return Ok(legacy_plain_object(vec![
             ("pathname".into(), Value::String(url.clone())),
             ("path".into(), Value::String(url.clone())),
             ("href".into(), Value::String(url)),
@@ -85,7 +94,7 @@ pub fn parse(
     }
     if let Some(rest) = url.strip_prefix("//") {
         if !rest.contains('@') && !rest.contains(':') && !rest.contains('/') {
-            return Ok(legacy_object(vec![
+            return Ok(legacy_plain_object(vec![
                 ("href".into(), Value::String(url.clone())),
                 ("pathname".into(), Value::String(url.clone())),
                 ("path".into(), Value::String(url)),
@@ -245,6 +254,11 @@ pub fn parse(
 }
 
 fn legacy_object(entries: Vec<(String, Value)>) -> Value {
+    let object = legacy_plain_object(entries);
+    execute::set_prototype_of(&object, &legacy_url_prototype()).unwrap_or(object)
+}
+
+fn legacy_plain_object(entries: Vec<(String, Value)>) -> Value {
     let mut object = host_api::object(
         [
             "protocol", "slashes", "auth", "host", "port", "hostname", "hash", "search", "query",
@@ -257,24 +271,7 @@ fn legacy_object(entries: Vec<(String, Value)>) -> Value {
     for (key, value) in entries {
         object = execute::set_property(object, &key, value);
     }
-    let method = crate::host::capability(crate::registry::SPEC_URL_RESOLVE_OBJECT);
-    let descriptor = host_api::object(vec![
-        ("value".into(), method),
-        ("writable".into(), Value::Boolean(true)),
-        ("enumerable".into(), Value::Boolean(false)),
-        ("configurable".into(), Value::Boolean(true)),
-    ]);
-    let object = execute::set_prototype_of(&object, &legacy_url_prototype()).unwrap_or(object);
-    let object = execute::define_property(object, "resolveObject", descriptor)
-        .unwrap_or(Value::Undefined);
-    let method = crate::host::capability(crate::registry::SPEC_URL_RESOLVE);
-    let descriptor = host_api::object(vec![
-        ("value".into(), method),
-        ("writable".into(), Value::Boolean(true)),
-        ("enumerable".into(), Value::Boolean(false)),
-        ("configurable".into(), Value::Boolean(true)),
-    ]);
-    execute::define_property(object, "resolve", descriptor).unwrap_or(Value::Undefined)
+    object
 }
 
 pub fn resolve_object(
@@ -1122,9 +1119,27 @@ fn value_to_string(value: &Value) -> String {
 }
 
 pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
-    let (url_class, _) = crate::modules::url_whatwg::url_class(state);
+    let (native_url_class, _) = crate::modules::url_whatwg::url_class(state);
+    let url_class = {
+        let global = quench_runtime::vm::current_global_object();
+        let value = execute::get_property(&global, "URL");
+        if quench_runtime::is_callable(&value) {
+            value
+        } else {
+            native_url_class
+        }
+    };
     let legacy_url = crate::host::capability(crate::registry::SPEC_URL_LEGACY_NEW);
     let _ = execute::set_callable_property(&legacy_url, "prototype", legacy_url_prototype());
+    let url_pattern = {
+        let global = quench_runtime::vm::current_global_object();
+        let value = execute::get_property(&global, "__quenchURLPattern");
+        if quench_runtime::is_callable(&value) {
+            value
+        } else {
+            crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern", 2281))
+        }
+    };
     crate::host::namespace_object(vec![
         spec_fn("parse", "require:url:parse", 0x0500),
         spec_fn("format", "require:url:format", 0x0501),
@@ -1135,6 +1150,7 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
             legacy_url,
         ),
         ("URL", url_class),
+        ("URLPattern", url_pattern),
         spec_fn("URLSearchParams", "require:url:URLSearchParams", 0x0504),
         (
             "pathToFileURL",
