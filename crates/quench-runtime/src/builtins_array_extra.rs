@@ -6,6 +6,9 @@ pub(crate) fn array_with(
         crate::value::error::throw_type_error("Array.prototype.with called on null or undefined")
     })?;
     let length = crate::builtins::map_length(receiver)?;
+    if length > u32::MAX as usize {
+        return Err(crate::value::error::throw_range_error("Invalid array length"));
+    }
     let number = arguments.first().map(crate::conversion::to_number).transpose()?.unwrap_or(0.0);
     let integer = if number.is_nan() { 0.0 } else { number.trunc() };
     let index = if integer < 0.0 { length as f64 + integer } else { integer };
