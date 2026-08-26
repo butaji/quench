@@ -80,6 +80,8 @@ pub struct HostState {
     pub cares_binding: Option<Value>,
     /// Composite AbortSignals keyed by each source target identity.
     pub abort_composites: std::collections::HashMap<u64, Vec<Value>>,
+    /// Strong roots for host-created identity-bearing objects exposed as aliases.
+    pub identity_roots: Vec<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -121,6 +123,7 @@ impl NodeHost {
             os_binding: None,
             cares_binding: None,
             abort_composites: std::collections::HashMap::new(),
+            identity_roots: Vec::new(),
         };
         Self {
             state: Rc::new(RefCell::new(state)),
@@ -148,7 +151,7 @@ impl NodeHost {
 }
 
 impl Host for NodeHost {
-fn call(
+    fn call(
         &self,
         capability: HostCapabilityRef,
         receiver: Option<&Value>,
@@ -330,16 +333,8 @@ pub fn install_with_argv(
 /// Build a capability call descriptor for the host.
 pub fn capability(spec: NodeSpec) -> Value {
     let function = host_api::custom_function(RealmId::ROOT, spec.cap);
-    let name = spec
-        .name
-        .rsplit([':', '.'])
-        .next()
-        .unwrap_or(spec.name);
-    quench_runtime::execute::set_property(
-        function,
-        "name",
-        Value::String(name.to_string()),
-    )
+    let name = spec.name.rsplit([':', '.']).next().unwrap_or(spec.name);
+    quench_runtime::execute::set_property(function, "name", Value::String(name.to_string()))
 }
 
 /// Build a properly-described namespace object. Each named
