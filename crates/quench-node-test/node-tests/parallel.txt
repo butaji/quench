@@ -224,6 +224,9 @@ test-child-process-exec-any-shells-windows.js
 test-process-constants-noatime.js
 test-process-default.js
 test-process-env-delete.js
+test-process-cpuUsage.js
+test-process-hrtime-bigint.js
+test-process-hrtime.js
 test-process-release.js
 test-process-umask-mask.js
 test-process-uptime.js
