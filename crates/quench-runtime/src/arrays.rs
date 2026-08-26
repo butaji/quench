@@ -418,13 +418,21 @@ pub(crate) fn flat(
     let receiver = crate::construct::to_object(receiver)?;
     let length = crate::builtins::map_length(&receiver)?;
     let depth = flat_depth(arguments.first())?;
+    let mut target = crate::builtins::array_species_create(&receiver, 0)?;
     let mut values = Vec::with_capacity(length);
     for index in 0..length {
         if let Some(value) = crate::builtins::map_value(&receiver, index)? {
             values.push(value);
         }
     }
-    Ok(Value::array(flatten(&values, depth)))
+    for (index, value) in flatten(&values, depth).into_iter().enumerate() {
+        target = crate::builtins::create_data_property_or_throw(
+            target,
+            &index.to_string(),
+            value,
+        )?;
+    }
+    Ok(target)
 }
 
 fn flat_depth(value: Option<&Value>) -> Result<usize, crate::execute::VmError> {
