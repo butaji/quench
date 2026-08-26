@@ -1604,7 +1604,6 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
-    let overflow = from_overflow_option(options)?;
     if let Value::Object(object) = value {
         let is_plain_date = object.iter().any(|(key, value)| {
             key == "\0temporal-plain-date" && value == Value::Boolean(true)
@@ -1622,6 +1621,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     .map(|(_, value)| value.clone())
             });
             if let [Some(year), Some(month), Some(day)] = hidden {
+                from_overflow_option(options)?;
                 return construct(&[
                     year,
                     month,
@@ -1636,10 +1636,38 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             }
         }
     }
-    let year = crate::execute::get_property_result(value, "year")?;
-    let day = crate::execute::get_property_result(value, "day")?;
-    let month = crate::execute::get_property_result(value, "month")?;
-    let month_code = crate::execute::get_property_result(value, "monthCode")?;
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
+    if !matches!(calendar, Value::Undefined) {
+        validate_calendar(&calendar)?;
+    }
+    let mut raw_fields = vec![None; 9];
+    let mut month_code = Value::Undefined;
+    for name in [
+        "day",
+        "hour",
+        "microsecond",
+        "millisecond",
+        "minute",
+        "month",
+        "monthCode",
+        "nanosecond",
+        "second",
+        "year",
+    ] {
+        let field = crate::execute::get_property_result(value, name)?;
+        if name == "monthCode" {
+            if !matches!(field, Value::Undefined) {
+                month_code = month_code_number(&field)?;
+            }
+        } else if let Some(index) = NAMES.iter().position(|candidate| *candidate == name) {
+            if !matches!(field, Value::Undefined) {
+                raw_fields[index] = Some(Value::Number(crate::conversion::to_number(&field)?.trunc()));
+            }
+        }
+    }
+    let year = raw_fields[0].clone().unwrap_or(Value::Undefined);
+    let month = raw_fields[1].clone().unwrap_or(Value::Undefined);
+    let day = raw_fields[2].clone().unwrap_or(Value::Undefined);
     if matches!(year, Value::Undefined)
         || matches!(day, Value::Undefined)
         || (matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined))
@@ -1651,7 +1679,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let month_code_value = if matches!(month_code, Value::Undefined) {
         None
     } else {
-        Some(month_code_number(&month_code)?)
+        Some(month_code.clone())
     };
     let month = if matches!(month, Value::Undefined) {
         month_code_value
@@ -1660,13 +1688,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     } else {
         month
     };
-    let calendar = crate::execute::get_property_result(value, "calendar")?;
-    if !matches!(calendar, Value::Undefined) {
-        validate_calendar(&calendar)?;
-    }
     let mut fields = vec![year, month, day];
-    for name in &NAMES[3..] {
-        let field = crate::execute::get_property_result(value, name)?;
+    for field in raw_fields.iter().skip(3) {
+        let field = field.clone().unwrap_or(Value::Undefined);
         fields.push(if matches!(field, Value::Undefined) {
             Value::Number(0.0)
         } else {
@@ -1676,8 +1700,8 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let mut numeric = fields
         .iter()
         .map(crate::conversion::to_number)
-        .map(|value| value.map(f64::trunc))
         .collect::<Result<Vec<_>, _>>()?;
+    let overflow = from_overflow_option(options)?;
     if let Some(month_code) = month_code_value {
         let month_code = crate::conversion::to_number(&month_code)?;
         if !(1.0..=12.0).contains(&month_code) {
