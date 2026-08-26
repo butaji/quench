@@ -4,11 +4,12 @@ const LINKED_TASK_IDENTITY_SLOTS: usize = LINKED_TASK_ID_LIMIT * 2;
 enum DirectTaskKind {
     Idle(IdleTaskPlan),
     Device,
-    Worker,
+    Worker(WorkerTaskPlan),
     Handler(HandlerTaskPlan),
 }
 
 struct DirectTaskRunner {
+    index: usize,
     identity: u64,
     id: *const crate::register_file::SlotWord,
     link: *const crate::register_file::SlotWord,
@@ -21,12 +22,29 @@ struct DirectTaskRunner {
     task_v2: Option<*const crate::register_file::SlotWord>,
     held_mask: i32,
     suspended: i32,
+    tcb: *const crate::value::ObjectData,
     task: *const crate::value::ObjectData,
     task_value: crate::value::Value,
     tcb_value: crate::value::Value,
-    scheduler: crate::value::Value,
+    scheduler: *const crate::value::ObjectData,
     function: std::rc::Rc<crate::value::FunctionValue>,
     kind: DirectTaskKind,
+}
+
+struct DirectTaskStep {
+    next: Option<usize>,
+}
+
+impl DirectTaskStep {
+    fn new(next: Option<usize>) -> Self {
+        Self { next }
+    }
+}
+
+enum DirectTaskOutcome {
+    Step(DirectTaskStep),
+    Miss(crate::value::Value),
+    Value(crate::value::Value),
 }
 
 impl DirectTaskRunner {
@@ -45,45 +63,26 @@ impl DirectTaskRunner {
         task == self.task
     }
 
+    fn tcb(&self) -> &crate::value::ObjectData {
+        // SAFETY: `tcb_value` retains this exact allocation for the table's lifetime.
+        unsafe { &*self.tcb }
+    }
+
     fn execute(
         &self,
         packet: &crate::value::Value,
         table: &DirectTaskTable,
         scheduler: Option<&LinkedSchedulerWords>,
-    ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-        let arguments = std::slice::from_ref(packet);
+    ) -> Option<DirectTaskStep> {
+        let scheduler = scheduler?;
         match self.kind {
-            DirectTaskKind::Idle(plan) => {
-                if let Some(result) = scheduler.and_then(|scheduler| {
-                    execute_linked_idle(self, table, scheduler, plan)
-                }) {
-                    return Ok(Some(result));
-                }
-                execute_idle_task(&self.function, &self.task_value)
-            }
-            DirectTaskKind::Device => {
-                if let Some(result) = scheduler.and_then(|scheduler| {
-                    execute_linked_device(self, table, scheduler, packet)
-                }) {
-                    return Ok(Some(result));
-                }
-                execute_device_task_words(
-                    &self.function,
-                    arguments,
-                    self.word(self.task_v1),
-                    &self.scheduler,
-                )
-            }
-            DirectTaskKind::Worker => {
-                execute_worker_task(&self.function, &self.task_value, arguments)
+            DirectTaskKind::Idle(plan) => execute_linked_idle(self, table, scheduler, plan),
+            DirectTaskKind::Device => execute_linked_device(self, table, scheduler, packet),
+            DirectTaskKind::Worker(plan) => {
+                execute_linked_worker(self, table, scheduler, packet, plan)
             }
             DirectTaskKind::Handler(plan) => {
-                if let Some(result) = scheduler.and_then(|scheduler| {
-                    execute_linked_handler(self, table, scheduler, packet, plan)
-                }) {
-                    return Ok(Some(result));
-                }
-                execute_handler_task(&self.function, &self.task_value, arguments)
+                execute_linked_handler(self, table, scheduler, packet, plan)
             }
         }
     }
@@ -124,6 +123,36 @@ impl DirectTaskTable {
     fn for_id(&self, id: usize) -> Option<&DirectTaskRunner> {
         self.runners.get(id)?.as_ref()
     }
+
+    fn value_for_id(&self, id: usize) -> Option<&crate::value::Value> {
+        Some(&self.for_id(id)?.tcb_value)
+    }
+
+    fn id_for_value(&self, value: &crate::value::Value) -> Option<Option<usize>> {
+        match value {
+            crate::value::Value::Null => Some(None),
+            crate::value::Value::Object(object) => {
+                self.for_object(object).map(|runner| Some(runner.index))
+            }
+            _ => None,
+        }
+    }
+
+    fn id_for_word(&self, word: &crate::register_file::SlotWord) -> Option<Option<usize>> {
+        let object = word.object_or_null_ptr()?;
+        object.map_or(Some(None), |object| {
+            // SAFETY: the source word owns this object throughout the lookup.
+            self.for_object(unsafe { &*object }).map(|runner| Some(runner.index))
+        })
+    }
+
+    fn matches_scheduler(&self, scheduler: &crate::value::ObjectData) -> bool {
+        let scheduler = std::ptr::from_ref(scheduler);
+        self.runners
+            .iter()
+            .flatten()
+            .all(|runner| runner.scheduler == scheduler)
+    }
 }
 
 fn linked_task_runners(start: &crate::value::Value) -> Option<DirectTaskTable> {
@@ -140,7 +169,7 @@ fn linked_task_runners(start: &crate::value::Value) -> Option<DirectTaskTable> {
         if table.runners[id].is_some() {
             return None;
         }
-        let runner = linked_task_runner(&cursor, &tcb)?;
+        let runner = linked_task_runner(id, &cursor, &tcb)?;
         cursor = runner.word(runner.link).load();
         table.insert(id, runner)?;
     }
@@ -148,6 +177,7 @@ fn linked_task_runners(start: &crate::value::Value) -> Option<DirectTaskTable> {
 }
 
 fn linked_task_runner(
+    index: usize,
     tcb_value: &crate::value::Value,
     tcb: &crate::value::ObjectData,
 ) -> Option<DirectTaskRunner> {
@@ -178,15 +208,23 @@ fn linked_task_runner(
     if matches!(&kind, DirectTaskKind::Idle(_)) && task_count.is_none() {
         return None;
     }
-    let task_v2 = matches!(&kind, DirectTaskKind::Handler(_))
+    let task_v2 = matches!(&kind, DirectTaskKind::Worker(_) | DirectTaskKind::Handler(_))
         .then(|| crate::vm::proven_own_word(task_object, "v2"))
         .flatten()
         .map(std::ptr::from_ref);
-    if matches!(&kind, DirectTaskKind::Handler(_)) && task_v2.is_none() {
+    if matches!(&kind, DirectTaskKind::Worker(_) | DirectTaskKind::Handler(_))
+        && task_v2.is_none()
+    {
         return None;
     }
-    let scheduler = task_scheduler(task_object)?;
+    let crate::value::Value::Object(scheduler) = task_scheduler(task_object)? else {
+        return None;
+    };
+    if scheduler.has_replacement() {
+        return None;
+    }
     Some(DirectTaskRunner {
+        index,
         identity: tcb.identity(),
         id: std::ptr::from_ref(id),
         link: std::ptr::from_ref(link),
@@ -199,10 +237,11 @@ fn linked_task_runner(
         task_v2,
         held_mask,
         suspended,
+        tcb: std::ptr::from_ref(tcb),
         task: std::rc::Rc::as_ptr(task_object),
         task_value: task,
         tcb_value: tcb_value.clone(),
-        scheduler,
+        scheduler: std::rc::Rc::as_ptr(&scheduler),
         function,
         kind,
     })
@@ -232,8 +271,8 @@ fn direct_task_kind(function: &std::rc::Rc<crate::value::FunctionValue>) -> Opti
         Some(DirectTaskKind::Idle(plan))
     } else if device_task_fact(function) {
         Some(DirectTaskKind::Device)
-    } else if worker_task_fact(function).is_some() {
-        Some(DirectTaskKind::Worker)
+    } else if let Some(plan) = worker_task_fact(function) {
+        Some(DirectTaskKind::Worker(plan))
     } else if let Some(plan) = handler_task_fact(function) {
         Some(DirectTaskKind::Handler(plan))
     } else {
