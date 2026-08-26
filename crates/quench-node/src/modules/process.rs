@@ -754,6 +754,17 @@ pub(crate) fn emit_warning(
     code: Option<&str>,
     once_per_process: bool,
 ) {
+    emit_warning_with_detail(state, name, message, code, None, once_per_process);
+}
+
+pub(crate) fn emit_warning_with_detail(
+    state: &Rc<RefCell<HostState>>,
+    name: &str,
+    message: &str,
+    code: Option<&str>,
+    detail: Option<&str>,
+    once_per_process: bool,
+) {
     {
         let mut guard = state.borrow_mut();
         let key = format!("{name}:{message}");
@@ -770,6 +781,9 @@ pub(crate) fn emit_warning(
     ];
     if let Some(code) = code {
         props.push(("code".to_string(), Value::String(code.to_string())));
+    }
+    if let Some(detail) = detail {
+        props.push(("detail".to_string(), Value::String(detail.to_string())));
     }
     let global = quench_runtime::vm::current_global_object();
     let stack = match quench_runtime::execute::get_property(&global, "\0quench_vm_filename") {
