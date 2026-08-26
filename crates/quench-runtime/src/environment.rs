@@ -1002,9 +1002,6 @@ impl Environment {
         {
             return true;
         }
-        if self.slot(slot).is_some() {
-            return false;
-        }
         self.caller
             .as_ref()
             .is_some_and(|caller| caller.eval_name_aliases_slot(name, slot))
