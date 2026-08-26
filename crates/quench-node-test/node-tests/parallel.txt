@@ -493,3 +493,9 @@ test-tls-get-ca-certificates-system.js
 test-tls-get-ca-certificates-system-without-flag.js
 test-tls-get-ca-certificates-node-use-system-ca.js
 test-tls-getcertificate-x509.js
+test-tls-get-ca-certificates-worker-no-use-system-ca.js
+test-tls-get-ca-certificates-worker-use-system-ca.js
+test-tls-env-extra-ca-with-options.js
+test-tls-off-thread-cert-loading-disabled.js
+test-tls-off-thread-cert-loading-system.js
+test-tls-client-cert-resumption.js
