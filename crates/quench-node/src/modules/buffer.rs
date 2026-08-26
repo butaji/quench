@@ -86,28 +86,53 @@ pub fn build() -> Vec<(String, Value)> {
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-pub fn btoa(args: &[Value]) -> String {
-    let input: Vec<u8> = match args.first() {
-        Some(Value::String(s)) => s.bytes().collect(),
-        _ => Vec::new(),
+pub fn btoa(args: &[Value]) -> Result<String, VmError> {
+    let Some(value) = args.first() else {
+        return Err(enc::invalid_arg_type(
+            "The data argument must be a string".into(),
+        ));
     };
-    enc::base64_encode(&input, true, false)
+    let input = quench_runtime::to_string(value)?;
+    if input.chars().any(|character| character as u32 > 0xff) {
+        return Err(invalid_character_error());
+    }
+    Ok(enc::base64_encode(input.as_bytes(), true, false))
 }
 
 pub fn atob(args: &[Value]) -> Result<String, VmError> {
-    let Some(Value::String(input)) = args.first() else {
-        return Ok(String::new());
+    let Some(value) = args.first() else {
+        return Err(enc::invalid_arg_type(
+            "The data argument must be a string".into(),
+        ));
     };
-    if input
+    let input = quench_runtime::to_string(value)?;
+    let compact = input
         .bytes()
-        .any(|b| !b.is_ascii_whitespace() && b != b'=' && !B64.contains(&b))
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    if compact.len() % 4 == 1
+        || compact
+            .iter()
+            .any(|byte| *byte != b'=' && !B64.contains(byte))
     {
-        return Err(VmError::EvalError("InvalidCharacterError".into()));
+        return Err(invalid_character_error());
     }
     Ok(enc::base64_decode(input.as_bytes())
         .into_iter()
         .map(|b| b as char)
         .collect())
+}
+
+fn invalid_character_error() -> VmError {
+    let error = Value::object(vec![
+        (
+            "constructor".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Error),
+        ),
+        ("name".into(), Value::String("InvalidCharacterError".into())),
+        ("code".into(), Value::Number(5.0)),
+    ]);
+    VmError::Thrown(error)
 }
 
 /// Validate a Buffer size argument; returns the size as `usize`.
@@ -207,7 +232,9 @@ fn alloc_impl(args: &[Value], zero_fill: bool, pooled: bool) -> Result<Value, Vm
             Some(Value::Number(value)) => *value as usize,
             _ => 8,
         };
-        Ok(crate::modules::buffer_proto::make_pooled_buffer_aligned(&bytes, alignment))
+        Ok(crate::modules::buffer_proto::make_pooled_buffer_aligned(
+            &bytes, alignment,
+        ))
     } else {
         Ok(crate::modules::buffer_proto::make_buffer(&bytes))
     }
@@ -410,14 +437,8 @@ pub fn build_object() -> Value {
 pub fn build_module() -> Value {
     let module_props: Vec<(String, Value)> = vec![
         ("Buffer".to_string(), buffer_constructor()),
-        (
-            "atob".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
-        ),
-        (
-            "btoa".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_BTOA),
-        ),
+        ("atob".to_string(), atob_value()),
+        ("btoa".to_string(), btoa_value()),
         (
             "isAscii".to_string(),
             crate::host::capability(crate::registry::SPEC_BUFFER_ISASCII),
@@ -448,6 +469,28 @@ pub fn build_module() -> Value {
     ]);
     quench_runtime::execute::define_property(module, "INSPECT_MAX_BYTES", descriptor)
         .unwrap_or_else(|_| Value::Undefined)
+}
+
+thread_local! {
+    static ATOB: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static BTOA: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+/// Canonical global/module functions: Node exposes one identity for each.
+pub fn atob_value() -> Value {
+    ATOB.with(|slot| {
+        slot.borrow_mut()
+            .get_or_insert_with(|| crate::host::capability(crate::registry::SPEC_BUFFER_ATOB))
+            .clone()
+    })
+}
+
+pub fn btoa_value() -> Value {
+    BTOA.with(|slot| {
+        slot.borrow_mut()
+            .get_or_insert_with(|| crate::host::capability(crate::registry::SPEC_BUFFER_BTOA))
+            .clone()
+    })
 }
 
 pub fn inspect_max_bytes_get(

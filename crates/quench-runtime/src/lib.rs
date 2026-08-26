@@ -39,6 +39,7 @@ mod control_flow;
 mod conversion;
 pub use conversion::is_callable;
 pub use conversion::to_number;
+pub use conversion::to_string;
 pub mod date;
 mod disposable_stack;
 mod environment;
@@ -83,8 +84,8 @@ mod private_environment;
 mod private_slots;
 mod promise;
 pub use promise::{
-    drain_microtasks_all as drain_promise_jobs, reject_promise, resolve_promise,
-    has_pending_jobs as has_pending_promise_jobs, take_unhandled_rejections,
+    drain_microtasks_all as drain_promise_jobs, has_pending_jobs as has_pending_promise_jobs,
+    reject_promise, resolve_promise, take_unhandled_rejections,
 };
 mod properties;
 mod property_define;

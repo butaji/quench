@@ -373,6 +373,12 @@ pub fn namespace_object_from_pairs(props: Vec<(String, Value)>) -> Value {
     host_api::object(entries)
 }
 
+pub fn null_namespace(props: Vec<(String, Value)>) -> Value {
+    let object = namespace_object_from_pairs(props);
+    let _ = quench_runtime::execute::set_prototype_of(&object, &Value::Null);
+    object
+}
+
 /// The runtime's descriptor-prefix used by `builtins::descriptor_key`.
 fn descriptor_key(key: &str) -> String {
     format!("\0quench:descriptor:\0{key}")
