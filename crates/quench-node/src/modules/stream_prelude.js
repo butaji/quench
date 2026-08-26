@@ -1627,6 +1627,42 @@
     return last;
   }
 
+  function compose(...stages) {
+    if (stages.length === 0) {
+      const error = new TypeError("The streams argument must be an array or at least two streams");
+      error.code = "ERR_MISSING_ARGS";
+      throw error;
+    }
+    const asyncIterable = (stage) => stage && typeof stage[Symbol.asyncIterator] === "function";
+    const validStage = (stage) => typeof stage === "function" ||
+      (stage && typeof stage === "object" &&
+        (typeof stage.on === "function" || asyncIterable(stage)));
+    const readableStage = (stage) => typeof stage === "function" ||
+      (stage && ((typeof stage.pipe === "function" && typeof stage.on === "function") ||
+        asyncIterable(stage)));
+    const writableStage = (stage) => typeof stage === "function" ||
+      (stage && typeof stage.write === "function" && typeof stage.on === "function");
+    if (stages.some((stage) => !validStage(stage)) ||
+        stages.some((stage, index) => index > 0 &&
+          (!readableStage(stages[index - 1]) || !writableStage(stage)))) {
+      const error = new TypeError("The compose stages must be streams or functions");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    const first = stages[0];
+    const last = stages[stages.length - 1];
+    const firstIsSource = asyncIterable(first) ||
+      (typeof first === "function" && first.constructor?.name === "AsyncGeneratorFunction");
+    const singleSink = typeof first === "function" && first.constructor?.name === "AsyncFunction";
+    const result = new Duplex({ read() {}, write(_chunk, _encoding, callback) { callback(); } });
+    result.readable = stages.length === 1 && !singleSink || stages.length > 1 && !(
+      (last && typeof last.write === "function" && typeof last.read !== "function") ||
+      (typeof last === "function" && last.constructor?.name === "AsyncFunction"));
+    result.writable = stages.length === 1 || stages.length > 1 && !firstIsSource && !(first &&
+      typeof first.read === "function" && typeof first.write !== "function");
+    return result;
+  }
+
   function isReadableNodeStream(o) {
     return !!(
       o &&
@@ -1702,6 +1738,7 @@
     destroy,
     finished,
     pipeline,
+    compose,
     isReadable,
     isWritable,
     isErrored,
