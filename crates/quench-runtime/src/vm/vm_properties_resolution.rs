@@ -698,6 +698,12 @@ fn descriptor_property_result(
             return result;
         }
     }
+    if matches!(value, Value::BoundFunction(_)) {
+        let prototype = Value::Builtin(Builtin::FunctionPrototype);
+        if let Ok(property) = get_property_result(&prototype, key) {
+            return Some(Ok(property));
+        }
+    }
     #[cfg(feature = "execution-trace")]
     crate::execution_trace::descriptor_object(match value {
         Value::Object(_) | Value::ObjectAlias(_) => "internal:object",
