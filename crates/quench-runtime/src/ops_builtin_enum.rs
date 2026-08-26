@@ -132,6 +132,7 @@ pub enum Builtin {
     DateToTemporalInstant, Temporal,
     TemporalInstant, TemporalInstantPrototype,
     TemporalInstantFrom, TemporalInstantCompare, TemporalInstantFromEpochMilliseconds,
+    TemporalInstantValueOf,
     TemporalInstantFromEpochNanoseconds, TemporalInstantEpochNanosecondsGetter,
     TemporalInstantEpochMillisecondsGetter,
     TemporalInstantToString, TemporalInstantToJSON, TemporalInstantToLocaleString,

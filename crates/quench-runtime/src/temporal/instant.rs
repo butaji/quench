@@ -69,6 +69,11 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalInstantToLocaleString => {
             Some(to_locale_string(receiver, arguments))
         }
+        crate::ops::Builtin::TemporalInstantValueOf => {
+            Some(Err(crate::value::error::throw_type_error(
+                "Temporal.Instant.prototype.valueOf is not allowed",
+            )))
+        }
         crate::ops::Builtin::TemporalInstantToZonedDateTimeISO => {
             Some(to_zoned_date_time_iso(receiver, arguments.first()))
         }
