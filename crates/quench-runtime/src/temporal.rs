@@ -1090,11 +1090,19 @@ mod stubs {
             }
             let values = fields
                 .iter()
-                .map(|value| crate::conversion::to_number(value))
+                .map(|value| {
+                    if matches!(value, Value::Undefined) {
+                        Ok(0.0)
+                    } else {
+                        crate::conversion::to_number(value)
+                    }
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let overflow = match arguments.get(1) {
                 None | Some(Value::Undefined) => "constrain".to_string(),
-                Some(options) if crate::value::is_object(options) => {
+                Some(options)
+                    if crate::value::is_object(options)
+                        || matches!(options, Value::Function(_) | Value::BoundFunction(_)) => {
                     let value = crate::execute::get_property_result(options, "overflow")?;
                     if matches!(value, Value::Undefined) {
                         "constrain".to_string()
