@@ -270,9 +270,15 @@ fn is_iso_calendar_string(value: &str) -> bool {
     }
     let date = base.split(['T', 't', ' ']).next().unwrap_or(base);
     let fields: Vec<_> = date.split('-').collect();
+    let valid_year = |year: &str| {
+        (year.len() == 4 && year.bytes().all(|byte| byte.is_ascii_digit()))
+            || (year.len() == 7
+                && matches!(year.as_bytes().first(), Some(b'+' | b'-'))
+                && year[1..].bytes().all(|byte| byte.is_ascii_digit()))
+    };
     match fields.as_slice() {
-        [year, month, day] => year.len() >= 4 && month.len() == 2 && day.len() == 2,
-        [year, month] if year.len() >= 4 => month.len() == 2,
+        [year, month, day] => valid_year(year) && month.len() == 2 && day.len() == 2,
+        [year, month] if valid_year(year) => month.len() == 2,
         [month, day] => month.len() == 2 && day.len() == 2,
         _ => false,
     }
