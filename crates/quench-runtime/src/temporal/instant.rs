@@ -124,20 +124,28 @@ fn difference(
     options: Option<&Value>,
 ) -> Result<Value, VmError> {
     let left = epoch_number(get_epoch(receiver)?)?;
-    let right = epoch_number(get_epoch(other)?)?;
+    let other = from(other)?;
+    let right = epoch_number(get_epoch(Some(&other))?)?;
     let mut delta = (right - left) * direction;
-    let unit = options
+    let smallest = options
         .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
         .and_then(|value| match value {
             Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
             _ => None,
         })
+        .unwrap_or_else(|| "nanosecond".into());
+    let largest = options
+        .and_then(|value| crate::execute::get_property_result(value, "largestUnit").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
+            _ => None,
+        })
         .unwrap_or_else(|| "second".into());
-    let scale = unit_scale(&unit)
+    let scale = unit_scale(&smallest)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))?;
     delta = (delta / scale) * scale;
     let mut fields = vec![Value::Number(0.0); 10];
-    let index = [
+    let scales = [
         "day",
         "hour",
         "minute",
@@ -145,12 +153,25 @@ fn difference(
         "millisecond",
         "microsecond",
         "nanosecond",
-    ]
-    .iter()
-    .position(|name| *name == unit)
-    .unwrap_or(3)
-        + 3;
-    fields[index] = Value::Number((delta / scale) as f64);
+    ];
+    let largest_index = scales.iter().position(|name| *name == largest).unwrap_or(3) + 3;
+    let largest_scale = unit_scale(&largest).unwrap_or(1_000_000_000);
+    let mut remainder = delta;
+    for index in largest_index..=9 {
+        let unit_scale = unit_scale(scales[index - 3]).unwrap_or(1);
+        if unit_scale < scale {
+            continue;
+        }
+        let value = remainder / unit_scale;
+        fields[index] = Value::Number(value as f64);
+        remainder %= unit_scale;
+        if unit_scale == scale {
+            break;
+        }
+    }
+    if largest_scale == scale {
+        fields[largest_index] = Value::Number((delta / scale) as f64);
+    }
     crate::temporal::duration::construct(&fields)
 }
 
