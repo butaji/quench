@@ -17,6 +17,11 @@ fn process_module() -> Value {
             .collect(),
     );
     NODE_PROCESS_ENV.with(|current| *current.borrow_mut() = Some(env.clone()));
+    let hrtime = quench_runtime::execute::set_property(
+        capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime)),
+        "bigint",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtimeBigint)),
+    );
     let module = quench_runtime::host_api::object(vec![
         ("env".into(), env),
         (
@@ -99,18 +104,7 @@ fn process_module() -> Value {
         ),
         (
             "hrtime".into(),
-            quench_runtime::host_api::object(vec![
-                (
-                    "hrtime".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime)),
-                ),
-                (
-                    "bigint".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::ProcessHrtimeBigint,
-                    )),
-                ),
-            ]),
+            hrtime,
         ),
         (
             "getActiveResourcesInfo".into(),
