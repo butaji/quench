@@ -429,10 +429,6 @@ fn to_zoned_date_time_iso(
 ) -> Result<Value, VmError> {
     let epoch = get_epoch(receiver)?;
     let zone = match time_zone {
-        Some(Value::String(value)) if value.contains('[') => value
-            .rsplit_once('[')
-            .and_then(|(_, value)| value.strip_suffix(']'))
-            .unwrap_or(value),
         Some(Value::String(value)) => value.as_str(),
         _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
     };
