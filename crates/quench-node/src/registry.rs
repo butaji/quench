@@ -365,6 +365,7 @@ pub const SPEC_STRING_DECODER: NodeSpec = NodeSpec::new("string_decoder:StringDe
 
 pub const SPEC_DNS_LOOKUP: NodeSpec = NodeSpec::new("dns:lookup", 0x0E00);
 pub const SPEC_DNS_RESOLVE4: NodeSpec = NodeSpec::new("dns:resolve4", 0x0E01);
+pub const SPEC_DNS_LOOKUP_ADDRESSES: NodeSpec = NodeSpec::new("dns:lookupAddresses", 0x0E02);
 
 pub const SPEC_HTTP_REQUEST: NodeSpec = NodeSpec::new("http:request", 0x0F00);
 pub const SPEC_HTTP_GET: NodeSpec = NodeSpec::new("http:get", 0x0F01);
