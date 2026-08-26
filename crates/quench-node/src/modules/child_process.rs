@@ -230,6 +230,7 @@ pub fn spawn_sync(
     // Re-exec children need the same process identity relation Node exposes;
     // pass the parent as an explicit fact after option.env has been applied.
     if is_host_exec {
+        cmd.env("QUENCH_CHILD_RUNNER", "1");
         cmd.env(
             "QUENCH_PARENT_PID",
             std::process::id().to_string(),
