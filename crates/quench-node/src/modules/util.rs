@@ -133,6 +133,7 @@ pub fn build() -> Vec<(String, Value)> {
         .and_then(|object| quench_runtime::execute::get_property_result(&object, "assign").ok())
         .unwrap_or(Value::Undefined);
     let to_usv_string = crate::host::capability(crate::registry::SPEC_UTIL_TO_USV_STRING);
+    let debuglog = crate::host::capability(crate::registry::SPEC_UTIL_DEBUGLOG);
     let promisify = quench_runtime::execute::set_property(
         crate::host::capability(crate::registry::SPEC_UTIL_PROMISIFY),
         "custom",
@@ -173,6 +174,7 @@ pub fn build() -> Vec<(String, Value)> {
             Value::Builtin(quench_runtime::ops::Builtin::ArrayIsArray),
         ),
         ("_extend".to_string(), object_assign),
+        ("debuglog".to_string(), debuglog),
         ("toUSVString".to_string(), to_usv_string),
         ("types".to_string(), types),
         (
