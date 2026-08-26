@@ -2,7 +2,7 @@ const LINKED_TASK_ID_LIMIT: usize = 64;
 const LINKED_TASK_IDENTITY_SLOTS: usize = LINKED_TASK_ID_LIMIT * 2;
 
 enum DirectTaskKind {
-    Idle,
+    Idle(IdleTaskPlan),
     Device,
     Worker,
     Handler,
@@ -17,6 +17,7 @@ struct DirectTaskRunner {
     priority: *const crate::register_file::SlotWord,
     task_word: *const crate::register_file::SlotWord,
     task_v1: *const crate::register_file::SlotWord,
+    task_count: Option<*const crate::register_file::SlotWord>,
     held_mask: i32,
     suspended: i32,
     task: *const crate::value::ObjectData,
@@ -51,7 +52,14 @@ impl DirectTaskRunner {
     ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
         let arguments = std::slice::from_ref(packet);
         match self.kind {
-            DirectTaskKind::Idle => execute_idle_task(&self.function, &self.task_value),
+            DirectTaskKind::Idle(plan) => {
+                if let Some(result) = scheduler.and_then(|scheduler| {
+                    execute_linked_idle(self, table, scheduler, plan)
+                }) {
+                    return Ok(Some(result));
+                }
+                execute_idle_task(&self.function, &self.task_value)
+            }
             DirectTaskKind::Device => {
                 if let Some(result) = scheduler.and_then(|scheduler| {
                     execute_linked_device(self, table, scheduler, packet)
@@ -157,6 +165,13 @@ fn linked_task_runner(
     let (held_mask, suspended) = linked_state_predicate(tcb_value)?;
     let kind = direct_task_kind(&function)?;
     let task_v1 = crate::vm::proven_own_word(task_object, "v1")?;
+    let task_count = matches!(&kind, DirectTaskKind::Idle(_))
+        .then(|| crate::vm::proven_own_word(task_object, "count"))
+        .flatten()
+        .map(std::ptr::from_ref);
+    if matches!(&kind, DirectTaskKind::Idle(_)) && task_count.is_none() {
+        return None;
+    }
     let scheduler = task_scheduler(task_object)?;
     Some(DirectTaskRunner {
         identity: tcb.identity(),
@@ -167,6 +182,7 @@ fn linked_task_runner(
         priority: std::ptr::from_ref(priority),
         task_word: std::ptr::from_ref(task_word),
         task_v1: std::ptr::from_ref(task_v1),
+        task_count,
         held_mask,
         suspended,
         task: std::rc::Rc::as_ptr(task_object),
@@ -198,8 +214,8 @@ fn linked_state_predicate(tcb: &crate::value::Value) -> Option<(i32, i32)> {
 }
 
 fn direct_task_kind(function: &std::rc::Rc<crate::value::FunctionValue>) -> Option<DirectTaskKind> {
-    if idle_task_fact(function).is_some() {
-        Some(DirectTaskKind::Idle)
+    if let Some(plan) = idle_task_fact(function) {
+        Some(DirectTaskKind::Idle(plan))
     } else if device_task_fact(function) {
         Some(DirectTaskKind::Device)
     } else if worker_task_fact(function).is_some() {
