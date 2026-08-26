@@ -475,6 +475,11 @@ fn calendar_difference(
     }
     let time_fraction_days = (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64
         / 86_400_000_000_000.0;
+    let mut time_delta = time_of_day_nanos(end) - time_of_day_nanos(start);
+    if time_delta < 0 {
+        days -= 1;
+        time_delta += 86_400_000_000_000;
+    }
     if smallest == "day" && matches!(largest, "year" | "month" | "week") {
         let rounded = round_quotient((days as f64 + time_fraction_days) / increment, mode)
             * increment;
@@ -482,6 +487,7 @@ fn calendar_difference(
         months = 0;
         weeks = 0;
         days = rounded as i64;
+        time_delta = 0;
     }
     if matches!(smallest, "year" | "month" | "week") {
         let unit_value = match smallest {
@@ -509,32 +515,39 @@ fn calendar_difference(
                 weeks = 0;
             }
             _ => {
-                years = 0;
-                months = 0;
-                weeks = if largest == "week" {
-                    rounded as i64
+                if largest == "week" {
+                    years = 0;
+                    months = 0;
+                    weeks = rounded as i64;
+                    days = 0;
                 } else {
-                    0
-                };
-                days = if largest == "week" {
-                    0
-                } else {
-                    (rounded * 7.0) as i64
-                };
+                    days = (rounded * 7.0) as i64;
+                    weeks = 0;
+                }
             }
         }
     }
+    let hours = time_delta / 3_600_000_000_000;
+    let time_delta = time_delta % 3_600_000_000_000;
+    let minutes = time_delta / 60_000_000_000;
+    let time_delta = time_delta % 60_000_000_000;
+    let seconds = time_delta / 1_000_000_000;
+    let time_delta = time_delta % 1_000_000_000;
+    let milliseconds = time_delta / 1_000_000;
+    let time_delta = time_delta % 1_000_000;
+    let microseconds = time_delta / 1_000;
+    let nanoseconds = time_delta % 1_000;
     crate::temporal::duration::construct(&[
         Value::Number((years * sign) as f64),
         Value::Number((months * sign) as f64),
         Value::Number((weeks * sign) as f64),
         Value::Number((days * sign) as f64),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
+        Value::Number(hours as f64 * sign as f64),
+        Value::Number(minutes as f64 * sign as f64),
+        Value::Number(seconds as f64 * sign as f64),
+        Value::Number(milliseconds as f64 * sign as f64),
+        Value::Number(microseconds as f64 * sign as f64),
+        Value::Number(nanoseconds as f64 * sign as f64),
     ])
 }
 
