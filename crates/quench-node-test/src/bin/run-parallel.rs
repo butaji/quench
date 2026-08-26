@@ -105,11 +105,15 @@ fn run_manifest() -> ExitCode {
         eprintln!("read {MANIFEST}: missing or empty manifest");
         return ExitCode::from(2);
     }
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Err(error) = validate_manifest(&names, &root.join(PARALLEL_DIR)) {
+        eprintln!("invalid {MANIFEST}: {error}");
+        return ExitCode::from(2);
+    }
     let mut counts = [0usize; 6];
     // Resolve fixture paths against the startup CWD and isolate every fixture
     // in a child process. A manifest entry must not be able to retain module
     // state, change the runner's CWD, crash the gate, or hang it indefinitely.
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     for name in &names {
         let path = root.join(PARALLEL_DIR).join(name);
@@ -132,6 +136,26 @@ fn run_manifest() -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+fn validate_manifest(names: &[String], parallel_root: &std::path::Path) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::with_capacity(names.len());
+    for name in names {
+        if !seen.insert(name) {
+            return Err(format!("duplicate fixture entry: {name}"));
+        }
+        let path = parallel_root.join(name);
+        if !path.is_file() {
+            return Err(format!("fixture does not exist: {name}"));
+        }
+        if !matches!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("js" | "mjs" | "cjs")
+        ) {
+            return Err(format!("fixture has unsupported extension: {name}"));
+        }
+    }
+    Ok(())
 }
 
 fn triage(filter: Option<&String>) -> ExitCode {
@@ -338,4 +362,40 @@ fn json_escape(value: &str) -> String {
         .replace('"', "\\\"")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_manifest;
+    use std::fs;
+
+    #[test]
+    fn manifest_validation_rejects_duplicates_and_unknown_extensions() {
+        let root =
+            std::env::temp_dir().join(format!("quench-node-manifest-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("test-a.js"), "").unwrap();
+        fs::write(root.join("test-b.txt"), "").unwrap();
+        let duplicate = vec!["test-a.js".to_string(), "test-a.js".to_string()];
+        assert!(validate_manifest(&duplicate, &root).is_err());
+        let unsupported = vec!["test-b.txt".to_string()];
+        assert!(validate_manifest(&unsupported, &root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_validation_accepts_all_fixture_extensions() {
+        let root =
+            std::env::temp_dir().join(format!("quench-node-manifest-valid-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        for name in ["test-a.js", "test-b.mjs", "test-c.cjs"] {
+            fs::write(root.join(name), "").unwrap();
+        }
+        let names = ["test-a.js", "test-b.mjs", "test-c.cjs"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert!(validate_manifest(&names, &root).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
 }
