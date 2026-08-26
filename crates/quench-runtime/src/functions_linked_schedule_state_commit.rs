@@ -53,7 +53,7 @@ impl NativeSchedule<'_> {
                 .store_number(f64::from(task.state));
             runner
                 .word(runner.queue)
-                .store(self.packet_value(task.queue));
+                .store(self.packet_value(task.queue.head));
             self.commit_task(runner, task.kind)?;
         }
         self.scheduler
@@ -83,8 +83,12 @@ impl NativeSchedule<'_> {
                 runner.word(runner.task_v2?).store_number(f64::from(v2));
             }
             NativeTaskKind::Handler { v1, v2, .. } => {
-                runner.word(runner.task_v1).store(self.packet_value(v1));
-                runner.word(runner.task_v2?).store(self.packet_value(v2));
+                runner
+                    .word(runner.task_v1)
+                    .store(self.packet_value(v1.head));
+                runner
+                    .word(runner.task_v2?)
+                    .store(self.packet_value(v2.head));
             }
         }
         Some(())
