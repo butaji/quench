@@ -23,6 +23,9 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if let Some(value) = typed_array_prototype_tag(builtin, key) {
         return value;
     }
+    if builtin == Builtin::StringPrototype && key == "length" {
+        return Value::Number(0.0);
+    }
     if let Some(value) = special(builtin, key) {
         return value;
     }
