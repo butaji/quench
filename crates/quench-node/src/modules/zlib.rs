@@ -17,8 +17,8 @@ fn bytes_of(value: &Value) -> Result<Vec<u8>, VmError> {
         Value::Uint8Array(view) => Ok(view.buffer.bytes.borrow()
             [view.byte_offset..view.byte_offset + view.length]
             .to_vec()),
-        other => Err(execute::type_error(&format!(
-            "zlib: expected Buffer or string, got {}",
+        other => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer.{}",
             crate::modules::util::invalid_arg_received(other)
         ))),
     }
@@ -26,6 +26,28 @@ fn bytes_of(value: &Value) -> Result<Vec<u8>, VmError> {
 
 fn output(bytes: Vec<u8>) -> Value {
     crate::modules::buffer_proto::make_buffer(&bytes)
+}
+
+fn validate_window_bits(args: &[Value], minimum: u8) -> Result<(), VmError> {
+    let Some(Value::Object(options)) = args.get(1) else {
+        return Ok(());
+    };
+    let value = execute::get_property(&Value::Object(options.clone()), "windowBits");
+    let Value::Number(window_bits) = value else {
+        return Ok(());
+    };
+    if !window_bits.is_finite()
+        || window_bits.fract() != 0.0
+        || window_bits < f64::from(minimum)
+        || window_bits > 15.0
+    {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "options.windowBits",
+            &format!(">= {minimum} and <= 15"),
+            &execute::number_to_js_string(window_bits),
+        ));
+    }
+    Ok(())
 }
 
 fn run<F>(args: &[Value], mut f: F) -> Result<Value, VmError>
@@ -86,6 +108,7 @@ pub fn gzip(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let _ = state;
+    validate_window_bits(args, 9)?;
     run(args, gzip_deflate)
 }
 

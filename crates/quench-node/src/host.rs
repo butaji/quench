@@ -238,7 +238,7 @@ pub fn install_script(
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     script: &str,
 ) -> (Rc<NodeHost>, VmContext) {
-    let exec_path = "quench-node".to_string();
+    let exec_path = host_exec_path();
     install_with_argv(realm, sink, vec![exec_path, script.to_string()])
 }
 
@@ -248,12 +248,20 @@ pub fn install_script_with_args(
     script: &str,
     args: &[String],
 ) -> (Rc<NodeHost>, VmContext) {
-    let exec_path = "quench-node".to_string();
+    let exec_path = host_exec_path();
     let argv = std::iter::once(exec_path)
         .chain(std::iter::once(script.to_string()))
         .chain(args.iter().cloned())
         .collect();
     install_with_argv(realm, sink, argv)
+}
+
+fn host_exec_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::canonicalize(path).ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "quench-node".to_string())
 }
 
 /// Same as `install`, but provides a host-side output sink that
