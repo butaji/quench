@@ -221,11 +221,11 @@ impl DenseElements {
                 .collect();
             *self = Self::Values(Rc::new(RefCell::new(values)));
         }
-        let Self::Values(values) = self else {
-            unreachable!()
-        };
-        let values = values.borrow().clone();
-        *self = Self::Values(Rc::new(RefCell::new(values)));
+        let Self::Values(values) = self else { unreachable!() };
+        if Rc::strong_count(values) > 1 {
+            let cloned = values.borrow().clone();
+            *self = Self::Values(Rc::new(RefCell::new(cloned)));
+        }
         let Self::Values(values) = self else { unreachable!() };
         Rc::get_mut(values).expect("detached values").get_mut()
     }

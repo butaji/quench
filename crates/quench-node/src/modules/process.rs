@@ -112,10 +112,29 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
         ("execArgv", host_api::array(vec![])),
-        ("features", host_api::object(vec![])),
+        ("features", features()),
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
     ]
+}
+
+pub fn features() -> Value {
+    host_api::object(vec![
+        ("inspector".into(), Value::Boolean(false)),
+        ("debug".into(), Value::Boolean(false)),
+        ("uv".into(), Value::Boolean(true)),
+        ("ipv6".into(), Value::Boolean(true)),
+        ("openssl_is_boringssl".into(), Value::Boolean(false)),
+        ("dtls".into(), Value::Boolean(false)),
+        ("quic".into(), Value::Boolean(false)),
+        ("tls_alpn".into(), Value::Boolean(true)),
+        ("tls_sni".into(), Value::Boolean(true)),
+        ("tls_ocsp".into(), Value::Boolean(true)),
+        ("tls".into(), Value::Boolean(true)),
+        ("cached_builtins".into(), Value::Boolean(true)),
+        ("require_module".into(), Value::Boolean(true)),
+        ("typescript".into(), Value::String("strip".into())),
+    ])
 }
 
 /// `process.stdout` / `process.stderr` — non-TTY write streams.
@@ -138,6 +157,11 @@ fn std_stream(is_error: bool) -> Value {
 }
 
 fn method_props() -> Vec<(&'static str, Value)> {
+    let hrtime = quench_runtime::execute::set_property(
+        crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
+        "bigint",
+        crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME_BIGINT),
+    );
     vec![
         (
             "cwd",
@@ -157,8 +181,9 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ),
         (
             "hrtime",
-            crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
+            hrtime,
         ),
+        ("cpuUsage", crate::host::process_cpu_usage_capability()),
         (
             "umask",
             crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
@@ -181,6 +206,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ),
         (
             "removeListener",
+            crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
+        ),
+        (
+            "off",
             crate::host::capability(crate::registry::SPEC_PROCESS_REMOVE_LISTENER),
         ),
         (
@@ -237,6 +266,11 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
 
 pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
+    if !quench_runtime::is_callable(&cb) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"callback\" argument must be of type function".into(),
+        ));
+    }
     let rest = args.get(1..).unwrap_or(&[]).to_vec();
     let resource = crate::modules::async_hooks::new_resource(
         state,
@@ -260,6 +294,28 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
 }
 
 pub fn hrtime(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(value) = args.first() {
+        let Value::Array(array) = value else {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("name".into(), Value::String("TypeError".into())),
+                ("message".into(), Value::String(format!(
+                    "The \"time\" argument must be an instance of Array.{}",
+                    crate::modules::util::invalid_arg_received(value)
+                ))),
+            ])));
+        };
+        if array.len() != 2 {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                ("name".into(), Value::String("RangeError".into())),
+                ("message".into(), Value::String(format!(
+                    "The value of \"time\" is out of range. It must be 2. Received {}",
+                    array.len()
+                ))),
+            ])));
+        }
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())

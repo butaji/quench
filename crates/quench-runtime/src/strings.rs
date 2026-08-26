@@ -553,14 +553,14 @@ pub(crate) fn repeat(
     if total_units > MAX_STRING_UNITS {
         return Err(crate::value::error::throw_range_error("Invalid string length"));
     }
+    if !units_fit_limit(total_units) {
+        return Err(crate::value::error::throw_range_error("Invalid string length"));
+    }
     // Keep ordinary one-unit strings in their compact UTF-8 representation;
     // this avoids a transient UTF-16 allocation for Node's documented maximum
     // string-length boundary while preserving the same observable value.
     if source.len() == value.encode_utf16().count() {
         return Ok(Value::String(value.repeat(count)));
-    }
-    if !units_fit_limit(total_units) {
-        return Err(crate::value::error::throw_range_error("Invalid string length"));
     }
     let mut result = Vec::with_capacity(total_units);
 
