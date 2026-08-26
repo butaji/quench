@@ -584,10 +584,10 @@ pub(crate) fn flat(
     let mut values = Vec::with_capacity(length);
     for index in 0..length {
         if let Some(value) = crate::builtins::map_value(&receiver, index)? {
-            values.push(value);
+            flatten_value(&value, depth, &mut values)?;
         }
     }
-    for (index, value) in flatten(&values, depth).into_iter().enumerate() {
+    for (index, value) in values.into_iter().enumerate() {
         target = crate::builtins::create_data_property_or_throw(target, &index.to_string(), value)?;
     }
     Ok(target)
@@ -597,31 +597,33 @@ fn flat_depth(value: Option<&Value>) -> Result<usize, crate::execute::VmError> {
     let Some(value) = value else {
         return Ok(1);
     };
+    if matches!(value, Value::Undefined) {
+        return Ok(1);
+    }
     let number = crate::conversion::to_number(value)?;
     if number.is_nan() || number <= 0.0 {
         return Ok(0);
     }
     Ok(number.trunc().min(usize::MAX as f64) as usize)
 }
-fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
-    // Allocate the result once and append through the whole traversal. The
-    // previous recursive form allocated one temporary Vec per nested array,
-    // then copied each temporary into its parent.
-    let mut result = Vec::with_capacity(values.len());
-    flatten_into(values, depth, &mut result);
-    result
-}
-
-fn flatten_into(values: &[Value], depth: usize, result: &mut Vec<Value>) {
-    for value in values {
-        if depth > 0 {
-            if let Value::Array(nested) = value {
-                flatten_into(&nested.snapshot(), depth - 1, result);
-                continue;
+fn flatten_value(
+    value: &Value,
+    depth: usize,
+    result: &mut Vec<Value>,
+) -> Result<(), crate::execute::VmError> {
+    if depth > 0
+        && matches!(crate::builtins::is_array(Some(value))?, Value::Boolean(true))
+    {
+        let length = crate::builtins::map_length(value)?;
+        for index in 0..length {
+            if let Some(nested) = crate::builtins::map_value(value, index)? {
+                flatten_value(&nested, depth - 1, result)?;
             }
         }
+    } else {
         result.push(value.clone());
     }
+    Ok(())
 }
 pub(crate) fn flat_map(
     receiver: Option<&Value>,
@@ -650,25 +652,15 @@ pub(crate) fn flat_map(
         };
         let args = [value, Value::Number(index as f64), receiver.clone()];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
-        match result {
-            Value::Array(nested) => {
-                for value in nested.snapshot() {
-                    target = crate::builtins::create_data_property_or_throw(
-                        target,
-                        &target_index.to_string(),
-                        value,
-                    )?;
-                    target_index += 1;
-                }
-            }
-            value => {
-                target = crate::builtins::create_data_property_or_throw(
-                    target,
-                    &target_index.to_string(),
-                    value,
-                )?;
-                target_index += 1;
-            }
+        let mut flattened = Vec::new();
+        flatten_value(&result, 1, &mut flattened)?;
+        for value in flattened {
+            target = crate::builtins::create_data_property_or_throw(
+                target,
+                &target_index.to_string(),
+                value,
+            )?;
+            target_index += 1;
         }
     }
     Ok(target)
