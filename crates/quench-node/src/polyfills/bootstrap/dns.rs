@@ -3,6 +3,17 @@
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDns = globalThis.require;
 const __quenchDnsIsIP = (value) =>
   typeof value === "string" && (value.indexOf(":") >= 0 ? 6 : /^\d+(?:\.\d+){3}$/.test(value) ? 4 : 0);
+const __quenchDnsQueryStub = (rrtype) => {
+  try {
+    const binding = __quenchOriginalRequireWithDns("internal/test/binding").internalBinding("cares_wrap");
+    const channel = binding && binding.ChannelWrap;
+    const prototype = channel && channel.prototype;
+    const method = prototype && prototype[`query${rrtype}`];
+    return typeof method === "function" ? method : null;
+  } catch (_) {
+    return null;
+  }
+};
 let __quenchDnsServers = ["127.0.0.1"];
 let __quenchDnsDefaultResultOrder = "verbatim";
 const __quenchDnsNormalizeServer = (server) => {
@@ -185,6 +196,15 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
       return;
     }
     try {
+      const stub = __quenchDnsQueryStub(rrtype);
+      if (stub) {
+        const error = new Error(`query${rrtype} EPERM ${hostname}`);
+        error.code = "EPERM";
+        error.syscall = `query${rrtype}`;
+        error.hostname = hostname;
+        callback?.(error);
+        return;
+      }
       const addresses = globalThis.__quench_dns_lookup(hostname, 0)
         .filter((address) =>
           rrtype === "A"
