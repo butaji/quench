@@ -1598,7 +1598,22 @@ fn month_code_number(value: &Value) -> Result<Value, VmError> {
     if crate::conversion::is_symbol(value) {
         return Err(crate::value::error::throw_type_error("Invalid monthCode"));
     }
-    let code = crate::conversion::to_string(value)?;
+    let code = match value {
+        Value::String(code) => code.clone(),
+        Value::StringUnits(_) => crate::conversion::to_string(value)?,
+        Value::Object(_) => {
+            let method = crate::execute::get_property_result(value, "toString")?;
+            if !crate::conversion::is_callable(&method) {
+                return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+            }
+            let primitive = crate::functions::execute_target(&method, value, &[])?;
+            if !matches!(primitive, Value::String(_) | Value::StringUnits(_)) {
+                return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+            }
+            crate::conversion::to_string(&primitive)?
+        }
+        _ => return Err(crate::value::error::throw_type_error("Invalid monthCode")),
+    };
     let core = code.strip_suffix('L').unwrap_or(&code);
     if core.len() != 3
         || !core.starts_with('M')
