@@ -1293,6 +1293,23 @@ fn month_code_number(value: &Value) -> Result<Value, VmError> {
 }
 
 fn validate_calendar(value: &Value) -> Result<(), VmError> {
+    if let Value::Object(object) = value {
+        if object.iter().any(|(key, value)| {
+            key == "\0prototype"
+                && matches!(
+                    value,
+                    Value::Builtin(
+                        crate::ops::Builtin::TemporalPlainDatePrototype
+                            | crate::ops::Builtin::TemporalPlainDateTimePrototype
+                            | crate::ops::Builtin::TemporalPlainMonthDayPrototype
+                            | crate::ops::Builtin::TemporalPlainYearMonthPrototype
+                            | crate::ops::Builtin::TemporalZonedDateTimePrototype
+                    )
+                )
+        }) {
+            return Ok(());
+        }
+    }
     if !matches!(value, Value::String(_) | Value::StringUnits(_))
         || crate::conversion::is_symbol(value)
     {
