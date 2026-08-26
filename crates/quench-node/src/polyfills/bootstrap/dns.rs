@@ -1,13 +1,13 @@
 //! Polyfill: `dns`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDns = globalThis.require;
-const __quenchDnsCares = (() => {
+const __quenchDnsCares = () => {
   try {
     return __quenchOriginalRequireWithDns("internal/test/binding").internalBinding("cares_wrap");
   } catch (_) {
     return null;
   }
-})();
+};
 const __quenchDnsIsIP = (value) =>
   typeof value === "string" && (value.indexOf(":") >= 0 ? 6 : /^\d+(?:\.\d+){3}$/.test(value) ? 4 : 0);
 let __quenchDnsServers = ["127.0.0.1"];
@@ -117,15 +117,18 @@ const __quenchDnsLookup = (hostname, options, callback) => {
   }
   queueMicrotask(() => {
     try {
-      if (__quenchDnsCares && typeof __quenchDnsCares.getaddrinfo === "function") {
-        __quenchDnsCares.getaddrinfo(hostname);
-        {
+      const cares = __quenchDnsCares();
+      if (!__quenchDnsIsIP(hostname) && cares && typeof cares.getaddrinfo === "function") {
+        try {
+          cares.getaddrinfo(hostname);
           const error = new Error(`getaddrinfo ENOMEM ${hostname}`);
           error.code = "ENOMEM";
           error.syscall = "getaddrinfo";
           error.hostname = hostname;
           callback(error);
           return;
+        } catch (_) {
+          // A non-callable placeholder is equivalent to an unimplemented binding.
         }
       }
       const addresses = __quenchDnsIsIP(hostname)
