@@ -65,11 +65,26 @@ const CONSOLE_CLASS: &str = r#"(class Console {
     }
   }
   info(...args) { this.log(...args); }
+  dir(...args) { this.log(...args); }
+  time(label = "default") { this._times ||= {}; this._times[label] = Date.now(); }
+  timeEnd(label = "default") { delete this._times?.[label]; }
+  timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
     const output = this._stderr;
     if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
   }
   error(...args) { this.warn(...args); }
+  trace(...args) { this.error(...args); }
+  assert(condition, ...args) { if (!condition) this.error(...args); }
+  clear() {}
+  count(label = "default") { this._counts ||= {}; this._counts[label] = (this._counts[label] || 0) + 1; }
+  countReset(label = "default") { if (this._counts) delete this._counts[label]; }
+  group() {}
+  groupEnd() {}
+  table(...args) { this.log(...args); }
+  debug(...args) { this.log(...args); }
+  dirxml(...args) { this.log(...args); }
+  groupCollapsed() {}
 })"#;
 
 pub fn log(
