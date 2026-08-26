@@ -366,6 +366,9 @@ test-error-format-list.js
 test-compile-cache-api-error.js
 test-eval-strict-referenceerror.js
 test-eval.js
+test-vm-cross-context.js
+test-vm-data-property-writable.js
+test-vm-deleting-property.js
 test-assert-partial-deep-equal.js
 test-assert-typedarray-deepequal.js
 test-net-connect-after-destroy.js
