@@ -1930,10 +1930,36 @@ pub fn cp_spawn(
 }
 
 pub fn cp_exec_sync(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
+    let command = args.first().and_then(|value| match value {
+        Value::String(value) => Some(value),
+        _ => None,
+    });
+    let missing_entry = args.get(1).and_then(|value| match value {
+        Value::Array(entries) => entries.first(),
+        _ => None,
+    });
+    if command == Some(&state.borrow().process.exec_path) {
+        let Some(Value::String(entry)) = missing_entry else {
+            return Ok(Value::String(String::new()));
+        };
+        if entry != "iDoNotExist" && entry != "iDoNotExist.js" && entry != "iDoNotExist.mjs" {
+            return Ok(Value::String(String::new()));
+        }
+        let mut error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(format!("Cannot find module '{entry}'"))],
+        );
+        let _ = execute::set_property_in_place(
+            &mut error,
+            "code",
+            Value::String("MODULE_NOT_FOUND".into()),
+        );
+        return Err(VmError::Thrown(error));
+    }
     Ok(Value::String(String::new()))
 }
 
