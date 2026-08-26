@@ -52,6 +52,7 @@ const CAP_UTIL_FORMAT: u16 = 0x0300;
 const CAP_UTIL_DEPRECATE: u16 = 0x0730;
 const CAP_UTIL_DEPRECATED_CALL: u16 = 0x0731;
 const CAP_UTIL_SYSTEM_ERROR_NAME: u16 = 0x0733;
+const CAP_UTIL_DEBUGLOG: u16 = 0x0735;
 const CAP_UTIL_EXCEPTION_WITH_HOST_PORT: u16 = 0x0734;
 const CAP_INTERNAL_UTIL_EMIT_WARNING: u16 = 0x0735;
 const CAP_OS_GET_PRIORITY: u16 = 0x0736;
@@ -442,6 +443,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_UTIL_DEPRECATE => util_deprecate,
         CAP_UTIL_DEPRECATED_CALL => util_deprecated_call,
         CAP_UTIL_SYSTEM_ERROR_NAME => util_system_error_name,
+        CAP_UTIL_DEBUGLOG => util_debuglog,
         CAP_UTIL_EXCEPTION_WITH_HOST_PORT => util_exception_with_host_port,
         CAP_INTERNAL_UTIL_EMIT_WARNING => internal_util_emit_warning,
         CAP_OS_GET_PRIORITY => os_get_priority,
