@@ -35,6 +35,7 @@ pub struct ProcessState {
     pub versions: Vec<(String, String)>,
     pub exit_code: Option<i32>,
     pub cwd: std::path::PathBuf,
+    pub umask: u32,
 }
 
 impl Default for ProcessState {
@@ -70,6 +71,7 @@ impl ProcessState {
             versions,
             exit_code: None,
             cwd,
+            umask: 0o022,
         }
     }
 }
@@ -99,6 +101,10 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ),
         ("execPath", Value::String(exec_path.to_string())),
         ("argv0", Value::String("node".into())),
+        (
+            "release",
+            host_api::object(vec![("name".to_string(), Value::String("node".into()))]),
+        ),
         ("domain", Value::Null),
         ("version", Value::String("v22.0.0".into())),
         (
@@ -179,11 +185,9 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "nextTick",
             crate::host::capability(crate::registry::SPEC_PROCESS_NEXT_TICK),
         ),
-        (
-            "hrtime",
-            hrtime,
-        ),
+        ("hrtime", hrtime),
         ("cpuUsage", crate::host::process_cpu_usage_capability()),
+        ("uptime", crate::host::process_uptime_capability()),
         (
             "umask",
             crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
@@ -220,7 +224,68 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "emitWarning",
             crate::host::capability(crate::registry::SPEC_PROCESS_EMIT_WARNING),
         ),
+        (
+            "getuid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_GETUID),
+        ),
+        (
+            "getgid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_GETGID),
+        ),
+        (
+            "geteuid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_GETEUID),
+        ),
+        (
+            "getegid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_GETEGID),
+        ),
+        (
+            "setuid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_SETUID),
+        ),
+        (
+            "setgid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_SETGID),
+        ),
+        (
+            "seteuid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_SETEUID),
+        ),
+        (
+            "setegid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_SETEGID),
+        ),
     ]
+}
+
+pub fn credential(kind: &str) -> Value {
+    #[cfg(unix)]
+    let id = match kind {
+        "uid" | "euid" => unsafe { libc::getuid() },
+        "gid" | "egid" => unsafe { libc::getgid() },
+        _ => 0,
+    };
+    #[cfg(not(unix))]
+    let id = 0;
+    Value::Number(id as f64)
+}
+
+pub fn set_credential(kind: &str, args: &[Value]) -> Result<Value, VmError> {
+    let Some(value) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    match value {
+        Value::Number(_) => Ok(Value::Undefined),
+        Value::String(name) => Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("message".into(), Value::String(format!("{} identifier does not exist: {name}", if kind == "uid" { "User" } else { "Group" }))),
+            ("code".into(), Value::String("ERR_UNKNOWN_CREDENTIAL".into())),
+        ]))),
+        _ => Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"id\" argument must be one of type number or string. Received an instance of Object".into(),
+        )),
+    }
 }
 
 /// `process.env` — a snapshot of the host environment at startup.
@@ -278,10 +343,9 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
     )
     .ok();
     let global = quench_runtime::vm::current_global_object();
-    if let Ok(init) = quench_runtime::execute::get_property_result(
-        &global,
-        "\0quench:process_next_tick_init",
-    ) {
+    if let Ok(init) =
+        quench_runtime::execute::get_property_result(&global, "\0quench:process_next_tick_init")
+    {
         if quench_runtime::is_callable(&init) {
             let _ = quench_runtime::vm::call_value(&init, &Value::Undefined, &[]);
         }
@@ -299,20 +363,26 @@ pub fn hrtime(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             return Err(VmError::Thrown(host_api::object(vec![
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
                 ("name".into(), Value::String("TypeError".into())),
-                ("message".into(), Value::String(format!(
-                    "The \"time\" argument must be an instance of Array.{}",
-                    crate::modules::util::invalid_arg_received(value)
-                ))),
+                (
+                    "message".into(),
+                    Value::String(format!(
+                        "The \"time\" argument must be an instance of Array.{}",
+                        crate::modules::util::invalid_arg_received(value)
+                    )),
+                ),
             ])));
         };
         if array.len() != 2 {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
                 ("name".into(), Value::String("RangeError".into())),
-                ("message".into(), Value::String(format!(
-                    "The value of \"time\" is out of range. It must be 2. Received {}",
-                    array.len()
-                ))),
+                (
+                    "message".into(),
+                    Value::String(format!(
+                        "The value of \"time\" is out of range. It must be 2. Received {}",
+                        array.len()
+                    )),
+                ),
             ])));
         }
     }
@@ -369,11 +439,11 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
             "uncaughtException" | "warning" | "unhandledRejection" => {
                 push_handler(state, handler, event.as_str(), true)
             }
-            _ => state
-                .borrow_mut()
-                .process
-                .other_handlers
-                .push((event.clone(), handler.clone(), true)),
+            _ => state.borrow_mut().process.other_handlers.push((
+                event.clone(),
+                handler.clone(),
+                true,
+            )),
         }
     }
     Ok(Value::Undefined)
@@ -427,8 +497,31 @@ pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
 
 /// `process.umask([mask])` — accepts an optional new mask, returns the
 /// previous one. The host keeps a single shared mask (0o022 default).
-pub fn umask(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::Number(0o022 as f64))
+pub fn umask(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let Some(value) = args.first() else {
+        return Ok(Value::Number(state.borrow().process.umask as f64));
+    };
+    let mask = match value {
+        Value::Number(number) if number.is_finite() && *number >= 0.0 && number.fract() == 0.0 => {
+            *number as u32
+        }
+        Value::String(text) => u32::from_str_radix(text, 8).map_err(|_| {
+            crate::modules::buffer_enc::invalid_arg_value(format!(
+                "The \"mask\" argument is invalid. Received {text}"
+            ))
+        })?,
+        _ => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"mask\" argument must be of type number or string".into(),
+            ));
+        }
+    };
+    // POSIX umask uses only the permission bits; Node ignores higher bits.
+    let mask = mask & 0o777;
+    let mut guard = state.borrow_mut();
+    let previous = guard.process.umask;
+    guard.process.umask = mask;
+    Ok(Value::Number(previous as f64))
 }
 
 /// `process.on(event, handler)` — registers lifecycle handlers.
@@ -450,11 +543,11 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
                 push_handler(state, handler, event, false)
             }
             "warning" => push_handler(state, handler, "warning", false),
-            _ => state
-                .borrow_mut()
-                .process
-                .other_handlers
-                .push((event.clone(), handler.clone(), false)),
+            _ => state.borrow_mut().process.other_handlers.push((
+                event.clone(),
+                handler.clone(),
+                false,
+            )),
         }
     }
     Ok(Value::Undefined)
@@ -511,10 +604,7 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     Ok(Value::Boolean(true))
 }
 
-pub fn remove_listener(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+pub fn remove_listener(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let (Some(Value::String(event)), Some(target)) = (args.first(), args.get(1)) else {
         return Ok(Value::Undefined);
     };
@@ -551,9 +641,9 @@ pub fn remove_all_listeners(
     if event.is_none() || event == Some("unhandledRejection") {
         process.unhandled_rejection_handlers.clear();
     }
-    process.other_handlers.retain(|(name, _, _)| {
-        event.is_some_and(|target| target != name)
-    });
+    process
+        .other_handlers
+        .retain(|(name, _, _)| event.is_some_and(|target| target != name));
     Ok(Value::Undefined)
 }
 
@@ -620,15 +710,20 @@ pub(crate) fn emit_warning(
     };
     props.push(("stack".to_string(), Value::String(stack)));
     let warning = host_api::object(props);
-    let _ = emit(state, &[Value::String("warning".into()), warning]);
+    // Node delivers warnings on a later turn, so listeners installed after
+    // `emitWarning()` still observe the event. Queue the canonical process
+    // emitter capability rather than calling it inline; this preserves the
+    // process event identity while keeping delivery asynchronous.
+    let emitter = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(emitter, vec![Value::String("warning".into()), warning]);
 }
 
 /// Emit the pair of warnings Node exposes for an unhandled rejection in
 /// `warn` mode: the reason and the note describing its origin.
-pub(crate) fn emit_unhandled_rejection_warnings(
-    state: &Rc<RefCell<HostState>>,
-    reason: &Value,
-) {
+pub(crate) fn emit_unhandled_rejection_warnings(state: &Rc<RefCell<HostState>>, reason: &Value) {
     let rendered = match quench_runtime::execute::get_property(reason, "message") {
         Value::String(message) => message,
         _ => crate::modules::util::inspect(reason),
@@ -641,7 +736,10 @@ pub(crate) fn emit_unhandled_rejection_warnings(
     let note = "Unhandled promise rejection. This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch().";
     for message in [first, note.to_string()] {
         let mut props = vec![
-            ("name".to_string(), Value::String("UnhandledPromiseRejectionWarning".into())),
+            (
+                "name".to_string(),
+                Value::String("UnhandledPromiseRejectionWarning".into()),
+            ),
             ("message".to_string(), Value::String(message.clone())),
         ];
         if !stack.is_empty() {
