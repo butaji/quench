@@ -361,6 +361,55 @@ fn difference(
     remainder %= 1_000_000;
     let microseconds = remainder / 1_000;
     let nanoseconds = remainder % 1_000;
+    let mut days = days as i128;
+    let mut hours = hours as i128;
+    let mut minutes = minutes as i128;
+    let mut seconds = seconds as i128;
+    let mut milliseconds = milliseconds as i128;
+    let mut microseconds = microseconds as i128;
+    let mut nanoseconds = nanoseconds as i128;
+    match largest.as_str() {
+        "hour" => {
+            hours += days * 24;
+            days = 0;
+        }
+        "minute" => {
+            minutes += days * 1_440 + hours * 60;
+            days = 0;
+            hours = 0;
+        }
+        "second" => {
+            seconds += days * 86_400 + hours * 3_600 + minutes * 60;
+            days = 0;
+            hours = 0;
+            minutes = 0;
+        }
+        "millisecond" => {
+            milliseconds += days * 86_400_000 + hours * 3_600_000 + minutes * 60_000 + seconds * 1_000;
+            days = 0;
+            hours = 0;
+            minutes = 0;
+            seconds = 0;
+        }
+        "microsecond" => {
+            microseconds += days * 86_400_000_000 + hours * 3_600_000_000 + minutes * 60_000_000 + seconds * 1_000_000 + milliseconds * 1_000;
+            days = 0;
+            hours = 0;
+            minutes = 0;
+            seconds = 0;
+            milliseconds = 0;
+        }
+        "nanosecond" => {
+            nanoseconds += days * 86_400_000_000_000 + hours * 3_600_000_000_000 + minutes * 60_000_000_000 + seconds * 1_000_000_000 + milliseconds * 1_000_000 + microseconds * 1_000;
+            days = 0;
+            hours = 0;
+            minutes = 0;
+            seconds = 0;
+            milliseconds = 0;
+            microseconds = 0;
+        }
+        _ => {}
+    }
     crate::temporal::duration::construct(&[
         Value::Number(0.0),
         Value::Number(0.0),
