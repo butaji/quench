@@ -656,6 +656,9 @@ fn descriptor_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     if let Value::Builtin(builtin) = value {
+        if let Some(value) = crate::vm::intrinsic_override_property(*builtin, key, receiver) {
+            return Some(Ok(value));
+        }
         if let Some(getter) = crate::property_define::accessor(value, key, "get") {
             return Some(match getter {
                 Value::Undefined => Ok(Value::Undefined),

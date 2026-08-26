@@ -461,6 +461,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
+            | Builtin::PromisePrototype
             | Builtin::MapPrototype
             | Builtin::SetPrototype
             | Builtin::WeakMapPrototype

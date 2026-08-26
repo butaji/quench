@@ -287,7 +287,11 @@ fn iterator_property_value(value: &Value, property: Value) -> Value {
     bind_method(value, property)
 }
 
-fn intrinsic_override_property(builtin: Builtin, key: &str, receiver: &Value) -> Option<Value> {
+pub(crate) fn intrinsic_override_property(
+    builtin: Builtin,
+    key: &str,
+    receiver: &Value,
+) -> Option<Value> {
     let descriptor = crate::builtins::read_intrinsic_override(builtin, key)?;
     if let Some(value) = crate::builtins::read_descriptor_value(builtin, key) {
         return Some(value);
