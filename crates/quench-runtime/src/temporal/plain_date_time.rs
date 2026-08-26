@@ -14,19 +14,16 @@ const NAMES: [&str; 9] = [
 ];
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let mut fields = Vec::with_capacity(9);
-    for index in 0..9 {
+    let fields = (0..9)
+        .map(|index| {
             let value = arguments.get(index).unwrap_or(&Value::Undefined);
-            let number = if index >= 3 && matches!(value, Value::Undefined) {
+            if index >= 3 && matches!(value, Value::Undefined) {
                 Ok(0.0)
             } else {
                 Ok(crate::conversion::to_number(value)?.trunc())
-            }?;
-            if !number.is_finite() {
-                return Err(crate::value::error::throw_range_error("Invalid date-time"));
             }
-            fields.push(number);
-    }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     crate::temporal::plain_date::construct(
         &fields[..3]
             .iter()
@@ -147,7 +144,9 @@ pub(crate) fn execute(
             Some(to_string(_receiver, arguments.first()))
         }
         crate::ops::Builtin::TemporalPlainDateTimeToJSON
-        | crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => Some(to_string(_receiver, None)),
+        | crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => {
+            Some(to_string(_receiver, None))
+        }
         crate::ops::Builtin::TemporalPlainDateTimeCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateTimeEquals => {
             Some(equals(_receiver, arguments.first()))
@@ -181,9 +180,11 @@ pub(crate) fn execute(
         )),
         crate::ops::Builtin::TemporalPlainDateTimeToPlainDate => Some(to_plain_date(_receiver)),
         crate::ops::Builtin::TemporalPlainDateTimeToPlainTime => Some(to_plain_time(_receiver)),
-        crate::ops::Builtin::TemporalPlainDateTimeToZonedDateTime => {
-            Some(to_zoned_date_time(_receiver, arguments.first(), arguments.get(1)))
-        }
+        crate::ops::Builtin::TemporalPlainDateTimeToZonedDateTime => Some(to_zoned_date_time(
+            _receiver,
+            arguments.first(),
+            arguments.get(1),
+        )),
         crate::ops::Builtin::TemporalPlainDateTimeWithCalendar => {
             Some(with_calendar(_receiver, arguments.first()))
         }
@@ -251,7 +252,9 @@ fn difference(
                 | "microsecond"
                 | "nanosecond"
         ) {
-            return Err(crate::value::error::throw_range_error("Invalid largestUnit"));
+            return Err(crate::value::error::throw_range_error(
+                "Invalid largestUnit",
+            ));
         }
         let increment = crate::execute::get_property_result(options, "roundingIncrement")?;
         if !matches!(increment, Value::Undefined) {
@@ -278,7 +281,9 @@ fn difference(
                     | "halfTrunc"
                     | "trunc"
             ) {
-                return Err(crate::value::error::throw_range_error("Invalid roundingMode"));
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid roundingMode",
+                ));
             }
             rounding_mode = mode;
         }
@@ -299,7 +304,9 @@ fn difference(
                     | "microsecond"
                     | "nanosecond"
             ) {
-                return Err(crate::value::error::throw_range_error("Invalid smallestUnit"));
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid smallestUnit",
+                ));
             }
             smallest_unit = smallest.to_string();
             if largest_was_default && unit_rank(smallest) < unit_rank(&largest) {
@@ -321,12 +328,8 @@ fn difference(
         "millisecond" | "microsecond" | "nanosecond" => 1_000,
         _ => 0,
     };
-    if increment_max > 1
-            && (rounding_increment as u64) >= increment_max
-        || increment_max > 1
-            && increment_max % (rounding_increment as u64) != 0
-        || matches!(smallest_unit.as_str(), "year" | "month" | "week")
-            && rounding_increment > 1_000_000.0
+    if increment_max > 1 && (rounding_increment as u64) >= increment_max
+        || increment_max > 1 && increment_max % (rounding_increment as u64) != 0
     {
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
@@ -396,14 +399,19 @@ fn difference(
             minutes = 0;
         }
         "millisecond" => {
-            milliseconds += days * 86_400_000 + hours * 3_600_000 + minutes * 60_000 + seconds * 1_000;
+            milliseconds +=
+                days * 86_400_000 + hours * 3_600_000 + minutes * 60_000 + seconds * 1_000;
             days = 0;
             hours = 0;
             minutes = 0;
             seconds = 0;
         }
         "microsecond" => {
-            microseconds += days * 86_400_000_000 + hours * 3_600_000_000 + minutes * 60_000_000 + seconds * 1_000_000 + milliseconds * 1_000;
+            microseconds += days * 86_400_000_000
+                + hours * 3_600_000_000
+                + minutes * 60_000_000
+                + seconds * 1_000_000
+                + milliseconds * 1_000;
             days = 0;
             hours = 0;
             minutes = 0;
@@ -411,7 +419,12 @@ fn difference(
             milliseconds = 0;
         }
         "nanosecond" => {
-            nanoseconds += days * 86_400_000_000_000 + hours * 3_600_000_000_000 + minutes * 60_000_000_000 + seconds * 1_000_000_000 + milliseconds * 1_000_000 + microseconds * 1_000;
+            nanoseconds += days * 86_400_000_000_000
+                + hours * 3_600_000_000_000
+                + minutes * 60_000_000_000
+                + seconds * 1_000_000_000
+                + milliseconds * 1_000_000
+                + microseconds * 1_000;
             days = 0;
             hours = 0;
             minutes = 0;
@@ -465,7 +478,7 @@ fn calendar_difference(
     } else if largest == "month" {
         months = (end[0] as i64 - start[0] as i64) * 12 + end[1] as i64 - start[1] as i64;
     }
-    let mut anchor = add_months_serial(
+    let anchor = add_months_serial(
         start,
         years * 12 + months * if largest == "week" { 0 } else { 1 },
     );
@@ -478,104 +491,28 @@ fn calendar_difference(
     if largest == "week" {
         days %= 7;
     }
-    let backward_receiver = direction > 0.0 && left_total > right_total;
-    let mut time_fraction_days = (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64
-        / 86_400_000_000_000.0;
-    let mut time_delta = time_of_day_nanos(end) - time_of_day_nanos(start);
-    if backward_receiver {
-        let mut total_months = if largest == "year" {
-            (left[0] as i64 - right[0] as i64) * 12
-        } else if largest == "month" {
-            (left[0] as i64 - right[0] as i64) * 12 + left[1] as i64 - right[1] as i64
-        } else {
-            0
-        };
-        let raw_time_delta = time_of_day_nanos(right) - time_of_day_nanos(left);
-        if matches!(largest, "year" | "month")
-            && raw_time_delta > 0
-            && add_months_serial(left, -total_months) <= start_serial
-        {
-            total_months -= 1;
-        }
-        if largest == "year" {
-            years = total_months.div_euclid(12);
-            months = total_months.rem_euclid(12);
-        } else if largest == "month" {
-            months = total_months;
-        }
-        anchor = add_months_serial(left, -total_months);
-        days = start_serial - anchor;
-        if largest == "week" {
-            weeks = days / 7;
-            days %= 7;
-        }
-        if raw_time_delta > 0 {
-            days += 1;
-            time_delta = 86_400_000_000_000 - raw_time_delta;
-        } else {
-            time_delta = -raw_time_delta;
-        }
-        days = -days;
-        weeks = -weeks;
-        time_fraction_days = time_delta as f64 / 86_400_000_000_000.0;
-    } else if time_delta < 0 {
-        if matches!(largest, "year" | "month") && years * 12 + months > 0 && days <= 0 {
-            let total_months = years * 12 + months - 1;
-            if largest == "month" {
-                months -= 1;
-            } else {
-                years = total_months.div_euclid(12);
-                months = total_months.rem_euclid(12);
-            }
-            anchor = add_months_serial(start, total_months);
-            days = end_serial - anchor - 1;
-        } else {
-            days -= 1;
-        }
-        time_delta += 86_400_000_000_000;
-    }
+    let time_fraction_days =
+        (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64 / 86_400_000_000_000.0;
     if smallest == "day" && matches!(largest, "year" | "month" | "week") {
-        let rounded = round_quotient((days as f64 + time_fraction_days) / increment, mode)
-            * increment;
+        let rounded =
+            round_quotient((days as f64 + time_fraction_days) / increment, mode) * increment;
         years = 0;
         months = 0;
         weeks = 0;
         days = rounded as i64;
-        time_delta = 0;
     }
     if matches!(smallest, "year" | "month" | "week") {
         let unit_value = match smallest {
             "year" => {
-                let year_anchor = add_months_serial(start, years * 12);
-                let (anchor_year, _, _) = crate::temporal::plain_date::civil_from_serial(year_anchor);
-                let year_length = if days_in_month(anchor_year, 2) == 29 { 366.0 } else { 365.0 };
-                years as f64 + (end_serial - year_anchor) as f64 / year_length + time_fraction_days
-                    / year_length
+                years as f64 + months as f64 / 12.0 + (days as f64 + time_fraction_days) / 365.0
             }
             "month" => {
-                let (anchor_year, anchor_month, _) =
-                    crate::temporal::plain_date::civil_from_serial(anchor);
-                let month_length = days_in_month(anchor_year, anchor_month) as f64;
-                years as f64 * 12.0 + months as f64
-                    + (days as f64 + time_fraction_days) / month_length
+                years as f64 * 12.0 + months as f64 + (days as f64 + time_fraction_days) / 30.0
             }
             _ => (weeks as f64) + (days as f64 + time_fraction_days) / 7.0,
         };
-        let relative_toward_zero = mode == "halfExpand"
-            && ((direction < 0.0 && sign > 0) || (direction > 0.0 && sign < 0));
-        let rounding_mode = if relative_toward_zero {
-            "halfCeil"
-        } else {
-            mode
-        };
-        let round_sign = if direction < 0.0 && sign > 0 && relative_toward_zero {
-            -sign
-        } else {
-            sign
-        };
         let rounded =
-            (round_quotient(unit_value * round_sign as f64 / increment, rounding_mode) * increment)
-                .abs();
+            (round_quotient(unit_value * sign as f64 / increment, mode) * increment).abs();
         match smallest {
             "year" => {
                 years = rounded as i64;
@@ -595,77 +532,28 @@ fn calendar_difference(
                 weeks = 0;
             }
             _ => {
-                if largest == "week" {
-                    years = 0;
-                    months = 0;
-                    weeks = rounded as i64;
-                    days = 0;
+                years = 0;
+                months = 0;
+                weeks = if largest == "week" { rounded as i64 } else { 0 };
+                days = if largest == "week" {
+                    0
                 } else {
-                    days = (rounded * 7.0) as i64;
-                    weeks = 0;
-                }
-            }
-        }
-        time_delta = 0;
-    }
-    if matches!(largest, "year" | "month" | "week")
-        && matches!(
-            smallest,
-            "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
-        )
-    {
-        let quantum = match smallest {
-            "hour" => 3_600_000_000_000,
-            "minute" => 60_000_000_000,
-            "second" => 1_000_000_000,
-            "millisecond" => 1_000_000,
-            "microsecond" => 1_000,
-            _ => 1,
-        } * increment as i128;
-        let rounded_time = round_integer(time_delta * sign as i128, quantum, mode).abs();
-        let day_nanos = 86_400_000_000_000i128;
-        let carry_days = (rounded_time / day_nanos) as i64;
-        days += carry_days;
-        time_delta = rounded_time % day_nanos;
-        if carry_days > 0 && matches!(largest, "year" | "month") {
-            let total_months = years * 12 + months;
-            let month_anchor = add_months_serial(start, total_months);
-            let (anchor_year, anchor_month, _) =
-                crate::temporal::plain_date::civil_from_serial(month_anchor);
-            let month_length = days_in_month(anchor_year, anchor_month) as i64;
-            if days >= month_length {
-                let total_months = total_months + 1;
-                days -= month_length;
-                if largest == "year" {
-                    years = total_months.div_euclid(12);
-                    months = total_months.rem_euclid(12);
-                } else {
-                    months = total_months;
-                }
+                    (rounded * 7.0) as i64
+                };
             }
         }
     }
-    let hours = time_delta / 3_600_000_000_000;
-    let time_delta = time_delta % 3_600_000_000_000;
-    let minutes = time_delta / 60_000_000_000;
-    let time_delta = time_delta % 60_000_000_000;
-    let seconds = time_delta / 1_000_000_000;
-    let time_delta = time_delta % 1_000_000_000;
-    let milliseconds = time_delta / 1_000_000;
-    let time_delta = time_delta % 1_000_000;
-    let microseconds = time_delta / 1_000;
-    let nanoseconds = time_delta % 1_000;
     crate::temporal::duration::construct(&[
         Value::Number((years * sign) as f64),
         Value::Number((months * sign) as f64),
         Value::Number((weeks * sign) as f64),
         Value::Number((days * sign) as f64),
-        Value::Number(hours as f64 * sign as f64),
-        Value::Number(minutes as f64 * sign as f64),
-        Value::Number(seconds as f64 * sign as f64),
-        Value::Number(milliseconds as f64 * sign as f64),
-        Value::Number(microseconds as f64 * sign as f64),
-        Value::Number(nanoseconds as f64 * sign as f64),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
     ])
 }
 
@@ -729,31 +617,39 @@ fn to_zoned_date_time(
     time_zone: Option<&Value>,
     options: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let disambiguation = if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
-        if !crate::value::is_object(options) {
-            return Err(crate::value::error::throw_type_error("Invalid options"));
-        }
-        let value = crate::execute::get_property_result(options, "disambiguation")?;
-        if matches!(value, Value::Undefined) {
-            "compatible".to_string()
+    let disambiguation =
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            if !crate::value::is_object(options) {
+                return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+            let value = crate::execute::get_property_result(options, "disambiguation")?;
+            if matches!(value, Value::Undefined) {
+                "compatible".to_string()
+            } else {
+                if crate::conversion::is_symbol(&value) {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid disambiguation",
+                    ));
+                }
+                let value = crate::conversion::to_string(&value)?;
+                if !matches!(
+                    value.as_str(),
+                    "compatible" | "earlier" | "later" | "reject"
+                ) {
+                    return Err(crate::value::error::throw_range_error(
+                        "Invalid disambiguation",
+                    ));
+                }
+                value
+            }
         } else {
-            if crate::conversion::is_symbol(&value) {
-                return Err(crate::value::error::throw_type_error("Invalid disambiguation"));
-            }
-            let value = crate::conversion::to_string(&value)?;
-            if !matches!(value.as_str(), "compatible" | "earlier" | "later" | "reject") {
-                return Err(crate::value::error::throw_range_error("Invalid disambiguation"));
-            }
-            value
-        }
-    } else {
-        "compatible".to_string()
-    };
+            "compatible".to_string()
+        };
     let values = fields(
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
     )?;
-    let time_zone = time_zone
-        .ok_or_else(|| crate::value::error::throw_type_error("Missing time zone"))?;
+    let time_zone =
+        time_zone.ok_or_else(|| crate::value::error::throw_type_error("Missing time zone"))?;
     if crate::conversion::is_symbol(time_zone) {
         return Err(crate::value::error::throw_type_error("Invalid time zone"));
     }
@@ -774,10 +670,7 @@ fn to_zoned_date_time(
     }
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
-            (
-                "epochNanoseconds".into(),
-                Value::BigInt(epoch.to_string()),
-            ),
+            ("epochNanoseconds".into(), Value::BigInt(epoch.to_string())),
             ("calendarId".into(), Value::String("iso8601".into())),
             ("timeZoneId".into(), Value::String(time_zone)),
             (
@@ -887,8 +780,7 @@ fn normalize_time_zone_identifier(text: &str) -> Result<String, VmError> {
             .and_then(|value| value.find(['+', '-']).map(|index| &value[index..]));
         if let Some(offset) = offset {
             if matches!(offset.len(), 3 | 5 | 6)
-                && (offset.len() == 3
-                    && offset[1..].bytes().all(|byte| byte.is_ascii_digit())
+                && (offset.len() == 3 && offset[1..].bytes().all(|byte| byte.is_ascii_digit())
                     || offset.len() == 6
                         && offset.as_bytes().get(3) == Some(&b':')
                         && offset[1..3].bytes().all(|byte| byte.is_ascii_digit())
@@ -998,9 +890,10 @@ fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Valu
     if !object.iter().any(|(key, value)| {
         key == "\0prototype"
             && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
-    }) && !object.iter().any(|(key, value)| {
-        key == "\0temporal-plain-date-time" && value == Value::Boolean(true)
-    }) {
+    }) && !object
+        .iter()
+        .any(|(key, value)| key == "\0temporal-plain-date-time" && value == Value::Boolean(true))
+    {
         return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
     }
     let name = match builtin {
@@ -1034,9 +927,10 @@ fn fields(value: &Value) -> Result<Vec<f64>, VmError> {
     if !object.iter().any(|(key, value)| {
         key == "\0prototype"
             && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
-    }) && !object.iter().any(|(key, value)| {
-        key == "\0temporal-plain-date-time" && value == Value::Boolean(true)
-    }) {
+    }) && !object
+        .iter()
+        .any(|(key, value)| key == "\0temporal-plain-date-time" && value == Value::Boolean(true))
+    {
         return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
     }
     NAMES
@@ -1073,7 +967,9 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
-    Ok(Value::Boolean(fields(receiver)? == fields(&from(other, None)?)?))
+    Ok(Value::Boolean(
+        fields(receiver)? == fields(&from(other, None)?)?,
+    ))
 }
 
 fn add(
@@ -1173,15 +1069,39 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     let options = match options {
         Some(value) if crate::value::is_object(value) => value,
         Some(value @ (Value::String(_) | Value::StringUnits(_))) => {
-            owned_options = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-                (
-                    "smallestUnit".into(),
-                    value.clone(),
-                ),
-            ])));
+            owned_options = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
+                "smallestUnit".into(),
+                value.clone(),
+            )])));
             &owned_options
         }
-        _ => return Err(crate::value::error::throw_type_error("Invalid rounding options")),
+        _ => {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid rounding options",
+            ))
+        }
+    };
+    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
+    if crate::conversion::is_symbol(&unit) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid smallestUnit",
+        ));
+    }
+    let unit = crate::conversion::to_string(&unit)?;
+    let unit = unit.strip_suffix('s').unwrap_or(&unit).to_string();
+    let quantum = match unit.as_str() {
+        "day" => 86_400_000_000_000.0,
+        "hour" => 3_600_000_000_000.0,
+        "minute" => 60_000_000_000.0,
+        "second" => 1_000_000_000.0,
+        "millisecond" => 1_000_000.0,
+        "microsecond" => 1_000.0,
+        "nanosecond" => 1.0,
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            ))
+        }
     };
     let increment_value = crate::execute::get_property_result(options, "roundingIncrement")?;
     let increment = if matches!(increment_value, Value::Undefined) {
@@ -1190,6 +1110,25 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         crate::conversion::to_number(&increment_value)?
     }
     .trunc();
+    let maximum: f64 = match unit.as_str() {
+        "day" => 1.0,
+        "hour" => 24.0,
+        "minute" | "second" => 60.0,
+        _ => 1_000.0,
+    };
+    if !increment.is_finite()
+        || increment < 1.0
+        || if unit == "day" {
+            increment > maximum
+        } else {
+            increment >= maximum
+        }
+        || (maximum as u64) % (increment as u64) != 0
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
     let mode_value = crate::execute::get_property_result(options, "roundingMode")?;
     let mut mode = "halfExpand".to_string();
     if !matches!(mode_value, Value::Undefined) {
@@ -1215,47 +1154,6 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                 "Invalid roundingMode",
             ));
         }
-    }
-    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
-    if crate::conversion::is_symbol(&unit) {
-        return Err(crate::value::error::throw_type_error(
-            "Invalid smallestUnit",
-        ));
-    }
-    let unit = crate::conversion::to_string(&unit)?;
-    let unit = unit.strip_suffix('s').unwrap_or(&unit).to_string();
-    let quantum = match unit.as_str() {
-        "day" => 86_400_000_000_000.0,
-        "hour" => 3_600_000_000_000.0,
-        "minute" => 60_000_000_000.0,
-        "second" => 1_000_000_000.0,
-        "millisecond" => 1_000_000.0,
-        "microsecond" => 1_000.0,
-        "nanosecond" => 1.0,
-        _ => {
-            return Err(crate::value::error::throw_range_error(
-                "Invalid smallestUnit",
-            ))
-        }
-    };
-    let maximum: f64 = match unit.as_str() {
-        "day" => 1.0,
-        "hour" => 24.0,
-        "minute" | "second" => 60.0,
-        _ => 1_000.0,
-    };
-    if !increment.is_finite()
-        || increment < 1.0
-        || if unit == "day" {
-            increment > maximum
-        } else {
-            increment >= maximum
-        }
-        || (maximum as u64) % (increment as u64) != 0
-    {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid roundingIncrement",
-        ));
     }
     round_values(fields(receiver)?, quantum, increment, &mode)
 }
@@ -1337,15 +1235,6 @@ fn round_quotient(value: f64, mode: &str) -> f64 {
                 floor
             }
         }
-        "halfExpand" => {
-            if value < 0.0 {
-                if fraction <= 0.5 { floor } else { ceil }
-            } else if fraction >= 0.5 {
-                ceil
-            } else {
-                floor
-            }
-        }
         "halfEven" => {
             if fraction < 0.5 {
                 floor
@@ -1399,6 +1288,14 @@ fn with(
 ) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    if let Some(value) = options {
+        if !matches!(
+            value,
+            Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
+        ) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
+    }
     let changes = changes
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
@@ -1410,83 +1307,46 @@ fn with(
     if !matches!(calendar, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
-    let time_zone = crate::execute::get_property_result(changes, "timeZone")?;
-    if !matches!(time_zone, Value::Undefined) {
-        return Err(crate::value::error::throw_type_error("Invalid time zone"));
+    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    let month = crate::execute::get_property_result(changes, "month")?;
+    if !matches!(month_code, Value::Undefined) {
+        values[1] = crate::conversion::to_number(&month_code_number(&month_code)?)?;
     }
-    let mut month_input = None;
-    let mut month_code_input = None;
-    let mut month_code_error = None;
-    let mut recognized = false;
-    for name in [
-        "day",
-        "hour",
-        "microsecond",
-        "millisecond",
-        "minute",
-        "month",
-        "monthCode",
-        "nanosecond",
-        "second",
-        "year",
-    ] {
+    for (index, name) in NAMES.iter().enumerate() {
         let value = crate::execute::get_property_result(changes, name)?;
-        if matches!(value, Value::Undefined) {
-            continue;
-        }
-        recognized = true;
-        if name == "monthCode" {
-            match month_code_number(&value)
-                .and_then(|value| crate::conversion::to_number(&value))
-            {
-                Ok(month) if month.is_finite() => {
-                    values[1] = month;
-                    month_code_input = Some(month);
-                }
-                Ok(_) => {
-                    month_code_error = Some(crate::value::error::throw_range_error(
-                        "Invalid monthCode",
-                    ));
-                }
-                Err(error) => month_code_error = Some(error),
-            }
-            continue;
-        }
-        let index = NAMES.iter().position(|field| *field == name).unwrap();
-        let raw_number = crate::conversion::to_number(&value)?;
-        let number = raw_number.trunc();
-        values[index] = number;
-        if name == "month" {
-            month_input = Some(raw_number);
+        if !matches!(value, Value::Undefined) {
+            values[index] = if *name == "monthCode" {
+                crate::conversion::to_number(&month_code_number(&value)?)?
+            } else {
+                crate::conversion::to_number(&value)?
+            };
         }
     }
-    if let Some(error) = month_code_error {
-        let _ = options
-            .filter(|value| !matches!(value, Value::Undefined))
-            .map(|value| {
-                if !crate::value::is_object(value) {
-                    return Err(crate::value::error::throw_type_error("Invalid options"));
-                }
-                crate::execute::get_property_result(value, "overflow").and_then(|value| {
-                    if matches!(value, Value::Undefined) {
-                        Ok("constrain".to_string())
-                    } else {
-                        crate::conversion::to_string(&value)
-                    }
-                })
-            })
-            .transpose()?;
-        return Err(error);
+    if !matches!(month_code, Value::Undefined)
+        && month != Value::Undefined
+        && crate::conversion::to_number(&month)?
+            != crate::conversion::to_number(&month_code_number(&month_code)?)?
+    {
+        return Err(crate::value::error::throw_range_error("Month mismatch"));
     }
-    if let (Some(month), Some(month_code)) = (month_input, month_code_input) {
-        if month.fract() == 0.0 && month != month_code {
-            return Err(crate::value::error::throw_range_error("Month mismatch"));
-        }
-    }
+    let recognized = NAMES.iter().any(|name| {
+        crate::execute::get_property_result(changes, name)
+            .is_ok_and(|value| !matches!(value, Value::Undefined))
+    }) || !matches!(month_code, Value::Undefined);
     if !recognized {
         return Err(crate::value::error::throw_type_error(
             "Insufficient date-time data",
         ));
+    }
+    let overflow = options
+        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
+        .unwrap_or(Value::String("constrain".into()));
+    let overflow = match overflow {
+        Value::Undefined => "constrain".to_string(),
+        value => crate::conversion::to_string(&value)?,
+    };
+    if overflow != "constrain" && overflow != "reject" {
+        return Err(crate::value::error::throw_range_error("Invalid overflow"));
     }
     if !values[0].is_finite()
         || !values[1].is_finite()
@@ -1495,25 +1355,6 @@ fn with(
         || values[2] < 1.0
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
-    }
-    let overflow = options
-        .filter(|value| !matches!(value, Value::Undefined))
-        .map(|value| {
-            if !crate::value::is_object(value) {
-                return Err(crate::value::error::throw_type_error("Invalid options"));
-            }
-            crate::execute::get_property_result(value, "overflow").and_then(|value| {
-                if matches!(value, Value::Undefined) {
-                    Ok("constrain".to_string())
-                } else {
-                    crate::conversion::to_string(&value)
-                }
-            })
-        })
-        .transpose()?
-        .unwrap_or_else(|| "constrain".to_string());
-    if overflow != "constrain" && overflow != "reject" {
-        return Err(crate::value::error::throw_range_error("Invalid overflow"));
     }
     values[1] = values[1].min(12.0);
     if values[2] > days_in_month(values[0] as i32, values[1] as u32) as f64 {
@@ -1543,13 +1384,14 @@ fn with(
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        2 if year.rem_euclid(4) == 0
-            && (year.rem_euclid(100) != 0 || year.rem_euclid(400) == 0) => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
+        .map(|date| (date - chrono::Days::new(1)).day())
+        .unwrap_or(28)
 }
 
 fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
@@ -1569,10 +1411,15 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         let calendar_name_value = crate::execute::get_property_result(options, "calendarName")?;
         if !matches!(calendar_name_value, Value::Undefined) {
             if crate::conversion::is_symbol(&calendar_name_value) {
-                return Err(crate::value::error::throw_type_error("Invalid calendarName"));
+                return Err(crate::value::error::throw_type_error(
+                    "Invalid calendarName",
+                ));
             }
             let calendar_name_text = crate::conversion::to_string(&calendar_name_value)?;
-            if !matches!(calendar_name_text.as_str(), "auto" | "always" | "never" | "critical") {
+            if !matches!(
+                calendar_name_text.as_str(),
+                "auto" | "always" | "never" | "critical"
+            ) {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid calendarName",
                 ));
@@ -1616,7 +1463,9 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         let rounding_mode_value = crate::execute::get_property_result(options, "roundingMode")?;
         if !matches!(rounding_mode_value, Value::Undefined) {
             if crate::conversion::is_symbol(&rounding_mode_value) {
-                return Err(crate::value::error::throw_type_error("Invalid roundingMode"));
+                return Err(crate::value::error::throw_type_error(
+                    "Invalid roundingMode",
+                ));
             }
             let rounding_mode_text = crate::conversion::to_string(&rounding_mode_value)?;
             if !matches!(
@@ -1631,14 +1480,18 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
                     | "halfTrunc"
                     | "trunc"
             ) {
-                return Err(crate::value::error::throw_range_error("Invalid roundingMode"));
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid roundingMode",
+                ));
             }
             rounding_mode = rounding_mode_text;
         }
         let smallest_unit = crate::execute::get_property_result(options, "smallestUnit")?;
         if !matches!(smallest_unit, Value::Undefined) {
             if crate::conversion::is_symbol(&smallest_unit) {
-                return Err(crate::value::error::throw_type_error("Invalid smallestUnit"));
+                return Err(crate::value::error::throw_type_error(
+                    "Invalid smallestUnit",
+                ));
             }
             let smallest_unit = crate::conversion::to_string(&smallest_unit)?;
             let unit = smallest_unit.strip_suffix('s').unwrap_or(&smallest_unit);
@@ -1660,13 +1513,16 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         .into_iter()
         .map(|value| crate::conversion::to_number(&value))
         .collect::<Result<Vec<_>, _>>()?;
-    let quantum = normalized_smallest_unit.as_deref().map(|unit| match unit {
-        "minute" => 60_000_000_000.0,
-        "second" => 1_000_000_000.0,
-        "millisecond" => 1_000_000.0,
-        "microsecond" => 1_000.0,
-        _ => 1.0,
-    }).or_else(|| (digits != usize::MAX).then(|| 10_f64.powi((9 - digits) as i32)));
+    let quantum = normalized_smallest_unit
+        .as_deref()
+        .map(|unit| match unit {
+            "minute" => 60_000_000_000.0,
+            "second" => 1_000_000_000.0,
+            "millisecond" => 1_000_000.0,
+            "microsecond" => 1_000.0,
+            _ => 1.0,
+        })
+        .or_else(|| (digits != usize::MAX).then(|| 10_f64.powi((9 - digits) as i32)));
     if let Some(quantum) = quantum.filter(|quantum| *quantum > 1.0) {
         let rounded = round_values(values, quantum, 1.0, &rounding_mode)?;
         values = fields(&rounded)?;
@@ -1761,6 +1617,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
+    let overflow = from_overflow_option(options)?;
     if let Value::Object(object) = value {
         let is_plain_date = object.iter().any(|(key, value)| {
             key == "\0temporal-plain-date" && value == Value::Boolean(true)
@@ -1778,7 +1635,6 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     .map(|(_, value)| value.clone())
             });
             if let [Some(year), Some(month), Some(day)] = hidden {
-                from_overflow_option(options)?;
                 return construct(&[
                     year,
                     month,
@@ -1793,38 +1649,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             }
         }
     }
-    let calendar = crate::execute::get_property_result(value, "calendar")?;
-    if !matches!(calendar, Value::Undefined) {
-        validate_calendar(&calendar)?;
-    }
-    let mut raw_fields = vec![None; 9];
-    let mut month_code = Value::Undefined;
-    for name in [
-        "day",
-        "hour",
-        "microsecond",
-        "millisecond",
-        "minute",
-        "month",
-        "monthCode",
-        "nanosecond",
-        "second",
-        "year",
-    ] {
-        let field = crate::execute::get_property_result(value, name)?;
-        if name == "monthCode" {
-            if !matches!(field, Value::Undefined) {
-                month_code = month_code_number(&field)?;
-            }
-        } else if let Some(index) = NAMES.iter().position(|candidate| *candidate == name) {
-            if !matches!(field, Value::Undefined) {
-                raw_fields[index] = Some(Value::Number(crate::conversion::to_number(&field)?.trunc()));
-            }
-        }
-    }
-    let year = raw_fields[0].clone().unwrap_or(Value::Undefined);
-    let month = raw_fields[1].clone().unwrap_or(Value::Undefined);
-    let day = raw_fields[2].clone().unwrap_or(Value::Undefined);
+    let year = crate::execute::get_property_result(value, "year")?;
+    let day = crate::execute::get_property_result(value, "day")?;
+    let month = crate::execute::get_property_result(value, "month")?;
+    let month_code = crate::execute::get_property_result(value, "monthCode")?;
     if matches!(year, Value::Undefined)
         || matches!(day, Value::Undefined)
         || (matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined))
@@ -1836,7 +1664,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let month_code_value = if matches!(month_code, Value::Undefined) {
         None
     } else {
-        Some(month_code.clone())
+        Some(month_code_number(&month_code)?)
     };
     let month = if matches!(month, Value::Undefined) {
         month_code_value
@@ -1845,9 +1673,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     } else {
         month
     };
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
+    if !matches!(calendar, Value::Undefined) {
+        validate_calendar(&calendar)?;
+    }
     let mut fields = vec![year, month, day];
-    for field in raw_fields.iter().skip(3) {
-        let field = field.clone().unwrap_or(Value::Undefined);
+    for name in &NAMES[3..] {
+        let field = crate::execute::get_property_result(value, name)?;
         fields.push(if matches!(field, Value::Undefined) {
             Value::Number(0.0)
         } else {
@@ -1857,8 +1689,8 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let mut numeric = fields
         .iter()
         .map(crate::conversion::to_number)
+        .map(|value| value.map(f64::trunc))
         .collect::<Result<Vec<_>, _>>()?;
-    let overflow = from_overflow_option(options)?;
     if let Some(month_code) = month_code_value {
         let month_code = crate::conversion::to_number(&month_code)?;
         if !(1.0..=12.0).contains(&month_code) {
@@ -1997,8 +1829,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
                 continue;
             }
             if key == "u-ca" {
-                if value.is_empty() || !value.eq_ignore_ascii_case("iso8601")
-                {
+                if value.is_empty() || !value.eq_ignore_ascii_case("iso8601") {
                     return Err(crate::value::error::throw_range_error("Invalid annotation"));
                 }
                 calendar_annotation = true;
@@ -2037,15 +1868,6 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             date.split('-').collect::<Vec<_>>()
         };
     if date_fields.len() != 3 {
-        return Err(crate::value::error::throw_range_error("Invalid date-time"));
-    }
-    if (!date_fields[0].starts_with(['+', '-']) && date_fields[0].len() != 4)
-        || (date_fields[0].starts_with(['+', '-']) && date_fields[0].len() != 7)
-        || date_fields[1].len() != 2
-        || date_fields[2].len() != 2
-        || !date_fields[1].bytes().all(|byte| byte.is_ascii_digit())
-        || !date_fields[2].bytes().all(|byte| byte.is_ascii_digit())
-    {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     if date_fields[0] == "-000000" {
@@ -2102,17 +1924,12 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     } else {
         Vec::new()
     };
-    if colon_clock
-        && clock
-            .iter()
-            .any(|part| part.len() != 2 || !part.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        return Err(crate::value::error::throw_range_error("Invalid date-time"));
-    }
     if clock.is_empty() || clock.len() > 3 || fraction.len() > 9 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
-    if (clock.len() < 3 && !fraction.is_empty()) || (!colon_clock && clock.len() == 1 && !fraction.is_empty()) {
+    if (clock.len() < 3 && !fraction.is_empty())
+        || (!colon_clock && clock.len() == 1 && !fraction.is_empty())
+    {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     let mut fields = date_fields
@@ -2120,7 +1937,10 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .chain(clock)
         .map(|part| part.parse::<f64>().unwrap_or(f64::NAN))
         .collect::<Vec<_>>();
-    if fields.iter().any(|value| !value.is_finite() || value.fract() != 0.0) {
+    if fields
+        .iter()
+        .any(|value| !value.is_finite() || value.fract() != 0.0)
+    {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     while fields.len() < 6 {
