@@ -23,6 +23,17 @@ fn main() -> ExitCode {
         print_usage();
         return ExitCode::from(64);
     };
+    if script == "-e" || script == "--eval" {
+        let source = args.get(1).cloned().unwrap_or_default();
+        let outcome = quench_node::run::eval_script(
+            &source,
+            std::sync::Arc::new(|line| println!("{line}")),
+        );
+        if let Some(error) = &outcome.error {
+            eprintln!("{error}");
+        }
+        return ExitCode::from(outcome.exit_code.clamp(0, 255) as u8);
+    }
     let path = Path::new(script);
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
