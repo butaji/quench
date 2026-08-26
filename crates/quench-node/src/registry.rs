@@ -514,8 +514,10 @@ pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0
 pub const SPEC_CP_EXEC: NodeSpec = NodeSpec::new("child_process:exec", 0x1e02);
 pub const SPEC_CP_EXECFILE: NodeSpec = NodeSpec::new("child_process:execFile", 0x1e03);
 pub const SPEC_CP_SPAWN: NodeSpec = NodeSpec::new("child_process:spawn", 0x1e03);
-pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec = NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
-pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec = NodeSpec::new("child_process:spawnOutputEmit", 0x1e05);
+pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
+    NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
+pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec =
+    NodeSpec::new("child_process:spawnOutputEmit", 0x1e05);
 pub const SPEC_URL_PATH_TO_FILE_URL: NodeSpec = NodeSpec::new("url:pathToFileURL", 0x0505);
 pub const SPEC_URL_GET_HREF: NodeSpec = NodeSpec::new("url:get:href", 0x0506);
 pub const SPEC_URL_GET_PROTOCOL: NodeSpec = NodeSpec::new("url:get:protocol", 0x0507);
@@ -800,14 +802,8 @@ pub fn namespace_bindings(
         "__quench_event_source".to_string(),
         crate::host::capability(crate::registry::SPEC_EVENT_SOURCE),
     ));
-    out.push((
-        "atob".to_string(),
-        crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
-    ));
-    out.push((
-        "btoa".to_string(),
-        crate::host::capability(crate::registry::SPEC_BUFFER_BTOA),
-    ));
+    out.push(("atob".to_string(), crate::modules::buffer::atob_value()));
+    out.push(("btoa".to_string(), crate::modules::buffer::btoa_value()));
     out.push((
         "global".to_string(),
         crate::host::namespace_object_from_pairs(vec![]),
