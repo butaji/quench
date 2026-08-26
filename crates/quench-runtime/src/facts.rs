@@ -15,7 +15,14 @@ pub(crate) enum DirectConstructorSource {
     Argument(u16),
     Boolean(bool),
     Integer(i32),
-    GuardedArray { length_slot: u16 },
+    GuardedArray {
+        length_slot: u16,
+    },
+    NullishSelectCapture {
+        argument: u16,
+        nullish_slot: u16,
+        other_slot: u16,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
