@@ -534,27 +534,47 @@ fn plain_method(
 }
 
 fn plain_data_property(receiver: &crate::value::Value, name: &str) -> Option<crate::value::Value> {
-    let mut owner = crate::locals::resolved_replacement(receiver.clone());
-    for _ in 0..4 {
-        let crate::value::Value::Object(object) = &owner else {
-            return None;
-        };
-        if object.has_replacement() {
-            return None;
+    let mut owner = if matches!(receiver, crate::value::Value::Object(object) if !object.has_replacement())
+    {
+        match inspect_plain_property(receiver, name)? {
+            Ok(value) => return Some(value),
+            Err(prototype) => prototype,
         }
-        let shadows = object.hot_properties().names().any(|candidate| {
-            candidate == name
-                || crate::builtins::is_deleted_key_for(candidate, name)
-                || crate::builtins::is_descriptor_key_for(candidate, name)
-        });
-        if shadows {
-            return crate::vm::proven_own_data(&owner, name)
-                .map(crate::locals::resolved_replacement);
+    } else {
+        crate::locals::resolved_replacement(receiver.clone())
+    };
+    for _ in 1..4 {
+        match inspect_plain_property(&owner, name)? {
+            Ok(value) => return Some(value),
+            Err(prototype) => owner = crate::locals::resolved_replacement(prototype),
         }
-        owner = match crate::vm::proven_own_data(&owner, "\0prototype")? {
-            crate::value::Value::ObjectAlias(alias) => crate::value::Value::Object(alias.target()?),
-            prototype => crate::locals::resolved_replacement(prototype),
-        };
     }
     None
+}
+
+fn inspect_plain_property(
+    owner: &crate::value::Value,
+    name: &str,
+) -> Option<Result<crate::value::Value, crate::value::Value>> {
+    let crate::value::Value::Object(object) = &owner else {
+        return None;
+    };
+    if object.has_replacement() {
+        return None;
+    }
+    let shadows = object.hot_properties().names().any(|candidate| {
+        candidate == name
+            || crate::builtins::is_deleted_key_for(candidate, name)
+            || crate::builtins::is_descriptor_key_for(candidate, name)
+    });
+    if shadows {
+        return crate::vm::proven_own_data(owner, name)
+            .map(crate::locals::resolved_replacement)
+            .map(Ok);
+    }
+    let prototype = match crate::vm::proven_own_data(owner, "\0prototype")? {
+        crate::value::Value::ObjectAlias(alias) => crate::value::Value::Object(alias.target()?),
+        prototype => prototype,
+    };
+    Some(Err(prototype))
 }
