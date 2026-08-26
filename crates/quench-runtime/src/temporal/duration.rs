@@ -342,6 +342,13 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             "largestUnit must not be smaller than smallestUnit",
         ));
     }
+    if index >= 4
+        && !has_calendar
+        && relative_is_zoned(options)
+        && largest_unit(options).is_none_or(|largest| largest >= 4)
+    {
+        return zoned_time_round(object, options, index);
+    }
     if largest_unit(options).is_some()
         && largest < index
         && largest <= 2
@@ -430,6 +437,73 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     fixed_round(object, options, largest, index)
 }
 
+fn relative_is_zoned(options: Option<&Value>) -> bool {
+    let Some(Value::Object(object)) = options else {
+        return false;
+    };
+    let Some((_, relative)) = object.iter().find(|(key, _)| key == "relativeTo") else {
+        return false;
+    };
+    let resolved = crate::locals::resolved_replacement(relative.clone());
+    matches!(
+        resolved,
+        Value::Object(ref object)
+            if object.iter().any(|(key, value)| {
+                key == "\0prototype"
+                    && matches!(
+                        value,
+                        Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+                    )
+            })
+    )
+}
+
+fn zoned_time_round(
+    object: &crate::value::ObjectData,
+    options: Option<&Value>,
+    index: usize,
+) -> Result<Value, VmError> {
+    let scales = [
+        3_600_000_000_000_i128,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
+    ];
+    let total = [
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ]
+    .iter()
+    .zip(scales)
+    .map(|(name, scale)| duration_field(object, name) * scale)
+    .sum::<i128>();
+    let increment = rounding_increment(options, index)? as i128;
+    let quantum = scales[index - 4] * increment;
+    let rounded = round_integer(total, quantum, &rounding_mode(options)?) * quantum;
+    let mut fields = vec![Value::Number(0.0); 10];
+    fields[0] = Value::Number(duration_field(object, "years") as f64);
+    fields[1] = Value::Number(duration_field(object, "months") as f64);
+    fields[2] = Value::Number(duration_field(object, "weeks") as f64);
+    fields[3] = Value::Number(duration_field(object, "days") as f64);
+    let sign = rounded.signum();
+    let mut remainder = rounded.abs();
+    for unit in 4..=index {
+        let value = remainder / scales[unit - 4];
+        fields[unit] = Value::Number((value * sign) as f64);
+        remainder %= scales[unit - 4];
+    }
+    if remainder != 0 {
+        fields[3] = Value::Number(fields[3].as_number().unwrap_or(0.0) + (remainder * sign) as f64);
+    }
+    construct(&fields)
+}
+
 fn calendar_time_round(
     object: &crate::value::ObjectData,
     relative: &Value,
@@ -460,9 +534,15 @@ fn calendar_time_round(
         + duration_field(object, "nanoseconds") as f64 / 86_400_000_000_000.0;
     let mut cursor = start;
     let mut fields = vec![Value::Number(0.0); 10];
-    let preserve = largest_unit(options).is_none();
-    if preserve {
+    let largest = largest_unit(options);
+    if largest.is_none() || largest.is_some_and(|largest| largest <= 1) {
         for unit in 0..2 {
+            if unit == 0 && largest.is_some_and(|largest| largest > 0) {
+                continue;
+            }
+            if unit == 1 && largest.is_some_and(|largest| largest > 1) {
+                continue;
+            }
             let mut count = 0_i64;
             loop {
                 let next = shift_calendar(cursor, unit, sign as i32)?;
@@ -479,6 +559,23 @@ fn calendar_time_round(
             }
             fields[unit] = Value::Number(count as f64);
         }
+    }
+    if largest == Some(2) {
+        let mut count = 0_i64;
+        loop {
+            let next = shift_calendar(cursor, 2, sign as i32)?;
+            let reached = if sign >= 0.0 {
+                next <= target
+            } else {
+                next >= target
+            };
+            if !reached {
+                break;
+            }
+            cursor = next;
+            count += sign as i64;
+        }
+        fields[2] = Value::Number(count as f64);
     }
     let remaining_days = (target - cursor).num_days() as f64 + subday;
     let total_nanos = (remaining_days * 86_400_000_000_000.0) as i128;
@@ -920,6 +1017,9 @@ fn calendar_round(
         if let Some(largest) = largest_unit(options).filter(|largest| *largest < unit) {
             let mut larger_cursor = start;
             for larger_unit in largest..unit {
+                if larger_unit == 2 && unit >= 3 {
+                    continue;
+                }
                 let mut larger_count = 0_i64;
                 loop {
                     let next = shift_calendar(larger_cursor, larger_unit, sign as i32)?;
@@ -945,6 +1045,46 @@ fn calendar_round(
                 let residual_days = (target - larger_cursor).num_days() as i128 * sign as i128;
                 fields[2] =
                     Value::Number(round_integer(residual_days, 7, &rounding_mode(options)?) as f64);
+            }
+            if unit == 1 && largest == 0 {
+                let mut residual_cursor = larger_cursor;
+                let mut residual_count = 0_i64;
+                loop {
+                    let next = shift_calendar(residual_cursor, 1, sign as i32)?;
+                    let reached = if sign >= 0.0 {
+                        next <= target
+                    } else {
+                        next >= target
+                    };
+                    if !reached {
+                        break;
+                    }
+                    residual_cursor = next;
+                    residual_count += sign as i64;
+                }
+                fields[1] = Value::Number(residual_count as f64);
+            }
+            if unit == 2 && largest == 0 {
+                let mut residual_cursor = larger_cursor;
+                let mut residual_count = 0_i64;
+                loop {
+                    let next = shift_calendar(residual_cursor, 2, sign as i32)?;
+                    let reached = if sign >= 0.0 {
+                        next <= target
+                    } else {
+                        next >= target
+                    };
+                    if !reached {
+                        break;
+                    }
+                    residual_cursor = next;
+                    residual_count += sign as i64;
+                }
+                fields[2] = Value::Number(residual_count as f64);
+            }
+            if unit == 3 && largest <= 1 {
+                fields[2] = Value::Number(0.0);
+                fields[3] = Value::Number((target - larger_cursor).num_days() as f64 * sign as f64);
             }
             if unit == 3 && largest == 2 {
                 fields[2] = Value::Number((count / 7) as f64);
