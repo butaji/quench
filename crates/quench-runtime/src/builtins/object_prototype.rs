@@ -116,7 +116,12 @@ fn function_prototype(function: &crate::value::FunctionValue) -> Value {
             return prototype.clone();
         }
         let realm = crate::construct::function_realm_id(function);
-        return crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype);
+        let prototype = if matches!(function.kind, crate::ops::FunctionKind::Generator) {
+            Builtin::AsyncGeneratorFunctionPrototype
+        } else {
+            Builtin::AsyncFunctionPrototype
+        };
+        return crate::vm::realm_intrinsic_for(realm, prototype);
     }
     internal_prototype(
         &function.properties.borrow()[..],
