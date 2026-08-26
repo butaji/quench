@@ -144,4 +144,3 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         _ => set_property_tail(target, key, value),
     }
 }
-

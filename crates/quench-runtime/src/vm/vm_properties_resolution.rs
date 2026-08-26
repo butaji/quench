@@ -632,7 +632,11 @@ fn descriptor_property_result(
     }
     if let Value::Array(values) = value {
         if key == "length" {
-            return Some(Ok(Value::Number(values.logical_len() as f64)));
+            return Some(Ok(if values.is_arguments() {
+                values.arguments_length_value()
+            } else {
+                Value::Number(values.logical_len() as f64)
+            }));
         }
         if let Ok(index) = key.parse::<usize>() {
             return values.get_index(index).map(Ok);

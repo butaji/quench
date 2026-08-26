@@ -291,6 +291,9 @@ fn prepare_array_length_definition(
     if key != "length" {
         return Ok(None);
     }
+    if values.is_arguments() {
+        return Ok(None);
+    }
     let Some(value) = array_descriptor_value(descriptor, "value") else {
         return Ok(None);
     };
@@ -407,7 +410,7 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         if values.is_arguments() {
             // Per spec 10.6 / Annex 10.6, arguments.length's descriptor is a plain
             // value property. Keep the live override visible through every alias.
-            Rc::make_mut(&mut values).set_arguments_length_override(value.clone());
+            values.set_arguments_length_override(value.clone());
             return Value::Array(values);
         }
         let length = array_length_number(&value) as usize;
