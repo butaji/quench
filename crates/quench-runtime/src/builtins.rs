@@ -345,7 +345,10 @@ pub fn read_intrinsic_prototype_override(builtin: Builtin) -> Option<Value> {
 /// Drop every cached intrinsic-property override and recorded deletion so a
 /// fresh program can start with a clean prototype view.
 pub fn reset_intrinsic_prototype_state() {
-    overrides::reset()
+    overrides::reset();
+    GENERATOR_PROTOTYPES.with(|cell| cell.borrow_mut().clear());
+    ASYNC_ITERATOR_PROTOTYPES.with(|cell| cell.borrow_mut().clear());
+    ASYNC_GENERATOR_PROTOTYPES.with(|cell| cell.borrow_mut().clear());
 }
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
