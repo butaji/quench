@@ -660,7 +660,7 @@ fn date_parts(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
     Ok((year, month, day))
 }
 
-fn date_serial(year: f64, month: f64, day: f64) -> i64 {
+pub(crate) fn date_serial(year: f64, month: f64, day: f64) -> i64 {
     let year = year as i64 - i64::from(month <= 2.0);
     let era = year.div_euclid(400);
     let year_of_era = year - era * 400;
