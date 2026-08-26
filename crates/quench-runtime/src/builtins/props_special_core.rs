@@ -164,6 +164,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDateTimePrototype, "constructor") => {
             Some(Value::Builtin(TemporalPlainDateTime))
         }
+        (TemporalPlainDateTimePrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Temporal.PlainDateTime".into()))
+        }
         (TemporalPlainDateTimePrototype, "calendarId") => {
             Some(Value::Builtin(TemporalPlainDateTimeCalendarIdGetter))
         }
