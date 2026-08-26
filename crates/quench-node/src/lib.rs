@@ -22,6 +22,7 @@ pub mod envelope;
 pub mod esm_imports;
 pub mod host;
 pub mod modules;
+pub mod polyfills;
 pub mod registry;
 pub mod run;
 

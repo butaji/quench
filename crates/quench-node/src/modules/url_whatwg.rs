@@ -223,11 +223,22 @@ fn method_descriptor(value: Value) -> Value {
 
 /// Construct a URL instance from a parsed URL.
 pub fn make_instance(state: &Rc<RefCell<HostState>>, parsed: &Parsed) -> Value {
-    let (_, prototype) = url_class(state);
-    host_api::object(vec![
-        ("\0prototype".to_string(), prototype),
-        ("\0url".to_string(), Value::String(parsed.href())),
-    ])
+    let (_, native_prototype) = url_class(state);
+    let prototype = {
+        let global = quench_runtime::vm::current_global_object();
+        let constructor = execute::get_property(&global, "URL");
+        let candidate = execute::get_property(&constructor, "prototype");
+        if matches!(candidate, Value::Object(_)) {
+            candidate
+        } else {
+            native_prototype
+        }
+    };
+    let object = host_api::object(vec![(
+        "\0url".to_string(),
+        Value::String(parsed.href()),
+    )]);
+    execute::set_prototype_of(&object, &prototype).unwrap_or(object)
 }
 
 /// `new URL(input[, base])`.
