@@ -14,6 +14,9 @@ pub(crate) fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::TemporalPlainTimePrototype && key == "Symbol.toStringTag" {
         return false;
     }
+    if builtin == Builtin::TemporalNow && key == "Symbol.toStringTag" {
+        return false;
+    }
     if builtin == Builtin::DatePrototype && key == "Symbol.toPrimitive" {
         return false;
     }
