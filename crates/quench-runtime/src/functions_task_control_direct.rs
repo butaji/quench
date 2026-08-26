@@ -8,7 +8,7 @@ struct TaskControlRunPlan {
 struct TaskControlWords<'a> {
     state: &'a crate::register_file::SlotWord,
     queue: &'a crate::register_file::SlotWord,
-    task: &'a crate::register_file::SlotWord,
+    task: Option<&'a crate::register_file::SlotWord>,
     direct: Option<&'a DirectTaskRunner>,
 }
 
@@ -16,7 +16,7 @@ fn task_control_words<'a>(
     tcb: &'a crate::value::ObjectData,
     direct: Option<&'a DirectTaskRunner>,
 ) -> Option<TaskControlWords<'a>> {
-    if tcb.has_replacement() {
+    if direct.is_none() && tcb.has_replacement() {
         return None;
     }
     let state = direct
@@ -26,10 +26,12 @@ fn task_control_words<'a>(
         .map(|runner| runner.word(runner.queue))
         .or_else(|| writable_own_word(tcb, "queue"))?;
     let task = direct
-        .map(|runner| runner.word(runner.task_word))
-        .or_else(|| crate::vm::proven_own_word(tcb, "task"))?;
-    let pointer = task.object_or_null_ptr().flatten();
-    let direct = direct.filter(|runner| pointer.is_some_and(|task| runner.matches(task)));
+        .is_none()
+        .then(|| crate::vm::proven_own_word(tcb, "task"))
+        .flatten();
+    if direct.is_none() && task.is_none() {
+        return None;
+    }
     Some(TaskControlWords {
         state,
         queue,
@@ -85,7 +87,10 @@ fn execute_task_control_run(
     let outcome = match words.direct {
         Some(runner) => execute_direct_task(runner, packet, task_runners, linked_scheduler),
         None => {
-            let Some(outcome) = execute_dynamic_task(words.task.load(), packet)? else {
+            let Some(task) = words.task else {
+                return Ok(None);
+            };
+            let Some(outcome) = execute_dynamic_task(task.load(), packet)? else {
                 return Ok(None);
             };
             outcome
