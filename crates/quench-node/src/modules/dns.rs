@@ -44,6 +44,19 @@ pub fn lookup_addresses_handler(
     lookup_addresses(state, args)
 }
 
+pub fn dns_exception(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let message = args.get(1).cloned().unwrap_or(Value::Undefined);
+    Ok(host_api::object(vec![
+        ("name".into(), Value::String("DNSException".into())),
+        ("message".into(), message),
+        ("code".into(), Value::String("EAI_MEMORY".into())),
+        ("stack".into(), Value::String("DNSException\n    at Object".into())),
+    ]))
+}
+
 fn resolve_address(host: &str) -> Value {
     use std::net::ToSocketAddrs;
     let mut iter = (host, 0u16).to_socket_addrs().ok();
