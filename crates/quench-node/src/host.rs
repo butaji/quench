@@ -26,7 +26,7 @@ pub fn scheduler_capability(kind: u16) -> Value {
 
 /// Canonical process.cpuUsage host capability used by the Rust process module.
 pub fn process_cpu_usage_capability() -> Value {
-    scheduler_capability(2110)
+    capability(crate::registry::SPEC_PROCESS_CPU_USAGE)
 }
 
 pub struct NodeHost {
@@ -141,7 +141,7 @@ impl NodeHost {
 }
 
 impl Host for NodeHost {
-    fn call(
+fn call(
         &self,
         capability: HostCapabilityRef,
         receiver: Option<&Value>,
@@ -196,6 +196,7 @@ fn dispatch(
 }
 
 fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    eprintln!("NODE_CONSTRUCT cap={cap}");
     if cap == crate::registry::SPEC_BUFFER_INDEX_OF.cap
         || cap == crate::registry::SPEC_BUFFER_LAST_INDEX_OF.cap
     {
