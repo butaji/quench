@@ -228,6 +228,15 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
     }
   });
 };
+const __quenchDnsResolveNs = (hostname, callback) => {
+  if (typeof hostname !== "string") {
+    throw Object.assign(new TypeError(`The "name" argument must be of type string. Received ${hostname}`), { code: "ERR_INVALID_ARG_TYPE" });
+  }
+  if (typeof callback !== "function") {
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
+  }
+  queueMicrotask(() => callback(null, []));
+};
 const __quenchDnsLookupService = function __quenchDnsLookupService(
   address,
   port,
@@ -357,6 +366,7 @@ const __quenchDns = {
   lookupService: __quenchDnsLookupService,
   reverse: __quenchDnsReverse,
   resolveMx: __quenchDnsResolveMx,
+  resolveNs: __quenchDnsResolveNs,
   Resolver: __quenchResolver,
   promises: {
     Resolver: __quenchResolver,
@@ -401,6 +411,14 @@ const __quenchDns = {
           (error, value) => error ? reject(error) : resolve(value),
         )
       ),
+    resolveNs: (hostname) => {
+      if (typeof hostname !== "string") {
+        throw Object.assign(new TypeError(`The "name" argument must be of type string. Received ${hostname}`), { code: "ERR_INVALID_ARG_TYPE" });
+      }
+      return new Promise((resolve, reject) =>
+        __quenchDnsResolveNs(hostname, (error, value) => error ? reject(error) : resolve(value))
+      );
+    },
     lookupService: (address, ...args) => {
       const port = args[0];
       if (typeof address !== "string" || args.length === 0) {
