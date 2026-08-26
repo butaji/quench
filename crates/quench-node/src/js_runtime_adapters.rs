@@ -246,6 +246,19 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
         )
         .with_host_value("process", process_module())
         .with_host_value(
+            "__quench_pid",
+            Value::Number(std::process::id() as f64),
+        )
+        .with_host_value(
+            "__quench_ppid",
+            Value::Number(
+                std::env::var("QUENCH_PARENT_PID")
+                    .ok()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or_else(process_parent_id) as f64,
+            ),
+        )
+        .with_host_value(
             "__filename",
             Value::String(
                 path.map(|path| path.to_string_lossy().into_owned())
@@ -372,4 +385,14 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
             .map_err(|error| error.render().into())
     }
 
+}
+
+#[cfg(unix)]
+fn process_parent_id() -> u32 {
+    std::os::unix::process::parent_id()
+}
+
+#[cfg(not(unix))]
+fn process_parent_id() -> u32 {
+    0
 }
