@@ -218,6 +218,7 @@ enum Snapshot {
         iterators: Vec<Value>,
         padding: Vec<Value>,
         mode: u8,
+        keys: Option<Vec<String>>,
         started: bool,
         done: bool,
     },
@@ -280,12 +281,14 @@ fn snapshot_reentry(data: &IteratorData) -> Option<Snapshot> {
             iterators,
             padding,
             mode,
+            keys,
             done,
             started,
         } => Snapshot::Zip {
             iterators: iterators.clone(),
             padding: padding.clone(),
             mode: *mode,
+            keys: keys.clone(),
             started: *started,
             done: *done,
         },
@@ -409,9 +412,11 @@ fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::ex
             iterators,
             padding,
             mode,
+            keys,
             started,
             done,
-        } => zip_step(iterators, padding, *mode, started, done).map(StepTarget::Value),
+        } => zip_step(iterators, padding, keys.as_deref(), *mode, started, done)
+            .map(StepTarget::Value),
     };
     write_snapshot(data, &owned);
     Ok(Some(result?))
@@ -463,6 +468,7 @@ fn step_target_state(
 fn zip_step(
     iterators: &[Value],
     padding: &[Value],
+    keys: Option<&[String]>,
     mode: u8,
     started: &mut bool,
     done: &mut bool,
@@ -510,7 +516,14 @@ fn zip_step(
         }
         return Ok(None);
     }
-    Ok(Some(Value::array(values)))
+    Ok(Some(match keys {
+        Some(keys) => Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+            std::iter::once(("\0prototype".to_string(), Value::Null))
+                .chain(keys.iter().cloned().zip(values))
+                .collect(),
+        ))),
+        None => Value::array(values),
+    }))
 }
 
 fn close_strict(iterators: &[Value], open: &[bool]) -> crate::execute::VmError {
