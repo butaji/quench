@@ -1,7 +1,7 @@
 //! Promise implementation with microtask queue.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
     rc::Rc,
 };
@@ -17,6 +17,94 @@ use crate::{
 
 #[path = "promise_constructor.rs"]
 mod promise_constructor;
+
+struct CapabilityState {
+    resolve: Option<Value>,
+    reject: Option<Value>,
+}
+
+thread_local! {
+    static NEXT_CAPABILITY_ID: Cell<u64> = const { Cell::new(1) };
+    static CAPABILITIES: RefCell<HashMap<u64, CapabilityState>> = RefCell::new(HashMap::new());
+}
+
+fn capability_id(receiver: Option<&Value>) -> Option<u64> {
+    let Value::Number(value) = receiver? else {
+        return None;
+    };
+    (*value >= 1.0 && value.is_finite() && value.fract() == 0.0).then_some(*value as u64)
+}
+
+fn capability_executor(id: u64, arguments: &[Value]) -> Result<Value, VmError> {
+    CAPABILITIES.with(|capabilities| {
+        let mut capabilities = capabilities.borrow_mut();
+        let Some(state) = capabilities.get_mut(&id) else {
+            return Err(crate::vm::not_callable());
+        };
+        if state.resolve.is_some() || state.reject.is_some() {
+            return Err(crate::value::error::throw_type_error(
+                "Promise capability executor already called",
+            ));
+        }
+        let resolve = arguments.first().cloned().unwrap_or(Value::Undefined);
+        let reject = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+        if !matches!(resolve, Value::Undefined) {
+            state.resolve = Some(resolve);
+        }
+        if !matches!(reject, Value::Undefined) {
+            state.reject = Some(reject);
+        }
+        Ok(Value::Undefined)
+    })
+}
+
+fn capability_executor_function(id: u64, target: Builtin) -> Value {
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
+        target: Value::Builtin(target),
+        receiver: Value::Number(id as f64),
+        arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
+    }))
+}
+
+pub(crate) fn new_promise_capability(
+    constructor: &Value,
+) -> Result<(Value, Value, Value), VmError> {
+    let id = NEXT_CAPABILITY_ID.with(|next| {
+        let id = next.get();
+        next.set(id.wrapping_add(1).max(1));
+        id
+    });
+    CAPABILITIES.with(|capabilities| {
+        capabilities.borrow_mut().insert(
+            id,
+            CapabilityState {
+                resolve: None,
+                reject: None,
+            },
+        );
+    });
+    let executor = capability_executor_function(id, Builtin::PromiseResolve);
+    let result = crate::construct::construct_value(constructor, &[executor]);
+    let state = CAPABILITIES.with(|capabilities| capabilities.borrow_mut().remove(&id));
+    let result = result?;
+    let Some(CapabilityState {
+        resolve: Some(resolve),
+        reject: Some(reject),
+    }) = state
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Promise capability executor did not provide callable functions",
+        ));
+    };
+    if !crate::conversion::is_callable(&resolve) || !crate::conversion::is_callable(&reject) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise capability functions are not callable",
+        ));
+    }
+    Ok((result, resolve, reject))
+}
 
 include!("promise_combinators.rs");
 include!("promise_finally.rs");
@@ -85,12 +173,13 @@ fn process_then_actions(
             continue;
         };
         promise_phase(&result_promise, "before");
-        let completion = match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {
-            Ok(Value::Promise(next)) => adopt_promise(&result_promise, &next),
-            Ok(value) => resolve_promise(&result_promise, value),
-            Err(VmError::Thrown(reason)) => reject_promise(&result_promise, reason),
-            Err(_) => reject_promise(&result_promise, Value::Undefined),
-        };
+        let completion =
+            match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {
+                Ok(Value::Promise(next)) => adopt_promise(&result_promise, &next),
+                Ok(value) => resolve_promise(&result_promise, value),
+                Err(VmError::Thrown(reason)) => reject_promise(&result_promise, reason),
+                Err(_) => reject_promise(&result_promise, Value::Undefined),
+            };
         let _ = completion;
         promise_phase(&result_promise, "after");
     }
@@ -307,21 +396,22 @@ fn queue_promise(promise: &Rc<PromiseData>) {
 
 pub(crate) fn promise_created(promise: &Rc<PromiseData>) {
     let context = crate::vm::current_context();
-    let Some(host) = context.host_handle() else { return; };
+    let Some(host) = context.host_handle() else {
+        return;
+    };
     let descriptor = crate::ops::HostCapabilityRef {
         realm: context.realm(),
         kind: crate::ops::HostCapabilityKind::PromiseHook,
     };
     let trigger = PROMISE_TRIGGER.with(|slot| slot.borrow().clone());
-    let mut args = vec![Value::String("init".into()), Value::Promise(Rc::clone(promise))];
+    let mut args = vec![
+        Value::String("init".into()),
+        Value::Promise(Rc::clone(promise)),
+    ];
     if let Some(trigger) = trigger {
         args.push(Value::Promise(trigger));
     }
-    let _ = host.call(
-        descriptor,
-        None,
-        &args,
-    );
+    let _ = host.call(descriptor, None, &args);
 }
 
 pub(crate) fn promise_resolved(promise: &Rc<PromiseData>) {
@@ -336,7 +426,10 @@ pub(crate) fn promise_resolved(promise: &Rc<PromiseData>) {
     let _ = host.call(
         descriptor,
         None,
-        &[Value::String("resolve".into()), Value::Promise(Rc::clone(promise))],
+        &[
+            Value::String("resolve".into()),
+            Value::Promise(Rc::clone(promise)),
+        ],
     );
 }
 
@@ -352,7 +445,10 @@ pub(crate) fn promise_phase(promise: &Rc<PromiseData>, event: &str) {
     let _ = host.call(
         descriptor,
         None,
-        &[Value::String(event.to_owned()), Value::Promise(Rc::clone(promise))],
+        &[
+            Value::String(event.to_owned()),
+            Value::Promise(Rc::clone(promise)),
+        ],
     );
 }
 
@@ -375,11 +471,10 @@ pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
     promise_resolved(promise);
     queue_promise(promise);
     if !promise.rejection_handled.get() && !promise.unhandled_queued.replace(true) {
-        crate::promise::queue_unhandled_rejection(Rc::clone(promise), promise
-            .result
-            .borrow()
-            .clone()
-            .unwrap_or(Value::Undefined));
+        crate::promise::queue_unhandled_rejection(
+            Rc::clone(promise),
+            promise.result.borrow().clone().unwrap_or(Value::Undefined),
+        );
     }
 }
 
@@ -490,6 +585,9 @@ pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
 }
 
 fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(id) = capability_id(receiver) {
+        return capability_executor(id, arguments);
+    }
     match receiver {
         Some(Value::Builtin(Builtin::Promise)) => {
             let value = arguments.first().cloned().unwrap_or(Value::Undefined);
@@ -505,14 +603,13 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                     .then_actions
                     .borrow_mut()
                     .push((Some(resolve), Some(reject)));
-                THEN_RESULTS
-                    .with(|results| {
-                        results
-                            .borrow_mut()
-                            .entry(Rc::as_ptr(promise) as usize)
-                            .or_default()
-                            .push_back(Rc::clone(&target));
-                    });
+                THEN_RESULTS.with(|results| {
+                    results
+                        .borrow_mut()
+                        .entry(Rc::as_ptr(promise) as usize)
+                        .or_default()
+                        .push_back(Rc::clone(&target));
+                });
                 if !matches!(*promise.state.borrow(), PromiseState::Pending) {
                     queue_promise(promise);
                 }
@@ -566,6 +663,9 @@ pub fn promise_reject(_arguments: &[Value]) -> Value {
 }
 
 fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(id) = capability_id(receiver) {
+        return capability_executor(id, arguments);
+    }
     match receiver {
         Some(Value::Builtin(Builtin::Promise)) => Ok(promise_reject(arguments)),
         Some(Value::Promise(promise)) => {

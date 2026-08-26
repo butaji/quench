@@ -701,7 +701,16 @@ fn descriptor_property_result(
             return result;
         }
     }
-    if matches!(value, Value::BoundFunction(_)) {
+    if let Value::BoundFunction(bound) = value {
+        let deleted = crate::builtins::deleted_key(key);
+        let properties = bound.properties.borrow();
+        let has_own = properties
+            .iter()
+            .any(|(name, _)| name == key || name == &deleted);
+        drop(properties);
+        if has_own {
+            return Some(Ok(crate::vm::get_property(value, key)));
+        }
         let prototype = Value::Builtin(Builtin::FunctionPrototype);
         if let Ok(property) = get_property_result(&prototype, key) {
             return Some(Ok(property));
