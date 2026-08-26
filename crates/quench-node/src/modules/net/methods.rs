@@ -55,6 +55,53 @@ fn connect_with_receiver(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(path) = args
+        .first()
+        .filter(|value| matches!(value, Value::String(_)))
+    {
+        let path = execute::to_js_string(path)?;
+        if path.starts_with('/') {
+            let (object, _) = new_net_object(state, socket_props())?;
+            let error = host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("code".into(), Value::String("ENOENT".into())),
+                ("syscall".into(), Value::String("connect".into())),
+            ]);
+            let error = execute::define_property(
+                error,
+                "message",
+                host_api::object(vec![
+                    (
+                        "value".into(),
+                        Value::String(format!("connect ENOENT {path}")),
+                    ),
+                    ("enumerable".into(), Value::Boolean(false)),
+                ]),
+            )?;
+            state
+                .borrow_mut()
+                .net
+                .pending_errors
+                .push((object.clone(), error));
+            return Ok(object);
+        }
+    }
+    if let Some(options) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_)))
+    {
+        let path = execute::get_property(options, "path");
+        if !matches!(path, Value::Undefined | Value::Null) && !matches!(path, Value::String(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String("The \"path\" argument must be a string".into()),
+                ),
+            ])));
+        }
+    }
     let (port, host) = connect_target(state, args)?;
     let addr = resolve(host.as_deref().unwrap_or(LOCAL_HOST), port);
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
