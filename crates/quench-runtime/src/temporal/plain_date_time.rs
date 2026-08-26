@@ -122,7 +122,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::TemporalPlainDateTimeFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateTimeFrom => {
+            Some(from(arguments.first(), arguments.get(1)))
+        }
         crate::ops::Builtin::TemporalPlainDateTimeCalendarIdGetter
         | crate::ops::Builtin::TemporalPlainDateTimeYearGetter
         | crate::ops::Builtin::TemporalPlainDateTimeMonthGetter
@@ -209,7 +211,7 @@ fn difference(
     let left = fields(
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
     )?;
-    let right = fields(&from(other)?)?;
+    let right = fields(&from(other, None)?)?;
     let largest = if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined))
     {
         if !crate::value::is_object(options) {
@@ -222,17 +224,58 @@ fn difference(
             let text = crate::conversion::to_string(&largest_value)?;
             text.strip_suffix('s').unwrap_or(&text).to_string()
         };
+        if !matches!(
+            largest.as_str(),
+            "year"
+                | "month"
+                | "week"
+                | "day"
+                | "hour"
+                | "minute"
+                | "second"
+                | "millisecond"
+                | "microsecond"
+                | "nanosecond"
+        ) {
+            return Err(crate::value::error::throw_range_error("Invalid largestUnit"));
+        }
         let increment = crate::execute::get_property_result(options, "roundingIncrement")?;
         if !matches!(increment, Value::Undefined) {
-            let _ = crate::conversion::to_number(&increment)?;
+            let increment = crate::conversion::to_number(&increment)?;
+            if !increment.is_finite() || increment < 1.0 {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid roundingIncrement",
+                ));
+            }
         }
         let mode = crate::execute::get_property_result(options, "roundingMode")?;
         if !matches!(mode, Value::Undefined) {
-            let _ = crate::conversion::to_string(&mode)?;
+            let mode = crate::conversion::to_string(&mode)?;
+            if !matches!(
+                mode.as_str(),
+                "ceil"
+                    | "floor"
+                    | "expand"
+                    | "halfCeil"
+                    | "halfFloor"
+                    | "halfEven"
+                    | "halfExpand"
+                    | "halfTrunc"
+                    | "trunc"
+            ) {
+                return Err(crate::value::error::throw_range_error("Invalid roundingMode"));
+            }
         }
         let smallest = crate::execute::get_property_result(options, "smallestUnit")?;
         if !matches!(smallest, Value::Undefined) {
-            let _ = crate::conversion::to_string(&smallest)?;
+            let smallest = crate::conversion::to_string(&smallest)?;
+            let smallest = smallest.strip_suffix('s').unwrap_or(&smallest);
+            if !matches!(
+                smallest,
+                "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+            ) {
+                return Err(crate::value::error::throw_range_error("Invalid smallestUnit"));
+            }
         }
         largest
     } else {
@@ -598,8 +641,8 @@ fn fields(value: &Value) -> Result<Vec<f64>, VmError> {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = fields(&from(arguments.first())?)?;
-    let right = fields(&from(arguments.get(1))?)?;
+    let left = fields(&from(arguments.first(), None)?)?;
+    let right = fields(&from(arguments.get(1), None)?)?;
     Ok(Value::Number(match left.partial_cmp(&right) {
         Some(std::cmp::Ordering::Less) => -1.0,
         Some(std::cmp::Ordering::Greater) => 1.0,
@@ -610,7 +653,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
-    Ok(Value::Boolean(fields(receiver)? == fields(&from(other)?)?))
+    Ok(Value::Boolean(fields(receiver)? == fields(&from(other, None)?)?))
 }
 
 fn add(
@@ -1001,7 +1044,7 @@ fn year_text(year: i32) -> String {
     }
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let Some(value) = value else {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     };
@@ -1009,8 +1052,11 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
     if let Value::String(text) = value {
-        return parse_string(text);
+        let result = parse_string(text)?;
+        validate_from_options(options)?;
+        return Ok(result);
     }
+    validate_from_options(options)?;
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
@@ -1052,6 +1098,24 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         });
     }
     construct(&fields)
+}
+
+fn validate_from_options(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(());
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let overflow = crate::execute::get_property_result(options, "overflow")?;
+    if matches!(overflow, Value::Undefined) {
+        return Ok(());
+    }
+    let overflow = crate::conversion::to_string(&overflow)?;
+    if !matches!(overflow.as_str(), "constrain" | "reject") {
+        return Err(crate::value::error::throw_range_error("Invalid overflow"));
+    }
+    Ok(())
 }
 
 fn month_code_number(value: &Value) -> Result<Value, VmError> {
