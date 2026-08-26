@@ -468,3 +468,5 @@ test-tls-cert-ext-encoding.js
 test-tls-certificate-compression.js
 test-tls-certcb-sync-write.js
 test-tls-alpn-server-client.js
+test-tls-cli-min-version-1.3.js
+test-tls-connect-secure-context.js
