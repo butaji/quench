@@ -627,13 +627,15 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let calendar =
         calendar.ok_or_else(|| crate::value::error::throw_type_error("Missing calendar"))?;
-    if !matches!(calendar, Value::String(_) | Value::StringUnits(_))
-        || crate::conversion::is_symbol(calendar)
-    {
-        return Err(crate::value::error::throw_type_error("Invalid calendar"));
-    }
-    if !crate::temporal::plain_date::is_iso_calendar_value(calendar)? {
-        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    if !crate::temporal::plain_date::is_temporal_date_like(calendar) {
+        if !matches!(calendar, Value::String(_) | Value::StringUnits(_))
+            || crate::conversion::is_symbol(calendar)
+        {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
+        if !crate::temporal::plain_date::is_iso_calendar_value(calendar)? {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
     }
     let _calendar = crate::conversion::to_string(calendar)?;
     let values = fields(receiver)?;
