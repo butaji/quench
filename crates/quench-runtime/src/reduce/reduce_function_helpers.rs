@@ -34,7 +34,7 @@ fn function_metadata(
                     .map(|slot| (expected, slot))
             },
         ),
-        direct_constructor: crate::functions::direct_constructor_fact(function),
+        direct_constructor: crate::functions::direct_constructor_fact(function, locals),
     }
 }
 
