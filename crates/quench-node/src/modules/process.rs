@@ -310,9 +310,18 @@ pub fn set_credential(kind: &str, args: &[Value]) -> Result<Value, VmError> {
 
 /// `process.env` — a snapshot of the host environment at startup.
 fn env_object() -> Value {
-    let pairs: Vec<(String, Value)> = std::env::vars()
+    let mut pairs: Vec<(String, Value)> = std::env::vars()
         .map(|(key, value)| (key, Value::String(value)))
         .collect();
+    pairs.push(("\0quench:process_env".into(), Value::Boolean(true)));
+    pairs.push((
+        "\0quench:descriptor:\0quench:process_env".into(),
+        host_api::object(vec![
+            ("writable".into(), Value::Boolean(false)),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(false)),
+        ]),
+    ));
     host_api::object(pairs)
 }
 
