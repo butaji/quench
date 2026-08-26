@@ -251,7 +251,56 @@ fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
     matches!(
         prototype,
         crate::value::Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
-    ) || is_zoned_receiver(prototype, depth + 1)
+    ) || is_zoned_receiver(&prototype, depth + 1)
+}
+
+fn parse_calendar_identifier(
+    value: &crate::value::Value,
+) -> Result<String, crate::execute::VmError> {
+    if matches!(
+        value,
+        crate::value::Value::String(_) | crate::value::Value::StringUnits(_)
+    ) {
+        let text = crate::conversion::to_string(value)?;
+        let calendar = text
+            .split_once("[u-ca=")
+            .and_then(|(_, rest)| rest.split(']').next())
+            .unwrap_or(&text);
+        let iso_date = text
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || "-+Tt:., ".contains(ch))
+            && text.chars().any(|ch| ch.is_ascii_digit());
+        if calendar.eq_ignore_ascii_case("iso8601") || (iso_date && !text.contains("[u-ca=")) {
+            return Ok("iso8601".into());
+        }
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    }
+    if matches!(value, crate::value::Value::Object(_))
+        && matches!(
+            crate::execute::get_property_result(value, "calendarId"),
+            Ok(crate::value::Value::String(calendar)) if calendar.eq_ignore_ascii_case("iso8601")
+        )
+    {
+        return Ok("iso8601".into());
+    }
+    Err(crate::value::error::throw_type_error("Invalid calendar"))
+}
+
+fn zoned_record_with_calendar(
+    epoch: i128,
+    timezone: String,
+    calendar: String,
+) -> crate::value::Value {
+    let mut record = zoned_record(
+        epoch,
+        timezone,
+        crate::ops::Builtin::TemporalZonedDateTimePrototype,
+    );
+    if let crate::value::Value::Object(object) = &mut record {
+        std::rc::Rc::make_mut(object)
+            .set_property_in_place("calendarId", crate::value::Value::String(calendar));
+    }
+    record
 }
 
 pub(crate) fn execute(
@@ -296,6 +345,7 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeToPlainTime
                 | crate::ops::Builtin::TemporalZonedDateTimeEquals
                 | crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone
+                | crate::ops::Builtin::TemporalZonedDateTimeWithCalendar
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -605,6 +655,25 @@ mod stubs {
                 timezone,
                 crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithCalendar {
+            let calendar = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing calendar"))?;
+            let calendar = super::parse_calendar_identifier(calendar)?;
+            let epoch = property("epochNanoseconds")?;
+            let epoch = match epoch {
+                Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid epochNanoseconds")
+                })?,
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToInstant {
             return Ok(Value::Object(std::rc::Rc::new(
