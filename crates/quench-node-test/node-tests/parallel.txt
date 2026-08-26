@@ -108,11 +108,14 @@ test-url-pathtofileurl.js
 test-url-revokeobjecturl.js
 test-util-format.js
 test-util-callbackify.js
+test-util-deprecate-invalid-code.js
+test-util-exception-with-host-port.js
 test-util-inspect.js
 test-util-inspect-getters-accessing-this.js
 test-util-parse-env.js
 test-util-types.js
 test-util-types-exists.js
+test-util.js
 test-url-urltooptions.js
 test-whatwg-url-custom-deepequal.js
 test-util-inherits.js
