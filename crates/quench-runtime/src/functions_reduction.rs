@@ -459,7 +459,7 @@ pub(crate) fn reduce_expression_kind(
                     .copied()
                     .map(|slot| (expected, slot))
             }),
-            direct_constructor: direct_constructor_fact(function),
+            direct_constructor: direct_constructor_fact(function, locals),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
     ))
