@@ -359,6 +359,7 @@ impl MapData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetData {
     pub(crate) weak: bool,
+    pub(crate) extensible: Cell<bool>,
     pub(crate) frozen: Cell<bool>,
     pub values: RefCell<VecDeque<Value>>,
     pub(crate) properties: RefCell<Vec<(String, Value)>>,
@@ -371,6 +372,9 @@ impl SetData {
     }
     pub(crate) fn is_frozen(&self) -> bool {
         self.frozen.get()
+    }
+    pub(crate) fn is_extensible(&self) -> bool {
+        self.extensible.get()
     }
     pub(crate) fn prototype(&self) -> Option<Value> {
         self.prototype.borrow().clone()
