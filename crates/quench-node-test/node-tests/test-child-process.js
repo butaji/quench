@@ -9,7 +9,7 @@ const cp = require('child_process');
 const echo = cp.spawnSync('/bin/echo', ['hello', 'world']);
 assert.strictEqual(echo.status, 0, `echo status`);
 assert.ok(echo.pid > 0, 'echo pid');
-assert.strictEqual(echo.stdout.trim(), 'hello world', 'echo stdout');
+assert.strictEqual(echo.stdout.toString().trim(), 'hello world', 'echo stdout');
 
 // A non-zero exit status is surfaced via `status`, not thrown.
 const fail = cp.spawnSync('/bin/sh', ['-c', 'exit 1']);
