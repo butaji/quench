@@ -447,3 +447,8 @@ test-webcrypto-sign-verify.js
 test-webcrypto-encrypt-decrypt-aes.js
 test-webcrypto-derivebits.js
 test-webcrypto-sign-verify-ecdsa.js
+test-tls-basic-validations.js
+test-tls-cipher-list.js
+test-tls-buffersize.js
+test-tls-check-server-identity.js
+test-tls-cli-max-version-1.2.js
