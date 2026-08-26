@@ -576,6 +576,18 @@ mod stubs {
             let second = crate::conversion::to_number(
                 &crate::execute::get_property_result(value, "second").unwrap_or(Value::Number(0.0)),
             )? as i128;
+            let millisecond = crate::conversion::to_number(
+                &crate::execute::get_property_result(value, "millisecond")
+                    .unwrap_or(Value::Number(0.0)),
+            )? as i128;
+            let microsecond = crate::conversion::to_number(
+                &crate::execute::get_property_result(value, "microsecond")
+                    .unwrap_or(Value::Number(0.0)),
+            )? as i128;
+            let nanosecond = crate::conversion::to_number(
+                &crate::execute::get_property_result(value, "nanosecond")
+                    .unwrap_or(Value::Number(0.0)),
+            )? as i128;
             let timezone = super::parse_timezone_identifier(
                 &crate::execute::get_property_result(value, "timeZone")?,
             )?;
@@ -596,6 +608,10 @@ mod stubs {
                 + hour * 3_600_000_000_000
                 + minute * 60_000_000_000
                 + second * 1_000_000_000;
+            let local_epoch = local_epoch
+                + millisecond * 1_000_000
+                + microsecond * 1_000
+                + nanosecond;
             let epoch = local_epoch - super::timezone_offset_nanos(&timezone, local_epoch);
             return Ok(super::zoned_record(
                 epoch,
@@ -722,6 +738,17 @@ mod stubs {
             }) {
                 return Err(crate::value::error::throw_type_error("Invalid options"));
             }
+            let overflow = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "overflow"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::conversion::to_string(&value))
+                .transpose()?;
+            let overflow = overflow.unwrap_or_else(|| "constrain".into());
+            if overflow != "constrain" && overflow != "reject" {
+                return Err(crate::value::error::throw_range_error("Invalid overflow"));
+            }
             let value_or = |name: &str| -> Result<Value, VmError> {
                 let value = crate::execute::get_property_result(partial, name)?;
                 if matches!(value, Value::Undefined) {
@@ -738,6 +765,9 @@ mod stubs {
                 ("hour".to_string(), value_or("hour")?),
                 ("minute".to_string(), value_or("minute")?),
                 ("second".to_string(), value_or("second")?),
+                ("millisecond".to_string(), value_or("millisecond")?),
+                ("microsecond".to_string(), value_or("microsecond")?),
+                ("nanosecond".to_string(), value_or("nanosecond")?),
                 ("timeZone".to_string(), property("timeZoneId")?),
             ];
             if !matches!(month, Value::Undefined) {
@@ -747,20 +777,41 @@ mod stubs {
             } else {
                 fields.push(("month".to_string(), property("month")?));
             }
+            let year = fields
+                .iter()
+                .find(|(name, _)| name == "year")
+                .map(|(_, value)| crate::conversion::to_number(value))
+                .transpose()?
+                .unwrap_or(0.0) as i32;
+            let month = if let Some((_, value)) = fields.iter().find(|(name, _)| name == "month") {
+                crate::conversion::to_number(value)? as u32
+            } else if let Some((_, Value::String(code))) =
+                fields.iter().find(|(name, _)| name == "monthCode")
+            {
+                code.get(1..)
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            if let Some((_, day)) = fields.iter_mut().find(|(name, _)| name == "day") {
+                let day_number = crate::conversion::to_number(day)? as u32;
+                if chrono::NaiveDate::from_ymd_opt(year, month, day_number).is_none() {
+                    if overflow == "reject" {
+                        return Err(crate::value::error::throw_range_error("Invalid date"));
+                    }
+                    let mut constrained = day_number.min(31);
+                    while constrained > 1
+                        && chrono::NaiveDate::from_ymd_opt(year, month, constrained).is_none()
+                    {
+                        constrained -= 1;
+                    }
+                    *day = Value::Number(constrained as f64);
+                }
+            }
             let result = zoned_from(Some(&Value::Object(std::rc::Rc::new(
                 crate::value::ObjectData::new(fields),
             ))))?;
-            let overflow = options
-                .filter(|value| !matches!(value, Value::Undefined))
-                .map(|value| crate::execute::get_property_result(value, "overflow"))
-                .transpose()?
-                .filter(|value| !matches!(value, Value::Undefined));
-            if let Some(value) = overflow {
-                let value = crate::conversion::to_string(&value)?;
-                if value != "constrain" && value != "reject" {
-                    return Err(crate::value::error::throw_range_error("Invalid overflow"));
-                }
-            }
             return Ok(result);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone {
