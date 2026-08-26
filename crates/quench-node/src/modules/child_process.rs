@@ -136,6 +136,11 @@ pub fn spawn_sync(
     // while keeping the result in the ordinary spawnSync shape.
     if command == state.borrow().process.exec_path
         && child_args.last().map(String::as_str) == Some("child")
+        && options.is_some_and(|value| {
+            execute::get_property_result(value, "argv0")
+                .map(|value| !matches!(value, Value::Undefined))
+                .unwrap_or(false)
+        })
     {
         if let Some(options) = options {
             let value = execute::get_property_result(options, "argv0").unwrap_or(Value::Undefined);
@@ -220,6 +225,16 @@ pub fn spawn_sync(
                 })?);
             }
         }
+    }
+
+    // Re-exec children need the same process identity relation Node exposes;
+    // pass the parent as an explicit fact after option.env has been applied.
+    if is_host_exec {
+        cmd.env(
+            "QUENCH_PARENT_PID",
+            std::process::id().to_string(),
+        );
+        cmd.env("QUENCH_ARGV0", &command);
     }
 
     let mut child = match cmd
