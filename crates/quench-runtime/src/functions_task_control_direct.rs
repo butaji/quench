@@ -30,7 +30,12 @@ fn task_control_words<'a>(
         .or_else(|| crate::vm::proven_own_word(tcb, "task"))?;
     let pointer = task.object_or_null_ptr().flatten();
     let direct = direct.filter(|runner| pointer.is_some_and(|task| runner.matches(task)));
-    Some(TaskControlWords { state, queue, task, direct })
+    Some(TaskControlWords {
+        state,
+        queue,
+        task,
+        direct,
+    })
 }
 
 fn take_task_packet(
@@ -43,15 +48,23 @@ fn take_task_packet(
         return Some(crate::value::Value::Null);
     }
     let packet = words.queue.load();
-    let crate::value::Value::Object(packet_object) = &packet else { return None };
-    if packet_object.has_replacement() { return None; }
+    let crate::value::Value::Object(packet_object) = &packet else {
+        return None;
+    };
+    if packet_object.has_replacement() {
+        return None;
+    }
     let link = task_runners
         .and_then(|table| table.packet_words(packet_object).map(|words| words.link))
         .or_else(|| linked_schedule_word(packet_object, "link", packet_link_cache))?;
     let next = link.load();
     words.queue.store(next.clone());
-    let next_state = if next.is_nullish() { plan.running } else { plan.runnable };
-    words.state.store(crate::value::Value::Number(next_state));
+    let next_state = if next.is_nullish() {
+        plan.running
+    } else {
+        plan.runnable
+    };
+    words.state.store_number(next_state);
     Some(packet)
 }
 
@@ -63,7 +76,9 @@ fn execute_task_control_run(
     task_runners: Option<&DirectTaskTable>,
     linked_scheduler: Option<&LinkedSchedulerWords>,
 ) -> Result<Option<DirectTaskOutcome>, crate::execute::VmError> {
-    let Some(words) = task_control_words(tcb, direct) else { return Ok(None) };
+    let Some(words) = task_control_words(tcb, direct) else {
+        return Ok(None);
+    };
     let Some(packet) = take_task_packet(&words, plan, packet_link_cache, task_runners) else {
         return Ok(None);
     };
