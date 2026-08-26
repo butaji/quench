@@ -127,6 +127,11 @@ fn difference(
     let other = from(other)?;
     let right = epoch_number(get_epoch(Some(&other))?)?;
     let mut delta = (right - left) * direction;
+    if options
+        .is_some_and(|value| !matches!(value, Value::Undefined) && !crate::value::is_object(value))
+    {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
     let smallest = options
         .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
         .and_then(|value| match value {
@@ -140,10 +145,76 @@ fn difference(
             Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
             _ => None,
         })
-        .unwrap_or_else(|| "second".into());
+        .unwrap_or_else(|| {
+            if options.is_some_and(crate::value::is_object) && smallest != "nanosecond" {
+                smallest.clone()
+            } else {
+                "second".into()
+            }
+        });
+    if !matches!(
+        smallest.as_str(),
+        "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+    ) || !matches!(
+        largest.as_str(),
+        "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+    ) {
+        return Err(crate::value::error::throw_range_error("Invalid time unit"));
+    }
     let scale = unit_scale(&smallest)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))?;
-    delta = (delta / scale) * scale;
+    let increment = options
+        .and_then(|value| crate::execute::get_property_result(value, "roundingIncrement").ok())
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(|value| crate::conversion::to_number(&value))
+        .transpose()?
+        .unwrap_or(1.0)
+        .trunc();
+    if !increment.is_finite() || increment <= 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    let increment_maximum = match smallest.as_str() {
+        "hour" => 24_i128,
+        "minute" | "second" => 60,
+        "millisecond" | "microsecond" | "nanosecond" => 1_000,
+        _ => 0,
+    };
+    if increment as i128 >= increment_maximum || increment_maximum % increment as i128 != 0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    if unit_scale(&largest).unwrap_or(0) < scale {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid unit relationship",
+        ));
+    }
+    let rounding_mode = options
+        .and_then(|value| crate::execute::get_property_result(value, "roundingMode").ok())
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(|value| crate::conversion::to_string(&value))
+        .transpose()?
+        .unwrap_or_else(|| "trunc".into());
+    if ![
+        "ceil",
+        "floor",
+        "expand",
+        "trunc",
+        "halfCeil",
+        "halfFloor",
+        "halfExpand",
+        "halfTrunc",
+        "halfEven",
+    ]
+    .contains(&rounding_mode.as_str())
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingMode",
+        ));
+    }
+    delta = round_instant_integer(delta, scale * increment as i128, &rounding_mode);
     let mut fields = vec![Value::Number(0.0); 10];
     let scales = [
         "day",
