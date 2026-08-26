@@ -423,3 +423,4 @@ test-crypto-rsa-pss-default-salt-length.js
 test-crypto-dh.js
 test-crypto-dh-shared.js
 test-crypto-x509.js
+test-dns-memory-error.js
