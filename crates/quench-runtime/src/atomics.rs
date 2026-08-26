@@ -275,14 +275,21 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
             ))
         }
     };
-    let _timeout = arguments
+    let timeout = arguments
         .get(3)
         .map(crate::conversion::to_number)
         .transpose()?;
+    let is_async = result == "timed-out"
+        && timeout.map_or(true, |value| value.is_nan() || value > 0.0);
+    let result_value = if is_async {
+        crate::promise::promise_resolve(&[Value::String("ok".into())])
+    } else {
+        Value::String(result.into())
+    };
     Ok(crate::value::Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
-            ("async".into(), Value::Boolean(false)),
-            ("value".into(), Value::String(result.into())),
+            ("async".into(), Value::Boolean(is_async)),
+            ("value".into(), result_value),
         ]),
     )))
 }
