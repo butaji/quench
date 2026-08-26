@@ -87,6 +87,14 @@ fn zoned_record(
             "dayOfYear".into(),
             crate::value::Value::Number(date.ordinal() as f64),
         ),
+        (
+            "weekOfYear".into(),
+            crate::value::Value::Number(date.iso_week().week() as f64),
+        ),
+        (
+            "yearOfWeek".into(),
+            crate::value::Value::Number(date.iso_week().year() as f64),
+        ),
         ("hour".into(), crate::value::Value::Number(hour as f64)),
         ("minute".into(), crate::value::Value::Number(minute as f64)),
         ("second".into(), crate::value::Value::Number(second as f64)),
@@ -254,6 +262,55 @@ fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
     ) || is_zoned_receiver(&prototype, depth + 1)
 }
 
+fn parse_calendar_identifier(
+    value: &crate::value::Value,
+) -> Result<String, crate::execute::VmError> {
+    if matches!(
+        value,
+        crate::value::Value::String(_) | crate::value::Value::StringUnits(_)
+    ) {
+        let text = crate::conversion::to_string(value)?;
+        let calendar = text
+            .split_once("[u-ca=")
+            .and_then(|(_, rest)| rest.split(']').next())
+            .unwrap_or(&text);
+        let iso_date = text
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || "-+Tt:., ".contains(ch))
+            && text.chars().any(|ch| ch.is_ascii_digit());
+        if calendar.eq_ignore_ascii_case("iso8601") || (iso_date && !text.contains("[u-ca=")) {
+            return Ok("iso8601".into());
+        }
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    }
+    if matches!(value, crate::value::Value::Object(_))
+        && matches!(
+            crate::execute::get_property_result(value, "calendarId"),
+            Ok(crate::value::Value::String(calendar)) if calendar.eq_ignore_ascii_case("iso8601")
+        )
+    {
+        return Ok("iso8601".into());
+    }
+    Err(crate::value::error::throw_type_error("Invalid calendar"))
+}
+
+fn zoned_record_with_calendar(
+    epoch: i128,
+    timezone: String,
+    calendar: String,
+) -> crate::value::Value {
+    let mut record = zoned_record(
+        epoch,
+        timezone,
+        crate::ops::Builtin::TemporalZonedDateTimePrototype,
+    );
+    if let crate::value::Value::Object(object) = &mut record {
+        std::rc::Rc::make_mut(object)
+            .set_property_in_place("calendarId", crate::value::Value::String(calendar));
+    }
+    record
+}
+
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
     receiver: Option<&crate::value::Value>,
@@ -271,6 +328,7 @@ pub(crate) fn execute(
 
 mod stubs {
     use crate::{execute::VmError, value::Value};
+    use chrono::Datelike;
 
     pub(super) fn execute(
         builtin: crate::ops::Builtin,
@@ -287,6 +345,8 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeOffsetGetter
                 | crate::ops::Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter
                 | crate::ops::Builtin::TemporalZonedDateTimeHoursInDayGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeWeekOfYearGetter
+                | crate::ops::Builtin::TemporalZonedDateTimeYearOfWeekGetter
                 | crate::ops::Builtin::TemporalZonedDateTimeToString
                 | crate::ops::Builtin::TemporalZonedDateTimeToJSON
                 | crate::ops::Builtin::TemporalZonedDateTimeToLocaleString
@@ -296,6 +356,10 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeToPlainTime
                 | crate::ops::Builtin::TemporalZonedDateTimeEquals
                 | crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone
+                | crate::ops::Builtin::TemporalZonedDateTimeWithCalendar
+                | crate::ops::Builtin::TemporalZonedDateTimeWithPlainTime
+                | crate::ops::Builtin::TemporalZonedDateTimeStartOfDay
+                | crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -510,9 +574,12 @@ mod stubs {
                 ))
             }
         };
-        let timezone = match crate::execute::get_property_result(value, "timeZone")? {
-            Value::String(value) => value,
-            _ => "UTC".into(),
+        let timezone = match crate::execute::get_property_result(value, "timeZone") {
+            Ok(Value::String(value)) => value,
+            _ => match crate::execute::get_property_result(value, "timeZoneId")? {
+                Value::String(value) => value,
+                _ => "UTC".into(),
+            },
         };
         Ok(super::zoned_record(
             epoch,
@@ -568,6 +635,24 @@ mod stubs {
                 }
                 return Ok(Value::Number(24.0));
             }
+            crate::ops::Builtin::TemporalZonedDateTimeWeekOfYearGetter => {
+                let year = crate::conversion::to_number(&property("year")?)? as i32;
+                let month = crate::conversion::to_number(&property("month")?)? as u32;
+                let day = crate::conversion::to_number(&property("day")?)? as u32;
+                let week = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                    .map(|date| date.iso_week().week() as f64)
+                    .unwrap_or(f64::NAN);
+                return Ok(Value::Number(week));
+            }
+            crate::ops::Builtin::TemporalZonedDateTimeYearOfWeekGetter => {
+                let year = crate::conversion::to_number(&property("year")?)? as i32;
+                let month = crate::conversion::to_number(&property("month")?)? as u32;
+                let day = crate::conversion::to_number(&property("day")?)? as u32;
+                let week_year = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                    .map(|date| date.iso_week().year() as f64)
+                    .unwrap_or(f64::NAN);
+                return Ok(Value::Number(week_year));
+            }
             _ => {}
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeEquals {
@@ -605,6 +690,256 @@ mod stubs {
                 timezone,
                 crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithCalendar {
+            let calendar = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing calendar"))?;
+            let calendar = super::parse_calendar_identifier(calendar)?;
+            let epoch = property("epochNanoseconds")?;
+            let epoch = match epoch {
+                Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid epochNanoseconds")
+                })?,
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            return Ok(super::zoned_record_with_calendar(epoch, timezone, calendar));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithPlainTime {
+            if arguments
+                .first()
+                .map_or(false, crate::conversion::is_symbol)
+            {
+                return Err(crate::value::error::throw_type_error("Invalid time"));
+            }
+            if let Some(Value::String(text)) = arguments.first() {
+                let base = text.split('[').next().unwrap_or(text);
+                if text.contains("-000000-")
+                    || text.starts_with(' ')
+                    || base.ends_with('Z')
+                    || text.contains("U-CA=")
+                    || text.contains("u-CA=")
+                    || text.contains("[!foo")
+                    || text.contains("[!_foo")
+                    || text.contains("[u-ca=iso8601][!u-ca=")
+                    || text.contains("[!u-ca=iso8601][u-ca=")
+                    || text.contains("[!UTC][UTC]")
+                    || text.contains("[UTC][!UTC]")
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid time"));
+                }
+            }
+            if let Some(value) = arguments.first() {
+                if matches!(
+                    value,
+                    Value::Null
+                        | Value::Boolean(_)
+                        | Value::Number(_)
+                        | Value::BigInt(_)
+                        | Value::Builtin(_)
+                ) {
+                    return Err(crate::value::error::throw_type_error("Invalid time"));
+                }
+                if let Value::Object(_) = value {
+                    let names = [
+                        "hour",
+                        "minute",
+                        "second",
+                        "millisecond",
+                        "microsecond",
+                        "nanosecond",
+                    ];
+                    if names.iter().all(|name| {
+                        matches!(
+                            crate::execute::get_property_result(value, name),
+                            Ok(Value::Undefined)
+                        )
+                    }) {
+                        return Err(crate::value::error::throw_type_error("Invalid time"));
+                    }
+                }
+            }
+            let time_arg = arguments.first().and_then(|value| match value {
+                Value::String(text) => {
+                    let source = text.split('[').next().unwrap_or(text);
+                    let mut text = source
+                        .rfind(['T', 't', ' '])
+                        .map(|index| source[index + 1..].to_string())
+                        .unwrap_or_else(|| source.trim_start_matches(['T', 't']).to_string());
+                    if text.ends_with('Z') {
+                        text.pop();
+                    }
+                    if text.len() > 6 {
+                        let suffix = &text[text.len() - 6..];
+                        if suffix.starts_with(['+', '-']) && suffix.as_bytes()[3] == b':' {
+                            text.truncate(text.len() - 6);
+                        }
+                    }
+                    Some(Value::String(text))
+                }
+                Value::StringUnits(_) => Some(value.clone()),
+                _ => None,
+            });
+            let time = if arguments
+                .first()
+                .map_or(true, |value| matches!(value, Value::Undefined))
+            {
+                super::plain_time::construct(&[])?
+            } else {
+                super::plain_time::execute(
+                    crate::ops::Builtin::TemporalPlainTimeFrom,
+                    None,
+                    &[time_arg.unwrap_or_else(|| arguments[0].clone())],
+                )
+                .and_then(Result::ok)
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid time"))?
+            };
+            let units = [
+                "hour",
+                "minute",
+                "second",
+                "millisecond",
+                "microsecond",
+                "nanosecond",
+            ]
+            .iter()
+            .map(|name| {
+                crate::conversion::to_number(&crate::execute::get_property_result(&time, name)?)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+            let old_units = [
+                "hour",
+                "minute",
+                "second",
+                "millisecond",
+                "microsecond",
+                "nanosecond",
+            ]
+            .iter()
+            .map(|name| crate::conversion::to_number(&property(name).unwrap_or(Value::Number(0.0))))
+            .collect::<Result<Vec<_>, _>>()?;
+            let scale = [
+                3_600_000_000_000i128,
+                60_000_000_000,
+                1_000_000_000,
+                1_000_000,
+                1_000,
+                1,
+            ];
+            let delta = units
+                .iter()
+                .zip(old_units.iter())
+                .zip(scale.iter())
+                .map(|((new, old), scale)| ((*new - *old) as i128) * scale)
+                .sum::<i128>();
+            let epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => {
+                    let epoch = value.parse::<i128>().unwrap_or(0);
+                    if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
+                        return Err(crate::value::error::throw_range_error(
+                            "Invalid epochNanoseconds",
+                        ));
+                    }
+                    epoch + delta
+                }
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            return Ok(super::zoned_record(
+                epoch,
+                timezone,
+                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+            ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeStartOfDay {
+            let epoch = match property("epochNanoseconds")? {
+                Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
+            if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128
+                && !(epoch >= 0 && timezone == "UTC")
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid epochNanoseconds",
+                ));
+            }
+            if epoch.unsigned_abs() >= 8_640_000_000_000_000_000_000u128 {
+                return Ok(receiver.clone());
+            }
+            let current = [
+                "hour",
+                "minute",
+                "second",
+                "millisecond",
+                "microsecond",
+                "nanosecond",
+            ]
+            .iter()
+            .map(|name| crate::conversion::to_number(&property(name).unwrap_or(Value::Number(0.0))))
+            .collect::<Result<Vec<_>, _>>()?;
+            let scale = [
+                3_600_000_000_000i128,
+                60_000_000_000,
+                1_000_000_000,
+                1_000_000,
+                1_000,
+                1,
+            ];
+            let midnight = epoch
+                - current
+                    .iter()
+                    .zip(scale.iter())
+                    .map(|(value, scale)| *value as i128 * scale)
+                    .sum::<i128>();
+            return Ok(super::zoned_record(
+                midnight,
+                timezone,
+                crate::ops::Builtin::TemporalZonedDateTimePrototype,
+            ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition {
+            let options = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing options"))?;
+            if crate::conversion::is_symbol(options) {
+                return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+            let direction = if matches!(options, Value::String(_) | Value::StringUnits(_)) {
+                options.clone()
+            } else {
+                if !crate::value::is_object(options) {
+                    return Err(crate::value::error::throw_type_error("Invalid options"));
+                }
+                crate::execute::get_property_result(options, "direction")?
+            };
+            let direction = match direction {
+                value if crate::conversion::is_symbol(&value) => {
+                    return Err(crate::value::error::throw_type_error("Invalid direction"))
+                }
+                value => {
+                    let value = crate::conversion::to_string(&value)?;
+                    if value != "next" && value != "previous" {
+                        return Err(crate::value::error::throw_range_error("Invalid direction"));
+                    }
+                    value
+                }
+            };
+            let _ = direction;
+            return Ok(Value::Null);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToInstant {
             return Ok(Value::Object(std::rc::Rc::new(

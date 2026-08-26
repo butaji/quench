@@ -343,6 +343,8 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
             TemporalZonedDateTimeOffsetNanosecondsGetter
         }
         (TemporalZonedDateTimePrototype, "hoursInDay") => TemporalZonedDateTimeHoursInDayGetter,
+        (TemporalZonedDateTimePrototype, "weekOfYear") => TemporalZonedDateTimeWeekOfYearGetter,
+        (TemporalZonedDateTimePrototype, "yearOfWeek") => TemporalZonedDateTimeYearOfWeekGetter,
         (TemporalZonedDateTimePrototype, "calendarId") => TemporalPlainDateCalendarIdGetter,
         (TemporalZonedDateTimePrototype, "year") => TemporalPlainDateYearGetter,
         (TemporalZonedDateTimePrototype, "month") => TemporalPlainDateMonthGetter,
