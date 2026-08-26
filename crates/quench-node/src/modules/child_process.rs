@@ -167,10 +167,28 @@ pub fn spawn_sync(
             let _ = stdin.write_all(&data);
         }
     }
+    let timed_out = options.and_then(timeout_millis).map_or(false, |limit| {
+        let started = std::time::Instant::now();
+        loop {
+            if child.try_wait().ok().flatten().is_some() { break false; }
+            if started.elapsed().as_millis() >= limit { let _ = child.kill(); break true; }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    });
     let output = match child.wait_with_output() {
         Ok(output) => output,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
+    if timed_out {
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(pid as f64)),
+            ("status".into(), Value::Number(143.0)),
+            ("signal".into(), Value::String("SIGTERM".into())),
+            ("error".into(), coded_error_with_errno("ETIMEDOUT", -110.0)),
+            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&output.stdout)),
+            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&output.stderr)),
+        ]));
+    }
     if output_exceeds_max_buffer(&output.stdout, &output.stderr, options) {
         return Ok(host_api::object(vec![
             ("pid".into(), Value::Number(pid as f64)),
@@ -305,6 +323,13 @@ fn output_exceeds_max_buffer(stdout: &[u8], stderr: &[u8], options: Option<&Valu
         })
         .unwrap_or(1024.0 * 1024.0);
     limit.is_finite() && (stdout.len() + stderr.len()) as f64 > limit
+}
+
+fn timeout_millis(options: &Value) -> Option<u128> {
+    match execute::get_property_result(options, "timeout").ok()? {
+        Value::Number(value) if value.is_finite() && value > 0.0 => Some(value as u128),
+        _ => None,
+    }
 }
 
 fn stdio_inherit(options: &Value) -> bool {

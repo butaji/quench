@@ -7,6 +7,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeSystemErrorName
   [-17, "EEXIST"],
   [-32, "EPIPE"],
   [-105, "ENOBUFS"],
+  [-110, "ETIMEDOUT"],
   [-4094, "UNKNOWN"],
 ]);
 const __nodeUtilGetSystemErrorName = (errorNumber) => {
