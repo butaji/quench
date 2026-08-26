@@ -64,6 +64,9 @@ fn finish_eval_bindings(
     };
     let mut prefix = eval_binding_prefix(&deletable);
     let lexical = shadow_names(lexical_names, &mut locals, &mut next_slot);
+    for (name, slot) in &lexical {
+        locals.insert(format!("\0lexical-predeclared:{name}"), *slot);
+    }
     prefix.extend(
         lexical
             .into_iter()
