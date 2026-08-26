@@ -108,6 +108,22 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if matches!(
+            capability.kind,
+            HostCapabilityKind::Custom(CapabilityName::BufferIndexOf)
+                | HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf)
+        ) {
+            let method = if capability.kind
+                == HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf)
+            {
+                "lastIndexOf"
+            } else {
+                "indexOf"
+            };
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"buffer\" argument must be an instance of Buffer, TypedArray, or DataView. Received an instance of {method}"
+            )));
+        }
         if let Some(result) = self.construct_stream(capability, arguments) {
             return result;
         }

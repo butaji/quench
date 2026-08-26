@@ -135,17 +135,17 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
       });
     }
     URLPattern.prototype.test = function (value, baseURL) {
-      validateURLPatternValue(value, baseURL);
       if (!(this instanceof URLPattern)) {
         throw new TypeError("Illegal invocation");
       }
+      validateURLPatternValue(value, baseURL);
       return isURLPatternMatch(this._source, value, baseURL);
     };
     URLPattern.prototype.exec = function (value, baseURL) {
-      validateURLPatternValue(value, baseURL);
       if (!(this instanceof URLPattern)) {
         throw new TypeError("Illegal invocation");
       }
+      validateURLPatternValue(value, baseURL);
       if (baseURL === null && typeof value === "string") return null;
       return getURLPatternResult(this._source, value, baseURL);
     };

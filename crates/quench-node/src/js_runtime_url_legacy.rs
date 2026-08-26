@@ -71,13 +71,31 @@ fn legacy_path_parse(normalized: &str) -> Result<Value, VmError> {
     ]))
 }
 
-fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
+fn url_parse_legacy(
+    state: Option<&std::rc::Rc<std::cell::RefCell<crate::host::HostState>>>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
     let Some(Value::String(value)) = arguments.first() else {
         return Err(VmError::Thrown(fs_error(
             "ERR_INVALID_ARG_TYPE",
             "url must be a string",
         )));
     };
+    let vm_filename = quench_runtime::execute::get_property(
+        &quench_runtime::vm::current_global_object(),
+        "\0quench_vm_filename",
+    );
+    if state.is_some()
+        && !matches!(vm_filename, Value::String(ref path) if path.contains("node_modules"))
+    {
+        crate::modules::process::emit_warning(
+            state.expect("checked above"),
+            "DeprecationWarning",
+            "`url.parse()` behavior is not standardized and prone to errors. Use the WHATWG URL API instead.",
+            Some("DEP0169"),
+            true,
+        );
+    }
     if value.contains("%E0%A4%A") {
         return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
             ("name".into(), Value::String("URIError".into())),
@@ -107,7 +125,16 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
                 parsed, "query", query,
             ));
         }
-        return legacy_query_parse(&normalized);
+        let parsed = url_parse_legacy(state, &[Value::String(normalized.clone())])?;
+        let parsed = match quench_runtime::execute::get_property_result(&parsed, "search") {
+            Err(_) | Ok(Value::Undefined) => {
+                quench_runtime::execute::set_property(parsed, "search", Value::Null)
+            }
+            Ok(_) => parsed,
+        };
+        let query = legacy_query_parse(&normalized)?;
+        let query = quench_runtime::execute::get_property_result(&query, "query")?;
+        return Ok(quench_runtime::execute::set_property(parsed, "query", query));
     }
     if value == "/foo/bar?baz=quux#frag" && matches!(arguments.get(1), Some(Value::Boolean(true))) {
         let query = Value::object(vec![("baz".into(), Value::String("quux".into()))]);
@@ -359,7 +386,8 @@ fn legacy_query_parse(value: &str) -> Result<Value, VmError> {
             (key, value)
         })
         .collect();
-    Ok(Value::object(vec![("query".into(), Value::object(query))]))
+    let query = quench_runtime::execute::set_prototype_of(&Value::object(query), &Value::Null)?;
+    Ok(Value::object(vec![("query".into(), query)]))
 }
 
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
