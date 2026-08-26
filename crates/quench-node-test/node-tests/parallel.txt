@@ -163,6 +163,9 @@ test-buffer-constants.js
 test-btoa-atob.js
 test-binding-constants.js
 test-bad-unicode.js
+test-blob.js
+test-blob-file-backed.js
+test-blob-createobjecturl.js
 test-net-connect-after-destroy.js
 test-dns-get-server.js
 test-dns-negative-zero.js
