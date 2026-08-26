@@ -234,6 +234,7 @@ test-child-process-exec-kill-throws.js
 test-child-process-exec-any-shells-windows.js
 test-process-constants-noatime.js
 test-process-features.js
+test-process-getgroups.js
 test-process-default.js
 test-process-env-delete.js
 test-process-exit-handler.js
@@ -244,6 +245,7 @@ test-process-release.js
 test-process-umask-mask.js
 test-process-uptime.js
 test-process-umask.js
+test-process-uid-gid.js
 test-process-versions.js
 test-process-next-tick.js
 test-os-eol.js
