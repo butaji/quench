@@ -238,6 +238,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
         Builtin::TemporalPlainTime => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainTimePrototype => &[
             "constructor",
+            "Symbol.toStringTag",
             "hour",
             "minute",
             "second",
