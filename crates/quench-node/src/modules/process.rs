@@ -112,10 +112,29 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
         ("execArgv", host_api::array(vec![])),
-        ("features", host_api::object(vec![])),
+        ("features", features()),
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
     ]
+}
+
+pub fn features() -> Value {
+    host_api::object(vec![
+        ("inspector".into(), Value::Boolean(false)),
+        ("debug".into(), Value::Boolean(false)),
+        ("uv".into(), Value::Boolean(true)),
+        ("ipv6".into(), Value::Boolean(true)),
+        ("openssl_is_boringssl".into(), Value::Boolean(false)),
+        ("dtls".into(), Value::Boolean(false)),
+        ("quic".into(), Value::Boolean(false)),
+        ("tls_alpn".into(), Value::Boolean(true)),
+        ("tls_sni".into(), Value::Boolean(true)),
+        ("tls_ocsp".into(), Value::Boolean(true)),
+        ("tls".into(), Value::Boolean(true)),
+        ("cached_builtins".into(), Value::Boolean(true)),
+        ("require_module".into(), Value::Boolean(true)),
+        ("typescript".into(), Value::String("strip".into())),
+    ])
 }
 
 /// `process.stdout` / `process.stderr` — non-TTY write streams.
