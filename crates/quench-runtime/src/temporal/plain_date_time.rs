@@ -526,6 +526,7 @@ fn calendar_difference(
                 }
             }
         }
+        time_delta = 0;
     }
     let hours = time_delta / 3_600_000_000_000;
     let time_delta = time_delta % 3_600_000_000_000;
