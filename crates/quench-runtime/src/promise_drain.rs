@@ -3,7 +3,7 @@ thread_local! {
         const { RefCell::new(VecDeque::new()) };
     static PROMISE_TRIGGER: RefCell<Option<Rc<PromiseData>>> =
         const { RefCell::new(None) };
-    static THEN_RESULTS: RefCell<HashMap<usize, VecDeque<Rc<PromiseData>>>> =
+    static THEN_RESULTS: RefCell<HashMap<usize, VecDeque<crate::promise::ThenResult>>> =
         RefCell::new(HashMap::new());
     static JOB_QUEUE: RefCell<VecDeque<Rc<dyn Fn()>>> = const { RefCell::new(VecDeque::new()) };
     static UNHANDLED_REJECTIONS: RefCell<VecDeque<(Rc<PromiseData>, Value)>> =
