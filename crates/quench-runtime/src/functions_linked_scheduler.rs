@@ -89,6 +89,7 @@ fn execute_linked_worker(
     }
     let crate::value::Value::Object(packet_object) = packet else { return None };
     if packet_object.has_replacement() { return None; }
+    let packet_words = table.packet_words(packet_object)?;
     let v1 = current.word(current.task_v1);
     let v2 = current.word(current.task_v2?);
     let handler_a = current.function.captures.get_number(plan.handler_a_slot)?;
@@ -96,9 +97,7 @@ fn execute_linked_worker(
     let next_id = if v1.number()? == handler_a { handler_b } else { handler_a };
     let count = exact_worker_count(current.function.captures.get_number(plan.data_size_slot)?)?;
     let (values, next_v2) = worker_values(v2.number()?, count);
-    let payload = worker_payload(packet_object, count)?;
-    let packet_id = writable_own_word(packet_object, "id")?;
-    let packet_a1 = writable_own_word(packet_object, "a1")?;
+    let payload = linked_worker_payload(packet_words.a2, count)?;
     let target_id = exact_linked_task_id(next_id)?;
     let queue = LinkedQueueTransition::new_for_id(
         current,
@@ -110,8 +109,8 @@ fn execute_linked_worker(
     apply_linked_worker_payload(&payload, &values[..count])?;
     v1.store(crate::value::Value::Number(next_id));
     v2.store(crate::value::Value::Number(next_v2));
-    packet_id.store(crate::value::Value::Number(next_id));
-    packet_a1.store(crate::value::Value::Number(0.0));
+    packet_words.id.store(crate::value::Value::Number(next_id));
+    packet_words.a1.store(crate::value::Value::Number(0.0));
     crate::execution_trace::kernel("linked_worker_task", false);
     Some(DirectTaskStep::new(Some(queue.execute())))
 }
@@ -130,6 +129,18 @@ fn apply_linked_worker_payload(
     Some(())
 }
 
+fn linked_worker_payload(
+    payload: &crate::register_file::SlotWord,
+    count: usize,
+) -> Option<std::rc::Rc<crate::value::ArrayData>> {
+    let crate::value::Value::Array(payload) = payload.load() else { return None };
+    (crate::locals::array_word_is_current(&payload)
+        && payload.header_length() == count
+        && ((payload.is_packed_ordinary() && payload.is_numeric_packed())
+            || (payload.is_holey() && payload.physical_len() == 0)))
+        .then_some(payload)
+}
+
 fn execute_linked_handler(
     current: &DirectTaskRunner,
     table: &DirectTaskTable,
@@ -141,12 +152,13 @@ fn execute_linked_handler(
     let task_v2 = current.word(current.task_v2?);
     let mut v1 = task_v1.load();
     let mut v2 = task_v2.load();
-    let incoming = incoming_packet(
+    let incoming = linked_incoming_packet(
         &current.function,
-        Some(packet),
+        packet,
         plan,
         task_v1,
         task_v2,
+        table,
     )?;
     if let Some(incoming) = &incoming {
         let appended = predicted_append(&incoming.packet, &incoming.queue)?;
@@ -162,6 +174,39 @@ fn execute_linked_handler(
     }
     crate::execution_trace::kernel("linked_handler_task", false);
     Some(DirectTaskStep::new(Some(route.execute())))
+}
+
+fn linked_incoming_packet<'a>(
+    function: &crate::value::FunctionValue,
+    packet: &crate::value::Value,
+    plan: HandlerTaskPlan,
+    task_v1: &'a crate::register_file::SlotWord,
+    task_v2: &'a crate::register_file::SlotWord,
+    table: &DirectTaskTable,
+) -> Option<Option<IncomingPacket<'a>>> {
+    if packet.is_nullish() { return Some(None); }
+    let crate::value::Value::Object(object) = packet else { return None };
+    let words = table.packet_words(object)?;
+    let kind = words.kind.number()?;
+    let work_kind = function.captures.get_number(plan.work_kind_slot)?;
+    let target = if kind == work_kind { task_v1 } else { task_v2 };
+    let queue = target.load();
+    if !queue.is_nullish() && !matches!(queue, crate::value::Value::Object(_)) { return None; }
+    let tail_link = match &queue {
+        crate::value::Value::Object(head) => Some(table.packet_tail_link(
+            std::rc::Rc::as_ptr(head),
+            std::rc::Rc::as_ptr(object),
+        )?),
+        _ => None,
+    };
+    handler_packet_add_callee(function, object, kind == work_kind)?;
+    Some(Some(IncomingPacket {
+        target,
+        packet: packet.clone(),
+        queue,
+        packet_link: std::ptr::from_ref(words.link),
+        tail_link,
+    }))
 }
 
 fn apply_linked_incoming(incoming: IncomingPacket<'_>) -> Option<()> {
@@ -226,12 +271,13 @@ fn linked_handler_route<'a>(
     }
     let crate::value::Value::Object(work) = v1 else { return None };
     if work.has_replacement() { return None; }
-    let count = writable_own_word(&work, "a1")?.number()?;
+    let work_words = table.packet_words(&work)?;
+    let count = work_words.a1.number()?;
     let data_size = current.function.captures.get_number(plan.data_size_slot)?;
     if count < data_size {
         return linked_handler_work(current, table, scheduler, task_v2, v2, work, count);
     }
-    let next_v1 = crate::vm::proven_own_word(&work, "link")?.load();
+    let next_v1 = work_words.link.load();
     let packet = crate::value::Value::Object(work);
     Some(LinkedHandlerRoute::Complete {
         task_v1,
@@ -254,16 +300,18 @@ fn linked_handler_work<'a>(
     }
     let crate::value::Value::Object(packet) = v2 else { return None };
     if packet.has_replacement() || count < 0.0 || count.fract() != 0.0 { return None; }
-    let next_v2 = crate::vm::proven_own_word(&packet, "link")?.load();
-    let crate::value::Value::Array(payload) = crate::vm::proven_own_word(&work, "a2")?.load() else { return None };
+    let packet_words = table.packet_words(&packet)?;
+    let work_words = table.packet_words(&work)?;
+    let next_v2 = packet_words.link.load();
+    let crate::value::Value::Array(payload) = work_words.a2.load() else { return None };
     if !crate::locals::array_word_is_current(&payload) || !payload.is_packed_ordinary() { return None; }
     let value = payload.dense_number_at(count as usize)?;
     let packet_value = crate::value::Value::Object(packet.clone());
     Some(LinkedHandlerRoute::Work {
         task_v2,
         next_v2,
-        packet_a1: std::ptr::from_ref(writable_own_word(&packet, "a1")?),
-        work_a1: std::ptr::from_ref(writable_own_word(&work, "a1")?),
+        packet_a1: std::ptr::from_ref(packet_words.a1),
+        work_a1: std::ptr::from_ref(work_words.a1),
         value,
         count,
         queue: LinkedQueueTransition::new(current, table, scheduler, packet_value)?,
@@ -360,7 +408,7 @@ impl LinkedQueueTransition {
         if packet_object.has_replacement() {
             return None;
         }
-        let id = exact_linked_task_id(crate::vm::proven_own_word(packet_object, "id")?.number()?)?;
+        let id = exact_linked_task_id(table.packet_words(packet_object)?.id.number()?)?;
         Self::new_for_id(current, table, scheduler, packet, id)
     }
 
@@ -377,17 +425,19 @@ impl LinkedQueueTransition {
         if packet_object.has_replacement() {
             return None;
         }
+        let packet_words = table.packet_words(packet_object)?;
         let target = table.for_id(id)?;
         let queue_count = scheduler.word(scheduler.queue_count);
         Some(Self {
             queue_count: scheduler.queue_count,
             next_count: queue_count.number()? + 1.0,
-            packet_link: std::ptr::from_ref(writable_own_word(packet_object, "link")?),
-            packet_id: std::ptr::from_ref(writable_own_word(packet_object, "id")?),
+            packet_link: std::ptr::from_ref(packet_words.link),
+            packet_id: std::ptr::from_ref(packet_words.id),
             current_id: current.word(current.id).number()?,
             target: linked_priority_transition(
                 current,
                 target,
+                table,
                 packet_object,
                 scheduler.runnable,
             )?,
@@ -407,6 +457,7 @@ impl LinkedQueueTransition {
 fn linked_priority_transition(
     current: &DirectTaskRunner,
     target: &DirectTaskRunner,
+    table: &DirectTaskTable,
     packet: &crate::value::ObjectData,
     runnable: i32,
 ) -> Option<CheckPriorityTransition<usize>> {
@@ -426,7 +477,7 @@ fn linked_priority_transition(
     let crate::value::Value::Object(head_object) = &head else {
         return None;
     };
-    let tail_link = packet_tail_link(std::rc::Rc::as_ptr(head_object), packet as *const _)?;
+    let tail_link = table.packet_tail_link(std::rc::Rc::as_ptr(head_object), packet as *const _)?;
     Some(CheckPriorityTransition::Append {
         queue: target.queue,
         tail_link,

@@ -37,6 +37,7 @@ fn take_task_packet(
     words: &TaskControlWords<'_>,
     plan: &TaskControlRunPlan,
     packet_link_cache: &std::cell::Cell<u64>,
+    task_runners: Option<&DirectTaskTable>,
 ) -> Option<crate::value::Value> {
     if words.state.number()? != plan.suspended_runnable {
         return Some(crate::value::Value::Null);
@@ -44,7 +45,9 @@ fn take_task_packet(
     let packet = words.queue.load();
     let crate::value::Value::Object(packet_object) = &packet else { return None };
     if packet_object.has_replacement() { return None; }
-    let link = linked_schedule_word(packet_object, "link", packet_link_cache)?;
+    let link = task_runners
+        .and_then(|table| table.packet_words(packet_object).map(|words| words.link))
+        .or_else(|| linked_schedule_word(packet_object, "link", packet_link_cache))?;
     let next = link.load();
     words.queue.store(next.clone());
     let next_state = if next.is_nullish() { plan.running } else { plan.runnable };
@@ -61,7 +64,9 @@ fn execute_task_control_run(
     linked_scheduler: Option<&LinkedSchedulerWords>,
 ) -> Result<Option<DirectTaskOutcome>, crate::execute::VmError> {
     let Some(words) = task_control_words(tcb, direct) else { return Ok(None) };
-    let Some(packet) = take_task_packet(&words, plan, packet_link_cache) else { return Ok(None) };
+    let Some(packet) = take_task_packet(&words, plan, packet_link_cache, task_runners) else {
+        return Ok(None);
+    };
     let outcome = match words.direct {
         Some(runner) => execute_direct_task(runner, packet, task_runners, linked_scheduler),
         None => {
