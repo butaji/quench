@@ -51,6 +51,9 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
+    if let Some(result) = execute_linked_record_insert(function, &receiver, arguments) {
+        return result;
+    }
     if is_handler_task_candidate(function) {
         if let Some(result) = execute_handler_task(function, &receiver, arguments)? {
             return Ok(result);

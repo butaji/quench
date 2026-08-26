@@ -61,6 +61,7 @@ fn write_non_ordinary(
             raytrace_pixel: false,
             raytrace_render: None,
             direct_constructor: function.1.facts().direct_constructor.clone(),
+            linked_record_insert: function.1.facts().linked_record_insert.clone(),
             strictness,
             is_async,
             mapped_arguments,
@@ -100,6 +101,7 @@ fn write_ordinary(
             raytrace_pixel: false,
             raytrace_render: None,
             direct_constructor: body.facts().direct_constructor.clone(),
+            linked_record_insert: body.facts().linked_record_insert.clone(),
         },
     );
 }
