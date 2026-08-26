@@ -108,10 +108,11 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
             ));
         }
         let parsed = url_parse_legacy(&[Value::String(normalized.clone())])?;
-        let parsed = if quench_runtime::execute::get_property_result(&parsed, "search").is_err() {
-            quench_runtime::execute::set_property(parsed, "search", Value::Null)
-        } else {
-            parsed
+        let parsed = match quench_runtime::execute::get_property_result(&parsed, "search") {
+            Err(_) | Ok(Value::Undefined) => {
+                quench_runtime::execute::set_property(parsed, "search", Value::Null)
+            }
+            Ok(_) => parsed,
         };
         let query = legacy_query_parse(&normalized)?;
         let query = quench_runtime::execute::get_property_result(&query, "query")?;
