@@ -480,7 +480,7 @@ pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
 
 /// The `http` module namespace.
 pub fn build() -> Value {
-    crate::host::namespace_object(vec![
+    let mut module = crate::host::namespace_object(vec![
         (
             "createServer",
             crate::host::capability(crate::registry::SPEC_HTTP_SERVER),
@@ -502,5 +502,17 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_HTTP_AGENT),
         ),
     ])
-    .unwrap_or_else(|_| Value::Undefined)
+    .unwrap_or_else(|_| Value::Undefined);
+    let methods = [
+        "ACL", "BIND", "CHECKOUT", "CONNECT", "COPY", "DELETE", "GET", "HEAD", "LINK",
+        "LOCK", "M-SEARCH", "MERGE", "MKACTIVITY", "MKCALENDAR", "MKCOL", "MOVE", "NOTIFY",
+        "OPTIONS", "PATCH", "POST", "PROPFIND", "PROPPATCH", "PURGE", "PUT", "QUERY", "REBIND",
+        "REPORT", "SEARCH", "SOURCE", "SUBSCRIBE", "TRACE", "UNBIND", "UNLINK", "UNLOCK", "UNSUBSCRIBE",
+    ];
+    let values = methods
+        .into_iter()
+        .map(|method| Value::String(method.to_string()))
+        .collect();
+    module = quench_runtime::execute::set_property(module, "METHODS", quench_runtime::host_api::array(values));
+    module
 }
