@@ -453,6 +453,15 @@ fn proleptic_weekday(year: i32, month: u32, day: u32) -> u32 {
 fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let Value::Object(object) = receiver else {
+        return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
+    };
+    if !object.iter().any(|(key, value)| {
+        key == "\0prototype"
+            && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+    }) {
+        return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
+    }
     let name = match builtin {
         crate::ops::Builtin::TemporalPlainDateTimeCalendarIdGetter => "calendarId",
         crate::ops::Builtin::TemporalPlainDateTimeYearGetter => "year",
@@ -481,6 +490,12 @@ fn fields(value: &Value) -> Result<Vec<f64>, VmError> {
     let Value::Object(object) = value else {
         return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
     };
+    if !object.iter().any(|(key, value)| {
+        key == "\0prototype"
+            && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+    }) {
+        return Err(crate::value::error::throw_type_error("Not a PlainDateTime"));
+    }
     NAMES
         .iter()
         .map(|name| {
@@ -748,6 +763,7 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let _ = fields(receiver)?;
     if let Some(options) = options {
         if !crate::value::is_object(options) {
             return Err(crate::value::error::throw_type_error(
