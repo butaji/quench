@@ -295,7 +295,12 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::SPEC_LINKED_LIST_PEEK),
             ),
         ])),
-        "internal/errors" => Some(crate::host::namespace_object_from_pairs(vec![(
+        "internal/errors" => Some(crate::host::namespace_object_from_pairs(vec![
+            (
+                "DNSException".to_string(),
+                quench_runtime::host_api::bound_builtin(quench_runtime::ops::Builtin::Error, Value::Undefined),
+            ),
+            (
             "codes".to_string(),
             crate::host::namespace_object_from_pairs(vec![
                 (
