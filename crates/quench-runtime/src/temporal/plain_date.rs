@@ -11,13 +11,18 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let month = number(arguments.get(1))?;
     let day = number(arguments.get(2))?;
     if let Some(calendar) = arguments.get(3) {
-        if !matches!(calendar, Value::Undefined | Value::String(_)) {
+        if !matches!(
+            calendar,
+            Value::Undefined | Value::String(_) | Value::StringUnits(_)
+        ) {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
         if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
-        if matches!(calendar, Value::String(value) if !value.eq_ignore_ascii_case("iso8601")) {
+        if matches!(calendar, Value::String(_) | Value::StringUnits(_))
+            && !is_iso_calendar_value(calendar)?
+        {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
@@ -57,7 +62,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDate => Some(Err(crate::value::error::throw_type_error(
             "Temporal.PlainDate requires new",
         ))),
-        crate::ops::Builtin::TemporalPlainDateFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateFrom => {
+            Some(from(arguments.first(), arguments.get(1)))
+        }
         crate::ops::Builtin::TemporalPlainDateCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateWithCalendar => {
             Some(with_calendar(receiver, arguments.first()))
@@ -122,14 +129,9 @@ pub(crate) fn execute(
 }
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
-    let (Some(Value::Object(left)), Some(Value::Object(right))) = (receiver, other) else {
-        return Ok(Value::Boolean(false));
-    };
-    Ok(Value::Boolean(
-        ["year", "month", "day"]
-            .iter()
-            .all(|name| field(left, name) == field(right, name)),
-    ))
+    let left = date_parts(receiver)?;
+    let right = date_parts(other)?;
+    Ok(Value::Boolean(left == right))
 }
 
 fn add(
@@ -177,6 +179,9 @@ fn date_parts(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
     let Value::Object(object) = value.ok_or_else(invalid_receiver)? else {
         return Err(invalid_receiver());
     };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
     let year = number_field(field(object, "year"));
     let month = number_field(field(object, "month"));
     let day = number_field(field(object, "day"));
@@ -263,8 +268,8 @@ fn number_property(object: &crate::value::ObjectData, name: &str) -> f64 {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = from(arguments.first())?;
-    let right = from(arguments.get(1))?;
+    let left = from(arguments.first(), None)?;
+    let right = from(arguments.get(1), None)?;
     let (Value::Object(left), Value::Object(right)) = (left, right) else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
@@ -660,10 +665,43 @@ fn invalid_receiver() -> VmError {
 }
 
 fn has_date_fields(object: &crate::value::ObjectData) -> bool {
-    ["year", "month", "day"].iter().all(|name| {
+    object.iter().any(|(key, value)| {
+        key == "\0prototype"
+            && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype)
+    }) && ["year", "month", "day"].iter().all(|name| {
         object
             .iter()
             .any(|(key, value)| key == *name && matches!(value, Value::Number(_)))
+    })
+}
+
+fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
+    let text = crate::conversion::to_string(value)?;
+    if text.eq_ignore_ascii_case("iso8601") {
+        return Ok(true);
+    }
+    let (base, annotation) = text
+        .split_once('[')
+        .map_or((text.as_str(), None), |(base, annotation)| {
+            (base, Some(annotation))
+        });
+    if let Some(annotation) = annotation {
+        if !annotation
+            .strip_suffix(']')
+            .is_some_and(|value| value.eq_ignore_ascii_case("u-ca=iso8601"))
+        {
+            return Ok(false);
+        }
+    }
+    let date = base.split(['T', 't', ' ']).next().unwrap_or(base);
+    let fields: Vec<_> = date.split('-').collect();
+    let digits = |value: &str, min: usize, max: usize| {
+        (min..=max).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    Ok(match fields.as_slice() {
+        [year, month, day] => digits(year, 4, 6) && digits(month, 2, 2) && digits(day, 2, 2),
+        [month, day] => digits(month, 2, 2) && digits(day, 2, 2),
+        _ => false,
     })
 }
 
