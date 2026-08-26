@@ -20,6 +20,19 @@ const SEARCH_KEYS: &[&str] = &[
     "t", "u", "v", "w", "x", "y", "z",
 ];
 
+thread_local! {
+    static LEGACY_URL_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+fn legacy_url_prototype() -> Value {
+    LEGACY_URL_PROTOTYPE.with(|slot| {
+        if let Some(value) = slot.borrow().clone() { return value; }
+        let value = host_api::object(Vec::new());
+        *slot.borrow_mut() = Some(value.clone());
+        value
+    })
+}
+
 pub fn parse_handler(
     _state: &std::rc::Rc<std::cell::RefCell<crate::host::HostState>>,
     args: &[Value],
@@ -79,12 +92,18 @@ pub fn parse(
             ]));
         }
     }
-    if !url.contains(':') && !url.contains('?') && !url.contains('#') && !url.starts_with("//") {
-        let mut entries = vec![
-            ("pathname".into(), Value::String(url.clone())),
-            ("path".into(), Value::String(url.clone())),
-            ("href".into(), Value::String(url)),
-        ];
+    if !url.contains(':') && !url.starts_with("//") {
+        let (without_hash, hash) = url.split_once('#').map_or((url.as_str(), None), |(path, hash)| (path, Some(hash)));
+        let (pathname, query) = without_hash.split_once('?').map_or((without_hash, None), |(path, query)| (path, Some(query)));
+        let pathname = encode_path_component(pathname);
+        let search = query.map(|value| format!("?{}", encode_query_component(value)));
+        let hash = hash.map(|value| format!("#{}", encode_path_component(value)));
+        let path = format!("{}{}", pathname, search.as_deref().unwrap_or_default());
+        let href = format!("{}{}", path, hash.as_deref().unwrap_or_default());
+        let mut entries = vec![("pathname".into(), Value::String(pathname)), ("path".into(), Value::String(path)), ("href".into(), Value::String(href))];
+        entries.push(("search".into(), search.clone().map_or(Value::Null, Value::String)));
+        entries.push(("query".into(), query.map_or(Value::Null, |value| Value::String(encode_query_component(value)))));
+        entries.push(("hash".into(), hash.map_or(Value::Null, Value::String)));
         if args.get(1).is_some_and(execute::is_truthy) {
             let query = host_api::object(vec![("__query_empty".into(), Value::Undefined)]);
             execute::define_property(
@@ -249,6 +268,7 @@ fn legacy_object(entries: Vec<(String, Value)>) -> Value {
         ("enumerable".into(), Value::Boolean(false)),
         ("configurable".into(), Value::Boolean(true)),
     ]);
+    let object = execute::set_prototype_of(&object, &legacy_url_prototype()).unwrap_or(object);
     let object = execute::define_property(object, "resolveObject", descriptor)
         .unwrap_or(Value::Undefined);
     let method = crate::host::capability(crate::registry::SPEC_URL_RESOLVE);
@@ -354,7 +374,7 @@ pub fn format(
     let (protocol, auth, host, pathname, query, hash) = read_url_parts(_state, args);
     let slashes = execute::is_truthy(&execute::get_property(&obj, "slashes"))
         || (!host.is_empty() && protocol_uses_authority_slashes(&protocol));
-    let slashes = slashes || (protocol == "file" && pathname.starts_with('/'));
+    let slashes = slashes || (protocol.trim_end_matches(':') == "file" && pathname.starts_with('/'));
     Ok(Value::String(assemble_url(
         &protocol, &auth, &host, &pathname, &query, &hash, slashes,
     )))
@@ -1098,6 +1118,8 @@ fn value_to_string(value: &Value) -> String {
 
 pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
     let (url_class, _) = crate::modules::url_whatwg::url_class(state);
+    let legacy_url = crate::host::capability(crate::registry::SPEC_URL_LEGACY_NEW);
+    let _ = execute::set_callable_property(&legacy_url, "prototype", legacy_url_prototype());
     crate::host::namespace_object(vec![
         spec_fn("parse", "require:url:parse", 0x0500),
         spec_fn("format", "require:url:format", 0x0501),
@@ -1105,7 +1127,7 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
         spec_fn("resolveObject", "require:url:resolveObject", 0x0520),
         (
             "Url",
-            crate::host::capability(crate::registry::SPEC_URL_LEGACY_NEW),
+            legacy_url,
         ),
         ("URL", url_class),
         spec_fn("URLSearchParams", "require:url:URLSearchParams", 0x0504),
