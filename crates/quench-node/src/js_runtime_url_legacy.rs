@@ -107,7 +107,10 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
                 parsed, "query", query,
             ));
         }
-        return legacy_query_parse(&normalized);
+        let parsed = url_parse_legacy(&[Value::String(normalized.clone())])?;
+        let query = legacy_query_parse(&normalized)?;
+        let query = quench_runtime::execute::get_property_result(&query, "query")?;
+        return Ok(quench_runtime::execute::set_property(parsed, "query", query));
     }
     if value == "/foo/bar?baz=quux#frag" && matches!(arguments.get(1), Some(Value::Boolean(true))) {
         let query = Value::object(vec![("baz".into(), Value::String("quux".into()))]);
@@ -359,7 +362,8 @@ fn legacy_query_parse(value: &str) -> Result<Value, VmError> {
             (key, value)
         })
         .collect();
-    Ok(Value::object(vec![("query".into(), Value::object(query))]))
+    let query = quench_runtime::execute::set_prototype_of(&Value::object(query), &Value::Null)?;
+    Ok(Value::object(vec![("query".into(), query)]))
 }
 
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
