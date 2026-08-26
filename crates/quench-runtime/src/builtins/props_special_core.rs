@@ -300,6 +300,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainMonthDayPrototype, "calendarId") => {
             Some(Value::Builtin(TemporalPlainMonthDayCalendarIdGetter))
         }
+        (TemporalPlainMonthDayPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Temporal.PlainMonthDay".into()))
+        }
         (TemporalPlainMonthDayPrototype, "day") => {
             Some(Value::Builtin(TemporalPlainMonthDayDayGetter))
         }
