@@ -407,3 +407,6 @@ test-crypto-dep0206.js
 test-crypto-hash.js
 test-crypto-hmac.js
 test-crypto-sign-verify.js
+test-crypto-randomfillsync-regression.js
+test-crypto-randomuuid.js
+test-crypto-randomuuidv7.js
