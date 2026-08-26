@@ -49,7 +49,7 @@ fn attach_prototype(value: &crate::value::Value) {
                             "\0prototype".to_string(),
                             crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype),
                         ),
-                        ("constructor".to_string(), constructor),
+                        ("constructor".to_string(), constructor.clone()),
                         (
                             crate::builtins::descriptor_key("constructor"),
                             constructor_descriptor(constructor.clone()),
