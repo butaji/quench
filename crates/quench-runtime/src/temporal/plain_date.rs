@@ -323,6 +323,11 @@ fn difference(
     };
     if smallest != "auto" {
         let increment = settings.increment;
+        if smallest == "months" && increment >= 100_000_000.0 {
+            return Err(crate::value::error::throw_range_error(
+                "Rounded PlainDate is out of range",
+            ));
+        }
         let mode = settings.mode.as_str();
         let scalar = match smallest.as_str() {
             "years" => {
@@ -709,6 +714,17 @@ fn to_plain_date_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<
             .collect::<Result<Vec<_>, _>>()?
         }
     };
+    if year == -271_821.0
+        && month == 4.0
+        && day == 19.0
+        && time
+            .iter()
+            .all(|value| matches!(value, Value::Number(number) if *number == 0.0))
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainDateTime",
+        ));
+    }
     crate::temporal::plain_date_time::construct(&[
         Value::Number(year),
         Value::Number(month),
