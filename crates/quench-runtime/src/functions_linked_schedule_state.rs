@@ -611,7 +611,16 @@ impl<'a> NativeSchedule<'a> {
     fn suspend(&mut self, current: usize) -> Option<Option<usize>> {
         let task = self.task_mut(current);
         task.state |= task.suspended;
-        Some(Some(current))
+        let next = if task.state == task.suspended {
+            task.link
+        } else {
+            Some(current)
+        };
+        #[cfg(feature = "execution-trace")]
+        if next != Some(current) {
+            self.direct_branches[11] += 1;
+        }
+        Some(next)
     }
 
     #[inline(always)]
