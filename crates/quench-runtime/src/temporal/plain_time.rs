@@ -195,8 +195,14 @@ fn time_string_options_internal(
     let timezone = read_timezone.then(|| get("timeZone")).transpose()?;
     let fractional_digits = match fractional {
         Value::Undefined => usize::MAX,
-        Value::Number(value) if value.is_finite() && (0.0..=9.0).contains(&value) => {
-            value.floor() as usize
+        Value::Number(value) if value.is_finite() => {
+            let value = value.floor();
+            if !(0.0..=9.0).contains(&value) {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid fractionalSecondDigits",
+                ));
+            }
+            value as usize
         }
         Value::String(value) if value == "auto" => usize::MAX,
         _ => {
