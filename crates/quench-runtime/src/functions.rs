@@ -15,6 +15,7 @@ pub(crate) struct FunctionMetadata {
     pub(crate) is_async: bool,
     pub(crate) mapped_arguments: bool,
     pub(crate) raytrace_pixel: bool,
+    pub(crate) raytrace_render: Option<(f64, u16)>,
 }
 include!("functions_raytrace_kernel.rs");
 pub(super) fn function_parameters(
