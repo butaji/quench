@@ -19,3 +19,6 @@ promisify(multi)().then((value) => {
 const key = Symbol.for('nodejs.util.promisify.custom');
 fn[key] = custom;
 assert.strictEqual(promisify(fn), custom);
+const object = {};
+object.method = promisify(function (callback) { callback(null, this === object); });
+object.method().then((value) => assert.strictEqual(value, true));
