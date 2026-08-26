@@ -2,10 +2,7 @@ use crate::{execute::VmError, value::Value};
 use chrono::{Datelike, Timelike};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let epoch = arguments
-        .first()
-        .cloned()
-        .unwrap_or(Value::BigInt("0".into()));
+    let epoch = parse_epoch_argument(arguments.first())?;
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             ("epochNanoseconds".into(), epoch),
@@ -17,12 +14,41 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     )))
 }
 
+fn parse_epoch_argument(value: Option<&Value>) -> Result<Value, VmError> {
+    let value = value.ok_or_else(|| crate::value::error::throw_type_error("Invalid instant"))?;
+    let text = match value {
+        Value::BigInt(value) => value.clone(),
+        Value::String(value) if !crate::conversion::is_symbol_string(value) => value.clone(),
+        Value::Boolean(value) => if *value { "1" } else { "0" }.to_string(),
+        _ => return Err(crate::value::error::throw_type_error("Invalid instant")),
+    };
+    let epoch = match text.parse::<i128>() {
+        Ok(epoch) => epoch,
+        Err(_)
+            if text.parse::<f64>().is_ok()
+                || text
+                    .chars()
+                    .all(|value| value.is_ascii_digit() || value == '-') =>
+        {
+            return Err(crate::value::error::throw_range_error("Invalid instant"));
+        }
+        Err(_) => return Err(crate::value::error::throw_syntax_error("Invalid instant")),
+    };
+    if epoch.abs() > 8_640_000_000_000_000_000_000_i128 {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
+    }
+    Ok(Value::BigInt(epoch.to_string()))
+}
+
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        crate::ops::Builtin::TemporalInstant => Some(Err(crate::value::error::throw_type_error(
+            "Temporal.Instant constructor cannot be called without new",
+        ))),
         crate::ops::Builtin::TemporalInstantFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalInstantEpochNanosecondsGetter => Some(get_epoch(receiver)),
         crate::ops::Builtin::TemporalInstantEpochMillisecondsGetter => {
