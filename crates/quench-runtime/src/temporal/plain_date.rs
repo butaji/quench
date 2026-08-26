@@ -92,7 +92,9 @@ pub(crate) fn execute(
             -1.0,
         )),
         crate::ops::Builtin::TemporalPlainDateToLocaleString => Some(to_string(receiver, None)),
-        crate::ops::Builtin::TemporalPlainDateToPlainDateTime => Some(to_plain_date_time(receiver)),
+        crate::ops::Builtin::TemporalPlainDateToPlainDateTime => {
+            Some(to_plain_date_time(receiver, arguments.first()))
+        }
         crate::ops::Builtin::TemporalPlainDateToPlainMonthDay => Some(to_stub(
             receiver,
             crate::ops::Builtin::TemporalPlainMonthDayPrototype,
@@ -101,10 +103,9 @@ pub(crate) fn execute(
             receiver,
             crate::ops::Builtin::TemporalPlainYearMonthPrototype,
         )),
-        crate::ops::Builtin::TemporalPlainDateToZonedDateTime => Some(to_stub(
-            receiver,
-            crate::ops::Builtin::TemporalZonedDateTimePrototype,
-        )),
+        crate::ops::Builtin::TemporalPlainDateToZonedDateTime => {
+            Some(to_zoned_date_time(receiver, arguments.first()))
+        }
         crate::ops::Builtin::TemporalPlainDateValueOf => {
             Some(Err(crate::value::error::throw_type_error(
                 "Temporal.PlainDate.prototype.valueOf is not allowed",
@@ -322,19 +323,170 @@ fn shift_date(year: f64, month: f64, day: f64, delta: f64) -> Result<Value, VmEr
     ])
 }
 
-fn to_plain_date_time(receiver: Option<&Value>) -> Result<Value, VmError> {
+fn to_plain_date_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Value, VmError> {
     let (year, month, day) = date_parts(receiver)?;
+    let time = match time.filter(|value| !matches!(value, Value::Undefined)) {
+        None => vec![Value::Number(0.0); 6],
+        Some(value) => {
+            let time = crate::temporal::plain_time::from(Some(value), None)?;
+            [
+                "hour",
+                "minute",
+                "second",
+                "millisecond",
+                "microsecond",
+                "nanosecond",
+            ]
+            .iter()
+            .map(|name| crate::execute::get_property_result(&time, name))
+            .collect::<Result<Vec<_>, _>>()?
+        }
+    };
     crate::temporal::plain_date_time::construct(&[
         Value::Number(year),
         Value::Number(month),
         Value::Number(day),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
+        time[0].clone(),
+        time[1].clone(),
+        time[2].clone(),
+        time[3].clone(),
+        time[4].clone(),
+        time[5].clone(),
     ])
+}
+
+fn to_zoned_date_time(
+    receiver: Option<&Value>,
+    argument: Option<&Value>,
+) -> Result<Value, VmError> {
+    let (year, month, day) = date_parts(receiver)?;
+    let argument = argument
+        .filter(|value| !matches!(value, Value::Undefined))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid time zone"))?;
+    let (timezone, time_value) = if crate::value::is_object(argument) {
+        let timezone = crate::execute::get_property_result(argument, "timeZone")?;
+        if matches!(timezone, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error("Invalid time zone"));
+        }
+        let time = crate::execute::get_property_result(argument, "plainTime")?;
+        (timezone, time)
+    } else {
+        (argument.clone(), Value::Undefined)
+    };
+    let timezone = timezone_identifier(&timezone)?;
+    let time = if matches!(time_value, Value::Undefined) {
+        crate::temporal::plain_time::construct(&[])?
+    } else {
+        crate::temporal::plain_time::from(Some(&time_value), None)?
+    };
+    let values = [
+        "hour",
+        "minute",
+        "second",
+        "millisecond",
+        "microsecond",
+        "nanosecond",
+    ]
+    .iter()
+    .map(|name| crate::execute::get_property_result(&time, name))
+    .collect::<Result<Vec<_>, _>>()?;
+    let hour = crate::conversion::to_number(&values[0])? as u32;
+    let minute = crate::conversion::to_number(&values[1])? as u32;
+    let second = crate::conversion::to_number(&values[2])? as u32;
+    let nanos = crate::conversion::to_number(&values[3])? as u32 * 1_000_000
+        + crate::conversion::to_number(&values[4])? as u32 * 1_000
+        + crate::conversion::to_number(&values[5])? as u32;
+    let date = chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    let local = date
+        .and_hms_nano_opt(hour, minute, second, nanos)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid time"))?;
+    let epoch = local.and_utc().timestamp_nanos_opt().unwrap_or(0) as i128
+        - fixed_timezone_offset(&timezone);
+    crate::temporal::zoned_construct(&[Value::BigInt(epoch.to_string()), Value::String(timezone)])
+}
+
+fn timezone_identifier(value: &Value) -> Result<String, VmError> {
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        let text = crate::conversion::to_string(value)?;
+        if text.contains("-000000-") || text.contains('−') {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        if text.eq_ignore_ascii_case("utc") {
+            return Ok("UTC".into());
+        }
+        if text.starts_with(['+', '-']) && is_fixed_timezone(&text) {
+            return Ok(text);
+        }
+        if text.contains('T') {
+            let base = text.split('[').next().unwrap_or(&text);
+            if let Some(annotation) = text
+                .split('[')
+                .nth(1)
+                .and_then(|part| part.strip_suffix(']'))
+            {
+                if annotation.eq_ignore_ascii_case("utc") {
+                    return Ok("UTC".into());
+                }
+                if is_fixed_timezone(annotation) {
+                    return Ok(annotation.to_string());
+                }
+                if !annotation.is_empty()
+                    && !annotation.contains(':')
+                    && annotation
+                        .chars()
+                        .any(|character| character.is_ascii_alphabetic())
+                {
+                    return Ok(annotation.to_string());
+                }
+                return Err(crate::value::error::throw_range_error("Invalid time zone"));
+            }
+            if base.ends_with('Z') || base.ends_with('z') {
+                return Ok("UTC".into());
+            }
+            if let Some(index) = base.rfind(['+', '-']) {
+                let offset = &base[index..];
+                if is_fixed_timezone(offset) {
+                    return Ok(offset.to_string());
+                }
+            }
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        if !text.is_empty()
+            && !text.contains('T')
+            && !text
+                .chars()
+                .all(|character| character.is_ascii_digit() || ".,:+-".contains(character))
+        {
+            return Ok(text);
+        }
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    Err(crate::value::error::throw_type_error("Invalid time zone"))
+}
+
+fn is_fixed_timezone(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 6
+        && matches!(bytes[0], b'+' | b'-')
+        && bytes[3] == b':'
+        && value[1..3].parse::<u8>().is_ok()
+        && value[4..6].parse::<u8>().is_ok()
+}
+
+fn fixed_timezone_offset(value: &str) -> i128 {
+    let bytes = value.as_bytes();
+    if bytes.len() != 6 || !matches!(bytes[0], b'+' | b'-') || bytes[3] != b':' {
+        return 0;
+    }
+    let Ok(hour) = value[1..3].parse::<i128>() else {
+        return 0;
+    };
+    let Ok(minute) = value[4..6].parse::<i128>() else {
+        return 0;
+    };
+    let sign = if bytes[0] == b'-' { -1 } else { 1 };
+    sign * (hour * 3_600 + minute * 60) * 1_000_000_000
 }
 
 fn to_stub(receiver: Option<&Value>, prototype: crate::ops::Builtin) -> Result<Value, VmError> {

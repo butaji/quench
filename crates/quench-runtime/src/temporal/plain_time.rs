@@ -384,7 +384,7 @@ pub(crate) fn format_time(
     Ok(Value::String(text))
 }
 
-fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let Some(value) = value else {
         return Err(crate::value::error::throw_type_error("Invalid time"));
     };
