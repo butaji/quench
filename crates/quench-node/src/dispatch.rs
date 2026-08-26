@@ -387,6 +387,8 @@ const CAP_NET_SOCKET_UNREF: u16 = 2290;
 const CAP_NET_SOCKET_REF: u16 = 2291;
 const CAP_NET_BLOCK_LIST: u16 = 2292;
 const CAP_NET_BLOCK_LIST_ADD_SUBNET: u16 = 2293;
+const CAP_NET_BLOCK_LIST_ADD_ADDRESS: u16 = 2294;
+const CAP_NET_BLOCK_LIST_CHECK: u16 = 2295;
 const CAP_NET_SOCKET_ADDRESS: u16 = 0x100D;
 const CAP_NET_SOCKET_SET_NO_DELAY: u16 = 0x100E;
 const CAP_NET_SOCKET_SET_KEEP_ALIVE: u16 = 0x100F;
@@ -794,6 +796,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_UNREF => crate::modules::net::socket_unref,
         CAP_NET_SOCKET_REF => crate::modules::net::socket_ref,
         CAP_NET_BLOCK_LIST_ADD_SUBNET => crate::modules::net::block_list_add_subnet,
+        CAP_NET_BLOCK_LIST_ADD_ADDRESS => crate::modules::net::block_list_add_address,
+        CAP_NET_BLOCK_LIST_CHECK => crate::modules::net::block_list_check,
         CAP_NET_SOCKET_ADDRESS => crate::modules::net::socket_address,
         CAP_NET_SOCKET_SET_NO_DELAY => crate::modules::net::socket_set_no_delay,
         CAP_NET_SOCKET_SET_KEEP_ALIVE => crate::modules::net::socket_set_keep_alive,
