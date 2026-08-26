@@ -211,11 +211,10 @@ pub fn server_listen(
     let listener = match bind_listener(port, host.as_deref()) {
         Ok(listener) => listener,
         Err(error) => {
-            state
-                .borrow_mut()
-                .net
-                .pending_errors
-                .push((receiver.clone(), server_bind_error(&error)));
+            state.borrow_mut().net.pending_errors.push((
+                receiver.clone(),
+                server_bind_error(&error, host.as_deref(), port),
+            ));
             return Ok(receiver);
         }
     };
@@ -268,13 +267,19 @@ fn add_listener_cb(
     Ok(())
 }
 
-fn server_bind_error(error: &std::io::Error) -> Value {
+fn server_bind_error(error: &std::io::Error, host: Option<&str>, port: u16) -> Value {
     let code = bind_code(error);
     let message = format!("{code}: Another server is running on port");
     let props = vec![
         ("name".to_string(), Value::String("Error".to_string())),
         ("message".to_string(), Value::String(message)),
         ("code".to_string(), Value::String(code.to_string())),
+        (
+            "address".to_string(),
+            Value::String(host.unwrap_or("0.0.0.0").to_string()),
+        ),
+        ("port".to_string(), Value::Number(f64::from(port))),
+        ("syscall".to_string(), Value::String("listen".to_string())),
     ];
     host_api::object(props)
 }
