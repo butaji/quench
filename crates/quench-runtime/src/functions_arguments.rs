@@ -514,6 +514,7 @@ include!("functions_shape_kernels.rs");
 include!("functions_plan_kernel.rs");
 include!("functions_linked_schedule.rs");
 include!("functions_linked_task_runners.rs");
+include!("functions_linked_scheduler.rs");
 include!("functions_task_control_run_match.rs");
 include!("functions_scheduler_queue.rs");
 include!("functions_packet_add.rs");
