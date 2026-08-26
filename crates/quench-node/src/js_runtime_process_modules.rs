@@ -34,7 +34,10 @@ fn process_module() -> Value {
             "execPath".into(),
             Value::String(std::env::args().next().unwrap_or_default()),
         ),
-        ("argv0".into(), Value::String("node".into())),
+        (
+            "argv0".into(),
+            Value::String(std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| "node".into())),
+        ),
         (
             "title".into(),
             Value::String(
