@@ -492,6 +492,7 @@ fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::e
         if let Some(value) = crate::builtins::map_value(&target, index)? {
             elements.push(value);
         }
+        target = crate::locals::resolved_replacement(target);
     }
     insertion_sort(&mut elements, compare)?;
     for index in 0..length {
