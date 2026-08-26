@@ -1111,16 +1111,16 @@ mod stubs {
             }) {
                 return Err(crate::value::error::throw_type_error("Invalid options"));
             }
-            let largest = options
+            let mut largest = options
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::execute::get_property_result(value, "largestUnit"))
                 .transpose()?
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::conversion::to_string(&value))
                 .transpose()?
-                .unwrap_or_else(|| "second".into())
+                .unwrap_or_else(|| "hour".into())
                 .strip_suffix('s')
-                .unwrap_or("second")
+                .unwrap_or("hour")
                 .to_string();
             if !matches!(
                 largest.as_str(),
@@ -1169,11 +1169,15 @@ mod stubs {
                 .filter(|value| !matches!(value, Value::Undefined))
                 .map(|value| crate::conversion::to_string(&value))
                 .transpose()?
-                .unwrap_or_else(|| "nanosecond".into())
-                .strip_suffix('s')
-                .unwrap_or("nanosecond")
-                .to_string();
+                .unwrap_or_else(|| "nanosecond".into());
+            let smallest = smallest.strip_suffix('s').unwrap_or(&smallest).to_string();
+            if largest == "hour" && matches!(smallest.as_str(), "year" | "month" | "week" | "day") {
+                largest = smallest.clone();
+            }
             let scale = match smallest.as_str() {
+                "day" => 86_400_000_000_000,
+                "week" => 604_800_000_000_000,
+                "year" | "month" => 86_400_000_000_000,
                 "hour" => 3_600_000_000_000,
                 "minute" => 60_000_000_000,
                 "second" => 1_000_000_000,
@@ -1201,6 +1205,31 @@ mod stubs {
                 let quantum = scale * increment as i128;
                 delta = delta.div_euclid(quantum) * quantum;
             }
+            let rounding_mode = options
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::execute::get_property_result(value, "roundingMode"))
+                .transpose()?
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(|value| crate::conversion::to_string(&value))
+                .transpose()?
+                .unwrap_or_else(|| "trunc".into());
+            if ![
+                "ceil",
+                "floor",
+                "expand",
+                "trunc",
+                "halfCeil",
+                "halfFloor",
+                "halfExpand",
+                "halfTrunc",
+                "halfEven",
+            ]
+            .contains(&rounding_mode.as_str())
+            {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid roundingMode",
+                ));
+            }
             let scales = [
                 ("week", 604_800_000_000_000_i128),
                 ("day", 86_400_000_000_000),
@@ -1216,6 +1245,102 @@ mod stubs {
                 .find(|(name, _)| *name == largest)
                 .map_or(1_000_000_000, |(_, scale)| *scale);
             let mut fields = vec![Value::Number(0.0); 10];
+            if matches!(largest.as_str(), "year" | "month") {
+                let start = if direction > 0 { receiver } else { &other };
+                let end = if direction > 0 { &other } else { receiver };
+                let number = |object: &Value, name: &str| -> Result<i32, VmError> {
+                    Ok(
+                        crate::conversion::to_number(&crate::execute::get_property_result(
+                            object, name,
+                        )?)? as i32,
+                    )
+                };
+                let start_date = chrono::NaiveDate::from_ymd_opt(
+                    number(start, "year")?,
+                    number(start, "month")? as u32,
+                    number(start, "day")? as u32,
+                )
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                let end_date = chrono::NaiveDate::from_ymd_opt(
+                    number(end, "year")?,
+                    number(end, "month")? as u32,
+                    number(end, "day")? as u32,
+                )
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                let mut month_delta = (end_date.year() - start_date.year()) * 12
+                    + end_date.month() as i32
+                    - start_date.month() as i32;
+                if month_delta > 0 && end_date.day() < start_date.day() {
+                    month_delta -= 1;
+                } else if month_delta < 0 && end_date.day() > start_date.day() {
+                    month_delta += 1;
+                }
+                let years = month_delta / 12;
+                let months = month_delta % 12;
+                let (anchor, days) = if month_delta >= 0 {
+                    let anchor = end_date
+                        .checked_sub_months(chrono::Months::new(month_delta as u32))
+                        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                    (anchor, (anchor - start_date).num_days())
+                } else {
+                    let anchor = start_date
+                        .checked_sub_months(chrono::Months::new(month_delta.unsigned_abs() as u32))
+                        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date"))?;
+                    (anchor, (end_date - anchor).num_days())
+                };
+                let date_days = (end_date - start_date).num_days() as i128;
+                let time_remainder = delta - date_days * 86_400_000_000_000;
+                if largest == "year" {
+                    fields[0] = Value::Number(years as f64);
+                    fields[1] = Value::Number(months as f64);
+                } else {
+                    fields[1] = Value::Number((years * 12 + months) as f64);
+                }
+                fields[3] = Value::Number(days as f64);
+                if smallest == "year" {
+                    if rounding_mode == "floor"
+                        && delta < 0
+                        && (months != 0 || days != 0 || time_remainder != 0)
+                    {
+                        fields[0] = Value::Number((years - 1) as f64);
+                    } else if matches!(rounding_mode.as_str(), "ceil" | "expand")
+                        && delta > 0
+                        && (months != 0 || days != 0 || time_remainder != 0)
+                    {
+                        fields[0] = Value::Number((years + 1) as f64);
+                    }
+                    fields[1] = Value::Number(0.0);
+                    fields[3] = Value::Number(0.0);
+                } else if smallest == "month" {
+                    if rounding_mode == "floor" && delta < 0 && (days != 0 || time_remainder != 0) {
+                        fields[1] = Value::Number((years * 12 + months - 1) as f64);
+                    } else if matches!(rounding_mode.as_str(), "ceil" | "expand")
+                        && delta > 0
+                        && (days != 0 || time_remainder != 0)
+                    {
+                        fields[1] = Value::Number((years * 12 + months + 1) as f64);
+                    }
+                    fields[3] = Value::Number(0.0);
+                } else if smallest == "week" {
+                    fields[3] = Value::Number((days / 7) as f64 * 7.0);
+                }
+                let mut remainder = time_remainder;
+                for (index, unit_scale) in [
+                    (4, 3_600_000_000_000_i128),
+                    (5, 60_000_000_000),
+                    (6, 1_000_000_000),
+                    (7, 1_000_000),
+                    (8, 1_000),
+                    (9, 1),
+                ] {
+                    if unit_scale < scale {
+                        continue;
+                    }
+                    fields[index] = Value::Number((remainder / unit_scale) as f64);
+                    remainder %= unit_scale;
+                }
+                return crate::temporal::duration::construct(&fields);
+            }
             let mut remainder = delta;
             let largest_index: usize = match largest.as_str() {
                 "week" => 2,
