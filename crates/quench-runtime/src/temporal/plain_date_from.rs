@@ -38,8 +38,7 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
                 }
             }
         }
-        let overflow = overflow_value(options)?;
-        return from_property_bag(value, overflow);
+        return from_property_bag(value, options);
     }
     if value.is_some_and(crate::conversion::is_symbol) {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
@@ -128,7 +127,7 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
     Ok(result)
 }
 
-fn from_property_bag(value: &Value, overflow: &'static str) -> Result<Value, VmError> {
+fn from_property_bag(value: &Value, options: Option<&Value>) -> Result<Value, VmError> {
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     let day = crate::execute::get_property_result(value, "day")?;
     let day = if matches!(day, Value::Undefined) {
@@ -149,6 +148,12 @@ fn from_property_bag(value: &Value, overflow: &'static str) -> Result<Value, VmE
         Value::String(month_code_text(&month_code)?)
     };
     let year = crate::execute::get_property_result(value, "year")?;
+    let year = if matches!(year, Value::Undefined) {
+        year
+    } else {
+        Value::Number(crate::conversion::to_number(&year)?.trunc())
+    };
+    let overflow = overflow_value(options)?;
     if matches!(day, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Missing day"));
     }
@@ -163,7 +168,6 @@ fn from_property_bag(value: &Value, overflow: &'static str) -> Result<Value, VmE
     } else {
         Some(month_from_code(month_code.clone())?)
     };
-    let year = Value::Number(crate::conversion::to_number(&year)?.trunc());
     if let Some(month_number) = &month_code_number {
         if !(1.0..=12.0).contains(&crate::conversion::to_number(month_number)?) {
             return Err(crate::value::error::throw_range_error("Invalid monthCode"));
