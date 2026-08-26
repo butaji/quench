@@ -404,3 +404,6 @@ test-crypto-dh-errors.js
 test-crypto-dh-group-setters.js
 test-crypto-dep0204.js
 test-crypto-dep0206.js
+test-crypto-hash.js
+test-crypto-hmac.js
+test-crypto-sign-verify.js
