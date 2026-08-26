@@ -45,8 +45,10 @@ test-stream-readable-data.js
 test-stream-readable-ended.js
 test-stream-ispaused.js
 test-stream-writable-finished-state.js
+test-stream-writable-finished.js
 test-stream-writable-properties.js
 test-stream-writable-writable.js
+test-stream-writable-change-default-encoding.js
 test-stream-unshift-empty-chunk.js
 test-stream-uint8array.js
 test-stream-writable-ended-state.js
@@ -221,6 +223,9 @@ test-child-process-exec-kill-throws.js
 test-child-process-exec-any-shells-windows.js
 test-process-constants-noatime.js
 test-process-default.js
+test-process-release.js
+test-process-uptime.js
+test-process-versions.js
 test-os-eol.js
 test-os-checked-function.js
 test-os-homedir-no-envvar.js
