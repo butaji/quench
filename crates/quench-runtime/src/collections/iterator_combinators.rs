@@ -62,9 +62,9 @@ fn close_zip_iterators(
     }
 }
 
-fn zip_mode(options: &Value) -> Result<u8, crate::execute::VmError> {
+fn zip_mode(options: &Value) -> Result<(u8, Option<Value>), crate::execute::VmError> {
     if matches!(options, Value::Undefined) {
-        return Ok(0);
+        return Ok((0, None));
     }
     if !crate::value::is_object(options) {
         return Err(crate::value::error::throw_type_error(
@@ -79,15 +79,18 @@ fn zip_mode(options: &Value) -> Result<u8, crate::execute::VmError> {
         Value::String(value) if value == "strict" => 2,
         _ => return Err(crate::value::error::throw_type_error("Iterator.zip mode")),
     };
-    if mode == 1 {
+    let padding = if mode == 1 {
         let padding = crate::execute::get_property_result(options, "padding")?;
         if !matches!(padding, Value::Undefined) && !crate::value::is_object(&padding) {
             return Err(crate::value::error::throw_type_error(
                 "Iterator.zip padding",
             ));
         }
-    }
-    Ok(mode)
+        Some(padding)
+    } else {
+        None
+    };
+    Ok((mode, padding))
 }
 
 pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -312,7 +315,11 @@ pub(crate) fn return_iterator(
                 ..
             }
         );
-        if completed && !active_concat {
+        let active_zip = matches!(
+            &*data.state.borrow(),
+            IteratorState::Zip { started: true, .. }
+        );
+        if completed && !active_concat && !active_zip {
             return Ok(result(value, true));
         }
         return Err(crate::value::error::throw_type_error(
