@@ -945,6 +945,24 @@ pub fn internal_binding(
         state.borrow_mut().os_binding = Some(binding.clone());
         return Ok(binding);
     }
+    if name == "constants" {
+        let empty = || crate::host::null_namespace(Vec::new());
+        let os = crate::host::null_namespace(vec![
+            ("UV_UDP_REUSEADDR".into(), Value::Number(1.0)),
+            ("dlopen".into(), empty()),
+            ("errno".into(), empty()),
+            ("priority".into(), empty()),
+            ("signals".into(), empty()),
+        ]);
+        return Ok(crate::host::null_namespace(vec![
+            ("crypto".into(), empty()),
+            ("fs".into(), empty()),
+            ("internal".into(), empty()),
+            ("os".into(), os),
+            ("trace".into(), empty()),
+            ("zlib".into(), empty()),
+        ]));
+    }
     if name == "cares_wrap" {
         if let Some(binding) = state.borrow().cares_binding.clone() {
             return Ok(binding);
