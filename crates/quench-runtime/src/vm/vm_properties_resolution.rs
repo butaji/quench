@@ -633,11 +633,10 @@ fn array_property_result(
             getter => invoke_accessor(&getter, receiver),
         });
     }
-    Some(get_property_with_receiver(
-        &Value::Builtin(crate::ops::Builtin::ArrayPrototype),
-        key,
-        receiver,
-    ))
+    let prototype = values
+        .prototype()
+        .unwrap_or_else(|| Value::Builtin(crate::ops::Builtin::ArrayPrototype));
+    Some(get_property_with_receiver(&prototype, key, receiver))
 }
 
 fn array_has_own_property(values: &crate::value::ArrayData, key: &str) -> bool {
@@ -775,6 +774,23 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 }
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
+    if let Value::Array(values) = value {
+        if let Some(property) = values.property(key) {
+            return property;
+        }
+        if key == "length" {
+            return if values.is_arguments() {
+                values.arguments_length_value()
+            } else {
+                Value::Number(values.logical_len() as f64)
+            };
+        }
+        if let Some(index) = crate::arrays::array_index(key) {
+            if let Some(property) = values.get_index(index as usize) {
+                return property;
+            }
+        }
+    }
     let property = get_property(value, key);
     if should_preserve_receiver_property(value, key, &property, receiver)
         || same_property_receiver(value, receiver)
@@ -792,6 +808,15 @@ fn should_preserve_receiver_property(
 ) -> bool {
     if object_has_property(value, key) {
         return true;
+    }
+    if let Value::Array(values) = value {
+        if key == "length"
+            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+            || values.property(key).is_some()
+            || values.descriptor(key).is_some()
+        {
+            return true;
+        }
     }
     if plural_rules_instance(receiver) {
         return true;
