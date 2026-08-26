@@ -55,7 +55,7 @@ fn execute_builtin_match(
         ArrayAt => return Some(at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
-        ArraySplice => return Some(Ok(splice(receiver, arguments))),
+        ArraySplice => return Some(splice(receiver, arguments)),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
@@ -127,28 +127,88 @@ include!("arrays_mutation.rs");
 include!("arrays_typed_static.rs");
 include!("arrays_from.rs");
 
-fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
+fn splice(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.splice called on null or undefined",
+        ));
     };
-    let length = values.len();
-    let start = relative_index(arguments.first(), length as isize) as usize;
-    let delete_count = arguments.get(1).map_or(length - start, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-            .max(0.0)
-            .min((length - start) as f64) as usize
-    });
-    let mut updated = values.to_vec();
-    let start = start.min(updated.len());
-    let end = start.saturating_add(delete_count).min(updated.len());
-    let removed = updated
-        .splice(
-            start..end,
-            arguments.iter().skip(2).cloned(),
-        )
-        .collect();
-    crate::locals::replace_value(receiver, &Value::array(updated));
-    Value::array(removed)
+    let mut target = crate::construct::to_object(receiver)?;
+    let length = array_like_length(&target)?;
+    let start = splice_index(arguments.first(), length)?;
+    let available = length - start;
+    let delete_count = match arguments.get(1) {
+        None => available,
+        Some(value) => splice_count(value)?.min(available),
+    };
+    let mut removed = crate::builtins::array_species_create(&target, delete_count)?;
+    for offset in 0..delete_count {
+        if let Some(value) = crate::builtins::map_value(&target, start + offset)? {
+            removed = crate::builtins::create_data_property_or_throw(
+                removed,
+                &offset.to_string(),
+                value,
+            )?;
+        }
+    }
+    let items: Vec<Value> = arguments.iter().skip(2).cloned().collect();
+    let new_length = length - delete_count + items.len();
+    if items.len() < delete_count {
+        for index in start..(length - delete_count) {
+            let from = index + delete_count;
+            target = splice_move(&target, index, &target, from)?;
+        }
+        for index in (new_length..length).rev() {
+            target = splice_delete(target, index)?;
+        }
+    } else if items.len() > delete_count {
+        for index in (start..(length - delete_count)).rev() {
+            let from = index + delete_count;
+            target = splice_move(&target, index + items.len(), &target, from)?;
+        }
+    }
+    for (offset, value) in items.into_iter().enumerate() {
+        target = crate::properties::assign_set_property(&target, &(start + offset).to_string(), value)?;
+    }
+    target = crate::properties::assign_set_property(&target, "length", Value::Number(new_length as f64))?;
+    Ok(removed)
+}
+
+fn splice_index(value: Option<&Value>, length: usize) -> Result<usize, crate::execute::VmError> {
+    let number = value.map(crate::conversion::to_number).transpose()?.unwrap_or(0.0);
+    if number.is_nan() || number == 0.0 { return Ok(0); }
+    if number.is_sign_negative() { return Ok((length as f64 + number.trunc()).max(0.0) as usize); }
+    Ok(number.min(length as f64).trunc() as usize)
+}
+
+fn splice_count(value: &Value) -> Result<usize, crate::execute::VmError> {
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number <= 0.0 { return Ok(0); }
+    Ok(number.min(9_007_199_254_740_991.0).trunc() as usize)
+}
+
+fn splice_move(
+    target: &Value,
+    to: usize,
+    source: &Value,
+    from: usize,
+) -> Result<Value, crate::execute::VmError> {
+    match crate::builtins::map_value(source, from)? {
+        Some(value) => crate::properties::assign_set_property(target, &to.to_string(), value),
+        None => splice_delete(target.clone(), to),
+    }
+}
+
+fn splice_delete(
+    target: Value,
+    index: usize,
+) -> Result<Value, crate::execute::VmError> {
+    let (updated, deleted) = crate::builtins::delete_property(target, index.to_string());
+    if deleted { Ok(updated) } else { Err(crate::value::error::throw_type_error("Cannot delete array property")) }
 }
 
 pub(crate) fn reduce(
@@ -373,29 +433,73 @@ fn sort(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Ok(Value::Undefined);
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.sort called on null or undefined",
+        ));
     };
-    let mut sorted = values.to_vec();
-    if let Some(compare) = arguments.first().filter(|value| !matches!(value, Value::Undefined)) {
+    let mut target = crate::construct::to_object(receiver)?;
+    let length = array_like_length(&target)?;
+    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    if let Some(compare) = compare {
         if !crate::conversion::is_callable(compare) {
             return Err(crate::value::error::throw_type_error(
                 "The comparison function must be either a function or undefined",
             ));
         }
-        sorted.sort_by(|left, right| {
-            let result = crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])
-                .ok()
-                .and_then(|value| crate::conversion::to_number(&value).ok())
-                .unwrap_or(0.0);
-            result.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal)
-        });
-    } else {
-        sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
     }
-    let result = Value::array(sorted);
-    crate::locals::replace_value(receiver, &result);
-    Ok(result)
+    let mut elements = Vec::new();
+    for index in 0..length {
+        if let Some(value) = crate::builtins::map_value(&target, index)? {
+            elements.push(value);
+        }
+    }
+    insertion_sort(&mut elements, compare)?;
+    for index in 0..length {
+        let key = index.to_string();
+        if let Some(value) = elements.get(index).cloned() {
+            target = crate::properties::assign_set_property(&target, &key, value)?;
+        } else {
+            let (updated, _) = crate::builtins::delete_property(target, key);
+            target = updated;
+        }
+    }
+    Ok(target)
+}
+
+fn insertion_sort(
+    elements: &mut [Value],
+    compare: Option<&Value>,
+) -> Result<(), crate::execute::VmError> {
+    for index in 1..elements.len() {
+        let value = elements[index].clone();
+        let mut position = index;
+        while position > 0 {
+            let ordering = compare_values(&elements[position - 1], &value, compare)?;
+            if ordering != std::cmp::Ordering::Greater { break; }
+            elements[position] = elements[position - 1].clone();
+            position -= 1;
+        }
+        elements[position] = value;
+    }
+    Ok(())
+}
+
+fn compare_values(
+    left: &Value,
+    right: &Value,
+    compare: Option<&Value>,
+) -> Result<std::cmp::Ordering, crate::execute::VmError> {
+    let number = if let Some(compare) = compare {
+        let value = crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
+        crate::conversion::to_number(&value)?
+    } else {
+        let left = crate::conversion::to_string(left)?;
+        let right = crate::conversion::to_string(right)?;
+        return Ok(left.cmp(&right));
+    };
+    Ok(number.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal))
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {
@@ -418,13 +522,21 @@ pub(crate) fn flat(
     let receiver = crate::construct::to_object(receiver)?;
     let length = crate::builtins::map_length(&receiver)?;
     let depth = flat_depth(arguments.first())?;
+    let mut target = crate::builtins::array_species_create(&receiver, 0)?;
     let mut values = Vec::with_capacity(length);
     for index in 0..length {
         if let Some(value) = crate::builtins::map_value(&receiver, index)? {
             values.push(value);
         }
     }
-    Ok(Value::array(flatten(&values, depth)))
+    for (index, value) in flatten(&values, depth).into_iter().enumerate() {
+        target = crate::builtins::create_data_property_or_throw(
+            target,
+            &index.to_string(),
+            value,
+        )?;
+    }
+    Ok(target)
 }
 
 fn flat_depth(value: Option<&Value>) -> Result<usize, crate::execute::VmError> {
