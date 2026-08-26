@@ -308,7 +308,11 @@ fn finish_set_property(
 ) -> Result<(), crate::execute::VmError> {
     let setter = {
         let _scope = crate::execution_trace::attribution_scope("SetN:accessor");
-        crate::property_define::accessor(target, key, "set")
+        if own_data_property(target, key) {
+            None
+        } else {
+            crate::property_define::accessor(target, key, "set")
+        }
     };
     if let Some(setter) = setter {
         if matches!(setter, crate::value::Value::Undefined) {
@@ -354,6 +358,23 @@ fn finish_set_property(
     }
     let _scope = crate::execution_trace::attribution_scope("SetN:ordinary");
     ordinary_set(registers, object, target, key, value, strict)
+}
+
+fn own_data_property(target: &crate::value::Value, key: &str) -> bool {
+    if crate::builtins::object::has_own_property(
+        Some(target),
+        Some(&crate::value::Value::String(key.to_string())),
+    ) != crate::value::Value::Boolean(true)
+    {
+        return false;
+    }
+    let Ok(descriptor) = crate::builtins::object::descriptor(
+        Some(target),
+        Some(&crate::value::Value::String(key.to_string())),
+    ) else {
+        return false;
+    };
+    matches!(descriptor, crate::value::Value::Object(fields) if fields.iter().any(|(name, _)| name == "value"))
 }
 
 fn inherits_error_prototype(target: &crate::value::Value) -> bool {
