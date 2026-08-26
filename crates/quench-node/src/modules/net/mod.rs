@@ -25,10 +25,10 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    connect, connect_existing, create_server, server_address, server_close, server_listen, socket_address,
-    socket_construct,
-    socket_destroy, socket_end, socket_pause, socket_resume, socket_set_encoding,
-    socket_set_keep_alive, socket_set_no_delay, socket_write,
+    connect, connect_existing, create_server, server_address, server_close, server_listen,
+    server_ref, server_unref,
+    socket_address, socket_construct, socket_destroy, socket_end, socket_pause, socket_resume,
+    socket_set_encoding, socket_set_keep_alive, socket_set_no_delay, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -50,6 +50,7 @@ pub struct NetServer {
     pub bind_addr: Option<SocketAddr>,
     pub js: Value,
     pub listening: bool,
+    pub refed: bool,
     pub announced: bool,
     pub closed: bool,
     pub close_emitted: bool,
@@ -100,7 +101,10 @@ pub fn has_work(state: &Rc<RefCell<HostState>>) -> bool {
     host.net
         .servers
         .values()
-        .any(|s| s.borrow().listening && !s.borrow().closed)
+        .any(|s| {
+            let server = s.borrow();
+            server.listening && server.refed && !server.closed
+        })
         || host
             .net
             .sockets
@@ -150,24 +154,18 @@ pub(crate) fn install_socket_counters(object: Value) -> Result<Value, VmError> {
             ("bytesWritten".to_string(), Value::Number(0.0)),
             ("pending".to_string(), Value::Boolean(true)),
             ("connecting".to_string(), Value::Boolean(false)),
-            ("readyState".to_string(), Value::String("closed".to_string())),
+            (
+                "readyState".to_string(),
+                Value::String("closed".to_string()),
+            ),
         ],
     )
 }
 
-pub(crate) fn set_socket_state(
-    socket: &Value,
-    pending: bool,
-    connecting: bool,
-    ready_state: &str,
-) {
+pub(crate) fn set_socket_state(socket: &Value, pending: bool, connecting: bool, ready_state: &str) {
     execute::set_property_in_place(socket, "pending", Value::Boolean(pending));
     execute::set_property_in_place(socket, "connecting", Value::Boolean(connecting));
-    execute::set_property_in_place(
-        socket,
-        "readyState",
-        Value::String(ready_state.to_string()),
-    );
+    execute::set_property_in_place(socket, "readyState", Value::String(ready_state.to_string()));
 }
 
 pub(crate) fn update_socket_counters(socket: &NetSocket) {
@@ -215,6 +213,8 @@ fn server_props() -> Vec<(&'static str, Value)> {
         ("listen", cap(crate::registry::SPEC_NET_SERVER_LISTEN)),
         ("close", cap(crate::registry::SPEC_NET_SERVER_CLOSE)),
         ("address", cap(crate::registry::SPEC_NET_SERVER_ADDRESS)),
+        ("unref", cap(crate::registry::SPEC_NET_SERVER_UNREF)),
+        ("ref", cap(crate::registry::SPEC_NET_SERVER_REF)),
     ]
 }
 
@@ -292,6 +292,7 @@ fn register_server(
             bind_addr,
             js: js.clone(),
             listening: is_listening,
+            refed: true,
             announced: false,
             closed: false,
             close_emitted: false,
@@ -459,11 +460,14 @@ pub fn is_ipv6(args: &[Value]) -> bool {
 }
 
 fn parse_ipv6(value: &str) -> Option<std::net::Ipv6Addr> {
-    let (address, zone) = value.split_once('%').map_or((value, None), |(address, zone)| {
-        (address, Some(zone))
-    });
+    let (address, zone) = value
+        .split_once('%')
+        .map_or((value, None), |(address, zone)| (address, Some(zone)));
     if zone.is_some_and(|zone| {
-        zone.is_empty() || !zone.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'.')
+        zone.is_empty()
+            || !zone
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.')
     }) {
         return None;
     }

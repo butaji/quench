@@ -23,10 +23,7 @@ pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
 
 /// `new net.Socket()` creates an unconnected socket whose `connect` method
 /// shares the public connection capability and validation path.
-pub fn socket_construct(
-    state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn socket_construct(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let (object, _id) = new_net_object(state, socket_props())?;
     let object = install_socket_counters(object)?;
     install_methods(
@@ -66,7 +63,10 @@ fn connect_with_receiver(
     };
     let _ = stream.set_nonblocking(true);
     let (object, id) = match receiver {
-        Some(object) => (object.clone(), net_id(object).unwrap_or_else(|| allocate_id(state))),
+        Some(object) => (
+            object.clone(),
+            net_id(object).unwrap_or_else(|| allocate_id(state)),
+        ),
         None => {
             let (object, id) = new_net_object(state, socket_props())?;
             (install_socket_counters(object)?, id)
@@ -160,7 +160,9 @@ fn missing_connect_args() -> VmError {
         ),
         (
             "message".to_string(),
-            Value::String("The \"options\" or \"port\" or \"path\" argument must be specified".to_string()),
+            Value::String(
+                "The \"options\" or \"port\" or \"path\" argument must be specified".to_string(),
+            ),
         ),
     ]))
 }
@@ -302,6 +304,32 @@ pub fn server_close(
     super::set_server_listening(&receiver, false)?;
     add_listener_cb(state, &receiver, args.first(), "close")?;
     Ok(receiver)
+}
+
+pub fn server_unref(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| execute::type_error("server"))?;
+    let id = super::net_id(receiver).ok_or_else(|| execute::type_error("server"))?;
+    if let Some(server) = state.borrow().net.servers.get(&id) {
+        server.borrow_mut().refed = false;
+    }
+    Ok(receiver.clone())
+}
+
+pub fn server_ref(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| execute::type_error("server"))?;
+    let id = super::net_id(receiver).ok_or_else(|| execute::type_error("server"))?;
+    if let Some(server) = state.borrow().net.servers.get(&id) {
+        server.borrow_mut().refed = true;
+    }
+    Ok(receiver.clone())
 }
 
 /// `server.address()` — the bound address object, or null.
