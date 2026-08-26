@@ -696,6 +696,9 @@ pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::exec
         ));
     }
     let length = array_like_length(&this)?;
+    if length > u32::MAX as usize {
+        return Err(crate::value::error::throw_range_error("Invalid array length"));
+    }
     let mut values = Vec::with_capacity(length);
     for index in (0..length).rev() {
         values.push(crate::execute::get_property_result(
