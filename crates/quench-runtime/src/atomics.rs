@@ -14,22 +14,28 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
     };
     match view {
         Value::Int32Array(view) => {
-            if !view.buffer.shared {
-                return Ok(Value::Number(0.0));
+            let length = view.logical_len();
+            if *view.buffer.detached.borrow() {
+                return Err(crate::value::error::throw_type_error(
+                    "Atomics.notify requires an attached buffer",
+                ));
             }
             let index = atomic_index(arguments.get(1))?;
-            if view.get(index).is_none() {
+            if index >= length {
                 return Err(crate::value::error::throw_range_error(
                     "Atomics.notify index is out of range",
                 ));
             }
         }
         Value::BigInt64Array(view) => {
-            if !view.buffer.shared {
-                return Ok(Value::Number(0.0));
+            let length = view.logical_len();
+            if *view.buffer.detached.borrow() {
+                return Err(crate::value::error::throw_type_error(
+                    "Atomics.notify requires an attached buffer",
+                ));
             }
             let index = atomic_index(arguments.get(1))?;
-            if view.get(index).is_none() {
+            if index >= length {
                 return Err(crate::value::error::throw_range_error(
                     "Atomics.notify index is out of range",
                 ));
