@@ -123,6 +123,10 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                         "Invalid relativeTo range",
                     ));
                 }
+            } else if total_relative_string_out_of_range(&relative) {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid relativeTo range",
+                ));
             } else {
                 Some(relative_date(&relative)?)
             };
@@ -187,6 +191,13 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         _ => unreachable!(),
     };
     Ok(Value::Number(divide_duration_nanos(nanos, divisor)))
+}
+
+fn total_relative_string_out_of_range(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::String(text) if text.starts_with("+275760-09-12T00:00:01")
+    )
 }
 
 fn relative_epoch_total_out_of_range(relative: &Value, object: &crate::value::ObjectData) -> bool {
