@@ -66,6 +66,7 @@ test-timers-clearImmediate.js
 test-timers-destroyed.js
 test-timers-immediate-unref-nested-once.js
 test-timers-immediate-unref.js
+test-timers-immediate-queue.js
 test-timers-immediate.js
 test-timers-interval-throw.js
 test-timers-invalid-clear.js
