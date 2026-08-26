@@ -8,8 +8,8 @@ impl ForwardingConstructorFact {
             GetN,
             GetN,
             LoadLocalChecked,
-            LoadLocalChecked,
-            Slow,
+            LoadLocal,
+            CallN,
             LoadConst,
             Return,
         ];
@@ -17,9 +17,11 @@ impl ForwardingConstructorFact {
             .then_some(())?;
         let code = function.code.code()?;
         (code.len() == SHAPE.len()).then_some(())?;
-        SHAPE.into_iter().enumerate().all(|(pc, opcode)| {
-            code.instruction(pc).is_some_and(|op| op.opcode == opcode)
-        }).then_some(())?;
+        SHAPE
+            .into_iter()
+            .enumerate()
+            .all(|(pc, opcode)| code.instruction(pc).is_some_and(|op| op.opcode == opcode))
+            .then_some(())?;
         validate_forwarding_operands(function, code)?;
         Some(Self)
     }
@@ -48,22 +50,15 @@ fn validate_forwarding_call(
     this: u16,
     arguments: u16,
 ) -> Option<()> {
-    let crate::ops::Op::CallMethod {
-        object,
-        key,
-        callee: actual,
-        args,
-        spreads,
-        ..
-    } = code.cold_at(5)? else {
-        return None;
-    };
-    (*object == code.instruction(1)?.a
-        && key == "apply"
-        && *actual == Some(callee)
-        && args.as_slice() == [this, arguments]
-        && spreads.iter().all(|spread| !spread))
-    .then_some(())
+    let call = code.instruction(5)?;
+    let first_argument = call.a.checked_sub(u16::from(call.flags))?;
+    (call.opcode == crate::ir::Opcode::CallN
+        && call.flags == 2
+        && call.b == code.instruction(1)?.a
+        && call.c == callee
+        && first_argument == this
+        && first_argument.checked_add(1)? == arguments)
+        .then_some(())
 }
 
 fn execute_forwarding_constructor(
@@ -82,11 +77,15 @@ fn forward_constructor(
 ) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
     let initializer = crate::execute::get_property_result(this_value, "initialize")?;
     let apply = crate::execute::get_property_result(&initializer, "apply")?;
-    if matches!(apply, crate::value::Value::Builtin(crate::ops::Builtin::FunctionApply)) {
+    if matches!(
+        apply,
+        crate::value::Value::Builtin(crate::ops::Builtin::FunctionApply)
+    ) {
         crate::functions::execute_target(&initializer, this_value, arguments)?;
     } else {
         forward_custom_apply(function, &initializer, &apply, this_value, arguments)?;
     }
+    crate::execution_trace::kernel("forwarding_constructor", false);
     let final_this = crate::locals::resolved_replacement(this_value.clone());
     Ok((crate::value::Value::Undefined, final_this))
 }
