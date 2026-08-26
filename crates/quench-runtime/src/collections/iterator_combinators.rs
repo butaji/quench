@@ -189,18 +189,28 @@ fn predicate_terminal(
     stop_when_truthy: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    let iterator = receiver_iterator(receiver)?;
-    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
-    if !crate::conversion::is_callable(callback) {
-        return Err(crate::vm::not_callable());
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        let error = crate::vm::not_callable();
+        if let Ok(method) = crate::execute::get_property_result(receiver, "Symbol.iterator") {
+            if crate::conversion::is_callable(&method) {
+                if let Ok(return_method) = crate::execute::get_property_result(receiver, "return") {
+                    if crate::conversion::is_callable(&return_method) {
+                        let _ = crate::functions::execute_target(&return_method, receiver, &[]);
+                    }
+                }
+            }
+        }
+        return Err(error);
     }
+    let iterator = receiver_iterator(receiver)?;
     let mut index = 0;
     loop {
         let Some(value) = step_value(&iterator)? else {
             return Ok(Value::Boolean(!stop_when_truthy));
         };
         let result = crate::functions::execute_target(
-            callback,
+            &callback,
             &Value::Undefined,
             &[value, Value::Number(index as f64), iterator.clone()],
         );
@@ -238,24 +248,56 @@ pub(crate) fn return_iterator(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Iterator(data)) = receiver else {
+    let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Iterator return called on incompatible receiver",
         ));
     };
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let Value::Iterator(data) = receiver else {
+        if iterator_prototype_receiver(receiver) {
+            return Ok(result(value, true));
+        }
+        return Err(crate::value::error::throw_type_error(
+            "Iterator return called on incompatible receiver",
+        ));
+    };
     let (already_done, inner) = inner_iterators(data);
     if already_done {
         return Ok(result(value, true));
     }
     mark_done(data);
     *data.in_return.borrow_mut() = true;
-    let completion = close_inner(data, inner, receiver)?;
+    let completion = close_inner(data, inner, Some(receiver))?;
     *data.in_return.borrow_mut() = false;
     match completion {
         crate::completion::Completion::Normal => Ok(result(value, true)),
         completion => completion.into_vm_error().map(|_| result(value, true)),
     }
+}
+
+fn iterator_prototype_receiver(value: &Value) -> bool {
+    let iterator_prototype =
+        crate::vm::realm_intrinsic(crate::ops::Builtin::IteratorPrototype);
+    let mut current = match crate::builtins::object::get_prototype_of(Some(value)) {
+        Ok(current) => current,
+        Err(_) => return false,
+    };
+    for _ in 0..64 {
+        if crate::builtins::same_value(Some(&current), Some(&iterator_prototype))
+            || matches!(current, Value::Builtin(crate::ops::Builtin::IteratorPrototype))
+        {
+            return true;
+        }
+        if matches!(current, Value::Null | Value::Undefined) {
+            return false;
+        }
+        current = match crate::builtins::object::get_prototype_of(Some(&current)) {
+            Ok(current) => current,
+            Err(_) => return false,
+        };
+    }
+    false
 }
 
 /// Walk the iterator state and return a tuple of `(already_done, inner)`
@@ -505,5 +547,3 @@ pub(crate) fn for_each(
         index += 1;
     }
 }
-
-
