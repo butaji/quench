@@ -697,6 +697,16 @@ fn descriptor_property_result(
             return Some(invoke_accessor(&Value::Builtin(getter), receiver));
         }
         let property = receiver_property(value, key, receiver);
+        if key == "constructor" {
+            if let (Value::Builtin(constructor), Value::BoundFunction(bound)) =
+                (&property, receiver)
+            {
+                return Some(Ok(crate::vm::realm_intrinsic_for(
+                    bound.realm,
+                    *constructor,
+                )));
+            }
+        }
         return (!matches!(property, Value::Undefined)).then_some(Ok(property));
     }
     if let Value::Array(values) = value {
