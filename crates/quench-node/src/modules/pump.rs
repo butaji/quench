@@ -397,12 +397,28 @@ fn drain_immediates(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             continue;
         };
         super::timers::mark_destroyed(&timer);
+        // An unref'd immediate is only eligible while some other referenced
+        // resource keeps the loop alive. With no such resource Node exits
+        // without invoking it.
+        if !timer.referenced && !has_referenced_work(state) {
+            continue;
+        }
         let result = call_guarded(state, &timer.callback, &timer.object, &timer.args);
         super::timers::async_destroy(&timer.async_resource);
         result?;
         drain_ticks(state)?;
     }
     Ok(())
+}
+
+fn has_referenced_work(state: &Rc<RefCell<HostState>>) -> bool {
+    let guard = state.borrow();
+    guard
+        .timers
+        .timers
+        .values()
+        .any(|timer| timer.referenced && timer.active)
+        || crate::modules::net::has_work(state)
 }
 
 fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
