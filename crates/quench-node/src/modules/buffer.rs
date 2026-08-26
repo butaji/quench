@@ -94,7 +94,7 @@ pub fn btoa(args: &[Value]) -> Result<String, VmError> {
     };
     let input = quench_runtime::to_string(value)?;
     if input.chars().any(|character| character as u32 > 0xff) {
-        return Err(VmError::EvalError("InvalidCharacterError".into()));
+        return Err(invalid_character_error());
     }
     Ok(enc::base64_encode(input.as_bytes(), true, false))
 }
@@ -106,16 +106,33 @@ pub fn atob(args: &[Value]) -> Result<String, VmError> {
         ));
     };
     let input = quench_runtime::to_string(value)?;
-    if input
+    let compact = input
         .bytes()
-        .any(|b| !b.is_ascii_whitespace() && b != b'=' && !B64.contains(&b))
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    if compact.len() % 4 == 1
+        || compact
+            .iter()
+            .any(|byte| *byte != b'=' && !B64.contains(byte))
     {
-        return Err(VmError::EvalError("InvalidCharacterError".into()));
+        return Err(invalid_character_error());
     }
     Ok(enc::base64_decode(input.as_bytes())
         .into_iter()
         .map(|b| b as char)
         .collect())
+}
+
+fn invalid_character_error() -> VmError {
+    let error = Value::object(vec![
+        (
+            "constructor".into(),
+            Value::Builtin(quench_runtime::ops::Builtin::Error),
+        ),
+        ("name".into(), Value::String("InvalidCharacterError".into())),
+        ("code".into(), Value::Number(5.0)),
+    ]);
+    VmError::Thrown(error)
 }
 
 /// Validate a Buffer size argument; returns the size as `usize`.
