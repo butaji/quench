@@ -42,7 +42,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeDuplexPairFacto
 };
 const NodeReadableCompat = function Readable(options = {}) {
   const instance = Reflect.construct(NodeReadable, [
-    { ...options, __quenchCompatConstruct: true },
+    { ...options, __quenchCompatConstruct: true, __quenchSkipConstruct: true },
   ]);
   if (this instanceof NodeReadableCompat && this !== instance) {
     Object.assign(this, instance);
@@ -53,8 +53,10 @@ const NodeReadableCompat = function Readable(options = {}) {
       autoDestroyErrorListener.__quenchInternal = true;
       this.on("error", autoDestroyErrorListener);
     }
+    __nodeRunConstruct(this, options);
     return this;
   }
+  __nodeRunConstruct(instance, options);
   return instance;
 };
 NodeReadableCompat.prototype = NodeReadable.prototype;
