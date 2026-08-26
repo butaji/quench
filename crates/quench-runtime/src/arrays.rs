@@ -50,7 +50,7 @@ fn execute_builtin_match(
         ArrayLastIndexOf => return Some(last_index_of(receiver, arguments)),
         ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
-        ArrayFlat => flat(receiver, arguments),
+        ArrayFlat => return Some(flat(receiver, arguments)),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
@@ -410,18 +410,33 @@ fn index(values: &crate::value::ArrayData, key: &str) -> Value {
 }
 
 include!("arrays_iteration.rs");
-pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
+pub(crate) fn flat(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.flat called on null or undefined",
+        ));
     };
-    let depth = arguments
-        .first()
-        .and_then(|value| match value {
-            Value::Number(number) => Some(number.max(0.0) as usize),
-            _ => None,
-        })
-        .unwrap_or(1);
-    Value::array(flatten(&values.snapshot(), depth))
+    let receiver = crate::construct::to_object(receiver)?;
+    let length = crate::builtins::map_length(&receiver)?;
+    let depth = flat_depth(arguments.first())?;
+    let mut values = Vec::with_capacity(length);
+    for index in 0..length {
+        if let Some(value) = crate::builtins::map_value(&receiver, index)? {
+            values.push(value);
+        }
+    }
+    Ok(Value::array(flatten(&values, depth)))
+}
+
+fn flat_depth(value: Option<&Value>) -> Result<usize, crate::execute::VmError> {
+    let Some(value) = value else { return Ok(1); };
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number <= 0.0 { return Ok(0); }
+    Ok(number.trunc().min(usize::MAX as f64) as usize)
 }
 fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
     // Allocate the result once and append through the whole traversal. The
@@ -531,64 +546,40 @@ pub(crate) fn reduce_values(
             "Array.prototype.reduce called on null or undefined",
         ));
     }
-    let values: Vec<Value> = if let Value::Array(values) = receiver {
-        values.snapshot()
-    } else {
-        let length = crate::execute::get_property_result(receiver, "length")
-            .ok()
-            .and_then(|v| {
-                if let Value::Number(n) = v {
-                    let clamped = if n.is_nan() || n < 0.0 {
-                        0.0
-                    } else if n > 1_048_576.0 {
-                        1_048_576.0
-                    } else {
-                        n
-                    };
-                    Some(clamped.trunc() as usize)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-        (0..length)
-            .map(|i| {
-                crate::execute::get_property_result(receiver, &i.to_string())
-                    .unwrap_or(Value::Undefined)
-            })
-            .collect()
-    };
     let Some(callback) = arguments.first() else {
-        return Ok(Value::Undefined);
+        return Err(crate::vm::not_callable());
     };
-    let (mut accumulator, start) = match arguments.get(1) {
-        Some(initial) => (initial.clone(), 0),
-        None if values.is_empty() => return Ok(Value::Undefined),
-        None => {
-            let index = if reverse { values.len() - 1 } else { 0 };
-            (values[index].clone(), 1)
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let length = crate::builtins::map_length(receiver)?;
+    let initial = arguments.get(1).cloned();
+    let mut index = if reverse { length } else { 0 };
+    let mut accumulator = initial;
+    while accumulator.is_none() {
+        if reverse {
+            if index == 0 { break; }
+            index -= 1;
+        } else if index >= length { break; } else {
+            index += 1;
         }
-    };
-    let apply = |index: usize, accumulator: &mut Value| -> Result<(), crate::execute::VmError> {
-        let args = [
-            accumulator.clone(),
-            values[index].clone(),
-            Value::Number(index as f64),
-            receiver.clone(),
-        ];
-        *accumulator = crate::functions::execute_target(callback, receiver, &args)?;
-        Ok(())
-    };
-    if reverse {
-        let end = values.len().saturating_sub(start);
-        for index in (0..end).rev() {
-            apply(index, &mut accumulator)?;
+        let position = if reverse { index } else { index - 1 };
+        if let Some(value) = crate::builtins::map_value(receiver, position)? {
+            accumulator = Some(value);
         }
+    }
+    let Some(mut accumulator) = accumulator else {
+        return Err(crate::value::error::throw_type_error("Reduce of empty array"));
+    };
+    let indices: Box<dyn Iterator<Item = usize>> = if reverse {
+        Box::new((0..index).rev())
     } else {
-        let begin = if arguments.get(1).is_some() { 0 } else { 1 };
-        for index in begin..values.len() {
-            apply(index, &mut accumulator)?;
-        }
+        Box::new(index..length)
+    };
+    for position in indices {
+        let Some(value) = crate::builtins::map_value(receiver, position)? else { continue; };
+        let args = [accumulator, value, Value::Number(position as f64), receiver.clone()];
+        accumulator = crate::functions::execute_target(callback, receiver, &args)?;
     }
     Ok(accumulator)
 }
