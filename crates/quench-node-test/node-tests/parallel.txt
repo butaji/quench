@@ -10,6 +10,7 @@ test-events-static-geteventlisteners.js
 test-events-uncaught-exception-stack.js
 test-eventsource-disabled.js
 test-fs-exists.js
+test-fs-assert-encoding-error.js
 test-fs-existssync-false.js
 test-fs-fmap.js
 test-fs-make-callback.js
