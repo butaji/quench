@@ -295,6 +295,22 @@ fn duration_value_without_calendar(value: &Value) -> i128 {
 }
 
 fn relative_date(value: &Value) -> Result<(i32, u32, u32), VmError> {
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error("Invalid relativeTo"));
+    }
+    if matches!(value, Value::Undefined) {
+        return Err(crate::value::error::throw_range_error("Invalid relativeTo"));
+    }
+    if matches!(
+        value,
+        Value::Null
+            | Value::Boolean(_)
+            | Value::Number(_)
+            | Value::BigInt(_)
+            | Value::Builtin(crate::ops::Builtin::Symbol)
+    ) {
+        return Err(crate::value::error::throw_type_error("Invalid relativeTo"));
+    }
     if zoned_date_out_of_range(value) {
         return Err(crate::value::error::throw_range_error(
             "Invalid relativeTo range",
@@ -467,6 +483,11 @@ fn validate_date_limits(text: &str, date: &Value) -> Result<(), VmError> {
     }
     if (year, month, day) == (275_760, 9, 13) {
         let clock = base.split_once(['+', '-']).map_or(base, |(clock, _)| clock);
+        if base.ends_with('Z') {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid relativeTo range",
+            ));
+        }
         if clock.matches(':').count() > 1 {
             return Err(crate::value::error::throw_range_error(
                 "Invalid relativeTo range",
