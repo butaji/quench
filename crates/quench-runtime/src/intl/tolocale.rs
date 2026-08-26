@@ -243,7 +243,8 @@ pub(crate) mod value {
             crate::ops::Builtin::Math
             | crate::ops::Builtin::Reflect
             | crate::ops::Builtin::Json
-            | crate::ops::Builtin::Temporal => "object",
+            | crate::ops::Builtin::Temporal
+            | crate::ops::Builtin::Atomics => "object",
             builtin if crate::builtin_meta::is_prototype(builtin) => "object",
             _ => "function",
         }
