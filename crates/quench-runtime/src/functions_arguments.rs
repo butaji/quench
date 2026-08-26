@@ -548,13 +548,24 @@ fn bind_function_target(
     let Some(target) = receiver else {
         return Err(crate::execute::VmError::NotCallable);
     };
-    let bound_target = arguments
+    let requested_receiver = arguments
         .first()
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
-    let extra = arguments.get(1..).unwrap_or(&[]).to_vec();
-    let name = bound_function_name(target)?;
-    let length = bound_function_length(target, extra.len() as f64);
+    let mut extra = arguments.get(1..).unwrap_or(&[]).to_vec();
+    let (target, bound_target) = match target {
+        crate::value::Value::BoundFunction(bound)
+            if matches!(bound.target, crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
+        {
+            let call_target = bound.target.clone();
+            let bound_receiver = bound.receiver.clone();
+            extra.splice(0..0, bound.arguments.clone());
+            (call_target, bound_receiver)
+        }
+        target => (target.clone(), requested_receiver),
+    };
+    let name = bound_function_name(&target)?;
+    let length = bound_function_length(&target, extra.len() as f64);
     let mut properties = Vec::new();
     insert_bound_property(
         &mut properties,
@@ -571,7 +582,7 @@ fn bind_function_target(
     Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
             realm: crate::vm::current_context_or_default().realm(),
-            target: target.clone(),
+            target,
             receiver: bound_target,
             arguments: extra,
             properties: std::cell::RefCell::new(properties),

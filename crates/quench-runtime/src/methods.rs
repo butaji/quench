@@ -238,7 +238,14 @@ fn resolved_callee(
             }
             value => Ok(value),
         },
-        |callee| read_register(registers, callee),
+        |callee| {
+            let value = read_register(registers, callee)?;
+            if matches!(value, Value::Undefined) {
+                get_property_result(receiver, key)
+            } else {
+                Ok(value)
+            }
+        },
     )
 }
 

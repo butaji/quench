@@ -418,12 +418,14 @@ fn run_source(source: &str) -> Result<(), String> {
 }
 
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
+    quench_runtime::vm::reset_host_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
     quench_runtime::execute::reset_replacements();
     let context = fresh_context();
     let result = execute_code_with_context(program.code(), &context)
         .map(|_| ())
         .map_err(|error| format!("residual VM error: {}", error.render()));
+    quench_runtime::vm::reset_host_agent_state();
     // Promise reactions (including asyncHelpers' $DONE handler) are queued
     // during script execution and must settle before the host reports success.
     quench_runtime::module_bindings::drain_jobs();
@@ -441,6 +443,18 @@ fn fresh_context() -> VmContext {
             quench_runtime::ops::HostCapabilityKind::CreateRealm,
             quench_runtime::ops::HostCapabilityKind::EvalScript,
             quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
+            quench_runtime::ops::HostCapabilityKind::Agent,
+            quench_runtime::ops::HostCapabilityKind::AgentStart,
+            quench_runtime::ops::HostCapabilityKind::AgentBroadcast,
+            quench_runtime::ops::HostCapabilityKind::AgentReport,
+            quench_runtime::ops::HostCapabilityKind::AgentGetReport,
+            quench_runtime::ops::HostCapabilityKind::AgentLeaving,
+            quench_runtime::ops::HostCapabilityKind::AgentReceiveBroadcast,
+            quench_runtime::ops::HostCapabilityKind::AgentSleep,
+            quench_runtime::ops::HostCapabilityKind::AgentTryYield,
+            quench_runtime::ops::HostCapabilityKind::AgentTrySleep,
+            quench_runtime::ops::HostCapabilityKind::AgentSetTimeout,
+            quench_runtime::ops::HostCapabilityKind::AgentMonotonicNow,
             quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
         ],
     );
