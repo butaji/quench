@@ -234,6 +234,7 @@ pub fn spawn_sync(
             "QUENCH_PARENT_PID",
             std::process::id().to_string(),
         );
+        cmd.env("QUENCH_ARGV0", &command);
     }
 
     let mut child = match cmd
