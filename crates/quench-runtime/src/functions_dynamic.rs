@@ -298,7 +298,7 @@ fn dynamic_value(
             mapped_arguments: true,
             raytrace_pixel: false,
             raytrace_render: None,
-            direct_constructor: Vec::new(),
+            direct_constructor: std::rc::Rc::default(),
         },
     );
     if let Value::Function(function) = &value {
