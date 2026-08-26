@@ -153,6 +153,107 @@ fn format_offset(offset: i128) -> String {
     format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
+fn parse_timezone_identifier(
+    value: &crate::value::Value,
+) -> Result<String, crate::execute::VmError> {
+    if matches!(
+        value,
+        crate::value::Value::Null
+            | crate::value::Value::Undefined
+            | crate::value::Value::Boolean(_)
+            | crate::value::Value::Number(_)
+            | crate::value::Value::Object(_)
+            | crate::value::Value::Function(_)
+            | crate::value::Value::BoundFunction(_)
+            | crate::value::Value::Proxy(_)
+            | crate::value::Value::BigInt(_)
+    ) {
+        return Err(crate::value::error::throw_type_error("Invalid time zone"));
+    }
+    let text = crate::conversion::to_string(value)?;
+    if text.eq_ignore_ascii_case("utc") {
+        return Ok("UTC".into());
+    }
+    if text.is_empty() || text.contains("-000000-") {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    if text.starts_with(['+', '-']) {
+        let bytes = text.as_bytes();
+        if bytes.len() != 6 || bytes[3] != b':' {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        let hour = text[1..3].parse::<u8>().unwrap_or(99);
+        let minute = text[4..6].parse::<u8>().unwrap_or(99);
+        if hour > 23 || minute > 59 {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        return Ok(text);
+    }
+    if text.contains('T') {
+        let base = text.split('[').next().unwrap_or(&text);
+        let annotation = text
+            .split('[')
+            .nth(1)
+            .and_then(|part| part.split(']').next());
+        let identifier = annotation.or_else(|| {
+            if base.ends_with('Z') {
+                Some("UTC")
+            } else if base.len() >= 6 {
+                let suffix = &base[base.len() - 6..];
+                (suffix.starts_with(['+', '-']) && suffix.as_bytes()[3] == b':').then_some(suffix)
+            } else {
+                None
+            }
+        });
+        let Some(identifier) = identifier else {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        };
+        if identifier.ends_with(":60")
+            || (identifier.starts_with(['+', '-']) && identifier.len() != 6)
+        {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        if identifier.eq_ignore_ascii_case("utc") {
+            return Ok("UTC".into());
+        }
+        if identifier.starts_with(['+', '-']) {
+            let hour = identifier[1..3].parse::<u8>().unwrap_or(99);
+            let minute = identifier[4..6].parse::<u8>().unwrap_or(99);
+            if hour > 23 || minute > 59 {
+                return Err(crate::value::error::throw_range_error("Invalid time zone"));
+            }
+        }
+        return Ok(identifier.to_string());
+    }
+    if text
+        .chars()
+        .all(|ch| ch.is_ascii_digit() || ch == '.' || ch == ':')
+    {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    Ok(text)
+}
+
+fn is_zoned_receiver(value: &crate::value::Value, depth: usize) -> bool {
+    if depth > 4 {
+        return false;
+    }
+    let crate::value::Value::Object(object) = value else {
+        return false;
+    };
+    let Some(prototype) = object
+        .iter()
+        .find(|(key, _)| key == "\0prototype")
+        .map(|(_, value)| value)
+    else {
+        return false;
+    };
+    matches!(
+        prototype,
+        crate::value::Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)
+    ) || is_zoned_receiver(prototype, depth + 1)
+}
+
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
     receiver: Option<&crate::value::Value>,
@@ -194,6 +295,7 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeToPlainDate
                 | crate::ops::Builtin::TemporalZonedDateTimeToPlainTime
                 | crate::ops::Builtin::TemporalZonedDateTimeEquals
+                | crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -429,11 +531,7 @@ mod stubs {
             .ok_or_else(|| {
                 crate::value::error::throw_type_error("Invalid ZonedDateTime receiver")
             })?;
-        if !matches!(receiver, Value::Object(object) if object
-            .iter()
-            .any(|(key, value)| key == "\0prototype"
-                && value == Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype)))
-        {
+        if !super::is_zoned_receiver(receiver, 0) {
             return Err(crate::value::error::throw_type_error(
                 "Invalid ZonedDateTime receiver",
             ));
@@ -484,6 +582,28 @@ mod stubs {
                         property(name).ok()
                             == crate::execute::get_property_result(&other, name).ok()
                     }),
+            ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeWithTimeZone {
+            let timezone = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing time zone"))?;
+            let timezone = super::parse_timezone_identifier(timezone)?;
+            let epoch = property("epochNanoseconds")?;
+            let epoch = match epoch {
+                Value::BigInt(value) => value.parse::<i128>().map_err(|_| {
+                    crate::value::error::throw_range_error("Invalid epochNanoseconds")
+                })?,
+                _ => {
+                    return Err(crate::value::error::throw_type_error(
+                        "Invalid epochNanoseconds",
+                    ))
+                }
+            };
+            return Ok(super::zoned_record(
+                epoch,
+                timezone,
+                crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToInstant {
