@@ -1,7 +1,12 @@
 fn then_species_constructor(promise: &Value) -> Result<Value, VmError> {
     let constructor = crate::execute::get_property_result(promise, "constructor")?;
-    if matches!(constructor, Value::Undefined | Value::Null) {
+    if matches!(constructor, Value::Undefined) {
         return Ok(Value::Builtin(Builtin::Promise));
+    }
+    if !crate::value::is_object(&constructor) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise constructor is not an object",
+        ));
     }
     let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
     Ok(if matches!(species, Value::Undefined | Value::Null) {

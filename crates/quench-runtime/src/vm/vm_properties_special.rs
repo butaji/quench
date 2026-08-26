@@ -24,6 +24,9 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
+    if let Some(override_value) = crate::vm::intrinsic_override_property(builtin, key, value) {
+        return override_value;
+    }
     if key == "toString" && callable_builtin_value(value) {
         return Value::Builtin(Builtin::FunctionPrototypeToString);
     }
