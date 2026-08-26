@@ -146,6 +146,16 @@ pub fn spawn_sync(
         Ok(output) => output,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
+    if output_exceeds_max_buffer(&output.stdout, &output.stderr, args.get(2)) {
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(pid as f64)),
+            ("status".into(), Value::Null),
+            ("signal".into(), Value::Null),
+            ("error".into(), coded_error_with_errno("ENOBUFS", -105.0)),
+            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&output.stdout)),
+            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&output.stderr)),
+        ]));
+    }
     if args.get(2).is_some_and(|options| stdio_inherit(options)) {
         use std::io::Write as _;
         let _ = std::io::stdout().write_all(&output.stdout);
@@ -194,6 +204,17 @@ fn output_value(bytes: &[u8], options: Option<&Value>) -> Value {
     }
 }
 
+fn output_exceeds_max_buffer(stdout: &[u8], stderr: &[u8], options: Option<&Value>) -> bool {
+    let limit: f64 = options
+        .and_then(|value| execute::get_property_result(value, "maxBuffer").ok())
+        .and_then(|value| match value {
+            Value::Number(number) => Some(number),
+            _ => None,
+        })
+        .unwrap_or(1024.0 * 1024.0);
+    limit.is_finite() && (stdout.len() + stderr.len()) as f64 > limit
+}
+
 fn stdio_inherit(options: &Value) -> bool {
     match execute::get_property_result(options, "stdio").ok() {
         Some(Value::String(value)) => value == "inherit",
@@ -228,6 +249,15 @@ fn coded_error(code: &str, message: &str) -> Value {
         ("code".to_string(), Value::String(code.to_string())),
         ("errno".to_string(), Value::Number(-2.0)),
         ("syscall".to_string(), Value::String("spawn".to_string())),
+    ])
+}
+
+fn coded_error_with_errno(code: &str, errno: f64) -> Value {
+    host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        ("message".into(), Value::String("spawnSync ENOBUFS".into())),
+        ("code".into(), Value::String(code.into())),
+        ("errno".into(), Value::Number(errno)),
     ])
 }
 
@@ -294,24 +324,20 @@ fn opt_str(value: &Value, key: &str) -> Option<String> {
 /// Snapshot a JS `env` object into a clean env map (empty when the
 /// object has no own enumerable keys, e.g. a deleted `process.env`).
 fn opt_env(value: &Value) -> Option<std::collections::HashMap<String, String>> {
-    if !matches!(value, Value::Object(_)) {
+    let value = execute::get_property_result(value, "env").ok()?;
+    if !matches!(&value, Value::Object(_) | Value::ObjectAlias(_)) {
         return None;
     }
     let mut env = std::collections::HashMap::new();
-    for key in execute::own_keys(value).into_iter().filter_map(|key| match key {
+    for key in execute::own_keys(&value).into_iter().filter_map(|key| match key {
         Value::String(key) => Some(key),
         _ => None,
     }) {
-        if let Ok(item) = execute::get_property_result(value, &key) {
+        if let Ok(item) = execute::get_property_result(&value, &key) {
             if let Ok(s) = execute::to_js_string(&item) {
                 env.insert(key, s);
             }
         }
-    }
-    // Host-backed environment objects may not expose their copied keys through
-    // the VM's enumerable-key view; preserve explicitly assigned variables.
-    if let Ok(Value::String(foo)) = execute::get_property_result(value, "foo") {
-        env.insert("foo".into(), foo);
     }
     Some(env)
 }
