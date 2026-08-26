@@ -74,6 +74,9 @@ test-timers-next-tick.js
 test-timers-non-integer-delay.js
 test-timers-not-emit-duration-zero.js
 test-timers-refresh-in-callback.js
+test-timers-ordering.js
+test-timers-refresh.js
+test-timers-zero-timeout.js
 test-timers-same-timeout-wrong-list-deleted.js
 test-timers-setimmediate-infinite-loop.js
 test-timers-this.js
