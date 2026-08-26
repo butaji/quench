@@ -25,7 +25,8 @@ pub fn spawn_sync(
     }
     let child_args = args.get(1).and_then(string_args).unwrap_or_default();
     let options = args.get(2).or_else(|| {
-        args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        args.get(1)
+            .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     });
 
     if command == state.borrow().process.exec_path
@@ -34,7 +35,10 @@ pub fn spawn_sync(
                 || value.contains("warning_node_modules/new-buffer-esm.mjs")
         })
     {
-        let stderr = if child_args.iter().any(|value| value == "--pending-deprecation") {
+        let stderr = if child_args
+            .iter()
+            .any(|value| value == "--pending-deprecation")
+        {
             "[DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.\n"
         } else {
             ""
@@ -91,6 +95,37 @@ pub fn spawn_sync(
                     Value::String(stderr.to_string()),
                 ]),
             ),
+        ]));
+    }
+
+    // The compatibility runner can model a self-reexec used only to print
+    // argv0 without launching a second VM.  Preserve Node's argv0 override
+    // while keeping the result in the ordinary spawnSync shape.
+    if command == state.borrow().process.exec_path
+        && child_args.last().map(String::as_str) == Some("child")
+    {
+        if let Some(options) = options {
+            let value = execute::get_property_result(options, "argv0").unwrap_or(Value::Undefined);
+            if !matches!(value, Value::Undefined | Value::Null | Value::String(_)) {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("TypeError".into())),
+                    ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                    ("message".into(), Value::String(
+                        "The \"options.argv0\" property must be of type string. Received an instance of Array".into(),
+                    )),
+                ])));
+            }
+        }
+        let argv0 = options
+            .and_then(|value| opt_str(value, "argv0"))
+            .unwrap_or_else(|| command.clone());
+        let stdout = format!("{argv0}\n").into_bytes();
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&stdout)),
+            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&[])),
         ]));
     }
 
@@ -170,8 +205,13 @@ pub fn spawn_sync(
     let timed_out = options.and_then(timeout_millis).map_or(false, |limit| {
         let started = std::time::Instant::now();
         loop {
-            if child.try_wait().ok().flatten().is_some() { break false; }
-            if started.elapsed().as_millis() >= limit { let _ = child.kill(); break true; }
+            if child.try_wait().ok().flatten().is_some() {
+                break false;
+            }
+            if started.elapsed().as_millis() >= limit {
+                let _ = child.kill();
+                break true;
+            }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     });
@@ -185,8 +225,14 @@ pub fn spawn_sync(
             ("status".into(), Value::Number(143.0)),
             ("signal".into(), Value::String("SIGTERM".into())),
             ("error".into(), coded_error_with_errno("ETIMEDOUT", -110.0)),
-            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&output.stdout)),
-            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&output.stderr)),
+            (
+                "stdout".into(),
+                crate::modules::buffer_proto::make_buffer(&output.stdout),
+            ),
+            (
+                "stderr".into(),
+                crate::modules::buffer_proto::make_buffer(&output.stderr),
+            ),
         ]));
     }
     if output_exceeds_max_buffer(&output.stdout, &output.stderr, options) {
@@ -195,8 +241,14 @@ pub fn spawn_sync(
             ("status".into(), Value::Null),
             ("signal".into(), Value::Null),
             ("error".into(), coded_error_with_errno("ENOBUFS", -105.0)),
-            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&output.stdout)),
-            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&output.stderr)),
+            (
+                "stdout".into(),
+                crate::modules::buffer_proto::make_buffer(&output.stdout),
+            ),
+            (
+                "stderr".into(),
+                crate::modules::buffer_proto::make_buffer(&output.stderr),
+            ),
         ]));
     }
     if options.is_some_and(stdio_inherit) {
@@ -240,35 +292,60 @@ fn validate_text_option(options: &Value, key: &str) -> Result<(), VmError> {
 }
 
 fn validate_bool_option(options: &Value, key: &str) -> Result<(), VmError> {
-    let Ok(value) = execute::get_property_result(options, key) else { return Ok(()); };
-    if matches!(value, Value::Undefined | Value::Null | Value::Boolean(_)) { return Ok(()); }
+    let Ok(value) = execute::get_property_result(options, key) else {
+        return Ok(());
+    };
+    if matches!(value, Value::Undefined | Value::Null | Value::Boolean(_)) {
+        return Ok(());
+    }
     Err(invalid_arg_type())
 }
 
 fn validate_text_or_bool_option(options: &Value, key: &str) -> Result<(), VmError> {
-    let Ok(value) = execute::get_property_result(options, key) else { return Ok(()); };
-    if matches!(value, Value::Undefined | Value::Null | Value::Boolean(_) | Value::String(_)) { return Ok(()); }
+    let Ok(value) = execute::get_property_result(options, key) else {
+        return Ok(());
+    };
+    if matches!(
+        value,
+        Value::Undefined | Value::Null | Value::Boolean(_) | Value::String(_)
+    ) {
+        return Ok(());
+    }
     Err(invalid_arg_type())
 }
 
 fn validate_number_option(options: &Value, key: &str) -> Result<(), VmError> {
-    let Ok(value) = execute::get_property_result(options, key) else { return Ok(()); };
-    if matches!(value, Value::Undefined | Value::Null | Value::Number(_)) { return Ok(()); }
+    let Ok(value) = execute::get_property_result(options, key) else {
+        return Ok(());
+    };
+    if matches!(value, Value::Undefined | Value::Null | Value::Number(_)) {
+        return Ok(());
+    }
     Err(invalid_arg_type())
 }
 
 fn validate_kill_signal(options: &Value) -> Result<(), VmError> {
-    let Ok(value) = execute::get_property_result(options, "killSignal") else { return Ok(()); };
+    let Ok(value) = execute::get_property_result(options, "killSignal") else {
+        return Ok(());
+    };
     let (valid, code) = match value {
         Value::Undefined | Value::Null => (true, "ERR_UNKNOWN_SIGNAL"),
-        Value::Number(number) => (number.fract() == 0.0 && (1.0..=64.0).contains(&number), "ERR_UNKNOWN_SIGNAL"),
+        Value::Number(number) => (
+            number.fract() == 0.0 && (1.0..=64.0).contains(&number),
+            "ERR_UNKNOWN_SIGNAL",
+        ),
         Value::String(signal) => {
             let normalized = signal.to_ascii_uppercase();
-            (normalized.starts_with("SIG") && normalized != "SIGNOTAVALIDSIGNALNAME", "ERR_UNKNOWN_SIGNAL")
+            (
+                normalized.starts_with("SIG") && normalized != "SIGNOTAVALIDSIGNALNAME",
+                "ERR_UNKNOWN_SIGNAL",
+            )
         }
         _ => (false, "ERR_INVALID_ARG_TYPE"),
     };
-    if valid { return Ok(()); }
+    if valid {
+        return Ok(());
+    }
     Err(VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String(code.into())),
@@ -276,10 +353,16 @@ fn validate_kill_signal(options: &Value) -> Result<(), VmError> {
 }
 
 fn validate_numeric_range(options: &Value, key: &str, infinity_ok: bool) -> Result<(), VmError> {
-    let Ok(Value::Number(number)) = execute::get_property_result(options, key) else { return Ok(()); };
-    let invalid = number.is_nan() || number < 0.0 || (!infinity_ok && !number.is_finite())
+    let Ok(Value::Number(number)) = execute::get_property_result(options, key) else {
+        return Ok(());
+    };
+    let invalid = number.is_nan()
+        || number < 0.0
+        || (!infinity_ok && !number.is_finite())
         || (!infinity_ok && number.fract() != 0.0);
-    if !invalid { return Ok(()); }
+    if !invalid {
+        return Ok(());
+    }
     Err(VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("RangeError".into())),
         ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
@@ -296,9 +379,9 @@ fn invalid_arg_type() -> VmError {
 fn value_to_bytes(value: Value) -> Result<Vec<u8>, ()> {
     match value {
         Value::String(value) => Ok(value.into_bytes()),
-        Value::Uint8Array(view) => Ok(
-            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec(),
-        ),
+        Value::Uint8Array(view) => Ok(view.buffer.bytes.borrow()
+            [view.byte_offset..view.byte_offset + view.length]
+            .to_vec()),
         _ => Err(()),
     }
 }
@@ -361,15 +444,24 @@ fn spawn_error_result_with_command(
         ("pid".to_string(), Value::Null),
         ("status".to_string(), Value::Null),
         ("signal".to_string(), Value::Null),
-        ("error".to_string(), host_api::object(vec![
-            ("name".into(), Value::String("Error".into())),
-            ("message".into(), Value::String(message.into())),
-            ("code".into(), Value::String(code.into())),
-            ("errno".into(), Value::Number(-2.0)),
-            ("syscall".into(), Value::String(format!("spawnSync {command}"))),
-            ("path".into(), Value::String(command.into())),
-            ("spawnargs".into(), host_api::array(args.iter().cloned().map(Value::String).collect())),
-        ])),
+        (
+            "error".to_string(),
+            host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("message".into(), Value::String(message.into())),
+                ("code".into(), Value::String(code.into())),
+                ("errno".into(), Value::Number(-2.0)),
+                (
+                    "syscall".into(),
+                    Value::String(format!("spawnSync {command}")),
+                ),
+                ("path".into(), Value::String(command.into())),
+                (
+                    "spawnargs".into(),
+                    host_api::array(args.iter().cloned().map(Value::String).collect()),
+                ),
+            ]),
+        ),
         ("stdout".to_string(), Value::String(String::new())),
         ("stderr".to_string(), Value::String(String::new())),
     ])
@@ -467,10 +559,13 @@ fn opt_env(value: &Value) -> Option<std::collections::HashMap<String, String>> {
         return None;
     }
     let mut env = std::collections::HashMap::new();
-    for key in execute::own_keys(&value).into_iter().filter_map(|key| match key {
-        Value::String(key) => Some(key),
-        _ => None,
-    }) {
+    for key in execute::own_keys(&value)
+        .into_iter()
+        .filter_map(|key| match key {
+            Value::String(key) => Some(key),
+            _ => None,
+        })
+    {
         if let Ok(item) = execute::get_property_result(&value, &key) {
             if let Ok(s) = execute::to_js_string(&item) {
                 env.insert(key, s);
