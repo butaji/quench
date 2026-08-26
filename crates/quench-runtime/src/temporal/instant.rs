@@ -23,6 +23,7 @@ fn parse_epoch_argument(value: Option<&Value>) -> Result<Value, VmError> {
         _ => return Err(crate::value::error::throw_type_error("Invalid instant")),
     };
     if text.contains('\u{2212}') {
+        eprintln!("MINUSDBG");
         return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
     let epoch = match text.parse::<i128>() {
@@ -226,6 +227,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     }
     let text = match value {
         Value::String(text) if !crate::conversion::is_symbol_string(text) => text.clone(),
+        Value::StringUnits(_) => crate::conversion::to_string(value)?,
         Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype) => {
             return Err(crate::value::error::throw_type_error("Invalid instant"));
         }
