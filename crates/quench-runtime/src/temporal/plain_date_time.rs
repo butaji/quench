@@ -272,7 +272,16 @@ fn difference(
             let smallest = smallest.strip_suffix('s').unwrap_or(&smallest);
             if !matches!(
                 smallest,
-                "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+                "year"
+                    | "month"
+                    | "week"
+                    | "day"
+                    | "hour"
+                    | "minute"
+                    | "second"
+                    | "millisecond"
+                    | "microsecond"
+                    | "nanosecond"
             ) {
                 return Err(crate::value::error::throw_range_error("Invalid smallestUnit"));
             }
@@ -759,6 +768,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         ));
     }
     let unit = crate::conversion::to_string(&unit)?;
+    let unit = unit.strip_suffix('s').unwrap_or(&unit).to_string();
     let quantum = match unit.as_str() {
         "day" => 86_400_000_000_000.0,
         "hour" => 3_600_000_000_000.0,
