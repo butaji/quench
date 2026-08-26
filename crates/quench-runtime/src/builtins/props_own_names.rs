@@ -652,6 +652,23 @@ fn own_property_names_tail_registry(builtin: Builtin) -> &'static [&'static str]
 
 fn own_property_names_tail_end(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::IteratorPrototype => &[
+            "constructor",
+            "reduce",
+            "toArray",
+            "forEach",
+            "some",
+            "every",
+            "find",
+            "map",
+            "filter",
+            "take",
+            "drop",
+            "flatMap",
+            "Symbol.iterator",
+            "Symbol.toStringTag",
+            "Symbol.dispose",
+        ],
         Builtin::ArrayPrototype => &["length", "Symbol.unscopables"],
         Builtin::ArrayIteratorPrototype => &["next", "constructor", "Symbol.toStringTag"],
         Builtin::Math => MATH_NAMES,
