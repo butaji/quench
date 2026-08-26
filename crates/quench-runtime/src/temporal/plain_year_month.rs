@@ -80,10 +80,12 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
                 "Invalid PlainYearMonth",
             ));
         }
-        return construct(
-            parts[parts.len() - 2].parse().unwrap_or(0.0),
-            parts[parts.len() - 1].parse().unwrap_or(0.0),
-        );
+        let (year, month) = if parts.len() == 3 && parts[0].len() == 4 {
+            (parts[0], parts[1])
+        } else {
+            (parts[parts.len() - 2], parts[parts.len() - 1])
+        };
+        return construct(year.parse().unwrap_or(0.0), month.parse().unwrap_or(0.0));
     }
     let year = crate::conversion::to_number(&crate::execute::get_property_result(value, "year")?)?;
     let month = match crate::execute::get_property_result(value, "month")? {
