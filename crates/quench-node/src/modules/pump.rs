@@ -366,7 +366,22 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
         }
     };
     let result = call_timer(state, domain.as_ref(), &cb, &receiver, &args);
-    if destroy {
+    let converted = destroy
+        && result.is_ok()
+        && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
+            &receiver,
+            "_repeat",
+        ));
+    if converted {
+        if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {
+            timer.kind = TimerKind::Interval;
+            timer.active = true;
+            timer.referenced = true;
+            timer.fire_at = now.saturating_add(timer.period.max(1));
+            *timer.destroyed.borrow_mut() = Value::Boolean(false);
+        }
+    }
+    if destroy && !converted {
         super::timers::async_destroy(&resource);
     }
     result
