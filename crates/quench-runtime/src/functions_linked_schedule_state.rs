@@ -315,7 +315,8 @@ impl<'a> NativeSchedule<'a> {
 
     fn run(&mut self) -> Option<usize> {
         let mut iterations = 0usize;
-        while let Some(current) = self.current {
+        let mut cursor = self.current.take();
+        while let Some(current) = cursor {
             iterations = iterations.checked_add(1)?;
             #[cfg(feature = "execution-trace")]
             {
@@ -327,12 +328,12 @@ impl<'a> NativeSchedule<'a> {
             }
             let task = self.task(current);
             if task.state & task.held_mask != 0 || task.state == task.suspended {
-                self.current = task.link;
+                cursor = task.link;
                 continue;
             }
             self.current_id = i32::try_from(current).ok()?;
             let packet = self.take_packet(current)?;
-            self.current = self.run_task(current, packet)?;
+            cursor = self.run_task(current, packet)?;
         }
         Some(iterations)
     }
