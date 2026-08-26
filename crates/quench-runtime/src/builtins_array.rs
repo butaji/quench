@@ -47,6 +47,9 @@ fn delete_object_property_value(
     properties: Rc<crate::value::ObjectData>,
     key: &str,
 ) -> (Value, bool) {
+    if key == "lastIndex" && properties.iter().any(|(name, _)| name == "\0regexp") {
+        return (Value::Object(properties), false);
+    }
     if global_constant(&properties, key) || boxed_string_non_configurable(&properties, key) {
         return (Value::Object(properties), false);
     }
