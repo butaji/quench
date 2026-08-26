@@ -546,13 +546,76 @@ pub fn block_list_construct(
     _state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(host_api::object(vec![(
-        "addSubnet".into(),
-        crate::host::capability(crate::registry::NodeSpec::new(
-            "net:BlockList:addSubnet",
-            2293,
-        )),
-    )]))
+    Ok(host_api::object(vec![
+        (
+            "\0quench:blocklist:addresses".into(),
+            host_api::array(Vec::new()),
+        ),
+        (
+            "addSubnet".into(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "net:BlockList:addSubnet",
+                2293,
+            )),
+        ),
+        (
+            "addAddress".into(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "net:BlockList:addAddress",
+                2294,
+            )),
+        ),
+        (
+            "check".into(),
+            crate::host::capability(crate::registry::NodeSpec::new("net:BlockList:check", 2295)),
+        ),
+    ]))
+}
+
+pub fn block_list_add_address(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let list = execute::get_property(receiver, "\0quench:blocklist:addresses");
+    let mut values = match list {
+        Value::Array(array) => (0..array.logical_len())
+            .map(|i| array.index_value(i))
+            .collect(),
+        _ => Vec::new(),
+    };
+    values.push(Value::String(
+        args.first().map(value_to_string).unwrap_or_default(),
+    ));
+    execute::set_property_in_place(
+        receiver,
+        "\0quench:blocklist:addresses",
+        host_api::array(values),
+    );
+    Ok(Value::Undefined)
+}
+
+pub fn block_list_check(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let address = args.first().map(value_to_string).unwrap_or_default();
+    let blocked = receiver
+        .and_then(
+            |value| match execute::get_property(value, "\0quench:blocklist:addresses") {
+                Value::Array(array) => Some(
+                    (0..array.logical_len())
+                        .any(|i| value_to_string(&array.index_value(i)) == address),
+                ),
+                _ => None,
+            },
+        )
+        .unwrap_or(false);
+    Ok(Value::Boolean(blocked))
 }
 
 pub fn block_list_add_subnet(
