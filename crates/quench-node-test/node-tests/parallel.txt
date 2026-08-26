@@ -95,6 +95,9 @@ test-url-format-whatwg.js
 test-url-invalid-file-url-path-input.js
 test-url-pathtofileurl.js
 test-url-revokeobjecturl.js
+test-util-format.js
+test-util-inspect.js
+test-util-types.js
 test-url-urltooptions.js
 test-whatwg-url-custom-deepequal.js
 test-util-inherits.js
