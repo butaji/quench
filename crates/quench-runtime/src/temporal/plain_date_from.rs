@@ -21,7 +21,18 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
                     .map(|(_, value)| value.clone())
             });
             let has_month_code = object.iter().any(|(key, _)| key == "monthCode");
-            if !has_month_code {
+            let temporal_date = object.iter().any(|(key, value)| {
+                key == "\0temporal-plain-date"
+                    || key == "\0prototype"
+                        && matches!(
+                            value,
+                            Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+                                | Value::Builtin(
+                                    crate::ops::Builtin::TemporalZonedDateTimePrototype
+                                )
+                        )
+            });
+            if !has_month_code || temporal_date {
                 if let [Some(year), Some(month), Some(day)] = direct {
                     let _ = overflow_value(options)?;
                     return construct(&[year, month, day]);
