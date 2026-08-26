@@ -306,6 +306,11 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     let has_calendar = ["years", "months", "weeks"]
         .iter()
         .any(|name| duration_field(object, name) != 0);
+    if let Some(relative) =
+        relative_option(options).filter(|value| !matches!(value, Value::Undefined))
+    {
+        let _ = relative_date(&relative)?;
+    }
     let largest = requested_largest.unwrap_or_else(|| {
         [
             "years",
@@ -424,7 +429,10 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         return calendar_time_round(object, &relative, options, index);
     }
     if index <= 3
-        && (index <= 2 || has_calendar || requested_largest.is_some_and(|largest| largest < index))
+        && (index <= 2
+            || has_calendar
+            || (requested_largest.is_some_and(|largest| largest < index)
+                && duration_field(object, "days") != 0))
     {
         if index == 2
             && requested_largest.is_none()
@@ -455,7 +463,71 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             requested_largest.is_none(),
         );
     }
+    if requested_largest.is_some_and(|largest| largest <= 3) && !has_calendar {
+        if let Some(relative) = relative_option(options) {
+            let _ = relative_date(&relative)?;
+        }
+        if relative_epoch_out_of_range(options) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid relativeTo range",
+            ));
+        }
+        let time_values = [
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ]
+        .map(|name| duration_field(object, name) as f64);
+        let time_total = time_values
+            .iter()
+            .zip([
+                86_400_000_000_000_i128,
+                3_600_000_000_000,
+                60_000_000_000,
+                1_000_000_000,
+                1_000_000,
+                1_000,
+                1,
+            ])
+            .map(|(value, scale)| *value as i128 * scale)
+            .sum::<i128>();
+        let time_total_f64 = time_values
+            .iter()
+            .zip([
+                86_400_000_000_000.0,
+                3_600_000_000_000.0,
+                60_000_000_000.0,
+                1_000_000_000.0,
+                1_000_000.0,
+                1_000.0,
+                1.0,
+            ])
+            .map(|(value, scale)| *value * scale)
+            .sum::<f64>();
+        if total_time_out_of_range(&time_values)
+            || time_total.abs() >= 9_007_199_254_740_991_i128 * 1_000_000_000
+            || time_total_f64.abs() >= 9_007_199_254_740_991.0 * 1_000_000_000.0
+        {
+            return Err(crate::value::error::throw_range_error(
+                "Duration time span is out of range",
+            ));
+        }
+    }
     fixed_round(object, options, largest, index)
+}
+
+fn relative_option(options: Option<&Value>) -> Option<Value> {
+    let Value::Object(object) = options? else {
+        return None;
+    };
+    object
+        .iter()
+        .find(|(key, _)| key == "relativeTo")
+        .map(|(_, value)| value)
 }
 
 fn relative_is_zoned(options: Option<&Value>) -> bool {
@@ -477,6 +549,24 @@ fn relative_is_zoned(options: Option<&Value>) -> bool {
                     )
             })
     )
+}
+
+fn relative_epoch_out_of_range(options: Option<&Value>) -> bool {
+    let Some(relative) = relative_option(options) else {
+        return false;
+    };
+    let resolved = crate::locals::resolved_replacement(relative);
+    let Value::Object(object) = resolved else {
+        return false;
+    };
+    let Some((_, Value::BigInt(epoch))) = object.iter().find(|(key, _)| key == "epochNanoseconds")
+    else {
+        return false;
+    };
+    epoch
+        .parse::<i128>()
+        .ok()
+        .is_some_and(|epoch| epoch.abs() >= 8_640_000_000_000_000_000_000)
 }
 
 fn zoned_time_round(
@@ -825,6 +915,14 @@ fn duration_fields(object: &crate::value::ObjectData) -> Vec<Value> {
 
 fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
     if value.is_none() || value.is_some_and(crate::conversion::is_symbol) {
+        return Err(crate::value::error::throw_type_error(
+            "Options must be an object",
+        ));
+    }
+    if value.is_some_and(|value| {
+        !crate::value::is_object(value)
+            && !matches!(value, Value::String(_) | Value::StringUnits(_))
+    }) {
         return Err(crate::value::error::throw_type_error(
             "Options must be an object",
         ));
