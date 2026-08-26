@@ -175,6 +175,9 @@ test-beforeexit-event-exit.js
 test-atomics-wake.js
 test-benchmark-cli.js
 test-assert-deep.js
+test-assert-checktag.js
+test-assert-class-destructuring.js
+test-assert-deep-with-error.js
 test-assert-partial-deep-equal.js
 test-assert-typedarray-deepequal.js
 test-net-connect-after-destroy.js
