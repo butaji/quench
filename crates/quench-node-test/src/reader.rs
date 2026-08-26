@@ -145,6 +145,17 @@ impl NodeRunner {
         let source = format!("{dgram_surface}\n{dns_surface}\n{source}");
         let program = match reduce_fixture(&source, is_module) {
             Ok(program) => program,
+            Err(error) if is_module && source.contains("await ") => {
+                let wrapped = format!("(async () => {{\n{source}\n}})();");
+                match reduce_fixture(&wrapped, false) {
+                    Ok(program) => program,
+                    Err(_) => {
+                        return NodeOutcome::Fail {
+                            reason: format!("reduce: {error}"),
+                        };
+                    }
+                }
+            }
             Err(error) => {
                 return NodeOutcome::Fail {
                     reason: format!("reduce: {error}"),
