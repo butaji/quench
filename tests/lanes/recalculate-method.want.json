@@ -6,7 +6,7 @@
         "top": {
           "path": "lanes.l1.kernels",
           "key": "id",
-          "value": "recalculate_method",
+          "value": "S|C",
           "field": "hits"
         }
       },
