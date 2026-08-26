@@ -464,3 +464,7 @@ test-tls-0-dns-altname.js
 test-tls-cert-chains-concat.js
 test-tls-cert-chains-in-ca.js
 test-tls-cert-regression.js
+test-tls-cert-ext-encoding.js
+test-tls-certificate-compression.js
+test-tls-certcb-sync-write.js
+test-tls-alpn-server-client.js
