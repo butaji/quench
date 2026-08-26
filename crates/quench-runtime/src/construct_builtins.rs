@@ -58,6 +58,17 @@ fn construct_builtin_tail(
                 crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
             let month =
                 crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+            if let Some(reference_day) = arguments
+                .get(3)
+                .filter(|value| !matches!(value, Value::Undefined))
+            {
+                let reference_day = crate::conversion::to_number(reference_day)?;
+                crate::temporal::plain_date::construct(&[
+                    Value::Number(year),
+                    Value::Number(month),
+                    Value::Number(reference_day),
+                ])?;
+            }
             crate::temporal::plain_year_month::construct(year, month)
         }
         crate::ops::Builtin::TemporalZonedDateTime => crate::temporal::zoned_construct(arguments),
