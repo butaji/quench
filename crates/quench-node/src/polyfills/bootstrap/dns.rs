@@ -339,6 +339,7 @@ const __quenchDns = {
   resolveMx: __quenchDnsResolveMx,
   Resolver: __quenchResolver,
   promises: {
+    Resolver: __quenchResolver,
     resolve: (hostname, rrtype = "A") => {
       if (typeof hostname !== "string") {
         throw Object.assign(
