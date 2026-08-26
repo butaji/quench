@@ -181,6 +181,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
             "toString",
             "toJSON",
             "toLocaleString",
+            "valueOf",
             "toZonedDateTimeISO",
             "equals",
             "add",
