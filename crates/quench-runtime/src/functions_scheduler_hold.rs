@@ -48,8 +48,20 @@ fn execute_scheduler_hold(
         return Ok(None);
     }
 
+    let crate::value::Value::Function(mark) = &callee else {
+        return Ok(None);
+    };
+    let Some((state, next_state)) = state_bitwise_word_transition(
+        mark,
+        &current,
+        crate::ops::BinaryOp::BitwiseOr,
+    ) else {
+        return Ok(None);
+    };
     hold_count.store(crate::value::Value::Number(next_count));
-    crate::functions::execute_target(&callee, &current_value, &[])?;
+    // SAFETY: admission retains `current`, proves its ordinary own state
+    // word, and performs no shape mutation before this store.
+    unsafe { &*state }.store(crate::value::Value::Number(next_state));
     let Some(link) = crate::vm::proven_own_word(&current, "link").map(|slot| slot.load()) else {
         return Ok(None);
     };
