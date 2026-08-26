@@ -570,7 +570,7 @@ fn timer_promise_alias(value: &Value) -> Option<&'static str> {
 
 pub fn util_promisified_call(
     state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(original) = args.first() else {
@@ -590,7 +590,8 @@ pub fn util_promisified_call(
     );
     let mut call_args = args.get(1..).unwrap_or_default().to_vec();
     call_args.push(callback);
-    match quench_runtime::vm::call_value(original, &Value::Undefined, &call_args) {
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    match quench_runtime::vm::call_value(original, &receiver, &call_args) {
         Ok(result) => {
             if matches!(result, Value::Promise(_)) {
                 crate::modules::process::emit_warning(
