@@ -476,22 +476,29 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
             return Some(setter);
         }
     }
-    let prototype = values
+    let mut prototype = values
         .prototype()
         .unwrap_or_else(|| crate::vm::realm_intrinsic(Builtin::ArrayPrototype));
-    let descriptor = crate::builtins::object::descriptor(
-        Some(&prototype),
-        Some(&Value::String(key.to_string())),
-    )
-    .ok()?;
-    let Value::Object(fields) = descriptor else {
-        return None;
-    };
-    let result = fields
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == field).then(|| value.clone()));
-    result
+    loop {
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&prototype),
+            Some(&Value::String(key.to_string())),
+        )
+        .ok()?;
+        if let Value::Object(fields) = descriptor {
+            if let Some(result) = fields
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == field).then(|| value.clone()))
+            {
+                return Some(result);
+            }
+        }
+        prototype = crate::builtins::object::get_prototype_of(Some(&prototype)).ok()?;
+        if matches!(prototype, Value::Null) {
+            return None;
+        }
+    }
 }
 
 fn array_accessor_value(values: &crate::value::ArrayData, key: &str, field: &str) -> Option<Value> {
