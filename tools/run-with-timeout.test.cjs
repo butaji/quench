@@ -5,6 +5,7 @@ const cp = require("node:child_process");
 const path = require("node:path");
 
 const runner = path.join(__dirname, "run-with-timeout.cjs");
+const bounded = require("./lib/bounded-process.cjs");
 const started = Date.now();
 const result = cp.spawnSync(
   process.execPath,
@@ -22,4 +23,11 @@ if (Date.now() - started > 1500)
   throw new Error("timeout runner exceeded its deadline budget");
 if (!result.stderr.includes("command timed out after 100ms"))
   throw new Error("timeout diagnostic missing");
+const helper = bounded.spawnSync(
+  process.execPath,
+  ["-e", "setInterval(() => {}, 1000)"],
+  { encoding: "utf8", deadlineMs: 100 }
+);
+if (helper.status !== 124)
+  throw new Error(`bounded helper returned ${helper.status}`);
 console.log("run-with-timeout: ok");
