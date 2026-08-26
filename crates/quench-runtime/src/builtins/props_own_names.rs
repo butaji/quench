@@ -332,6 +332,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
             "toPlainTime",
             "equals",
             "withTimeZone",
+            "withCalendar",
             "valueOf",
         ],
         Builtin::TemporalNow => &[
