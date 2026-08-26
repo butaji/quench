@@ -6,6 +6,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::OnceLock;
+use std::time::Instant;
 use std::cell::Cell;
 
 use quench_runtime::execute::VmError;
@@ -21,6 +23,8 @@ pub type ConstructHandler = fn(&Rc<RefCell<HostState>>, &[Value]) -> Result<Valu
 thread_local! {
     static OS_PRIORITY: Cell<i32> = const { Cell::new(0) };
 }
+
+static PROCESS_START: OnceLock<Instant> = OnceLock::new();
 
 fn value_text(value: &Value) -> String {
     match value {
@@ -1435,6 +1439,16 @@ pub fn process_cpu_usage(
         ("user".into(), Value::Number(0.0)),
         ("system".into(), Value::Number(0.0)),
     ]))
+}
+
+pub fn process_uptime(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(
+        PROCESS_START.get_or_init(Instant::now).elapsed().as_secs_f64(),
+    ))
 }
 
 // ---- os ----
