@@ -121,27 +121,27 @@ fn execute_scheduler_queue(
     Ok(Some(result))
 }
 
-enum CheckPriorityTransition {
+enum CheckPriorityTransition<R> {
     Empty {
         queue: *const crate::register_file::SlotWord,
         state: *const crate::register_file::SlotWord,
         next_state: f64,
-        result: crate::value::Value,
+        result: R,
     },
     Append {
         queue: *const crate::register_file::SlotWord,
         tail_link: *const crate::register_file::SlotWord,
         head: crate::value::Value,
-        result: crate::value::Value,
+        result: R,
     },
 }
 
-impl CheckPriorityTransition {
+impl<R> CheckPriorityTransition<R> {
     fn apply(
         self,
         packet_link: &crate::register_file::SlotWord,
         packet: crate::value::Value,
-    ) -> crate::value::Value {
+    ) -> R {
         match self {
             Self::Empty {
                 queue,
@@ -178,7 +178,7 @@ fn check_priority_transition(
     target_value: &crate::value::Value,
     task_value: &crate::value::Value,
     packet: &crate::value::ObjectData,
-) -> Result<Option<CheckPriorityTransition>, crate::execute::VmError> {
+) -> Result<Option<CheckPriorityTransition<crate::value::Value>>, crate::execute::VmError> {
     let Some((ready, occupied)) = match_check_priority_add(function) else {
         return Ok(None);
     };
@@ -204,7 +204,7 @@ fn check_priority_append(
     task: &crate::value::Value,
     queue: &crate::register_file::SlotWord,
     head: crate::value::Value,
-) -> Result<Option<CheckPriorityTransition>, crate::execute::VmError> {
+) -> Result<Option<CheckPriorityTransition<crate::value::Value>>, crate::execute::VmError> {
     let crate::value::Value::Object(head_object) = &head else {
         return Ok(None);
     };
@@ -240,7 +240,7 @@ fn check_priority_empty(
     target_value: &crate::value::Value,
     task_value: &crate::value::Value,
     queue: &crate::register_file::SlotWord,
-) -> Option<CheckPriorityTransition> {
+) -> Option<CheckPriorityTransition<crate::value::Value>> {
     let crate::value::Value::Object(task) = task_value else {
         return None;
     };

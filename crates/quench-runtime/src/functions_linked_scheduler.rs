@@ -28,24 +28,24 @@ fn execute_linked_device(
     table: &DirectTaskTable,
     scheduler: &LinkedSchedulerWords,
     packet: &crate::value::Value,
-) -> Option<crate::value::Value> {
+) -> Option<DirectTaskStep> {
     let v1 = current.word(current.task_v1);
     if !packet.is_nullish() {
-        let transition = LinkedHoldTransition::new(current, scheduler)?;
+        let transition = LinkedHoldTransition::new(current, table, scheduler)?;
         v1.store(packet.clone());
         crate::execution_trace::kernel("linked_device_hold", false);
-        return Some(transition.execute());
+        return Some(DirectTaskStep::new(transition.execute()));
     }
     let queued = v1.load();
     if queued.is_nullish() {
         let result = linked_suspend(current)?;
         crate::execution_trace::kernel("linked_device_suspend", false);
-        return Some(result);
+        return Some(DirectTaskStep::new(Some(result)));
     }
     let transition = LinkedQueueTransition::new(current, table, scheduler, queued)?;
     v1.store(crate::value::Value::Null);
     crate::execution_trace::kernel("linked_device_queue", false);
-    Some(transition.execute())
+    Some(DirectTaskStep::new(Some(transition.execute())))
 }
 
 fn execute_linked_idle(
@@ -53,14 +53,14 @@ fn execute_linked_idle(
     table: &DirectTaskTable,
     scheduler: &LinkedSchedulerWords,
     plan: IdleTaskPlan,
-) -> Option<crate::value::Value> {
+) -> Option<DirectTaskStep> {
     let count = current.word(current.task_count?);
     let next_count = count.number()? - 1.0;
     if next_count == 0.0 {
-        let transition = LinkedHoldTransition::new(current, scheduler)?;
+        let transition = LinkedHoldTransition::new(current, table, scheduler)?;
         count.store(crate::value::Value::Number(next_count));
         crate::execution_trace::kernel("linked_idle_hold", false);
-        return Some(transition.execute());
+        return Some(DirectTaskStep::new(transition.execute()));
     }
     let v1 = current.word(current.task_v1);
     let value = crate::vm::vm_arithmetic::numeric_to_int32(v1.number()?);
@@ -72,7 +72,62 @@ fn execute_linked_idle(
     count.store(crate::value::Value::Number(next_count));
     v1.store(crate::value::Value::Number(f64::from(next_v1)));
     crate::execution_trace::kernel("linked_idle_release", false);
-    Some(transition.execute())
+    Some(DirectTaskStep::new(Some(transition.execute())))
+}
+
+fn execute_linked_worker(
+    current: &DirectTaskRunner,
+    table: &DirectTaskTable,
+    scheduler: &LinkedSchedulerWords,
+    packet: &crate::value::Value,
+    plan: WorkerTaskPlan,
+) -> Option<DirectTaskStep> {
+    if packet.is_nullish() {
+        let next = linked_suspend(current)?;
+        crate::execution_trace::kernel("linked_worker_suspend", false);
+        return Some(DirectTaskStep::new(Some(next)));
+    }
+    let crate::value::Value::Object(packet_object) = packet else { return None };
+    if packet_object.has_replacement() { return None; }
+    let v1 = current.word(current.task_v1);
+    let v2 = current.word(current.task_v2?);
+    let handler_a = current.function.captures.get_number(plan.handler_a_slot)?;
+    let handler_b = current.function.captures.get_number(plan.handler_b_slot)?;
+    let next_id = if v1.number()? == handler_a { handler_b } else { handler_a };
+    let count = exact_worker_count(current.function.captures.get_number(plan.data_size_slot)?)?;
+    let (values, next_v2) = worker_values(v2.number()?, count);
+    let payload = worker_payload(packet_object, count)?;
+    let packet_id = writable_own_word(packet_object, "id")?;
+    let packet_a1 = writable_own_word(packet_object, "a1")?;
+    let target_id = exact_linked_task_id(next_id)?;
+    let queue = LinkedQueueTransition::new_for_id(
+        current,
+        table,
+        scheduler,
+        packet.clone(),
+        target_id,
+    )?;
+    apply_linked_worker_payload(&payload, &values[..count])?;
+    v1.store(crate::value::Value::Number(next_id));
+    v2.store(crate::value::Value::Number(next_v2));
+    packet_id.store(crate::value::Value::Number(next_id));
+    packet_a1.store(crate::value::Value::Number(0.0));
+    crate::execution_trace::kernel("linked_worker_task", false);
+    Some(DirectTaskStep::new(Some(queue.execute())))
+}
+
+fn apply_linked_worker_payload(
+    payload: &crate::value::ArrayData,
+    values: &[f64],
+) -> Option<()> {
+    if payload.is_holey() {
+        for (index, value) in values.iter().copied().enumerate() {
+            if !payload.append_preallocated_f64(index, value) { return None; }
+        }
+    } else {
+        payload.numeric_kernel_words_mut()?[..values.len()].copy_from_slice(values);
+    }
+    Some(())
 }
 
 fn execute_linked_handler(
@@ -81,7 +136,7 @@ fn execute_linked_handler(
     scheduler: &LinkedSchedulerWords,
     packet: &crate::value::Value,
     plan: HandlerTaskPlan,
-) -> Option<crate::value::Value> {
+) -> Option<DirectTaskStep> {
     let task_v1 = current.word(current.task_v1);
     let task_v2 = current.word(current.task_v2?);
     let mut v1 = task_v1.load();
@@ -106,7 +161,7 @@ fn execute_linked_handler(
         apply_linked_incoming(incoming)?;
     }
     crate::execution_trace::kernel("linked_handler_task", false);
-    Some(route.execute())
+    Some(DirectTaskStep::new(Some(route.execute())))
 }
 
 fn apply_linked_incoming(incoming: IncomingPacket<'_>) -> Option<()> {
@@ -121,7 +176,7 @@ fn apply_linked_incoming(incoming: IncomingPacket<'_>) -> Option<()> {
 }
 
 enum LinkedHandlerRoute<'a> {
-    Suspend(crate::value::Value),
+    Suspend(usize),
     Work {
         task_v2: &'a crate::register_file::SlotWord,
         next_v2: crate::value::Value,
@@ -139,7 +194,7 @@ enum LinkedHandlerRoute<'a> {
 }
 
 impl LinkedHandlerRoute<'_> {
-    fn execute(self) -> crate::value::Value {
+    fn execute(self) -> usize {
         match self {
             Self::Suspend(result) => result,
             Self::Work { task_v2, next_v2, packet_a1, work_a1, value, count, queue } => {
@@ -218,7 +273,7 @@ fn linked_handler_work<'a>(
 struct LinkedReleaseTransition {
     state: *const crate::register_file::SlotWord,
     next_state: f64,
-    result: crate::value::Value,
+    result: usize,
 }
 
 impl LinkedReleaseTransition {
@@ -232,7 +287,7 @@ impl LinkedReleaseTransition {
         })
     }
 
-    fn execute(self) -> crate::value::Value {
+    fn execute(self) -> usize {
         // SAFETY: the retained target TCB owns the canonical state word.
         unsafe { &*self.state }.store(crate::value::Value::Number(self.next_state));
         self.result
@@ -244,37 +299,42 @@ struct LinkedHoldTransition {
     next_count: f64,
     state: *const crate::register_file::SlotWord,
     next_state: f64,
-    link: *const crate::register_file::SlotWord,
+    next: Option<usize>,
 }
 
 impl LinkedHoldTransition {
-    fn new(current: &DirectTaskRunner, scheduler: &LinkedSchedulerWords) -> Option<Self> {
+    fn new(
+        current: &DirectTaskRunner,
+        table: &DirectTaskTable,
+        scheduler: &LinkedSchedulerWords,
+    ) -> Option<Self> {
         let hold_count = scheduler.word(scheduler.hold_count);
         let state = current.word(current.state);
         let current_state = exact_i32(state.number()?)?;
+        let next = table.id_for_word(current.word(current.link))?;
         Some(Self {
             hold_count: scheduler.hold_count,
             next_count: hold_count.number()? + 1.0,
             state: current.state,
             next_state: f64::from(current_state | current.held_mask),
-            link: current.link,
+            next,
         })
     }
 
-    fn execute(self) -> crate::value::Value {
+    fn execute(self) -> Option<usize> {
         // SAFETY: admission retains the scheduler and current TCB, and every
         // pointer names a canonical ordinary own word proved before mutation.
         unsafe { &*self.hold_count }.store(crate::value::Value::Number(self.next_count));
         unsafe { &*self.state }.store(crate::value::Value::Number(self.next_state));
-        unsafe { &*self.link }.load()
+        self.next
     }
 }
 
-fn linked_suspend(current: &DirectTaskRunner) -> Option<crate::value::Value> {
+fn linked_suspend(current: &DirectTaskRunner) -> Option<usize> {
     let state = current.word(current.state);
     let next = exact_i32(state.number()?)? | current.suspended;
     state.store(crate::value::Value::Number(f64::from(next)));
-    Some(current.tcb_value.clone())
+    Some(current.index)
 }
 
 struct LinkedQueueTransition {
@@ -282,9 +342,9 @@ struct LinkedQueueTransition {
     next_count: f64,
     packet_link: *const crate::register_file::SlotWord,
     packet_id: *const crate::register_file::SlotWord,
-    current_id: crate::value::Value,
+    current_id: f64,
     packet: crate::value::Value,
-    target: CheckPriorityTransition,
+    target: CheckPriorityTransition<usize>,
 }
 
 impl LinkedQueueTransition {
@@ -301,6 +361,22 @@ impl LinkedQueueTransition {
             return None;
         }
         let id = exact_linked_task_id(crate::vm::proven_own_word(packet_object, "id")?.number()?)?;
+        Self::new_for_id(current, table, scheduler, packet, id)
+    }
+
+    fn new_for_id(
+        current: &DirectTaskRunner,
+        table: &DirectTaskTable,
+        scheduler: &LinkedSchedulerWords,
+        packet: crate::value::Value,
+        id: usize,
+    ) -> Option<Self> {
+        let crate::value::Value::Object(packet_object) = &packet else {
+            return None;
+        };
+        if packet_object.has_replacement() {
+            return None;
+        }
         let target = table.for_id(id)?;
         let queue_count = scheduler.word(scheduler.queue_count);
         Some(Self {
@@ -308,7 +384,7 @@ impl LinkedQueueTransition {
             next_count: queue_count.number()? + 1.0,
             packet_link: std::ptr::from_ref(writable_own_word(packet_object, "link")?),
             packet_id: std::ptr::from_ref(writable_own_word(packet_object, "id")?),
-            current_id: current.word(current.id).load(),
+            current_id: current.word(current.id).number()?,
             target: linked_priority_transition(
                 current,
                 target,
@@ -319,11 +395,11 @@ impl LinkedQueueTransition {
         })
     }
 
-    fn execute(self) -> crate::value::Value {
+    fn execute(self) -> usize {
         let packet_link = unsafe { &*self.packet_link };
         unsafe { &*self.queue_count }.store(crate::value::Value::Number(self.next_count));
         packet_link.store(crate::value::Value::Null);
-        unsafe { &*self.packet_id }.store(self.current_id);
+        unsafe { &*self.packet_id }.store(crate::value::Value::Number(self.current_id));
         self.target.apply(packet_link, self.packet)
     }
 }
@@ -333,7 +409,7 @@ fn linked_priority_transition(
     target: &DirectTaskRunner,
     packet: &crate::value::ObjectData,
     runnable: i32,
-) -> Option<CheckPriorityTransition> {
+) -> Option<CheckPriorityTransition<usize>> {
     let queue = target.word(target.queue);
     let head = queue.load();
     if head.is_nullish() {
@@ -355,19 +431,19 @@ fn linked_priority_transition(
         queue: target.queue,
         tail_link,
         head,
-        result: current.tcb_value.clone(),
+        result: current.index,
     })
 }
 
 fn linked_priority_result(
     current: &DirectTaskRunner,
     target: &DirectTaskRunner,
-) -> Option<crate::value::Value> {
+) -> Option<usize> {
     let target_priority = target.word(target.priority).number()?;
     let current_priority = current.word(current.priority).number()?;
     Some(if target_priority > current_priority {
-        target.tcb_value.clone()
+        target.index
     } else {
-        current.tcb_value.clone()
+        current.index
     })
 }

@@ -52,6 +52,21 @@ fn execute_linked_schedule(
     let linked_scheduler = task_runners
         .as_ref()
         .and_then(|_| LinkedSchedulerWords::new(scheduler, &task_control_plan));
+    if let (Some(task_runners), Some(linked_scheduler)) = (&task_runners, &linked_scheduler) {
+        if let Some(result) = execute_direct_schedule_cursor(
+            receiver,
+            &plan,
+            &list_value,
+            current,
+            current_id,
+            &task_control_plan,
+            task_runners,
+            scheduler,
+            linked_scheduler,
+        )? {
+            return Ok(Some(result));
+        }
+    }
     let packet_link_cache = std::cell::Cell::new(0);
     current.copy_from(list);
 
@@ -109,7 +124,22 @@ fn execute_linked_schedule(
                 task_runners.as_ref(),
                 linked_scheduler.as_ref(),
             )? {
-                Some(value) => value,
+                Some(DirectTaskOutcome::Value(value)) => value,
+                Some(DirectTaskOutcome::Miss(packet)) => {
+                    let task = direct
+                        .map(|runner| &runner.task_value)
+                        .ok_or(crate::execute::VmError::MissingReturn)?;
+                    let run = crate::execute::get_property_result(task, "run")?;
+                    crate::functions::execute_target(&run, task, &[packet])?
+                }
+                Some(DirectTaskOutcome::Step(step)) => match step.next {
+                    Some(id) => task_runners
+                        .as_ref()
+                        .and_then(|table| table.value_for_id(id))
+                        .cloned()
+                        .ok_or(crate::execute::VmError::MissingReturn)?,
+                    None => crate::value::Value::Null,
+                },
                 None => {
                     let current_value = current.load();
                     crate::functions::execute_target(
@@ -124,108 +154,6 @@ fn execute_linked_schedule(
         crate::execution_trace::kernel("linked_schedule_word_slots", false);
     }
     Ok(Some(crate::value::Value::Undefined))
-}
-
-#[derive(Clone, Copy)]
-struct TaskControlRunPlan {
-    suspended_runnable: f64,
-    running: f64,
-    runnable: f64,
-}
-
-fn execute_task_control_run(
-    tcb: &crate::value::ObjectData,
-    plan: &TaskControlRunPlan,
-    direct: Option<&DirectTaskRunner>,
-    packet_link_cache: &std::cell::Cell<u64>,
-    task_runners: Option<&DirectTaskTable>,
-    linked_scheduler: Option<&LinkedSchedulerWords>,
-) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    if tcb.has_replacement() {
-        return Ok(None);
-    }
-    let state = direct
-        .map(|runner| runner.word(runner.state))
-        .or_else(|| writable_own_word(tcb, "state"));
-    let Some(state) = state else {
-        return Ok(None);
-    };
-    let Some(state_number) = state.number() else {
-        return Ok(None);
-    };
-    let queue = direct
-        .map(|runner| runner.word(runner.queue))
-        .or_else(|| writable_own_word(tcb, "queue"));
-    let Some(queue) = queue else {
-        return Ok(None);
-    };
-    let task = direct
-        .map(|runner| runner.word(runner.task_word))
-        .or_else(|| crate::vm::proven_own_word(tcb, "task"));
-    let Some(task) = task else {
-        return Ok(None);
-    };
-    let task_pointer = task.object_or_null_ptr().flatten();
-    let direct = direct.filter(|runner| task_pointer.is_some_and(|task| runner.matches(task)));
-    let task_value = direct.is_none().then(|| task.load());
-    let task = direct.map_or_else(
-        || task_value.as_ref().expect("slow task materialized"),
-        |runner| &runner.task_value,
-    );
-
-    let packet = if state_number == plan.suspended_runnable {
-        let packet = queue.load();
-        let crate::value::Value::Object(packet_object) = &packet else {
-            return Ok(None);
-        };
-        if packet_object.has_replacement() {
-            return Ok(None);
-        }
-        let Some(link) = linked_schedule_word(packet_object, "link", packet_link_cache) else {
-            return Ok(None);
-        };
-        let next = link.load();
-        queue.store(next.clone());
-        state.store(crate::value::Value::Number(
-            if matches!(
-                next,
-                crate::value::Value::Null | crate::value::Value::Undefined
-            ) {
-                plan.running
-            } else {
-                plan.runnable
-            },
-        ));
-        packet
-    } else {
-        crate::value::Value::Null
-    };
-    let result = match direct {
-        Some(runner) => match runner.execute(
-            &packet,
-            task_runners.expect("direct runner table retained"),
-            linked_scheduler,
-        )? {
-            Some(result) => {
-                crate::execution_trace::kernel("linked_task_direct", false);
-                result
-            }
-            None => {
-                crate::execution_trace::kernel("linked_task_direct", true);
-                let run = crate::execute::get_property_result(&task, "run")?;
-                crate::functions::execute_target(&run, &task, &[packet])?
-            }
-        },
-        None => {
-            let run = crate::execute::get_property_result(&task, "run")?;
-            if !crate::conversion::is_callable(&run) {
-                return Ok(None);
-            }
-            crate::functions::execute_target(&run, &task, &[packet])?
-        }
-    };
-    crate::execution_trace::kernel("task_control_run_word_slots", false);
-    Ok(Some(result))
 }
 
 fn linked_schedule_word<'a>(
