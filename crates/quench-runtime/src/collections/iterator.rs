@@ -69,6 +69,47 @@ pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError>
             iterators,
             padding,
             mode,
+            keys: None,
+            started: false,
+            done: false,
+        },
+    ))))
+}
+
+fn collect_zip_keyed_padding(
+    padding: Value,
+    keys: &[String],
+) -> Result<Vec<Value>, crate::execute::VmError> {
+    if matches!(padding, Value::Undefined) {
+        return Ok(vec![Value::Undefined; keys.len()]);
+    }
+    keys.iter()
+        .map(|key| crate::execute::get_property_result(&padding, key))
+        .collect()
+}
+
+pub(crate) fn zip_keyed(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let inputs = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let options = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    if !crate::value::is_object(&inputs) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.zipKeyed iterables",
+        ));
+    }
+    let (mode, padding_option) = zip_mode(&options)?;
+    let (keys, iterators) = collect_zip_keyed_iterators(inputs)?;
+    let padding = if let Some(padding) = padding_option {
+        collect_zip_keyed_padding(padding, &keys)
+            .map_err(|error| close_zip_iterators(iterators.clone(), error))?
+    } else {
+        Vec::new()
+    };
+    Ok(Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::Zip {
+            iterators,
+            padding,
+            mode,
+            keys: Some(keys),
             started: false,
             done: false,
         },

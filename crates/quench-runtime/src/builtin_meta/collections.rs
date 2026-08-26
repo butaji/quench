@@ -136,6 +136,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorConcat => Some("Iterator.concat"),
         Builtin::IteratorFrom => Some("Iterator.from"),
         Builtin::IteratorZip => Some("Iterator.zip"),
+        Builtin::IteratorZipKeyed => Some("Iterator.zipKeyed"),
         Builtin::IteratorToArray => Some("Iterator.prototype.toArray"),
         Builtin::IteratorMap => Some("Iterator.prototype.map"),
         Builtin::IteratorFilter => Some("Iterator.prototype.filter"),
@@ -209,6 +210,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::AsyncIteratorSelf
         | Builtin::AsyncIteratorDispose => Some(0.0),
         Builtin::IteratorZip => Some(1.0),
+        Builtin::IteratorZipKeyed => Some(1.0),
         Builtin::IteratorFrom => Some(1.0),
         Builtin::IteratorToArray => Some(0.0),
         Builtin::IteratorMap => Some(1.0),
@@ -266,6 +268,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorConcat => Some("concat"),
         Builtin::IteratorFrom => Some("from"),
         Builtin::IteratorZip => Some("zip"),
+        Builtin::IteratorZipKeyed => Some("zipKeyed"),
         Builtin::IteratorToArray => Some("toArray"),
         Builtin::IteratorMap => Some("map"),
         Builtin::IteratorFilter => Some("filter"),
