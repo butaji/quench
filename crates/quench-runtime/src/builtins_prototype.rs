@@ -56,6 +56,9 @@ pub(crate) fn prototype_to_string_result(
     if matches!(value, Value::Null | Value::Undefined) {
         return Ok(prototype_to_string(Some(value)));
     }
+    if is_callable_builtin(value) {
+        return Ok(Value::String("[object Function]".into()));
+    }
     if let Value::Generator(_) = value {
         if let Ok(prototype) = crate::builtins::object::get_prototype_of(Some(value)) {
             if let Some(getter) =
@@ -98,6 +101,9 @@ pub(crate) fn prototype_to_string_result(
 }
 
 fn intrinsic_tag_data_value(value: &Value) -> Option<Value> {
+    if is_callable_builtin(value) {
+        return None;
+    }
     let builtin = match value {
         Value::Builtin(builtin) => *builtin,
         Value::String(text) if crate::conversion::is_symbol_string(text) => {
@@ -496,7 +502,9 @@ fn native_builtin_source(builtin: crate::ops::Builtin) -> String {
 
 fn valid_native_identifier(name: &str) -> bool {
     let mut chars = name.chars();
-    let Some(first) = chars.next() else { return false };
+    let Some(first) = chars.next() else {
+        return false;
+    };
     (first == '_' || first == '$' || first.is_ascii_alphabetic())
         && chars.all(|character| {
             character == '_' || character == '$' || character.is_ascii_alphanumeric()
