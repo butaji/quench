@@ -458,3 +458,9 @@ test-tls-cli-min-version-1.1.js
 test-tls-cli-min-version-1.2.js
 test-tls-cli-min-max-conflict.js
 test-tls-ca-concat.js
+test-tls-add-context.js
+test-tls-addca.js
+test-tls-0-dns-altname.js
+test-tls-cert-chains-concat.js
+test-tls-cert-chains-in-ca.js
+test-tls-cert-regression.js
