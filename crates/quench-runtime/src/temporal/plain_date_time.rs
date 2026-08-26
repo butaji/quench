@@ -244,7 +244,7 @@ fn difference(
         let increment = crate::execute::get_property_result(options, "roundingIncrement")?;
         if !matches!(increment, Value::Undefined) {
             let increment = crate::conversion::to_number(&increment)?;
-            if !increment.is_finite() || increment < 1.0 {
+            if !increment.is_finite() || increment.trunc() < 1.0 || increment.trunc() > 1e9 {
                 return Err(crate::value::error::throw_range_error(
                     "Invalid roundingIncrement",
                 ));
