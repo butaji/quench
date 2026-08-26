@@ -420,3 +420,5 @@ test-crypto-verify-failure.js
 test-crypto-rsa-dsa.js
 test-crypto-rsa-oaep-mgf1.js
 test-crypto-rsa-pss-default-salt-length.js
+test-crypto-dh.js
+test-crypto-dh-shared.js
