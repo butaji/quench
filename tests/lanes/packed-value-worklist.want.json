@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "metrics": {
+    "array_allocations_per_iteration": {
+      "numerator": "heap_lifecycle.array.allocated",
+      "denominator": "events.loop_iteration",
+      "min_traffic": 300000,
+      "max": 0.001
+    }
+  }
+}

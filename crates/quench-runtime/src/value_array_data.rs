@@ -22,7 +22,7 @@ impl ArrayKind {
 pub struct ArrayData {
     identity: u64,
     values: DenseElements,
-    length: usize,
+    length: std::cell::Cell<usize>,
     kind: std::cell::Cell<ArrayKind>,
     properties: Vec<(String, Value)>,
     descriptors: Vec<(String, Value)>,
@@ -37,7 +37,7 @@ pub struct ArrayData {
 impl PartialEq for ArrayData {
     fn eq(&self, other: &Self) -> bool {
         self.values == other.values
-            && self.length == other.length
+            && self.length.get() == other.length.get()
             && self.kind == other.kind
             && self.properties == other.properties
             && self.descriptors == other.descriptors
@@ -54,10 +54,31 @@ impl PartialEq for ArrayData {
 /// words; generic JavaScript values appear only after a semantic transition.
 /// `Cell<f64>` permits value-only mutation through shared array identity while
 /// preserving structural COW for growth, holes, descriptors, and mappings.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 enum DenseElements {
     Numbers(Rc<RefCell<Vec<std::cell::Cell<f64>>>>),
-    Values(Rc<RefCell<Vec<Value>>>),
+    Values(Rc<std::cell::UnsafeCell<Vec<Value>>>),
+}
+
+impl Clone for DenseElements {
+    fn clone(&self) -> Self {
+        match self {
+            // Numeric cells deliberately preserve the existing shared-value
+            // storage used by packed numeric kernels.
+            Self::Numbers(values) => Self::Numbers(Rc::clone(values)),
+            // Structural ArrayData COW must remain independent. In-place
+            // mutation is reserved for aliases of the same ArrayData.
+            Self::Values(values) => Self::Values(Rc::new(std::cell::UnsafeCell::new(
+                unsafe { &*values.get() }.clone(),
+            ))),
+        }
+    }
+}
+
+impl PartialEq for DenseElements {
+    fn eq(&self, other: &Self) -> bool {
+        self.snapshot() == other.snapshot()
+    }
 }
 
 impl DenseElements {
@@ -73,34 +94,34 @@ impl DenseElements {
                     .collect(),
             )));
         }
-        Self::Values(Rc::new(RefCell::new(values)))
+        Self::Values(Rc::new(std::cell::UnsafeCell::new(values)))
     }
 
     fn len(&self) -> usize {
         match self {
             Self::Numbers(values) => values.borrow().len(),
-            Self::Values(values) => values.borrow().len(),
+            Self::Values(values) => unsafe { &*values.get() }.len(),
         }
     }
 
     fn capacity(&self) -> usize {
         match self {
             Self::Numbers(values) => values.borrow().capacity(),
-            Self::Values(values) => values.borrow().capacity(),
+            Self::Values(values) => unsafe { &*values.get() }.capacity(),
         }
     }
 
     fn truncate(&mut self, length: usize) {
         match self {
             Self::Numbers(values) => values.borrow_mut().truncate(length),
-            Self::Values(values) => values.borrow_mut().truncate(length),
+            Self::Values(values) => unsafe { &mut *values.get() }.truncate(length),
         }
     }
 
     fn reserve(&mut self, additional: usize) {
         match self {
             Self::Numbers(values) => values.borrow_mut().reserve(additional),
-            Self::Values(values) => values.borrow_mut().reserve(additional),
+            Self::Values(values) => unsafe { &mut *values.get() }.reserve(additional),
         }
     }
 
@@ -108,20 +129,9 @@ impl DenseElements {
         self.materialize_values().resize(length, Value::Undefined);
     }
 
-    fn resize_numeric(&mut self, length: usize) {
-        match self {
-            Self::Numbers(values) => values.borrow_mut().resize_with(length, || std::cell::Cell::new(0.0)),
-            Self::Values(values) => values.borrow_mut().resize(length, Value::Number(0.0)),
-        }
-    }
-
     fn set(&mut self, index: usize, value: Value) {
         if let (Self::Numbers(values), Value::Number(number)) = (&*self, &value) {
             values.borrow()[index].set(*number);
-            return;
-        }
-        if let Self::Values(values) = self {
-            values.borrow_mut()[index] = value;
             return;
         }
         self.materialize_values()[index] = value;
@@ -154,7 +164,7 @@ impl DenseElements {
     fn number_at(&self, index: usize) -> Option<f64> {
         match self {
             Self::Numbers(values) => values.borrow().get(index).map(std::cell::Cell::get),
-            Self::Values(values) => match values.borrow().get(index)? {
+            Self::Values(values) => match unsafe { &*values.get() }.get(index)? {
                 Value::Number(number) => Some(*number),
                 _ => None,
             },
@@ -167,7 +177,7 @@ impl DenseElements {
                 .borrow()
                 .get(index)
                 .map(|value| Value::Number(value.get())),
-            Self::Values(values) => values.borrow().get(index).cloned(),
+            Self::Values(values) => unsafe { &*values.get() }.get(index).cloned(),
         }
     }
 
@@ -212,6 +222,24 @@ impl DenseElements {
         true
     }
 
+    fn append_values_shared(&self, additions: &[Value]) -> bool {
+        let Self::Values(values) = self else {
+            return false;
+        };
+        // SAFETY: array execution is single-threaded; structural mutation is
+        // serialized and this dense store is the sole element truth.
+        unsafe { &mut *values.get() }.extend_from_slice(additions);
+        true
+    }
+
+    fn pop_value_shared(&self) -> Option<Value> {
+        let Self::Values(values) = self else {
+            return None;
+        };
+        // SAFETY: see `append_values_shared`.
+        unsafe { &mut *values.get() }.pop()
+    }
+
     fn materialize_values(&mut self) -> &mut Vec<Value> {
         if let Self::Numbers(numbers) = self {
             let values = numbers
@@ -219,15 +247,12 @@ impl DenseElements {
                 .iter()
                 .map(|number| Value::Number(number.get()))
                 .collect();
-            *self = Self::Values(Rc::new(RefCell::new(values)));
+            *self = Self::Values(Rc::new(std::cell::UnsafeCell::new(values)));
         }
-        let Self::Values(values) = self else { unreachable!() };
-        if Rc::strong_count(values) > 1 {
-            let cloned = values.borrow().clone();
-            *self = Self::Values(Rc::new(RefCell::new(cloned)));
-        }
-        let Self::Values(values) = self else { unreachable!() };
-        Rc::get_mut(values).expect("detached values").get_mut()
+        let Self::Values(values) = self else {
+            unreachable!()
+        };
+        unsafe { &mut *values.get() }
     }
 
     fn snapshot(&self) -> Vec<Value> {
@@ -259,7 +284,7 @@ impl ArrayData {
             identity: next_array_identity(),
             kind: std::cell::Cell::new(kind),
             values: DenseElements::from_values(values),
-            length,
+            length: std::cell::Cell::new(length),
             properties: Vec::new(),
             descriptors: Vec::new(),
             arguments: false,
@@ -281,7 +306,7 @@ impl ArrayData {
         data.strict_arguments = strict;
         data.argument_live = Some(Rc::new(RefCell::new(ArgumentLive {
             values: data.values.snapshot(),
-            length: data.length,
+            length: data.length.get(),
             mapped: data.mapped.clone(),
             deleted: data.deleted.clone(),
             length_override: None,
@@ -294,10 +319,6 @@ impl ArrayData {
 
     pub(crate) fn is_arguments(&self) -> bool {
         self.arguments
-    }
-
-    pub(crate) fn has_argument_live(&self) -> bool {
-        self.argument_live.is_some()
     }
 
     pub(crate) fn is_strict_arguments(&self) -> bool {
@@ -317,31 +338,9 @@ impl ArrayData {
     }
 
     pub fn logical_len(&self) -> usize {
-        self.argument_live.as_ref().map_or_else(
-            || {
-                // Packed ordinary arrays have no separate hole/descriptor
-                // state. Their shared dense store is authoritative so a
-                // value-only append remains visible through all references.
-                if self.kind.get().is_packed()
-                    && self.deleted.is_empty()
-                    && self.properties.is_empty()
-                    && self.descriptors.is_empty()
-                    && self.prototype.borrow().is_none()
-                    && !self.arguments
-                {
-                    self.length.max(self.values.len())
-                } else {
-                    self.length
-                }
-            },
-            |live| {
-            let live = live.borrow();
-            live.length_override
-                .as_ref()
-                .and_then(argument_length)
-                .unwrap_or(live.length)
-            },
-        )
+        self.argument_live
+            .as_ref()
+            .map_or(self.length.get(), |live| live.borrow().length)
     }
 
     pub fn len(&self) -> usize {
@@ -434,12 +433,31 @@ impl ArrayData {
             && self.argument_live.is_none()
     }
 
-    pub(crate) fn has_indexed_accessor(&self) -> bool {
-        self.descriptors.iter().any(|(key, value)| {
-            crate::arrays::array_index(key).is_some_and(|_| {
-                matches!(value, Value::Object(fields) if fields.iter().any(|(name, _)| name == "get" || name == "set"))
-            })
-        })
+    /// Append generic packed elements through the canonical shared identity.
+    /// Structural COW is not JavaScript semantics: aliases observe the same
+    /// array, so the one dense store and header move together in place.
+    pub(crate) fn append_packed_values_shared(&self, additions: &[Value]) -> Option<usize> {
+        (self.kind.get() == ArrayKind::PackedValue
+            && self.is_packed_ordinary()
+            && crate::locals::array_word_is_current(self))
+        .then_some(())?;
+        let length = self.length.get().checked_add(additions.len())?;
+        self.values.append_values_shared(additions).then_some(())?;
+        self.length.set(length);
+        Some(length)
+    }
+
+    /// Pop one generic packed element without cloning the complete array.
+    /// The outer option is the representation guard; the inner option is the
+    /// ordinary empty-array result.
+    pub(crate) fn pop_packed_value_shared(&self) -> Option<Option<Value>> {
+        (self.kind.get() == ArrayKind::PackedValue
+            && self.is_packed_ordinary()
+            && crate::locals::array_word_is_current(self))
+        .then_some(())?;
+        let value = self.values.pop_value_shared();
+        self.length.set(self.length.get().saturating_sub(1));
+        Some(value)
     }
 
     /// Borrow the live argument data without consuming `self`.
@@ -466,14 +484,14 @@ impl ArrayData {
             live.mapped.truncate(length);
             live.length = length;
         }
-        if length < self.length || length < self.values.len() {
+        if length < self.length.get() {
             self.values.truncate(length);
             self.deleted.truncate(length);
             self.mapped.truncate(length);
             self.properties.retain(|(key, _)| keep_index(key, length));
             self.descriptors.retain(|(key, _)| keep_index(key, length));
         }
-        self.length = length;
+        self.length.set(length);
         self.kind.set(monotonic_kind(
             self.kind.get(),
             self.values.kind_with_holes(&self.deleted, length),
@@ -483,18 +501,6 @@ impl ArrayData {
     pub fn set_index(&mut self, index: usize, value: Value) {
         if self.is_sparse() && index >= self.values.len() {
             self.set_sparse_index(index, value);
-            return;
-        }
-        if index == self.length
-            && index == self.values.len()
-            && self.properties.is_empty()
-            && self.descriptors.is_empty()
-            && self.prototype.borrow().is_none()
-            && !self.arguments
-            && self.argument_live.is_none()
-            && matches!(&value, Value::Number(number) if self.values.append_number(*number))
-        {
-            self.length += 1;
             return;
         }
         if index > self.values.len() {
@@ -520,10 +526,12 @@ impl ArrayData {
             self.deleted.resize(index.saturating_add(1), false);
         }
         self.deleted[index] = false;
-        self.length = self.length.max(index.saturating_add(1));
+        self.length
+            .set(self.length.get().max(index.saturating_add(1)));
         self.kind.set(monotonic_kind(
             self.kind.get(),
-            self.values.kind_with_holes(&self.deleted, self.length),
+            self.values
+                .kind_with_holes(&self.deleted, self.length.get()),
         ));
     }
 
@@ -556,7 +564,7 @@ impl ArrayData {
             let mut live = live.borrow_mut();
             live.length = live.length.max(length);
         }
-        self.length = self.length.max(length);
+        self.length.set(self.length.get().max(length));
         self.kind.set(ArrayKind::Sparse);
     }
     pub(crate) fn append_live(&self, values: &[Value]) {
@@ -568,25 +576,6 @@ impl ArrayData {
             let index = live.length;
             set_live_index(&mut live, index, value.clone());
         }
-    }
-
-    pub(crate) fn append_physical(&mut self, values: &[Value]) {
-        match &mut self.values {
-            DenseElements::Numbers(numbers)
-                if values.iter().all(|value| matches!(value, Value::Number(_))) => {
-                    numbers.borrow_mut().extend(values.iter().map(|value| {
-                        let Value::Number(number) = value else { unreachable!() };
-                        std::cell::Cell::new(*number)
-                    }));
-                }
-            DenseElements::Numbers(_) => {
-                let mut current = self.values.materialize_values().to_vec();
-                current.extend_from_slice(values);
-                self.values = DenseElements::Values(Rc::new(RefCell::new(current)));
-            }
-            DenseElements::Values(current) => current.borrow_mut().extend_from_slice(values),
-        }
-        self.length = self.length.saturating_add(values.len());
     }
 
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
@@ -611,11 +600,6 @@ impl ArrayData {
             .map(|binding| binding.borrow().clone())
             .or_else(|| self.values.value_at(index))
             .or_else(|| self.property(&index.to_string()))
-    }
-
-    /// Public host-facing indexed read for API adapters that consume arrays as data.
-    pub fn index_value(&self, index: usize) -> Value {
-        self.get_index(index).unwrap_or(Value::Undefined)
     }
 
     /// Read a packed numeric slot without materializing an owned `Value`.
@@ -744,14 +728,16 @@ impl ArrayData {
             }
         }
         self.properties.clear();
-        self.kind
-            .set(self.values.kind_with_holes(&self.deleted, self.length));
+        self.kind.set(
+            self.values
+                .kind_with_holes(&self.deleted, self.length.get()),
+        );
         self.is_packed_ordinary()
     }
 
     fn numeric_sparse_tail(&self, start: usize) -> Option<Vec<f64>> {
-        (start <= self.length).then_some(())?;
-        let mut tail = vec![None; self.length - start];
+        (start <= self.length.get()).then_some(())?;
+        let mut tail = vec![None; self.length.get() - start];
         for (key, value) in &self.properties {
             let index = usize::try_from(crate::arrays::array_index(key)?).ok()?;
             let Value::Number(number) = value else {
@@ -768,22 +754,6 @@ impl ArrayData {
     #[inline]
     pub(crate) fn set_numeric_index(&mut self, index: usize, number: f64) {
         self.set_index(index, Value::Number(number));
-    }
-
-    pub(crate) fn fill_numeric_range(&mut self, start: usize, end: usize, first: f64) {
-        if self.values.len() < end {
-            self.values.resize_numeric(end);
-        }
-        if let DenseElements::Numbers(values) = &self.values {
-            let values = values.borrow();
-            for (offset, slot) in values[start..end].iter().enumerate() {
-                slot.set(first + offset as f64);
-            }
-            return;
-        }
-        for index in start..end {
-            self.set_numeric_index(index, first + (index - start) as f64);
-        }
     }
 
     /// Mutate an existing packed numeric slot through shared JS array
@@ -835,46 +805,10 @@ impl ArrayData {
         if !self.values.append_number_shared(number) {
             return false;
         }
-        let derived = self.values.kind_with_holes(&self.deleted, self.length);
+        let derived = self
+            .values
+            .kind_with_holes(&self.deleted, self.length.get());
         self.kind.set(derived);
-        true
-    }
-
-    /// Append a numeric value to an ordinary packed array without cloning its
-    /// backing store. The array's physical length is its logical length in
-    /// this state, so the dense store remains the single source of truth.
-    #[inline(always)]
-    pub(crate) fn append_shared_numbers(&self, values: &[Value]) -> bool {
-        if !self.is_packed_ordinary() || !values.iter().all(|value| matches!(value, Value::Number(_))) {
-            return false;
-        }
-        let DenseElements::Numbers(numbers) = &self.values else {
-            return false;
-        };
-        numbers.borrow_mut().extend(values.iter().map(|value| {
-            let Value::Number(number) = value else { unreachable!() };
-            std::cell::Cell::new(*number)
-        }));
-        self.kind
-            .set(monotonic_kind(
-                self.kind.get(),
-                values.iter().fold(self.kind.get(), |kind, value| {
-                    let Value::Number(number) = value else { unreachable!() };
-                    monotonic_kind(kind, number_kind(*number))
-                }),
-            ));
-        true
-    }
-
-    #[inline(always)]
-    pub(crate) fn append_shared_values(&self, values: &[Value]) -> bool {
-        if !self.is_packed_ordinary() || values.is_empty() {
-            return values.is_empty() && self.is_packed_ordinary();
-        }
-        let DenseElements::Values(current) = &self.values else {
-            return false;
-        };
-        current.borrow_mut().extend_from_slice(values);
         true
     }
 
@@ -990,7 +924,7 @@ impl ArrayData {
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
-        (0..self.logical_len())
+        (0..self.length.get())
             .map(|index| self.get_index(index).unwrap_or(Value::Undefined))
             .collect()
     }
@@ -1099,28 +1033,15 @@ impl ArrayData {
                 return;
             }
             self.disconnect_index(index);
-            if self.deleted.len() <= index {
-                self.deleted.resize(index.saturating_add(1), false);
-            }
+            self.deleted.resize(index.saturating_add(1), false);
             self.deleted[index] = true;
             self.kind.set(ArrayKind::Holey);
             if let Some(live) = &self.argument_live {
                 let mut live = live.borrow_mut();
-                if live.deleted.len() <= index {
-                    live.deleted.resize(index.saturating_add(1), false);
-                }
+                live.deleted.resize(index.saturating_add(1), false);
                 live.deleted[index] = true;
             }
         }
-    }
-}
-
-fn argument_length(value: &Value) -> Option<usize> {
-    match value {
-        Value::Number(number) if number.is_finite() && *number >= 0.0 => {
-            Some(number.floor() as usize)
-        }
-        _ => None,
     }
 }
 
@@ -1369,6 +1290,35 @@ mod array_data_tests {
         assert!(data.set_existing_number(0, &Value::Number(9.5)));
         assert_eq!(alias.dense_number_at(0), Some(9.5));
         assert_eq!(alias.storage_capacity(), data.storage_capacity());
+    }
+
+    #[test]
+    fn packed_value_push_and_pop_mutate_one_array_identity() {
+        let data = std::rc::Rc::new(ArrayData::new(vec![Value::Boolean(false)]));
+        let alias = std::rc::Rc::clone(&data);
+
+        assert_eq!(
+            data.append_packed_values_shared(&[Value::Boolean(true)]),
+            Some(2)
+        );
+        assert_eq!(alias.logical_len(), 2);
+        assert_eq!(alias.get_index(1), Some(Value::Boolean(true)));
+        assert_eq!(
+            alias.pop_packed_value_shared(),
+            Some(Some(Value::Boolean(true)))
+        );
+        assert_eq!(data.logical_len(), 1);
+        assert_eq!(data.get_index(1), None);
+    }
+
+    #[test]
+    fn structural_array_clone_does_not_share_generic_elements() {
+        let original = ArrayData::new(vec![Value::Boolean(false)]);
+        let mut copy = original.clone();
+        copy.set_index(0, Value::Boolean(true));
+
+        assert_eq!(original.get_index(0), Some(Value::Boolean(false)));
+        assert_eq!(copy.get_index(0), Some(Value::Boolean(true)));
     }
 
     #[test]
