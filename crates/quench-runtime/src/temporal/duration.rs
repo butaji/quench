@@ -301,12 +301,12 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
     let smallest = round_unit(options)?;
-    validate_largest_unit(options)?;
+    let requested_largest = parse_largest_unit(options)?;
     let index = unit_index(&smallest)?;
     let has_calendar = ["years", "months", "weeks"]
         .iter()
         .any(|name| duration_field(object, name) != 0);
-    let largest = largest_unit(options).unwrap_or_else(|| {
+    let largest = requested_largest.unwrap_or_else(|| {
         [
             "years",
             "months",
@@ -345,11 +345,11 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
     if index >= 4
         && !has_calendar
         && relative_is_zoned(options)
-        && largest_unit(options).is_none_or(|largest| largest >= 4)
+        && requested_largest.is_none_or(|largest| largest >= 4)
     {
         return zoned_time_round(object, options, index);
     }
-    if index >= 4 && largest_unit(options) == Some(3) && relative_is_zoned(options) {
+    if index >= 4 && requested_largest == Some(3) && relative_is_zoned(options) {
         if let Some(Value::Object(option_object)) = options {
             if let Some((_, relative)) = option_object.iter().find(|(key, _)| key == "relativeTo") {
                 let resolved = crate::locals::resolved_replacement(relative.clone());
@@ -372,7 +372,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             }
         }
     }
-    if largest_unit(options).is_some()
+    if requested_largest.is_some()
         && largest < index
         && largest <= 2
         && rounding_increment(options, index)? > 1.0
@@ -387,7 +387,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             .all(|(key, value)| key != "smallestUnit" || matches!(value, Value::Undefined)),
         _ => false,
     });
-    if has_calendar && no_smallest && largest_unit(options).is_some_and(|unit| unit <= 3) {
+    if has_calendar && no_smallest && requested_largest.is_some_and(|unit| unit <= 3) {
         let relative = options.and_then(|value| match value {
             Value::Object(object) => object
                 .iter()
@@ -404,7 +404,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             object,
             &relative,
             options,
-            largest_unit(options).unwrap_or(3),
+            requested_largest.unwrap_or(3),
             false,
         );
     }
@@ -424,12 +424,10 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         return calendar_time_round(object, &relative, options, index);
     }
     if index <= 3
-        && (index <= 2
-            || has_calendar
-            || largest_unit(options).is_some_and(|largest| largest < index))
+        && (index <= 2 || has_calendar || requested_largest.is_some_and(|largest| largest < index))
     {
         if index == 2
-            && largest_unit(options).is_none()
+            && requested_largest.is_none()
             && duration_field(object, "months") != 0
             && rounding_increment(options, index)? > 1.0
         {
@@ -454,7 +452,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             &relative,
             options,
             index,
-            largest_unit(options).is_none(),
+            requested_largest.is_none(),
         );
     }
     fixed_round(object, options, largest, index)
@@ -1238,22 +1236,19 @@ fn largest_unit(value: Option<&Value>) -> Option<usize> {
         })
 }
 
-fn validate_largest_unit(options: Option<&Value>) -> Result<(), VmError> {
+fn parse_largest_unit(options: Option<&Value>) -> Result<Option<usize>, VmError> {
     let Some(options) = options.filter(|value| crate::value::is_object(value)) else {
-        return Ok(());
+        return Ok(None);
     };
     let value = crate::execute::get_property_result(options, "largestUnit")?;
     if matches!(value, Value::Undefined) {
-        return Ok(());
+        return Ok(None);
     }
-    if let Value::String(unit) = value {
-        if unit == "auto" {
-            return Ok(());
-        }
-        unit_index(&unit).map(|_| ())
-    } else {
-        Ok(())
+    let unit = crate::conversion::to_string(&value)?;
+    if unit == "auto" {
+        return Ok(None);
     }
+    unit_index(&unit).map(Some)
 }
 
 fn balance_time_fields(fields: &mut [Value], first: usize) {
