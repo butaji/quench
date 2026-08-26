@@ -1090,11 +1090,19 @@ mod stubs {
             }
             let values = fields
                 .iter()
-                .map(|value| crate::conversion::to_number(value))
+                .map(|value| {
+                    if matches!(value, Value::Undefined) {
+                        Ok(0.0)
+                    } else {
+                        crate::conversion::to_number(value)
+                    }
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let overflow = match arguments.get(1) {
                 None | Some(Value::Undefined) => "constrain".to_string(),
-                Some(options) if crate::value::is_object(options) => {
+                Some(options)
+                    if crate::value::is_object(options)
+                        || matches!(options, Value::Function(_) | Value::BoundFunction(_)) => {
                     let value = crate::execute::get_property_result(options, "overflow")?;
                     if matches!(value, Value::Undefined) {
                         "constrain".to_string()
@@ -1752,6 +1760,7 @@ mod stubs {
             if !matches!(
                 value,
                 Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
+                    | Value::Proxy(_)
             ) {
                 return Err(crate::value::error::throw_type_error(
                     "Invalid string options",
@@ -1784,12 +1793,47 @@ mod stubs {
             }
             Ok(Some(value))
         };
-        let offset_mode =
-            parse_choice("offset", &["auto", "never"])?.unwrap_or_else(|| "auto".into());
-        let zone_mode = parse_choice("timeZoneName", &["auto", "never", "critical"])?
-            .unwrap_or_else(|| "auto".into());
         let calendar_mode = parse_choice("calendarName", &["auto", "always", "never", "critical"])?
             .unwrap_or_else(|| "auto".into());
+        let mut precision = match option("fractionalSecondDigits")? {
+            None | Some(Value::Undefined) => usize::MAX,
+            Some(Value::String(value)) if value == "auto" => usize::MAX,
+            Some(Value::Null | Value::Boolean(_) | Value::BigInt(_)) => {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid fractionalSecondDigits",
+                ))
+            }
+            Some(value) => {
+                let text = match &value {
+                    Value::Number(_) => None,
+                    _ => Some(crate::conversion::to_string(&value)?),
+                };
+                if text.as_deref() == Some("auto") {
+                    usize::MAX
+                } else {
+                    let value = text
+                        .as_deref()
+                        .map_or_else(|| crate::conversion::to_number(&value), |text| {
+                            Ok(text.parse::<f64>().unwrap_or(f64::NAN))
+                        })?;
+                    if !value.is_finite() || !(0.0..=9.0).contains(&value) {
+                        return Err(crate::value::error::throw_range_error(
+                            "Invalid fractionalSecondDigits",
+                        ));
+                    }
+                    value.floor() as usize
+                }
+            }
+        };
+        let offset_mode =
+            parse_choice("offset", &["auto", "never"])?.unwrap_or_else(|| "auto".into());
+        let rounding_mode = parse_choice(
+            "roundingMode",
+            &[
+                "ceil", "floor", "expand", "trunc", "halfCeil", "halfFloor", "halfExpand",
+                "halfTrunc", "halfEven",
+            ],
+        )?;
         let smallest = parse_choice(
             "smallestUnit",
             &[
@@ -1798,43 +1842,27 @@ mod stubs {
                 "millisecond",
                 "microsecond",
                 "nanosecond",
+                "day",
+                "week",
+                "month",
+                "year",
             ],
         )?;
-        let rounding_mode = parse_choice(
-            "roundingMode",
-            &[
-                "ceil",
-                "floor",
-                "expand",
-                "trunc",
-                "halfCeil",
-                "halfFloor",
-                "halfExpand",
-                "halfTrunc",
-                "halfEven",
-            ],
-        )?;
-        let mut precision = match option("fractionalSecondDigits")? {
-            None | Some(Value::Undefined) => usize::MAX,
-            Some(Value::String(value)) if value == "auto" => usize::MAX,
-            Some(Value::Null | Value::Boolean(_) | Value::Object(_) | Value::BigInt(_)) => {
-                return Err(crate::value::error::throw_range_error(
-                    "Invalid fractionalSecondDigits",
-                ))
-            }
-            Some(value) => {
-                let value = crate::conversion::to_number(&value)?;
-                if !value.is_finite() || !(0.0..=9.0).contains(&value) {
-                    return Err(crate::value::error::throw_range_error(
-                        "Invalid fractionalSecondDigits",
-                    ));
-                }
-                value.floor() as usize
-            }
-        };
+        let zone_mode = parse_choice("timeZoneName", &["auto", "never", "critical"])?
+            .unwrap_or_else(|| "auto".into());
+        if smallest
+            .as_deref()
+            .is_some_and(|unit| matches!(unit, "day" | "week" | "month" | "year"))
+        {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            ));
+        }
         let mut fraction = i128::from(millisecond) * 1_000_000
             + i128::from(microsecond) * 1_000
             + i128::from(nanosecond);
+        let original_minute = minute;
+        let original_second = second;
         if let Some(unit) = smallest.as_deref() {
             match unit {
                 "hour" => {
@@ -1856,6 +1884,59 @@ mod stubs {
                 "microsecond" => precision = 6,
                 "nanosecond" => precision = 9,
                 _ => unreachable!(),
+            }
+        }
+        if let Some(unit) = smallest.as_deref() {
+            let (remainder, quantum, carry) = match unit {
+                "minute" => (
+                    i128::from(original_second) * 1_000_000_000 + fraction,
+                    60_000_000_000i128,
+                    60,
+                ),
+                "hour" => (
+                    i128::from(original_minute) * 60_000_000_000
+                        + i128::from(original_second) * 1_000_000_000
+                        + fraction,
+                    3_600_000_000_000i128,
+                    60,
+                ),
+                _ => (0, 1, 0),
+            };
+            if carry != 0 && remainder != 0 {
+                let mode = rounding_mode.as_deref().unwrap_or("trunc");
+                let round_up = match mode {
+                    "ceil" | "expand" => true,
+                    "halfCeil" | "halfFloor" | "halfExpand" | "halfTrunc" | "halfEven" => {
+                        remainder * 2 > quantum
+                            || (remainder * 2 == quantum
+                                && matches!(mode, "halfCeil" | "halfExpand"))
+                    }
+                    _ => false,
+                };
+                if round_up {
+                    if unit == "minute" {
+                        minute += 1;
+                    } else {
+                        hour += 1;
+                    }
+                    if unit == "minute" && minute >= 60 {
+                        minute = 0;
+                        hour += 1;
+                    }
+                    if hour >= 24 {
+                        hour = 0;
+                        if let Some(next) = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                            .and_then(|date| date.checked_add_days(chrono::Days::new(1)))
+                        {
+                            year = next.year();
+                            month = next.month();
+                            day = next.day();
+                        }
+                    }
+                }
+            }
+            if unit == "minute" || unit == "hour" {
+                fraction = 0;
             }
         }
         if precision != usize::MAX {
