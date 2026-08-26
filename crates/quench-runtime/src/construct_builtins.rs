@@ -58,6 +58,18 @@ fn construct_builtin_tail(
                 crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
             let month =
                 crate::conversion::to_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+            if let Some(calendar) = arguments
+                .get(2)
+                .filter(|value| !matches!(value, Value::Undefined))
+            {
+                if !matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
+                    return Err(crate::value::error::throw_type_error("Invalid calendar"));
+                }
+                let calendar = crate::conversion::to_string(calendar)?;
+                if !calendar.eq_ignore_ascii_case("iso8601") {
+                    return Err(crate::value::error::throw_range_error("Invalid calendar"));
+                }
+            }
             if let Some(reference_day) = arguments
                 .get(3)
                 .filter(|value| !matches!(value, Value::Undefined))
