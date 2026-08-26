@@ -224,7 +224,13 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
                     "Atomics.waitAsync requires a shared buffer",
                 ));
             }
+            let length = view.logical_len();
             let index = atomic_index(arguments.get(1))?;
+            if index >= length {
+                return Err(crate::value::error::throw_range_error(
+                    "Atomics.waitAsync index is out of range",
+                ));
+            }
             let expected = bigint_argument(arguments.get(2))?.to_string();
             let current = view
                 .get(index)
@@ -246,7 +252,13 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
                     "Atomics.waitAsync requires a shared buffer",
                 ));
             }
+            let length = view.logical_len();
             let index = atomic_index(arguments.get(1))?;
+            if index >= length {
+                return Err(crate::value::error::throw_range_error(
+                    "Atomics.waitAsync index is out of range",
+                ));
+            }
             let expected = atomic_value(arguments.get(2))?;
             let current = view.get(index).ok_or_else(|| {
                 crate::value::error::throw_range_error("Atomics.waitAsync index is out of range")
@@ -263,6 +275,10 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
             ))
         }
     };
+    let _timeout = arguments
+        .get(3)
+        .map(crate::conversion::to_number)
+        .transpose()?;
     Ok(crate::value::Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             ("async".into(), Value::Boolean(false)),
