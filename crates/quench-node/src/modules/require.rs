@@ -390,10 +390,13 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "http" => Some(crate::modules::http::build()),
         "readline" => Some(crate::modules::readline::build()),
         "vm" => Some(crate::modules::vm::build()),
-        "dgram" => {
+        "dgram" | "node:dgram" => {
             let global = quench_runtime::vm::current_global_object();
             let module = quench_runtime::execute::get_property(&global, "\0quench:dgram_module");
-            (!matches!(module, Value::Undefined)).then_some(module)
+            if !matches!(module, Value::Undefined) {
+                return Some(module);
+            }
+            None
         },
         "https" => Some(crate::host::namespace_object_from_pairs(vec![
             (
