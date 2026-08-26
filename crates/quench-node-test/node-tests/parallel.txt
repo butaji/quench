@@ -475,3 +475,9 @@ test-tls-sni-servername.js
 test-tls-client-resume.js
 test-tls-client-auth.js
 test-tls-ecdh.js
+test-tls-client-default-ciphers.js
+test-tls-clientcertengine-invalid-arg-type.js
+test-tls-clientcertengine-unsupported.js
+test-tls-getcipher.js
+test-tls-getprotocol.js
+test-tls-no-cert-required.js
