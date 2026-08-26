@@ -156,22 +156,126 @@ fn difference(
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let epoch = epoch_number(get_epoch(receiver)?)?;
-    let unit = options
-        .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.strip_suffix('s').unwrap_or(&value).to_string()),
-            _ => None,
+    if options.is_none()
+        || options.is_some_and(|value| {
+            matches!(value, Value::Undefined | Value::Null)
+                || crate::conversion::is_symbol(value)
+                || (!crate::value::is_object(value)
+                    && !matches!(value, Value::String(_) | Value::StringUnits(_)))
         })
-        .ok_or_else(|| crate::value::error::throw_type_error("Missing smallestUnit"))?;
+    {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let (increment_number, rounding_mode_text, smallest_unit_text) =
+        if let Some(value) = options.filter(|value| crate::value::is_object(value)) {
+            let increment = crate::execute::get_property_result(value, "roundingIncrement")?;
+            let increment = if matches!(increment, Value::Undefined) {
+                None
+            } else {
+                Some(crate::conversion::to_number(&increment)?.trunc())
+            };
+            let rounding_mode = crate::execute::get_property_result(value, "roundingMode")?;
+            let rounding_mode = if matches!(rounding_mode, Value::Undefined) {
+                None
+            } else {
+                Some(crate::conversion::to_string(&rounding_mode)?)
+            };
+            let smallest = crate::execute::get_property_result(value, "smallestUnit")?;
+            let smallest = if matches!(smallest, Value::Undefined) {
+                None
+            } else {
+                Some(crate::conversion::to_string(&smallest)?)
+            };
+            (increment, rounding_mode, smallest)
+        } else {
+            (None, None, None)
+        };
+    let shorthand = options.and_then(|value| match value {
+        Value::String(value) => Some(value.clone()),
+        Value::StringUnits(_) => crate::conversion::to_string(value).ok(),
+        _ => None,
+    });
+    let unit_value = match shorthand {
+        Some(value) => value,
+        None => match smallest_unit_text {
+            None => {
+                return Err(crate::value::error::throw_range_error(
+                    "Missing smallestUnit",
+                ));
+            }
+            value => value,
+        },
+    };
+    let unit = unit_value
+        .strip_suffix('s')
+        .unwrap_or(&unit_value)
+        .to_string();
     let scale = unit_scale(&unit)
+        .filter(|_| unit != "day")
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))?;
-    let increment = options
-        .and_then(|value| crate::execute::get_property_result(value, "roundingIncrement").ok())
-        .and_then(|value| crate::conversion::to_number(&value).ok())
-        .unwrap_or(1.0) as i128;
-    let quantum = scale * increment;
-    let rounded = ((epoch as f64 / quantum as f64).round() as i128) * quantum;
+    let increment = increment_number.unwrap_or(1.0);
+    if !increment.is_finite() || increment <= 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    let maximum = match unit.as_str() {
+        "hour" => 24.0,
+        "minute" => 1_440.0,
+        "second" => 86_400.0,
+        "millisecond" => 86_400_000.0,
+        "microsecond" => 86_400_000_000.0,
+        "nanosecond" => 86_400_000_000_000.0,
+        _ => 0.0,
+    };
+    if increment > maximum || (maximum % increment) != 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    let rounding_mode = rounding_mode_text.unwrap_or_else(|| "halfExpand".to_string());
+    if ![
+        "ceil",
+        "floor",
+        "expand",
+        "trunc",
+        "halfCeil",
+        "halfFloor",
+        "halfExpand",
+        "halfTrunc",
+        "halfEven",
+    ]
+    .contains(&rounding_mode.as_str())
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingMode",
+        ));
+    }
+    let quantum = scale * increment as i128;
+    let rounded = round_instant_integer(epoch, quantum, &rounding_mode);
     construct(&[Value::BigInt(rounded.to_string())])
+}
+
+fn round_instant_integer(value: i128, quantum: i128, mode: &str) -> i128 {
+    let sign = value.signum();
+    let absolute = value.abs();
+    let mut units = absolute / quantum;
+    let remainder = absolute % quantum;
+    let increment = match mode {
+        "ceil" => sign > 0 && remainder != 0,
+        "floor" => sign < 0 && remainder != 0,
+        "expand" => sign > 0 && remainder != 0,
+        "trunc" => sign < 0 && remainder != 0,
+        "halfEven" => remainder * 2 > quantum || remainder * 2 == quantum && units % 2 != 0,
+        "halfCeil" => remainder * 2 >= quantum && sign > 0 || remainder * 2 > quantum && sign < 0,
+        "halfFloor" => remainder * 2 > quantum && sign > 0 || remainder * 2 >= quantum && sign < 0,
+        "halfTrunc" => remainder * 2 > quantum,
+        _ => remainder * 2 > quantum || remainder * 2 == quantum && sign > 0,
+    };
+    if increment {
+        units += 1;
+    }
+    units * sign * quantum
 }
 
 fn epoch_number(value: Value) -> Result<i128, VmError> {
@@ -286,9 +390,10 @@ fn get_epoch(receiver: Option<&Value>) -> Result<Value, VmError> {
     let Value::Object(object) = receiver else {
         return Err(crate::value::error::throw_type_error("Not an Instant"));
     };
-    if !object.iter().any(|(key, value)| {
-        key == "epochNanoseconds" && matches!(value, Value::BigInt(_))
-    }) {
+    if !object
+        .iter()
+        .any(|(key, value)| key == "epochNanoseconds" && matches!(value, Value::BigInt(_)))
+    {
         return Err(crate::value::error::throw_type_error("Not an Instant"));
     }
     crate::execute::get_property_result(receiver, "epochNanoseconds")
