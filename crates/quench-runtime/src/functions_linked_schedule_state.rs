@@ -70,14 +70,14 @@ struct NativeTask {
 const _: () = assert!(std::mem::size_of::<NativeTask>() == 96);
 
 struct NativePacket {
-    link: Option<usize>,
+    link: usize,
     id: usize,
     kind: i32,
     a1: i32,
     payload_len: usize,
 }
 
-const _: () = assert!(std::mem::size_of::<NativePacket>() == 40);
+const _: () = assert!(std::mem::size_of::<NativePacket>() == 32);
 
 struct NativePacketBacking {
     object: std::rc::Rc<crate::value::ObjectData>,
@@ -180,7 +180,7 @@ impl<'a> NativeSchedule<'a> {
                 if std::mem::replace(&mut seen[index], true) {
                     return false;
                 }
-                packet = self.packets[index].link;
+                packet = self.packet_link(index);
             }
         }
         true
@@ -236,10 +236,11 @@ impl<'a> NativeSchedule<'a> {
             let Some(packet) = tail else {
                 break;
             };
-            match self.packets.get(packet)?.link {
-                Some(next) => tail = Some(next),
-                None => return Some(NativeQueue::from_ends(head, tail)),
+            let next = self.packets.get(packet)?.link;
+            if next == NativeQueue::NONE {
+                return Some(NativeQueue::from_ends(head, tail));
             }
+            tail = Some(next);
         }
         head.is_none().then_some(NativeQueue::empty())
     }
@@ -280,7 +281,7 @@ impl<'a> NativeSchedule<'a> {
         }
         let index = self.packets.len();
         self.packets.push(NativePacket {
-            link: None,
+            link: NativeQueue::NONE,
             id: exact_linked_task_id(words.id.number()?)?,
             kind: exact_i32(words.kind.number()?)?,
             a1: exact_i32(words.a1.number()?)?,
@@ -293,7 +294,7 @@ impl<'a> NativeSchedule<'a> {
             payload_dirty: false,
         });
         let link = self.packet_from_word(words.link)?;
-        self.packets[index].link = link;
+        self.packets[index].link = link.unwrap_or(NativeQueue::NONE);
         Some(Some(index))
     }
 
@@ -328,11 +329,15 @@ impl<'a> NativeSchedule<'a> {
         let packet = queue.head;
         let next = self.packets.get(packet)?.link;
         let task = self.task_mut(current);
-        task.queue.head = next.unwrap_or(NativeQueue::NONE);
-        if next.is_none() {
+        task.queue.head = next;
+        if next == NativeQueue::NONE {
             task.queue.tail = NativeQueue::NONE;
         }
-        task.state = if next.is_none() { 0 } else { runnable };
+        task.state = if next == NativeQueue::NONE {
+            0
+        } else {
+            runnable
+        };
         Some(Some(packet))
     }
 
@@ -506,7 +511,7 @@ impl<'a> NativeSchedule<'a> {
                     };
                     return self.suspend(current);
                 };
-                v2.head = self.packets.get(device)?.link.unwrap_or(NativeQueue::NONE);
+                v2.head = self.packets.get(device)?.link;
                 if v2.head == NativeQueue::NONE {
                     v2.tail = NativeQueue::NONE;
                 }
@@ -528,7 +533,7 @@ impl<'a> NativeSchedule<'a> {
                 {
                     self.direct_branches[8] += 1;
                 }
-                v1.head = self.packets.get(work)?.link.unwrap_or(NativeQueue::NONE);
+                v1.head = self.packets.get(work)?.link;
                 if v1.head == NativeQueue::NONE {
                     v1.tail = NativeQueue::NONE;
                 }
@@ -546,10 +551,10 @@ impl<'a> NativeSchedule<'a> {
     }
 
     fn append_packet(&mut self, mut queue: NativeQueue, packet: usize) -> Option<NativeQueue> {
-        self.packets.get_mut(packet)?.link = None;
+        self.packets.get_mut(packet)?.link = NativeQueue::NONE;
         if queue.tail != NativeQueue::NONE {
             let tail = queue.tail;
-            self.packets.get_mut(tail)?.link = Some(packet);
+            self.packets.get_mut(tail)?.link = packet;
         } else {
             queue.head = packet;
         }
@@ -563,7 +568,7 @@ impl<'a> NativeSchedule<'a> {
             self.queue_iterations += 1;
         }
         self.queue_count = self.queue_count.checked_add(1)?;
-        self.packets.get_mut(packet)?.link = None;
+        self.packets.get_mut(packet)?.link = NativeQueue::NONE;
         self.packets.get_mut(packet)?.id = current;
         let current_priority = self.task(current).priority;
         let runnable = self.scheduler.runnable;
@@ -639,5 +644,10 @@ impl<'a> NativeSchedule<'a> {
         // SAFETY: identical invariant to `task`; mutation never changes the
         // table length or manufactures a task ID.
         unsafe { self.tasks.get_unchecked_mut(index) }
+    }
+
+    fn packet_link(&self, index: usize) -> Option<usize> {
+        let link = self.packets.get(index)?.link;
+        (link != NativeQueue::NONE).then_some(link)
     }
 }
