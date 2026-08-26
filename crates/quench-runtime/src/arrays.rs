@@ -51,13 +51,37 @@ fn execute_builtin_match(
         ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
         ArrayFlat => return Some(flat(receiver, arguments)),
-        ArrayFlatMap => return Some(flat_map(receiver, arguments)),
+        ArrayFlatMap => {
+            if arguments
+                .first()
+                .is_none_or(|value| !crate::conversion::is_callable(value))
+            {
+                return Some(Err(crate::vm::not_callable()));
+            }
+            return Some(flat_map(receiver, arguments));
+        }
         ArrayAt => return Some(at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
         ArraySplice => return Some(splice(receiver, arguments)),
-        ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
-        ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
+        ArrayReduce => {
+            if arguments
+                .first()
+                .is_none_or(|value| !crate::conversion::is_callable(value))
+            {
+                return Some(Err(crate::vm::not_callable()));
+            }
+            return Some(reduce_values(receiver, arguments, false));
+        }
+        ArrayReduceRight => {
+            if arguments
+                .first()
+                .is_none_or(|value| !crate::conversion::is_callable(value))
+            {
+                return Some(Err(crate::vm::not_callable()));
+            }
+            return Some(reduce_values(receiver, arguments, true));
+        }
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
         _ => return None,
@@ -226,10 +250,7 @@ fn splice_move(
     }
 }
 
-fn splice_value(
-    source: &Value,
-    index: usize,
-) -> Result<Option<Value>, crate::execute::VmError> {
+fn splice_value(source: &Value, index: usize) -> Result<Option<Value>, crate::execute::VmError> {
     let key = index.to_string();
     if !crate::with_scope::has_property(source, &key)? {
         return Ok(None);
@@ -614,7 +635,10 @@ fn flatten_value(
     result: &mut Vec<Value>,
 ) -> Result<(), crate::execute::VmError> {
     if depth > 0
-        && matches!(crate::builtins::is_array(Some(value))?, Value::Boolean(true))
+        && matches!(
+            crate::builtins::is_array(Some(value))?,
+            Value::Boolean(true)
+        )
     {
         let length = crate::builtins::map_length(value)?;
         for index in 0..length {
@@ -642,7 +666,7 @@ pub(crate) fn flat_map(
         .first()
         .filter(|value| crate::conversion::is_callable(value))
     else {
-        return Err(crate::vm::not_callable());
+        return Ok(receiver);
     };
     let length = crate::builtins::map_length(&receiver)?;
     let mut target = crate::builtins::array_species_create(&receiver, 0)?;
@@ -671,7 +695,8 @@ pub(crate) fn at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Array.prototype.at called on null or undefined",
         ));
@@ -688,7 +713,10 @@ pub(crate) fn at(
     if position < 0.0 || position >= length {
         return Ok(Value::Undefined);
     }
-    Ok(crate::execute::get_property_result(&receiver, &(position as usize).to_string())?)
+    Ok(crate::execute::get_property_result(
+        &receiver,
+        &(position as usize).to_string(),
+    )?)
 }
 pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let this = receiver.cloned().unwrap_or(Value::Undefined);
@@ -699,7 +727,9 @@ pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::exec
     }
     let length = array_like_length(&this)?;
     if length > u32::MAX as usize {
-        return Err(crate::value::error::throw_range_error("Invalid array length"));
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
     }
     let mut values = Vec::with_capacity(length);
     for index in (0..length).rev() {
@@ -728,10 +758,10 @@ pub(crate) fn reduce_values(
     let receiver = crate::construct::to_object(receiver)?;
     let length = crate::builtins::map_length(&receiver)?;
     let Some(callback) = arguments.first() else {
-        return Err(crate::vm::not_callable());
+        return Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined));
     };
     if !crate::conversion::is_callable(callback) {
-        return Err(crate::vm::not_callable());
+        return Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined));
     }
     let initial = arguments.get(1).cloned();
     let mut index = if reverse { length } else { 0 };

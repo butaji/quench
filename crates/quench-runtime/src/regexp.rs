@@ -1181,10 +1181,10 @@ mod tests {
         let regexp = Value::Object(
             ObjectData::new(vec![
                 (
-                    "source".to_string(),
+                    "\0regexp_source".to_string(),
                     Value::String(r"^\s*|\s*$".to_string()),
                 ),
-                ("flags".to_string(), Value::String("g".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
             ])
             .into(),
         );
@@ -1196,8 +1196,8 @@ mod tests {
     fn global_empty_replace_inserts_once_at_each_position() {
         let regexp = Value::Object(
             ObjectData::new(vec![
-                ("source".to_string(), Value::String("(?:)".to_string())),
-                ("flags".to_string(), Value::String("g".to_string())),
+                ("\0regexp_source".to_string(), Value::String("(?:)".to_string())),
+                ("\0regexp_flags".to_string(), Value::String("g".to_string())),
             ])
             .into(),
         );
