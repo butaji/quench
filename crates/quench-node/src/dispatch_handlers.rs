@@ -299,25 +299,31 @@ pub fn util_promisify(
     if let Ok(custom) = execute::get_property_result(&original, custom_key) {
         if !matches!(custom, Value::Undefined) {
             if quench_runtime::is_callable(&custom) {
-                return Ok(match timer_promise_alias(&original).or_else(|| {
-                    match execute::get_property(&custom, "name") {
-                        Value::String(name) if name.ends_with("Promise") => Some("timer"),
-                        _ => None,
-                    }
-                }) {
-                    Some(_) => match execute::get_property(&original, "name") {
-                        Value::String(name) => execute::define_property(
-                            custom.clone(),
-                            "name",
-                            host_api::object(vec![
-                                ("value".into(), Value::String(name.trim_end_matches("Promise").to_string())),
-                                ("configurable".into(), Value::Boolean(true)),
-                            ]),
-                        ).unwrap_or(custom),
-                        _ => custom,
+                return Ok(
+                    match timer_promise_alias(&original).or_else(|| {
+                        match execute::get_property(&custom, "name") {
+                            Value::String(name) if name.ends_with("Promise") => Some("timer"),
+                            _ => None,
+                        }
+                    }) {
+                        Some(_) => match execute::get_property(&original, "name") {
+                            Value::String(name) => execute::define_property(
+                                custom.clone(),
+                                "name",
+                                host_api::object(vec![
+                                    (
+                                        "value".into(),
+                                        Value::String(name.trim_end_matches("Promise").to_string()),
+                                    ),
+                                    ("configurable".into(), Value::Boolean(true)),
+                                ]),
+                            )
+                            .unwrap_or(custom),
+                            _ => custom,
+                        },
+                        None => custom,
                     },
-                    None => custom,
-                });
+                );
             }
             return Err(VmError::NotCallable);
         }
@@ -330,11 +336,9 @@ pub fn util_promisify(
         if let Ok(timers) = timers {
             let promise_api = execute::get_property(&timers, name);
             return Ok(match execute::get_property(&original, "name") {
-                Value::String(name) => execute::set_property(
-                    promise_api,
-                    "name",
-                    Value::String(name),
-                ),
+                Value::String(name) => {
+                    execute::set_property(promise_api, "name", Value::String(name))
+                }
                 _ => promise_api,
             });
         }
@@ -400,7 +404,10 @@ pub fn util_debuglog(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(bound_custom(crate::registry::SPEC_UTIL_DEBUGLOG.cap, vec![]))
+    Ok(bound_custom(
+        crate::registry::SPEC_UTIL_DEBUGLOG.cap,
+        vec![],
+    ))
 }
 
 pub fn util_deprecated_call(
@@ -937,6 +944,24 @@ pub fn internal_binding(
         )]);
         state.borrow_mut().os_binding = Some(binding.clone());
         return Ok(binding);
+    }
+    if name == "constants" {
+        let empty = || crate::host::null_namespace(Vec::new());
+        let os = crate::host::null_namespace(vec![
+            ("UV_UDP_REUSEADDR".into(), Value::Number(1.0)),
+            ("dlopen".into(), empty()),
+            ("errno".into(), empty()),
+            ("priority".into(), empty()),
+            ("signals".into(), empty()),
+        ]);
+        return Ok(crate::host::null_namespace(vec![
+            ("crypto".into(), empty()),
+            ("fs".into(), empty()),
+            ("internal".into(), empty()),
+            ("os".into(), os),
+            ("trace".into(), empty()),
+            ("zlib".into(), empty()),
+        ]));
     }
     if name == "cares_wrap" {
         if let Some(binding) = state.borrow().cares_binding.clone() {
@@ -1875,7 +1900,7 @@ pub fn buffer_btoa(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::buffer::btoa(args)))
+    crate::modules::buffer::btoa(args).map(Value::String)
 }
 
 pub fn cp_spawn_sync(
@@ -1929,10 +1954,16 @@ pub fn cp_spawn(
         }
         _ => child,
     };
-    if command == "foo123" || command == "does-not-exist" || command == "hopefully_you_dont_have_this" {
+    if command == "foo123"
+        || command == "does-not-exist"
+        || command == "hopefully_you_dont_have_this"
+    {
         let error = host_api::object(vec![
             ("name".into(), Value::String("Error".into())),
-            ("message".into(), Value::String(format!("spawn {command} ENOENT"))),
+            (
+                "message".into(),
+                Value::String(format!("spawn {command} ENOENT")),
+            ),
             ("code".into(), Value::String("ENOENT".into())),
             ("errno".into(), Value::Number(-2.0)),
             ("syscall".into(), Value::String(format!("spawn {command}"))),
@@ -1988,11 +2019,7 @@ pub fn cp_spawn_error_emit(
         return Ok(Value::Undefined);
     };
     let error = args.get(1).cloned().unwrap_or(Value::Undefined);
-    crate::modules::events::method_emit(
-        state,
-        Some(child),
-        &[Value::String("error".into()), error],
-    )
+    crate::modules::events::method_emit(state, Some(child), &[Value::String("error".into()), error])
 }
 
 pub fn cp_exec_sync(
@@ -2587,8 +2614,15 @@ pub fn abort_signal_timeout(
     let delay = args.first().cloned().unwrap_or(Value::Number(0.0));
     let signal = crate::modules::event_target::new_target(state, &[])?;
     let signal = execute::set_property(signal, "aborted", Value::Boolean(false));
-    let signal = execute::set_property(signal, crate::modules::event_target::ABORT_SIGNAL_BRAND, Value::Boolean(true));
-    let callback = crate::host::capability(crate::registry::NodeSpec::new("AbortSignal.timeout.fire", 0x1F31));
+    let signal = execute::set_property(
+        signal,
+        crate::modules::event_target::ABORT_SIGNAL_BRAND,
+        Value::Boolean(true),
+    );
+    let callback = crate::host::capability(crate::registry::NodeSpec::new(
+        "AbortSignal.timeout.fire",
+        0x1F31,
+    ));
     let timer = crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
     // Node's AbortSignal.timeout timer is deliberately unref'd: creating a
     // signal must not keep the process alive on its own.
@@ -2609,15 +2643,23 @@ pub fn abort_signal_timeout_fire(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(signal) = args.first() else { return Ok(Value::Undefined); };
+    let Some(signal) = args.first() else {
+        return Ok(Value::Undefined);
+    };
     let reason = execute::set_property(
-        quench_runtime::builtins::error(quench_runtime::ops::Builtin::Error, &[Value::String("The operation was aborted due to timeout".into())]),
+        quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(
+                "The operation was aborted due to timeout".into(),
+            )],
+        ),
         "name",
         Value::String("TimeoutError".into()),
     );
     execute::set_property_in_place(signal, "aborted", Value::Boolean(true));
     execute::set_property_in_place(signal, "reason", reason);
-    let event = quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+    let event =
+        quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
     crate::modules::event_target::dispatch_event(state, Some(signal), &[event])?;
     propagate_abort_composites(state, signal)
 }
@@ -2641,37 +2683,61 @@ fn propagate_abort_composites(
         }
         execute::set_property_in_place(&composite, "aborted", Value::Boolean(true));
         execute::set_property_in_place(&composite, "reason", reason.clone());
-        let event = quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+        let event =
+            quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
         crate::modules::event_target::dispatch_event(state, Some(&composite), &[event])?;
         propagate_abort_composites(state, &composite)?;
     }
     Ok(Value::Undefined)
 }
 
-pub fn abort_signal_any(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let list = args.first().ok_or_else(|| execute::type_error("The \"signals\" argument must be an instance of Array"))?;
+pub fn abort_signal_any(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let list = args.first().ok_or_else(|| {
+        execute::type_error("The \"signals\" argument must be an instance of Array")
+    })?;
     let length = match execute::get_property(list, "length") {
         Value::Number(n) if n.is_finite() && n >= 0.0 => n as usize,
-        _ => return Err(execute::type_error("The \"signals\" argument must be an instance of Array")),
+        _ => {
+            return Err(execute::type_error(
+                "The \"signals\" argument must be an instance of Array",
+            ))
+        }
     };
     let composite = crate::modules::event_target::new_target(state, &[])?;
     execute::set_property_in_place(&composite, "aborted", Value::Boolean(false));
-    execute::set_property_in_place(&composite, crate::modules::event_target::ABORT_SIGNAL_BRAND, Value::Boolean(true));
+    execute::set_property_in_place(
+        &composite,
+        crate::modules::event_target::ABORT_SIGNAL_BRAND,
+        Value::Boolean(true),
+    );
     for index in 0..length {
         let source = execute::get_property(list, &index.to_string());
-        if !matches!(source, Value::Object(_)) || !matches!(execute::get_property(&source, crate::modules::event_target::ABORT_SIGNAL_BRAND), Value::Boolean(true)) {
-            return Err(execute::type_error("The \"signals\" argument must contain only AbortSignal instances"));
+        if !matches!(source, Value::Object(_))
+            || !matches!(
+                execute::get_property(&source, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+                Value::Boolean(true)
+            )
+        {
+            return Err(execute::type_error(
+                "The \"signals\" argument must contain only AbortSignal instances",
+            ));
         }
         if execute::is_truthy(&execute::get_property(&source, "aborted")) {
             execute::set_property_in_place(&composite, "aborted", Value::Boolean(true));
-            execute::set_property_in_place(&composite, "reason", execute::get_property(&source, "reason"));
+            execute::set_property_in_place(
+                &composite,
+                "reason",
+                execute::get_property(&source, "reason"),
+            );
             return Ok(composite);
         }
         if let Some(identity) = crate::modules::event_target::target_identity(&source) {
-            state.borrow_mut().abort_composites.entry(identity).or_default().push(composite.clone());
+            state
+                .borrow_mut()
+                .abort_composites
+                .entry(identity)
+                .or_default()
+                .push(composite.clone());
         }
     }
     Ok(composite)
