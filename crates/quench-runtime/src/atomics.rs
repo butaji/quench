@@ -15,9 +15,7 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
     match view {
         Value::Int32Array(view) => {
             if !view.buffer.shared {
-                return Err(crate::value::error::throw_type_error(
-                    "Atomics.notify requires a shared buffer",
-                ));
+                return Ok(Value::Number(0.0));
             }
             let index = atomic_index(arguments.get(1))?;
             if view.get(index).is_none() {
@@ -28,9 +26,7 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
         }
         Value::BigInt64Array(view) => {
             if !view.buffer.shared {
-                return Err(crate::value::error::throw_type_error(
-                    "Atomics.notify requires a shared buffer",
-                ));
+                return Ok(Value::Number(0.0));
             }
             let index = atomic_index(arguments.get(1))?;
             if view.get(index).is_none() {
