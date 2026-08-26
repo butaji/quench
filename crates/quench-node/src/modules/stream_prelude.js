@@ -24,6 +24,7 @@
       if (name === "data" && this._readableState &&
                  this.listenerCount("readable") === 0) {
         this.resume();
+        flowReadable(this);
       }
       if (name === "readable" && this._readableState &&
           !this._readableState.reading && !this._readableState.ended) {
