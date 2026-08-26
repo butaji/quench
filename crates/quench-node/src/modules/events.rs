@@ -101,12 +101,19 @@ fn ensure_emitter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> O
     emitter.borrow_mut().capture_rejections = CAPTURE_REJECTIONS.with(Cell::get);
     state.borrow_mut().emitters.insert(id, emitter);
     let events = execute::set_property(host_api::object(Vec::new()), "\0prototype", Value::Null);
-    let mut updated = execute::set_property(receiver.clone(), "_events", events);
-    updated = execute::set_property(updated, EMITTER_ID_PROP, Value::Number(id.0 as f64));
-    updated = execute::set_property(updated, "_eventsCount", Value::Number(0.0));
-    updated = execute::set_property(updated, "domain", Value::Undefined);
-    execute::replace_value(receiver, &updated);
-    state.borrow_mut().emitters.bind_identity(&updated, id);
+    if matches!(receiver, Value::ObjectAlias(_)) {
+        execute::set_property_in_place(receiver, "_events", events);
+        execute::set_property_in_place(receiver, EMITTER_ID_PROP, Value::Number(id.0 as f64));
+        execute::set_property_in_place(receiver, "_eventsCount", Value::Number(0.0));
+        execute::set_property_in_place(receiver, "domain", Value::Undefined);
+    } else {
+        let mut updated = execute::set_property(receiver.clone(), "_events", events);
+        updated = execute::set_property(updated, EMITTER_ID_PROP, Value::Number(id.0 as f64));
+        updated = execute::set_property(updated, "_eventsCount", Value::Number(0.0));
+        updated = execute::set_property(updated, "domain", Value::Undefined);
+        execute::replace_value(receiver, &updated);
+    }
+    state.borrow_mut().emitters.bind_identity(receiver, id);
     Some(id)
 }
 

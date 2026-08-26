@@ -24,10 +24,16 @@ __quenchChildSpawnError.spawn = (...args) => {
           path: command,
           spawnargs: args[1] || [],
         });
-        emit.call(child, "error", error);
+        Reflect.apply(emit, child, ["error", error]);
       }
       if (event === "error") return true;
-      return emit.call(child, event, ...values);
+      return Reflect.apply(emit, child, [event, ...values]);
+    };
+    const on = child.on;
+    child.on = (event, listener) => {
+      const result = on.call(child, event, listener);
+      if (event === "error") child.emit("error");
+      return result;
     };
   }
   return child;
