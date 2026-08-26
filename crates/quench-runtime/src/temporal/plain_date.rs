@@ -169,7 +169,6 @@ fn add(
     let Value::Object(duration) = crate::temporal::duration::from(duration)? else {
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
-    validate_date_options(options, false)?;
     let overflow = overflow_option(options)?;
     let years =
         number_field(field(&date, "year")) + number_property(&duration, "years") * direction;
@@ -205,7 +204,12 @@ fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
     if matches!(value, Value::Undefined) {
         return Ok("constrain".into());
     }
-    option_string(&value)
+    let value = option_string(&value)?;
+    if matches!(value.as_str(), "constrain" | "reject") {
+        Ok(value)
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid overflow"))
+    }
 }
 
 fn difference(
