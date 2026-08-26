@@ -68,7 +68,7 @@ fn write_non_ordinary(
             length,
             raytrace_pixel: false,
             raytrace_render: None,
-            direct_constructor: Vec::new(),
+            direct_constructor: function.1.facts().direct_constructor.clone(),
             strictness,
             is_async,
             mapped_arguments,
@@ -107,7 +107,7 @@ fn write_ordinary(
             length,
             raytrace_pixel: false,
             raytrace_render: None,
-            direct_constructor: Vec::new(),
+            direct_constructor: body.facts().direct_constructor.clone(),
         },
     );
 }

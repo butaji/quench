@@ -29,6 +29,7 @@ thread_local! {
     static NODE_PROCESS_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PROCESS_WARNING_LISTENERS: RefCell<Vec<(String, Value, bool)>> =
         const { RefCell::new(Vec::new()) };
+    static NODE_PENDING_PROCESS_WARNINGS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_DNS_SERVERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_STREAM_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
