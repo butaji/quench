@@ -407,6 +407,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "withCalendar") => {
             Some(Value::Builtin(TemporalZonedDateTimeWithCalendar))
         }
+        (TemporalZonedDateTimePrototype, "withPlainTime") => {
+            Some(Value::Builtin(TemporalZonedDateTimeWithPlainTime))
+        }
         (TemporalZonedDateTimePrototype, "valueOf") => {
             Some(Value::Builtin(TemporalDurationValueOf))
         }
