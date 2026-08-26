@@ -553,8 +553,22 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    let calendar = calendar.unwrap_or(&Value::Undefined);
-    if !matches!(calendar, Value::Undefined | Value::String(_)) {
+    let calendar = calendar
+        .filter(|value| !matches!(value, Value::Undefined))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid calendar"))?;
+    if matches!(calendar, Value::Object(object) if object.iter().any(|(key, value)| key == "calendarId" && value == Value::String("iso8601".into())))
+    {
+        return construct(&[
+            field(object, "year"),
+            field(object, "month"),
+            field(object, "day"),
+        ]);
+    }
+    if matches!(calendar, Value::String(_) | Value::StringUnits(_)) {
+        if !is_iso_calendar_value(calendar)? {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    } else {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
     construct(&[
@@ -667,8 +681,9 @@ fn invalid_receiver() -> VmError {
 
 fn has_date_fields(object: &crate::value::ObjectData) -> bool {
     object.iter().any(|(key, value)| {
-        key == "\0prototype"
-            && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype)
+        (key == "\0prototype"
+            && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype))
+            || (key == "\0temporal-plain-date" && value == Value::Boolean(true))
     }) && ["year", "month", "day"].iter().all(|name| {
         object
             .iter()
@@ -699,11 +714,19 @@ fn is_iso_calendar_value(value: &Value) -> Result<bool, VmError> {
     let digits = |value: &str, min: usize, max: usize| {
         (min..=max).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
     };
-    Ok(match fields.as_slice() {
+    let structured = match fields.as_slice() {
         [year, month, day] => digits(year, 4, 6) && digits(month, 2, 2) && digits(day, 2, 2),
         [month, day] => digits(month, 2, 2) && digits(day, 2, 2),
         _ => false,
-    })
+    };
+    if structured {
+        return Ok(true);
+    }
+    Ok(!date.is_empty()
+        && date.chars().any(|character| character.is_ascii_digit())
+        && date
+            .chars()
+            .all(|character| character.is_ascii_digit() || "-+:.,".contains(character)))
 }
 
 fn field(object: &crate::value::ObjectData, name: &str) -> Value {
