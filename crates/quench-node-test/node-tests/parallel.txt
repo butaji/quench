@@ -386,3 +386,5 @@ test-timers-negative-duration-warning.js
 test-timers-async-store-leak.js
 test-timers-nan-duration-warning-promises.js
 test-timers-process-tampering.js
+test-console-formatTime.js
+test-diagnostics-channel-has-subscribers.js
