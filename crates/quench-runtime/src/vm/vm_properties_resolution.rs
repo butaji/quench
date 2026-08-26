@@ -12,7 +12,7 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
         value
     };
     let result = get_property_with_receiver(&value, key, &value)?;
-    Ok(crate::locals::resolved_replacement(result))
+    Ok(crate::locals::resolved_replacement(result).strong_function())
 }
 
 pub(crate) fn get_named_property_result(
@@ -37,7 +37,7 @@ pub(crate) fn get_named_property_result(
     }
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyMiss);
     crate::execution_trace::named_property_miss(key);
-    let result = get_property_result(&resolved, key)?;
+    let result = get_property_result(&resolved, key)?.strong_function();
     if let Value::Object(object) = &resolved {
         if let Some(slot) = cacheable_own_slot(&resolved, key) {
             cache.set(crate::machine::pack_named_cache(
@@ -59,9 +59,9 @@ pub(crate) fn get_named_cached_object(
     cache: &std::cell::Cell<u64>,
 ) -> Option<Value> {
     match get_named_cached_payload(object, cache)? {
-        NamedCachedPayload::Word(word) => Some(unsafe { &*word }.load()),
-        NamedCachedPayload::Cell(cell) => Some(unsafe { &*cell }.load()),
-        NamedCachedPayload::Value(value) => Some(value),
+        NamedCachedPayload::Word(word) => Some(unsafe { &*word }.load().strong_function()),
+        NamedCachedPayload::Cell(cell) => Some(unsafe { &*cell }.load().strong_function()),
+        NamedCachedPayload::Value(value) => Some(value.strong_function()),
     }
 }
 
