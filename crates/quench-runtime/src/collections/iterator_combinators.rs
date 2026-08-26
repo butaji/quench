@@ -207,9 +207,10 @@ fn predicate_terminal(
         match result {
             Ok(result) if crate::execute::is_truthy(&result) == stop_when_truthy => {
                 let completion = close(iterator, crate::completion::Completion::Normal)?;
-                return match completion.into_vm_error() {
-                    Err(error) => Err(error),
-                    Ok(_) => Ok(Value::Boolean(stop_when_truthy)),
+                return if matches!(completion, crate::completion::Completion::Normal) {
+                    Ok(Value::Boolean(stop_when_truthy))
+                } else {
+                    completion.into_vm_error()
                 };
             }
             Ok(_) => index += 1,
@@ -504,6 +505,5 @@ pub(crate) fn for_each(
         index += 1;
     }
 }
-
 
 
