@@ -100,10 +100,14 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainYearMonthToPlainDate => {
             to_plain_date(receiver, arguments.first())
         }
-        crate::ops::Builtin::TemporalPlainYearMonthWith => with(receiver, arguments.first()),
-        crate::ops::Builtin::TemporalPlainYearMonthAdd => add(receiver, arguments.first(), 1.0),
+        crate::ops::Builtin::TemporalPlainYearMonthWith => {
+            with(receiver, arguments.first(), arguments.get(1))
+        }
+        crate::ops::Builtin::TemporalPlainYearMonthAdd => {
+            add(receiver, arguments.first(), arguments.get(1), 1.0)
+        }
         crate::ops::Builtin::TemporalPlainYearMonthSubtract => {
-            add(receiver, arguments.first(), -1.0)
+            add(receiver, arguments.first(), arguments.get(1), -1.0)
         }
         crate::ops::Builtin::TemporalPlainYearMonthUntil => {
             difference(receiver, arguments.first(), arguments.get(1), 1.0)
@@ -466,31 +470,92 @@ fn to_plain_date(receiver: Option<&Value>, day: Option<&Value>) -> Result<Value,
     ])
 }
 
-fn with(receiver: Option<&Value>, changes: Option<&Value>) -> Result<Value, VmError> {
+fn with(
+    receiver: Option<&Value>,
+    changes: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
     let (year, month) =
         values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
     let changes = changes
         .filter(|v| crate::value::is_object(v))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
-    let year = match crate::execute::get_property_result(changes, "year")? {
+    let calendar = crate::execute::get_property_result(changes, "calendar")?;
+    let time_zone = crate::execute::get_property_result(changes, "timeZone")?;
+    if !matches!(calendar, Value::Undefined) || !matches!(time_zone, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Invalid fields"));
+    }
+    let year_value = crate::execute::get_property_result(changes, "year")?;
+    let year = match &year_value {
         Value::Undefined => year,
-        value => crate::conversion::to_number(&value)?,
+        value => crate::conversion::to_number(value)?,
     };
-    let month = match crate::execute::get_property_result(changes, "month")? {
+    let month_value = crate::execute::get_property_result(changes, "month")?;
+    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    if matches!(year_value, Value::Undefined)
+        && matches!(month_value, Value::Undefined)
+        && matches!(month_code, Value::Undefined)
+    {
+        return Err(crate::value::error::throw_type_error("Invalid fields"));
+    }
+    let month = match &month_value {
         Value::Undefined => month,
-        value => crate::conversion::to_number(&value)?,
+        value => crate::conversion::to_number(value)?,
     };
-    construct(year, month)
+    if !month.is_finite() || month <= 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid PlainYearMonth",
+        ));
+    }
+    let month_code = if matches!(month_code, Value::Undefined) {
+        None
+    } else {
+        Some(parse_month_code(&crate::conversion::to_string(
+            &month_code,
+        )?)?)
+    };
+    if let Some(code) = month_code {
+        if !matches!(month_value, Value::Undefined) && month.trunc() != code {
+            return Err(crate::value::error::throw_range_error(
+                "Conflicting month fields",
+            ));
+        }
+        let constrain = overflow_option(options)?;
+        return construct(year, if constrain { code.min(12.0) } else { code });
+    }
+    let constrain = overflow_option(options)?;
+    construct(year, if constrain { month.min(12.0) } else { month })
 }
 
 fn add(
     receiver: Option<&Value>,
     duration: Option<&Value>,
+    options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
     let (year, month) =
         values(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?;
     let duration = crate::temporal::duration::from(duration)?;
+    if [
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ]
+    .iter()
+    .any(|name| {
+        crate::execute::get_property_result(&duration, name)
+            .ok()
+            .and_then(|value| crate::conversion::to_number(&value).ok())
+            .is_some_and(|value| value != 0.0)
+    }) {
+        return Err(crate::value::error::throw_range_error("Invalid duration"));
+    }
+    let _ = overflow_option(options)?;
     let months = crate::execute::get_property_result(&duration, "years")
         .ok()
         .and_then(|v| crate::conversion::to_number(&v).ok())
