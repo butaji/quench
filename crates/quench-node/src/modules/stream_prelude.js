@@ -1651,6 +1651,32 @@
     }
     const first = stages[0];
     const last = stages[stages.length - 1];
+    const streamStages = stages.every((stage) => stage && typeof stage.write === "function" &&
+      typeof stage.on === "function");
+    if (streamStages) {
+      const composed = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          first.write(chunk, encoding, callback);
+        },
+        final(callback) {
+          first.end(callback);
+        },
+        destroy(error, callback) {
+          for (const stage of stages) {
+            if (!stage.destroyed && typeof stage.destroy === "function") stage.destroy(error);
+          }
+          callback(error);
+        },
+      });
+      for (let index = 0; index + 1 < stages.length; index += 1) {
+        stages[index].pipe(stages[index + 1]);
+      }
+      last.on("data", (chunk) => composed.push(chunk));
+      last.once("end", () => composed.push(null));
+      for (const stage of stages) stage.on("error", (error) => composed.destroy(error));
+      return composed;
+    }
     const firstIsSource = asyncIterable(first) ||
       (typeof first === "function" && first.constructor?.name === "AsyncGeneratorFunction");
     const singleSink = typeof first === "function" && first.constructor?.name === "AsyncFunction";
