@@ -39,10 +39,10 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainYearMonthMonthCodeGetter => field(receiver, "monthCode"),
         crate::ops::Builtin::TemporalPlainYearMonthEquals => equals(receiver, arguments.first()),
         crate::ops::Builtin::TemporalPlainYearMonthToString
-        | crate::ops::Builtin::TemporalPlainYearMonthToJSON
         | crate::ops::Builtin::TemporalPlainYearMonthToLocaleString => {
             to_string(receiver, arguments.first())
         }
+        crate::ops::Builtin::TemporalPlainYearMonthToJSON => to_string(receiver, None),
         crate::ops::Builtin::TemporalPlainYearMonthToPlainDate => {
             to_plain_date(receiver, arguments.first())
         }
