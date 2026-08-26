@@ -172,6 +172,8 @@ const CAP_PROCESS_HRTIME: u16 = 0x0A05;
 const CAP_PROCESS_HRTIME_BIGINT: u16 = 0x0A0B;
 const CAP_PROCESS_CPU_USAGE: u16 = 0x0A10;
 const CAP_PROCESS_UPTIME: u16 = 0x0A11;
+const CAP_PROCESS_AVAILABLE_MEMORY: u16 = 0x0A1B;
+const CAP_PROCESS_CONSTRAINED_MEMORY: u16 = 0x0A1C;
 const CAP_PROCESS_GETUID: u16 = 0x0A12;
 const CAP_PROCESS_GETGID: u16 = 0x0A13;
 const CAP_PROCESS_GETEUID: u16 = 0x0A14;
@@ -705,6 +707,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_HRTIME_BIGINT => process_hrtime_bigint,
         CAP_PROCESS_CPU_USAGE => process_cpu_usage,
         CAP_PROCESS_UPTIME => process_uptime,
+        CAP_PROCESS_AVAILABLE_MEMORY => process_available_memory,
+        CAP_PROCESS_CONSTRAINED_MEMORY => process_constrained_memory,
         CAP_PROCESS_GETUID => process_getuid,
         CAP_PROCESS_GETGID => process_getgid,
         CAP_PROCESS_GETEUID => process_geteuid,
