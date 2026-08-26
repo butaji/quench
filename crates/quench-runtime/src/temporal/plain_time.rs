@@ -812,6 +812,9 @@ fn with(
     let fields = fields
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid time-like object"))?;
+    if is_temporal_object(fields) {
+        return Err(crate::value::error::throw_type_error("Invalid time-like object"));
+    }
     let _ = crate::execute::get_property_result(fields, "calendar")?;
     let _ = crate::execute::get_property_result(fields, "timeZone")?;
     let names = [
@@ -1169,6 +1172,26 @@ fn is_plain_time(value: &Value) -> bool {
     matches!(value, Value::Object(object) if object.iter().any(|(key, value)| {
         key == "\0temporal-plain-time" && matches!(value, Value::Boolean(true))
     }))
+}
+
+fn is_temporal_object(value: &Value) -> bool {
+    let Value::Object(object) = value else {
+        return false;
+    };
+    object.iter().any(|(key, value)| {
+        key == "\0prototype"
+            && matches!(
+                value,
+                Value::Builtin(
+                    crate::ops::Builtin::TemporalPlainDatePrototype
+                        | crate::ops::Builtin::TemporalPlainDateTimePrototype
+                        | crate::ops::Builtin::TemporalPlainTimePrototype
+                        | crate::ops::Builtin::TemporalPlainMonthDayPrototype
+                        | crate::ops::Builtin::TemporalPlainYearMonthPrototype
+                        | crate::ops::Builtin::TemporalZonedDateTimePrototype
+                )
+            )
+    })
 }
 
 fn temporal_field(value: &Value, name: &str) -> Result<Value, VmError> {
