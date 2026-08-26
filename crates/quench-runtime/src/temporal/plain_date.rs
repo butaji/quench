@@ -178,15 +178,103 @@ fn difference(
     let left = date_parts(receiver)?;
     let right_value = from(other, None)?;
     let right = date_parts(Some(&right_value))?;
-    let days = (date_serial(right.0, right.1, right.2) - date_serial(left.0, left.1, left.2))
-        as f64
-        * direction;
+    let raw_days =
+        (date_serial(right.0, right.1, right.2) - date_serial(left.0, left.1, left.2)) as f64;
+    let signed_days = raw_days * direction;
+    let sign = if signed_days == 0.0 {
+        1.0
+    } else {
+        signed_days.signum()
+    };
+    let largest = largest_unit_option(options)?;
+    let (years, months, weeks, days) = match largest.as_str() {
+        "years" => {
+            let step = if raw_days < 0.0 { -1_i64 } else { 1 };
+            let step_f = step as f64;
+            let (base, limit) = (left, right);
+            let mut years = (limit.0 - base.0) * step_f;
+            let mut cursor = add_calendar_months(base, (years as i64) * 12 * step);
+            let passed = if step < 0 {
+                date_serial(cursor.0, cursor.1, cursor.2) < date_serial(limit.0, limit.1, limit.2)
+            } else {
+                date_serial(cursor.0, cursor.1, cursor.2) > date_serial(limit.0, limit.1, limit.2)
+            };
+            if passed {
+                years -= 1.0;
+                cursor = add_calendar_months(base, (years as i64) * 12 * step);
+            }
+            let mut months = (limit.0 * 12.0 + limit.1 - (cursor.0 * 12.0 + cursor.1)) * step_f;
+            cursor = add_calendar_months(base, (years as i64 * 12 + months as i64) * step);
+            let passed = if step < 0 {
+                date_serial(cursor.0, cursor.1, cursor.2) < date_serial(limit.0, limit.1, limit.2)
+            } else {
+                date_serial(cursor.0, cursor.1, cursor.2) > date_serial(limit.0, limit.1, limit.2)
+            };
+            if passed {
+                months -= 1.0;
+                cursor = add_calendar_months(base, (years as i64 * 12 + months as i64) * step);
+            }
+            let days = (date_serial(limit.0, limit.1, limit.2)
+                - date_serial(cursor.0, cursor.1, cursor.2)) as f64;
+            (years * sign, months * sign, 0.0, days.abs() * sign)
+        }
+        "months" => {
+            let step = if raw_days < 0.0 { -1_i64 } else { 1 };
+            let step_f = step as f64;
+            let (base, limit) = (left, right);
+            let mut months = (limit.0 * 12.0 + limit.1 - (base.0 * 12.0 + base.1)) * step_f;
+            let mut cursor = add_calendar_months(base, months as i64 * step);
+            let passed = if step < 0 {
+                date_serial(cursor.0, cursor.1, cursor.2) < date_serial(limit.0, limit.1, limit.2)
+            } else {
+                date_serial(cursor.0, cursor.1, cursor.2) > date_serial(limit.0, limit.1, limit.2)
+            };
+            if passed {
+                months -= 1.0;
+                cursor = add_calendar_months(base, months as i64 * step);
+            }
+            let days = (date_serial(limit.0, limit.1, limit.2)
+                - date_serial(cursor.0, cursor.1, cursor.2)) as f64;
+            (0.0, months * sign, 0.0, days.abs() * sign)
+        }
+        "weeks" => {
+            let weeks = (signed_days.abs() / 7.0).floor();
+            let days = signed_days.abs() - weeks * 7.0;
+            (0.0, 0.0, weeks * sign, days * sign)
+        }
+        _ => (0.0, 0.0, 0.0, signed_days),
+    };
     crate::temporal::duration::construct(&[
-        Value::Number(0.0),
-        Value::Number(0.0),
-        Value::Number(0.0),
+        Value::Number(years),
+        Value::Number(months),
+        Value::Number(weeks),
         Value::Number(days),
     ])
+}
+
+fn largest_unit_option(options: Option<&Value>) -> Result<String, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("days".into());
+    };
+    let value = crate::execute::get_property_result(options, "largestUnit")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("days".into());
+    }
+    let value = crate::conversion::to_string(&value)?;
+    Ok(match value.as_str() {
+        "year" | "years" => "years",
+        "month" | "months" => "months",
+        "week" | "weeks" => "weeks",
+        _ => "days",
+    }
+    .into())
+}
+
+fn add_calendar_months(date: (f64, f64, f64), months: i64) -> (f64, f64, f64) {
+    let index = date.0 as i64 * 12 + date.1 as i64 - 1 + months;
+    let year = index.div_euclid(12) as f64;
+    let month = (index.rem_euclid(12) + 1) as f64;
+    (year, month, date.2.min(days_in_month(year, month)))
 }
 
 fn date_parts(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
@@ -603,25 +691,39 @@ fn with(
             "Invalid PlainDate receiver",
         ));
     }
-    if let Some(value) = options {
-        if !matches!(
-            value,
-            Value::Undefined | Value::Object(_) | Value::Function(_) | Value::BoundFunction(_)
-        ) {
-            return Err(crate::value::error::throw_type_error("Invalid options"));
-        }
-    }
     let (year, month, day) = date_parts(receiver)?;
     let changes = changes
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid fields"))?;
-    let year = number_or_field(changes, "year", year)?;
-    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    let _ = crate::execute::get_property_result(changes, "calendar")?;
+    let _ = crate::execute::get_property_result(changes, "timeZone")?;
+    let mut day = number_or_field(changes, "day", day)?;
     let explicit_month = number_or_field(changes, "month", month)?;
-    let month = if matches!(month_code, Value::Undefined) {
+    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    let month_code_text = if matches!(month_code, Value::Undefined) {
+        None
+    } else {
+        Some(crate::conversion::to_string(&month_code)?)
+    };
+    let year = number_or_field(changes, "year", year)?;
+    let overflow = if let Some(value) = options {
+        if !matches!(value, Value::Undefined) && !crate::value::is_object(value) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
+        value
+    } else {
+        &Value::Undefined
+    };
+    let overflow = if matches!(overflow, Value::Undefined) {
+        Value::String("constrain".into())
+    } else {
+        crate::execute::get_property_result(overflow, "overflow")?
+    };
+    let overflow = option_string(&overflow)?;
+    let month = if month_code_text.is_none() {
         explicit_month
     } else {
-        let month = month_code_number(&month_code)?;
+        let month = month_code_number_text(month_code_text.as_deref().unwrap_or_default())?;
         if explicit_month != month
             && !matches!(
                 crate::execute::get_property_result(changes, "month")?,
@@ -633,14 +735,6 @@ fn with(
             ));
         }
         month
-    };
-    let mut day = number_or_field(changes, "day", day)?;
-    let overflow = options
-        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
-        .unwrap_or(Value::String("constrain".into()));
-    let overflow = match overflow {
-        Value::Undefined => "constrain".to_string(),
-        value => crate::conversion::to_string(&value)?,
     };
     if overflow != "constrain" && overflow != "reject" {
         return Err(crate::value::error::throw_range_error("Invalid overflow"));
@@ -673,12 +767,27 @@ fn with(
 fn number_or_field(object: &Value, name: &str, default: f64) -> Result<f64, VmError> {
     match crate::execute::get_property_result(object, name)? {
         Value::Undefined => Ok(default),
-        value => crate::conversion::to_number(&value),
+        value => Ok(crate::conversion::to_number(&value)?.trunc()),
     }
+}
+
+fn option_string(value: &Value) -> Result<String, VmError> {
+    if crate::value::is_object(value) {
+        let method = crate::execute::get_property_result(value, "toString")?;
+        if crate::conversion::is_callable(&method) {
+            let primitive = crate::functions::execute_target(&method, value, &[])?;
+            return crate::conversion::to_string(&primitive);
+        }
+    }
+    crate::conversion::to_string(value)
 }
 
 fn month_code_number(value: &Value) -> Result<f64, VmError> {
     let code = crate::conversion::to_string(value)?;
+    month_code_number_text(&code)
+}
+
+fn month_code_number_text(code: &str) -> Result<f64, VmError> {
     code.strip_prefix('M')
         .and_then(|value| value.parse::<f64>().ok())
         .filter(|value| (1.0..=12.0).contains(value))
