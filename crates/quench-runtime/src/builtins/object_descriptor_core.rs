@@ -523,6 +523,14 @@ fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             true,
         ));
     }
+    if builtin == Builtin::TemporalPlainMonthDayPrototype && key == "Symbol.toStringTag" {
+        return Some(descriptor_object_with_flags(
+            Value::String("Temporal.PlainMonthDay".into()),
+            false,
+            false,
+            true,
+        ));
+    }
     if builtin == Builtin::AbstractModuleSourcePrototype && key == "constructor" {
         return Some(descriptor_object_with_flags(
             crate::vm::realm_intrinsic(Builtin::AbstractModuleSource),
