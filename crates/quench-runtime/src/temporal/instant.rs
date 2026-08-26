@@ -203,7 +203,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                     "Missing smallestUnit",
                 ));
             }
-            value => value,
+            Some(value) => value,
         },
     };
     let unit = unit_value
@@ -554,7 +554,7 @@ fn arithmetic(
 }
 
 fn duration_nanos(duration: &Value) -> Result<i128, VmError> {
-    for name in ["years", "months", "weeks"] {
+    for name in ["years", "months", "weeks", "days"] {
         if duration_number(duration, name)? != 0.0 {
             return Err(crate::value::error::throw_range_error(
                 "Date units are not supported for Instant arithmetic",
