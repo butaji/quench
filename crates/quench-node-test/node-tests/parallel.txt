@@ -33,6 +33,7 @@ test-stream-end-paused.js
 test-stream-err-multiple-callback-construction.js
 test-stream-error-once.js
 test-stream-event-names.js
+test-stream-base-prototype-accessors-enumerability.js
 test-stream-ispaused.js
 test-stream-unshift-empty-chunk.js
 test-stream-uint8array.js
