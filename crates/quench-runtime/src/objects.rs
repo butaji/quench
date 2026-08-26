@@ -55,7 +55,11 @@ fn reduce_property(
                 else {
                     return None;
                 };
-                crate::functions::reduce_expression_kind(
+                let source = facts
+                    .reduction_source
+                    .get(property.span.start as usize..property.span.end as usize)
+                    .map(str::to_string);
+                crate::functions::reduce_expression_kind_source(
                     function,
                     ops,
                     facts,
@@ -66,6 +70,7 @@ fn reduce_property(
                     } else {
                         crate::ops::FunctionKind::Method
                     }),
+                    source,
                 )?
             } else {
                 crate::reduce::reduce_expression(&property.value, ops, facts, next, locals)?

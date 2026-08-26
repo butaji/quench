@@ -217,6 +217,7 @@ pub fn is_prototype(builtin: Builtin) -> bool {
                 | Builtin::WeakMapPrototype
                 | Builtin::WeakSetPrototype
                 | Builtin::WeakRefPrototype
+                | Builtin::FinalizationRegistryPrototype
                 | Builtin::ErrorPrototype
                 | Builtin::RangeErrorPrototype
                 | Builtin::TypeErrorPrototype
