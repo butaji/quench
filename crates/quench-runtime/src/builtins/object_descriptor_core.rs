@@ -173,6 +173,18 @@ fn object_descriptor<P: crate::value::PropertyEntries + ?Sized>(
         })
 }
 fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::IteratorPrototype && key == "constructor" {
+        return Some(accessor_descriptor_with_setter(
+            Builtin::IteratorPrototypeConstructorGetter,
+            Some(Builtin::IteratorPrototypeConstructorSetter),
+        ));
+    }
+    if builtin == Builtin::IteratorPrototype && key == "Symbol.toStringTag" {
+        return Some(accessor_descriptor_with_setter(
+            Builtin::IteratorPrototypeToStringTagGetter,
+            Some(Builtin::IteratorPrototypeToStringTagSetter),
+        ));
+    }
     let legacy = is_regexp_legacy_accessor(key);
     if builtin == Builtin::RegExp && legacy {
         let setter = matches!(key, "$_" | "input");
@@ -215,6 +227,10 @@ fn is_regexp_legacy_accessor(key: &str) -> bool {
 
 pub(crate) fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
     let getter = match (builtin, key) {
+        (Builtin::IteratorPrototype, "constructor") => Builtin::IteratorPrototypeConstructorGetter,
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => {
+            Builtin::IteratorPrototypeToStringTagGetter
+        }
         (Builtin::RegExpPrototype, "source") => Builtin::RegExpSourceGetter,
         (Builtin::RegExpPrototype, "flags") => Builtin::RegExpFlagsGetter,
         (Builtin::RegExpPrototype, "global") => Builtin::RegExpGlobalGetter,

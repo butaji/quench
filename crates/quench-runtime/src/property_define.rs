@@ -190,16 +190,29 @@ fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
 /// runtime override needed), e.g. `get Set [@@species]`.
 fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
     let getter = static_accessor_builtin(builtin, key)?;
+    let setter = match (builtin, key) {
+        (Builtin::IteratorPrototype, "constructor") => {
+            Value::Builtin(Builtin::IteratorPrototypeConstructorSetter)
+        }
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => {
+            Value::Builtin(Builtin::IteratorPrototypeToStringTagSetter)
+        }
+        _ => Value::Undefined,
+    };
     Some(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             ("get".to_string(), Value::Builtin(getter)),
-            ("set".to_string(), Value::Undefined),
+            ("set".to_string(), setter),
         ]),
     )))
 }
 
 fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::IteratorPrototype, "constructor") => Builtin::IteratorPrototypeConstructorGetter,
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => {
+            Builtin::IteratorPrototypeToStringTagGetter
+        }
         (Builtin::TemporalDurationPrototype, "years") => Builtin::TemporalDurationYearsGetter,
         (Builtin::TemporalDurationPrototype, "sign") => Builtin::TemporalDurationSignGetter,
         (Builtin::TemporalDurationPrototype, "blank") => Builtin::TemporalDurationBlankGetter,
