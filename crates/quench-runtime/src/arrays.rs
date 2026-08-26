@@ -468,14 +468,6 @@ fn iterator_symbol_removed(key: &str) -> bool {
 include!("arrays_iterator.rs");
 
 fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
-    else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.sort called on null or undefined",
-        ));
-    };
-    let mut target = crate::construct::to_object(receiver)?;
-    let length = array_like_length(&target)?;
     let compare = arguments
         .first()
         .filter(|value| !matches!(value, Value::Undefined));
@@ -486,6 +478,14 @@ fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::e
             ));
         }
     }
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.sort called on null or undefined",
+        ));
+    };
+    let mut target = crate::construct::to_object(receiver)?;
+    let length = array_like_length(&target)?;
     let mut elements = Vec::new();
     for index in 0..length {
         if let Some(value) = crate::builtins::map_value(&target, index)? {
