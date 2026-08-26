@@ -106,7 +106,13 @@ fn reduce_function_body(
     );
     facts.eval_var_scope_start = layout.1;
     facts.eval_arrow_scope = arrow_expression.is_some();
-    facts.function_has_direct_eval = function_has_direct_eval(syntax.0);
+    // A direct eval in a default/rest initializer runs while the parameter
+    // environment is active.  Treat that initializer as part of the
+    // function's dynamic scope so closures created there cannot resolve
+    // unresolved names through the global fast path.
+    facts.function_has_direct_eval = inherited.2
+        || function_has_direct_eval(syntax.0)
+        || function_has_direct_eval_formal(syntax.1);
     let previous_name_slot = facts.function_name_slot;
     facts.function_name_slot = self_name_slot
         .or_else(|| previous_name_slot.filter(|slot| captured_name_slot.contains(slot)));
@@ -121,34 +127,42 @@ fn reduce_function_body(
 }
 
 fn function_has_direct_eval(statements: &[oxc::ast::ast::Statement<'_>]) -> bool {
-    struct Finder(bool);
-    impl<'a> oxc::ast::visit::Visit<'a> for Finder {
-        fn visit_call_expression(&mut self, call: &oxc::ast::ast::CallExpression<'a>) {
-            if matches!(&call.callee, oxc::ast::ast::Expression::Identifier(id) if id.name == "eval") {
-                self.0 = true;
-            } else {
-                oxc::ast::visit::walk::walk_call_expression(self, call);
-            }
-        }
-
-        fn visit_function(
-            &mut self,
-            _: &oxc::ast::ast::Function<'a>,
-            _: oxc::syntax::scope::ScopeFlags,
-        ) {
-        }
-
-        fn visit_arrow_function_expression(
-            &mut self,
-            _: &oxc::ast::ast::ArrowFunctionExpression<'a>,
-        ) {
-        }
-    }
-    let mut finder = Finder(false);
+    let mut finder = DirectEvalFinder(false);
     for statement in statements {
         oxc::ast::visit::walk::walk_statement(&mut finder, statement);
     }
     finder.0
+}
+
+fn function_has_direct_eval_formal(formal: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    let mut finder = DirectEvalFinder(false);
+    oxc::ast::visit::walk::walk_formal_parameters(&mut finder, formal);
+    finder.0
+}
+
+struct DirectEvalFinder(bool);
+
+impl<'a> oxc::ast::visit::Visit<'a> for DirectEvalFinder {
+    fn visit_call_expression(&mut self, call: &oxc::ast::ast::CallExpression<'a>) {
+        if matches!(&call.callee, oxc::ast::ast::Expression::Identifier(id) if id.name == "eval") {
+            self.0 = true;
+        } else {
+            oxc::ast::visit::walk::walk_call_expression(self, call);
+        }
+    }
+
+    fn visit_function(
+        &mut self,
+        _: &oxc::ast::ast::Function<'a>,
+        _: oxc::syntax::scope::ScopeFlags,
+    ) {
+    }
+
+    fn visit_arrow_function_expression(
+        &mut self,
+        _: &oxc::ast::ast::ArrowFunctionExpression<'a>,
+    ) {
+    }
 }
 
 fn reduce_function_body_inner(
