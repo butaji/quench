@@ -91,7 +91,16 @@ pub fn spawn_sync(
         ]));
     }
 
-    let mut cmd = std::process::Command::new(&command);
+    let executable = if command == state.borrow().process.exec_path {
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|dir| dir.join("quench-node-cli")))
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| std::path::PathBuf::from(&command))
+    } else {
+        std::path::PathBuf::from(&command)
+    };
+    let mut cmd = std::process::Command::new(executable);
     cmd.args(&child_args);
 
     let mut input: Option<String> = None;
