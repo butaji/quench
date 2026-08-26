@@ -478,14 +478,6 @@ fn bigint_view_immutable(view: &Value) -> bool {
     }
 }
 
-fn bigint_view_immutable(view: &Value) -> bool {
-    match view {
-        Value::BigInt64Array(v) => v.buffer.immutable,
-        Value::BigUint64Array(v) => v.buffer.immutable,
-        _ => false,
-    }
-}
-
 fn atomic_index(value: Option<&Value>) -> Result<usize, VmError> {
     let value = value.ok_or_else(|| crate::value::error::throw_type_error("Missing index"))?;
     crate::construct::to_index(crate::conversion::to_number(value)?)
