@@ -15,10 +15,12 @@ struct DirectTaskRunner {
     state: *const crate::register_file::SlotWord,
     queue: *const crate::register_file::SlotWord,
     task_word: *const crate::register_file::SlotWord,
+    task_v1: *const crate::register_file::SlotWord,
     held_mask: i32,
     suspended: i32,
     task: *const crate::value::ObjectData,
     task_value: crate::value::Value,
+    scheduler: crate::value::Value,
     function: std::rc::Rc<crate::value::FunctionValue>,
     kind: DirectTaskKind,
 }
@@ -47,7 +49,12 @@ impl DirectTaskRunner {
         match self.kind {
             DirectTaskKind::Idle => execute_idle_task(&self.function, &self.task_value),
             DirectTaskKind::Device => {
-                execute_device_task(&self.function, &self.task_value, arguments)
+                execute_device_task_words(
+                    &self.function,
+                    arguments,
+                    self.word(self.task_v1),
+                    &self.scheduler,
+                )
             }
             DirectTaskKind::Worker => {
                 execute_worker_task(&self.function, &self.task_value, arguments)
@@ -135,6 +142,8 @@ fn linked_task_runner(
     };
     let (held_mask, suspended) = linked_state_predicate(tcb_value)?;
     let kind = direct_task_kind(&function)?;
+    let task_v1 = crate::vm::proven_own_word(task_object, "v1")?;
+    let scheduler = task_scheduler(task_object)?;
     Some(DirectTaskRunner {
         identity: tcb.identity(),
         id: std::ptr::from_ref(id),
@@ -142,10 +151,12 @@ fn linked_task_runner(
         state: std::ptr::from_ref(state),
         queue: std::ptr::from_ref(queue),
         task_word: std::ptr::from_ref(task_word),
+        task_v1: std::ptr::from_ref(task_v1),
         held_mask,
         suspended,
         task: std::rc::Rc::as_ptr(task_object),
         task_value: task,
+        scheduler,
         function,
         kind,
     })
