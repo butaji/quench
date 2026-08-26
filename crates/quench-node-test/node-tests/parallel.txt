@@ -510,6 +510,8 @@ test-worker-event.js
 test-worker-process-env.js
 test-worker-hasref.js
 test-worker-resource-limits.js
+test-worker-esm-missing-main.js
+test-worker-console-listeners.js
 test-https-agent-additional-options.js
 test-https-agent-servername.js
 test-https-agent-sni.js
