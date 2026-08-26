@@ -46,7 +46,13 @@ fn main() -> ExitCode {
             .iter()
             .position(|a| a == "--filter")
             .and_then(|i| args.get(i + 1));
-        return triage(filter);
+        let timeout = args
+            .iter()
+            .position(|a| a == "--timeout-secs")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30);
+        return triage(filter, timeout);
     }
     if args.iter().any(|a| a == "--all") {
         let filter = args
@@ -74,7 +80,7 @@ fn print_help() {
     println!("usage:");
     println!("  run-parallel                         run the checked-in stage manifest");
     println!("  run-parallel --all [options]         run the recursive fixture inventory");
-    println!("  run-parallel --triage [--filter NAME]  print passing triage fixtures");
+    println!("  run-parallel --triage [options]        print passing triage fixtures");
     println!();
     println!("options for --all:");
     println!("  --filter NAME       restrict fixtures by filename");
@@ -158,7 +164,7 @@ fn validate_manifest(names: &[String], parallel_root: &std::path::Path) -> Resul
     Ok(())
 }
 
-fn triage(filter: Option<&String>) -> ExitCode {
+fn triage(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
     if !std::path::Path::new(PARALLEL_DIR).is_dir() {
         eprintln!(
             "error: upstream Node fixture directory is missing: {PARALLEL_DIR}\n\
@@ -182,7 +188,7 @@ fn triage(filter: Option<&String>) -> ExitCode {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;
     for path in &entries {
-        if matches!(triage_one(&exe, path, 30), RunResult::Pass) {
+        if matches!(triage_one(&exe, path, timeout_secs), RunResult::Pass) {
             println!("{}", path.file_name().unwrap().to_string_lossy());
             passed += 1;
         }
