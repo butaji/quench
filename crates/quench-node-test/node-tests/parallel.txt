@@ -45,6 +45,7 @@ test-stream-readable-data.js
 test-stream-readable-ended.js
 test-stream-ispaused.js
 test-stream-writable-finished-state.js
+test-stream-writable-finished.js
 test-stream-writable-properties.js
 test-stream-writable-writable.js
 test-stream-unshift-empty-chunk.js
