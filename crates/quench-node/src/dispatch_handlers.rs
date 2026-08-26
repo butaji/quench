@@ -848,7 +848,16 @@ pub fn internal_binding(
         if let Some(binding) = state.borrow().cares_binding.clone() {
             return Ok(binding);
         }
-        let binding = crate::host::namespace_object_from_pairs(Vec::new());
+        let prototype = crate::host::namespace_object_from_pairs(Vec::new());
+        let channel = quench_runtime::host_api::bound_builtin(
+            quench_runtime::ops::Builtin::Object,
+            Value::Undefined,
+        );
+        let channel = quench_runtime::execute::set_property(channel, "prototype", prototype);
+        let binding = crate::host::namespace_object_from_pairs(vec![(
+            "ChannelWrap".to_string(),
+            channel,
+        )]);
         state.borrow_mut().cares_binding = Some(binding.clone());
         return Ok(binding);
     }
