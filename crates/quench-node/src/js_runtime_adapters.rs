@@ -85,15 +85,19 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
             .replace("require('events')", "__quench_events_module()")
             .replace("require(\"node:events\")", "__quench_events_module()")
             .replace("require('node:events')", "__quench_events_module()");
-        let source = transform_esm_imports(&source);
-        let support_source = crate::polyfills::bootstrap::lookup("support").unwrap_or("");
+        let mut source = transform_esm_imports(&source);
+        source = format!("var DOMException = globalThis.DOMException;\n{source}");
+        let support_source = format!(
+            "var DOMException = globalThis.DOMException;\n{}",
+            format!(
+                "{}\n{}",
+                crate::polyfills::bootstrap::lookup("globals-extra").unwrap_or(""),
+                crate::polyfills::bootstrap::lookup("support").unwrap_or("")
+            )
+        );
         let url_pattern_source = crate::polyfills::post_bootstrap::lookup("module-surface-06")
             .unwrap_or("");
-        // atob/btoa are installed as globalThis properties (not `var`) so user
-        // `const { atob }` bindings must not collide with a script-scope var.
-        // Free-identifier resolution reads globalThis properties, so callers
-        // keep working; `??=` preserves any host-provided implementation.
-        let source_with_globals = format!("var global = globalThis; globalThis.atob ??= function(value) {{ return String(value); }}; globalThis.btoa ??= function(value) {{ return String(value); }}; globalThis.exports ??= {{}}; globalThis.module ??= {{ exports: globalThis.exports }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; if (typeof globalThis.DOMException !== 'function') {{ globalThis.DOMException = class DOMException extends Error {{ constructor(message = '', name = 'Error') {{ super(message); this.name = name; this.code = {{ DataCloneError: 25, AbortError: 20 }}[name] || 0; }} }}; }}\n{support_source}\nObject.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_source}\nObject.defineProperty(globalThis, '__quenchURLPattern', {{ value: globalThis.__quenchURLPatternFactory?.(), configurable: true }}); delete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter;\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_done = true;");
+        let source_with_globals = format!("var global = globalThis; globalThis.exports ??= {{}}; globalThis.module ??= {{ exports: globalThis.exports }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; if (typeof globalThis.DOMException !== 'function') {{ globalThis.DOMException = class DOMException extends Error {{ constructor(message = '', name = 'Error') {{ super(message); this.name = name; this.code = {{ DataCloneError: 25, AbortError: 20 }}[name] || 0; }} }}; }}\n{support_source}\nObject.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_source}\nObject.defineProperty(globalThis, '__quenchURLPattern', {{ value: globalThis.__quenchURLPatternFactory?.(), configurable: true }}); delete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter;\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_done = true;");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),

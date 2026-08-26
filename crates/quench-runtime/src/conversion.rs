@@ -114,7 +114,7 @@ pub fn to_number(value: &Value) -> Result<f64, VmError> {
     primitive_to_number(&primitive)
 }
 
-pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
+pub fn to_string(value: &Value) -> Result<String, VmError> {
     let primitive = to_primitive(value, "string")?;
     if is_symbol(&primitive) {
         return Err(crate::value::error::throw_type_error(
@@ -365,9 +365,9 @@ pub fn is_callable(value: &Value) -> bool {
     match value {
         Value::Builtin(
             crate::ops::Builtin::Math
-                | crate::ops::Builtin::Json
-                | crate::ops::Builtin::Reflect
-                | crate::ops::Builtin::Atomics,
+            | crate::ops::Builtin::Json
+            | crate::ops::Builtin::Reflect
+            | crate::ops::Builtin::Atomics,
         ) => false,
         Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => false,
         Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
