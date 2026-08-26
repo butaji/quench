@@ -33,7 +33,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainMonthDay => Err(crate::value::error::throw_type_error(
             "Temporal.PlainMonthDay requires new",
         )),
-        crate::ops::Builtin::TemporalPlainMonthDayFrom => from(arguments.first()),
+        crate::ops::Builtin::TemporalPlainMonthDayFrom => from(arguments.first(), arguments.get(1)),
         crate::ops::Builtin::TemporalPlainMonthDayCompare => compare(arguments),
         crate::ops::Builtin::TemporalPlainMonthDayCalendarIdGetter => field(receiver, "calendarId"),
         crate::ops::Builtin::TemporalPlainMonthDayDayGetter => field(receiver, "day"),
@@ -45,9 +45,11 @@ pub(crate) fn execute(
             to_string(receiver, arguments.first())
         }
         crate::ops::Builtin::TemporalPlainMonthDayToPlainDate => {
-            to_plain_date(receiver, arguments.first())
+            to_plain_date(receiver, arguments.first(), arguments.get(1))
         }
-        crate::ops::Builtin::TemporalPlainMonthDayWith => with(receiver, arguments.first()),
+        crate::ops::Builtin::TemporalPlainMonthDayWith => {
+            with(receiver, arguments.first(), arguments.get(1))
+        }
         crate::ops::Builtin::TemporalPlainMonthDayValueOf => Err(
             crate::value::error::throw_type_error("Cannot convert PlainMonthDay to a number"),
         ),
@@ -55,7 +57,7 @@ pub(crate) fn execute(
     })
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let value =
         value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainMonthDay"))?;
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
@@ -94,6 +96,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
                 "Invalid PlainMonthDay",
             ));
         }
+        let _ = overflow_reject(options)?;
         return construct(month.parse().unwrap_or(0.0), day.parse().unwrap_or(0.0));
     }
     let month = match crate::execute::get_property_result(value, "month")? {
@@ -105,7 +108,30 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         value => crate::conversion::to_number(&value)?,
     };
     let day = crate::conversion::to_number(&crate::execute::get_property_result(value, "day")?)?;
+    let reject = overflow_reject(options)?;
+    if !reject {
+        return construct(month.clamp(1.0, 12.0), day.clamp(1.0, 31.0));
+    }
     construct(month, day)
+}
+
+fn overflow_reject(options: Option<&Value>) -> Result<bool, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(false);
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let value = crate::execute::get_property_result(options, "overflow")?;
+    if matches!(value, Value::Undefined) {
+        return Ok(false);
+    }
+    let text = crate::conversion::to_string(&value)?;
+    match text.as_str() {
+        "constrain" => Ok(false),
+        "reject" => Ok(true),
+        _ => Err(crate::value::error::throw_range_error("Invalid overflow")),
+    }
 }
 
 fn fields(value: &Value) -> Result<(String, f64), VmError> {
@@ -137,8 +163,8 @@ fn is_plain_month_day(value: &Value) -> bool {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = fields(&from(arguments.first())?)?;
-    let right = fields(&from(arguments.get(1))?)?;
+    let left = fields(&from(arguments.first(), None)?)?;
+    let right = fields(&from(arguments.get(1), None)?)?;
     Ok(Value::Number(
         match (left.0.cmp(&right.0), left.1.partial_cmp(&right.1)) {
             (std::cmp::Ordering::Less, _) | (_, Some(std::cmp::Ordering::Less)) => -1.0,
@@ -151,7 +177,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::Boolean(
         fields(receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?)?
-            == fields(&from(other)?)?,
+            == fields(&from(other, None)?)?,
     ))
 }
 
@@ -196,12 +222,17 @@ fn calendar_name(options: Option<&Value>) -> Result<String, VmError> {
     }
 }
 
-fn to_plain_date(receiver: Option<&Value>, year: Option<&Value>) -> Result<Value, VmError> {
+fn to_plain_date(
+    receiver: Option<&Value>,
+    year: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
     let year = crate::conversion::to_number(
         year.ok_or_else(|| crate::value::error::throw_type_error("Missing year"))?,
     )?;
+    let _ = overflow_reject(options)?;
     let (month, day) = fields(receiver)?;
     let month = month.trim_start_matches('M').parse().unwrap_or(0.0);
     crate::temporal::plain_date::construct(&[
@@ -211,7 +242,11 @@ fn to_plain_date(receiver: Option<&Value>, year: Option<&Value>) -> Result<Value
     ])
 }
 
-fn with(receiver: Option<&Value>, changes: Option<&Value>) -> Result<Value, VmError> {
+fn with(
+    receiver: Option<&Value>,
+    changes: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Invalid receiver"))?;
     let (month, day) = fields(receiver)?;
@@ -227,5 +262,10 @@ fn with(receiver: Option<&Value>, changes: Option<&Value>) -> Result<Value, VmEr
         Value::String(code) => code.trim_start_matches('M').parse().unwrap_or(0.0),
         value => crate::conversion::to_number(&value)?,
     };
-    construct(month, day)
+    let reject = overflow_reject(options)?;
+    if reject {
+        construct(month, day)
+    } else {
+        construct(month.clamp(1.0, 12.0), day.clamp(1.0, 31.0))
+    }
 }
