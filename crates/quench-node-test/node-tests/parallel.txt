@@ -115,7 +115,9 @@ test-buffer-compare.js
 test-buffer-concat.js
 test-buffer-equals.js
 test-buffer-failed-alloc-typed-arrays.js
+test-buffer-fill.js
 test-buffer-from.js
+test-buffer-generic-methods.js
 test-buffer-includes.js
 test-buffer-inspect.js
 test-buffer-isencoding.js
