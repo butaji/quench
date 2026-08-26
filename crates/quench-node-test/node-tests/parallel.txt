@@ -285,6 +285,7 @@ test-dns-promises-exists.js
 test-dns-resolve-promises.js
 test-dns-resolveany-bad-ancount.js
 test-dns-resolveany.js
+test-dns-resolveany-ttl-overflow.js
 test-dns-resolver-max-timeout.js
 test-dns-resolvens-typeerror.js
 test-net-access-byteswritten.js
