@@ -478,6 +478,20 @@ fn compare_url_like(left: &Value, right: &Value) -> Result<bool, VmError> {
             return Ok(false);
         }
     }
+    let left_keys = execute::own_enumerable_keys(left);
+    let right_keys = execute::own_enumerable_keys(right);
+    if left_keys.len() != right_keys.len() || left_keys.iter().any(|key| !right_keys.contains(key))
+    {
+        return Ok(false);
+    }
+    for key in left_keys {
+        if !execute::same_value(
+            &execute::get_property(left, &key),
+            &execute::get_property(right, &key),
+        ) {
+            return Ok(false);
+        }
+    }
     Ok(true)
 }
 
