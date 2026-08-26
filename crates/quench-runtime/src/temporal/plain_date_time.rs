@@ -1827,6 +1827,10 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     }
     if (!date_fields[0].starts_with(['+', '-']) && date_fields[0].len() != 4)
         || (date_fields[0].starts_with(['+', '-']) && date_fields[0].len() != 7)
+        || date_fields[1].len() != 2
+        || date_fields[2].len() != 2
+        || !date_fields[1].bytes().all(|byte| byte.is_ascii_digit())
+        || !date_fields[2].bytes().all(|byte| byte.is_ascii_digit())
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
