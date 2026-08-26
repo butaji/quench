@@ -478,6 +478,14 @@ fn set_property_tail(target: Value, key: &str, value: Value) -> Value {
             buffer.set_own_property(key, value);
             Value::ArrayBuffer(buffer)
         }
+        Value::Map(data) => {
+            data.set_property(key, value);
+            Value::Map(data)
+        }
+        Value::Set(data) => {
+            data.set_property(key, value);
+            Value::Set(data)
+        }
         other => other,
     }
 }

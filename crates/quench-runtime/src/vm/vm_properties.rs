@@ -211,6 +211,10 @@ fn get_property_value_collection_tail(value: &Value, key: &str) -> Value {
 }
 
 fn set_property(data: &crate::value::SetData, key: &str) -> Value {
+    let own = data.property(key);
+    if !matches!(own, Value::Undefined) {
+        return own;
+    }
     if key == "constructor" {
         return Value::Builtin(if data.weak { Builtin::WeakSet } else { Builtin::Set });
     }
@@ -286,6 +290,10 @@ fn map_constructor(weak: bool) -> Value {
 }
 
 fn map_collection_property(data: &crate::value::MapData, key: &str) -> Value {
+    let own = data.property(key);
+    if !matches!(own, Value::Undefined) {
+        return own;
+    }
     if key == "size" && !data.weak {
         return Value::Number(data.keys.borrow().len() as f64);
     }
