@@ -141,6 +141,7 @@ test-buffer-writefloat.js
 test-buffer-zero-fill-cli.js
 test-buffer-zero-fill.js
 test-net-connect-after-destroy.js
+test-net-access-byteswritten.js
 test-net-during-close.js
 test-net-isipv4.js
 test-net-server-close.js
