@@ -415,8 +415,11 @@ fn has_invalid_time(text: &str) -> bool {
     let fields: Vec<_> = clock.split(':').collect();
     let parse = |value: &str| value.parse::<u32>().ok();
     if fields.len() == 1 {
+        let has_fraction = fields[0].contains(['.', ',']);
         let compact = fields[0].split(['.', ',']).next().unwrap_or(fields[0]);
-        if !matches!(compact.len(), 2 | 4 | 6) || !compact.bytes().all(|byte| byte.is_ascii_digit())
+        if !matches!(compact.len(), 2 | 4 | 6)
+            || !compact.bytes().all(|byte| byte.is_ascii_digit())
+            || has_fraction && compact.len() != 6
         {
             return true;
         }
