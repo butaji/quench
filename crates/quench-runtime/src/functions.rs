@@ -7,7 +7,7 @@ include!("functions_properties.rs");
 const NEW_TARGET: &str = "\0new_target";
 pub(crate) const FUNCTION_SELF: &str = "\0function_self";
 pub(crate) const FUNCTION_NAME_IMMUTABLE: &str = "\0function_name_immutable";
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct FunctionMetadata {
     pub(crate) kind: FunctionKind,
     pub(crate) length: u16,
@@ -16,8 +16,15 @@ pub(crate) struct FunctionMetadata {
     pub(crate) mapped_arguments: bool,
     pub(crate) raytrace_pixel: bool,
     pub(crate) raytrace_render: Option<(f64, u16)>,
+    pub(crate) direct_constructor: Vec<DirectConstructorField>,
+}
+#[derive(Clone)]
+pub(crate) struct DirectConstructorField {
+    pub(crate) name: String,
+    pub(crate) source: i16,
 }
 include!("functions_raytrace_kernel.rs");
+include!("functions_direct_constructor_fact.rs");
 pub(super) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {

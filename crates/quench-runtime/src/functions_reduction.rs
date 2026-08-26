@@ -373,6 +373,20 @@ fn emit_function_op(
             strict: true,
         });
     }
+    for field in &metadata.direct_constructor {
+        let source = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::Const {
+            dst: source,
+            value: crate::ops::Constant::Number(f64::from(field.source)),
+        });
+        ops.push(Op::SetProperty {
+            object: register,
+            key: format!("\0quench:direct_constructor:{}", field.name),
+            src: source,
+            strict: true,
+        });
+    }
     if let Some((expected, slot)) = metadata.raytrace_render {
         let slot_register = *next_register;
         *next_register = next_register.saturating_add(1);
@@ -457,6 +471,7 @@ pub(crate) fn reduce_expression_kind(
                     .copied()
                     .map(|slot| (expected, slot))
             }),
+            direct_constructor: direct_constructor_fact(function),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
     ))
@@ -494,6 +509,7 @@ pub(crate) fn reduce_arrow(
             mapped_arguments: false,
             raytrace_pixel: false,
             raytrace_render: None,
+            direct_constructor: Vec::new(),
         },
     ))
 }
@@ -531,8 +547,9 @@ pub(super) fn make(
 ) -> crate::value::Value {
     let has_prototype = matches!(metadata.kind, FunctionKind::Generator)
         || matches!(metadata.kind, FunctionKind::Ordinary) && !metadata.is_async;
+    let kind = metadata.kind;
     let value = make_function_value(code, params, captures, length, metadata);
-    attach_lexical_super(&value, metadata.kind);
+    attach_lexical_super(&value, kind);
     if has_prototype {
         attach_prototype(&value);
     }
