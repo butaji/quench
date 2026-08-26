@@ -59,6 +59,37 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     )))
 }
 
+/// The constructor's calendar argument is a calendar identifier, not a value
+/// that may be coerced with the general string conversion rules.  Keep this
+/// check at the constructor boundary so operations such as `withCalendar`
+/// can continue to accept ISO date/time strings as specified.
+pub(crate) fn construct_from_constructor(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(calendar) = arguments
+        .get(9)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        if !matches!(calendar, Value::String(_) | Value::StringUnits(_))
+            || crate::conversion::is_symbol(calendar)
+        {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
+        let text = crate::conversion::to_string(calendar)?;
+        let date = text.split(['T', 't', ' ', '[']).next().unwrap_or(&text);
+        let fields: Vec<_> = date.split('-').collect();
+        let date_like = fields.len() == 3
+            && fields[0].len() >= 4
+            && fields[1].len() == 2
+            && fields[2].len() == 2
+            || fields.len() == 1
+                && date.len() == 8
+                && date.bytes().all(|byte| byte.is_ascii_digit());
+        if date_like || !crate::temporal::plain_date::is_iso_calendar_value(calendar)? {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    }
+    construct(arguments)
+}
+
 fn validate(fields: &[f64]) -> Result<(), VmError> {
     if !(1.0..=12.0).contains(&fields[1])
         || !(1.0..=31.0).contains(&fields[2])
@@ -353,14 +384,17 @@ fn to_zoned_date_time(
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
-    let Value::String(calendar) =
-        calendar.ok_or_else(|| crate::value::error::throw_type_error("Missing calendar"))?
-    else {
+    let calendar =
+        calendar.ok_or_else(|| crate::value::error::throw_type_error("Missing calendar"))?;
+    if !matches!(calendar, Value::String(_) | Value::StringUnits(_))
+        || crate::conversion::is_symbol(calendar)
+    {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
-    };
-    if !calendar.eq_ignore_ascii_case("iso8601") {
+    }
+    if !crate::temporal::plain_date::is_iso_calendar_value(calendar)? {
         return Err(crate::value::error::throw_range_error("Invalid calendar"));
     }
+    let _calendar = crate::conversion::to_string(calendar)?;
     let values = fields(receiver)?;
     let month_code = format!("M{:02}", values[1] as u32);
     let properties = NAMES
@@ -370,7 +404,7 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
         .map(|(name, value)| (name.into(), Value::Number(value)))
         .chain([
             ("monthCode".into(), Value::String(month_code)),
-            ("calendarId".into(), Value::String(calendar.clone())),
+            ("calendarId".into(), Value::String("iso8601".into())),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
@@ -1016,18 +1050,15 @@ fn month_code_number(value: &Value) -> Result<Value, VmError> {
 }
 
 fn validate_calendar(value: &Value) -> Result<(), VmError> {
-    if crate::conversion::is_symbol(value) {
+    if !matches!(value, Value::String(_) | Value::StringUnits(_))
+        || crate::conversion::is_symbol(value)
+    {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
-    let Value::String(calendar) = value else {
-        return Err(crate::value::error::throw_type_error("Invalid calendar"));
-    };
-    if calendar.eq_ignore_ascii_case("iso8601")
-        || (calendar.chars().any(|character| character.is_ascii_digit()) && calendar.contains('-'))
-    {
-        Ok(())
-    } else {
+    if !crate::temporal::plain_date::is_iso_calendar_value(value)? {
         Err(crate::value::error::throw_range_error("Invalid calendar"))
+    } else {
+        Ok(())
     }
 }
 

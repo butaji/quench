@@ -48,7 +48,7 @@ fn construct_builtin_tail(
         crate::ops::Builtin::TemporalInstant => crate::temporal::instant::construct(arguments),
         crate::ops::Builtin::TemporalPlainTime => crate::temporal::plain_time::construct(arguments),
         crate::ops::Builtin::TemporalPlainDateTime => {
-            crate::temporal::plain_date_time::construct(arguments)
+            crate::temporal::plain_date_time::construct_from_constructor(arguments)
         }
         crate::ops::Builtin::TemporalPlainMonthDay => {
             crate::temporal::plain_month_day::construct_from_arguments(arguments)
