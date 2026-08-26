@@ -353,7 +353,9 @@ fn emit_function_op(
     *next_register = next_register.saturating_add(1);
     ops.push(Op::MakeFunctionWithKind {
         dst: register,
-        body: crate::machine::FunctionCode::pending(body),
+        body: crate::machine::FunctionCode::pending(body).with_facts(crate::facts::FunctionFacts {
+            direct_constructor: metadata.direct_constructor.clone(),
+        }),
         params,
         captures,
         length: metadata.length,
@@ -370,20 +372,6 @@ fn emit_function_op(
             object: register,
             key: "\0quench:raytrace_pixel".to_string(),
             src: marker,
-            strict: true,
-        });
-    }
-    for field in &metadata.direct_constructor {
-        let source = *next_register;
-        *next_register = next_register.saturating_add(1);
-        ops.push(Op::Const {
-            dst: source,
-            value: crate::ops::Constant::Number(f64::from(field.source)),
-        });
-        ops.push(Op::SetProperty {
-            object: register,
-            key: format!("\0quench:direct_constructor:{}", field.name),
-            src: source,
             strict: true,
         });
     }
@@ -509,7 +497,7 @@ pub(crate) fn reduce_arrow(
             mapped_arguments: false,
             raytrace_pixel: false,
             raytrace_render: None,
-            direct_constructor: Vec::new(),
+            direct_constructor: std::rc::Rc::default(),
         },
     ))
 }

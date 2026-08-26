@@ -402,6 +402,17 @@ fn construct_function(
         if let Some(object) = try_record_constructor(function, target, arguments) {
             return Ok(object);
         }
+        if !function.code.facts().direct_constructor.is_empty() {
+            let prototype = get_prototype_from_constructor(target, |realm| {
+                crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
+            });
+            if let Some(object) =
+                crate::functions::direct_constructor_object(function, prototype, arguments)
+            {
+                crate::execution_trace::kernel("direct_record_constructor", false);
+                return Ok(object);
+            }
+        }
     }
     let receiver = constructor_receiver(target);
     let object = initialize_instance_fields(function, receiver)?;
