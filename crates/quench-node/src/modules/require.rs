@@ -298,7 +298,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "internal/errors" => Some(crate::host::namespace_object_from_pairs(vec![
             (
                 "DNSException".to_string(),
-                quench_runtime::host_api::bound_builtin(quench_runtime::ops::Builtin::Error, Value::Undefined),
+                crate::host::capability(crate::registry::SPEC_DNS_EXCEPTION),
             ),
             (
             "codes".to_string(),
