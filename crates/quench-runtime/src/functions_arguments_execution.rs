@@ -63,7 +63,7 @@ pub(crate) fn execute(
     if let Some(result) = execute_slot_alu(function, &receiver, arguments) {
         return Ok(result);
     }
-    if let Some(result) = execute_recalculate_method(function, &receiver)? {
+    if let Some(result) = execute_select_update_call(function, &receiver)? {
         return Ok(result);
     }
     if let Some(result) = execute_linked_schedule(function, &receiver)? {
@@ -72,7 +72,7 @@ pub(crate) fn execute(
     if let Some(result) = execute_constraint_collection_loop(function, arguments)? {
         return Ok(result);
     }
-    if let Some(result) = execute_plan_loop(function, &receiver)? {
+    if let Some(result) = execute_counted_method_loop(function, &receiver)? {
         return Ok(result);
     }
     if let Some(result) = execute_shape_kernel(function, &receiver, arguments) {
