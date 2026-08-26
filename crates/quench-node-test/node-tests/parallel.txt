@@ -69,6 +69,8 @@ test-timers-immediate-unref.js
 test-timers-immediate-queue.js
 test-timers-immediate-unref-simple.js
 test-timers-immediate.js
+test-timers-dispose.js
+test-timers-fast-calls.js
 test-timers-interval-throw.js
 test-timers-invalid-clear.js
 test-timers-max-duration-warning.js
