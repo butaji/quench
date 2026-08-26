@@ -10,6 +10,11 @@ fn execute_plan_loop(
     else {
         return Ok(None);
     };
+    if let Some(result) =
+        execute_direct_plan_loop(receiver, length_method, element_method, body_method)
+    {
+        return Ok(Some(result));
+    }
     let mut index = 0.0;
     loop {
         let size = call_fact_named(receiver, length_method, &[])?;
@@ -35,6 +40,139 @@ fn execute_plan_loop(
         index += 1.0;
     }
     Ok(Some(crate::value::Value::Undefined))
+}
+
+enum DirectPlanAction {
+    Noop,
+    Copy {
+        target: *const crate::register_file::SlotWord,
+        source: *const crate::register_file::SlotWord,
+        _target_owner: std::rc::Rc<crate::value::ObjectData>,
+        _source_owner: std::rc::Rc<crate::value::ObjectData>,
+    },
+}
+
+impl DirectPlanAction {
+    fn execute(&self) {
+        match self {
+            Self::Noop => crate::execution_trace::kernel("counted_method_noop", false),
+            Self::Copy { target, source, .. } => {
+                // SAFETY: admission roots both owners in this action and
+                // ordinary own-slot mutation cannot relocate either word.
+                unsafe { &**target }.copy_from(unsafe { &**source });
+                crate::execution_trace::kernel("counted_method_copy_property", false);
+            }
+        }
+        crate::execution_trace::kernel("plan_execute_loop", false);
+        crate::execution_trace::kernel("plan_execute_direct", false);
+    }
+}
+
+fn execute_direct_plan_loop(
+    receiver: &crate::value::Value,
+    length_method: &str,
+    element_method: &str,
+    body_method: &str,
+) -> Option<crate::value::Value> {
+    let length = plain_method(receiver, length_method)?;
+    let element = plain_method(receiver, element_method)?;
+    let input = collection_array_for_methods(receiver, &length, &element)?;
+    if !input.is_packed_ordinary() || !crate::locals::array_word_is_current(&input) {
+        return None;
+    }
+    let mut actions = Vec::with_capacity(input.logical_len());
+    for index in 0..input.logical_len() {
+        let constraint = crate::locals::resolved_replacement(input.dense_value_at(index)?);
+        let body = plain_method(&constraint, body_method)?;
+        actions.push(admit_direct_plan_action(&body, &constraint)?);
+    }
+    for action in &actions {
+        action.execute();
+    }
+    Some(crate::value::Value::Undefined)
+}
+
+fn collection_array_for_methods(
+    receiver: &crate::value::Value,
+    length: &std::rc::Rc<crate::value::FunctionValue>,
+    element: &std::rc::Rc<crate::value::FunctionValue>,
+) -> Option<std::rc::Rc<crate::value::ArrayData>> {
+    if let Some(array) = nested_array_for_methods(receiver, length, element) {
+        return Some(array);
+    }
+    let ShapeKernelPlan::ForwardZero(length_plan) = shape_kernel_fact(length)? else {
+        return None;
+    };
+    let ShapeKernelPlan::ForwardOne(element_plan) = shape_kernel_fact(element)? else {
+        return None;
+    };
+    let length_code = length.code.code()?;
+    let element_code = element.code.code()?;
+    let length_receiver = length_code
+        .metadata_at(length_plan.receiver_pc)?
+        .name
+        .as_deref()?;
+    let element_receiver = element_code
+        .metadata_at(element_plan.receiver_pc)?
+        .name
+        .as_deref()?;
+    if length_receiver != element_receiver {
+        return None;
+    }
+    let nested = plain_data_property(receiver, length_receiver)?;
+    let length_name = length_code
+        .metadata_at(length_plan.call_pc)?
+        .name
+        .as_deref()?;
+    let element_name = element_code
+        .metadata_at(element_plan.callee_pc)?
+        .name
+        .as_deref()?;
+    let nested_length = plain_method(&nested, length_name)?;
+    let nested_element = plain_method(&nested, element_name)?;
+    nested_array_for_methods(&nested, &nested_length, &nested_element)
+}
+
+fn admit_direct_plan_action(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    receiver: &crate::value::Value,
+) -> Option<DirectPlanAction> {
+    match function.code.facts().direct_method.as_deref()? {
+        crate::facts::DirectMethodFact::Noop => Some(DirectPlanAction::Noop),
+        crate::facts::DirectMethodFact::CopyMethodProperty {
+            target_method,
+            source_method,
+            property,
+        } => {
+            let target_owner = plain_property_select(receiver, target_method)?;
+            let source_owner = plain_property_select(receiver, source_method)?;
+            let target = plain_own_word(&target_owner, property).map(std::ptr::from_ref)?;
+            let source =
+                crate::vm::proven_own_word(&source_owner, property).map(std::ptr::from_ref)?;
+            Some(DirectPlanAction::Copy {
+                target,
+                source,
+                _target_owner: target_owner,
+                _source_owner: source_owner,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn plain_property_select(
+    receiver: &crate::value::Value,
+    method: &str,
+) -> Option<std::rc::Rc<crate::value::ObjectData>> {
+    let method = plain_method(receiver, method)?;
+    let ShapeKernelPlan::PropertySelect(plan) = shape_kernel_fact(&method)? else {
+        return None;
+    };
+    let crate::value::Value::Object(selected) = execute_property_select(&method, receiver, plan)?
+    else {
+        return None;
+    };
+    Some(selected)
 }
 
 fn execute_direct_counted_method(
