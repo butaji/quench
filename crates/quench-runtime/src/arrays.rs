@@ -127,10 +127,7 @@ include!("arrays_mutation.rs");
 include!("arrays_typed_static.rs");
 include!("arrays_from.rs");
 
-fn splice(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
+fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
     else {
         return Err(crate::value::error::throw_type_error(
@@ -172,22 +169,36 @@ fn splice(
         }
     }
     for (offset, value) in items.into_iter().enumerate() {
-        target = crate::properties::assign_set_property(&target, &(start + offset).to_string(), value)?;
+        target =
+            crate::properties::assign_set_property(&target, &(start + offset).to_string(), value)?;
     }
-    target = crate::properties::assign_set_property(&target, "length", Value::Number(new_length as f64))?;
+    target = crate::properties::assign_set_property(
+        &target,
+        "length",
+        Value::Number(new_length as f64),
+    )?;
     Ok(removed)
 }
 
 fn splice_index(value: Option<&Value>, length: usize) -> Result<usize, crate::execute::VmError> {
-    let number = value.map(crate::conversion::to_number).transpose()?.unwrap_or(0.0);
-    if number.is_nan() || number == 0.0 { return Ok(0); }
-    if number.is_sign_negative() { return Ok((length as f64 + number.trunc()).max(0.0) as usize); }
+    let number = value
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    if number.is_nan() || number == 0.0 {
+        return Ok(0);
+    }
+    if number.is_sign_negative() {
+        return Ok((length as f64 + number.trunc()).max(0.0) as usize);
+    }
     Ok(number.min(length as f64).trunc() as usize)
 }
 
 fn splice_count(value: &Value) -> Result<usize, crate::execute::VmError> {
     let number = crate::conversion::to_number(value)?;
-    if number.is_nan() || number <= 0.0 { return Ok(0); }
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
     Ok(number.min(9_007_199_254_740_991.0).trunc() as usize)
 }
 
@@ -203,12 +214,16 @@ fn splice_move(
     }
 }
 
-fn splice_delete(
-    target: Value,
-    index: usize,
-) -> Result<Value, crate::execute::VmError> {
-    let (updated, deleted) = crate::builtins::delete_property(target, index.to_string());
-    if deleted { Ok(updated) } else { Err(crate::value::error::throw_type_error("Cannot delete array property")) }
+fn splice_delete(target: Value, index: usize) -> Result<Value, crate::execute::VmError> {
+    let key = index.to_string();
+    let (updated, deleted) = crate::builtins::delete_property(target, &key);
+    if deleted {
+        Ok(updated)
+    } else {
+        Err(crate::value::error::throw_type_error(
+            "Cannot delete array property",
+        ))
+    }
 }
 
 pub(crate) fn reduce(
@@ -429,10 +444,7 @@ fn iterator_symbol_removed(key: &str) -> bool {
 
 include!("arrays_iterator.rs");
 
-fn sort(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
+fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
     else {
         return Err(crate::value::error::throw_type_error(
@@ -441,7 +453,9 @@ fn sort(
     };
     let mut target = crate::construct::to_object(receiver)?;
     let length = array_like_length(&target)?;
-    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    let compare = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined));
     if let Some(compare) = compare {
         if !crate::conversion::is_callable(compare) {
             return Err(crate::value::error::throw_type_error(
@@ -461,7 +475,7 @@ fn sort(
         if let Some(value) = elements.get(index).cloned() {
             target = crate::properties::assign_set_property(&target, &key, value)?;
         } else {
-            let (updated, _) = crate::builtins::delete_property(target, key);
+            let (updated, _) = crate::builtins::delete_property(target, &key);
             target = updated;
         }
     }
@@ -477,7 +491,9 @@ fn insertion_sort(
         let mut position = index;
         while position > 0 {
             let ordering = compare_values(&elements[position - 1], &value, compare)?;
-            if ordering != std::cmp::Ordering::Greater { break; }
+            if ordering != std::cmp::Ordering::Greater {
+                break;
+            }
             elements[position] = elements[position - 1].clone();
             position -= 1;
         }
@@ -492,14 +508,17 @@ fn compare_values(
     compare: Option<&Value>,
 ) -> Result<std::cmp::Ordering, crate::execute::VmError> {
     let number = if let Some(compare) = compare {
-        let value = crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
+        let value =
+            crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
         crate::conversion::to_number(&value)?
     } else {
         let left = crate::conversion::to_string(left)?;
         let right = crate::conversion::to_string(right)?;
         return Ok(left.cmp(&right));
     };
-    Ok(number.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal))
+    Ok(number
+        .partial_cmp(&0.0)
+        .unwrap_or(std::cmp::Ordering::Equal))
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {
@@ -530,19 +549,19 @@ pub(crate) fn flat(
         }
     }
     for (index, value) in flatten(&values, depth).into_iter().enumerate() {
-        target = crate::builtins::create_data_property_or_throw(
-            target,
-            &index.to_string(),
-            value,
-        )?;
+        target = crate::builtins::create_data_property_or_throw(target, &index.to_string(), value)?;
     }
     Ok(target)
 }
 
 fn flat_depth(value: Option<&Value>) -> Result<usize, crate::execute::VmError> {
-    let Some(value) = value else { return Ok(1); };
+    let Some(value) = value else {
+        return Ok(1);
+    };
     let number = crate::conversion::to_number(value)?;
-    if number.is_nan() || number <= 0.0 { return Ok(0); }
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
     Ok(number.trunc().min(usize::MAX as f64) as usize)
 }
 fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
@@ -576,7 +595,9 @@ pub(crate) fn flat_map(
         ));
     };
     let receiver = crate::construct::to_object(receiver)?;
-    let Some(callback) = arguments.first().filter(|value| crate::conversion::is_callable(value))
+    let Some(callback) = arguments
+        .first()
+        .filter(|value| crate::conversion::is_callable(value))
     else {
         return Err(crate::vm::not_callable());
     };
@@ -585,12 +606,10 @@ pub(crate) fn flat_map(
     let mut target_index = 0usize;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for index in 0..length {
-        let Some(value) = crate::builtins::map_value(&receiver, index)? else { continue; };
-        let args = [
-            value,
-            Value::Number(index as f64),
-            receiver.clone(),
-        ];
+        let Some(value) = crate::builtins::map_value(&receiver, index)? else {
+            continue;
+        };
+        let args = [value, Value::Number(index as f64), receiver.clone()];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
         match result {
             Value::Array(nested) => {
@@ -688,9 +707,13 @@ pub(crate) fn reduce_values(
     let mut accumulator = initial;
     while accumulator.is_none() {
         if reverse {
-            if index == 0 { break; }
+            if index == 0 {
+                break;
+            }
             index -= 1;
-        } else if index >= length { break; } else {
+        } else if index >= length {
+            break;
+        } else {
             index += 1;
         }
         let position = if reverse { index } else { index - 1 };
@@ -699,7 +722,9 @@ pub(crate) fn reduce_values(
         }
     }
     let Some(mut accumulator) = accumulator else {
-        return Err(crate::value::error::throw_type_error("Reduce of empty array"));
+        return Err(crate::value::error::throw_type_error(
+            "Reduce of empty array",
+        ));
     };
     let indices: Box<dyn Iterator<Item = usize>> = if reverse {
         Box::new((0..index).rev())
@@ -707,8 +732,15 @@ pub(crate) fn reduce_values(
         Box::new(index..length)
     };
     for position in indices {
-        let Some(value) = crate::builtins::map_value(&receiver, position)? else { continue; };
-        let args = [accumulator, value, Value::Number(position as f64), receiver.clone()];
+        let Some(value) = crate::builtins::map_value(&receiver, position)? else {
+            continue;
+        };
+        let args = [
+            accumulator,
+            value,
+            Value::Number(position as f64),
+            receiver.clone(),
+        ];
         accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
     }
     Ok(accumulator)
