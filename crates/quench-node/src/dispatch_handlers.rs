@@ -299,7 +299,25 @@ pub fn util_promisify(
     if let Ok(custom) = execute::get_property_result(&original, custom_key) {
         if !matches!(custom, Value::Undefined) {
             if quench_runtime::is_callable(&custom) {
-                return Ok(custom);
+                return Ok(match timer_promise_alias(&original).or_else(|| {
+                    match execute::get_property(&custom, "name") {
+                        Value::String(name) if name.ends_with("Promise") => Some("timer"),
+                        _ => None,
+                    }
+                }) {
+                    Some(_) => match execute::get_property(&original, "name") {
+                        Value::String(name) => execute::define_property(
+                            custom.clone(),
+                            "name",
+                            host_api::object(vec![
+                                ("value".into(), Value::String(name.trim_end_matches("Promise").to_string())),
+                                ("configurable".into(), Value::Boolean(true)),
+                            ]),
+                        ).unwrap_or(custom),
+                        _ => custom,
+                    },
+                    None => custom,
+                });
             }
             return Err(VmError::NotCallable);
         }
@@ -310,13 +328,25 @@ pub fn util_promisify(
             &[Value::String("timers/promises".to_string())],
         );
         if let Ok(timers) = timers {
-            return Ok(execute::get_property(&timers, name));
+            let promise_api = execute::get_property(&timers, name);
+            return Ok(match execute::get_property(&original, "name") {
+                Value::String(name) => execute::set_property(
+                    promise_api,
+                    "name",
+                    Value::String(name),
+                ),
+                _ => promise_api,
+            });
         }
     }
     let wrapper = bound_custom(
         crate::registry::SPEC_UTIL_PROMISIFIED_CALL.cap,
-        vec![original],
+        vec![original.clone()],
     );
+    let wrapper = match execute::get_property(&original, "name") {
+        Value::String(name) => execute::set_property(wrapper, "name", Value::String(name)),
+        _ => wrapper,
+    };
     let custom = wrapper.clone();
     Ok(execute::set_property(
         wrapper,

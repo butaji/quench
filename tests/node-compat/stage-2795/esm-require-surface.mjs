@@ -1,0 +1,16 @@
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { promisify } from 'node:util';
+import readline from 'node:readline';
+import stream from 'node:stream';
+import timers from 'node:timers';
+import child_process from 'node:child_process';
+assert.strictEqual(typeof fs.exists, 'function');
+assert.strictEqual(typeof promisify, 'function');
+assert.strictEqual(typeof promisify(fs.exists), 'function');
+assert.strictEqual(typeof readline.Interface, 'function');
+assert.strictEqual(typeof readline.Interface.prototype.question, 'function');
+assert.strictEqual(typeof stream.finished, 'function');
+assert.strictEqual(typeof stream.pipeline, 'function');
+assert.strictEqual(typeof timers.setImmediate, 'function');
+assert.strictEqual(typeof child_process.exec, 'function');
