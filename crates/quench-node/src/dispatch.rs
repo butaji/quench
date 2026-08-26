@@ -55,6 +55,7 @@ const CAP_UTIL_SYSTEM_ERROR_NAME: u16 = 0x0733;
 const CAP_UTIL_EXCEPTION_WITH_HOST_PORT: u16 = 0x0734;
 const CAP_INTERNAL_UTIL_EMIT_WARNING: u16 = 0x0735;
 const CAP_OS_GET_PRIORITY: u16 = 0x0736;
+const CAP_OS_AVAILABLE_PARALLELISM: u16 = crate::registry::SPEC_OS_AVAILABLE_PARALLELISM.cap;
 const CAP_OS_SET_PRIORITY: u16 = 0x0737;
 const CAP_INTERNAL_OS_GET_HOME_DIRECTORY: u16 = 0x0738;
 const CAP_UTIL_INSPECT: u16 = 0x0301;
@@ -429,6 +430,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_INTERNAL_UTIL_EMIT_WARNING => internal_util_emit_warning,
         CAP_OS_GET_PRIORITY => os_get_priority,
         CAP_OS_SET_PRIORITY => os_set_priority,
+        CAP_OS_AVAILABLE_PARALLELISM => crate::modules::os::available_parallelism,
         CAP_INTERNAL_OS_GET_HOME_DIRECTORY => internal_os_get_home_directory,
         CAP_UTIL_INSPECT => util_inspect,
         CAP_UTIL_PARSE_ENV => util_parse_env,

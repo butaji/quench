@@ -130,6 +130,16 @@ pub fn build() -> Vec<(String, Value)> {
         .and_then(|object| quench_runtime::execute::get_property_result(&object, "assign").ok())
         .unwrap_or(Value::Undefined);
     let to_usv_string = crate::host::capability(crate::registry::SPEC_UTIL_TO_USV_STRING);
+    let promisify = quench_runtime::execute::set_property(
+        crate::host::capability(crate::registry::SPEC_UTIL_PROMISIFY),
+        "custom",
+        Value::String("Symbol.for.nodejs.util.promisify.custom\0".into()),
+    );
+    let promisify = quench_runtime::execute::set_property(
+        promisify,
+        "Symbol.for.nodejs.util.promisify.custom\0",
+        Value::String("Symbol.for.nodejs.util.promisify.custom\0".into()),
+    );
     let types = types_object();
     /*let type_names = [
         "isArgumentsObject", "isArrayBuffer", "isAsyncFunction", "isBigIntObject",
@@ -172,7 +182,7 @@ pub fn build() -> Vec<(String, Value)> {
         ),
         (
             "promisify".to_string(),
-            crate::host::capability(crate::registry::SPEC_UTIL_PROMISIFY),
+            promisify,
         ),
         (
             "deprecate".to_string(),

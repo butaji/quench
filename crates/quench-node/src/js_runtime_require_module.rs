@@ -356,7 +356,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return require_url_modules(name);
         }
         if name == "util" || name == "node:util" {
-            return Ok(util_module());
+            return Ok(crate::host::namespace_object_from_pairs(crate::modules::util::build()));
         }
         if name == "util/types" || name == "node:util/types" {
             return Ok(crate::js_runtime_internal_binding::util_types_module());
@@ -431,7 +431,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "os" || name == "node:os" {
-            return Ok(os_module());
+            return Ok(crate::host::namespace_object_from_pairs(crate::modules::os::build()));
         }
         if name == "repl" || name == "node:repl" {
             return Ok(crate::modules::repl::build());
