@@ -18,10 +18,12 @@ pub(crate) struct FunctionMetadata {
     pub(crate) raytrace_render: Option<(f64, u16)>,
     pub(crate) direct_constructor: std::rc::Rc<[crate::facts::DirectConstructorField]>,
     pub(crate) linked_record_insert: Option<std::rc::Rc<crate::facts::LinkedRecordInsertFact>>,
+    pub(crate) forward_construct_call: Option<std::rc::Rc<crate::facts::ForwardConstructCallFact>>,
 }
 include!("functions_raytrace_kernel.rs");
 include!("functions_direct_constructor_fact.rs");
 include!("functions_linked_record_insert_fact.rs");
+include!("functions_forward_construct_call_fact.rs");
 pub(super) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
