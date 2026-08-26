@@ -261,6 +261,9 @@ pub fn parse(
         out.push((k, value));
     }
     if let Some(query) = query_object {
+        if !out.iter().any(|(key, _)| key == "search") {
+            out.push(("search".into(), Value::Null));
+        }
         out.push(("query".into(), query));
     }
     Ok(legacy_object(out))
