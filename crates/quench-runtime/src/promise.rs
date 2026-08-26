@@ -23,6 +23,12 @@ struct CapabilityState {
     reject: Option<Value>,
 }
 
+pub(crate) struct ThenResult {
+    pub(crate) target: Value,
+    pub(crate) resolve: Value,
+    pub(crate) reject: Value,
+}
+
 thread_local! {
     static NEXT_CAPABILITY_ID: Cell<u64> = const { Cell::new(1) };
     static CAPABILITIES: RefCell<HashMap<u64, CapabilityState>> = RefCell::new(HashMap::new());
@@ -59,12 +65,27 @@ fn capability_executor(id: u64, arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn capability_executor_function(id: u64, target: Builtin) -> Value {
+    let length = Value::Number(2.0);
+    let name = Value::String(String::new());
+    let descriptor = |value: Value| {
+        Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])))
+    };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(target),
         receiver: Value::Number(id as f64),
         arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
+        properties: RefCell::new(vec![
+            ("length".to_string(), length.clone()),
+            (crate::builtins::descriptor_key("length"), descriptor(length)),
+            ("name".to_string(), name.clone()),
+            (crate::builtins::descriptor_key("name"), descriptor(name)),
+        ]),
     }))
 }
 
@@ -144,7 +165,7 @@ fn process_then_actions(
     promise_key: usize,
 ) {
     for (on_fulfilled, on_rejected) in then_actions {
-        let result_promise = THEN_RESULTS.with(|results| {
+        let result = THEN_RESULTS.with(|results| {
             let mut results = results.borrow_mut();
             let queue = results.get_mut(&promise_key)?;
             let result = queue.pop_front();
@@ -153,7 +174,7 @@ fn process_then_actions(
             }
             result
         });
-        let Some(result_promise) = result_promise else {
+        let Some(result) = result else {
             continue;
         };
         let action = match &state {
@@ -169,19 +190,39 @@ fn process_then_actions(
             .map(peel_binding_cell)
             .filter(crate::conversion::is_callable)
         else {
-            propagate_default(&result_promise, state, value);
+            let settle = if matches!(state, PromiseState::Rejected(_)) {
+                &result.reject
+            } else {
+                &result.resolve
+            };
+            let _ = crate::functions::execute_target(settle, &Value::Undefined, &[value]);
             continue;
         };
-        promise_phase(&result_promise, "before");
+        if let Value::Promise(promise) = &result.target {
+            promise_phase(promise, "before");
+        }
         let completion =
             match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {
-                Ok(Value::Promise(next)) => adopt_promise(&result_promise, &next),
-                Ok(value) => resolve_promise(&result_promise, value),
-                Err(VmError::Thrown(reason)) => reject_promise(&result_promise, reason),
-                Err(_) => reject_promise(&result_promise, Value::Undefined),
+                Ok(value) => crate::functions::execute_target(
+                    &result.resolve,
+                    &Value::Undefined,
+                    &[value],
+                ),
+                Err(VmError::Thrown(reason)) => crate::functions::execute_target(
+                    &result.reject,
+                    &Value::Undefined,
+                    &[reason],
+                ),
+                Err(_) => crate::functions::execute_target(
+                    &result.reject,
+                    &Value::Undefined,
+                    &[Value::Undefined],
+                ),
             };
         let _ = completion;
-        promise_phase(&result_promise, "after");
+        if let Value::Promise(promise) = &result.target {
+            promise_phase(promise, "after");
+        }
     }
 }
 
@@ -602,13 +643,17 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                 promise
                     .then_actions
                     .borrow_mut()
-                    .push((Some(resolve), Some(reject)));
+                    .push((Some(resolve.clone()), Some(reject.clone())));
                 THEN_RESULTS.with(|results| {
                     results
                         .borrow_mut()
                         .entry(Rc::as_ptr(promise) as usize)
                         .or_default()
-                        .push_back(Rc::clone(&target));
+                    .push_back(ThenResult {
+                        target: Value::Promise(Rc::clone(&target)),
+                        resolve: resolve.clone(),
+                        reject: reject.clone(),
+                    });
                 });
                 if !matches!(*promise.state.borrow(), PromiseState::Pending) {
                     queue_promise(promise);
@@ -699,11 +744,8 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     };
     let promise_value = Value::Promise(Rc::clone(promise));
     let constructor = then_species_constructor(&promise_value)?;
-    let result = with_promise_trigger(promise, || construct_then_result(&constructor))?;
-    let result_promise = match &result {
-        Value::Promise(promise) => Rc::clone(promise),
-        _ => return Err(VmError::NotCallable),
-    };
+    let (result, resolve, reject) =
+        with_promise_trigger(promise, || construct_then_result(&constructor))?;
     promise
         .then_actions
         .borrow_mut()
@@ -716,11 +758,11 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     }
     let promise_key = Rc::as_ptr(promise) as usize;
     THEN_RESULTS.with(|results| {
-        results
-            .borrow_mut()
-            .entry(promise_key)
-            .or_default()
-            .push_back(result_promise);
+        results.borrow_mut().entry(promise_key).or_default().push_back(ThenResult {
+            target: result.clone(),
+            resolve,
+            reject,
+        });
     });
     if !matches!(*promise.state.borrow(), PromiseState::Pending) {
         queue_promise(promise);
