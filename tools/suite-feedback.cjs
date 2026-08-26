@@ -8,7 +8,11 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const benchmark = path.join(root, "quench-bench/run-quench-runtime.mjs");
 const scoreBinary = path.join(root, "target/bench-throughput/quench-node");
-const traceBinary = path.join(root, "target-exec-trace/bench-throughput/quench-node");
+const traceBinary = path.join(
+  root,
+  "target-exec-trace/bench-throughput/quench-node"
+);
+const timeoutRunner = path.join(root, "tools/run-with-timeout.cjs");
 const outputPath = "/tmp/quench-suite-row.json";
 const floors = Object.freeze({
   richards: 52430,
@@ -18,17 +22,26 @@ const floors = Object.freeze({
   "earley-boyer": 87457,
   regexp: 22983,
   splay: 50113,
-  "navier-stokes": 34337,
+  "navier-stokes": 34337
 });
 const expectedKernels = Object.freeze({
   richards: ["linked_schedule", "linked_task_direct"],
-  deltablue: ["plan_execute_direct", "plan_execute_loop", "counted_method_affine", "counted_method_copy_property"],
+  deltablue: [
+    "plan_execute_direct",
+    "plan_execute_loop",
+    "counted_method_affine",
+    "counted_method_copy_property"
+  ],
   crypto: ["crypto_integer_multiply", "crypto_kernel"],
   raytrace: ["raytrace_render", "raytrace_pixel"],
   "earley-boyer": ["pair_word_walk", "pair_walk"],
   regexp: ["regexp_exact_global_exec"],
   splay: ["bump_tiny_object", "splay_rotate"],
-  "navier-stokes": ["counted_packed_f64", "navier_numeric_kernel", "counted_for"],
+  "navier-stokes": [
+    "counted_packed_f64",
+    "navier_numeric_kernel",
+    "counted_for"
+  ]
 });
 const microContracts = Object.freeze({
   deltablue: ["affine-plan.want.json", "plan-execute-loop.want.json"],
@@ -38,7 +51,7 @@ const microContracts = Object.freeze({
   "earley-boyer": ["pair-car-cdr.want.json"],
   regexp: ["exec-discard.want.json"],
   splay: ["cons-bump.want.json"],
-  "navier-stokes": ["packed-add.want.json"],
+  "navier-stokes": ["packed-add.want.json"]
 });
 
 function fail(message) {
@@ -47,12 +60,20 @@ function fail(message) {
 }
 
 function run(command, args, options = {}) {
-  const result = cp.spawnSync(command, args, {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    ...options,
-  });
+  const timeout = options.timeout || 600000;
+  const spawnOptions = { ...options };
+  delete spawnOptions.timeout;
+  const result = cp.spawnSync(
+    process.execPath,
+    [timeoutRunner, String(timeout), command, ...args],
+    {
+      cwd: root,
+      encoding: "utf8",
+      timeout: timeout + 10000,
+      maxBuffer: 64 * 1024 * 1024,
+      ...spawnOptions
+    }
+  );
   if (result.status !== 0) {
     const detail = [result.stdout, result.stderr].filter(Boolean).join("\n");
     throw new Error(`${command} failed (${result.status})\n${detail}`);
@@ -62,9 +83,24 @@ function run(command, args, options = {}) {
 
 function build() {
   run("cargo", ["build", "--profile", "bench-throughput", "-p", "quench-node"]);
-  run("cargo", ["build", "--profile", "bench-throughput", "-p", "quench-node", "--features", "execution-trace"], {
-    env: { ...process.env, CARGO_TARGET_DIR: path.join(root, "target-exec-trace") },
-  });
+  run(
+    "cargo",
+    [
+      "build",
+      "--profile",
+      "bench-throughput",
+      "-p",
+      "quench-node",
+      "--features",
+      "execution-trace"
+    ],
+    {
+      env: {
+        ...process.env,
+        CARGO_TARGET_DIR: path.join(root, "target-exec-trace")
+      }
+    }
+  );
 }
 
 function median(values) {
@@ -73,7 +109,21 @@ function median(values) {
 }
 
 function scoreSuites(suites) {
-  const result = run(process.execPath, [benchmark, "--runs", "3", "--only", suites.join(","), "--quench", scoreBinary]);
+  const result = run(
+    process.execPath,
+    [
+      benchmark,
+      "--runs",
+      "3",
+      "--only",
+      suites.join(","),
+      "--quench",
+      scoreBinary
+    ],
+    {
+      timeout: Math.max(300000, suites.length * 6 * 130000)
+    }
+  );
   const summaries = new Map();
   for (const line of result.stdout.split(/\n/)) {
     if (!line.startsWith("{")) continue;
@@ -85,16 +135,17 @@ function scoreSuites(suites) {
 
 function traceSuite(suite) {
   const script = path.join("/tmp", `quench-bench-${suite}.js`);
-  const result = cp.spawnSync(traceBinary, [script], {
-    cwd: root,
-    encoding: "utf8",
+  const result = run(traceBinary, [script], {
     timeout: 180000,
-    maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, QUENCH_EXEC_TRACE: "1" },
+    env: { ...process.env, QUENCH_EXEC_TRACE: "1" }
   });
-  const line = (result.stderr || "").split(/\n/).find((candidate) => candidate.startsWith("QUENCH_EXEC_TRACE "));
+  const line = (result.stderr || "")
+    .split(/\n/)
+    .find((candidate) => candidate.startsWith("QUENCH_EXEC_TRACE "));
   if (result.status !== 0 || !line) {
-    throw new Error(`trace failed for ${suite} (${result.status})\n${result.stdout || ""}\n${result.stderr || ""}`);
+    throw new Error(
+      `trace failed for ${suite} (${result.status})\n${result.stdout || ""}\n${result.stderr || ""}`
+    );
   }
   return JSON.parse(line.slice("QUENCH_EXEC_TRACE ".length));
 }
@@ -112,14 +163,19 @@ function kernelMeasurement(trace, suite) {
   return {
     kernel_id: kernel?.id || "NONE",
     hits_per_loop: kernel ? kernel.hits / Math.max(loops, 1) : 0,
-    deopt: kernel?.deopts || 0,
+    deopt: kernel?.deopts || 0
   };
 }
 
 function rowFor(suite, summary, trace) {
-  const quenchScores = summary?.quench?.map((sample) => sample.score).filter(Number.isFinite) || [];
-  const nodeScores = summary?.node?.map((sample) => sample.score).filter(Number.isFinite) || [];
-  const valid = Boolean(summary?.valid && quenchScores.length === 3 && nodeScores.length === 3);
+  const quenchScores =
+    summary?.quench?.map((sample) => sample.score).filter(Number.isFinite) ||
+    [];
+  const nodeScores =
+    summary?.node?.map((sample) => sample.score).filter(Number.isFinite) || [];
+  const valid = Boolean(
+    summary?.valid && quenchScores.length === 3 && nodeScores.length === 3
+  );
   const score = valid ? median(quenchScores) : null;
   const node = valid ? median(nodeScores) : null;
   const kernel = kernelMeasurement(trace, suite);
@@ -133,33 +189,63 @@ function rowFor(suite, summary, trace) {
     calln: rankedCount(trace.lanes?.l0?.owned_word_read_by_op, "CallN"),
     getn: rankedCount(trace.lanes?.l0?.owned_word_read_by_op, "GetN"),
     env_alloc: trace.heap_lifecycle?.environment?.allocated || 0,
-    valid,
+    valid
   };
 }
 
 function printRow(row) {
-  const fields = ["suite", "score_m3", "node_m3", "floor", "pct_floor", "kernel_id", "hits_per_loop", "calln", "getn", "env_alloc", "deopt", "valid"];
+  const fields = [
+    "suite",
+    "score_m3",
+    "node_m3",
+    "floor",
+    "pct_floor",
+    "kernel_id",
+    "hits_per_loop",
+    "calln",
+    "getn",
+    "env_alloc",
+    "deopt",
+    "valid"
+  ];
   console.log(fields.join("\t"));
-  console.log(fields.map((field) => {
-    const value = row[field];
-    return typeof value === "number" && !Number.isInteger(value) ? value.toFixed(6) : String(value);
-  }).join("\t"));
+  console.log(
+    fields
+      .map((field) => {
+        const value = row[field];
+        return typeof value === "number" && !Number.isInteger(value)
+          ? value.toFixed(6)
+          : String(value);
+      })
+      .join("\t")
+  );
 }
 
 function hasMicroContract(suite) {
-  return (microContracts[suite] || []).some((file) => fs.existsSync(path.join(root, "tests/lanes", file)));
+  return (microContracts[suite] || []).some((file) =>
+    fs.existsSync(path.join(root, "tests/lanes", file))
+  );
 }
 
 function main() {
   const requested = process.argv[2];
   if (!requested) fail("usage: node tools/suite-feedback.cjs SUITE|--all");
-  const suites = requested === "--all" ? Object.keys(floors) : [requested.replace(/\.js$/, "")];
-  for (const suite of suites) if (!(suite in floors)) fail(`unknown suite: ${suite}`);
+  const suites =
+    requested === "--all"
+      ? Object.keys(floors)
+      : [requested.replace(/\.js$/, "")];
+  for (const suite of suites)
+    if (!(suite in floors)) fail(`unknown suite: ${suite}`);
   build();
 
-  const regressionSuites = requested === "--all" ? suites : [...new Set([...suites, "richards", "navier-stokes"])];
+  const regressionSuites =
+    requested === "--all"
+      ? suites
+      : [...new Set([...suites, "richards", "navier-stokes"])];
   const summaries = scoreSuites(regressionSuites);
-  const rows = suites.map((suite) => rowFor(suite, summaries.get(suite), traceSuite(suite)));
+  const rows = suites.map((suite) =>
+    rowFor(suite, summaries.get(suite), traceSuite(suite))
+  );
   const report = { schema: 1, generated_at: new Date().toISOString(), rows };
   fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`);
   rows.forEach(printRow);
@@ -172,8 +258,16 @@ function main() {
   }
   const richards = summaries.get("richards");
   const navier = summaries.get("navier-stokes");
-  if (!richards?.valid || median(richards.quench.map((sample) => sample.score)) < 40000) invalid = true;
-  if (!navier?.valid || median(navier.quench.map((sample) => sample.score)) < 34000) invalid = true;
+  if (
+    !richards?.valid ||
+    median(richards.quench.map((sample) => sample.score)) < 40000
+  )
+    invalid = true;
+  if (
+    !navier?.valid ||
+    median(navier.quench.map((sample) => sample.score)) < 34000
+  )
+    invalid = true;
   if (invalid) process.exitCode = 1;
 }
 
