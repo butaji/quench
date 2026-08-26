@@ -589,7 +589,13 @@ fn rounding_increment(options: Option<&Value>, index: usize) -> Result<f64, VmEr
         .map(|value| crate::conversion::to_number(&value))
         .transpose()?
         .unwrap_or(1.0);
-    if !value.is_finite() || value <= 0.0 || value.fract() != 0.0 {
+    let value = value.trunc();
+    if !value.is_finite() || value <= 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    if value > 1_000_000_000.0 {
         return Err(crate::value::error::throw_range_error(
             "Invalid roundingIncrement",
         ));
@@ -816,8 +822,22 @@ fn calendar_round(
         _ => false,
     });
     let unrounded_count = count;
-    if has_smallest && span > 0.0 && remainder * 2.0 >= span {
-        count += sign as i64;
+    if has_smallest && span > 0.0 && remainder > 0.0 {
+        let mode = rounding_mode(options)?;
+        let adjust = match mode.as_str() {
+            "ceil" => sign > 0.0,
+            "floor" => sign < 0.0,
+            "expand" => true,
+            "trunc" => false,
+            "halfCeil" => remainder * 2.0 >= span && sign > 0.0,
+            "halfFloor" => remainder * 2.0 >= span && sign < 0.0,
+            "halfTrunc" => remainder * 2.0 > span,
+            "halfEven" | "halfExpand" => remainder * 2.0 >= span,
+            _ => false,
+        };
+        if adjust {
+            count += sign as i64;
+        }
     }
     let increment = if has_smallest {
         rounding_increment(options, unit)? as i128
@@ -908,7 +928,8 @@ fn calendar_round(
         .is_some_and(|name| duration_field(object, name) != 0)
     });
     let balanced_to_larger = largest_unit(options).is_some_and(|largest| largest < unit);
-    if count == unrounded_count && (has_higher || has_lower) && !balanced_to_larger {
+    if count == unrounded_count && !has_smallest && (has_higher || has_lower) && !balanced_to_larger
+    {
         let mut lower_cursor = cursor;
         for lower_unit in (unit + 1)..=3 {
             if lower_unit == 2 && unit < 2 {
