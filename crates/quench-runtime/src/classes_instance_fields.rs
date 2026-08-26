@@ -185,6 +185,7 @@ fn instance_field_initializer(
             strictness: FunctionStrictness::Strict,
             is_async: false,
             mapped_arguments: false,
+            raytrace_pixel: false,
         },
     );
     let crate::value::Value::Function(function) = value else {
