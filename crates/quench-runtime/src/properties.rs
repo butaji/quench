@@ -186,7 +186,7 @@ pub(crate) fn execute_set_property(
     if rejects_new {
         return write_failure(strict);
     }
-    let value = crate::execute::read_register(registers, src)?.clone();
+    let value = unwrap_assignment_value(&crate::execute::read_register(registers, src)?);
     if matches!(target, crate::value::Value::Proxy(_)) {
         return assign_proxy_set(registers, object, &target, &key, value);
     }
@@ -203,6 +203,14 @@ pub(crate) fn execute_set_property(
     }
     let _scope = crate::execution_trace::attribution_scope("SetN:finish");
     finish_set_property(registers, object, &target, &key, value, strict)
+}
+
+fn unwrap_assignment_value(value: &crate::value::Value) -> crate::value::Value {
+    match value {
+        crate::value::Value::BindingCell(cell) => unwrap_assignment_value(&cell.load()),
+        crate::value::Value::WeakFunction(function) => function.value(),
+        value => value.clone(),
+    }
 }
 
 pub(crate) fn execute_set_named_cached(
