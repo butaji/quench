@@ -96,6 +96,7 @@ test-url-invalid-file-url-path-input.js
 test-url-pathtofileurl.js
 test-url-revokeobjecturl.js
 test-util-format.js
+test-util-callbackify.js
 test-util-inspect.js
 test-util-types.js
 test-url-urltooptions.js
