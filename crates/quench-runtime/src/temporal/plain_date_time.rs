@@ -14,20 +14,16 @@ const NAMES: [&str; 9] = [
 ];
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let mut fields = arguments
-        .iter()
-        .take(9)
-        .map(|value| {
-            if matches!(value, Value::Undefined) {
+    let fields = (0..9)
+        .map(|index| {
+            let value = arguments.get(index).unwrap_or(&Value::Undefined);
+            if index >= 3 && matches!(value, Value::Undefined) {
                 Ok(0.0)
             } else {
-                crate::conversion::to_number(value)
+                Ok(crate::conversion::to_number(value)?.trunc())
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    while fields.len() < 9 {
-        fields.push(0.0);
-    }
     crate::temporal::plain_date::construct(
         &fields[..3]
             .iter()
@@ -101,7 +97,9 @@ fn validate(fields: &[f64]) -> Result<(), VmError> {
     if !(1.0..=12.0).contains(&fields[1])
         || !(1.0..=31.0).contains(&fields[2])
         || !(0.0..=23.0).contains(&fields[3])
-        || fields[4..]
+        || !(0.0..=59.0).contains(&fields[4])
+        || !(0.0..=59.0).contains(&fields[5])
+        || fields[6..]
             .iter()
             .any(|value| !(0.0..=999.0).contains(value))
     {
@@ -123,6 +121,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        crate::ops::Builtin::TemporalPlainDateTime => Some(Err(
+            crate::value::error::throw_type_error("Temporal.PlainDateTime requires 'new'"),
+        )),
         crate::ops::Builtin::TemporalPlainDateTimeFrom => {
             Some(from(arguments.first(), arguments.get(1)))
         }
@@ -178,7 +179,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeToPlainDate => Some(to_plain_date(_receiver)),
         crate::ops::Builtin::TemporalPlainDateTimeToPlainTime => Some(to_plain_time(_receiver)),
         crate::ops::Builtin::TemporalPlainDateTimeToZonedDateTime => {
-            Some(to_zoned_date_time(_receiver, arguments.first()))
+            Some(to_zoned_date_time(_receiver, arguments.first(), arguments.get(1)))
         }
         crate::ops::Builtin::TemporalPlainDateTimeWithCalendar => {
             Some(with_calendar(_receiver, arguments.first()))
@@ -591,29 +592,59 @@ fn to_plain_time(receiver: Option<&Value>) -> Result<Value, VmError> {
 fn to_zoned_date_time(
     receiver: Option<&Value>,
     time_zone: Option<&Value>,
+    options: Option<&Value>,
 ) -> Result<Value, VmError> {
+    let disambiguation = if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+        if !crate::value::is_object(options) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
+        let value = crate::execute::get_property_result(options, "disambiguation")?;
+        if matches!(value, Value::Undefined) {
+            "compatible".to_string()
+        } else {
+            if crate::conversion::is_symbol(&value) {
+                return Err(crate::value::error::throw_type_error("Invalid disambiguation"));
+            }
+            let value = crate::conversion::to_string(&value)?;
+            if !matches!(value.as_str(), "compatible" | "earlier" | "later" | "reject") {
+                return Err(crate::value::error::throw_range_error("Invalid disambiguation"));
+            }
+            value
+        }
+    } else {
+        "compatible".to_string()
+    };
     let values = fields(
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?,
     )?;
-    let Value::String(time_zone) =
-        time_zone.ok_or_else(|| crate::value::error::throw_type_error("Missing time zone"))?
-    else {
+    let time_zone = time_zone
+        .ok_or_else(|| crate::value::error::throw_type_error("Missing time zone"))?;
+    if crate::conversion::is_symbol(time_zone) {
         return Err(crate::value::error::throw_type_error("Invalid time zone"));
-    };
-    if time_zone.is_empty() {
-        return Err(crate::value::error::throw_range_error("Invalid time zone"));
     }
-    if time_zone.starts_with("-000000-") {
-        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    let time_zone = match time_zone {
+        Value::String(value) => value.clone(),
+        Value::StringUnits(_) => crate::conversion::to_string(time_zone)?,
+        _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
+    };
+    let time_zone = normalize_time_zone_identifier(&time_zone)?;
+    let _ = disambiguation;
+    let mut epoch = epoch_nanos(&values);
+    if let Some(offset) = fixed_offset_nanos(&time_zone) {
+        epoch -= offset;
+    }
+    const INSTANT_LIMIT: i128 = 8_640_000_000_000_000_000_000;
+    if !(-INSTANT_LIMIT..=INSTANT_LIMIT).contains(&epoch) {
+        return Err(crate::value::error::throw_range_error("Invalid instant"));
     }
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             (
                 "epochNanoseconds".into(),
-                Value::BigInt(epoch_nanos(&values).to_string()),
+                Value::BigInt(epoch.to_string()),
             ),
             ("calendarId".into(), Value::String("iso8601".into())),
-            ("timeZoneId".into(), Value::String(time_zone.clone())),
+            ("timeZoneId".into(), Value::String(time_zone)),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
@@ -660,10 +691,8 @@ fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<V
 }
 
 fn epoch_nanos(values: &[f64]) -> i128 {
-    let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
-        .unwrap_or(NaiveDate::MIN);
-    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("valid epoch");
-    let days = date.signed_duration_since(epoch).num_days() as i128;
+    let days = (crate::temporal::plain_date::date_serial(values[0], values[1], values[2])
+        - crate::temporal::plain_date::date_serial(1970.0, 1.0, 1.0)) as i128;
     days * 86_400_000_000_000
         + values[3] as i128 * 3_600_000_000_000
         + values[4] as i128 * 60_000_000_000
@@ -671,6 +700,75 @@ fn epoch_nanos(values: &[f64]) -> i128 {
         + values[6] as i128 * 1_000_000
         + values[7] as i128 * 1_000
         + values[8] as i128
+}
+
+fn fixed_offset_nanos(time_zone: &str) -> Option<i128> {
+    let sign = match time_zone.as_bytes().first()? {
+        b'+' => 1_i128,
+        b'-' => -1_i128,
+        _ => return None,
+    };
+    let text = &time_zone[1..];
+    let (hours, minutes) = text
+        .split_once(':')
+        .map_or((text, "0"), |(hours, minutes)| (hours, minutes));
+    let hours = hours.parse::<i128>().ok()?;
+    let minutes = minutes.parse::<i128>().ok()?;
+    Some(sign * (hours * 3_600_000_000_000 + minutes * 60_000_000_000))
+}
+
+fn normalize_time_zone_identifier(text: &str) -> Result<String, VmError> {
+    if text.is_empty() || text.starts_with("-000000-") || text.contains('\u{2212}') {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    if text.eq_ignore_ascii_case("utc") {
+        return Ok("UTC".into());
+    }
+    if let Some((_, annotation)) = text.rsplit_once('[') {
+        let annotation = annotation
+            .strip_suffix(']')
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid time zone"))?;
+        if annotation.is_empty() {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        if annotation.eq_ignore_ascii_case("utc") {
+            return Ok("UTC".into());
+        }
+        if annotation.starts_with(['+', '-']) {
+            if fixed_offset_nanos(annotation).is_none() {
+                return Err(crate::value::error::throw_range_error("Invalid time zone"));
+            }
+            return Ok(annotation.to_string());
+        }
+        return Ok(annotation.to_string());
+    }
+    let time = text.split(['T', 't', ' ']).nth(1);
+    if let Some(time) = time {
+        if time.ends_with(['Z', 'z']) {
+            return Ok("UTC".into());
+        }
+        let offset = time
+            .get(1..)
+            .and_then(|value| value.find(['+', '-']).map(|index| &value[index..]));
+        if let Some(offset) = offset {
+            if matches!(offset.len(), 3 | 5 | 6)
+                && (offset.len() == 3
+                    && offset[1..].bytes().all(|byte| byte.is_ascii_digit())
+                    || offset.len() == 6
+                        && offset.as_bytes().get(3) == Some(&b':')
+                        && offset[1..3].bytes().all(|byte| byte.is_ascii_digit())
+                        && offset[4..].bytes().all(|byte| byte.is_ascii_digit()))
+            {
+                return Ok(offset.to_string());
+            }
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    if fixed_offset_nanos(text).is_some() {
+        return Ok(text.to_string());
+    }
+    Ok(text.to_string())
 }
 
 fn with_plain_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Value, VmError> {
@@ -1169,6 +1267,9 @@ fn with(
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
     let mut values = fields(receiver)?;
+    if crate::temporal::plain_date::is_temporal_date_like(changes) {
+        return Err(crate::value::error::throw_type_error("Invalid date-time"));
+    }
     let calendar = crate::execute::get_property_result(changes, "calendar")?;
     if !matches!(calendar, Value::Undefined) {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
@@ -1466,10 +1567,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         from_overflow_option(options)?;
         return Ok(result);
     }
-    let overflow = from_overflow_option(options)?;
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
+    let overflow = from_overflow_option(options)?;
     if let Value::Object(object) = value {
         let is_plain_date = object.iter().any(|(key, value)| {
             key == "\0temporal-plain-date" && value == Value::Boolean(true)
@@ -1513,18 +1614,18 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             "Missing date-time field",
         ));
     }
+    let month_code_value = if matches!(month_code, Value::Undefined) {
+        None
+    } else {
+        Some(month_code_number(&month_code)?)
+    };
     let month = if matches!(month, Value::Undefined) {
-        month_code_number(&month_code)?
+        month_code_value
+            .clone()
+            .ok_or_else(|| crate::value::error::throw_type_error("Missing month"))?
     } else {
         month
     };
-    let _ = crate::conversion::to_number(&year)?;
-    if !matches!(month_code, Value::Undefined)
-        && crate::conversion::to_number(&month)?
-            != crate::conversion::to_number(&month_code_number(&month_code)?)?
-    {
-        return Err(crate::value::error::throw_range_error("Month mismatch"));
-    }
     let calendar = crate::execute::get_property_result(value, "calendar")?;
     if !matches!(calendar, Value::Undefined) {
         validate_calendar(&calendar)?;
@@ -1541,7 +1642,20 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let mut numeric = fields
         .iter()
         .map(crate::conversion::to_number)
+        .map(|value| value.map(f64::trunc))
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(month_code) = month_code_value {
+        let month_code = crate::conversion::to_number(&month_code)?;
+        if !(1.0..=12.0).contains(&month_code) {
+            return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+        }
+        if numeric[1] != month_code {
+            return Err(crate::value::error::throw_range_error("Month mismatch"));
+        }
+    }
+    if numeric.iter().any(|value| !value.is_finite()) {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     if overflow == "constrain" {
         if numeric[1] > 12.0 {
             numeric[1] = 12.0;
@@ -1584,10 +1698,23 @@ fn month_code_number(value: &Value) -> Result<Value, VmError> {
     if crate::conversion::is_symbol(value) {
         return Err(crate::value::error::throw_type_error("Invalid monthCode"));
     }
-    let Value::String(code) = value else {
-        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+    let code = match value {
+        Value::String(code) => code.clone(),
+        Value::StringUnits(_) => crate::conversion::to_string(value)?,
+        Value::Object(_) => {
+            let method = crate::execute::get_property_result(value, "toString")?;
+            if !crate::conversion::is_callable(&method) {
+                return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+            }
+            let primitive = crate::functions::execute_target(&method, value, &[])?;
+            if !matches!(primitive, Value::String(_) | Value::StringUnits(_)) {
+                return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+            }
+            crate::conversion::to_string(&primitive)?
+        }
+        _ => return Err(crate::value::error::throw_type_error("Invalid monthCode")),
     };
-    let core = code.strip_suffix('L').unwrap_or(code);
+    let core = code.strip_suffix('L').unwrap_or(&code);
     if core.len() != 3
         || !core.starts_with('M')
         || !core[1..].bytes().all(|byte| byte.is_ascii_digit())
