@@ -66,7 +66,7 @@ fn with_domain<'a>(state: &'a Rc<RefCell<HostState>>, value: &Value) -> Result<s
 }
 fn refresh(state: &Rc<RefCell<HostState>>) {
     let (module, stack, active) = { let host = state.borrow(); (host.domain.module.clone(), host.domain.stack.clone(), host.domain.stack.last().copied()) };
-    if let Some(module) = module { let values = { let host = state.borrow(); stack.iter().filter_map(|id| host.domain.domains.get(id).map(|domain| domain.object.clone())).collect() }; let _ = execute::set_property_in_place(&module, "_stack", host_api::array(values)); let active = active.and_then(|id| { let host = state.borrow(); host.domain.domains.get(&id).map(|domain| domain.object.clone()) }).unwrap_or(Value::Null); let _ = execute::set_property_in_place(&module, "active", active); }
+    if let Some(module) = module { let values = { let host = state.borrow(); stack.iter().filter_map(|id| host.domain.domains.get(id).map(|domain| domain.object.clone())).collect() }; let _ = execute::set_property_in_place(&module, "_stack", host_api::array(values)); let active = active.and_then(|id| { let host = state.borrow(); host.domain.domains.get(&id).map(|domain| domain.object.clone()) }).unwrap_or(Value::Null); let _ = execute::set_property_in_place(&module, "active", active.clone()); let process = execute::get_property(&quench_runtime::vm::current_global_object(), "process"); let _ = execute::set_property_in_place(&process, "domain", active); }
 }
 
 pub fn enter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, _: &[Value]) -> Result<Value, VmError> {
