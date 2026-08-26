@@ -306,9 +306,22 @@ fn finish_set_property(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
-    let value = if crate::execute::get_property(target, "\0quench:process_env")
-        == crate::value::Value::Boolean(true)
-    {
+    let process_env = crate::execute::get_property(target, "\0quench:process_env")
+        == crate::value::Value::Boolean(true);
+    if process_env && key.is_empty() {
+        return Ok(());
+    }
+    if process_env && crate::conversion::is_symbol_string(key) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert a Symbol value to a string",
+        ));
+    }
+    if process_env && crate::conversion::is_symbol(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert a Symbol value to a string",
+        ));
+    }
+    let value = if process_env {
         crate::conversion::to_string(&value)
             .map(crate::value::Value::String)
             .unwrap_or(value)
@@ -639,6 +652,7 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
             .borrow()
             .iter()
             .any(|(name, _)| name == NON_EXTENSIBLE),
+        crate::value::Value::Set(data) => data.is_extensible(),
         value => crate::value::is_object(value),
     }
 }

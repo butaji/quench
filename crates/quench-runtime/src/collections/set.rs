@@ -77,6 +77,7 @@ pub(crate) fn weak_property(key: &str) -> Value {
 pub(crate) fn set_new(arguments: &[Value]) -> Result<Value, VmError> {
     let set = Value::Set(Rc::new(SetData {
         weak: false,
+        extensible: std::cell::Cell::new(true),
         frozen: std::cell::Cell::new(false),
         values: std::cell::RefCell::new(VecDeque::new()),
         properties: std::cell::RefCell::new(Vec::new()),
@@ -108,6 +109,7 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
     match arguments.first() {
         None | Some(Value::Undefined | Value::Null) => Ok(Value::Set(Rc::new(SetData {
             weak: true,
+            extensible: std::cell::Cell::new(true),
             frozen: std::cell::Cell::new(false),
             values: std::cell::RefCell::new(VecDeque::new()),
             properties: std::cell::RefCell::new(Vec::new()),
@@ -123,6 +125,7 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
 fn weak_set_from_iterable(iterable: Value) -> Result<Value, VmError> {
     let set = Value::Set(Rc::new(SetData {
         weak: true,
+        extensible: std::cell::Cell::new(true),
         frozen: std::cell::Cell::new(false),
         values: std::cell::RefCell::new(VecDeque::new()),
         properties: std::cell::RefCell::new(Vec::new()),
