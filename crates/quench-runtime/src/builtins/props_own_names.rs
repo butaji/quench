@@ -340,6 +340,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
             "subtract",
             "until",
             "since",
+            "round",
             "valueOf",
         ],
         Builtin::TemporalNow => &[
