@@ -208,9 +208,7 @@ pub fn install_script(
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     script: &str,
 ) -> (Rc<NodeHost>, VmContext) {
-    let exec_path = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let exec_path = "quench-node".to_string();
     install_with_argv(realm, sink, vec![exec_path, script.to_string()])
 }
 
@@ -220,9 +218,7 @@ pub fn install_script_with_args(
     script: &str,
     args: &[String],
 ) -> (Rc<NodeHost>, VmContext) {
-    let exec_path = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let exec_path = "quench-node".to_string();
     let argv = std::iter::once(exec_path)
         .chain(std::iter::once(script.to_string()))
         .chain(args.iter().cloned())
