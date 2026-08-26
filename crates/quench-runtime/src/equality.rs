@@ -129,6 +129,12 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
     if let Value::BindingCell(cell) = right {
         return strict_equal(left, &cell.borrow());
     }
+    if let Value::WeakFunction(function) = left {
+        return strict_equal(&function.value(), right);
+    }
+    if let Value::WeakFunction(function) = right {
+        return strict_equal(left, &function.value());
+    }
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
