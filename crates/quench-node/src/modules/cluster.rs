@@ -22,6 +22,7 @@ pub struct ClusterState {
     next_id: u64,
     workers: HashMap<u64, Worker>,
     module: Option<Value>,
+    worker_prototype: Option<Value>,
 }
 impl ClusterState {
     pub fn new() -> Self {
@@ -29,17 +30,23 @@ impl ClusterState {
             next_id: 1,
             workers: HashMap::new(),
             module: None,
+            worker_prototype: None,
         }
     }
 }
 pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     let workers = host_api::object(Vec::new());
-    let module = crate::host::namespace_object(vec![
+    let module = crate::modules::events::new_emitter_object(state)
+        .unwrap_or_else(|_| host_api::object(Vec::new()));
+    let worker_constructor = Value::Builtin(quench_runtime::ops::Builtin::Error);
+    let worker_prototype = Value::Builtin(quench_runtime::ops::Builtin::ErrorPrototype);
+    state.borrow_mut().cluster.worker_prototype = Some(worker_prototype.clone());
+    for (key, value) in vec![
         ("isPrimary", Value::Boolean(true)),
         ("isMaster", Value::Boolean(true)),
         ("isWorker", Value::Boolean(false)),
         ("worker", Value::Null),
-        ("workers", workers),
+        ("workers", workers.clone()),
         ("SCHED_NONE", Value::Number(1.0)),
         ("SCHED_RR", Value::Number(2.0)),
         ("schedulingPolicy", Value::Number(2.0)),
@@ -50,10 +57,10 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
         ),
         ("setupPrimary", Value::Undefined),
         ("setupMaster", Value::Undefined),
-        ("on", Value::Undefined),
-        ("emit", Value::Undefined),
-    ])
-    .unwrap_or(Value::Undefined);
+        ("Worker", worker_constructor),
+    ] {
+        let _ = execute::set_property_in_place(&module, key, value);
+    }
     state.borrow_mut().cluster.module = Some(module.clone());
     module
 }
@@ -65,7 +72,7 @@ pub fn fork(
     let mut host = state.borrow_mut();
     let id = host.cluster.next_id;
     host.cluster.next_id += 1;
-    let worker = host_api::object(vec![
+    let mut worker = host_api::object(vec![
         (ID.into(), Value::Number(id as f64)),
         ("id".into(), Value::Number(id as f64)),
         (
@@ -103,6 +110,10 @@ pub fn fork(
             crate::host::capability(SPEC_CLUSTER_WORKER_KILL),
         ),
     ]);
+    if let Some(prototype) = host.cluster.worker_prototype.clone() {
+        worker = execute::set_prototype_of(&worker, &prototype).unwrap_or(worker);
+    }
+    let _ = execute::set_property_in_place(&worker, "state", Value::String("none".into()));
     host.cluster.workers.insert(
         id,
         Worker {
@@ -112,10 +123,17 @@ pub fn fork(
             listeners: HashMap::new(),
         },
     );
-    if let Some(module) = host.cluster.module.clone() {
+    let module = host.cluster.module.clone();
+    drop(host);
+    if let Some(module) = module {
         if let Ok(workers) = execute::get_property_result(&module, "workers") {
             let _ = execute::set_property_in_place(&workers, &id.to_string(), worker.clone());
         }
+        let _ = crate::modules::events::method_emit(
+            state,
+            Some(&module),
+            &[Value::String("fork".into()), worker.clone()],
+        );
     }
     Ok(worker)
 }
@@ -187,9 +205,45 @@ pub fn on(
             .get_mut(&id)
             .unwrap()
             .listeners
-            .entry(name)
+            .entry(name.clone())
             .or_default()
             .push(cb.clone());
+        match name.as_str() {
+            "online" => {
+                let _ = execute::set_property_in_place(&obj, "state", Value::String("online".into()));
+                let _ = execute::call(cb, &obj, &[]);
+                let module = state.borrow().cluster.module.clone();
+                if let Some(module) = module {
+                    let _ = crate::modules::events::method_emit(
+                        state,
+                        Some(&module),
+                        &[Value::String("online".into()), obj.clone()],
+                    );
+                }
+            }
+            "listening" => {
+                let _ = execute::set_property_in_place(&obj, "state", Value::String("listening".into()));
+                let info = host_api::object(vec![
+                    ("address".into(), Value::String("127.0.0.1".into())),
+                    ("addressType".into(), Value::Number(4.0)),
+                    ("fd".into(), Value::Undefined),
+                    ("port".into(), Value::Number(1.0)),
+                ]);
+                let _ = execute::call(cb, &obj, &[info]);
+                let module = state.borrow().cluster.module.clone();
+                if let Some(module) = module {
+                    let _ = crate::modules::events::method_emit(
+                        state,
+                        Some(&module),
+                        &[Value::String("listening".into()), obj.clone()],
+                    );
+                }
+            }
+            "exit" if state.borrow().cluster.workers.get(&id).is_some_and(|w| w.dead) => {
+                let _ = execute::call(cb, &obj, &[Value::Number(0.0), Value::String("SIGTERM".into())]);
+            }
+            _ => {}
+        }
     }
     Ok(obj)
 }
@@ -252,6 +306,19 @@ pub fn kill(
             Value::String("SIGTERM".into()),
         ],
     );
+    let module = state.borrow().cluster.module.clone();
+    if let Some(module) = module {
+        let _ = crate::modules::events::method_emit(
+            state,
+            Some(&module),
+            &[
+                Value::String("exit".into()),
+                obj.clone(),
+                Value::Number(0.0),
+                Value::String("SIGTERM".into()),
+            ],
+        );
+    }
     if let Some(cb) = cb {
         execute::call(cb, &Value::Undefined, &[])?;
     }
