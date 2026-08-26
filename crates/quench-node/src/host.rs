@@ -24,6 +24,11 @@ pub fn scheduler_capability(kind: u16) -> Value {
     })
 }
 
+/// Canonical process.cpuUsage host capability used by the Rust process module.
+pub fn process_cpu_usage_capability() -> Value {
+    scheduler_capability(2110)
+}
+
 pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
 }
