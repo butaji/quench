@@ -359,6 +359,7 @@ mod stubs {
                 | crate::ops::Builtin::TemporalZonedDateTimeWithCalendar
                 | crate::ops::Builtin::TemporalZonedDateTimeWithPlainTime
                 | crate::ops::Builtin::TemporalZonedDateTimeStartOfDay
+                | crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition
         ) {
             return Some(zoned_method(builtin, _receiver, arguments));
         }
@@ -909,6 +910,36 @@ mod stubs {
                 timezone,
                 crate::ops::Builtin::TemporalZonedDateTimePrototype,
             ));
+        }
+        if builtin == crate::ops::Builtin::TemporalZonedDateTimeGetTimeZoneTransition {
+            let options = arguments
+                .first()
+                .ok_or_else(|| crate::value::error::throw_type_error("Missing options"))?;
+            if crate::conversion::is_symbol(options) {
+                return Err(crate::value::error::throw_type_error("Invalid options"));
+            }
+            let direction = if matches!(options, Value::String(_) | Value::StringUnits(_)) {
+                options.clone()
+            } else {
+                if !crate::value::is_object(options) {
+                    return Err(crate::value::error::throw_type_error("Invalid options"));
+                }
+                crate::execute::get_property_result(options, "direction")?
+            };
+            let direction = match direction {
+                value if crate::conversion::is_symbol(&value) => {
+                    return Err(crate::value::error::throw_type_error("Invalid direction"))
+                }
+                value => {
+                    let value = crate::conversion::to_string(&value)?;
+                    if value != "next" && value != "previous" {
+                        return Err(crate::value::error::throw_range_error("Invalid direction"));
+                    }
+                    value
+                }
+            };
+            let _ = direction;
+            return Ok(Value::Null);
         }
         if builtin == crate::ops::Builtin::TemporalZonedDateTimeToInstant {
             return Ok(Value::Object(std::rc::Rc::new(
