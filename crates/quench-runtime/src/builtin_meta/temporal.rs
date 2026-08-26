@@ -74,11 +74,25 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalZonedDateTimeWithTimeZone => {
             Some("Temporal.ZonedDateTime.prototype.withTimeZone")
         }
+        Builtin::TemporalZonedDateTimeWithCalendar => {
+            Some("Temporal.ZonedDateTime.prototype.withCalendar")
+        }
+        Builtin::TemporalZonedDateTimeWithPlainTime => {
+            Some("Temporal.ZonedDateTime.prototype.withPlainTime")
+        }
+        Builtin::TemporalZonedDateTimeStartOfDay => {
+            Some("Temporal.ZonedDateTime.prototype.startOfDay")
+        }
+        Builtin::TemporalZonedDateTimeGetTimeZoneTransition => {
+            Some("Temporal.ZonedDateTime.prototype.getTimeZoneTransition")
+        }
         Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => Some("get epochMilliseconds"),
         Builtin::TemporalZonedDateTimeTimeZoneIdGetter => Some("get timeZoneId"),
         Builtin::TemporalZonedDateTimeOffsetGetter => Some("get offset"),
         Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter => Some("get offsetNanoseconds"),
         Builtin::TemporalZonedDateTimeHoursInDayGetter => Some("get hoursInDay"),
+        Builtin::TemporalZonedDateTimeWeekOfYearGetter => Some("get weekOfYear"),
+        Builtin::TemporalZonedDateTimeYearOfWeekGetter => Some("get yearOfWeek"),
         Builtin::TemporalNowInstant => Some("Temporal.Now.instant"),
         Builtin::TemporalNowPlainDateISO => Some("Temporal.Now.plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("Temporal.Now.plainDateTimeISO"),
@@ -299,11 +313,17 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalZonedDateTimeToPlainTime => Some("toPlainTime"),
         Builtin::TemporalZonedDateTimeEquals => Some("equals"),
         Builtin::TemporalZonedDateTimeWithTimeZone => Some("withTimeZone"),
+        Builtin::TemporalZonedDateTimeWithCalendar => Some("withCalendar"),
+        Builtin::TemporalZonedDateTimeWithPlainTime => Some("withPlainTime"),
+        Builtin::TemporalZonedDateTimeStartOfDay => Some("startOfDay"),
+        Builtin::TemporalZonedDateTimeGetTimeZoneTransition => Some("getTimeZoneTransition"),
         Builtin::TemporalZonedDateTimeEpochMillisecondsGetter => Some("epochMilliseconds"),
         Builtin::TemporalZonedDateTimeTimeZoneIdGetter => Some("timeZoneId"),
         Builtin::TemporalZonedDateTimeOffsetGetter => Some("offset"),
         Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter => Some("offsetNanoseconds"),
         Builtin::TemporalZonedDateTimeHoursInDayGetter => Some("hoursInDay"),
+        Builtin::TemporalZonedDateTimeWeekOfYearGetter => Some("weekOfYear"),
+        Builtin::TemporalZonedDateTimeYearOfWeekGetter => Some("yearOfWeek"),
         Builtin::TemporalNowInstant => Some("instant"),
         Builtin::TemporalNowPlainDateISO => Some("plainDateISO"),
         Builtin::TemporalNowPlainDateTimeISO => Some("plainDateTimeISO"),
@@ -475,11 +495,17 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::TemporalZonedDateTimeToPlainTime => Some(0.0),
         Builtin::TemporalZonedDateTimeEquals => Some(1.0),
         Builtin::TemporalZonedDateTimeWithTimeZone => Some(1.0),
+        Builtin::TemporalZonedDateTimeWithCalendar => Some(1.0),
+        Builtin::TemporalZonedDateTimeWithPlainTime => Some(0.0),
+        Builtin::TemporalZonedDateTimeStartOfDay => Some(0.0),
+        Builtin::TemporalZonedDateTimeGetTimeZoneTransition => Some(1.0),
         Builtin::TemporalZonedDateTimeEpochMillisecondsGetter
         | Builtin::TemporalZonedDateTimeTimeZoneIdGetter
         | Builtin::TemporalZonedDateTimeOffsetGetter
         | Builtin::TemporalZonedDateTimeOffsetNanosecondsGetter
         | Builtin::TemporalZonedDateTimeHoursInDayGetter => Some(0.0),
+        Builtin::TemporalZonedDateTimeWeekOfYearGetter
+        | Builtin::TemporalZonedDateTimeYearOfWeekGetter => Some(0.0),
         Builtin::TemporalNowInstant
         | Builtin::TemporalNowPlainDateISO
         | Builtin::TemporalNowPlainDateTimeISO
