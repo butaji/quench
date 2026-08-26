@@ -827,7 +827,14 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
     match value {
         Some(Value::String(unit)) => Ok(unit.clone()),
         Some(Value::Object(object)) => match object.iter().find(|(key, _)| key == "smallestUnit") {
-            Some((_, Value::String(unit))) => Ok(unit.clone()),
+            Some((_, Value::String(unit))) => {
+                if crate::conversion::is_symbol_string(&unit) {
+                    return Err(crate::value::error::throw_type_error(
+                        "Cannot convert a Symbol value to a string",
+                    ));
+                }
+                Ok(unit.clone())
+            }
             Some((_, Value::Undefined)) | None => object
                 .iter()
                 .find(|(key, _)| key == "largestUnit")
@@ -845,6 +852,20 @@ fn round_unit(value: Option<&Value>) -> Result<String, VmError> {
                 unit_index(&unit).map(|_| unit)
             }
         },
+        Some(value) if crate::value::is_object(value) => {
+            let smallest = crate::execute::get_property_result(value, "smallestUnit")?;
+            if !matches!(smallest, Value::Undefined) {
+                return Ok(crate::conversion::to_string(&smallest)?);
+            }
+            let largest = crate::execute::get_property_result(value, "largestUnit")?;
+            if let Value::String(unit) = largest {
+                if unit_index(&unit).ok().is_some_and(|index| index <= 2) {
+                    return Ok(unit);
+                }
+            }
+            Ok("nanosecond".into())
+        }
+        Some(value) => Ok(crate::conversion::to_string(value)?),
         _ => Err(crate::value::error::throw_type_error(
             "Options must be an object",
         )),
