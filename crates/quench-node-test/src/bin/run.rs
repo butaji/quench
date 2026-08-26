@@ -19,11 +19,17 @@ fn main() -> ExitCode {
         .collect();
     match NodeTestRunner::new().run_file_with_args(&path, argv) {
         quench_node_test::NodeOutcome::Pass => {
-            println!("PASS {}", path.display());
+            if std::env::var_os("QUENCH_CHILD_RUNNER").is_none() {
+                println!("PASS {}", path.display());
+            }
             ExitCode::SUCCESS
         }
         quench_node_test::NodeOutcome::Fail { reason } => {
-            eprintln!("FAIL {}: {reason}", path.display());
+            if reason.starts_with("read ") {
+                eprintln!("Cannot find module '{}'", path.display());
+            } else {
+                eprintln!("FAIL {}: {reason}", path.display());
+            }
             ExitCode::from(1)
         }
         quench_node_test::NodeOutcome::Skip { reason } => {
