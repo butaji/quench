@@ -75,6 +75,146 @@ fn execute_linked_idle(
     Some(transition.execute())
 }
 
+fn execute_linked_handler(
+    current: &DirectTaskRunner,
+    table: &DirectTaskTable,
+    scheduler: &LinkedSchedulerWords,
+    packet: &crate::value::Value,
+    plan: HandlerTaskPlan,
+) -> Option<crate::value::Value> {
+    let task_v1 = current.word(current.task_v1);
+    let task_v2 = current.word(current.task_v2?);
+    let mut v1 = task_v1.load();
+    let mut v2 = task_v2.load();
+    let incoming = incoming_packet(
+        &current.function,
+        Some(packet),
+        plan,
+        task_v1,
+        task_v2,
+    )?;
+    if let Some(incoming) = &incoming {
+        let appended = predicted_append(&incoming.packet, &incoming.queue)?;
+        if std::ptr::eq(incoming.target, task_v1) {
+            v1 = appended;
+        } else {
+            v2 = appended;
+        }
+    }
+    let route = linked_handler_route(current, table, scheduler, task_v1, task_v2, v1, v2, plan)?;
+    if let Some(incoming) = incoming {
+        apply_linked_incoming(incoming)?;
+    }
+    crate::execution_trace::kernel("linked_handler_task", false);
+    Some(route.execute())
+}
+
+fn apply_linked_incoming(incoming: IncomingPacket<'_>) -> Option<()> {
+    unsafe { &*incoming.packet_link }.store(crate::value::Value::Null);
+    if let Some(tail_link) = incoming.tail_link {
+        unsafe { &*tail_link }.store(incoming.packet.clone());
+    }
+    incoming
+        .target
+        .store(predicted_append(&incoming.packet, &incoming.queue)?);
+    Some(())
+}
+
+enum LinkedHandlerRoute<'a> {
+    Suspend(crate::value::Value),
+    Work {
+        task_v2: &'a crate::register_file::SlotWord,
+        next_v2: crate::value::Value,
+        packet_a1: *const crate::register_file::SlotWord,
+        work_a1: *const crate::register_file::SlotWord,
+        value: f64,
+        count: f64,
+        queue: LinkedQueueTransition,
+    },
+    Complete {
+        task_v1: &'a crate::register_file::SlotWord,
+        next_v1: crate::value::Value,
+        queue: LinkedQueueTransition,
+    },
+}
+
+impl LinkedHandlerRoute<'_> {
+    fn execute(self) -> crate::value::Value {
+        match self {
+            Self::Suspend(result) => result,
+            Self::Work { task_v2, next_v2, packet_a1, work_a1, value, count, queue } => {
+                task_v2.store(next_v2);
+                unsafe { &*packet_a1 }.store(crate::value::Value::Number(value));
+                unsafe { &*work_a1 }.store(crate::value::Value::Number(count + 1.0));
+                queue.execute()
+            }
+            Self::Complete { task_v1, next_v1, queue } => {
+                task_v1.store(next_v1);
+                queue.execute()
+            }
+        }
+    }
+}
+
+fn linked_handler_route<'a>(
+    current: &DirectTaskRunner,
+    table: &DirectTaskTable,
+    scheduler: &LinkedSchedulerWords,
+    task_v1: &'a crate::register_file::SlotWord,
+    task_v2: &'a crate::register_file::SlotWord,
+    v1: crate::value::Value,
+    v2: crate::value::Value,
+    plan: HandlerTaskPlan,
+) -> Option<LinkedHandlerRoute<'a>> {
+    if v1.is_nullish() {
+        return linked_suspend(current).map(LinkedHandlerRoute::Suspend);
+    }
+    let crate::value::Value::Object(work) = v1 else { return None };
+    if work.has_replacement() { return None; }
+    let count = writable_own_word(&work, "a1")?.number()?;
+    let data_size = current.function.captures.get_number(plan.data_size_slot)?;
+    if count < data_size {
+        return linked_handler_work(current, table, scheduler, task_v2, v2, work, count);
+    }
+    let next_v1 = crate::vm::proven_own_word(&work, "link")?.load();
+    let packet = crate::value::Value::Object(work);
+    Some(LinkedHandlerRoute::Complete {
+        task_v1,
+        next_v1,
+        queue: LinkedQueueTransition::new(current, table, scheduler, packet)?,
+    })
+}
+
+fn linked_handler_work<'a>(
+    current: &DirectTaskRunner,
+    table: &DirectTaskTable,
+    scheduler: &LinkedSchedulerWords,
+    task_v2: &'a crate::register_file::SlotWord,
+    v2: crate::value::Value,
+    work: std::rc::Rc<crate::value::ObjectData>,
+    count: f64,
+) -> Option<LinkedHandlerRoute<'a>> {
+    if v2.is_nullish() {
+        return linked_suspend(current).map(LinkedHandlerRoute::Suspend);
+    }
+    let crate::value::Value::Object(packet) = v2 else { return None };
+    if packet.has_replacement() || count < 0.0 || count.fract() != 0.0 { return None; }
+    let next_v2 = crate::vm::proven_own_word(&packet, "link")?.load();
+    let crate::value::Value::Array(payload) = crate::vm::proven_own_word(&work, "a2")?.load() else { return None };
+    if !crate::locals::array_word_is_current(&payload) || !payload.is_packed_ordinary() { return None; }
+    let value = payload.dense_number_at(count as usize)?;
+    let packet_value = crate::value::Value::Object(packet.clone());
+    Some(LinkedHandlerRoute::Work {
+        task_v2,
+        next_v2,
+        packet_a1: std::ptr::from_ref(writable_own_word(&packet, "a1")?),
+        work_a1: std::ptr::from_ref(writable_own_word(&work, "a1")?),
+        value,
+        count,
+        queue: LinkedQueueTransition::new(current, table, scheduler, packet_value)?,
+    })
+}
+
 struct LinkedReleaseTransition {
     state: *const crate::register_file::SlotWord,
     next_state: f64,
