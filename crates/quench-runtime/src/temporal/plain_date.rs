@@ -170,15 +170,16 @@ fn add(
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
     let day = original_day.min(max_day);
-    let time_nanos = number_property(&duration, "hours") * 3_600_000_000_000.0
-        + number_property(&duration, "minutes") * 60_000_000_000.0
-        + number_property(&duration, "seconds") * 1_000_000_000.0
-        + number_property(&duration, "milliseconds") * 1_000_000.0
-        + number_property(&duration, "microseconds") * 1_000.0
-        + number_property(&duration, "nanoseconds");
+    let time_nanos = i128::from(number_property(&duration, "hours") as i64) * 3_600_000_000_000
+        + i128::from(number_property(&duration, "minutes") as i64) * 60_000_000_000
+        + i128::from(number_property(&duration, "seconds") as i64) * 1_000_000_000
+        + i128::from(number_property(&duration, "milliseconds") as i64) * 1_000_000
+        + i128::from(number_property(&duration, "microseconds") as i64) * 1_000
+        + i128::from(number_property(&duration, "nanoseconds") as i64);
+    let time_days = (time_nanos / 86_400_000_000_000) as f64;
     let days = (number_property(&duration, "weeks") * 7.0
         + number_property(&duration, "days")
-        + (time_nanos / 86_400_000_000_000.0).trunc())
+        + time_days.trunc())
         * direction;
     shift_date(year, month, day, days)
 }
@@ -612,15 +613,27 @@ fn date_serial(year: f64, month: f64, day: f64) -> i64 {
 }
 
 fn shift_date(year: f64, month: f64, day: f64, delta: f64) -> Result<Value, VmError> {
-    let date = chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?
-        .checked_add_signed(chrono::Duration::days(delta as i64))
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    let serial = date_serial(year, month, day) + delta as i64;
+    let (year, month, day) = civil_from_serial(serial);
     construct(&[
-        Value::Number(date.year() as f64),
-        Value::Number(date.month() as f64),
-        Value::Number(date.day() as f64),
+        Value::Number(year as f64),
+        Value::Number(month as f64),
+        Value::Number(day as f64),
     ])
+}
+
+fn civil_from_serial(serial: i64) -> (i32, u32, u32) {
+    let mut z = serial;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096).div_euclid(365);
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month_index = (5 * doy + 2).div_euclid(153);
+    let day = doy - (153 * month_index + 2).div_euclid(5) + 1;
+    let month = month_index + if month_index < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    (year as i32, month as u32, day as u32)
 }
 
 fn to_plain_date_time(receiver: Option<&Value>, time: Option<&Value>) -> Result<Value, VmError> {
