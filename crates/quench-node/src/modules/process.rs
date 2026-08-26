@@ -91,13 +91,17 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ("env", env_object()),
         (
             "config",
-            host_api::object(vec![(
-                "variables".to_string(),
-                host_api::object(vec![(
-                    "v8_enable_i18n_support".to_string(),
-                    Value::Number(1.0),
-                )]),
-            )]),
+            crate::host::readonly_namespace_from_pairs(vec![
+                (
+                    "variables".to_string(),
+                    crate::host::readonly_namespace_from_pairs(vec![
+                        (
+                            "v8_enable_i18n_support".to_string(),
+                            Value::Number(1.0),
+                        ),
+                    ]),
+                ),
+            ]),
         ),
         ("execPath", Value::String(exec_path.to_string())),
         (
@@ -191,6 +195,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
         ),
         (
             "exit",
+            crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
+        ),
+        (
+            "abort",
             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
         ),
         (
@@ -358,7 +366,7 @@ pub fn versions_props() -> Vec<(String, Value)> {
 pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let code = args.first().map(value_to_i32).unwrap_or(0);
     state.borrow_mut().process.exit_code = Some(code);
-    Err(VmError::EvalError(format!("process.exit({code})")))
+    Err(VmError::Thrown(Value::String(format!("process.exit({code})"))))
 }
 
 pub fn cwd(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -750,6 +758,17 @@ pub(crate) fn emit_warning(
     code: Option<&str>,
     once_per_process: bool,
 ) {
+    emit_warning_with_detail(state, name, message, code, None, once_per_process);
+}
+
+pub(crate) fn emit_warning_with_detail(
+    state: &Rc<RefCell<HostState>>,
+    name: &str,
+    message: &str,
+    code: Option<&str>,
+    detail: Option<&str>,
+    once_per_process: bool,
+) {
     {
         let mut guard = state.borrow_mut();
         let key = format!("{name}:{message}");
@@ -766,6 +785,9 @@ pub(crate) fn emit_warning(
     ];
     if let Some(code) = code {
         props.push(("code".to_string(), Value::String(code.to_string())));
+    }
+    if let Some(detail) = detail {
+        props.push(("detail".to_string(), Value::String(detail.to_string())));
     }
     let global = quench_runtime::vm::current_global_object();
     let stack = match quench_runtime::execute::get_property(&global, "\0quench_vm_filename") {
