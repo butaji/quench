@@ -1,4 +1,4 @@
-use chrono::Datelike;
+use chrono::{Datelike, Offset, TimeZone};
 
 pub(crate) mod duration;
 pub(crate) mod instant;
@@ -35,7 +35,7 @@ fn zoned_record(
     timezone: String,
     prototype: crate::ops::Builtin,
 ) -> crate::value::Value {
-    let offset_nanos = fixed_offset_nanos(&timezone);
+    let offset_nanos = timezone_offset_nanos(&timezone, epoch);
     let seconds = (epoch + offset_nanos).div_euclid(1_000_000_000);
     let nanos = epoch.rem_euclid(1_000_000_000) as i64;
     let date = chrono::DateTime::from_timestamp(seconds as i64, nanos as u32)
@@ -143,6 +143,24 @@ fn fixed_offset_nanos(timezone: &str) -> i128 {
     let minute = timezone[4..6].parse::<i128>().unwrap_or(0);
     let sign = if bytes[0] == b'-' { -1 } else { 1 };
     sign * (hour * 3_600_000_000_000 + minute * 60_000_000_000)
+}
+
+fn timezone_offset_nanos(timezone: &str, epoch: i128) -> i128 {
+    let fixed = fixed_offset_nanos(timezone);
+    if fixed != 0 || timezone.starts_with(['+', '-']) {
+        return fixed;
+    }
+    let seconds = epoch.div_euclid(1_000_000_000);
+    let nanos = epoch.rem_euclid(1_000_000_000) as u32;
+    let Ok(seconds) = i64::try_from(seconds) else {
+        return 0;
+    };
+    timezone
+        .parse::<chrono_tz::Tz>()
+        .ok()
+        .and_then(|zone| zone.timestamp_opt(seconds, nanos).single())
+        .map(|date| i128::from(date.offset().fix().local_minus_utc()) * 1_000_000_000)
+        .unwrap_or(0)
 }
 
 fn parse_date_parts(date: &str) -> Option<(i32, u32, u32)> {
