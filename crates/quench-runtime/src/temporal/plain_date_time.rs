@@ -763,9 +763,20 @@ fn overflow_option(options: Option<&Value>) -> Result<String, VmError> {
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
-    let options = options
-        .filter(|value| crate::value::is_object(value))
-        .ok_or_else(|| crate::value::error::throw_type_error("Invalid rounding options"))?;
+    let owned_options;
+    let options = match options {
+        Some(value) if crate::value::is_object(value) => value,
+        Some(value @ (Value::String(_) | Value::StringUnits(_))) => {
+            owned_options = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                (
+                    "smallestUnit".into(),
+                    value.clone(),
+                ),
+            ])));
+            &owned_options
+        }
+        _ => return Err(crate::value::error::throw_type_error("Invalid rounding options")),
+    };
     let unit = crate::execute::get_property_result(options, "smallestUnit")?;
     if crate::conversion::is_symbol(&unit) {
         return Err(crate::value::error::throw_type_error(
