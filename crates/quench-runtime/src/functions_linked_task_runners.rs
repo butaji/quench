@@ -5,7 +5,7 @@ enum DirectTaskKind {
     Idle(IdleTaskPlan),
     Device,
     Worker,
-    Handler,
+    Handler(HandlerTaskPlan),
 }
 
 struct DirectTaskRunner {
@@ -18,6 +18,7 @@ struct DirectTaskRunner {
     task_word: *const crate::register_file::SlotWord,
     task_v1: *const crate::register_file::SlotWord,
     task_count: Option<*const crate::register_file::SlotWord>,
+    task_v2: Option<*const crate::register_file::SlotWord>,
     held_mask: i32,
     suspended: i32,
     task: *const crate::value::ObjectData,
@@ -76,7 +77,12 @@ impl DirectTaskRunner {
             DirectTaskKind::Worker => {
                 execute_worker_task(&self.function, &self.task_value, arguments)
             }
-            DirectTaskKind::Handler => {
+            DirectTaskKind::Handler(plan) => {
+                if let Some(result) = scheduler.and_then(|scheduler| {
+                    execute_linked_handler(self, table, scheduler, packet, plan)
+                }) {
+                    return Ok(Some(result));
+                }
                 execute_handler_task(&self.function, &self.task_value, arguments)
             }
         }
@@ -172,6 +178,13 @@ fn linked_task_runner(
     if matches!(&kind, DirectTaskKind::Idle(_)) && task_count.is_none() {
         return None;
     }
+    let task_v2 = matches!(&kind, DirectTaskKind::Handler(_))
+        .then(|| crate::vm::proven_own_word(task_object, "v2"))
+        .flatten()
+        .map(std::ptr::from_ref);
+    if matches!(&kind, DirectTaskKind::Handler(_)) && task_v2.is_none() {
+        return None;
+    }
     let scheduler = task_scheduler(task_object)?;
     Some(DirectTaskRunner {
         identity: tcb.identity(),
@@ -183,6 +196,7 @@ fn linked_task_runner(
         task_word: std::ptr::from_ref(task_word),
         task_v1: std::ptr::from_ref(task_v1),
         task_count,
+        task_v2,
         held_mask,
         suspended,
         task: std::rc::Rc::as_ptr(task_object),
@@ -220,8 +234,8 @@ fn direct_task_kind(function: &std::rc::Rc<crate::value::FunctionValue>) -> Opti
         Some(DirectTaskKind::Device)
     } else if worker_task_fact(function).is_some() {
         Some(DirectTaskKind::Worker)
-    } else if handler_task_fact(function).is_some() {
-        Some(DirectTaskKind::Handler)
+    } else if let Some(plan) = handler_task_fact(function) {
+        Some(DirectTaskKind::Handler(plan))
     } else {
         None
     }
