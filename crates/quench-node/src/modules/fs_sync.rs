@@ -455,6 +455,22 @@ pub fn readlink_sync(
     })
 }
 
+pub fn symlink_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let target = path_arg(args.first())?;
+    let link = path_arg(args.get(1))?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link)
+        .map_err(|e| super::fs_error::fs_error("symlink", Some(&link), &e))?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&target, &link)
+        .map_err(|e| super::fs_error::fs_error("symlink", Some(&link), &e))?;
+    Ok(Value::Undefined)
+}
+
 pub fn chmod_sync(
     _s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
