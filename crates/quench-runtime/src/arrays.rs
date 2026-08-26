@@ -462,21 +462,26 @@ pub(crate) fn flat_map(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::array(Vec::new()));
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.flatMap called on null or undefined",
+        ));
     };
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::Array(values.clone()));
+    let receiver = crate::construct::to_object(receiver)?;
+    let Some(callback) = arguments.first().filter(|value| crate::conversion::is_callable(value))
+    else {
+        return Err(crate::vm::not_callable());
     };
-    // Each source element contributes at least one output slot in the common case.
-    // Reserve that lower bound once; nested results can still grow the vector.
-    let mut mapped = Vec::with_capacity(values.len());
+    let length = crate::builtins::map_length(&receiver)?;
+    let mut mapped = Vec::with_capacity(length);
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    for (index, value) in values.snapshot().into_iter().enumerate() {
+    for index in 0..length {
+        let Some(value) = crate::builtins::map_value(&receiver, index)? else { continue; };
         let args = [
             value,
             Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
+            receiver.clone(),
         ];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
         match result {
