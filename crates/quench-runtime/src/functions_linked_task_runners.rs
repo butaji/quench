@@ -91,6 +91,7 @@ impl DirectTaskRunner {
 struct DirectTaskTable {
     runners: Vec<Option<DirectTaskRunner>>,
     identities: [Option<(u64, u8)>; LINKED_TASK_IDENTITY_SLOTS],
+    packet_layout: Option<LinkedPacketLayout>,
 }
 
 impl DirectTaskTable {
@@ -153,12 +154,38 @@ impl DirectTaskTable {
             .flatten()
             .all(|runner| runner.scheduler == scheduler)
     }
+
+    fn packet_words<'a>(
+        &self,
+        packet: &'a crate::value::ObjectData,
+    ) -> Option<LinkedPacketWords<'a>> {
+        self.packet_layout?.words(packet)
+    }
+
+    fn packet_tail_link(
+        &self,
+        head: *const crate::value::ObjectData,
+        packet: *const crate::value::ObjectData,
+    ) -> Option<*const crate::register_file::SlotWord> {
+        self.packet_layout?.tail_link(head, packet)
+    }
+
+    fn derive_packet_layout(&self) -> Option<LinkedPacketLayout> {
+        self.runners.iter().flatten().find_map(|runner| {
+            [runner.queue, runner.task_v1]
+                .into_iter()
+                .chain(runner.task_v2)
+                .find_map(|slot| runner.word(slot).object_or_null_ptr().flatten())
+                .and_then(|packet| LinkedPacketLayout::new(unsafe { &*packet }))
+        })
+    }
 }
 
 fn linked_task_runners(start: &crate::value::Value) -> Option<DirectTaskTable> {
     let mut table = DirectTaskTable {
         runners: Vec::new(),
         identities: [None; LINKED_TASK_IDENTITY_SLOTS],
+        packet_layout: None,
     };
     let mut cursor = start.clone();
     while let crate::value::Value::Object(ref tcb) = cursor {
@@ -173,7 +200,11 @@ fn linked_task_runners(start: &crate::value::Value) -> Option<DirectTaskTable> {
         cursor = runner.word(runner.link).load();
         table.insert(id, runner)?;
     }
-    matches!(cursor, crate::value::Value::Null).then_some(table)
+    if !matches!(cursor, crate::value::Value::Null) {
+        return None;
+    }
+    table.packet_layout = table.derive_packet_layout();
+    table.packet_layout.map(|_| table)
 }
 
 fn linked_task_runner(
