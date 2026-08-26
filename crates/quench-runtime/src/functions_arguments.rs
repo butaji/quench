@@ -313,6 +313,12 @@ fn execute_bound_builtin(
     bound: &crate::value::BoundFunctionValue,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    // Proxy.revocable's revoke function is a bound intrinsic whose receiver
+    // is the proxy itself. Realm probing the receiver would re-enter an
+    // active get trap when revoke is called from that trap.
+    if builtin == crate::ops::Builtin::ProxyRevoke {
+        return crate::proxy::revoke(Some(&bound.receiver));
+    }
     let realm = crate::vm::realm_id_for_intrinsic_receiver(Some(&bound.receiver));
     match realm {
         Some(realm) if realm != crate::ops::RealmId::ROOT => crate::vm::with_realm(realm, || {
