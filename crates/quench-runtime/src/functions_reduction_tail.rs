@@ -100,6 +100,7 @@ pub(crate) fn write(
     captures: u16,
     metadata: FunctionMetadata,
 ) {
+    let kind = metadata.kind;
     let value = make(
         body.clone(),
         params,
@@ -111,7 +112,7 @@ pub(crate) fn write(
         ),
         metadata,
     );
-    if matches!(metadata.kind, FunctionKind::Ordinary) {
+    if matches!(kind, FunctionKind::Ordinary) {
         if let crate::value::Value::Function(function) = &value {
             function.properties.borrow_mut().push((
                 "\0ordinary_function".to_string(),
