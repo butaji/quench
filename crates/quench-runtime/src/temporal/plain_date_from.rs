@@ -20,7 +20,6 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
                     })
                     .map(|(_, value)| value.clone())
             });
-            let has_month_code = object.iter().any(|(key, _)| key == "monthCode");
             let temporal_date = object.iter().any(|(key, value)| {
                 key == "\0temporal-plain-date"
                     || key == "\0prototype"
@@ -32,7 +31,7 @@ pub(crate) fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Val
                                 )
                         )
             });
-            if !has_month_code || temporal_date {
+            if temporal_date {
                 if let [Some(year), Some(month), Some(day)] = direct {
                     let _ = overflow_value(options)?;
                     return construct(&[year, month, day]);
