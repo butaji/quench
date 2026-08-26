@@ -7,7 +7,15 @@ use std::rc::Rc;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DirectConstructorField {
     pub(crate) name: String,
-    pub(crate) source: i16,
+    pub(crate) source: DirectConstructorSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DirectConstructorSource {
+    Argument(u16),
+    Boolean(bool),
+    Integer(i32),
+    GuardedArray { length_slot: u16 },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
