@@ -71,15 +71,16 @@ fn constructor_descriptor(value: crate::value::Value) -> crate::value::Value {
 }
 
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
+    let realm = crate::construct::function_realm_id(function);
     let parent = if function.is_async {
-        crate::builtins::async_generator_prototype()
+        crate::builtins::async_generator_prototype_in(realm)
     } else {
-        crate::builtins::generator_prototype()
+        crate::builtins::generator_prototype_in(realm)
     };
     let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
         vec![("\0prototype".to_string(), parent)],
     )));
-    let function_prototype = crate::vm::realm_intrinsic(if function.is_async {
+    let function_prototype = crate::vm::realm_intrinsic_for(realm, if function.is_async {
         crate::ops::Builtin::AsyncGeneratorFunctionPrototype
     } else {
         crate::ops::Builtin::GeneratorFunctionPrototype
