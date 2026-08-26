@@ -188,6 +188,7 @@ fn instance_field_initializer(
             mapped_arguments: false,
             raytrace_pixel: false,
             raytrace_render: None,
+            direct_constructor: Vec::new(),
         },
     );
     let crate::value::Value::Function(function) = value else {
