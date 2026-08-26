@@ -248,6 +248,8 @@ pub(crate) fn set_server_connection_key(
 
 fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
+        // Node exposes a nulled-out native handle after a socket closes.
+        ("_handle", Value::Null),
         ("connect", cap(crate::registry::SPEC_NET_CONNECT)),
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
