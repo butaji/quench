@@ -17,7 +17,6 @@ impl NativeSchedule<'_> {
             words.a1.store_number(f64::from(packet.a1));
         }
         for (index, task) in self.tasks.iter().enumerate() {
-            let task = task.as_ref()?;
             let runner = self.table.for_id(index)?;
             runner
                 .word(runner.state)
