@@ -196,6 +196,9 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
     let Some(receiver @ Value::Array(values)) = receiver else {
         return Value::Number(f64::NAN);
     };
+    if let Some(length) = values.append_packed_values_shared(arguments) {
+        return Value::Number(length as f64);
+    }
     if values.is_packed_ordinary() {
         let mut updated = std::rc::Rc::clone(values);
         let data = std::rc::Rc::make_mut(&mut updated);
