@@ -33,7 +33,7 @@ const expectedKernels = Object.freeze({
     "counted_method_copy_property"
   ],
   crypto: ["crypto_integer_multiply", "crypto_kernel"],
-  raytrace: ["raytrace_render", "raytrace_pixel"],
+  raytrace: ["S|P"],
   "earley-boyer": ["pair_word_walk", "pair_walk"],
   regexp: ["regexp_exact_global_exec"],
   splay: ["bump_tiny_object", "splay_rotate"],
@@ -47,7 +47,7 @@ const microContracts = Object.freeze({
   deltablue: ["affine-plan.want.json", "plan-execute-loop.want.json"],
   richards: ["linked-shape-call.want.json"],
   crypto: ["limb-fill.want.json"],
-  raytrace: ["vec3-dot-add.want.json"],
+  raytrace: ["slot-dot3.want.json"],
   "earley-boyer": ["pair-car-cdr.want.json"],
   regexp: ["exec-discard.want.json"],
   splay: ["cons-bump.want.json"],

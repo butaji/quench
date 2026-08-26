@@ -60,6 +60,9 @@ pub(crate) fn execute(
     if let Some(result) = execute_forward_then_call(function, &receiver, arguments) {
         return result;
     }
+    if let Some(result) = execute_slot_alu(function, &receiver, arguments) {
+        return Ok(result);
+    }
     if let Some(result) = execute_recalculate_method(function, &receiver)? {
         return Ok(result);
     }
@@ -97,12 +100,6 @@ pub(crate) fn execute(
         ));
     }
     if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
-        return result;
-    }
-    if let Some(result) = execute_raytrace_render_kernel(function, &receiver, arguments) {
-        return result;
-    }
-    if let Some(result) = execute_raytrace_pixel_kernel(function, &receiver, arguments) {
         return result;
     }
 

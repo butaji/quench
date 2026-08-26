@@ -307,6 +307,7 @@ fn execute_direct_counted_method(
             Some(())
         }
         crate::facts::DirectMethodFact::AppendArray { .. }
+        | crate::facts::DirectMethodFact::SlotDot3 { .. }
         | crate::facts::DirectMethodFact::Recalculate { .. } => None,
     }
 }

@@ -185,8 +185,6 @@ fn instance_field_initializer(
             strictness: FunctionStrictness::Strict,
             is_async: false,
             mapped_arguments: false,
-            raytrace_pixel: false,
-            raytrace_render: None,
             direct_constructor: std::rc::Rc::default(),
             linked_record_insert: None,
             forward_construct_call: None,

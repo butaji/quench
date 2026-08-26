@@ -10,7 +10,7 @@ pub(crate) fn direct_method_fact(
     if let Some(fact) = recalculate_fact(body.statements.as_slice(), locals) {
         return Some(std::rc::Rc::new(fact));
     }
-    if let Some(fact) = direct_return_fact(body.statements.as_slice(), locals) {
+    if let Some(fact) = direct_return_fact(function, body.statements.as_slice(), locals) {
         return Some(std::rc::Rc::new(fact));
     }
     if let Some(property) = append_array_fact(function, body.statements.as_slice()) {
@@ -201,6 +201,7 @@ fn flatten_and_terms<'a>(
 }
 
 fn direct_return_fact(
+    function: &oxc::ast::ast::Function<'_>,
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &std::collections::HashMap<String, u16>,
 ) -> Option<crate::facts::DirectMethodFact> {
@@ -209,6 +210,9 @@ fn direct_return_fact(
         return None;
     };
     let returned = returned.argument.as_ref()?;
+    if let Some((receiver, argument)) = slot_dot3_fact(function, returned) {
+        return Some(crate::facts::DirectMethodFact::SlotDot3 { receiver, argument });
+    }
     if let Some(property) = direct_this_member(returned) {
         return Some(crate::facts::DirectMethodFact::PropertyLoad {
             property: property.to_string(),
@@ -232,6 +236,61 @@ fn direct_return_fact(
         capture_slot: *locals.get(capture_object.name.as_str())?,
         capture_property: capture.property.name.to_string(),
     })
+}
+
+fn slot_dot3_fact(
+    function: &oxc::ast::ast::Function<'_>,
+    expression: &oxc::ast::ast::Expression<'_>,
+) -> Option<([String; 3], [String; 3])> {
+    use oxc::ast::ast::Expression;
+    let [parameter] = function.params.items.as_slice() else {
+        return None;
+    };
+    let parameter = parameter.pattern.get_identifier()?.as_str();
+    let mut terms = Vec::new();
+    flatten_add_terms(expression, &mut terms);
+    let terms: [&Expression<'_>; 3] = terms.try_into().ok()?;
+    let pairs: Vec<_> = terms
+        .into_iter()
+        .map(|term| slot_product(term, parameter))
+        .collect::<Option<_>>()?;
+    Some((
+        std::array::from_fn(|index| pairs[index].0.to_string()),
+        std::array::from_fn(|index| pairs[index].1.to_string()),
+    ))
+}
+
+fn flatten_add_terms<'a>(
+    expression: &'a oxc::ast::ast::Expression<'a>,
+    output: &mut Vec<&'a oxc::ast::ast::Expression<'a>>,
+) {
+    if let oxc::ast::ast::Expression::BinaryExpression(binary) = expression {
+        if binary.operator == oxc::syntax::operator::BinaryOperator::Addition {
+            flatten_add_terms(&binary.left, output);
+            flatten_add_terms(&binary.right, output);
+            return;
+        }
+    }
+    output.push(expression);
+}
+
+fn slot_product<'a>(
+    expression: &'a oxc::ast::ast::Expression<'a>,
+    parameter: &str,
+) -> Option<(&'a str, &'a str)> {
+    use oxc::ast::ast::Expression;
+    let Expression::BinaryExpression(product) = expression else {
+        return None;
+    };
+    (product.operator == oxc::syntax::operator::BinaryOperator::Multiplication).then_some(())?;
+    let receiver = direct_this_member(&product.left)?;
+    let Expression::StaticMemberExpression(argument) = &product.right else {
+        return None;
+    };
+    let Expression::Identifier(owner) = &argument.object else {
+        return None;
+    };
+    (owner.name == parameter).then_some((receiver, argument.property.name.as_str()))
 }
 
 fn append_array_fact<'a>(
@@ -329,6 +388,13 @@ mod direct_method_fact_tests {
             fact("function ready(){return this.satisfied;}"),
             Some(crate::facts::DirectMethodFact::PropertyLoad {
                 property: "satisfied".into(),
+            })
+        );
+        assert_eq!(
+            fact("function project(other){return this.a*other.u+this.b*other.v+this.c*other.w;}"),
+            Some(crate::facts::DirectMethodFact::SlotDot3 {
+                receiver: ["a".into(), "b".into(), "c".into()],
+                argument: ["u".into(), "v".into(), "w".into()],
             })
         );
     }
