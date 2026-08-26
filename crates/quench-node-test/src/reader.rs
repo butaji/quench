@@ -112,6 +112,7 @@ impl NodeRunner {
         let fixture_source = strip_v8_native_probes(&fixture.source);
         let source = if is_module {
             quench_node::esm_imports::transform_esm_imports(&fixture_source)
+                .replace("await import(", "require(")
         } else {
             quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture_source)
         };
