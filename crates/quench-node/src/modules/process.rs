@@ -621,7 +621,15 @@ pub(crate) fn emit_warning(
     };
     props.push(("stack".to_string(), Value::String(stack)));
     let warning = host_api::object(props);
-    let _ = emit(state, &[Value::String("warning".into()), warning]);
+    // Node delivers warnings on a later turn, so listeners installed after
+    // `emitWarning()` still observe the event. Queue the canonical process
+    // emitter capability rather than calling it inline; this preserves the
+    // process event identity while keeping delivery asynchronous.
+    let emitter = crate::host::capability(crate::registry::SPEC_PROCESS_EMIT);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(emitter, vec![Value::String("warning".into()), warning]);
 }
 
 /// Emit the pair of warnings Node exposes for an unhandled rejection in
