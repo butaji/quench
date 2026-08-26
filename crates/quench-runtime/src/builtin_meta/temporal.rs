@@ -633,11 +633,11 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainDateAdd
         | Builtin::TemporalPlainDateSubtract
         | Builtin::TemporalPlainDateEquals
-        | Builtin::TemporalPlainDateToPlainDateTime
-        | Builtin::TemporalPlainDateToPlainMonthDay
-        | Builtin::TemporalPlainDateToPlainYearMonth
         | Builtin::TemporalPlainDateToZonedDateTime => Some(1.0),
-        Builtin::TemporalPlainDateUntil | Builtin::TemporalPlainDateSince => Some(2.0),
+        Builtin::TemporalPlainDateToPlainDateTime
+        | Builtin::TemporalPlainDateToPlainMonthDay
+        | Builtin::TemporalPlainDateToPlainYearMonth => Some(0.0),
+        Builtin::TemporalPlainDateUntil | Builtin::TemporalPlainDateSince => Some(1.0),
         Builtin::TemporalPlainDateToLocaleString => Some(0.0),
         Builtin::TemporalPlainDateWithCalendar => Some(1.0),
         Builtin::TemporalPlainDateToString => Some(0.0),
