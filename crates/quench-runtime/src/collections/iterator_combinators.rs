@@ -287,13 +287,62 @@ pub(crate) fn return_iterator(
             "Iterator return called on incompatible receiver",
         ));
     };
+    if *data.in_return.borrow() {
+        let completed = match &*data.state.borrow() {
+            IteratorState::Mapped { done, .. }
+            | IteratorState::Filtered { done, .. }
+            | IteratorState::FlatMapped { done, .. }
+            | IteratorState::Dropped { done, .. }
+            | IteratorState::Concat { done, .. }
+            | IteratorState::Zip { done, .. } => *done,
+            IteratorState::Take { remaining, .. } => *remaining == u64::MAX,
+            _ => false,
+        };
+        let active_concat = matches!(
+            &*data.state.borrow(),
+            IteratorState::Concat {
+                current: Some(_),
+                ..
+            }
+        );
+        if completed && !active_concat {
+            return Ok(result(value, true));
+        }
+        return Err(crate::value::error::throw_type_error(
+            "Iterator is already executing",
+        ));
+    }
+    let protocol_inner = match &*data.state.borrow() {
+        IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
+        _ => None,
+    };
+    if let Some(iterator) = protocol_inner {
+        let method = crate::execute::get_property_result(&iterator, "return")?;
+        mark_done(data);
+        if matches!(method, Value::Null | Value::Undefined) {
+            return Ok(result(value, true));
+        }
+        if !crate::conversion::is_callable(&method) {
+            return Err(crate::vm::not_callable());
+        }
+        let returned = crate::functions::execute_target(&method, &iterator, &[])?;
+        if !crate::value::is_object(&returned) {
+            return Err(crate::value::error::throw_type_error(
+                "iterator return result is not an object",
+            ));
+        }
+        return Ok(returned);
+    }
     let (already_done, inner) = inner_iterators(data);
     if already_done {
         return Ok(result(value, true));
     }
     *data.in_return.borrow_mut() = true;
-    let completion = close_inner(data, inner, Some(receiver));
+    // A helper is completed before IteratorCloseAll runs. This lets an
+    // underlying return() callback re-enter the helper's next() and observe
+    // the completed iterator state without tripping the executing guard.
     mark_done(data);
+    let completion = close_inner(data, inner, Some(receiver));
     *data.in_return.borrow_mut() = false;
     let completion = completion?;
     match completion {
