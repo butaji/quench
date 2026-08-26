@@ -15,6 +15,10 @@ use super::*;
 /// Poll every server and socket once: accept connections, announce
 /// connects, read available bytes, flush writes, and finalize closes.
 pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let errors = std::mem::take(&mut state.borrow_mut().net.pending_errors);
+    for (receiver, error) in errors {
+        emit(state, &receiver, "error", vec![error])?;
+    }
     poll_accept(state)?;
     poll_sockets(state)?;
     finalize(state)?;
