@@ -45,6 +45,7 @@ fn process_module() -> Value {
         ),
         ("Symbol.toStringTag".into(), Value::String("process".into())),
         ("pid".into(), Value::Number(std::process::id() as f64)),
+        ("ppid".into(), Value::Number(process_parent_id() as f64)),
         (
             "getBuiltinModule".into(),
             capability_function(HostCapabilityKind::Custom(
@@ -126,6 +127,16 @@ fn process_module() -> Value {
     ]);
     NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
     module
+}
+
+#[cfg(unix)]
+fn process_parent_id() -> u32 {
+    std::os::unix::process::parent_id()
+}
+
+#[cfg(not(unix))]
+fn process_parent_id() -> u32 {
+    0
 }
 
 fn process_on(arguments: &[Value]) -> Result<Value, VmError> {

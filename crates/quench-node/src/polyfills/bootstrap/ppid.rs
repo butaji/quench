@@ -1,22 +1,13 @@
 //! Polyfill: `ppid`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchPpidFixtureRequire = globalThis.require;
-const __quenchPpidFixtureProcess = __quenchPpidFixtureRequire("child_process");
-const __quenchPpidFixtureOriginal = __quenchPpidFixtureProcess.spawnSync;
-__quenchPpidFixtureProcess.spawnSync = (command, args = [], options) => {
-  const values = Array.isArray(args) ? args : [];
-  if (
-    values.includes("child") &&
-    values.some((value) => String(value).endsWith("test-process-ppid.js"))
-  ) {
-    return {
-      pid: 0,
-      status: 0,
-      signal: null,
-      stdout: NodeBuffer.from(String(process.pid) + "\n"),
-      stderr: NodeBuffer.from(""),
-    };
-  }
-  return __quenchPpidFixtureOriginal(command, args, options);
-};
+// Keep the process-parent relation available even when an embedding realm
+// supplies a minimal process object instead of the standard host object.
+pub const JS: &str = quench_js_check::checked_js!(r#"if (globalThis.process && typeof globalThis.process.ppid !== "number") {
+  const parent = globalThis.process.env?.QUENCH_PARENT_PID;
+  Object.defineProperty(globalThis.process, "ppid", {
+    configurable: true,
+    enumerable: true,
+    value: Number(parent || 0),
+  });
+}
 "#);
