@@ -428,6 +428,12 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "hoursInDay") => {
             Some(Value::Builtin(TemporalZonedDateTimeHoursInDayGetter))
         }
+        (TemporalZonedDateTimePrototype, "weekOfYear") => {
+            Some(Value::Builtin(TemporalZonedDateTimeWeekOfYearGetter))
+        }
+        (TemporalZonedDateTimePrototype, "yearOfWeek") => {
+            Some(Value::Builtin(TemporalZonedDateTimeYearOfWeekGetter))
+        }
         (TemporalPlainTimePrototype, "toString") => Some(Value::Builtin(TemporalPlainTimeToString)),
         (TemporalPlainTimePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainTimeToJSON)),
         (TemporalPlainTimePrototype, "toLocaleString") => {
