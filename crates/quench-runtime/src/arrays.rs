@@ -496,12 +496,18 @@ fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::e
     for index in 0..length {
         let key = index.to_string();
         if let Some(value) = elements.get(index).cloned() {
-            target = crate::properties::assign_set_property(&target, &key, value)?;
+            let previous = target.clone();
+            let updated = crate::properties::assign_set_property(&target, &key, value)?;
+            crate::locals::replace_value(&previous, &updated);
+            target = updated;
         } else {
+            let previous = target.clone();
             let (updated, _) = crate::builtins::delete_property(target, &key);
+            crate::locals::replace_value(&previous, &updated);
             target = updated;
         }
     }
+    crate::locals::replace_value(receiver, &target);
     Ok(target)
 }
 
@@ -530,6 +536,16 @@ fn compare_values(
     right: &Value,
     compare: Option<&Value>,
 ) -> Result<std::cmp::Ordering, crate::execute::VmError> {
+    let left_undefined = matches!(left, Value::Undefined);
+    let right_undefined = matches!(right, Value::Undefined);
+    if left_undefined || right_undefined {
+        return Ok(match (left_undefined, right_undefined) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => std::cmp::Ordering::Equal,
+        });
+    }
     let number = if let Some(compare) = compare {
         let value =
             crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
