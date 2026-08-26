@@ -134,7 +134,14 @@ pub fn spawn_sync(
         .spawn()
     {
         Ok(child) => child,
-        Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
+        Err(error) => {
+            return Ok(spawn_error_result_with_command(
+                raw_code(&error),
+                &error.to_string(),
+                &command,
+                &child_args,
+            ));
+        }
     };
     let pid = child.id();
     if let Some(data) = input {
@@ -178,7 +185,7 @@ pub fn spawn_sync(
         ("stderr".to_string(), stderr.clone()),
         (
             "output".to_string(),
-            host_api::array(vec![stdout, stderr]),
+            host_api::array(vec![Value::Null, stdout, stderr]),
         ),
     ]))
 }
@@ -231,11 +238,28 @@ fn stdio_inherit(options: &Value) -> bool {
 }
 
 fn spawn_error_result(code: &str, message: &str) -> Value {
+    spawn_error_result_with_command(code, message, "spawn", &[])
+}
+
+fn spawn_error_result_with_command(
+    code: &str,
+    message: &str,
+    command: &str,
+    args: &[String],
+) -> Value {
     host_api::object(vec![
         ("pid".to_string(), Value::Null),
         ("status".to_string(), Value::Null),
         ("signal".to_string(), Value::Null),
-        ("error".to_string(), coded_error(code, message)),
+        ("error".to_string(), host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("message".into(), Value::String(message.into())),
+            ("code".into(), Value::String(code.into())),
+            ("errno".into(), Value::Number(-2.0)),
+            ("syscall".into(), Value::String(format!("spawnSync {command}"))),
+            ("path".into(), Value::String(command.into())),
+            ("spawnargs".into(), host_api::array(args.iter().cloned().map(Value::String).collect())),
+        ])),
         ("stdout".to_string(), Value::String(String::new())),
         ("stderr".to_string(), Value::String(String::new())),
     ])
@@ -243,12 +267,16 @@ fn spawn_error_result(code: &str, message: &str) -> Value {
 
 /// A Node-style coded `Error` object for a spawn failure.
 fn coded_error(code: &str, message: &str) -> Value {
+    coded_error_with_syscall(code, message, "spawn")
+}
+
+fn coded_error_with_syscall(code: &str, message: &str, syscall: &str) -> Value {
     host_api::object(vec![
         ("name".to_string(), Value::String("Error".to_string())),
         ("message".to_string(), Value::String(message.to_string())),
         ("code".to_string(), Value::String(code.to_string())),
         ("errno".to_string(), Value::Number(-2.0)),
-        ("syscall".to_string(), Value::String("spawn".to_string())),
+        ("syscall".to_string(), Value::String(syscall.to_string())),
     ])
 }
 
