@@ -104,8 +104,9 @@ fn values_biguint64_array(values: &[Value]) -> Result<Value, crate::execute::VmE
 fn copy_bigint64_array(
     source: &crate::value::BigInt64ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
-    let view = new_bigint64_data(source.length)?;
-    for index in 0..source.length {
+    let length = source.logical_len();
+    let view = new_bigint64_data(length)?;
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::BigInt64Array(view))
@@ -114,8 +115,9 @@ fn copy_bigint64_array(
 fn copy_biguint64_array(
     source: &crate::value::BigUint64ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
-    let view = new_biguint64_data(source.length)?;
-    for index in 0..source.length {
+    let length = source.logical_len();
+    let view = new_biguint64_data(length)?;
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::BigUint64Array(view))
