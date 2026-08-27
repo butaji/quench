@@ -211,6 +211,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
         ),
         (
+            "kill",
+            crate::host::capability(crate::registry::SPEC_PROCESS_KILL),
+        ),
+        (
             "abort",
             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
         ),
@@ -380,6 +384,21 @@ pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     let code = args.first().map(value_to_i32).unwrap_or(0);
     state.borrow_mut().process.exit_code = Some(code);
     Err(VmError::Thrown(Value::String(format!("process.exit({code})"))))
+}
+
+pub fn kill(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let pid = args.first().and_then(|value| match value {
+        Value::Number(number) if number.is_finite() => Some(*number as i64),
+        _ => None,
+    });
+    if pid != Some(std::process::id() as i64) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("Error".into())),
+            ("message".into(), Value::String("kill ESRCH".into())),
+            ("code".into(), Value::String("ESRCH".into())),
+        ])));
+    }
+    Ok(Value::Boolean(true))
 }
 
 pub fn cwd(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
