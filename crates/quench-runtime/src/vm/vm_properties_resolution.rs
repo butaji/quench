@@ -671,6 +671,9 @@ fn descriptor_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     if let Value::Builtin(builtin) = value {
+        if *builtin == crate::ops::Builtin::ObjectPrototype && key == "__proto__" {
+            return Some(crate::builtins::object::get_prototype_of(Some(receiver)));
+        }
         // NativeError prototypes inherit Error.prototype's stack accessor.
         // Their intrinsic representation is a builtin value rather than an
         // ordinary prototype-linked object, so expose that inherited getter

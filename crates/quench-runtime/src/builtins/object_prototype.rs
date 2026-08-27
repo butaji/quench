@@ -357,9 +357,19 @@ pub(crate) fn lookup_legacy_accessor(
     arguments: &[Value],
     field: &str,
 ) -> Result<Value, crate::execute::VmError> {
-    let target = require_object_receiver(receiver)?;
+    let target = require_object_receiver(receiver)?.clone();
     let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
-    Ok(crate::property_define::accessor(target, &key, field).unwrap_or(Value::Undefined))
+    let mut current = target;
+    loop {
+        let descriptor = crate::proxy::proxy_get_own_property_descriptor(&current, &key)?;
+        if !matches!(descriptor, Value::Undefined) {
+            return crate::execute::get_property_result(&descriptor, field);
+        }
+        current = crate::builtins::object::get_prototype_of(Some(&current))?;
+        if matches!(current, Value::Null) {
+            return Ok(Value::Undefined);
+        }
+    }
 }
 
 fn require_object_receiver(receiver: Option<&Value>) -> Result<&Value, crate::execute::VmError> {
