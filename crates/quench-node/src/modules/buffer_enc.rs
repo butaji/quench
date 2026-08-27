@@ -396,7 +396,7 @@ pub fn invalid_arg_received(value: &Value) -> String {
     match value {
         Value::Null => " Received null".into(),
         Value::Undefined => " Received undefined".into(),
-        Value::Object(_) => invalid_arg_object(value),
+        Value::Object(_) | Value::Proxy(_) => invalid_arg_object(value),
         Value::Function(_) | Value::BoundFunction(_) => {
             let name = quench_runtime::execute::get_property(value, "name");
             match name {
@@ -438,6 +438,6 @@ fn invalid_arg_object(value: &Value) -> String {
         {
             " Received [Object: null prototype] {}".into()
         }
-        _ => " Received [object Object]".into(),
+        _ => " Received an instance of Object".into(),
     }
 }
