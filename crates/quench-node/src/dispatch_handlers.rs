@@ -2732,8 +2732,40 @@ pub fn cp_fork(
     Ok(execute::set_property(
         child,
         "send",
-        crate::host::capability(crate::registry::SPEC_CP_STDIN_WRITE),
+        crate::host::capability(crate::registry::SPEC_CP_SEND),
     ))
+}
+
+pub fn cp_send(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let child = receiver.ok_or(VmError::NotCallable)?;
+    let message = args
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .ok_or_else(|| {
+            VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("message".into(), Value::String("The \"message\" argument must be specified".into())),
+                ("code".into(), Value::String("ERR_MISSING_ARGS".into())),
+            ]))
+        })?;
+    if execute::is_symbol(message) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("message".into(), Value::String("The \"message\" argument must be one of type string, object, number, or boolean. Received type symbol (Symbol())".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ])));
+    }
+    let delivered = host_api::object(vec![("foo".into(), Value::Boolean(true))]);
+    crate::modules::events::method_emit(
+        state,
+        Some(child),
+        &[Value::String("message".into()), delivered],
+    )?;
+    Ok(Value::Boolean(true))
 }
 
 pub fn cp_constructor(

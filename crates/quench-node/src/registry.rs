@@ -237,6 +237,7 @@ pub const SPEC_CP_STDIN_END: NodeSpec = NodeSpec::new("child_process:stdin:end",
 pub const SPEC_CP_ABORT: NodeSpec = NodeSpec::new("child_process:abort", 0x1E0B);
 pub const SPEC_CP_ABORT_EMIT: NodeSpec = NodeSpec::new("child_process:abortEmit", 0x1E0C);
 pub const SPEC_CP_FORK: NodeSpec = NodeSpec::new("child_process:fork", 0x1E0D);
+pub const SPEC_CP_SEND: NodeSpec = NodeSpec::new("child_process:send", 0x1E0E);
 pub const SPEC_CP_CONSTRUCTOR: NodeSpec = NodeSpec::new("child_process:ChildProcess", 0x2205);
 pub const SPEC_CP_INSTANCE_SPAWN: NodeSpec =
     NodeSpec::new("child_process:ChildProcess:spawn", 0x2206);
