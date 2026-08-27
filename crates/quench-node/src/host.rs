@@ -316,24 +316,7 @@ pub fn install_with_argv(
     context = context
         .with_host_value("Blob".to_string(), blob)
         .with_host_value("File".to_string(), file);
-    let console = namespace_object_from_pairs(vec![
-        (
-            "log".to_string(),
-            capability(crate::registry::SPEC_CONSOLE_LOG),
-        ),
-        (
-            "info".to_string(),
-            capability(crate::registry::SPEC_CONSOLE_INFO),
-        ),
-        (
-            "warn".to_string(),
-            capability(crate::registry::SPEC_CONSOLE_WARN),
-        ),
-        (
-            "error".to_string(),
-            capability(crate::registry::SPEC_CONSOLE_ERROR),
-        ),
-    ]);
+    let console = crate::modules::console::build_value();
     context = context.with_host_value("console".to_string(), console);
     (host, context)
 }
