@@ -488,6 +488,7 @@ pub const SPEC_NET_SOCKET_ADDRESS: NodeSpec = NodeSpec::new("net:socket:address"
 pub const SPEC_NET_SOCKET_SET_NO_DELAY: NodeSpec = NodeSpec::new("net:socket:setNoDelay", 0x100E);
 pub const SPEC_NET_SOCKET_SET_KEEP_ALIVE: NodeSpec =
     NodeSpec::new("net:socket:setKeepAlive", 0x100F);
+pub const SPEC_NET_LOOKUP_CALLBACK: NodeSpec = NodeSpec::new("net:lookupCallback", 0x1016);
 pub const SPEC_NET_SOCKET_SET_ENCODING: NodeSpec = NodeSpec::new("net:socket:setEncoding", 0x1010);
 pub const SPEC_NET_SOCKET_PAUSE: NodeSpec = NodeSpec::new("net:socket:pause", 0x1011);
 pub const SPEC_NET_SOCKET_RESUME: NodeSpec = NodeSpec::new("net:socket:resume", 0x1012);
