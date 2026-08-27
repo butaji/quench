@@ -62,6 +62,7 @@ fn execute_builtin_match(
         TypedArrayAt => return Some(typed_array_at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
+        TypedArrayToReversed => return Some(typed_array_to_reversed(receiver)),
         ArraySplice => return Some(splice(receiver, arguments)),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true, false)),
@@ -916,6 +917,109 @@ pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::exec
     }
     Ok(Value::array(values))
 }
+fn typed_array_to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "toReversed")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.toReversed called on out-of-bounds view",
+        ));
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let mut values = Vec::with_capacity(length);
+    for index in (0..length).rev() {
+        values.push(crate::execute::get_property_result(&value, &index.to_string())?);
+    }
+    construct_typed_array_result(&value, values)
+}
+
+fn typed_array_to_sorted(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "toSorted")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.toSorted called on out-of-bounds view",
+        ));
+    }
+    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    if let Some(compare) = compare {
+        if !crate::conversion::is_callable(compare) {
+            return Err(crate::value::error::throw_type_error(
+                "TypedArray.prototype.toSorted comparator is not callable",
+            ));
+        }
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let mut values = Vec::with_capacity(length);
+    for index in 0..length {
+        values.push(crate::execute::get_property_result(&value, &index.to_string())?);
+    }
+    for index in 1..values.len() {
+        let item = values[index].clone();
+        let mut position = index;
+        while position > 0
+            && typed_array_compare_values(&values[position - 1], &item, compare)?
+                == std::cmp::Ordering::Greater
+        {
+            values[position] = values[position - 1].clone();
+            position -= 1;
+        }
+        values[position] = item;
+    }
+    construct_typed_array_result(&value, values)
+}
+
+fn typed_array_compare_values(
+    left: &Value,
+    right: &Value,
+    compare: Option<&Value>,
+) -> Result<std::cmp::Ordering, crate::execute::VmError> {
+    if let Some(compare) = compare {
+        let result = crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
+        return Ok(crate::conversion::to_number(&result)?
+            .partial_cmp(&0.0)
+            .unwrap_or(std::cmp::Ordering::Equal));
+    }
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => match (left.is_nan(), right.is_nan()) {
+            (true, true) => Ok(std::cmp::Ordering::Equal),
+            (true, false) => Ok(std::cmp::Ordering::Greater),
+            (false, true) => Ok(std::cmp::Ordering::Less),
+            (false, false) => Ok(left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)),
+        },
+        (Value::BigInt(left), Value::BigInt(right)) => Ok(left
+            .parse::<num_bigint::BigInt>()
+            .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt representation"))?
+            .cmp(&right.parse::<num_bigint::BigInt>().map_err(|_| {
+                crate::value::error::throw_type_error("Invalid BigInt representation")
+            })?)),
+        _ => Ok(std::cmp::Ordering::Equal),
+    }
+}
+
+fn construct_typed_array_result(
+    exemplar: &Value,
+    values: Vec<Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let constructor = match exemplar {
+        Value::Float64Array(_) => crate::ops::Builtin::Float64Array,
+        Value::Float32Array(_) => crate::ops::Builtin::Float32Array,
+        Value::Int8Array(_) => crate::ops::Builtin::Int8Array,
+        Value::Int16Array(_) => crate::ops::Builtin::Int16Array,
+        Value::Int32Array(_) => crate::ops::Builtin::Int32Array,
+        Value::Uint8Array(_) => crate::ops::Builtin::Uint8Array,
+        Value::Uint16Array(_) => crate::ops::Builtin::Uint16Array,
+        Value::Uint32Array(_) => crate::ops::Builtin::Uint32Array,
+        Value::Uint8ClampedArray(_) => crate::ops::Builtin::Uint8ClampedArray,
+        Value::BigInt64Array(_) => crate::ops::Builtin::BigInt64Array,
+        Value::BigUint64Array(_) => crate::ops::Builtin::BigUint64Array,
+        _ => return Err(crate::value::error::throw_type_error("Not a TypedArray")),
+    };
+    let source = Value::Array(std::rc::Rc::new(crate::value::ArrayData::new(values)));
+    crate::construct::construct_value(&Value::Builtin(constructor), &[source])
+}
+
 pub(crate) fn reduce_values(
     receiver: Option<&Value>,
     arguments: &[Value],

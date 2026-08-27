@@ -405,8 +405,8 @@ fn typed_array_generic_method(key: &str) -> Option<Builtin> {
         "reverse" => TypedArrayReverse,
         "some" => ArraySome,
         "sort" => ArraySort,
-        "toReversed" => ArrayToReversed,
-        "toSorted" => ArrayToSorted,
+        "toReversed" => TypedArrayToReversed,
+        "toSorted" => TypedArrayToSorted,
         "with" => ArrayWith,
         _ => return None,
     })
