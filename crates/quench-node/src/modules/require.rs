@@ -394,6 +394,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     "kWeakHandler".to_string(),
                     Value::String("kWeakHandler\0quench".to_string()),
                 ),
+                (
+                    "kEvents".to_string(),
+                    Value::String("Symbol.for.quench.event_target.events\0".to_string()),
+                ),
             ]))
         }
         "path" => Some(crate::modules::path::build()),
