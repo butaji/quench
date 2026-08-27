@@ -103,6 +103,21 @@ fn typed_array_entries(receiver: Option<&Value>) -> Result<Value, crate::execute
     Ok(crate::collections::iterator::make_typed_entries(value.clone()))
 }
 
+fn typed_array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.map(unwrap_binding_cells);
+    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.keys called on incompatible receiver",
+        ));
+    };
+    if typed_array_is_detached(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on detached TypedArray",
+        ));
+    }
+    Ok(crate::collections::iterator::make_typed_keys(value.clone()))
+}
+
 fn array_iterator_values(receiver: Option<&Value>) -> Result<Vec<Value>, crate::execute::VmError> {
     if let Some(Value::Array(values)) = receiver {
         return Ok(values.snapshot());
