@@ -1803,16 +1803,21 @@
   Writable.destroy = destroy;
   // Keep the public stream module's Duplex family connected to the canonical
   // NodeDuplex adapters installed by the bootstrap layer.
-  Duplex.from = (source, options = {}) => {
+  const DuplexCompat = function (options = {}) {
+    return Reflect.construct(Duplex, [options], new.target || DuplexCompat);
+  };
+  DuplexCompat.prototype = Duplex.prototype;
+  Object.setPrototypeOf(DuplexCompat, Duplex);
+  DuplexCompat.from = (source, options = {}) => {
     const pair = source && source.readable && source.readable.getReader
       ? source
       : source && source.getReader
         ? { readable: source }
         : null;
-    if (pair) return Duplex.fromWeb(pair, options);
+    if (pair) return DuplexCompat.fromWeb(pair, options);
     return Readable.from(source, options);
   };
-  Duplex.fromWeb = (pair, options) =>
+  DuplexCompat.fromWeb = (pair, options) =>
     (() => {
       const readable = pair?.readable;
       const reader = readable?.getReader?.();
@@ -1843,7 +1848,7 @@
   return {
     Readable,
     Writable,
-    Duplex,
+    Duplex: DuplexCompat,
     Transform,
     PassThrough,
     Stream: Readable,
