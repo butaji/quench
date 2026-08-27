@@ -346,7 +346,8 @@ pub(crate) fn proxy_construct(
 fn is_constructible(value: &Value) -> bool {
     match value {
         Value::Function(function) => {
-            !function.is_async && matches!(function.kind, FunctionKind::Ordinary)
+            !function.is_async
+                && matches!(function.kind, FunctionKind::Ordinary | FunctionKind::ClassConstructor)
         }
         Value::BoundFunction(bound) => is_constructible(&bound.target),
         // A proxy is constructible exactly when its target is constructible.
