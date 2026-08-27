@@ -91,24 +91,18 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ("env", env_object()),
         (
             "config",
-            crate::host::readonly_namespace_from_pairs(vec![
-                (
-                    "variables".to_string(),
-                    crate::host::readonly_namespace_from_pairs(vec![
-                        (
-                            "v8_enable_i18n_support".to_string(),
-                            Value::Number(1.0),
-                        ),
-                    ]),
-                ),
-            ]),
+            crate::host::readonly_namespace_from_pairs(vec![(
+                "variables".to_string(),
+                crate::host::readonly_namespace_from_pairs(vec![(
+                    "v8_enable_i18n_support".to_string(),
+                    Value::Number(1.0),
+                )]),
+            )]),
         ),
         ("execPath", Value::String(exec_path.to_string())),
         (
             "argv0",
-            Value::String(
-                std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| exec_path.to_string()),
-            ),
+            Value::String(std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| exec_path.to_string())),
         ),
         (
             "release",
@@ -177,7 +171,10 @@ fn std_stream(is_error: bool) -> Value {
         ("isTTY".to_string(), Value::Boolean(false)),
         ("isRawTTY".to_string(), Value::Boolean(false)),
         ("writable".to_string(), Value::Boolean(true)),
-        ("fd".to_string(), Value::Number(if is_error { 2.0 } else { 1.0 })),
+        (
+            "fd".to_string(),
+            Value::Number(if is_error { 2.0 } else { 1.0 }),
+        ),
         ("writeTimes".to_string(), Value::Number(0.0)),
         (
             "write".to_string(),
@@ -385,7 +382,9 @@ pub fn versions_props() -> Vec<(String, Value)> {
 pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let code = args.first().map(value_to_i32).unwrap_or(0);
     state.borrow_mut().process.exit_code = Some(code);
-    Err(VmError::Thrown(Value::String(format!("process.exit({code})"))))
+    Err(VmError::Thrown(Value::String(format!(
+        "process.exit({code})"
+    ))))
 }
 
 pub fn kill(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -425,12 +424,22 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
             ("code".into(), Value::String("ENOENT".into())),
             (
                 "message".into(),
-                Value::String(format!("ENOENT: no such file or directory, chdir {} -> '{}'", state.borrow().process.cwd.display(), path)),
+                Value::String(format!(
+                    "ENOENT: no such file or directory, chdir {} -> '{}'",
+                    state.borrow().process.cwd.display(),
+                    path
+                )),
             ),
-            ("path".into(), Value::String(state.borrow().process.cwd.to_string_lossy().into_owned())),
+            (
+                "path".into(),
+                Value::String(state.borrow().process.cwd.to_string_lossy().into_owned()),
+            ),
             ("syscall".into(), Value::String("chdir".into())),
             ("dest".into(), Value::String(path.clone())),
-            ("errno".into(), Value::Number(error.raw_os_error().unwrap_or(2) as f64)),
+            (
+                "errno".into(),
+                Value::Number(error.raw_os_error().unwrap_or(2) as f64),
+            ),
         ]))),
     }
 }

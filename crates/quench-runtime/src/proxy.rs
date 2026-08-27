@@ -7,12 +7,10 @@ use std::rc::Rc;
 use std::slice;
 include!("proxy_set.rs");
 pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = crate::locals::resolved_replacement(
-        arguments.first().ok_or(VmError::NotCallable)?.clone(),
-    );
-    let handler = crate::locals::resolved_replacement(
-        arguments.get(1).ok_or(VmError::NotCallable)?.clone(),
-    );
+    let target =
+        crate::locals::resolved_replacement(arguments.first().ok_or(VmError::NotCallable)?.clone());
+    let handler =
+        crate::locals::resolved_replacement(arguments.get(1).ok_or(VmError::NotCallable)?.clone());
     validate_proxy_arguments(&target, &handler)?;
     let revoked = Rc::new(std::cell::RefCell::new(false));
     Ok(Value::Proxy(Rc::new(ProxyValue {
@@ -23,12 +21,10 @@ pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
     })))
 }
 pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = crate::locals::resolved_replacement(
-        arguments.first().ok_or(VmError::NotCallable)?.clone(),
-    );
-    let handler = crate::locals::resolved_replacement(
-        arguments.get(1).ok_or(VmError::NotCallable)?.clone(),
-    );
+    let target =
+        crate::locals::resolved_replacement(arguments.first().ok_or(VmError::NotCallable)?.clone());
+    let handler =
+        crate::locals::resolved_replacement(arguments.get(1).ok_or(VmError::NotCallable)?.clone());
     validate_proxy_arguments(&target, &handler)?;
     let revoked = Rc::new(std::cell::RefCell::new(false));
     let proxy = Value::Proxy(Rc::new(ProxyValue {
@@ -331,11 +327,8 @@ pub(crate) fn proxy_construct(
         // A proxy without a construct trap forwards [[Construct]] to its
         // target; recursing with the proxy itself would never reach the
         // target's constructor (and can overflow the host stack).
-        let result = crate::construct::construct_value_with_new_target(
-            &proxy.target,
-            new_target,
-            arguments,
-        );
+        let result =
+            crate::construct::construct_value_with_new_target(&proxy.target, new_target, arguments);
         if is_revoked(proxy) {
             return Err(crate::vm::not_callable());
         }
@@ -348,7 +341,10 @@ fn is_constructible(value: &Value) -> bool {
     match value {
         Value::Function(function) => {
             !function.is_async
-                && matches!(function.kind, FunctionKind::Ordinary | FunctionKind::ClassConstructor)
+                && matches!(
+                    function.kind,
+                    FunctionKind::Ordinary | FunctionKind::ClassConstructor
+                )
         }
         Value::BoundFunction(bound) => is_constructible(&bound.target),
         // A proxy is constructible exactly when its target is constructible.
@@ -462,7 +458,9 @@ pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
     }
     require_reflect_object(target)?;
     let target = crate::locals::resolved_replacement(target.clone());
-    Ok(Value::Boolean(crate::properties::object_is_extensible(&target)))
+    Ok(Value::Boolean(crate::properties::object_is_extensible(
+        &target,
+    )))
 }
 
 pub(crate) fn proxy_prevent_extensions(target: &Value) -> Result<Value, VmError> {
