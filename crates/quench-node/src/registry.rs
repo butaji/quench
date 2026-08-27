@@ -804,21 +804,7 @@ pub fn namespace_bindings(
     out.push(("gc".to_string(), crate::host::capability(crate::registry::SPEC_GC)));
     out.push((
         "console".to_string(),
-        crate::host::namespace_object_from_pairs(vec![
-            ("log".to_string(), crate::host::capability(SPEC_CONSOLE_LOG)),
-            (
-                "info".to_string(),
-                crate::host::capability(SPEC_CONSOLE_INFO),
-            ),
-            (
-                "warn".to_string(),
-                crate::host::capability(SPEC_CONSOLE_WARN),
-            ),
-            (
-                "error".to_string(),
-                crate::host::capability(SPEC_CONSOLE_ERROR),
-            ),
-        ]),
+        crate::modules::console::build_value(),
     ));
     out.push((
         "EventTarget".to_string(),
