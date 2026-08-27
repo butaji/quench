@@ -353,10 +353,17 @@ fn object_keys<P: crate::value::PropertyEntries + ?Sized>(
 ) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.entries().find(|(key, _)| *key == "_value")
     else {
-        let keys = ordered(properties, symbols)
+        let mut keys = ordered(properties, symbols)
             .into_iter()
             .filter(|key| key != "_value" && key != "timeValue")
             .collect();
+        if !symbols
+            && properties
+                .entries()
+                .any(|(name, _)| name == crate::vm::SCRIPT_GLOBAL_VIEW)
+        {
+            append_global_keys(&mut keys);
+        }
         return filter_namespace_symbol_name(properties, symbols, keys);
     };
 
@@ -370,6 +377,18 @@ fn object_keys<P: crate::value::PropertyEntries + ?Sized>(
         return filter_namespace_symbol_name(properties, symbols, keys);
     }
     boxed_string_keys(properties, &value, symbols)
+}
+
+fn append_global_keys(keys: &mut Vec<String>) {
+    for key in crate::globals::script_property_names()
+        .iter()
+        .copied()
+        .chain(["NaN", "Infinity", "undefined"])
+    {
+        if !keys.iter().any(|current| current == key) {
+            keys.push(key.to_string());
+        }
+    }
 }
 
 fn filter_namespace_symbol_name<P: crate::value::PropertyEntries + ?Sized>(
