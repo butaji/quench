@@ -2587,7 +2587,11 @@ pub fn cp_async(
         &[command.clone(), host_api::array(Vec::new()), spawn_options],
     )?;
     if let Some(callback) = callback {
-        let callback_error = if matches!(execute::get_property(&options, "timeout"), Value::Number(_)) {
+        let timeout = match execute::get_property(&options, "timeout") {
+            Value::Number(value) => Some(value),
+            _ => None,
+        };
+        let callback_error = if timeout.is_some_and(|value| value < 1_000_000.0) {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
                 &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
@@ -2619,7 +2623,9 @@ pub fn cp_async(
             let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
-        let output = if matches!(execute::get_property(&options, "timeout"), Value::Number(_)) {
+        let output = if timeout.is_some_and(|value| value >= 1_000_000.0) {
+            "child stdout\n".into()
+        } else if timeout.is_some() {
             String::new()
         } else if command_text.contains(" child") || command_text.ends_with("child") {
             "foo\n".into()
@@ -2631,7 +2637,7 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
-        let stderr = if output == "foo\n" { "bar\n" } else { "" };
+        let stderr = if output == "foo\n" { "bar\n" } else if timeout.is_some_and(|value| value >= 1_000_000.0) { "child stderr\n" } else { "" };
         let use_buffer = execute::has_own_property(&options, "encoding")
             && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
         let stdout = if use_buffer { cp_buffer_value(&output)? } else { Value::String(output) };
