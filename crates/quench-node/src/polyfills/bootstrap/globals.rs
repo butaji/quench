@@ -217,7 +217,15 @@ const __nodeProcessKill = (pid, signal) => {
   }
   const cluster = globalThis.__nodeCluster;
   if (__nodeClusterKill(cluster, pid, signal)) return true;
-  return globalThis.__quench_kill?.(pid, String(signal || "SIGTERM")) ?? true;
+  const kill = globalThis.__quench_kill;
+  if (typeof kill === "function") return kill(pid, String(signal || "SIGTERM"));
+  const alive = globalThis.__quench_node_pids || new Set();
+  if (!alive.has(pid)) {
+    const error = new Error("kill ESRCH");
+    error.code = "ESRCH";
+    throw error;
+  }
+  return true;
 };
 const __quenchOriginalCwdGet = globalThis.__quench_cwd_get;
 const __quenchDisplayCwd = () => __quenchOriginalCwdGet();
