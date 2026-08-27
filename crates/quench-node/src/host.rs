@@ -289,6 +289,15 @@ pub fn install_with_argv(
     };
     let bindings = crate::registry::namespace_bindings(&argv, &exec_path);
     let mut context = VmContext::default().with_host(host.clone());
+    // Bootstrap globals derive the public process surface from these
+    // canonical argv facts. Keep them identical to the host state so
+    // script arguments survive the shared bootstrap path.
+    context = context
+        .with_host_value(
+            "__quench_argv".to_string(),
+            host_api::array(argv.iter().cloned().map(Value::String).collect()),
+        )
+        .with_host_value("__quench_exec_path".to_string(), Value::String(exec_path.clone()));
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
     }
