@@ -2056,17 +2056,12 @@ fn inspect_object(value: &Value, depth: usize) -> String {
             let property_value = quench_runtime::execute::get_property(value, key);
             let rendered = if matches!(key.as_str(), "actual" | "expected") {
                 match property_value {
-                    Value::String(text) if text.len() > 488 => {
-                        format!("'{}...'", &text[..488])
+                    Value::String(text) if text.len() > 9_488 => {
+                        format!("'{}...'", &text[..9_488])
                     }
                     Value::String(text) if text.contains('\n') => {
-                        let mut lines = text
-                            .split('\n')
-                            .take(10)
-                            .map(|line| format!("'{line}\\n' +"))
-                            .collect::<Vec<_>>();
-                        lines.push("'...'".into());
-                        format!("{}", lines.join("\n    "))
+                        let prefix = text.split_inclusive('\n').take(10).collect::<String>();
+                        format!("'{}...'", prefix.replace('\n', "\\n"))
                     }
                     _ if property_value.object_identity() == value.object_identity() => {
                         "[Circular]".into()
