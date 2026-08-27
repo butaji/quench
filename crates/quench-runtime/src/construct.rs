@@ -146,6 +146,17 @@ fn construct_builtin_target(
         return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
     }
     let needs_new_target = !crate::builtins::same_value(Some(target), Some(new_target));
+    if builtin == crate::ops::Builtin::Object && needs_new_target {
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        let prototype = if crate::value::is_object(&prototype) {
+            prototype
+        } else {
+            crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype)
+        };
+        return Ok(crate::value::Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![("\0prototype".into(), prototype)]),
+        )));
+    }
     if builtin == crate::ops::Builtin::Iterator && !needs_new_target {
         return Err(crate::value::error::throw_type_error(
             "Iterator is not constructable",
