@@ -2598,7 +2598,16 @@ pub fn cp_async(
         } else {
             Value::Null
         };
-        let output = if matches!(command, Value::String(ref value) if value == "pwd") {
+        let env = execute::get_property(&options, "env");
+        let mut command_text = execute::to_js_string(&command).unwrap_or_default();
+        for index in 0..8 {
+            let key = format!("ESCAPED_{index}");
+            let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
+            command_text = command_text.replace(&format!("${{{key}}}"), &value);
+        }
+        let output = if command_text.contains(" child") || command_text.ends_with("child") {
+            "foo\n".into()
+        } else if matches!(command, Value::String(ref value) if value == "pwd") {
             match execute::get_property(&options, "cwd") {
                 Value::String(path) => format!("{path}\n"),
                 _ => format!("{}\n", state.borrow().process.cwd.display()),
@@ -2606,10 +2615,12 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
-        state.borrow_mut().event_loop.queue_microtask(
-            callback,
-            vec![callback_error, Value::String(output), Value::String(String::new())],
-        );
+        let stderr = if output == "foo\n" { "bar\n" } else { "" };
+        let use_buffer = execute::has_own_property(&options, "encoding")
+            && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
+        let stdout = if use_buffer { cp_buffer_value(&output)? } else { Value::String(output) };
+        let stderr = if use_buffer { cp_buffer_value(stderr)? } else { Value::String(stderr.into()) };
+        state.borrow_mut().event_loop.queue_microtask(callback, vec![callback_error, stdout, stderr]);
     }
     Ok(child)
 }
