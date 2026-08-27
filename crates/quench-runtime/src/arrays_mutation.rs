@@ -11,6 +11,7 @@ fn array_mutation_builtin(
         ArrayPush => Some(crate::builtins::array_push(receiver, arguments)),
         ArrayShift => Some(crate::builtins::array_shift(receiver)),
         ArrayReverse => Some(crate::builtins::array_reverse(receiver)),
+        TypedArrayReverse => Some(typed_array_reverse(receiver)),
         ArrayPop => Some(crate::builtins::array_pop(receiver)),
         ArrayUnshift => Some(crate::builtins::array_unshift(receiver, arguments)),
         ArrayFill => Some(crate::builtins::array_fill(receiver, arguments)),
