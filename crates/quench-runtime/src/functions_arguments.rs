@@ -482,23 +482,9 @@ fn execute_function_call_in_realm(
             key == "\0receiver_bound_method" && *value == crate::value::Value::Boolean(true)
         });
         if receiver_bound {
-            let target_receiver = if matches!(
-                (&bound.target, &bound.receiver),
-                (
-                    crate::value::Value::Builtin(crate::ops::Builtin::FunctionCall),
-                    crate::value::Value::Builtin(
-                        crate::ops::Builtin::ObjectGetPrototypeOf
-                            | crate::ops::Builtin::ObjectSetPrototypeOf
-                    ),
-                )
-            ) {
-                &bound.receiver
-            } else {
-                &this
-            };
             return execute_target(
                 &bound.target,
-                target_receiver,
+                &bound.receiver,
                 arguments.get(1..).unwrap_or_default(),
             );
         }
