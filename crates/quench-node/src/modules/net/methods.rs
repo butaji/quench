@@ -245,13 +245,25 @@ fn connect_with_receiver(
             }
         }
     }
-    let addr = resolve(
-        lookup_address
-            .as_deref()
-            .or(host.as_deref())
-            .unwrap_or(LOCAL_HOST),
-        port,
-    );
+    let target_host = lookup_address
+        .as_deref()
+        .or(host.as_deref())
+        .unwrap_or(LOCAL_HOST);
+    let Some(addr) = super::resolve_connect(target_host, port) else {
+        let (object, _) = new_net_object(state, socket_props())?;
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(format!("getaddrinfo ENOTFOUND {target_host}"))],
+        );
+        let error = execute::set_property(error, "code", Value::String("ENOTFOUND".into()));
+        state.borrow_mut().net.pending_events.push((
+            object.clone(),
+            "lookup".into(),
+            vec![error.clone(), Value::Undefined, Value::Undefined],
+        ));
+        state.borrow_mut().net.pending_errors.push((object.clone(), error));
+        return Ok(object);
+    };
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
         Ok(stream) => stream,
         Err(_) => return connect_refused(state, &addr),

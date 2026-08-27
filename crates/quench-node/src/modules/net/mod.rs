@@ -79,6 +79,7 @@ pub struct NetState {
     pub sockets: HashMap<u64, Rc<RefCell<NetSocket>>>,
     pub pending_errors: Vec<(Value, Value)>,
     pub lookup_result: Option<Value>,
+    pub pending_events: Vec<(Value, String, Vec<Value>)>,
 }
 
 impl Default for NetState {
@@ -95,6 +96,7 @@ impl NetState {
             sockets: HashMap::new(),
             pending_errors: Vec::new(),
             lookup_result: None,
+            pending_events: Vec::new(),
         }
     }
 }
@@ -359,6 +361,14 @@ fn resolve(host: &str, port: u16) -> SocketAddr {
         .ok()
         .and_then(|mut it| it.next())
         .unwrap_or(SocketAddr::new(LOCAL_HOST.parse().expect("loopback"), port))
+}
+
+pub(crate) fn resolve_connect(host: &str, port: u16) -> Option<SocketAddr> {
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return Some(SocketAddr::new(ip, port));
+    }
+    use std::net::ToSocketAddrs;
+    (host, port).to_socket_addrs().ok()?.next()
 }
 
 /// Best-effort flush of buffered writes back to the peer. Returns
