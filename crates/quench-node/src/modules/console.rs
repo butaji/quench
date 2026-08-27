@@ -78,8 +78,8 @@ const CONSOLE_CLASS: &str = r#"(class Console {
   }
   info(...args) { this.log(...args); }
   dir(...args) { this.log(...args); }
-  time(label = "default") { this._times ||= {}; this._times[label] = Date.now(); }
-  timeEnd(label = "default") { delete this._times?.[label]; }
+  time(label = "default") { this._times ||= new Map(); if (!this._times.has(label)) this._times.set(label, Date.now()); }
+  timeEnd(label = "default") { this._times?.delete(label); }
   timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
     const output = this._stderr;
@@ -89,8 +89,8 @@ const CONSOLE_CLASS: &str = r#"(class Console {
   trace(...args) { this.error(...args); }
   assert(condition, ...args) { if (!condition) this.error(...args); }
   clear() {}
-  count(label = "default") { this._counts ||= {}; this._counts[label] = (this._counts[label] || 0) + 1; }
-  countReset(label = "default") { if (this._counts) delete this._counts[label]; }
+  count(label = "default") { this._counts ||= new Map(); this._counts.set(label, (this._counts.get(label) || 0) + 1); }
+  countReset(label = "default") { this._counts?.delete(label); }
   group() {}
   groupEnd() {}
   table(...args) { this.log(...args); }
