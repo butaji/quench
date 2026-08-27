@@ -1224,6 +1224,22 @@ pub fn internal_binding(
             Value::Number(-3001.0),
         )]));
     }
+    if name == "tty_wrap" {
+        let mut tty = host_api::object(Vec::new());
+        for key in ["bytesRead", "fd", "_externalStream"] {
+            tty = execute::define_property(
+                tty,
+                key,
+                host_api::object(vec![
+                    ("value".into(), Value::Undefined),
+                    ("writable".into(), Value::Boolean(true)),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]),
+            )?;
+        }
+        return Ok(host_api::object(vec![("TTY".into(), tty)]));
+    }
     if name == "util" {
         return Ok(crate::host::namespace_object_from_pairs(vec![
             (
