@@ -14,6 +14,13 @@ pub fn call(
     crate::functions::execute_target(function, receiver, arguments)
 }
 
+pub fn construct_value(
+    constructor: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, VmError> {
+    crate::construct::construct_value(constructor, arguments)
+}
+
 pub fn set_property(
     target: crate::value::Value,
     key: &str,
@@ -40,7 +47,10 @@ pub fn set_property_in_place(
             return true;
         }
         crate::value::Value::Function(function) => {
-            function.properties.borrow_mut().push((key.to_string(), value));
+            function
+                .properties
+                .borrow_mut()
+                .push((key.to_string(), value));
             return true;
         }
         _ => return false,
@@ -50,6 +60,22 @@ pub fn set_property_in_place(
     unsafe {
         (&mut *(Rc::as_ptr(&object) as *mut crate::value::ObjectData))
             .set_property_in_place(key, value);
+    }
+    true
+}
+
+/// Mutate an array element while preserving the array identity held by host
+/// wrappers. This is the array counterpart of `set_property_in_place`.
+pub fn set_array_element_in_place(
+    target: &crate::value::Value,
+    index: usize,
+    value: crate::value::Value,
+) -> bool {
+    let crate::value::Value::Array(array) = target else {
+        return false;
+    };
+    unsafe {
+        (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData)).set_index(index, value);
     }
     true
 }
