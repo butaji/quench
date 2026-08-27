@@ -538,7 +538,7 @@ fn tail_object_dispatch(
     let result = match builtin {
         Builtin::ObjectIs => Ok(Value::Boolean(crate::builtins::same_value(
             arguments.first(),
-            arguments.get(1),
+            Some(arguments.get(1).unwrap_or(&Value::Undefined)),
         ))),
         Builtin::ObjectIsExtensible => crate::properties::is_extensible_value(arguments.first()),
         Builtin::ObjectIsFrozen => crate::properties::integrity_level(arguments.first(), true),
