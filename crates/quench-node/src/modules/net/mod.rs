@@ -78,6 +78,8 @@ pub struct NetState {
     pub servers: HashMap<u64, Rc<RefCell<NetServer>>>,
     pub sockets: HashMap<u64, Rc<RefCell<NetSocket>>>,
     pub pending_errors: Vec<(Value, Value)>,
+    pub lookup_result: Option<Value>,
+    pub pending_events: Vec<(Value, String, Vec<Value>)>,
 }
 
 impl Default for NetState {
@@ -93,6 +95,8 @@ impl NetState {
             servers: HashMap::new(),
             sockets: HashMap::new(),
             pending_errors: Vec::new(),
+            lookup_result: None,
+            pending_events: Vec::new(),
         }
     }
 }
@@ -359,6 +363,14 @@ fn resolve(host: &str, port: u16) -> SocketAddr {
         .unwrap_or(SocketAddr::new(LOCAL_HOST.parse().expect("loopback"), port))
 }
 
+pub(crate) fn resolve_connect(host: &str, port: u16) -> Option<SocketAddr> {
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return Some(SocketAddr::new(ip, port));
+    }
+    use std::net::ToSocketAddrs;
+    (host, port).to_socket_addrs().ok()?.next()
+}
+
 /// Best-effort flush of buffered writes back to the peer. Returns
 /// whether the buffer drained fully.
 fn try_flush(guard: &mut std::cell::RefMut<'_, NetSocket>) -> bool {
@@ -490,6 +502,23 @@ fn parse_ipv6(value: &str) -> Option<std::net::Ipv6Addr> {
 }
 
 pub fn build() -> Value {
+    let socket_prototype = host_api::object(Vec::new());
+    let global = quench_runtime::vm::current_global_object();
+    execute::set_property_in_place(
+        &global,
+        "\0quench:net:socket-prototype",
+        socket_prototype.clone(),
+    );
+    let socket_ctor = execute::set_property(
+        crate::host::capability(crate::registry::SPEC_NET_SOCKET),
+        "prototype",
+        socket_prototype,
+    );
+    let server_ctor = execute::set_property(
+        crate::host::capability(crate::registry::SPEC_NET_SERVER),
+        "prototype",
+        host_api::object(Vec::new()),
+    );
     crate::host::namespace_object(vec![
         (
             "connect",
@@ -503,18 +532,9 @@ pub fn build() -> Value {
             "createServer",
             crate::host::capability(crate::registry::SPEC_NET_SERVER),
         ),
-        (
-            "Socket",
-            crate::host::capability(crate::registry::SPEC_NET_SOCKET),
-        ),
-        (
-            "Stream",
-            crate::host::capability(crate::registry::SPEC_NET_SOCKET),
-        ),
-        (
-            "Server",
-            crate::host::capability(crate::registry::SPEC_NET_SERVER),
-        ),
+        ("Socket", socket_ctor.clone()),
+        ("Stream", socket_ctor),
+        ("Server", server_ctor),
         (
             "BlockList",
             crate::host::capability(crate::registry::NodeSpec::new("net:BlockList", 2292)),
