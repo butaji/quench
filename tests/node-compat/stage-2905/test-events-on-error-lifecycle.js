@@ -1,5 +1,6 @@
 const assert = require("assert");
 const { EventEmitter, on } = require("events");
+const { kEvents } = require("internal/event_target");
 
 (async () => {
   const emitter = new EventEmitter();
@@ -28,4 +29,10 @@ const { EventEmitter, on } = require("events");
   const thrown = new Error("thrown");
   await assert.rejects(thrownIterator.throw(thrown), (reason) => reason === thrown);
   assert.strictEqual(thrownEmitter.listenerCount("value"), 0);
+
+  const signal = new AbortController().signal;
+  const signalIterator = on(new EventEmitter(), "value", { signal });
+  assert.strictEqual(signal[kEvents].get("abort").size, 1);
+  signalIterator.return();
+  assert.strictEqual(signal[kEvents].get("abort").size, 0);
 })();
