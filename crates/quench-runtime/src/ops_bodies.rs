@@ -57,17 +57,67 @@ impl Op {
             | Self::IteratorBinding { body, .. }
             | Self::ForIn { body, .. }
             | Self::ForOf { body, .. } => body.rehome(arena, store),
-            Self::Branch { then_ops, else_ops, .. }
-            | Self::Conditional { consequent: then_ops, alternate: else_ops, .. } => {
+            Self::Branch { then_ops, else_ops, .. } => {
                 then_ops.rehome(arena, store);
                 else_ops.rehome(arena, store);
+            }
+            // Ternary arms stay as source ops so append_slice can flatten
+            // them into JumpIfFalse/Jump, but nested MakeFunction/Loop
+            // bodies still need a store range.
+            Self::Conditional {
+                consequent,
+                alternate,
+                ..
+            } => {
+                consequent.rehome_contents(arena, store);
+                alternate.rehome_contents(arena, store);
             }
             Self::Try { body, handler, finalizer, .. } => {
                 body.rehome(arena, store);
                 rehome_optional(handler, arena, store);
                 rehome_optional(finalizer, arena, store);
             }
-            Self::Loop { init, test, body, update, .. } => rehome_loop(init, test, body, update, arena, store),
+            Self::Loop {
+                init,
+                test,
+                body,
+                update,
+                label,
+                per_iteration,
+                ..
+            } => {
+                let flatten = label.is_none()
+                    && per_iteration.is_empty()
+                    && loop_parts_contain_call(init, test, body, update)
+                    && !test
+                        .source_ops()
+                        .is_some_and(crate::machine::ops_contain_short_circuit)
+                    && !test
+                        .source_ops()
+                        .is_some_and(crate::machine::test_always_true)
+                    && !(init.source_ops().is_some_and(|ops| ops.is_empty())
+                        && update.source_ops().is_some_and(|ops| ops.is_empty()))
+                    && !init
+                        .source_ops()
+                        .is_some_and(crate::machine::ops_use_arguments)
+                    && !test
+                        .source_ops()
+                        .is_some_and(crate::machine::ops_use_arguments)
+                    && !body
+                        .source_ops()
+                        .is_some_and(crate::machine::ops_use_arguments)
+                    && !update
+                        .source_ops()
+                        .is_some_and(crate::machine::ops_use_arguments);
+                if flatten {
+                    init.rehome_contents(arena, store);
+                    test.rehome_contents(arena, store);
+                    body.rehome_contents(arena, store);
+                    update.rehome_contents(arena, store);
+                } else {
+                    rehome_loop(init, test, body, update, arena, store);
+                }
+            }
             Self::Switch { cases, .. } => rehome_cases(cases, arena, store),
             _ => {}
         }
@@ -113,6 +163,17 @@ impl Op {
             _ => {}
         }
     }
+}
+
+fn loop_parts_contain_call(
+    init: &crate::machine::FunctionCode,
+    test: &crate::machine::FunctionCode,
+    body: &crate::machine::FunctionCode,
+    update: &crate::machine::FunctionCode,
+) -> bool {
+    [init, test, body, update]
+        .into_iter()
+        .any(|part| part.source_ops().is_some_and(crate::machine::ops_contain_call))
 }
 
 fn rehome_loop(

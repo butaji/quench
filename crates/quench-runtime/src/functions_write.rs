@@ -34,13 +34,18 @@ pub(crate) fn write_op(registers: &mut crate::register_file::RegisterFile, op: &
             source,
         } => {
             write_non_ordinary(
-            registers,
-            (*dst, body, *params, *captures),
-            (*kind, *length, *strictness, *is_async, *mapped_arguments),
+                registers,
+                (*dst, body, *params, *captures),
+                (*kind, *length, *strictness, *is_async, *mapped_arguments),
             );
             if let Some(source) = source {
-                if let Ok(crate::value::Value::Function(function)) = crate::execute::read_register(registers, *dst) {
-                    function.properties.borrow_mut().push(("\0dynamic_source".into(), crate::value::Value::String(source.clone())));
+                if let Ok(crate::value::Value::Function(function)) =
+                    crate::execute::read_register(registers, *dst)
+                {
+                    function.properties.borrow_mut().push((
+                        "\0dynamic_source".into(),
+                        crate::value::Value::String(source.clone()),
+                    ));
                 }
             }
         }
@@ -66,9 +71,11 @@ fn write_non_ordinary(
         FunctionMetadata {
             kind,
             length,
-            raytrace_pixel: false,
-            raytrace_render: None,
             direct_constructor: function.1.facts().direct_constructor.clone(),
+            forward_construct_call: function.1.facts().forward_construct_call.clone(),
+            forward_then_call: function.1.facts().forward_then_call.clone(),
+            counted_method_loop: function.1.facts().counted_method_loop.clone(),
+            direct_method: function.1.facts().direct_method.clone(),
             strictness,
             is_async,
             mapped_arguments,
@@ -105,9 +112,11 @@ fn write_ordinary(
             is_async,
             mapped_arguments,
             length,
-            raytrace_pixel: false,
-            raytrace_render: None,
             direct_constructor: body.facts().direct_constructor.clone(),
+            forward_construct_call: body.facts().forward_construct_call.clone(),
+            forward_then_call: body.facts().forward_then_call.clone(),
+            counted_method_loop: body.facts().counted_method_loop.clone(),
+            direct_method: body.facts().direct_method.clone(),
         },
     );
 }

@@ -1,3 +1,5 @@
+const GLOBAL_STATIC_SLOT: u32 = u32::MAX - 1;
+
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
     // A materialized global binding can transiently leave the receiver nullish
@@ -49,6 +51,59 @@ pub(crate) fn get_named_property_result(
         }
     }
     Ok(result)
+}
+
+pub(crate) fn get_global_named_property_result(
+    value: &Value,
+    key: &str,
+    cache: &std::cell::Cell<u64>,
+) -> Result<Value, VmError> {
+    let Value::Object(object) = value else {
+        return get_property_result(value, key);
+    };
+    if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
+        if !object.has_replacement()
+            && object.semantic_layout_id() == layout
+            && slot == GLOBAL_STATIC_SLOT
+        {
+            crate::execution_trace::event(crate::execution_trace::Event::NamedPropertyHit);
+            return Ok(crate::vm::global_object_static_property(object, key));
+        }
+    }
+    if let Some(value) = get_named_cached_object(object, cache) {
+        return Ok(global_placeholder_value(property_value(&value), key));
+    }
+    let result = get_property_result(value, key)?;
+    if let Some(slot) = cacheable_own_slot_with_placeholder(value, key) {
+        cache.set(crate::machine::pack_named_cache(
+            object.semantic_layout_id(),
+            slot,
+        ));
+    } else if cacheable_global_static(object, key) {
+        cache.set(crate::machine::pack_named_cache(
+            object.semantic_layout_id(),
+            GLOBAL_STATIC_SLOT,
+        ));
+    }
+    Ok(result)
+}
+
+fn cacheable_global_static(object: &crate::value::ObjectData, key: &str) -> bool {
+    crate::globals::builtin(key).is_some()
+        && object.physical_slot_for_name(key).is_none()
+        && object
+            .physical_slot_for_name(&crate::builtins::deleted_key(key))
+            .is_none()
+        && object
+            .physical_slot_for_name(&crate::builtins::descriptor_key(key))
+            .is_none()
+}
+
+fn global_placeholder_value(value: Value, key: &str) -> Value {
+    if matches!(value, Value::Null) {
+        return crate::vm::global_builtin_value(key).unwrap_or(value);
+    }
+    value
 }
 
 /// Resolve an already-proven object word without constructing an owning
@@ -206,7 +261,9 @@ fn prototype_cache_hit(
         // SAFETY: the validated chain above keeps this owner reachable from
         // `receiver` until the returned word has been copied by the caller.
         let owner = unsafe { owners[usize::from(entry.depth).checked_sub(1)?].as_ref()? };
-        let word = owner.hot_properties().slot_word(entry.value_slot as usize)?;
+        let word = owner
+            .hot_properties()
+            .slot_word(entry.value_slot as usize)?;
         word.trace_named_payload("prototype");
         Some(NamedCachedPayload::Word(word))
     })
@@ -324,30 +381,37 @@ mod named_prototype_cache_tests {
 }
 
 fn cacheable_own_slot(value: &Value, key: &str) -> Option<u32> {
+    cacheable_own_slot_impl(value, key, false)
+}
+
+fn cacheable_own_slot_with_placeholder(value: &Value, key: &str) -> Option<u32> {
+    cacheable_own_slot_impl(value, key, true)
+}
+
+fn cacheable_own_slot_impl(value: &Value, key: &str, allow_placeholder: bool) -> Option<u32> {
     let Value::Object(object) = value else {
         return None;
     };
-    if crate::vm::is_global_object(value) {
+    if crate::vm::is_global_object(value) && !allow_placeholder {
         return None;
     }
-    let mut own = None;
-    let mut metadata = None;
-    for (slot, name) in object.hot_properties().names().enumerate().rev() {
-        if crate::builtins::is_deleted_key_for(name, key) {
-            return None;
-        }
-        if name == key && own.is_none() {
-            own = Some((slot, object.hot_properties().slot_value(slot)?));
-        }
-        if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
-            metadata = object.hot_properties().slot_value(slot);
-        }
-    }
-    let (slot, value) = own?;
-    if matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
+    if object
+        .physical_slot_for_name(&crate::builtins::deleted_key(key))
+        .is_some()
+    {
         return None;
     }
-    if metadata.is_some_and(|value| accessor_descriptor(&value)) {
+    let slot = object.physical_slot_for_name(key)?;
+    let value = object.hot_properties().slot_value(slot)?;
+    if !allow_placeholder && matches!(value, Value::Null) && crate::vm::global_builtin_exists(key) {
+        return None;
+    }
+    let metadata_key = crate::builtins::descriptor_key(key);
+    if object
+        .physical_slot_for_name(&metadata_key)
+        .and_then(|slot| object.hot_properties().slot_value(slot))
+        .is_some_and(|value| accessor_descriptor(&value))
+    {
         return None;
     }
     u32::try_from(slot).ok()
@@ -436,17 +500,27 @@ pub(crate) fn proven_own_word<'a>(
     object: &'a crate::value::ObjectData,
     key: &str,
 ) -> Option<&'a crate::register_file::SlotWord> {
+    let properties = object.hot_properties();
+    let layout_slot = object.physical_slot_for_name(key);
     let mut own = None;
     let mut metadata = None;
-    for (slot, name) in object.hot_properties().names().enumerate().rev() {
+    if let Some(slot) = layout_slot {
+        if properties.name_at(slot).is_some_and(|name| name == key) {
+            own = properties.slot_word(slot);
+        }
+    }
+    for (slot, name) in properties.names().enumerate().rev() {
         if crate::builtins::is_deleted_key_for(name, key) {
             return None;
         }
         if own.is_none() && name == key {
-            own = object.hot_properties().slot_word(slot);
+            own = properties.slot_word(slot);
         }
         if metadata.is_none() && crate::builtins::is_descriptor_key_for(name, key) {
-            metadata = object.hot_properties().slot_value(slot);
+            metadata = properties.slot_value(slot);
+        }
+        if own.is_some() && metadata.is_some() {
+            break;
         }
     }
     if metadata.is_some_and(|value| accessor_descriptor(&value)) {
@@ -482,10 +556,7 @@ fn function_inherited_property_result(
             "call" => crate::ops::Builtin::FunctionCall,
             _ => crate::ops::Builtin::FunctionBind,
         };
-        return Some(Ok(crate::vm::bind_method(
-            value,
-            Value::Builtin(builtin),
-        )));
+        return Some(Ok(crate::vm::bind_method(value, Value::Builtin(builtin))));
     }
     if matches!(key, "prototype") {
         return None;
@@ -530,7 +601,7 @@ fn object_inherited_property_result(
     let Value::Object(properties) = value else {
         return None;
     };
-    if properties.iter().any(|(name, _)| name == key) {
+    if properties.physical_slot_for_name(key).is_some() {
         return None;
     }
     if crate::vm::realm::id_for_global(properties).is_some()
@@ -729,8 +800,7 @@ fn descriptor_property_result(
             return Some(Ok(Value::Number(crate::strings::utf16_len(text) as f64)));
         }
         if let Ok(index) = key.parse::<usize>() {
-            return crate::strings::char_at_utf16(text, index)
-                .map(Ok);
+            return crate::strings::char_at_utf16(text, index).map(Ok);
         }
         return None;
     }

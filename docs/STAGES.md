@@ -9,6 +9,12 @@ and observable behavior is verified at execution time, never worked around.
 This is a definition document only — it is not a progress ledger. Verify stages
 with the relevant commands and test262 runs at execution time.
 
+All stages exercise the Node-compatible runtime and ordinary VM semantics.
+Benchmark fixtures, scores, and harnesses are measurement inputs only; they
+must never introduce host dispatch or workload-specific runtime behavior. See
+[`benchmark-integrity.md`](benchmark-integrity.md) for the mandatory review
+boundary.
+
 ## Execution order
 
 Stages are numbered in dependency order by domain. Dependencies are
