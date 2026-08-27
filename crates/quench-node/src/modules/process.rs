@@ -781,6 +781,12 @@ pub fn remove_all_listeners(
     if event.is_none() || event == Some("unhandledRejection") {
         process.unhandled_rejection_handlers.clear();
     }
+    if event.is_none() || event == Some("exit") {
+        process.exit_handlers.clear();
+    }
+    if event.is_none() || event == Some("beforeExit") {
+        process.before_exit_handlers.clear();
+    }
     process
         .other_handlers
         .retain(|(name, _, _)| event.is_some_and(|target| target != name));
