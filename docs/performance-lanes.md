@@ -115,6 +115,10 @@ G1 drills also declare an `oracle.max_ratio`. Build the untraced measurement
 binary, then compare each JS micro with the matching optimized Rust/C-fast
 algorithm:
 
+This oracle is an external test-time comparison only. It is not linked into
+`quench-node` or `quench-runtime`, cannot select execution, and must never be
+used to justify a workload-specific fast path.
+
 ```sh
 cargo build --profile bench-throughput -p quench-node
 node tools/assert-l0-oracles.cjs
