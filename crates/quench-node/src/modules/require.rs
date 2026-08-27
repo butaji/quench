@@ -471,6 +471,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             for alias in ["test", "describe", "it", "suite"] {
                 let _ = attach(&test_fn, alias, test_fn.clone());
             }
+            let _ = attach(&test_fn, "run", test_fn.clone());
             let mock = quench_runtime::host_api::object(vec![
                 (
                     "fn".to_string(),
