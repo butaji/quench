@@ -97,8 +97,21 @@ fn invoke(state: &Rc<RefCell<HostState>>, callback: &Value, context: &Value) -> 
 }
 
 fn context() -> Value {
+    let namespace = crate::modules::assert::build_value();
+    let mut assertion_pairs = crate::modules::assert::build()
+        .into_iter()
+        .filter(|(name, _)| *name != "Assert" && *name != "AssertionError")
+        .collect::<Vec<_>>();
+    assertion_pairs.push(("name".into(), quench_runtime::execute::get_property(&namespace, "name")));
+    for name in ["rejects", "doesNotReject"] {
+        assertion_pairs.push((name.into(), quench_runtime::execute::get_property(&namespace, name)));
+    }
+    let snapshot = crate::host::capability(crate::registry::SPEC_TEST_CONTEXT_SKIP);
+    assertion_pairs.push(("snapshot".into(), snapshot.clone()));
+    assertion_pairs.push(("fileSnapshot".into(), snapshot));
+    let assertions = quench_runtime::host_api::object(assertion_pairs);
     quench_runtime::host_api::object(vec![
-        ("assert".into(), crate::modules::assert::build_value()),
+        ("assert".into(), assertions),
         ("skip".into(), crate::host::capability(crate::registry::SPEC_TEST_CONTEXT_SKIP)),
         ("todo".into(), crate::host::capability(crate::registry::SPEC_TEST_CONTEXT_TODO)),
         ("beforeEach".into(), crate::host::capability(crate::registry::SPEC_TEST_BEFORE_EACH)),
