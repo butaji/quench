@@ -725,6 +725,7 @@ pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
         (
             handlers
                 .iter()
+                .filter(|(_, once)| !*once)
                 .map(|(handler, _)| handler.clone())
                 .collect::<Vec<_>>(),
             handlers
