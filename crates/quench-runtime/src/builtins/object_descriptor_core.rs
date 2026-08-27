@@ -412,6 +412,11 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    // A user-defined own descriptor shadows any intrinsic accessor or method
+    // metadata for the same key (for example RegExp's legacy `$1` accessor).
+    if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
+        return Some(public_descriptor(&descriptor));
+    }
     if builtin == Builtin::SymbolPrototype && key == "constructor" {
         return Some(descriptor_object_with_flags(
             super::property(builtin, key),
