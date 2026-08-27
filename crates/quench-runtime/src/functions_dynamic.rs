@@ -282,8 +282,8 @@ fn dynamic_value(
 ) -> Value {
     let captures = crate::environment::Environment::new();
     let realm = crate::vm::current_context_or_default().realm();
-    let global = crate::vm::realm_global_value(realm)
-        .unwrap_or_else(|| crate::locals::current().get(0));
+    let global =
+        crate::vm::realm_global_value(realm).unwrap_or_else(|| crate::locals::current().get(0));
     captures.set(0, global);
     let value = crate::functions::make(
         crate::machine::FunctionCode::from_ops(ops),
