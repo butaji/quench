@@ -96,6 +96,12 @@ fn invoke(state: &Rc<RefCell<HostState>>, callback: &Value, context: &Value) -> 
     crate::modules::pump::await_promise(state, &result)
 }
 
+fn fulfilled_test_promise() -> Value {
+    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
+    )))
+}
+
 fn context() -> Value {
     let namespace = crate::modules::assert::build_value();
     let mut assertion_pairs = crate::modules::assert::build()
@@ -174,6 +180,16 @@ pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
 
 pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let name = test_name(args);
+    if let Some(options) = args.iter().find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
+        let signal = quench_runtime::execute::get_property(options, "signal");
+        if matches!(signal, Value::Object(_) | Value::ObjectAlias(_))
+            && !matches!(quench_runtime::execute::get_property(&signal, "aborted"), Value::Boolean(_))
+        {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"options.signal\" property must be an instance of AbortSignal".into(),
+            ));
+        }
+    }
     // `test(name, { skip: ... }, fn)` — a truthy `skip` option skips the run.
     let skipped = args.iter().any(|arg| {
         matches!(arg, Value::Object(_) | Value::ObjectAlias(_))
@@ -237,7 +253,7 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
             }
             CURRENT_CONTEXT.with(|current| current.replace(previous));
             report(state, &format!("ok - {name}"));
-            Ok(Value::Undefined)
+            Ok(fulfilled_test_promise())
         }
         Err(error) => {
             CURRENT_CONTEXT.with(|current| current.replace(previous));
