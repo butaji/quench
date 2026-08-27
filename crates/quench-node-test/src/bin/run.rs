@@ -29,9 +29,10 @@ fn main() -> ExitCode {
     if child_mode {
         let lines = captured.lock().map(|lines| lines.clone()).unwrap_or_default();
         for line in &lines { println!("{line}"); }
-        let pass = lines.iter().filter(|line| line.starts_with("ok ")).count();
+        let todo = lines.iter().filter(|line| line.contains("# TODO") || line.contains("# todo")).count();
+        let pass = lines.iter().filter(|line| line.starts_with("ok ") && !line.contains("# TODO") && !line.contains("# todo")).count();
         let fail = lines.iter().filter(|line| line.starts_with("not ok ")).count();
-        println!("1..{}\n# tests {}\n# pass {}\n# fail {}\n# cancelled 0\n# todo 0", pass + fail, pass + fail, pass, fail);
+        println!("1..{}\n# tests {}\n# pass {}\n# fail {}\n# cancelled 0\n# todo {}", pass + fail + todo, pass + fail + todo, pass, fail, todo);
     }
     match outcome {
         quench_node_test::NodeOutcome::Pass => {
