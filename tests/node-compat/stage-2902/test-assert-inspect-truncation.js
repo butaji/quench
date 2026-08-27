@@ -40,3 +40,9 @@ instance.throws(() => instance.deepEqual(linesA, linesB), (error) => {
   assert.ok(inspect(error).includes("expected: 'B\\nB\\nB\\n"));
   return true;
 });
+
+const simpleLines = 'fhqwhgads\n'.repeat(15);
+assert.throws(() => assert.strictEqual(simpleLines, ''), (error) => {
+  assert.ok(inspect(error).includes("actual: 'fhqwhgads\\n' +\n"));
+  return true;
+});
