@@ -5,25 +5,43 @@ fn from_code_point(arguments: &[Value]) -> Result<Value, crate::execute::VmError
             crate::value::Value::Number(number) => *number,
             _ => crate::intl::tolocale::value::to_number_result(Some(value))?,
         };
-        if !number.is_finite()
-            || number.fract() != 0.0
-            || !(0.0..=0x10ffff as f64).contains(&number)
-        {
-            return Err(crate::value::error::throw_range_error("Invalid code point"));
-        }
-        let codepoint = number as u32;
-        if (0xD800..=0xDFFF).contains(&codepoint) {
-            units.push(codepoint as u16);
-        } else {
-            let character = char::from_u32(codepoint).ok_or_else(|| {
-                crate::value::error::throw_range_error("Invalid code point")
-            })?;
-            let mut encoded = [0u16; 2];
-            let encoded_slice = character.encode_utf16(&mut encoded);
-            units.extend_from_slice(encoded_slice);
-        }
+        append_code_point(&mut units, number)?;
     }
     Ok(crate::strings::from_units(units))
+}
+
+pub(crate) fn from_code_point_array(
+    array: &crate::value::ArrayData,
+) -> Option<Result<Value, crate::execute::VmError>> {
+    let numbers = array.numeric_kernel_words()?;
+    let mut units = Vec::with_capacity(numbers.len());
+    let result = numbers
+        .iter()
+        .try_for_each(|number| append_code_point(&mut units, *number))
+        .map(|()| crate::strings::from_units(units));
+    Some(result)
+}
+
+fn append_code_point(
+    units: &mut Vec<u16>,
+    number: f64,
+) -> Result<(), crate::execute::VmError> {
+    if !number.is_finite()
+        || number.fract() != 0.0
+        || !(0.0..=0x10ffff as f64).contains(&number)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid code point"));
+    }
+    let codepoint = number as u32;
+    if (0xD800..=0xDFFF).contains(&codepoint) {
+        units.push(codepoint as u16);
+    } else {
+        let character = char::from_u32(codepoint)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid code point"))?;
+        let mut encoded = [0u16; 2];
+        units.extend_from_slice(character.encode_utf16(&mut encoded));
+    }
+    Ok(())
 }
 
 fn raw(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {

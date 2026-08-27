@@ -75,6 +75,22 @@ pub(crate) fn execute_function_apply(
         crate::value::error::throw_type_error("Function.prototype.apply called on non-callable")
     })?;
     let receiver = arguments.first().unwrap_or(&Value::Undefined);
+    if matches!(target, Value::Builtin(Builtin::StringFromCodePoint)) {
+        if let Some(array) = arguments.get(1).and_then(|value| match value {
+            Value::Array(array) if array.is_packed_ordinary() => Some(array),
+            _ => None,
+        }) {
+            let length = array_like_length(&crate::execute::get_property_result(
+                &arguments[1],
+                "length",
+            )?)?;
+            if length == array.logical_len() {
+                if let Some(result) = crate::strings::from_code_point_array(array) {
+                    return result;
+                }
+            }
+        }
+    }
     let list = create_list_from_array_like(arguments.get(1))?;
     crate::functions::execute_target(target, receiver, &list)
 }
