@@ -315,6 +315,14 @@ fn ordinary_set(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
+    if crate::typed_array_ops::is_view(target)
+        && crate::typed_array_ops::is_index_key(key)
+        && (crate::typed_array_prototype::is_out_of_bounds(target)
+            || crate::typed_array_ops::logical_len(target)
+                .is_some_and(|length| key.parse::<usize>().map_or(true, |index| index >= length)))
+    {
+        return write_failure(strict);
+    }
     // A script's global-object view is an execution-facing snapshot, while
     // `this` and global bindings share the realm's canonical global object.
     // Route writes through that owner so a COW view cannot hide a global var

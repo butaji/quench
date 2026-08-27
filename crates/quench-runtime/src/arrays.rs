@@ -225,7 +225,7 @@ fn typed_array_includes(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "includes")?;
-    includes(Some(&value), arguments)
+    typed_includes(Some(&value), arguments)
 }
 
 fn typed_array_index_of(
@@ -233,7 +233,7 @@ fn typed_array_index_of(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "indexOf")?;
-    index_of(Some(&value), arguments)
+    typed_index_of(Some(&value), arguments)
 }
 
 fn typed_array_last_index_of(
@@ -241,7 +241,7 @@ fn typed_array_last_index_of(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "lastIndexOf")?;
-    last_index_of(Some(&value), arguments)
+    typed_last_index_of(Some(&value), arguments)
 }
 
 fn typed_array_at(
