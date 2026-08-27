@@ -324,23 +324,27 @@ pub fn util_inspect(
             )
     });
     Ok(Value::String(match depth {
-        Some(depth) => crate::modules::util::inspect_with_options(
+        Some(depth) => crate::modules::util::inspect_with_options_colors(
             &arg,
             depth,
             show_hidden,
             max_array_length,
             getters,
+            colors,
         ),
         None if show_hidden || getters || max_array_length.is_some() => {
-            crate::modules::util::inspect_with_options(
+            crate::modules::util::inspect_with_options_colors(
                 &arg,
                 3,
                 show_hidden,
                 max_array_length,
                 getters,
+                colors,
             )
         }
-        None => crate::modules::util::inspect(&arg),
+        None => {
+            crate::modules::util::inspect_with_options_colors(&arg, 3, false, None, false, colors)
+        }
     }))
 }
 
