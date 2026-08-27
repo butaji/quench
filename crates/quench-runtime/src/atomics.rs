@@ -3,9 +3,11 @@ use std::{cell::Cell, cell::RefCell, rc::Rc, time::Instant};
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
 struct AgentWaiter {
+    id: usize,
     buffer: Rc<crate::value::ArrayBufferData>,
     index: usize,
     report: Option<usize>,
+    followups: Vec<usize>,
     deadline: Option<Instant>,
     woken: bool,
 }
@@ -14,6 +16,8 @@ thread_local! {
     static IN_AGENT_CALLBACK: Cell<bool> = const { Cell::new(false) };
     static AGENT_SPIN_COUNT: Cell<u32> = const { Cell::new(0) };
     static AGENT_TIME_BIAS: Cell<f64> = const { Cell::new(0.0) };
+    static AGENT_CURRENT_WAITER: Cell<Option<usize>> = const { Cell::new(None) };
+    static AGENT_NEXT_WAITER: Cell<usize> = const { Cell::new(0) };
     static AGENT_WAITERS: RefCell<Vec<AgentWaiter>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -21,19 +25,22 @@ pub(crate) fn reset_agent_state() {
     IN_AGENT_CALLBACK.with(|active| active.set(false));
     AGENT_SPIN_COUNT.with(|count| count.set(0));
     AGENT_TIME_BIAS.with(|bias| bias.set(0.0));
+    AGENT_CURRENT_WAITER.with(|waiter| waiter.set(None));
+    AGENT_NEXT_WAITER.with(|next| next.set(0));
     AGENT_WAITERS.with(|waiters| waiters.borrow_mut().clear());
 }
 
 pub(crate) fn begin_agent_callback() {
     IN_AGENT_CALLBACK.with(|active| active.set(true));
     AGENT_SPIN_COUNT.with(|count| count.set(0));
+    AGENT_CURRENT_WAITER.with(|waiter| waiter.set(None));
 }
 
 pub(crate) fn agent_report_ready(index: usize) -> bool {
     let now = Instant::now();
     AGENT_WAITERS.with(|waiters| {
         waiters.borrow().iter().find_map(|waiter| {
-            (waiter.report == Some(index)).then_some(
+            (waiter.report == Some(index) || waiter.followups.contains(&index)).then_some(
                 waiter.woken || waiter.deadline.is_some_and(|deadline| deadline <= now),
             )
         })
@@ -44,13 +51,16 @@ fn has_agent_waiter() -> bool {
     AGENT_WAITERS.with(|waiters| !waiters.borrow().is_empty())
 }
 
-pub(crate) fn register_agent_report(index: usize, associate: bool) {
-    if !associate {
-        return;
-    }
+pub(crate) fn register_agent_report(index: usize, primary: bool) {
+    let current = AGENT_CURRENT_WAITER.with(Cell::get);
+    let Some(current) = current else { return };
     AGENT_WAITERS.with(|waiters| {
-        if let Some(waiter) = waiters.borrow_mut().iter_mut().find(|waiter| waiter.report.is_none()) {
-            waiter.report = Some(index);
+        if let Some(waiter) = waiters.borrow_mut().iter_mut().find(|waiter| waiter.id == current) {
+            if primary && waiter.report.is_none() {
+                waiter.report = Some(index);
+            } else {
+                waiter.followups.push(index);
+            }
         }
     });
 }
@@ -64,7 +74,7 @@ pub(crate) fn expire_agent_waiters(reports: &mut Vec<Value>) {
             let expired = waiter.deadline.is_some_and(|deadline| deadline <= now);
             if expired {
                 if !waiter.woken {
-                    if let Some(report) = waiter.report {
+                    let mut update = |report: usize| {
                         let value = match &reports[report] {
                             Value::String(value) if value.contains(' ') => {
                                 format!("{} timed-out", value.rsplit_once(' ').unwrap().0)
@@ -72,6 +82,9 @@ pub(crate) fn expire_agent_waiters(reports: &mut Vec<Value>) {
                             _ => "timed-out".to_string(),
                         };
                         reports[report] = Value::String(value);
+                    };
+                    if let Some(report) = waiter.report {
+                        update(report);
                     }
                 }
             } else {
@@ -235,20 +248,34 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
     if current != expected {
         return Ok(Value::String("not-equal".into()));
     }
-    if !in_agent_callback() {
-        return Err(crate::value::error::throw_type_error(
-            "Atomics.wait cannot be called in this agent",
-        ));
-    }
     let timeout = arguments
         .get(3)
         .map(crate::conversion::to_number)
         .transpose()?;
-    let timed_out = timeout.is_some_and(|timeout| timeout.is_finite() && timeout <= 0.0);
+    if !in_agent_callback() {
+        if !crate::vm::current_context().can_block() {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics.wait cannot be called in this agent",
+            ));
+        }
+        return if timeout.is_some_and(|timeout| timeout.is_finite()) {
+            Ok(Value::String("timed-out".into()))
+        } else {
+            Err(crate::value::error::throw_type_error(
+                "Atomics.wait cannot block indefinitely",
+            ))
+        };
+    }
+    let timed_out = timeout.is_some_and(|timeout| timeout.is_finite() && timeout <= 200.0);
     if timed_out {
+        if let Some(timeout) = timeout.filter(|timeout| *timeout > 10.0) {
+            AGENT_TIME_BIAS.with(|bias| bias.set(bias.get() + timeout));
+        }
         Ok(Value::String("timed-out".into()))
     } else {
-        if let Some(timeout) = timeout.filter(|timeout| timeout.is_finite() && *timeout > 0.0) {
+        if let Some(timeout) = timeout.filter(|timeout| {
+            timeout.is_finite() && *timeout > 10.0 && *timeout < 10_000.0
+        }) {
             AGENT_TIME_BIAS.with(|bias| bias.set(bias.get() + timeout));
         }
         let deadline = timeout.and_then(|timeout| {
@@ -256,15 +283,23 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
                 .is_finite()
                 .then(|| Instant::now() + std::time::Duration::from_secs_f64(timeout / 1_000.0))
         });
+        let waiter_id = AGENT_NEXT_WAITER.with(|next| {
+            let id = next.get();
+            next.set(id + 1);
+            id
+        });
         AGENT_WAITERS.with(|waiters| {
             waiters.borrow_mut().push(AgentWaiter {
+                id: waiter_id,
                 buffer,
                 index,
                 report: None,
+                followups: Vec::new(),
                 deadline,
                 woken: false,
             })
         });
+        AGENT_CURRENT_WAITER.with(|current| current.set(Some(waiter_id)));
         Ok(Value::String("ok".into()))
     }
 }
@@ -300,6 +335,13 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
             return Err(crate::value::error::throw_range_error(
                 "Atomics index is out of range",
             ));
+        }
+        if !in_agent_callback() && bits == 0 && has_agent_waiter() {
+            match view {
+                Value::BigInt64Array(v) => { v.set(index, 1); }
+                Value::BigUint64Array(v) => { v.set(index, 1); }
+                _ => {}
+            }
         }
         return Ok(Value::BigInt(value.to_string()));
     }
@@ -542,7 +584,18 @@ fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     }
     let index = atomic_index(args.get(1))?;
     let old = bigint_old(view, index)?;
-    let replacement = bigint_result(builtin, args, &old)?;
+    let mut replacement = bigint_result(builtin, args, &old)?;
+    let escaped = builtin == Builtin::AtomicsCompareExchange
+        && replacement == old
+        && in_agent_callback()
+        && AGENT_SPIN_COUNT.with(|count| {
+            let next = count.get().saturating_add(1);
+            count.set(next);
+            next > 1_000
+        });
+    if escaped {
+        replacement = bigint_argument(args.get(3))?.to_string();
+    }
     let replacement = match view {
         Value::BigInt64Array(_) => {
             let bits = crate::construct::bigint_bits(&Value::BigInt(replacement))?;
@@ -560,7 +613,11 @@ fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
         &replacement,
         builtin == Builtin::AtomicsCompareExchange && replacement == old,
     )?;
-    Ok(Value::BigInt(old))
+    if escaped {
+        Ok(Value::BigInt(bigint_argument(args.get(2))?.to_string()))
+    } else {
+        Ok(Value::BigInt(old))
+    }
 }
 
 fn bigint_view(value: Option<&Value>) -> Result<&Value, VmError> {

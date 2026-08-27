@@ -338,6 +338,7 @@ impl LinkedModule {
 }
 
 thread_local! {
+    static TEST_CAN_BLOCK: Cell<bool> = const { Cell::new(false) };
     static CURRENT_MODULE_GRAPH: Cell<Option<(*const LinkedModuleGraph, *const ModuleGraph)>> =
         const { Cell::new(None) };
     static CURRENT_MODULE_ID: Cell<Option<ModuleId>> = const { Cell::new(None) };
@@ -357,6 +358,10 @@ fn module_source_cell() -> ModuleBindingCell {
 }
 
 impl Test262Host for RuntimeHost {
+    fn configure(&mut self, metadata: &crate::TestMetadata) {
+        TEST_CAN_BLOCK.with(|can_block| can_block.set(metadata.can_block));
+    }
+
     fn run_script(&mut self, source: &str) -> Result<(), String> {
         run_source(source)
     }
@@ -457,7 +462,7 @@ fn fresh_context() -> VmContext {
             quench_runtime::ops::HostCapabilityKind::AgentMonotonicNow,
             quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
         ],
-    );
+    ).with_can_block(TEST_CAN_BLOCK.with(Cell::get));
     context.with_host_capability(
         "$262",
         quench_runtime::ops::HostCapabilityRef {
