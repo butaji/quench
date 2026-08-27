@@ -5506,6 +5506,97 @@ pub fn test_mock_reset(
     Ok(Value::Undefined)
 }
 
+pub fn test_mock_property(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let object = args.first().ok_or(VmError::NotCallable)?;
+    if matches!(object, Value::Null | Value::Undefined) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type("The \"object\" argument must be an object".into()));
+    }
+    let key = match args.get(1) { Some(Value::String(key)) => key.clone(), _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"propertyName\" argument must be one of type string or symbol".into())) };
+    let descriptor = quench_runtime::execute::get_own_property_descriptor(object, &key)?;
+    if matches!(descriptor, Value::Undefined) {
+        return Err(crate::modules::buffer_enc::invalid_arg_value("The property must exist".into()));
+    }
+    let original = quench_runtime::execute::get_property_result(object, &key)?;
+    let value = args.get(2).cloned().unwrap_or(original.clone());
+    let cell = quench_runtime::value::BindingCell::new(value);
+    let accesses = quench_runtime::host_api::array(Vec::new());
+    let getter = bound_custom(0x1b16, vec![Value::BindingCell(cell.clone()), accesses.clone()]);
+    let setter = bound_custom(0x1b17, vec![Value::BindingCell(cell.clone()), accesses.clone(), quench_runtime::execute::get_property(&descriptor, "writable")]);
+    let replacement = quench_runtime::host_api::object(vec![
+        ("get".into(), getter.clone()), ("set".into(), setter.clone()),
+        ("enumerable".into(), quench_runtime::execute::get_property(&descriptor, "enumerable")),
+        ("configurable".into(), quench_runtime::execute::get_property(&descriptor, "configurable")),
+    ]);
+    let mock = quench_runtime::host_api::object(vec![("accesses".into(), accesses.clone())]);
+    let restore = bound_custom(0x1b06, vec![object.clone(), Value::String(key.clone()), Value::Undefined, descriptor.clone()]);
+    let _ = quench_runtime::execute::set_property_in_place(&mock, "restore", restore);
+    let _ = quench_runtime::execute::set_property_in_place(&mock, "accessCount", bound_custom(0x1b14, vec![accesses.clone()]));
+    let _ = quench_runtime::execute::set_property_in_place(&mock, "resetAccesses", bound_custom(0x1b15, vec![accesses.clone()]));
+    let _ = quench_runtime::execute::set_property_in_place(&mock, "mockImplementation", bound_custom(0x1b0C, vec![Value::BindingCell(cell.clone()), accesses.clone()]));
+    let _ = quench_runtime::execute::set_property_in_place(&mock, "mockImplementationOnce", bound_custom(0x1b18, vec![accesses.clone()]));
+    let _ = quench_runtime::execute::set_property_in_place(&getter, "mock", mock);
+    let replacement = quench_runtime::host_api::object(vec![
+        ("get".into(), getter.clone()), ("set".into(), setter),
+        ("enumerable".into(), quench_runtime::execute::get_property(&descriptor, "enumerable")),
+        ("configurable".into(), quench_runtime::execute::get_property(&descriptor, "configurable")),
+    ]);
+    let _ = quench_runtime::execute::define_property(object.clone(), &key, replacement)?;
+    let restore = bound_custom(0x1b06, vec![object.clone(), Value::String(key.clone()), Value::Undefined, descriptor.clone()]);
+    crate::modules::test::register_mock_restore(restore);
+    Ok(getter)
+}
+
+pub fn test_mock_property_get(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let cell = match args.first() { Some(Value::BindingCell(cell)) => cell, _ => return Err(VmError::NotCallable) };
+    let accesses = args.get(1).ok_or(VmError::NotCallable)?;
+    let index = match quench_runtime::execute::get_property(accesses, "length") { Value::Number(n) => n as usize, _ => 0 };
+    let key = format!("\0property:once:{index}");
+    let value = match quench_runtime::execute::get_property(accesses, &key) {
+        Value::Undefined => cell.load(),
+        value => value,
+    };
+    let record = quench_runtime::host_api::object(vec![("type".into(), Value::String("get".into())), ("value".into(), value.clone())]);
+    let _ = quench_runtime::execute::set_array_element_in_place(accesses, index, record);
+    Ok(value)
+}
+
+pub fn test_mock_property_once(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let accesses = args.first().ok_or(VmError::NotCallable)?;
+    let implementation = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let current = match quench_runtime::execute::get_property(accesses, "length") { Value::Number(n) => n as usize, _ => 0 };
+    let on_call = match args.get(2) { Some(Value::Number(n)) => *n as usize, _ => current };
+    if on_call < current { return Err(VmError::Thrown(quench_runtime::builtins::error(quench_runtime::ops::Builtin::RangeError, &[Value::String(format!("The value of \"onAccess\" is out of range. It must be >= {current}"))]))); }
+    let _ = quench_runtime::execute::set_property_in_place(accesses, &format!("\0property:once:{on_call}"), implementation);
+    Ok(Value::Undefined)
+}
+
+pub fn test_mock_property_set(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let cell = match args.first() { Some(Value::BindingCell(cell)) => cell, _ => return Err(VmError::NotCallable) };
+    let accesses = args.get(1).ok_or(VmError::NotCallable)?;
+    if matches!(args.get(2), Some(Value::Boolean(false))) {
+        return Err(crate::modules::buffer_enc::invalid_arg_value("Cannot assign to read only property".into()));
+    }
+    let value = args.last().cloned().unwrap_or(Value::Undefined);
+    cell.replace(value.clone());
+    let index = match quench_runtime::execute::get_property(accesses, "length") { Value::Number(n) => n as usize, _ => 0 };
+    let record = quench_runtime::host_api::object(vec![("type".into(), Value::String("set".into())), ("value".into(), value)]);
+    let _ = quench_runtime::execute::set_array_element_in_place(accesses, index, record);
+    Ok(Value::Undefined)
+}
+
+pub fn test_mock_access_count(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    Ok(quench_runtime::execute::get_property(args.first().ok_or(VmError::NotCallable)?, "length"))
+}
+
+pub fn test_mock_reset_accesses(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(accesses) = args.first() { let _ = quench_runtime::execute::set_array_length_in_place(accesses, 0); }
+    Ok(Value::Undefined)
+}
+
 pub fn test_mock_implementation(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -5515,7 +5606,16 @@ pub fn test_mock_implementation(
         Some(Value::BindingCell(cell)) => cell,
         _ => return Err(VmError::NotCallable),
     };
-    cell.replace(args.get(1).cloned().unwrap_or(Value::Undefined));
+    if let Some((index, Value::Array(accesses))) = args.iter().enumerate().find(|(_, value)| matches!(value, Value::Array(_))) {
+        let value = args.last().cloned().unwrap_or(Value::Undefined);
+        cell.replace(value.clone());
+        let length = match quench_runtime::execute::get_property(&Value::Array(accesses.clone()), "length") { Value::Number(n) => n as usize, _ => 0 };
+        let record = quench_runtime::host_api::object(vec![("type".into(), Value::String("set".into())), ("value".into(), value)]);
+        let _ = quench_runtime::execute::set_array_element_in_place(&Value::Array(accesses.clone()), length, record);
+        let _ = index;
+    } else {
+        cell.replace(args.get(1).cloned().unwrap_or(Value::Undefined));
+    }
     Ok(Value::Undefined)
 }
 

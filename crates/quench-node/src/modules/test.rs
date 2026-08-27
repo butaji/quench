@@ -85,6 +85,7 @@ fn context() -> Value {
             ("method".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD)),
             ("getter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_GETTER)),
             ("setter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER)),
+            ("property".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY)),
         ])),
     ])
 }
@@ -92,12 +93,13 @@ fn context() -> Value {
 pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let Some(callback) = callback(args).cloned() else { return Ok(Value::Undefined) };
     let child = context();
-    let inherited = FRAMES.with(|frames| frames.borrow().last().map(|f| f.before.clone()).unwrap_or_default());
+    let (inherited, parent_after) = FRAMES.with(|frames| frames.borrow().last().map(|f| (f.before.clone(), f.after.clone())).unwrap_or_default());
     for hook in inherited { invoke(state, &hook, &child)?; }
     FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new() }));
     let result = invoke(state, &callback, &child);
     let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
     for hook in frame.after.iter().rev() { invoke(state, hook, &child)?; }
+    for hook in parent_after.iter().rev() { invoke(state, hook, &child)?; }
     for restore in frame.restores.iter().rev() { let _ = quench_runtime::vm::call_value(restore, &Value::Undefined, &[]); }
     result.map(|_| Value::Undefined)
 }

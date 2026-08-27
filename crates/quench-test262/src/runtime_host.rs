@@ -462,7 +462,8 @@ fn fresh_context() -> VmContext {
             quench_runtime::ops::HostCapabilityKind::AgentMonotonicNow,
             quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
         ],
-    ).with_can_block(TEST_CAN_BLOCK.with(Cell::get));
+    )
+    .with_can_block(TEST_CAN_BLOCK.with(Cell::get));
     context.with_host_capability(
         "$262",
         quench_runtime::ops::HostCapabilityRef {

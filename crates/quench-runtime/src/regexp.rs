@@ -1098,7 +1098,9 @@ pub(crate) fn repeat_exact_global_exec(
     if source != input || !source.bytes().all(|byte| byte.is_ascii_alphanumeric()) || flags != "g" {
         return None;
     }
-    let last_index = receiver.hot_properties().slot_word(REGEXP_LAST_INDEX_SLOT)?;
+    let last_index = receiver
+        .hot_properties()
+        .slot_word(REGEXP_LAST_INDEX_SLOT)?;
     last_index.store(Value::Number(input.encode_utf16().count() as f64));
     Some(())
 }
@@ -1196,7 +1198,10 @@ mod tests {
     fn global_empty_replace_inserts_once_at_each_position() {
         let regexp = Value::Object(
             ObjectData::new(vec![
-                ("\0regexp_source".to_string(), Value::String("(?:)".to_string())),
+                (
+                    "\0regexp_source".to_string(),
+                    Value::String("(?:)".to_string()),
+                ),
                 ("\0regexp_flags".to_string(), Value::String("g".to_string())),
             ])
             .into(),

@@ -102,6 +102,12 @@ pub const SPEC_TEST_AFTER_EACH: NodeSpec = NodeSpec::new("test:afterEach", 0x1b0
 pub const SPEC_TEST_NESTED: NodeSpec = NodeSpec::new("test:nested", 0x1b10);
 pub const SPEC_TEST_MOCK_RESET_CALLS: NodeSpec = NodeSpec::new("test:mock:resetCalls", 0x1b11);
 pub const SPEC_TEST_MOCK_RESET: NodeSpec = NodeSpec::new("test:mock:reset", 0x1b12);
+pub const SPEC_TEST_MOCK_PROPERTY: NodeSpec = NodeSpec::new("test:mock:property", 0x1b13);
+pub const SPEC_TEST_MOCK_ACCESS_COUNT: NodeSpec = NodeSpec::new("test:mock:accessCount", 0x1b14);
+pub const SPEC_TEST_MOCK_RESET_ACCESSES: NodeSpec = NodeSpec::new("test:mock:resetAccesses", 0x1b15);
+pub const SPEC_TEST_MOCK_PROPERTY_GET: NodeSpec = NodeSpec::new("test:mock:propertyGet", 0x1b16);
+pub const SPEC_TEST_MOCK_PROPERTY_SET: NodeSpec = NodeSpec::new("test:mock:propertySet", 0x1b17);
+pub const SPEC_TEST_MOCK_PROPERTY_ONCE: NodeSpec = NodeSpec::new("test:mock:propertyOnce", 0x1b18);
 
 node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
