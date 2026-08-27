@@ -484,6 +484,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     "setter".to_string(),
                     crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER),
                 ),
+                (
+                    "property".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY),
+                ),
             ]);
             let _ = attach(&test_fn, "mock", mock);
             let _ = quench_runtime::execute::set_property_in_place(
