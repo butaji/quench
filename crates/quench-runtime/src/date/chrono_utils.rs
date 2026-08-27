@@ -5,8 +5,13 @@ use std::cell::Cell;
 
 thread_local! { static MOCK_NOW: Cell<Option<f64>> = const { Cell::new(None) }; static MOCK_ENABLED: Cell<bool> = const { Cell::new(false) }; }
 
-pub fn set_mock_now(value: Option<f64>) { MOCK_NOW.with(|now| now.set(value)); MOCK_ENABLED.with(|enabled| enabled.set(value.is_some())); }
-pub fn mock_enabled() -> bool { MOCK_ENABLED.with(Cell::get) }
+pub fn set_mock_now(value: Option<f64>) {
+    MOCK_NOW.with(|now| now.set(value));
+    MOCK_ENABLED.with(|enabled| enabled.set(value.is_some()));
+}
+pub fn mock_enabled() -> bool {
+    MOCK_ENABLED.with(Cell::get)
+}
 
 /// Maximum and minimum time values per ECMAScript TimeClip spec (±8.64e15 ms).
 const TIME_CLIP_LIMIT: f64 = 8.64e15;
@@ -22,7 +27,9 @@ pub fn time_clip(ms: f64) -> f64 {
 
 /// Get current time in milliseconds since Unix epoch.
 pub fn current_time_ms() -> f64 {
-    if let Some(value) = MOCK_NOW.with(Cell::get) { return value; }
+    if let Some(value) = MOCK_NOW.with(Cell::get) {
+        return value;
+    }
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as f64)

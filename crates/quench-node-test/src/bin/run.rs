@@ -22,17 +22,59 @@ fn main() -> ExitCode {
     let captured = Arc::new(Mutex::new(Vec::<String>::new()));
     let sink_capture = Arc::clone(&captured);
     let sink: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |line| {
-        if let Ok(mut lines) = sink_capture.lock() { lines.push(line.to_string()); }
+        if let Ok(mut lines) = sink_capture.lock() {
+            lines.push(line.to_string());
+        }
     });
     let mut runner = NodeTestRunner::new().with_output_sink(sink);
     let outcome = runner.run_file_with_args(&path, argv);
     if child_mode {
-        let lines = captured.lock().map(|lines| lines.clone()).unwrap_or_default();
-        for line in &lines { println!("{line}"); }
-        let todo = lines.iter().filter(|line| line.contains("# TODO") || line.contains("# todo")).count();
-        let pass = lines.iter().filter(|line| line.starts_with("ok ") && !line.contains("# TODO") && !line.contains("# todo")).count();
-        let fail = lines.iter().filter(|line| line.starts_with("not ok ")).count();
-        println!("1..{}\n# tests {}\n# pass {}\n# fail {}\n# cancelled 0\n# todo {}", pass + fail + todo, pass + fail + todo, pass, fail, todo);
+        let lines = captured
+            .lock()
+            .map(|lines| lines.clone())
+            .unwrap_or_default();
+        for line in &lines {
+            println!("{line}");
+        }
+        let todo = lines
+            .iter()
+            .filter(|line| line.contains("# TODO") || line.contains("# todo"))
+            .count();
+        let cancelled = lines
+            .iter()
+            .filter(|line| {
+                line.contains("# CANCELLED")
+                    || line.contains("# cancelled")
+                    || line.contains("# CANCELED")
+            })
+            .count();
+        let pass = lines
+            .iter()
+            .filter(|line| {
+                line.starts_with("ok ")
+                    && !line.contains("# TODO")
+                    && !line.contains("# todo")
+                    && !line.contains("# CANCELLED")
+                    && !line.contains("# CANCELED")
+                    && !line.contains("# cancelled")
+            })
+            .count();
+        let fail = lines
+            .iter()
+            .filter(|line| line.starts_with("not ok "))
+            .count();
+        println!(
+            "1..{}\n# tests {}\n# pass {}\n# fail {}\n# cancelled {}\n# todo {}",
+            pass + fail + todo + cancelled,
+            pass + fail + todo + cancelled,
+            pass,
+            fail,
+            cancelled,
+            todo
+        );
+        if fail != 0 || cancelled != 0 {
+            return ExitCode::from(1);
+        }
     }
     match outcome {
         quench_node_test::NodeOutcome::Pass => {
