@@ -562,8 +562,8 @@ pub const SPEC_ABORT_SIGNAL_ABORTED_GET: NodeSpec = NodeSpec::new("AbortSignal.a
 pub const SPEC_ABORT_SIGNAL_HAS_INSTANCE: NodeSpec = NodeSpec::new("AbortSignal.hasInstance", 0x1F29);
 pub const SPEC_ABORT_SIGNAL_THROW_IF_ABORTED: NodeSpec = NodeSpec::new("AbortSignal.throwIfAborted", 0x1F2A);
 pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1F24);
-pub const SPEC_ABORT_SIGNAL_TIMEOUT: NodeSpec = NodeSpec::new("AbortSignal.timeout", 0x1F30);
-pub const SPEC_ABORT_SIGNAL_ANY: NodeSpec = NodeSpec::new("AbortSignal.any", 0x1F32);
+pub const SPEC_ABORT_SIGNAL_TIMEOUT: NodeSpec = NodeSpec::new("AbortSignal.timeout", 0x1F40);
+pub const SPEC_ABORT_SIGNAL_ANY: NodeSpec = NodeSpec::new("AbortSignal.any", 0x1F41);
 pub const SPEC_ABORT_EVENT_STOP_IMMEDIATE: NodeSpec =
     NodeSpec::new("AbortEvent.stopImmediatePropagation", 0x1F26);
 pub const SPEC_EVENT: NodeSpec = NodeSpec::new("Event", 0x0118);
