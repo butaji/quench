@@ -467,10 +467,16 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             for alias in ["test", "describe", "it", "suite"] {
                 let _ = attach(&test_fn, alias, test_fn.clone());
             }
-            let mock = quench_runtime::host_api::object(vec![(
-                "fn".to_string(),
-                crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
-            )]);
+            let mock = quench_runtime::host_api::object(vec![
+                (
+                    "fn".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+                ),
+                (
+                    "method".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
+                ),
+            ]);
             let _ = attach(&test_fn, "mock", mock);
             Some(test_fn)
         }
