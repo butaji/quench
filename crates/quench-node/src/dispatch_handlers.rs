@@ -2714,6 +2714,28 @@ pub fn cp_abort_emit(
     Ok(Value::Undefined)
 }
 
+pub fn cp_fork(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let script = args.first().cloned().unwrap_or(Value::Undefined);
+    let fork_args = match args.get(1).cloned().unwrap_or(Value::Undefined) {
+        Value::Null => Value::Undefined,
+        value => value,
+    };
+    let options = match args.get(2).cloned().unwrap_or(Value::Undefined) {
+        Value::Null | Value::Undefined => host_api::object(Vec::new()),
+        value => value,
+    };
+    let child = cp_spawn(state, None, &[script, fork_args, options])?;
+    Ok(execute::set_property(
+        child,
+        "send",
+        crate::host::capability(crate::registry::SPEC_CP_STDIN_WRITE),
+    ))
+}
+
 pub fn cp_constructor(
     state: &Rc<RefCell<HostState>>,
     _args: &[Value],
