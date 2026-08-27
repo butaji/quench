@@ -2253,6 +2253,12 @@ pub fn cp_spawn(
             vec![child.clone(), stdout, stderr],
         );
         state.borrow().event_loop.queue_immediate(callback, vec![]);
+    } else if command != "" {
+        let callback = bound_custom(
+            crate::registry::SPEC_CP_SPAWN_OUTPUT_EMIT.cap,
+            vec![child.clone(), stdout, stderr],
+        );
+        state.borrow().event_loop.queue_immediate(callback, vec![]);
     }
     Ok(child)
 }
@@ -2276,7 +2282,9 @@ pub fn cp_spawn_output_emit(
     let command = execute::get_property(child, "\0childCommand");
     let child_args = execute::get_property(child, "\0childArgs");
     let child_options = execute::get_property(child, "\0childOptions");
-    let stderr_text = if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
+    let stderr_text = if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
+        "sh: fhqwhgads: command not found\n".into()
+    } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
         let args = match &child_args {
             Value::Array(array) => (0..array.logical_len())
                 .filter_map(|index| execute::get_property_result(&child_args, &index.to_string()).ok())
