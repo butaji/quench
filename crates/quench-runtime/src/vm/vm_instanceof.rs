@@ -222,9 +222,15 @@ fn boxed_primitive_instance(value: &Value, constructor: &Value) -> Option<bool> 
         .iter()
         .rev()
         .find_map(|(key, value)| (key == "\0prototype").then_some(value))?;
+    // Boxed primitive subclasses inherit the intrinsic prototype through the
+    // subclass prototype object. Check the complete chain rather than only
+    // comparing the immediate prototype's realm.
     let expected_realm = crate::vm::intrinsic_realm(constructor, builtin);
-    let actual_realm = crate::vm::intrinsic_realm(&actual, expected);
-    Some(expected_realm == actual_realm)
+    let expected = crate::vm::realm_intrinsic_for(
+        expected_realm.unwrap_or(crate::ops::RealmId::ROOT),
+        expected,
+    );
+    Some(prototype_chain_contains(value, &expected).unwrap_or(false))
 }
 
 fn is_shadow_realm(properties: &crate::value::ObjectData) -> bool {
