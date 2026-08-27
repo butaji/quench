@@ -360,6 +360,10 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if matches!(value, Value::ObjectAlias(_)) {
+        let resolved = crate::builtins::object::resolve_object_alias(value.clone());
+        return get_property_with_receiver(&resolved, key, receiver);
+    }
     // Prototype mutations materialize a replacement object. Resolve it before
     // walking inherited properties so ordinary objects (including generator
     // prototypes) observe the current descriptor rather than the stale view.
@@ -484,7 +488,10 @@ fn function_inherited_property_result(
             "call" => crate::ops::Builtin::FunctionCall,
             _ => crate::ops::Builtin::FunctionBind,
         };
-        return Some(Ok(crate::vm::bind_method(value, Value::Builtin(builtin))));
+        return Some(Ok(crate::vm::bind_method(
+            receiver,
+            Value::Builtin(builtin),
+        )));
     }
     if matches!(key, "prototype") {
         return None;
