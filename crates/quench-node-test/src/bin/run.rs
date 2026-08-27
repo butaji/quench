@@ -83,15 +83,17 @@ fn main() -> ExitCode {
             .iter()
             .filter(|line| line.starts_with("not ok "))
             .count();
-        println!(
-            "1..{}\n# tests {}\n# pass {}\n# fail {}\n# cancelled {}\n# todo {}",
-            pass + fail + todo + cancelled,
-            pass + fail + todo + cancelled,
-            pass,
-            fail,
-            cancelled,
-            todo
-        );
+        if pass + fail + todo + cancelled > 0 {
+            println!(
+                "1..{}\n# tests {}\n# pass {}\n# fail {}\n# cancelled {}\n# todo {}",
+                pass + fail + todo + cancelled,
+                pass + fail + todo + cancelled,
+                pass,
+                fail,
+                cancelled,
+                todo
+            );
+        }
         if fail != 0 || cancelled != 0 {
             return ExitCode::from(1);
         }
