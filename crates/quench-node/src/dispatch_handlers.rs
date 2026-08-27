@@ -4262,7 +4262,15 @@ pub fn process_emit_warning(
         ]))
     };
     let first = args.first().ok_or_else(|| invalid("The \"warning\" argument must be of type string or an instance of Error."))?;
-    if !matches!(first, Value::String(_) | Value::Object(_) | Value::ObjectAlias(_)) {
+    let error_object = matches!(first, Value::Object(_) | Value::ObjectAlias(_))
+        && (matches!(
+            quench_runtime::execute::get_property(first, "message"),
+            Value::String(_)
+        ) || matches!(
+            quench_runtime::execute::get_property(first, "name"),
+            Value::String(_)
+        ));
+    if !matches!(first, Value::String(_)) && !error_object {
         return Err(invalid("The \"warning\" argument must be of type string or an instance of Error."));
     }
     for (index, value) in args.iter().enumerate().skip(1).take(2) {
