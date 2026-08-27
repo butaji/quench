@@ -229,6 +229,16 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
                     ("EEXIST".to_string(), Value::Number(17.0)),
                 ]),
             ),
+            (
+                "signals".to_string(),
+                host_api::object(vec![
+                    ("SIGHUP".into(), Value::Number(1.0)),
+                    ("SIGINT".into(), Value::Number(2.0)),
+                    ("SIGABRT".into(), Value::Number(6.0)),
+                    ("SIGKILL".into(), Value::Number(9.0)),
+                    ("SIGTERM".into(), Value::Number(15.0)),
+                ]),
+            ),
         ]),
     ));
 }

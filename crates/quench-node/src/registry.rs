@@ -229,8 +229,11 @@ pub const SPEC_UTIL_SYSTEM_ERROR_NAME: NodeSpec = NodeSpec::new("util:getSystemE
 pub const SPEC_UTIL_DEBUGLOG: NodeSpec = NodeSpec::new("util:debuglog", 0x0735);
 pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec =
     NodeSpec::new("util:exceptionWithHostPort", 0x0734);
+pub const SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE: NodeSpec =
+    NodeSpec::new("util:convertProcessSignalToExitCode", 0x2203);
+pub const SPEC_CP_KILL: NodeSpec = NodeSpec::new("child_process:ChildProcess:kill", 0x2204);
 pub const SPEC_INTERNAL_UTIL_EMIT_WARNING: NodeSpec =
-    NodeSpec::new("internal/util:emitExperimentalWarning", 0x0735);
+    NodeSpec::new("internal/util:emitExperimentalWarning", 0x2201);
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
 pub const SPEC_OS_SET_PRIORITY: NodeSpec = NodeSpec::new("os:setPriority", 0x0737);
 pub const SPEC_INTERNAL_OS_GET_HOME_DIRECTORY: NodeSpec =
@@ -253,7 +256,7 @@ pub const SPEC_INTERNAL_BUFFER_FILL: NodeSpec = NodeSpec::new("internal:buffer-f
 pub const SPEC_INTERNAL_VIEW_HAS_BUFFER: NodeSpec =
     NodeSpec::new("internal:view-has-buffer", 0x0712);
 pub const SPEC_INTERNAL_GET_PROXY_DETAILS: NodeSpec =
-    NodeSpec::new("internal:get-proxy-details", 0x0721);
+    NodeSpec::new("internal:get-proxy-details", 0x2200);
 pub const SPEC_INTERNAL_BUFFER_ALIGNED_OFFSET: NodeSpec =
     NodeSpec::new("internal:buffer-array-buffer-aligned-offset", 0x0713);
 
@@ -599,7 +602,7 @@ pub const SPEC_ASSERT_CONSTRUCTOR: NodeSpec = NodeSpec::new("assert:Assert", 0x1
 pub const SPEC_ASSERTION_ERROR_CONSTRUCTOR: NodeSpec =
     NodeSpec::new("assert:AssertionError", 0x142E);
 pub const SPEC_ASSERT_PARTIAL_DEEP_STRICT_EQUAL: NodeSpec =
-    NodeSpec::new("assert:partialDeepStrictEqual", 0x142E);
+    NodeSpec::new("assert:partialDeepStrictEqual", 0x2202);
 pub const SPEC_ASSERT_DEEP_EQUAL: NodeSpec = NodeSpec::new("assert:deepEqual", 0x142F);
 pub const SPEC_ASSERT_NOT_DEEP_EQUAL: NodeSpec = NodeSpec::new("assert:notDeepEqual", 0x1430);
 
