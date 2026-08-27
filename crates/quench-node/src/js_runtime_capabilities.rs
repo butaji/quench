@@ -188,6 +188,9 @@ impl CapabilityName {
     const UrlPattern: u16 = 2281;
     const UrlPatternExec: u16 = 2282;
     const UrlPatternTest: u16 = 2283;
+    const UrlPatternGet: u16 = 2286;
+    const UrlPatternExecLegacy: u16 = 2285;
+    const UrlPatternTestLegacy: u16 = 2284;
     const UrlCanParse: u16 = 2284;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
