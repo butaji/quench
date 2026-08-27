@@ -398,6 +398,10 @@ impl ArrayData {
     pub(crate) fn physical_len(&self) -> usize {
         self.values.len()
     }
+
+    pub(crate) fn sync_length_to_storage(&mut self) {
+        self.length = self.length.max(self.values.len());
+    }
     /// Capacity of the dense backing store, exposed for focused allocation
     /// checks without exposing ownership of the storage itself.
     #[cfg(test)]
