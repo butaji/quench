@@ -115,6 +115,19 @@ fn connect_with_receiver(
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             ])));
         }
+        let hints = execute::get_property(options, "hints");
+        if let Value::Number(value) = hints {
+            let bits = value as i64;
+            if value.fract() != 0.0 || bits < 0 || bits & !7 != 0 {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("TypeError".into())),
+                    ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+                    ("message".into(), Value::String(format!(
+                        "The argument 'hints' is invalid. Received {value}"
+                    ))),
+                ])));
+            }
+        }
         let path = execute::get_property(options, "path");
         if !matches!(path, Value::Undefined | Value::Null) && !matches!(path, Value::String(_)) {
             return Err(VmError::Thrown(host_api::object(vec![
