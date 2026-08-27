@@ -527,6 +527,10 @@ impl ArrayData {
         }
         let appended_number = index == self.values.len()
             && matches!(&value, Value::Number(number) if self.values.append_number(*number));
+        let appended_kind = appended_number.then(|| match &value {
+            Value::Number(number) => number_kind(*number),
+            _ => unreachable!(),
+        });
         if self.values.len() <= index {
             self.grow_dense_storage(index.saturating_add(1));
         }
@@ -538,10 +542,13 @@ impl ArrayData {
         }
         self.deleted[index] = false;
         self.length = self.length.max(index.saturating_add(1));
-        self.kind.set(monotonic_kind(
-            self.kind.get(),
-            self.values.kind_with_holes(&self.deleted, self.length),
-        ));
+        let candidate = if self.kind.get().is_packed() {
+            appended_kind.unwrap_or_else(|| self.values.kind_with_holes(&self.deleted, self.length))
+        } else {
+            self.values.kind_with_holes(&self.deleted, self.length)
+        };
+        self.kind
+            .set(monotonic_kind(self.kind.get(), candidate));
     }
 
     /// Grow dense storage geometrically so sequential appends do not
