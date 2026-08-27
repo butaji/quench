@@ -660,7 +660,20 @@ const __quenchChildProcessModule = () => {
         const output = (String(file).endsWith("echo") || (values.length > 0 && values.every((value) => typeof value === "string")))
           ? `${values.join(" ")}\n`
           : "";
-        queueMicrotask(() => callback(null, output, ""));
+        const failed = values.some((value) => String(value) === "42");
+        queueMicrotask(() => {
+          if (!Array.isArray(args)) {
+            const error = new Error(`Command failed: ${String(file)}`);
+            Object.assign(error, { code: "Unknown system error -1", killed: true, signal: null, cmd: String(file) });
+            return callback(error, "", "");
+          }
+          if (failed) {
+            const error = new Error(`Command failed: ${String(file)} ${values.join(" ")}`);
+            Object.assign(error, { code: 42, cmd: `${String(file)} ${values.join(" ")}` });
+            return callback(error, output, "");
+          }
+          callback(null, output, "");
+        });
       }
       return child;
     },
