@@ -371,10 +371,10 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             (builtin == Builtin::TypedArrayPrototype && key == "at").then_some(Builtin::TypedArrayAt)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArrayPrototype && key == "map").then_some(Builtin::ArrayMap)
+            (builtin == Builtin::TypedArrayPrototype && key == "map").then_some(Builtin::TypedArrayMap)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArrayPrototype && key == "filter").then_some(Builtin::ArrayFilter)
+            (builtin == Builtin::TypedArrayPrototype && key == "filter").then_some(Builtin::TypedArrayFilter)
         })
         .or_else(|| {
             (builtin == Builtin::TypedArrayPrototype && key == "reduce")
