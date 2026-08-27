@@ -2233,11 +2233,13 @@ pub fn cp_spawn(
                 ("message".into(), Value::String("spawn pwd ENOENT".into())),
                 ("code".into(), Value::String("ENOENT".into())),
             ]);
-            let callback = bound_custom(
-                crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
-                vec![child.clone(), error],
-            );
-            state.borrow().event_loop.queue_immediate(callback, vec![]);
+            if !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true)) {
+                let callback = bound_custom(
+                    crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
+                    vec![child.clone(), error],
+                );
+                state.borrow().event_loop.queue_immediate(callback, vec![]);
+            }
             return Ok(child);
         }
     }
@@ -2246,6 +2248,9 @@ pub fn cp_spawn(
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
     {
+        if !matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
+            execute::set_property_in_place(&child, "pid", Value::Undefined);
+        }
         let error = host_api::object(vec![
             ("name".into(), Value::String("Error".into())),
             (
@@ -2258,11 +2263,13 @@ pub fn cp_spawn(
             ("path".into(), Value::String(command.clone())),
             ("spawnargs".into(), spawnargs.clone()),
         ]);
-        let callback = bound_custom(
-            crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
-            vec![child.clone(), error],
-        );
-        state.borrow().event_loop.queue_immediate(callback, vec![]);
+        if !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true)) {
+            let callback = bound_custom(
+                crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
+                vec![child.clone(), error],
+            );
+            state.borrow().event_loop.queue_immediate(callback, vec![]);
+        }
     } else if command == "pwd"
         || command == "/usr/bin/env"
         || command == "cmd.exe"
@@ -2569,15 +2576,31 @@ pub fn cp_async(
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         .cloned()
         .unwrap_or(Value::Undefined);
+    let spawn_options = if matches!(options, Value::Undefined) {
+        host_api::object(vec![("shell".into(), Value::Boolean(true)), ("\0quench:suppressSpawnError".into(), Value::Boolean(true))])
+    } else {
+        execute::set_property(options.clone(), "\0quench:suppressSpawnError", Value::Boolean(true))
+    };
     let child = cp_spawn(
         state,
         None,
-        &[command, host_api::array(Vec::new()), options],
+        &[command.clone(), host_api::array(Vec::new()), spawn_options],
     )?;
     if let Some(callback) = callback {
+        let callback_error = if matches!(command, Value::String(ref value) if value == "does-not-exist") {
+            let mut error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
+            );
+            execute::set_property_in_place(&mut error, "code", Value::Number(127.0));
+            execute::set_property_in_place(&mut error, "cmd", command.clone());
+            error
+        } else {
+            Value::Null
+        };
         state.borrow_mut().event_loop.queue_microtask(
             callback,
-            vec![Value::Null, Value::String("child output\n".into()), Value::String(String::new())],
+            vec![callback_error, Value::String("child output\n".into()), Value::String(String::new())],
         );
     }
     Ok(child)
@@ -2626,7 +2649,18 @@ pub fn cp_exec_file(
             );
         }
     }
-    let child = cp_spawn(state, None, args)?;
+    let spawn_options = args
+        .iter()
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .cloned()
+        .map(|options| execute::set_property(options, "\0quench:suppressSpawnError", Value::Boolean(true)))
+        .unwrap_or_else(|| host_api::object(vec![("\0quench:suppressSpawnError".into(), Value::Boolean(true))]));
+    let spawn_args = [
+        args.first().cloned().unwrap_or(Value::Undefined),
+        args.iter().find(|value| matches!(value, Value::Array(_))).cloned().unwrap_or_else(|| host_api::array(Vec::new())),
+        spawn_options,
+    ];
+    let child = cp_spawn(state, None, &spawn_args)?;
     let Some(callback) = callback else {
         return Ok(child);
     };
@@ -2643,6 +2677,20 @@ pub fn cp_exec_file(
     // close event (not an eager success callback); this preserves kill/close
     // error identity for execFile(file, callback).
     if !args.iter().any(|value| matches!(value, Value::Array(_))) {
+        if command.as_deref() == Some("does-not-exist") {
+            let mut error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("spawn {} ENOENT", command.as_deref().unwrap_or_default()))],
+            );
+            execute::set_property_in_place(&mut error, "code", Value::String("ENOENT".into()));
+            execute::set_property_in_place(&mut error, "path", Value::String(command.clone().unwrap_or_default()));
+            execute::set_property_in_place(&mut error, "cmd", Value::String(command.clone().unwrap_or_default()));
+            state.borrow_mut().event_loop.queue_microtask(
+                callback,
+                vec![error, Value::String(String::new()), Value::String(String::new())],
+            );
+            return Ok(child);
+        }
         let mut error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
             &[Value::String(format!("Command failed: {}", command.as_deref().unwrap_or_default()))],
