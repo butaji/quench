@@ -73,7 +73,7 @@ fn typed_array_accessor(
         };
         return Some(Ok(tag.map_or(Value::Undefined, |tag| Value::String(tag.into()))));
     }
-    if builtin == Builtin::DataViewBufferGetter {
+    if builtin == Builtin::TypedArrayBufferGetter {
         let buffer = match receiver {
             Some(Value::Float64Array(view)) => Some(view.buffer.clone()),
             Some(Value::Float32Array(view)) => Some(view.buffer.clone()),
