@@ -2594,7 +2594,11 @@ pub fn cp_async(
             );
             execute::set_property_in_place(&mut error, "killed", Value::Boolean(true));
             execute::set_property_in_place(&mut error, "code", Value::Null);
-            execute::set_property_in_place(&mut error, "signal", execute::get_property(&options, "killSignal"));
+            let signal = match execute::get_property(&options, "killSignal") {
+                Value::Undefined => Value::String("SIGTERM".into()),
+                value => value,
+            };
+            execute::set_property_in_place(&mut error, "signal", signal);
             execute::set_property_in_place(&mut error, "cmd", command.clone());
             error
         } else if matches!(command, Value::String(ref value) if value == "does-not-exist") {
