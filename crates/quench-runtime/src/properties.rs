@@ -182,6 +182,19 @@ pub(crate) fn execute_set_property(
     if crate::module_bindings::is_namespace(&target) {
         return write_failure(strict);
     }
+    let value = unwrap_assignment_value(&crate::execute::read_register(registers, src)?);
+    // Computed numeric writes are emitted as SetPropertyDynamic by the
+    // general reducer. Keep the proven packed-array path ahead of extensible
+    // and prototype checks, so each indexed append is constant work.
+    if let (crate::value::Value::Array(array), Some(index), crate::value::Value::Number(number)) =
+        (&target, crate::arrays::array_index(&key).map(|index| index as usize), &value)
+    {
+        if array.set_existing_f64(index, *number)
+            || array.append_preallocated_f64(index, *number)
+        {
+            return Ok(());
+        }
+    }
     let rejects_new = {
         let _scope = crate::execution_trace::attribution_scope("SetN:reject_new");
         rejects_new_property(&target, &key)
@@ -189,7 +202,6 @@ pub(crate) fn execute_set_property(
     if rejects_new && key != "__proto__" {
         return write_failure(strict);
     }
-    let value = unwrap_assignment_value(&crate::execute::read_register(registers, src)?);
     if matches!(target, crate::value::Value::Proxy(_)) {
         return assign_proxy_set(registers, object, &target, &key, value);
     }
