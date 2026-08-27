@@ -632,6 +632,7 @@ fn is_object_special(builtin: Builtin) -> bool {
             | Builtin::ObjectFromEntries
             | Builtin::ObjectGroupBy
             | Builtin::ObjectCreate
+            | Builtin::ObjectGetPrototypeOf
             | Builtin::ObjectSetPrototypeOf
             | Builtin::ObjectPropertyIsEnumerable
             | Builtin::ObjectPrototypeIsPrototypeOf
