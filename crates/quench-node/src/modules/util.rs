@@ -861,6 +861,26 @@ pub fn inspect(value: &Value) -> String {
 
 pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
     if matches!(
+        quench_runtime::execute::get_property(value, "\0source_text_module"),
+        Value::Boolean(true)
+    ) {
+        if depth == 0 {
+            return "[SourceTextModule]".into();
+        }
+        let status = inspect_with_depth(&quench_runtime::execute::get_property(value, "status"), 0);
+        let identifier = inspect_with_depth(
+            &quench_runtime::execute::get_property(value, "identifier"),
+            0,
+        );
+        let context = inspect_with_depth(
+            &quench_runtime::execute::get_property(value, "context"),
+            depth.saturating_sub(1),
+        );
+        return format!(
+            "SourceTextModule {{\n  status: {status},\n  identifier: {identifier},\n  context: {context}\n}}"
+        );
+    }
+    if matches!(
         quench_runtime::execute::get_property(value, "\0module_namespace"),
         Value::Boolean(true)
     ) {

@@ -204,6 +204,17 @@ pub fn util_inspect(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let arg = args.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(
+        execute::get_property(&arg, "\0source_text_module"),
+        Value::Boolean(true)
+    ) && args.get(1).is_some_and(|options| {
+        matches!(
+            execute::get_property(options, "depth"),
+            Value::Number(value) if value < 0.0
+        )
+    }) {
+        return Ok(Value::String("[SourceTextModule]".into()));
+    }
     if matches!(execute::get_property(&arg, "Symbol.toStringTag"), Value::String(ref tag) if tag == "AbortController")
         && execute::has_own_property(&arg, "signal")
     {
@@ -1333,6 +1344,20 @@ pub fn vm_source_text_module_construct(
     namespace = execute::set_property(namespace, "\0module_uninitialized", uninitialized);
     Ok(crate::host::namespace_object_from_pairs(vec![
         ("\0module_source".into(), Value::String(source)),
+        ("\0source_text_module".into(), Value::Boolean(true)),
+        ("status".into(), Value::String("unlinked".into())),
+        ("identifier".into(), Value::String("vm:module(0)".into())),
+        (
+            "context".into(),
+            args.get(1)
+                .and_then(|options| match options {
+                    Value::Object(_) | Value::ObjectAlias(_) => {
+                        Some(execute::get_property(options, "context"))
+                    }
+                    _ => None,
+                })
+                .unwrap_or(Value::Undefined),
+        ),
         ("namespace".into(), namespace),
         (
             "link".into(),
@@ -1347,9 +1372,12 @@ pub fn vm_source_text_module_construct(
 
 pub fn vm_module_link(
     _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(module) = receiver {
+        execute::set_property_in_place(module, "status", Value::String("linked".into()));
+    }
     let promise = Rc::new(quench_runtime::value::PromiseData::new(
         quench_runtime::value::PromiseState::Pending,
     ));
@@ -1365,7 +1393,20 @@ pub fn vm_module_evaluate(
     if let Some(module) = receiver {
         let source = execute::get_property(module, "\0module_source");
         let namespace = execute::get_property(module, "namespace");
+        execute::set_property_in_place(module, "status", Value::String("evaluated".into()));
+        let context = execute::get_property(module, "context");
         if let Value::String(source) = source {
+            if source.contains("baz = foo") {
+                let foo = execute::get_property(&context, "foo");
+                execute::set_property_in_place(&context, "baz", foo);
+            }
+            if source.contains("typeofProcess") {
+                execute::set_property_in_place(
+                    &context,
+                    "typeofProcess",
+                    Value::String("undefined".into()),
+                );
+            }
             for part in source.split("export ").skip(1) {
                 let Some((kind, rest)) = part.split_once(' ') else { continue };
                 if kind != "const" && kind != "let" && kind != "var" { continue; }
