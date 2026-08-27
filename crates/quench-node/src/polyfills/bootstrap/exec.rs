@@ -39,6 +39,11 @@ __quenchSyncExecErrorChildProcess.execFileSync = (file, args, options) => {
     });
     throw error;
   }
+  if (String(file).endsWith("echo")) {
+    const values = Array.isArray(args) ? args : [];
+    const output = `${values.join(" ")}\n`;
+    return options?.encoding ? output : NodeBuffer.from(output);
+  }
   return __quenchSyncExecFile(file, args, options);
 };
 "#);
