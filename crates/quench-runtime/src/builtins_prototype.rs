@@ -118,6 +118,25 @@ pub(crate) fn prototype_to_string_result(
     Ok(prototype_to_string(Some(value)))
 }
 
+/// Implement `Object.prototype.toLocaleString` by forwarding to the receiver's
+/// own/prototypal `toString` method.
+pub(crate) fn prototype_to_locale_string_result(
+    receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "Object.prototype.toLocaleString called on null or undefined",
+        )
+    })?;
+    let method = crate::execute::get_property_result(value, "toString")?;
+    if !crate::conversion::is_callable(&method) {
+        return Err(crate::value::error::throw_type_error(
+            "Object.prototype.toLocaleString called on non-callable toString",
+        ));
+    }
+    crate::functions::execute_target_with_receiver(&method, value, &[]).map(|(value, _)| value)
+}
+
 fn intrinsic_tag_data_value(value: &Value) -> Option<Value> {
     if is_callable_builtin(value) {
         return None;
