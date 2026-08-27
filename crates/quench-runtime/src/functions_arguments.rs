@@ -483,11 +483,13 @@ fn execute_function_call_in_realm(
         });
         if receiver_bound {
             let target_receiver = if matches!(
-                bound.target,
-                crate::value::Value::Builtin(
-                    crate::ops::Builtin::FunctionApply
-                        | crate::ops::Builtin::FunctionCall
-                        | crate::ops::Builtin::FunctionBind
+                (&bound.target, &bound.receiver),
+                (
+                    crate::value::Value::Builtin(crate::ops::Builtin::FunctionCall),
+                    crate::value::Value::Builtin(
+                        crate::ops::Builtin::ObjectGetPrototypeOf
+                            | crate::ops::Builtin::ObjectSetPrototypeOf
+                    ),
                 )
             ) {
                 &bound.receiver
