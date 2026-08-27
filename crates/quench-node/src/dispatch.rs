@@ -475,6 +475,7 @@ const CAP_TEST_MOCK_MODULE: u16 = 0x1b1D;
 const CAP_TEST_CONTEXT_SKIP: u16 = 0x1b1E;
 const CAP_TEST_CONTEXT_TODO: u16 = 0x1b1F;
 const CAP_TEST_RUN_EMIT: u16 = 0x1b20;
+const CAP_TEST_GET_CONTEXT: u16 = 0x1b21;
 
 /// Single canonical mapping from capability id to call handler.
 pub fn lookup(cap: u16) -> Option<CallHandler> {
@@ -914,6 +915,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TEST_CONTEXT_SKIP => test_context_skip,
         CAP_TEST_CONTEXT_TODO => test_context_todo,
         CAP_TEST_RUN_EMIT => test_run_emit,
+        CAP_TEST_GET_CONTEXT => test_get_context,
         CAP_EVENT_TRUSTED_GET => event_trusted_get,
         CAP_ABORT_CONTROLLER_SIGNAL_GET => abort_controller_signal_get,
         CAP_ABORT_SIGNAL_ABORTED_GET => abort_signal_aborted_get,

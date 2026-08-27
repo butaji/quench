@@ -23,6 +23,7 @@ struct Frame {
 
 thread_local! {
     static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+    static CURRENT_CONTEXT: RefCell<Option<Value>> = const { RefCell::new(None) };
     static MODULE_MOCKS: RefCell<std::collections::HashMap<String, Value>> = RefCell::new(std::collections::HashMap::new());
 }
 
@@ -114,13 +115,23 @@ fn context() -> Value {
     ])
 }
 
+pub fn current_context() -> Value {
+    CURRENT_CONTEXT.with(|context| context.borrow().clone().unwrap_or(Value::Undefined))
+}
+
 pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let Some(callback) = callback(args).cloned() else { return Ok(Value::Undefined) };
     let child = context();
+    let child_name = test_name(args);
+    let _ = quench_runtime::execute::set_property_in_place(&child, "name", Value::String(child_name.clone()));
+    let _ = quench_runtime::execute::set_property_in_place(&child, "fullName", Value::String(child_name));
+    let _ = quench_runtime::execute::set_property_in_place(&child, "signal", quench_runtime::host_api::object(vec![("aborted".into(), Value::Boolean(false))]));
     let (inherited, parent_after) = FRAMES.with(|frames| frames.borrow().last().map(|f| (f.before.clone(), f.after.clone())).unwrap_or_default());
     for hook in inherited { invoke(state, &hook, &child)?; }
     FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new() }));
+    let previous = CURRENT_CONTEXT.with(|current| current.replace(Some(child.clone())));
     let result = invoke(state, &callback, &child);
+    CURRENT_CONTEXT.with(|current| current.replace(previous));
     let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
     for hook in frame.after.iter().rev() { invoke(state, hook, &child)?; }
     for hook in parent_after.iter().rev() { invoke(state, hook, &child)?; }
@@ -154,11 +165,16 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
         return Ok(emitter);
     };
     let context = context();
+    let _ = quench_runtime::execute::set_property_in_place(&context, "name", Value::String(name.clone()));
+    let _ = quench_runtime::execute::set_property_in_place(&context, "fullName", Value::String(name.clone()));
+    let _ = quench_runtime::execute::set_property_in_place(&context, "signal", quench_runtime::host_api::object(vec![("aborted".into(), Value::Boolean(false))]));
+    let previous = CURRENT_CONTEXT.with(|current| current.replace(Some(context.clone())));
     FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new() }));
     let result = quench_runtime::vm::call_value(callback, &Value::Undefined, &[context.clone()]);
     let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
     for restore in frame.restores.iter().rev() { let _ = quench_runtime::vm::call_value(restore, &Value::Undefined, &[]); }
     quench_runtime::date::set_mock_now(None);
+    CURRENT_CONTEXT.with(|current| current.replace(previous));
     match result {
         Ok(result) => {
             // Async callbacks return a promise; drive the loop until it
