@@ -2551,11 +2551,31 @@ pub fn cp_exec_file(
                 ("message".into(), Value::String("The signal option must be an AbortSignal".into())),
             ])));
         }
+        if matches!(execute::get_property(options, "shell"), Value::Boolean(true))
+            && args.iter().any(|value| matches!(value, Value::Array(_)))
+        {
+            crate::modules::process::emit_warning(
+                state,
+                "DeprecationWarning",
+                "Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.",
+                Some("DEP0190"),
+                true,
+            );
+        }
     }
     let child = cp_spawn(state, None, args)?;
     let Some(callback) = callback else {
         return Ok(child);
     };
+    let signal = args
+        .iter()
+        .find_map(|value| match value {
+            Value::Object(_) | Value::ObjectAlias(_) => {
+                let candidate = execute::get_property(value, "signal");
+                matches!(candidate, Value::Object(_) | Value::ObjectAlias(_)).then_some(candidate)
+            }
+            _ => None,
+        });
     // With the callback in the args slot, completion is driven by the child
     // close event (not an eager success callback); this preserves kill/close
     // error identity for execFile(file, callback).
@@ -2572,10 +2592,14 @@ pub fn cp_exec_file(
         ] {
             let _ = execute::set_property_in_place(&mut error, key, value);
         }
-        state.borrow_mut().event_loop.queue_microtask(
+        cp_queue_exec_completion(
+            state,
             callback,
-            vec![error, Value::String(String::new()), Value::String(String::new())],
-        );
+            signal,
+            error,
+            String::new(),
+            String::new(),
+        )?;
         return Ok(child);
     }
     let mut error = Value::Null;
@@ -2641,15 +2665,126 @@ pub fn cp_exec_file(
             }
         }
     }
-    state.borrow_mut().event_loop.queue_microtask(
-        callback.clone(),
+    cp_queue_exec_completion(state, callback, signal, error, stdout, stderr)?;
+    Ok(child)
+}
+
+/// Queue an execFile completion while sharing one `done` fact between the
+/// abort listener and the ordinary process completion.  The listener is
+/// removed before the success callback, matching Node's observable lifecycle.
+fn cp_queue_exec_completion(
+    state: &Rc<RefCell<HostState>>,
+    callback: Value,
+    signal: Option<Value>,
+    error: Value,
+    stdout: String,
+    stderr: String,
+) -> Result<(), VmError> {
+    let Some(signal) = signal else {
+        state.borrow_mut().event_loop.queue_microtask(
+            callback,
+            vec![error, Value::String(stdout), Value::String(stderr)],
+        );
+        return Ok(());
+    };
+    let done = host_api::object(vec![("done".into(), Value::Boolean(false))]);
+    let abort_listener = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_CP_EXECFILE_ABORT.cap,
+            ),
+        },
+        vec![callback.clone(), done.clone()],
+    );
+    if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
+        // An already-aborted signal never installs a listener or starts a
+        // process completion path; use the same capability as a later abort.
+        execute::call(&abort_listener, &Value::Undefined, &[])?;
+        return Ok(());
+    }
+    crate::modules::event_target::add_event_listener(
+        state,
+        Some(&signal),
+        &[Value::String("abort".into()), abort_listener.clone()],
+    )?;
+    let completion = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_CP_EXECFILE_COMPLETE.cap,
+            ),
+        },
         vec![
+            callback,
+            signal,
+            abort_listener,
+            done,
             error,
-            Value::String(stdout.into()),
-            Value::String(stderr.into()),
+            Value::String(stdout),
+            Value::String(stderr),
         ],
     );
-    Ok(child)
+    state.borrow_mut().event_loop.queue_microtask(completion, vec![]);
+    Ok(())
+}
+
+pub fn cp_exec_file_abort(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (Some(callback), Some(done)) = (args.first(), args.get(1)) else {
+        return Ok(Value::Undefined);
+    };
+    if execute::is_truthy(&execute::get_property(done, "done")) {
+        return Ok(Value::Undefined);
+    }
+    execute::set_property_in_place(done, "done", Value::Boolean(true));
+    let mut error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("The operation was aborted".into())],
+    );
+    execute::set_property_in_place(&mut error, "name", Value::String("AbortError".into()));
+    execute::set_property_in_place(&mut error, "code", Value::String("ABORT_ERR".into()));
+    execute::set_property_in_place(&mut error, "signal", Value::Undefined);
+    // Abort is dispatched synchronously, so `done` wins over the queued
+    // process completion; the callback itself remains asynchronous.
+    state.borrow_mut().event_loop.queue_microtask(
+        callback.clone(),
+        vec![error, Value::String(String::new()), Value::String(String::new())],
+    );
+    Ok(Value::Undefined)
+}
+
+pub fn cp_exec_file_complete(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (Some(callback), Some(signal), Some(listener), Some(done)) =
+        (args.first(), args.get(1), args.get(2), args.get(3))
+    else {
+        return Ok(Value::Undefined);
+    };
+    if execute::is_truthy(&execute::get_property(done, "done")) {
+        return Ok(Value::Undefined);
+    }
+    execute::set_property_in_place(done, "done", Value::Boolean(true));
+    crate::modules::event_target::remove_event_listener(
+        state,
+        Some(signal),
+        &[Value::String("abort".into()), listener.clone()],
+    )?;
+    let values = args.get(4..7).unwrap_or(&[]);
+    let error = values.first().cloned().unwrap_or(Value::Null);
+    let stdout = values.get(1).cloned().unwrap_or(Value::String(String::new()));
+    let stderr = values.get(2).cloned().unwrap_or(Value::String(String::new()));
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(callback.clone(), vec![error, stdout, stderr]);
+    Ok(Value::Undefined)
 }
 
 pub fn url_path_to_file_url(

@@ -532,6 +532,8 @@ pub const SPEC_CP_SPAWNSYNC: NodeSpec = NodeSpec::new("child_process:spawnSync",
 pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0x1e01);
 pub const SPEC_CP_EXEC: NodeSpec = NodeSpec::new("child_process:exec", 0x1e02);
 pub const SPEC_CP_EXECFILE: NodeSpec = NodeSpec::new("child_process:execFile", 0x1e03);
+pub const SPEC_CP_EXECFILE_ABORT: NodeSpec = NodeSpec::new("child_process:execFileAbort", 0x1e07);
+pub const SPEC_CP_EXECFILE_COMPLETE: NodeSpec = NodeSpec::new("child_process:execFileComplete", 0x1e08);
 pub const SPEC_CP_SPAWN: NodeSpec = NodeSpec::new("child_process:spawn", 0x1e06);
 pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
