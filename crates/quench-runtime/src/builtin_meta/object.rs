@@ -48,8 +48,6 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         }
         Builtin::ObjectHasOwnProperty
         | Builtin::ObjectPrototypeIsPrototypeOf
-        | Builtin::ObjectPrototypeDefineGetter
-        | Builtin::ObjectPrototypeDefineSetter
         | Builtin::ObjectPrototypeLookupGetter
         | Builtin::ObjectPrototypeLookupSetter
         | Builtin::ObjectPropertyIsEnumerable
@@ -64,6 +62,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::ObjectIsFrozen
         | Builtin::ObjectIsSealed
         | Builtin::ObjectIsExtensible => Some(1.0),
+        Builtin::ObjectPrototypeDefineGetter | Builtin::ObjectPrototypeDefineSetter => Some(2.0),
         Builtin::ObjectHasOwn => Some(2.0),
         Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
         Builtin::ObjectCreate => Some(2.0),
@@ -76,6 +75,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::ProxyRevocable => Some(2.0),
         Builtin::ProxyRevoke => Some(0.0),
         Builtin::ObjectDefineProperty => Some(3.0),
+        Builtin::ObjectGetPrototypeOf => Some(1.0),
+        Builtin::ObjectSetPrototypeOf => Some(2.0),
         _ => None,
     }
 }
