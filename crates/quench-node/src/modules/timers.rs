@@ -10,6 +10,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::Cell;
 
 use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
@@ -23,6 +24,10 @@ const TIMER_ID_PROP: &str = "\0quench:timer:id";
 /// Node's `TIMEOUT_MAX` (2^31 - 1); larger delays clamp to 1ms.
 const TIMEOUT_MAX: f64 = 2_147_483_647.0;
 const PROMISES_PRELUDE: &str = include_str!("timers_promises.js");
+thread_local! { static MOCK_TIMER_NOW: Cell<Option<u64>> = const { Cell::new(None) }; }
+
+pub fn set_mock_timer_now(value: Option<u64>) { MOCK_TIMER_NOW.with(|now| now.set(value)); }
+pub fn mock_timer_now() -> Option<u64> { MOCK_TIMER_NOW.with(Cell::get) }
 
 pub enum TimerKind {
     Timeout,
@@ -310,6 +315,10 @@ fn invalid_callback_error() -> VmError {
 }
 
 pub(crate) fn monotonic_ms() -> u64 {
+    if let Some(value) = mock_timer_now() { return value; }
+    if quench_runtime::date::mock_enabled() {
+        return quench_runtime::date::current_time_ms().max(0.0) as u64;
+    }
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START
         .get_or_init(std::time::Instant::now)
