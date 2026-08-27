@@ -483,6 +483,11 @@ pub fn chmod_sync(
     let path = path_arg(args.first())?;
     let mode = match args.get(1) {
         Some(Value::Number(m)) => *m as u32,
+        Some(Value::String(m)) => u32::from_str_radix(m, 8).map_err(|_| {
+            crate::modules::buffer_enc::invalid_arg_value(format!(
+                "The \"mode\" argument is invalid: {m}"
+            ))
+        })?,
         _ => {
             return Err(crate::modules::buffer_enc::invalid_arg_type(
                 "The \"mode\" argument must be of type number.".to_string(),

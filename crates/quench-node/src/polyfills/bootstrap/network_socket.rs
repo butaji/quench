@@ -209,7 +209,9 @@ pub const JS: &str = quench_js_check::checked_js!(
       callback = _options[1];
       _options = _options[0];
     }
-    if (typeof _options !== "object" || _options === null) {
+    if (typeof _options === "string" && _options.startsWith("/")) {
+      _options = { path: _options };
+    } else if (typeof _options !== "object" || _options === null) {
       _options = { port: _options };
     }
     if (this.destroyed) {

@@ -108,6 +108,13 @@ fn connect_with_receiver(
         .first()
         .filter(|value| matches!(value, Value::Object(_)))
     {
+        let auto_select_family = execute::get_property(options, "autoSelectFamily");
+        if !matches!(auto_select_family, Value::Undefined | Value::Boolean(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ])));
+        }
         let path = execute::get_property(options, "path");
         if !matches!(path, Value::Undefined | Value::Null) && !matches!(path, Value::String(_)) {
             return Err(VmError::Thrown(host_api::object(vec![
@@ -264,6 +271,12 @@ fn missing_connect_args() -> VmError {
 }
 
 fn parse_port(value: &Value) -> Result<u16, VmError> {
+    if !matches!(value, Value::Number(_) | Value::String(_)) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ])));
+    }
     let text = execute::to_js_string(value)?;
     let Ok(port) = text.parse::<i64>() else {
         return Err(execute::type_error("port must be a number"));
