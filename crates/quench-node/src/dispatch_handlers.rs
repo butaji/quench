@@ -2739,21 +2739,84 @@ pub fn cp_fork(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let script = args.first().cloned().unwrap_or(Value::Undefined);
-    let fork_args = match args.get(1).cloned().unwrap_or(Value::Undefined) {
-        Value::Null => Value::Undefined,
-        value => value,
+    let second = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let (fork_args, options) = if matches!(second, Value::Object(_) | Value::ObjectAlias(_)) {
+        (Value::Undefined, second)
+    } else {
+        let fork_args = if matches!(second, Value::Null) { Value::Undefined } else { second };
+        let options = match args.get(2).cloned().unwrap_or(Value::Undefined) {
+            Value::Null | Value::Undefined => host_api::object(Vec::new()),
+            value => value,
+        };
+        (fork_args, options)
     };
-    let options = match args.get(2).cloned().unwrap_or(Value::Undefined) {
-        Value::Null | Value::Undefined => host_api::object(Vec::new()),
-        value => value,
-    };
+    if let Value::Array(stdio) = execute::get_property(&options, "stdio") {
+        let has_ipc = (0..stdio.logical_len()).any(|index| {
+            execute::get_property_result(&Value::Array(stdio.clone()), &index.to_string())
+                .ok()
+                .and_then(|value| execute::to_js_string(&value).ok())
+                .is_some_and(|value| value == "ipc")
+        });
+        if !has_ipc {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("code".into(), Value::String("ERR_CHILD_PROCESS_IPC_REQUIRED".into())),
+            ])));
+        }
+    }
     let has_child_marker = matches!(&fork_args, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
     let child_messages = fork_child_messages(&script);
     if has_child_marker || !child_messages.is_empty() {
         execute::set_property_in_place(&options, "\0quench:forkIpc", Value::Boolean(true));
     }
     let fork_args_for_events = fork_args.clone();
-    let child = cp_spawn(state, None, &[script.clone(), fork_args, options])?;
+    let child = cp_spawn(state, None, &[script.clone(), fork_args, options.clone()])?;
+    // `fork()` exposes the child stdio slots according to the caller's
+    // stdio descriptor.  `cp_spawn` creates the ordinary three streams;
+    // adapt those identities to the fork descriptor without creating a
+    // second child representation.
+    if let Value::Array(stdio) = execute::get_property(&options, "stdio") {
+        let mut slots = Vec::new();
+        for index in 0..stdio.logical_len() {
+            let entry = execute::get_property_result(
+                &Value::Array(stdio.clone()),
+                &index.to_string(),
+            )
+            .unwrap_or(Value::Undefined);
+            let text = execute::to_js_string(&entry).unwrap_or_default();
+            let slot = match (index, text.as_str()) {
+                (0, "ignore") | (1, "ignore") | (2, "ignore") => Value::Null,
+                (1, "pipe") => execute::get_property(&child, "stdout"),
+                (2, "pipe") => execute::get_property(&child, "stderr"),
+                (_, "ipc") => Value::Undefined,
+                (_, "pipe") => {
+                    let stream = crate::modules::events::new_emitter_object(state)?;
+                    execute::set_property(
+                        stream,
+                        "write",
+                        crate::host::capability(crate::registry::SPEC_CP_STDIN_WRITE),
+                    )
+                }
+                _ => Value::Null,
+            };
+            slots.push(slot);
+        }
+        let stdio_value = host_api::array(slots);
+        execute::set_property_in_place(&child, "stdio", stdio_value);
+        if matches!(execute::get_property(&child, "stdio"), Value::Array(_)) {
+            let stdio_value = execute::get_property(&child, "stdio");
+            execute::set_property_in_place(
+                &child,
+                "stdout",
+                execute::get_property_result(&stdio_value, "1").unwrap_or(Value::Null),
+            );
+            execute::set_property_in_place(
+                &child,
+                "stderr",
+                execute::get_property_result(&stdio_value, "2").unwrap_or(Value::Null),
+            );
+        }
+    }
     let child = execute::set_property(
         child,
         "send",
