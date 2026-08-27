@@ -343,7 +343,17 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
     let descriptor_key = descriptor_key(key);
     if let Value::Object(properties) = result {
         if default_ordinary_descriptor(descriptor) {
-            Rc::make_mut(properties).retain(|(name, _)| name != &descriptor_key);
+            // Avoid cloning a freshly-created cyclic object merely to remove a
+            // metadata entry that is absent. `Rc::make_mut` would allocate a
+            // new representative and leave weak self aliases targeting the
+            // discarded one.
+            if properties
+                .hot_properties()
+                .position_rev(&descriptor_key)
+                .is_some()
+            {
+                Rc::make_mut(properties).retain(|(name, _)| name != &descriptor_key);
+            }
             return;
         }
     }
