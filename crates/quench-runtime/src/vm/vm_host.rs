@@ -75,7 +75,10 @@ fn agent_start(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(_)) = arguments.first() else {
         return Err(type_error("$262.agent.start expects a string"));
     };
-    run_eval_script(arguments)
+    crate::atomics::begin_agent_callback();
+    let result = run_eval_script(arguments);
+    crate::atomics::end_agent_callback();
+    result
 }
 
 fn agent_receive_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
@@ -102,7 +105,13 @@ fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
-    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let value = match arguments.first().cloned().unwrap_or(Value::Undefined) {
+        Value::Number(value) => Value::String(
+            crate::conversion::to_string(&Value::Number(value)).unwrap_or_default(),
+        ),
+        Value::BigInt(value) => Value::String(value),
+        value => value,
+    };
     let associates = matches!(&value,
         Value::String(value)
             if value == "ok"
