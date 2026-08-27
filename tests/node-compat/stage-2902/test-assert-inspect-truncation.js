@@ -27,6 +27,16 @@ const linesB = 'B\n'.repeat(100);
 instance.throws(() => instance.strictEqual(linesA, linesB), (error) => {
   assert.strictEqual(error.message.split('\n').length, 204);
   assert.strictEqual(error.actual.split('\n').length, 101);
-  assert.ok(inspect(error).includes("actual: 'A\\n' +"));
+  assert.ok(inspect(error).includes("actual: 'A\\nA\\nA\\n"));
+  return true;
+});
+instance.throws(() => instance.notStrictEqual(linesA, linesA), (error) => {
+  assert.strictEqual(error.message.split('\n').length, 103);
+  assert.ok(inspect(error).includes("actual: 'A\\nA\\nA\\n"));
+  return true;
+});
+instance.throws(() => instance.deepEqual(linesA, linesB), (error) => {
+  assert.strictEqual(error.message.split('\n').length, 205);
+  assert.ok(inspect(error).includes("expected: 'B\\nB\\nB\\n"));
   return true;
 });
