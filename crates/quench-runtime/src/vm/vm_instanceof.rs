@@ -187,14 +187,18 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
     }
     if let Value::BoundFunction(bound) = constructor {
         if let Some(builtin) = intrinsic_builtin(&bound.target) {
-            let prototype_builtin = crate::builtin_meta::instance_prototype(builtin)
-                .unwrap_or(Builtin::ObjectPrototype);
-            let prototype = crate::vm::realm_intrinsic_for(bound.realm, prototype_builtin);
-            if crate::value::is_object(&prototype) {
-                return Ok(prototype_chain_contains(value, &prototype)?);
+            if let Some(prototype_builtin) = crate::builtin_meta::instance_prototype(builtin) {
+                let prototype = crate::vm::realm_intrinsic_for(bound.realm, prototype_builtin);
+                if crate::value::is_object(&prototype) {
+                    return Ok(prototype_chain_contains(value, &prototype)?);
+                }
             }
         }
-        return ordinary_instanceof(value, &bound.target);
+        let prototype = crate::execute::get_property_result(constructor, "prototype")?;
+        if !crate::value::is_object(&prototype) {
+            return Err(type_error("Function has non-object prototype"));
+        }
+        return Ok(prototype_chain_contains(value, &prototype)?);
     }
     let prototype = crate::execute::get_property_result(constructor, "prototype")?;
     if !crate::value::is_object(&prototype) {
