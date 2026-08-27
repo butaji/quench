@@ -249,6 +249,11 @@ const ASSERT_REJECTS: &str = r#"(promiseOrFn, expected, message) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
   }
+  if (typeof input.catch !== "function") {
+    const error = new TypeError("The promiseFn argument must be a Promise");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return Promise.reject(error);
+  }
   return Promise.resolve(input).then(
     () => Promise.reject(Object.assign(new Error(message || "Missing expected rejection"), {
       code: "ERR_ASSERTION", operator: "rejects"
