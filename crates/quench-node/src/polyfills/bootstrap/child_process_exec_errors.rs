@@ -90,6 +90,4 @@ __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
   }
   return __quenchExecFileSuccess(file, args, options, callback);
 };
-if (typeof __quenchExecErrorChildProcess["\0quench:child_process_execFile"] === "function")
-  __quenchExecErrorChildProcess.execFile = __quenchExecErrorChildProcess["\0quench:child_process_execFile"];
 "#);
