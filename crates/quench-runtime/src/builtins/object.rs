@@ -35,7 +35,7 @@ pub(crate) fn execute_special(
             has_own_property_result(target, key)
         }
         Builtin::ObjectPropertyIsEnumerable => {
-            Ok(object_property_is_enumerable(receiver, arguments))
+            object_property_is_enumerable(receiver, arguments)
         }
         Builtin::ObjectPrototypeIsPrototypeOf => is_prototype_of(receiver, arguments),
         Builtin::ObjectGetOwnPropertyDescriptor => {
@@ -199,6 +199,13 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Cannot set the prototype of a non-extensible object",
         ));
     }
+    if !crate::builtins::same_value(Some(&current), Some(&prototype))
+        && ordinary_prototype_contains(&prototype, target)?
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot create a prototype cycle",
+        ));
+    }
     if matches!(prototype, Value::Null) {
         let constructor = crate::vm::get_property(&current, "constructor");
         if let Value::String(name) = crate::vm::get_property(&constructor, "name") {
@@ -226,6 +233,20 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     crate::locals::replace_value(target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
+}
+
+fn ordinary_prototype_contains(prototype: &Value, target: &Value) -> Result<bool, VmError> {
+    let mut current = prototype.clone();
+    while !matches!(current, Value::Null) {
+        if crate::builtins::same_value(Some(&current), Some(target)) {
+            return Ok(true);
+        }
+        if matches!(current, Value::Proxy(_)) {
+            return Ok(false);
+        }
+        current = get_prototype_of(Some(&current))?;
+    }
+    Ok(false)
 }
 
 fn set_object_prototype(data: &Rc<crate::value::ObjectData>, prototype: Value) -> Value {
@@ -290,6 +311,7 @@ fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
             | Value::Map(_)
             | Value::Set(_)
             | Value::Promise(_)
+            | Value::Proxy(_)
             | Value::Function(_)
             | Value::BoundFunction(_)
             | Value::HostCapability(_)
@@ -316,14 +338,13 @@ fn validate_set_prototype_value(prototype: &Value) -> Result<(), VmError> {
 pub(crate) fn object_property_is_enumerable(
     receiver: Option<&Value>,
     arguments: &[Value],
-) -> Value {
-    let (Some(receiver), Some(key)) = (receiver, arguments.first()) else {
-        return Value::Boolean(false);
+) -> Result<Value, VmError> {
+    let receiver = require_object_coercible(receiver)?;
+    let Some(key) = arguments.first() else {
+        return Ok(Value::Boolean(false));
     };
-    let Ok(key) = crate::properties::dynamic_property_key(key) else {
-        return Value::Boolean(false);
-    };
-    enumerable_value(receiver, &key)
+    let key = crate::properties::dynamic_property_key(key)?;
+    Ok(enumerable_value(receiver, &key))
 }
 
 fn enumerable_value(receiver: &Value, key: &str) -> Value {
