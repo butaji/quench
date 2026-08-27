@@ -306,7 +306,8 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
                 .then_some(Builtin::TypedArrayIterator)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "keys").then_some(Builtin::ArrayKeys)
+            (builtin == Builtin::TypedArray && key == "keys")
+                .then_some(Builtin::TypedArrayKeys)
         })
         .or_else(|| {
             (builtin == Builtin::TypedArray && key == "entries")
