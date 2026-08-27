@@ -2519,17 +2519,32 @@ pub fn cp_exec_file(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(callback) = args
+    let callback = args
         .iter()
         .rev()
         .find(|value| quench_runtime::is_callable(value))
-    else {
-        return Ok(Value::Undefined);
-    };
+        .cloned();
     let command = args.first().and_then(|value| match value {
         Value::String(value) => Some(value.clone()),
         _ => None,
     });
+    if let Some(options) = args
+        .iter()
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        let signal = execute::get_property(options, "signal");
+        if !matches!(signal, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The signal option must be an AbortSignal".into())),
+            ])));
+        }
+    }
+    let child = cp_spawn(state, None, args)?;
+    let Some(callback) = callback else {
+        return Ok(child);
+    };
     let mut error = Value::Null;
     let mut stderr = String::new();
     if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
@@ -2571,7 +2586,7 @@ pub fn cp_exec_file(
             Value::String(stderr.into()),
         ],
     );
-    Ok(Value::Undefined)
+    Ok(child)
 }
 
 pub fn url_path_to_file_url(
