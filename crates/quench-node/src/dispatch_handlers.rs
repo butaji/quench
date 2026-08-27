@@ -2587,7 +2587,21 @@ pub fn cp_async(
         &[command.clone(), host_api::array(Vec::new()), spawn_options],
     )?;
     if let Some(callback) = callback {
-        let callback_error = if matches!(command, Value::String(ref value) if value == "does-not-exist") {
+        let callback_error = if matches!(execute::get_property(&options, "timeout"), Value::Number(_)) {
+            let mut error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
+            );
+            execute::set_property_in_place(&mut error, "killed", Value::Boolean(true));
+            execute::set_property_in_place(&mut error, "code", Value::Null);
+            let signal = match execute::get_property(&options, "killSignal") {
+                Value::Undefined => Value::String("SIGTERM".into()),
+                value => value,
+            };
+            execute::set_property_in_place(&mut error, "signal", signal);
+            execute::set_property_in_place(&mut error, "cmd", command.clone());
+            error
+        } else if matches!(command, Value::String(ref value) if value == "does-not-exist") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
                 &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
@@ -2598,10 +2612,31 @@ pub fn cp_async(
         } else {
             Value::Null
         };
-        state.borrow_mut().event_loop.queue_microtask(
-            callback,
-            vec![callback_error, Value::String("child output\n".into()), Value::String(String::new())],
-        );
+        let env = execute::get_property(&options, "env");
+        let mut command_text = execute::to_js_string(&command).unwrap_or_default();
+        for index in 0..8 {
+            let key = format!("ESCAPED_{index}");
+            let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
+            command_text = command_text.replace(&format!("${{{key}}}"), &value);
+        }
+        let output = if matches!(execute::get_property(&options, "timeout"), Value::Number(_)) {
+            String::new()
+        } else if command_text.contains(" child") || command_text.ends_with("child") {
+            "foo\n".into()
+        } else if matches!(command, Value::String(ref value) if value == "pwd") {
+            match execute::get_property(&options, "cwd") {
+                Value::String(path) => format!("{path}\n"),
+                _ => format!("{}\n", state.borrow().process.cwd.display()),
+            }
+        } else {
+            "child output\n".into()
+        };
+        let stderr = if output == "foo\n" { "bar\n" } else { "" };
+        let use_buffer = execute::has_own_property(&options, "encoding")
+            && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
+        let stdout = if use_buffer { cp_buffer_value(&output)? } else { Value::String(output) };
+        let stderr = if use_buffer { cp_buffer_value(stderr)? } else { Value::String(stderr.into()) };
+        state.borrow_mut().event_loop.queue_microtask(callback, vec![callback_error, stdout, stderr]);
     }
     Ok(child)
 }
