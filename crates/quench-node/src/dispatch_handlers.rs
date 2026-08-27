@@ -2556,6 +2556,12 @@ pub fn cp_exec_file(
     let Some(callback) = callback else {
         return Ok(child);
     };
+    // With the callback in the args slot, completion is driven by the child
+    // close event (not an eager success callback); this preserves kill/close
+    // error identity for execFile(file, callback).
+    if !args.iter().any(|value| matches!(value, Value::Array(_))) {
+        return Ok(child);
+    }
     let mut error = Value::Null;
     let mut stdout = String::new();
     let mut stderr = String::new();
