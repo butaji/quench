@@ -866,15 +866,13 @@ pub(crate) fn emit_warning_with_detail(
     detail: Option<&str>,
     once_per_process: bool,
 ) {
-    {
+    if once_per_process {
         let mut guard = state.borrow_mut();
         let key = format!("{name}:{message}");
         if guard.process.warnings_emitted.iter().any(|n| n == &key) {
             return;
         }
-        if once_per_process {
-            guard.process.warnings_emitted.push(key);
-        }
+        guard.process.warnings_emitted.push(key);
     }
     let mut props = vec![
         ("name".to_string(), Value::String(name.to_string())),
