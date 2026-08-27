@@ -443,7 +443,14 @@ fn reduce_method(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    reduce_method_with_source(method, ops, facts, next, locals, method_source(method, facts))
+    reduce_method_with_source(
+        method,
+        ops,
+        facts,
+        next,
+        locals,
+        method_source(method, facts),
+    )
 }
 
 fn reduce_method_with_source(
@@ -470,10 +477,7 @@ fn reduce_method_with_source(
     result
 }
 
-fn method_source(
-    method: &MethodDefinition<'_>,
-    facts: &ProgramDb,
-) -> Option<String> {
+fn method_source(method: &MethodDefinition<'_>, facts: &ProgramDb) -> Option<String> {
     let full = facts
         .reduction_source
         .get(method.span.start as usize..method.span.end as usize)?;

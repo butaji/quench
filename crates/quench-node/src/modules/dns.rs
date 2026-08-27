@@ -31,7 +31,10 @@ pub fn lookup_addresses(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resu
     }
     let addresses = format!("{host}:0")
         .to_socket_addrs()
-        .map(|iter| iter.map(|addr| Value::String(addr.ip().to_string())).collect())
+        .map(|iter| {
+            iter.map(|addr| Value::String(addr.ip().to_string()))
+                .collect()
+        })
         .unwrap_or_default();
     Ok(host_api::array(addresses))
 }
@@ -44,16 +47,16 @@ pub fn lookup_addresses_handler(
     lookup_addresses(state, args)
 }
 
-pub fn dns_exception(
-    _state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+pub fn dns_exception(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let message = args.get(1).cloned().unwrap_or(Value::Undefined);
     Ok(host_api::object(vec![
         ("name".into(), Value::String("DNSException".into())),
         ("message".into(), message),
         ("code".into(), Value::String("EAI_MEMORY".into())),
-        ("stack".into(), Value::String("DNSException\n    at Object".into())),
+        (
+            "stack".into(),
+            Value::String("DNSException\n    at Object".into()),
+        ),
     ]))
 }
 

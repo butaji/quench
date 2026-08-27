@@ -12,21 +12,17 @@ pub fn build() -> Value {
     crate::host::namespace_object(vec![
         (
             "REPLServer",
-            quench_runtime::host_api::capability_function(
-                quench_runtime::ops::HostCapabilityRef {
-                    realm: quench_runtime::ops::RealmId::ROOT,
-                    kind: quench_runtime::ops::HostCapabilityKind::Custom(REPL_SERVER),
-                },
-            ),
+            quench_runtime::host_api::capability_function(quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(REPL_SERVER),
+            }),
         ),
         (
             "start",
-            quench_runtime::host_api::capability_function(
-                quench_runtime::ops::HostCapabilityRef {
-                    realm: quench_runtime::ops::RealmId::ROOT,
-                    kind: quench_runtime::ops::HostCapabilityKind::Custom(REPL_SERVER),
-                },
-            ),
+            quench_runtime::host_api::capability_function(quench_runtime::ops::HostCapabilityRef {
+                realm: quench_runtime::ops::RealmId::ROOT,
+                kind: quench_runtime::ops::HostCapabilityKind::Custom(REPL_SERVER),
+            }),
         ),
     ])
     .unwrap_or(Value::Undefined)
