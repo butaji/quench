@@ -128,7 +128,7 @@ class NodeAbortSignal {
     if (!internal) {
       throw Object.assign(new TypeError("Illegal constructor"), { code: "ERR_ILLEGAL_CONSTRUCTOR" });
     }
-    this.aborted = false;
+    this._aborted = false;
     this.reason = reason;
     this.onabort = null;
     this._listeners = [];
@@ -151,7 +151,7 @@ class NodeAbortSignal {
     return event === "abort" ? this._listeners.length : 0;
   }
   throwIfAborted() {
-    if (this.aborted) throw this.reason;
+    if (this._aborted) throw this.reason;
   }
   dispatchEvent(event) {
     if (event?.type !== "abort") return true;
@@ -164,7 +164,7 @@ class NodeAbortSignal {
       reason = new DOMException("This operation was aborted", "AbortError");
     }
     const signal = new NodeAbortSignal(reason, true);
-    signal.aborted = true;
+    signal._aborted = true;
     return signal;
   }
   static any(signals) {
@@ -178,7 +178,7 @@ class NodeAbortSignal {
     const combined = new NodeAbortSignal(undefined, true);
     const abort = (signal) => {
       if (combined.aborted) return;
-      combined.aborted = true;
+      combined._aborted = true;
       combined.reason = signal.reason;
       for (const value of values) {
         if (value !== signal) clearTimeout(value.__timeoutTimer);
@@ -206,7 +206,7 @@ class NodeAbortSignal {
     signal.__timeoutTimer = setTimeout(() => {
       const reason = new Error("The operation was aborted due to timeout");
       reason.name = "TimeoutError";
-      signal.aborted = true;
+      signal._aborted = true;
       signal.reason = reason;
       const event = { type: "abort", target: signal };
       signal._listeners
@@ -225,7 +225,7 @@ class NodeAbortController {
   }
   abort(reason) {
     if (!(this instanceof NodeAbortController)) throw new TypeError("Illegal invocation");
-    this.signal.aborted = true;
+    this.signal._aborted = true;
     this.signal.reason = reason === undefined
       ? new DOMException("This operation was aborted", "AbortError")
       : reason;
@@ -245,7 +245,7 @@ class NodeAbortController {
 Object.defineProperty(NodeAbortSignal.prototype, "aborted", {
   get() {
     if (!(this instanceof NodeAbortSignal)) throw new TypeError("Illegal invocation");
-    return this.aborted;
+    return this._aborted;
   },
 });
 NodeAbortSignal.prototype[Symbol.toStringTag] = "AbortSignal";
