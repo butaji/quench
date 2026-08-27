@@ -20,6 +20,7 @@ struct Frame {
     after: Vec<Value>,
     restores: Vec<Value>,
     context: Option<Value>,
+    todo: bool,
 }
 
 thread_local! {
@@ -162,7 +163,8 @@ pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
         CURRENT_CONTEXT.with(|current| current.replace(hook_previous));
         result?;
     }
-    FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new(), context: Some(child.clone()) }));
+    let todo = args.iter().find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).is_some_and(|value| quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(value, "todo")));
+    FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new(), context: Some(child.clone()), todo }));
     let result = invoke(state, &callback, &child);
     let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
     for hook in frame.after.iter().rev() { invoke(state, hook, &child)?; }
@@ -219,18 +221,25 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     let _ = quench_runtime::execute::set_property_in_place(&context, "fullName", Value::String(name.clone()));
     let _ = quench_runtime::execute::set_property_in_place(&context, "signal", quench_runtime::host_api::object(vec![("aborted".into(), Value::Boolean(false))]));
     let previous = CURRENT_CONTEXT.with(|current| current.replace(Some(context.clone())));
-    let inherited_before = FRAMES.with(|frames| frames.borrow().last().map(|f| (f.before.clone(), f.context.clone())).unwrap_or_default());
+    let inherited_before = FRAMES.with(|frames| frames.borrow().last().map(|f| (f.before.clone(), f.context.clone(), f.todo)).unwrap_or_default());
     let hook_context = inherited_before.1.as_ref().unwrap_or(&context).clone();
     for hook in inherited_before.0 {
         let hook_previous = CURRENT_CONTEXT.with(|current| current.replace(Some(hook_context.clone())));
         let result = invoke(state, &hook, &hook_context);
         CURRENT_CONTEXT.with(|current| current.replace(hook_previous));
-        result?;
+        if let Err(error) = result {
+            if inherited_before.2 {
+                CURRENT_CONTEXT.with(|current| current.replace(previous));
+                report(state, &format!("ok - {name} # TODO"));
+                return Ok(fulfilled_test_promise());
+            }
+            return Err(error);
+        }
     }
     let root_before = ROOT_BEFORE.with(|hooks| hooks.borrow().clone());
     let root_after = ROOT_AFTER.with(|hooks| hooks.borrow().clone());
     for hook in root_before { invoke(state, &hook, &context)?; }
-    FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new(), context: Some(context.clone()) }));
+    FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new(), context: Some(context.clone()), todo: false }));
     let result = quench_runtime::vm::call_value(callback, &Value::Undefined, &[context.clone()]);
     let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
     let hook_context = frame.context.as_ref().unwrap_or(&context).clone();
