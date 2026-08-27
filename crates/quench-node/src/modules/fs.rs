@@ -49,7 +49,9 @@ pub(crate) fn parse_options(value: Option<&Value>) -> Result<FsOptions, VmError>
     match value {
         None | Some(Value::Undefined) | Some(Value::Null) => {}
         Some(Value::String(encoding)) => set_encoding(&mut options, encoding)?,
-        Some(object @ Value::Object(_)) => parse_option_object(&mut options, object)?,
+        Some(object @ (Value::Object(_) | Value::Proxy(_))) => {
+            parse_option_object(&mut options, object)?
+        }
         Some(other) => {
             return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
                 "The \"options\" argument must be of type string or an instance of Object.{}",
