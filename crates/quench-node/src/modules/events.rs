@@ -1112,7 +1112,7 @@ pub fn build() -> Value {
                 throw error;
               }
               finish(reason);
-              return Promise.reject(reason);
+              return undefined;
             },
             [Symbol.asyncIterator]() { return this; }
           };
