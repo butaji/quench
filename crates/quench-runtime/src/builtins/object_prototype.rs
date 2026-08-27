@@ -62,7 +62,7 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::TypedArray)
         }
         Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
+            Value::Builtin(Builtin::TypedArrayPrototype)
         }
         Value::Builtin(
             Builtin::RangeErrorPrototype
@@ -490,6 +490,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
             | Builtin::PromisePrototype
+            | Builtin::TypedArrayPrototype
             | Builtin::MapPrototype
             | Builtin::SetPrototype
             | Builtin::WeakMapPrototype

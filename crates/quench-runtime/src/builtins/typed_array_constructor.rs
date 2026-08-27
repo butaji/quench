@@ -45,9 +45,9 @@ fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Built
         });
     }
     if builtin == TypedArray && key == "prototype" {
-        return Some(TypedArray);
+        return Some(TypedArrayPrototype);
     }
-    if builtin == TypedArray && key == "constructor" {
+    if matches!(builtin, TypedArray | TypedArrayPrototype) && key == "constructor" {
         return Some(TypedArray);
     }
     if key == "from" && is_typed_array_constructor(builtin) {
