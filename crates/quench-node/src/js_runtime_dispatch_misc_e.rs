@@ -443,7 +443,16 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(
                 CapabilityName::ModuleFindSourceMap..=CapabilityName::ModuleSyncBuiltinExports,
             ) => Ok(Value::Undefined),
-            HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall) => require_module(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall) => {
+                match arguments.first() {
+                    Some(Value::String(name))
+                        if name.trim_start_matches("node:") == "stream" =>
+                    {
+                        crate::modules::stream::build(&self.state)
+                    }
+                    _ => require_module(arguments),
+                }
+            }
             HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
             HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
             HostCapabilityKind::Custom(CapabilityName::OsUptime) => Ok(Value::Number(
