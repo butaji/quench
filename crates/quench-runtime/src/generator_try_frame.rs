@@ -47,7 +47,10 @@ fn resume_try_frame(
     }
     let (completion, next) = match input {
         crate::completion::Completion::Normal
-            if matches!(frame.phase, crate::machine::TryPhase::Body | crate::machine::TryPhase::Catch) =>
+            if matches!(
+                frame.phase,
+                crate::machine::TryPhase::Body | crate::machine::TryPhase::Catch
+            ) =>
         {
             let step = execute_frame_step(generator, frame.body_resume)?;
             (step.completion, Some(step.next))
@@ -56,7 +59,12 @@ fn resume_try_frame(
     };
     if completion.is_suspension() {
         let next = next.ok_or(VmError::MissingReturn)?;
-        advance_frame_after_yield(generator, frame.body_resume, next)?;
+        if let Err(error) = advance_frame_after_yield(generator, frame.body_resume, next) {
+            if push_nested_try_after_yield(generator, &frame)? {
+                return Ok(Some(completion));
+            }
+            return Err(error);
+        }
         return Ok(Some(completion));
     }
     let completion = complete_try_frame(generator, state, &frame, completion)?;
@@ -65,6 +73,69 @@ fn resume_try_frame(
     }
     generator.machine.borrow_mut().pop_frame();
     resume_after_try(generator, state, frame.resume, completion).map(Some)
+}
+
+fn push_nested_try_after_yield(
+    generator: &GeneratorData,
+    frame: &TryFrameResume,
+) -> Result<bool, VmError> {
+    let store = generator
+        .machine
+        .borrow()
+        .store
+        .clone()
+        .ok_or(VmError::MissingReturn)?;
+    let code = store
+        .code(frame.body_resume)
+        .ok_or(VmError::MissingReturn)?;
+    let Some((index, candidate)) = code
+        .cold_ops()
+        .find_map(|(index, op)| matches!(op, Op::Try { .. }).then_some((index, op)))
+    else {
+        return Ok(false);
+    };
+    let Op::Try {
+        body,
+        handler,
+        finalizer,
+        catch_slot,
+        ..
+    } = candidate
+    else {
+        return Ok(false);
+    };
+    let Some((_, Op::Yield { src }, suffix)) = try_yield_parts(generator, candidate, body) else {
+        return Ok(false);
+    };
+    let outer_resume = crate::machine::CodeRange {
+        code: frame.body_resume.code,
+        start: frame.body_resume.start.saturating_add(index as u32 + 1),
+        end: frame.body_resume.end,
+    };
+    let inner_resume = crate::machine::CodeRange {
+        code: outer_resume.code,
+        start: outer_resume.end,
+        end: outer_resume.end,
+    };
+    {
+        let mut machine = generator.machine.borrow_mut();
+        let Some(crate::machine::Frame::Try { body_resume, .. }) = machine.frames.frames.last_mut()
+        else {
+            return Ok(false);
+        };
+        *body_resume = outer_resume;
+        machine.frames.frames.push(crate::machine::Frame::Try {
+            phase: crate::machine::TryPhase::Body,
+            body: body.range,
+            handler: handler.as_ref().map(|body| body.range),
+            finalizer: finalizer.as_ref().map(|body| body.range),
+            body_resume: range_after(body.range, suffix.len()),
+            resume: inner_resume,
+            yield_dst: *src,
+            catch_slot: *catch_slot,
+        });
+    }
+    Ok(true)
 }
 
 fn resume_finalizer_frame(
@@ -185,7 +256,8 @@ fn advance_finalizer_after_yield(
         .clone()
         .ok_or(VmError::MissingReturn)?;
     let code = store.code(range).ok_or(VmError::MissingReturn)?;
-    let Some(crate::ops::Op::Yield { src }) = next.checked_sub(1).and_then(|index| code.cold_at(index))
+    let Some(crate::ops::Op::Yield { src }) =
+        next.checked_sub(1).and_then(|index| code.cold_at(index))
     else {
         return Err(VmError::MissingReturn);
     };
@@ -214,7 +286,8 @@ fn advance_catch_after_yield(
         .clone()
         .ok_or(VmError::MissingReturn)?;
     let code = store.code(range).ok_or(VmError::MissingReturn)?;
-    let Some(crate::ops::Op::Yield { src }) = next.checked_sub(1).and_then(|index| code.cold_at(index))
+    let Some(crate::ops::Op::Yield { src }) =
+        next.checked_sub(1).and_then(|index| code.cold_at(index))
     else {
         return Err(VmError::MissingReturn);
     };
@@ -237,6 +310,14 @@ fn resume_after_try(
     range: crate::machine::CodeRange,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Try { .. })
+    ) {
+        if let Some(completion) = resume_try_frame(generator, state, completion.clone())? {
+            return Ok(completion);
+        }
+    }
     resume_generator_range(generator, state, range, completion)
 }
 
