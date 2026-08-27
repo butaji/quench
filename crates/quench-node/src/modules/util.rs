@@ -202,6 +202,10 @@ pub fn build() -> Vec<(String, Value)> {
             crate::host::capability(crate::registry::SPEC_UTIL_SYSTEM_ERROR_NAME),
         ),
         (
+            "convertProcessSignalToExitCode".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE),
+        ),
+        (
             "_exceptionWithHostPort".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_EXCEPTION_WITH_HOST_PORT),
         ),
