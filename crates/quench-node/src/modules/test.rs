@@ -213,19 +213,21 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     for hook in root_after.iter().rev() { invoke(state, &hook, &context)?; }
     for restore in frame.restores.iter().rev() { let _ = quench_runtime::vm::call_value(restore, &Value::Undefined, &[]); }
     quench_runtime::date::set_mock_now(None);
-    CURRENT_CONTEXT.with(|current| current.replace(previous));
     match result {
         Ok(result) => {
             // Async callbacks return a promise; drive the loop until it
             // settles so a rejection reports `not ok`, never a vacuous `ok`.
             if let Err(error) = crate::modules::pump::await_promise(state, &result) {
+                CURRENT_CONTEXT.with(|current| current.replace(previous));
                 report(state, &format!("not ok - {name}"));
                 return Err(error);
             }
+            CURRENT_CONTEXT.with(|current| current.replace(previous));
             report(state, &format!("ok - {name}"));
             Ok(Value::Undefined)
         }
         Err(error) => {
+            CURRENT_CONTEXT.with(|current| current.replace(previous));
             report(state, &format!("not ok - {name}"));
             Err(error)
         }
