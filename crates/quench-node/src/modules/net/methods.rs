@@ -80,6 +80,7 @@ fn connect_with_receiver(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let mut lookup_address = None;
     if let Some(path) = args
         .first()
         .filter(|value| matches!(value, Value::String(_)))
@@ -132,12 +133,20 @@ fn connect_with_receiver(
         if quench_runtime::is_callable(&lookup) {
             state.borrow_mut().net.lookup_result = None;
             let callback = crate::host::capability(crate::registry::SPEC_NET_LOOKUP_CALLBACK);
+            let lookup_options = if matches!(
+                execute::get_property(options, "autoSelectFamily"),
+                Value::Boolean(true)
+            ) {
+                execute::set_property(options.clone(), "all", Value::Boolean(true))
+            } else {
+                options.clone()
+            };
             let result = execute::call(
                 &lookup,
                 &Value::Undefined,
                 &[
                     execute::get_property(options, "host"),
-                    options.clone(),
+                    lookup_options,
                     callback,
                 ],
             )?;
@@ -147,6 +156,7 @@ fn connect_with_receiver(
                 return Ok(object);
             }
             let result = callback_result.unwrap_or(result);
+            lookup_address = lookup_address_for(&result);
             if let Some(family) = lookup_family(&result) {
                 if family != 4 && family != 6 {
                     let host = execute::to_js_string(&execute::get_property(options, "host"))
@@ -235,7 +245,13 @@ fn connect_with_receiver(
             }
         }
     }
-    let addr = resolve(host.as_deref().unwrap_or(LOCAL_HOST), port);
+    let addr = resolve(
+        lookup_address
+            .as_deref()
+            .or(host.as_deref())
+            .unwrap_or(LOCAL_HOST),
+        port,
+    );
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
         Ok(stream) => stream,
         Err(_) => return connect_refused(state, &addr),
@@ -330,8 +346,40 @@ fn connect_target(
 }
 
 fn lookup_family(result: &Value) -> Option<i64> {
-    match execute::get_property(result, "2") {
+    if let Value::Number(value) = execute::get_property(result, "2") {
+        if value.is_finite() && value.fract() == 0.0 {
+            return Some(value as i64);
+        }
+    }
+    let addresses = execute::get_property(result, "1");
+    let first = execute::get_property(&addresses, "0");
+    match execute::get_property(&first, "family") {
         Value::Number(value) if value.is_finite() && value.fract() == 0.0 => Some(value as i64),
+        _ => None,
+    }
+}
+
+fn lookup_address_for(result: &Value) -> Option<String> {
+    let direct = execute::get_property(result, "1");
+    if let Value::String(address) = direct {
+        return Some(address);
+    }
+    let length = match execute::get_property(&direct, "length") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    for index in 0..length {
+        let candidate = execute::get_property(&direct, &index.to_string());
+        if matches!(execute::get_property(&candidate, "family"), Value::Number(value) if value == 4.0)
+        {
+            if let Value::String(address) = execute::get_property(&candidate, "address") {
+                return Some(address);
+            }
+        }
+    }
+    let first = execute::get_property(&direct, "0");
+    match execute::get_property(&first, "address") {
+        Value::String(address) => Some(address),
         _ => None,
     }
 }
