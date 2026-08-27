@@ -2305,12 +2305,28 @@ pub fn cp_spawn_output_emit(
     } else { String::new() };
     let stdout_text = if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe") {
         let global = quench_runtime::vm::current_global_object();
-        let env = execute::get_property(&execute::get_property(&global, "process"), "env");
-        execute::own_enumerable_keys(&env)
-            .into_iter()
+        let process_env = execute::get_property(&execute::get_property(&global, "process"), "env");
+        let options = execute::get_property(child, "\0childOptions");
+        let env = match execute::get_property(&options, "env") {
+            Value::Object(_) | Value::ObjectAlias(_) => execute::get_property(&options, "env"),
+            _ => process_env,
+        };
+        let mut keys = Vec::new();
+        let mut current = Some(env.clone());
+        while let Some(value) = current {
+            for key in execute::own_enumerable_keys(&value) {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+            current = execute::get_prototype_of(&value).ok().filter(|p| {
+                !matches!(p, Value::Null | Value::Undefined)
+            });
+        }
+        keys.into_iter()
             .filter_map(|key| match execute::get_property(&env, &key) {
-                Value::String(value) => Some(format!("{key}={value}")),
-                _ => None,
+                Value::Undefined => None,
+                value => Some(format!("{key}={}", execute::to_js_string(&value).unwrap_or_default())),
             })
             .collect::<Vec<_>>()
             .join("\n")
