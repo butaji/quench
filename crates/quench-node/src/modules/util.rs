@@ -860,6 +860,28 @@ pub fn inspect(value: &Value) -> String {
 }
 
 pub fn inspect_with_depth(value: &Value, depth: usize) -> String {
+    if matches!(
+        quench_runtime::execute::get_property(value, "\0module_namespace"),
+        Value::Boolean(true)
+    ) {
+        let pending = quench_runtime::execute::get_property(value, "\0module_uninitialized");
+        let entries = quench_runtime::execute::own_enumerable_keys(value)
+            .into_iter()
+            .map(|key| {
+                let item = quench_runtime::execute::get_property(value, &key);
+                let text = if matches!(
+                    quench_runtime::execute::get_property(&pending, &key),
+                    Value::Boolean(true)
+                ) {
+                    "<uninitialized>".to_string()
+                } else {
+                    inspect_with_depth(&item, depth.saturating_sub(1))
+                };
+                format!("{key}: {text}")
+            })
+            .collect::<Vec<_>>();
+        return format!("[Module: null prototype] {{ {} }}", entries.join(", "));
+    }
     if value.object_identity().is_some() {
         for key in quench_runtime::execute::own_enumerable_keys(value) {
             if quench_runtime::execute::same_identity(

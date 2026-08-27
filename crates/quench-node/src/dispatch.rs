@@ -70,6 +70,8 @@ const CAP_UTIL_PARSE_ENV: u16 = 0x030B;
 const CAP_UTIL_TYPE_PREDICATE: u16 = 0x030C;
 const CAP_INTERNAL_JS_STREAM: u16 = 0x0F12;
 const CAP_VM_SOURCE_TEXT_MODULE: u16 = 0x0F11;
+const CAP_VM_MODULE_LINK: u16 = 0x0F13;
+const CAP_VM_MODULE_EVALUATE: u16 = 0x0F14;
 const CAP_PATH_JOIN: u16 = 0x0400;
 const CAP_PATH_RESOLVE: u16 = 0x0401;
 const CAP_PATH_NORMALIZE: u16 = 0x0402;
@@ -833,6 +835,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_REQCLOSE => crate::modules::http_client::req_close,
         CAP_NET_CONNECT => net_connect,
         CAP_NET_LOOKUP_CALLBACK => handlers::net_lookup_callback,
+        CAP_VM_MODULE_LINK => handlers::vm_module_link,
+        CAP_VM_MODULE_EVALUATE => handlers::vm_module_evaluate,
         CAP_NET_SOCKET => net_socket_call,
         CAP_NET_SERVER => net_create_server_call,
         CAP_NET_ISIP => net_is_ip,
