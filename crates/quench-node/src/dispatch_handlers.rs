@@ -2181,13 +2181,28 @@ pub fn cp_spawn(
         ])));
     }
     let command = match args.first() {
-        Some(value) => execute::to_js_string(value).map_err(|_| {
-            VmError::Thrown(host_api::object(vec![
+        Some(value) => {
+            if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+                if let Ok(to_string) = execute::get_property_result(value, "toString") {
+                    if let Ok(result) = execute::call(&to_string, value, &[]) {
+                        if matches!(result, Value::Null | Value::Undefined) {
+                            return Err(VmError::Thrown(host_api::object(vec![
+                                ("name".into(), Value::String("TypeError".into())),
+                                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                                ("message".into(), Value::String("The \"file\" argument must be of type string.".into())),
+                            ])));
+                        }
+                    }
+                }
+            }
+            execute::to_js_string(value).map_err(|_| {
+                VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
                 ("message".into(), Value::String("The \"file\" argument must be of type string.".into())),
-            ]))
-        })?,
+                ]))
+            })?
+        }
         None => String::new(),
     };
     if command.is_empty() {
@@ -2210,7 +2225,7 @@ pub fn cp_spawn(
         }
     }
     if let Some(value) = args.get(2) {
-        if !matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        if !matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined) {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
