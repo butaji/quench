@@ -373,6 +373,14 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             (builtin == Builtin::TypedArrayPrototype && key == "filter").then_some(Builtin::ArrayFilter)
         })
         .or_else(|| {
+            (builtin == Builtin::TypedArrayPrototype && key == "reduce")
+                .then_some(Builtin::TypedArrayReduce)
+        })
+        .or_else(|| {
+            (builtin == Builtin::TypedArrayPrototype && key == "reduceRight")
+                .then_some(Builtin::TypedArrayReduceRight)
+        })
+        .or_else(|| {
             (builtin == Builtin::TypedArrayPrototype)
                 .then(|| typed_array_generic_method(key))
                 .flatten()

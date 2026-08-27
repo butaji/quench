@@ -65,6 +65,8 @@ fn execute_builtin_match(
         ArraySplice => return Some(splice(receiver, arguments)),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
+        TypedArrayReduce => return Some(typed_array_reduce(receiver, arguments, false)),
+        TypedArrayReduceRight => return Some(typed_array_reduce(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
         TypedArrayForEach => return Some(typed_array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
@@ -245,6 +247,20 @@ fn typed_array_reverse(receiver: Option<&Value>) -> Result<Value, crate::execute
         ));
     }
     crate::builtins::array_reverse(Some(&value))
+}
+
+fn typed_array_reduce(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    reverse: bool,
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, if reverse { "reduceRight" } else { "reduce" })?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray reduce called on out-of-bounds view",
+        ));
+    }
+    reduce_values(Some(&value), arguments, reverse)
 }
 
 fn map_argument_error(
