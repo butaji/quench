@@ -57,9 +57,14 @@ pub(crate) fn execute(
         function.code.code(),
     );
     if is_class_constructor(function) {
-        return Err(crate::value::error::throw_type_error(
-            "Class constructor cannot be invoked without 'new'",
-        ));
+        let error = crate::vm::with_realm(
+            crate::construct::function_realm_id(function),
+            || crate::value::error::throw_type_error("Class constructor cannot be invoked without 'new'"),
+        )
+        .unwrap_or_else(|| {
+            crate::value::error::throw_type_error("Class constructor cannot be invoked without 'new'")
+        });
+        return Err(error);
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
     if is_handler_task_candidate(function) {
