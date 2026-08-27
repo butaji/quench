@@ -48,6 +48,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayFlat => Some("flat"),
         Builtin::ArrayFlatMap => Some("flatMap"),
         Builtin::ArrayAt => Some("at"),
+        Builtin::TypedArrayAt => Some("at"),
         Builtin::ArraySort => Some("sort"),
         Builtin::ArrayForEach => Some("forEach"),
         Builtin::TypedArrayForEach => Some("forEach"),
@@ -123,6 +124,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::TypedArrayLastIndexOf
         | Builtin::ArrayFlatMap
         | Builtin::ArrayAt
+        | Builtin::TypedArrayAt
         | Builtin::ArraySort
         | Builtin::ArrayForEach
         | Builtin::TypedArrayForEach

@@ -59,6 +59,7 @@ fn execute_builtin_match(
         ArrayFlat => return Some(flat(receiver, arguments)),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(at(receiver, arguments)),
+        TypedArrayAt => return Some(typed_array_at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
         ArraySplice => return Some(splice(receiver, arguments)),
@@ -180,6 +181,19 @@ fn typed_array_last_index_of(
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "lastIndexOf")?;
     last_index_of(Some(&value), arguments)
+}
+
+fn typed_array_at(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "at")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.at called on out-of-bounds view",
+        ));
+    }
+    at(Some(&value), arguments)
 }
 
 fn map_argument_error(
