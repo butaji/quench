@@ -46,6 +46,8 @@ fn execute_builtin_match(
         ArrayEvery => return Some(every(receiver, arguments)),
         TypedArrayEvery => return Some(typed_array_every(receiver, arguments)),
         ArrayFind => return Some(find(receiver, arguments)),
+        TypedArrayFind => return Some(typed_array_find(receiver, arguments)),
+        TypedArrayFindIndex => return Some(typed_array_find_index(receiver, arguments)),
         ArrayIncludes => return Some(includes(receiver, arguments)),
         ArrayIndexOf => return Some(index_of(receiver, arguments)),
         ArrayLastIndexOf => return Some(last_index_of(receiver, arguments)),
@@ -101,6 +103,56 @@ fn typed_array_every(
         ));
     }
     every(Some(value), arguments)
+}
+
+fn typed_array_receiver(
+    receiver: Option<&Value>,
+    _method: &str,
+) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.map(unwrap_binding_cells);
+    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray method called on incompatible receiver",
+        ));
+    };
+    if typed_array_is_detached(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray method called on detached TypedArray",
+        ));
+    }
+    Ok(value.clone())
+}
+
+fn typed_array_find(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "find")?;
+    find(Some(&value), arguments)
+}
+
+fn typed_array_find_index(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "findIndex")?;
+    find_index(Some(&value), arguments)
+}
+
+fn typed_array_find_last(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "findLast")?;
+    crate::builtins::array_find_last(Some(&value), arguments)
+}
+
+fn typed_array_find_last_index(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "findLastIndex")?;
+    crate::builtins::array_find_last_index(Some(&value), arguments)
 }
 
 fn map_argument_error(
