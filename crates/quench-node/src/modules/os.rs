@@ -341,10 +341,10 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
     ));
     out.push((
         "constants".to_string(),
-        host_api::object(vec![
+        frozen_object(vec![
             (
                 "priority".to_string(),
-                host_api::object(vec![
+                frozen_object(vec![
                     ("PRIORITY_LOW".to_string(), Value::Number(19.0)),
                     ("PRIORITY_BELOW_NORMAL".to_string(), Value::Number(10.0)),
                     ("PRIORITY_NORMAL".to_string(), Value::Number(0.0)),
@@ -355,7 +355,7 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
             ),
             (
                 "errno".to_string(),
-                host_api::object(vec![
+                frozen_object(vec![
                     ("ENOENT".to_string(), Value::Number(2.0)),
                     ("EACCES".to_string(), Value::Number(13.0)),
                     ("EEXIST".to_string(), Value::Number(17.0)),
@@ -363,7 +363,7 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
             ),
             (
                 "signals".to_string(),
-                host_api::object(vec![
+                frozen_object(vec![
                     ("SIGHUP".into(), Value::Number(1.0)),
                     ("SIGINT".into(), Value::Number(2.0)),
                     ("SIGABRT".into(), Value::Number(6.0)),
@@ -373,6 +373,16 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
             ),
         ]),
     ));
+}
+
+fn frozen_object(properties: Vec<(String, Value)>) -> Value {
+    let value = host_api::object(properties);
+    let global = quench_runtime::vm::current_global_object();
+    let freeze = quench_runtime::execute::get_property(&
+        &quench_runtime::execute::get_property(&global, "Object"),
+        "freeze",
+    );
+    quench_runtime::execute::call(&freeze, &Value::Undefined, &[value.clone()]).unwrap_or(value)
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
