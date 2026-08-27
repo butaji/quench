@@ -2878,6 +2878,14 @@ pub fn cp_fork(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let script = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(script, Value::String(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            format!(
+                "The \"modulePath\" argument must be of type string.{}",
+                crate::modules::util::invalid_arg_received(&script)
+            ),
+        ));
+    }
     let second = args.get(1).cloned().unwrap_or(Value::Undefined);
     let (fork_args, options) = if matches!(second, Value::Object(_) | Value::ObjectAlias(_)) {
         (Value::Undefined, second)
