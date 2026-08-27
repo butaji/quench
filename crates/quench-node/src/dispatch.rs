@@ -167,6 +167,7 @@ const CAP_BUFFER_NEW: u16 = 0x0805;
 const CAP_DNS_LOOKUP_ADDRESSES: u16 = 0x0E02;
 const CAP_TTY_ISATTY: u16 = 0x0900;
 const CAP_PROCESS_EXIT: u16 = 0x0A01;
+const CAP_PROCESS_KILL: u16 = 0x0A20;
 const CAP_PROCESS_CWD: u16 = 0x0A02;
 const CAP_PROCESS_CHDIR: u16 = 0x0A03;
 const CAP_PROCESS_NEXT_TICK: u16 = 0x0A04;
@@ -371,6 +372,8 @@ const CAP_CP_SPAWN: u16 = 0x1e06;
 const CAP_CP_SPAWN_ERROR_EMIT: u16 = 0x1e04;
 const CAP_CP_SPAWN_OUTPUT_EMIT: u16 = 0x1e05;
 const CAP_CP_KILL: u16 = crate::registry::SPEC_CP_KILL.cap;
+const CAP_CP_STDIN_WRITE: u16 = 0x1E09;
+const CAP_CP_STDIN_END: u16 = 0x1E0A;
 const CAP_CP_CONSTRUCTOR: u16 = crate::registry::SPEC_CP_CONSTRUCTOR.cap;
 const CAP_CP_INSTANCE_SPAWN: u16 = crate::registry::SPEC_CP_INSTANCE_SPAWN.cap;
 const CAP_PROCESS_UMASK: u16 = 0x0A06;
@@ -708,6 +711,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
         CAP_PROCESS_EXIT => process_exit,
+        CAP_PROCESS_KILL => process_kill,
         CAP_PROCESS_CWD => process_cwd,
         CAP_PROCESS_CHDIR => process_chdir,
         CAP_PROCESS_NEXT_TICK => process_next_tick,
@@ -827,6 +831,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_SPAWN_ERROR_EMIT => cp_spawn_error_emit,
         CAP_CP_SPAWN_OUTPUT_EMIT => cp_spawn_output_emit,
         CAP_CP_KILL => cp_kill,
+        CAP_CP_STDIN_WRITE => cp_stdin_write,
+        CAP_CP_STDIN_END => cp_stdin_end,
         CAP_CP_INSTANCE_SPAWN => cp_instance_spawn,
         CAP_CP_EXECSYNC => cp_exec_sync,
         CAP_CP_EXEC => cp_async,

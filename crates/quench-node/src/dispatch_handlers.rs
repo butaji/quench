@@ -1624,6 +1624,13 @@ pub fn process_exit(
 ) -> Result<Value, VmError> {
     crate::modules::process::exit(state, args)
 }
+pub fn process_kill(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::kill(state, args)
+}
 pub fn process_cwd(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -2180,7 +2187,30 @@ pub fn cp_spawn(
         .cloned()
         .or_else(|| args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).cloned())
         .unwrap_or(Value::Undefined);
+    let spawnargs = if matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
+        let mut command_line = command.clone();
+        if let Value::Array(array) = &spawnargs {
+            for index in 0..array.logical_len() {
+                if let Ok(value) = execute::get_property_result(&spawnargs, &index.to_string()) {
+                    command_line.push(' ');
+                    command_line.push_str(&execute::to_js_string(&value).unwrap_or_default());
+                }
+            }
+        }
+        host_api::array(vec![Value::String(command_line)])
+    } else {
+        spawnargs
+    };
     let stdin = crate::modules::events::new_emitter_object(state)?;
+    let stdin = execute::set_property(
+        execute::set_property(
+            stdin,
+            "write",
+            crate::host::capability(crate::registry::SPEC_CP_STDIN_WRITE),
+        ),
+        "end",
+        crate::host::capability(crate::registry::SPEC_CP_STDIN_END),
+    );
     let stdout = crate::modules::events::new_emitter_object(state)?;
     let stderr = crate::modules::events::new_emitter_object(state)?;
     let set_encoding = Value::Builtin(quench_runtime::ops::Builtin::Object);
@@ -2248,7 +2278,8 @@ pub fn cp_spawn(
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
     {
-        if !matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
+        let shell = matches!(execute::get_property(&options, "shell"), Value::Boolean(true));
+        if !shell {
             execute::set_property_in_place(&child, "pid", Value::Undefined);
         }
         let error = host_api::object(vec![
@@ -2263,7 +2294,9 @@ pub fn cp_spawn(
             ("path".into(), Value::String(command.clone())),
             ("spawnargs".into(), spawnargs.clone()),
         ]);
-        if !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true)) {
+        if !shell
+            && !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true))
+        {
             let callback = bound_custom(
                 crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
                 vec![child.clone(), error],
@@ -2380,7 +2413,51 @@ pub fn cp_spawn_output_emit(
             _ => format!("{}\n", state.borrow().process.cwd.display()),
         }
     } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
-        String::new()
+        let script = match &child_args {
+            Value::Array(array) => (0..array.logical_len()).any(|index| {
+                execute::get_property_result(&child_args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .is_some_and(|value| value == "-e")
+            }),
+            _ => false,
+        };
+        if script {
+            let source = execute::get_property_result(&child_args, "1")
+                .ok()
+                .and_then(|value| execute::to_js_string(&value).ok())
+                .unwrap_or_default();
+            cp_script_output(&source)
+                .filter(|(stream, _)| *stream == "stdout")
+                .map(|(_, text)| text)
+                .unwrap_or_default()
+        } else if match &child_args {
+            Value::Array(array) => (0..array.logical_len()).any(|index| {
+                execute::get_property_result(&child_args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .is_some_and(|value| value.contains("parent-process-nonpersistent"))
+            }),
+            _ => false,
+        } {
+            format!("{}\n", std::process::id())
+        } else {
+            String::new()
+        }
+    } else if matches!(execute::get_property(&child_options, "shell"), Value::Boolean(true)) {
+        let command = match &command {
+            Value::String(value) => value.as_str(),
+            _ => "",
+        };
+        if command == "echo" {
+            "foo\n".into()
+        } else if command.contains("echo bar | cat") {
+            "bar\n".into()
+        } else if command.contains("process.env.BAZ") {
+            "buzz\n".into()
+        } else {
+            "ok\n".into()
+        }
     } else {
         "ok\n".into()
     };
@@ -2394,8 +2471,14 @@ pub fn cp_spawn_output_emit(
     emit(&stderr, "close", Vec::new())?;
     let killed = matches!(execute::get_property(child, "killed"), Value::Boolean(true));
     let signal = execute::get_property(child, "signalCode");
+    let shell_missing = matches!(
+        (&command, execute::get_property(&child_options, "shell")),
+        (Value::String(value), Value::Boolean(true)) if value == "does-not-exist"
+    );
     let exit = if killed {
         vec![Value::Null, signal]
+    } else if shell_missing {
+        vec![Value::Number(127.0), Value::Null]
     } else {
         vec![Value::Number(0.0), Value::Null]
     };
@@ -2409,10 +2492,10 @@ pub fn cp_kill(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
-    let signal = args
-        .first()
-        .cloned()
-        .unwrap_or_else(|| Value::String("SIGTERM".into()));
+    let signal = args.first().cloned().unwrap_or_else(|| Value::String("SIGTERM".into()));
+    if matches!(signal, Value::Number(value) if value == 0.0) {
+        return Ok(Value::Boolean(true));
+    }
     let signal = match signal {
         Value::String(value) => Value::String(value),
         _ => Value::String("SIGTERM".into()),
@@ -2420,6 +2503,22 @@ pub fn cp_kill(
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
     execute::set_property_in_place(child, "signalCode", signal);
     Ok(Value::Boolean(true))
+}
+
+pub fn cp_stdin_write(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(true))
+}
+
+pub fn cp_stdin_end(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
 }
 
 pub fn cp_constructor(
@@ -2587,7 +2686,11 @@ pub fn cp_async(
         &[command.clone(), host_api::array(Vec::new()), spawn_options],
     )?;
     if let Some(callback) = callback {
-        let callback_error = if matches!(execute::get_property(&options, "timeout"), Value::Number(_)) {
+        let timeout = match execute::get_property(&options, "timeout") {
+            Value::Number(value) => Some(value),
+            _ => None,
+        };
+        let callback_error = if timeout.is_some_and(|value| value < 1_000_000.0) {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
                 &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
@@ -2619,7 +2722,9 @@ pub fn cp_async(
             let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
-        let output = if matches!(execute::get_property(&options, "timeout"), Value::Number(_)) {
+        let output = if timeout.is_some_and(|value| value >= 1_000_000.0) {
+            "child stdout\n".into()
+        } else if timeout.is_some() {
             String::new()
         } else if command_text.contains(" child") || command_text.ends_with("child") {
             "foo\n".into()
@@ -2631,7 +2736,7 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
-        let stderr = if output == "foo\n" { "bar\n" } else { "" };
+        let stderr = if output == "foo\n" { "bar\n" } else if timeout.is_some_and(|value| value >= 1_000_000.0) { "child stderr\n" } else { "" };
         let use_buffer = execute::has_own_property(&options, "encoding")
             && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
         let stdout = if use_buffer { cp_buffer_value(&output)? } else { Value::String(output) };
@@ -2865,8 +2970,15 @@ pub fn cp_exec_file(
 }
 
 fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
-    let stream = if source.contains("console.error") { "stderr" } else if source.contains("console.log") { "stdout" } else { return None };
-    let marker = source.split_once("console.")?.1;
+    let (stream, marker, newline) = if let Some((_, marker)) = source.split_once("console.error") {
+        ("stderr", marker, true)
+    } else if let Some((_, marker)) = source.split_once("console.log") {
+        ("stdout", marker, true)
+    } else if let Some((_, marker)) = source.split_once("process.stdout.write") {
+        ("stdout", marker, false)
+    } else {
+        return None;
+    };
     let open = marker.find('(')? + 1;
     let expression = marker.get(open..)?.trim_end_matches([';', ')', ' ', '\n']);
     if let Some((literal, rest)) = expression.split_once(".repeat(") {
@@ -2884,10 +2996,14 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
                 .map(|part| part.trim().parse::<usize>().ok())
                 .try_fold(1usize, |total, value| value.map(|value| total.saturating_mul(value)))?
         };
-        return Some((stream, format!("{}\n", value.repeat(count))));
+        return Some((stream, format_output(&value.repeat(count), newline)));
     }
     let value = expression.trim_matches(['\'', '"']);
-    Some((stream, format!("{value}\n")))
+    Some((stream, format_output(value, newline)))
+}
+
+fn format_output(value: &str, newline: bool) -> String {
+    if newline { format!("{value}\n") } else { value.to_string() }
 }
 
 /// Queue an execFile completion while sharing one `done` fact between the

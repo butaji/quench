@@ -232,6 +232,8 @@ pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec =
 pub const SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE: NodeSpec =
     NodeSpec::new("util:convertProcessSignalToExitCode", 0x2203);
 pub const SPEC_CP_KILL: NodeSpec = NodeSpec::new("child_process:ChildProcess:kill", 0x2204);
+pub const SPEC_CP_STDIN_WRITE: NodeSpec = NodeSpec::new("child_process:stdin:write", 0x1E09);
+pub const SPEC_CP_STDIN_END: NodeSpec = NodeSpec::new("child_process:stdin:end", 0x1E0A);
 pub const SPEC_CP_CONSTRUCTOR: NodeSpec = NodeSpec::new("child_process:ChildProcess", 0x2205);
 pub const SPEC_CP_INSTANCE_SPAWN: NodeSpec =
     NodeSpec::new("child_process:ChildProcess:spawn", 0x2206);
@@ -340,6 +342,7 @@ pub const SPEC_TTY_ISATTY: NodeSpec = NodeSpec::new("tty:isatty", 0x0900);
 
 pub const SPEC_PROCESS_GET: NodeSpec = NodeSpec::new("process:get", 0x0A00);
 pub const SPEC_PROCESS_EXIT: NodeSpec = NodeSpec::new("process:exit", 0x0A01);
+pub const SPEC_PROCESS_KILL: NodeSpec = NodeSpec::new("process:kill", 0x0A20);
 pub const SPEC_PROCESS_CWD: NodeSpec = NodeSpec::new("process:cwd", 0x0A02);
 pub const SPEC_PROCESS_CHDIR: NodeSpec = NodeSpec::new("process:chdir", 0x0A03);
 pub const SPEC_PROCESS_NEXT_TICK: NodeSpec = NodeSpec::new("process:nextTick", 0x0A04);
