@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 
 use quench_node_test::runner::NodeTestRunner;
 
@@ -17,7 +18,22 @@ fn main() -> ExitCode {
         .skip(2)
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
-    match NodeTestRunner::new().run_file_with_args(&path, argv) {
+    let child_mode = std::env::var_os("QUENCH_CHILD_RUNNER").is_some();
+    let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink_capture = Arc::clone(&captured);
+    let sink: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |line| {
+        if let Ok(mut lines) = sink_capture.lock() { lines.push(line.to_string()); }
+    });
+    let mut runner = NodeTestRunner::new().with_output_sink(sink);
+    let outcome = runner.run_file_with_args(&path, argv);
+    if child_mode {
+        let lines = captured.lock().map(|lines| lines.clone()).unwrap_or_default();
+        for line in &lines { println!("{line}"); }
+        let pass = lines.iter().filter(|line| line.starts_with("ok ")).count();
+        let fail = lines.iter().filter(|line| line.starts_with("not ok ")).count();
+        println!("1..{}\n# tests {}\n# pass {}\n# fail {}\n# cancelled 0\n# todo 0", pass + fail, pass + fail, pass, fail);
+    }
+    match outcome {
         quench_node_test::NodeOutcome::Pass => {
             if std::env::var_os("QUENCH_CHILD_RUNNER").is_none() {
                 println!("PASS {}", path.display());
