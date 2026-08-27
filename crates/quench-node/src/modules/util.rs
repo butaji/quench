@@ -1650,23 +1650,187 @@ fn colorize_regexp(literal: &str) -> String {
         return literal.to_string();
     }
     let mut out = String::new();
-    for (index, character) in literal.chars().enumerate() {
-        let (start, end) = if index == 0 || character == '/' {
-            ("\x1b[32m", "\x1b[39m")
-        } else if matches!(character, '^' | '$' | '|' | '*' | '+' | '?') {
-            ("\x1b[35m", "\x1b[39m")
-        } else if matches!(character, '(' | ')' | '[' | ']') {
-            ("\x1b[31m", "\x1b[39m")
+    let mut last_style = String::new();
+    let mut push = |style: &str, text: &str| {
+        if style != last_style {
+            if !last_style.is_empty() {
+                out.push_str("\x1b[39m");
+            }
+            if !style.is_empty() {
+                out.push_str(style);
+            }
+            last_style = style.to_string();
+        }
+        out.push_str(text);
+    };
+    let chars: Vec<char> = literal.chars().collect();
+    let unicode = literal.ends_with("/u");
+    let mut index = 0;
+    let mut flags = false;
+    let mut slash_count = 0;
+    let mut in_class = false;
+    let mut in_quantifier = false;
+    let mut quantifier_range = false;
+    let mut group_depth = 0usize;
+    let mut named_group = false;
+    while index < chars.len() {
+        let character = chars[index];
+        if character == '?' && chars.get(index.wrapping_sub(1)) == Some(&'(') {
+            if let Some(next) = chars.get(index + 1) {
+                if matches!(next, '<' | '=' | '!' | ':') {
+                    let lookbehind = *next == '<' && chars.get(index + 2) == Some(&'!');
+                    push("", "");
+                    if lookbehind {
+                        push("\x1b[31m", "?<");
+                        push("\x1b[31m", "!");
+                    } else {
+                        push("\x1b[31m", &format!("?{next}"));
+                    }
+                    named_group = *next == '<';
+                    index += if lookbehind { 3 } else { 2 };
+                    continue;
+                }
+            }
+        }
+        let closing_slash = character == '/' && slash_count == 1;
+        let style = if index == 0 || closing_slash {
+            "\x1b[32m"
+        } else if flags {
+            "\x1b[31m"
         } else if character == '\\' {
-            ("\x1b[36m", "\x1b[39m")
-        } else if character.is_ascii_alphabetic() || character.is_ascii_digit() {
-            ("\x1b[33m", "\x1b[39m")
+            push("", "");
+            let escape_style = if group_depth > 0 || unicode {
+                "\x1b[36m"
+            } else {
+                "\x1b[33m"
+            };
+            push(escape_style, &character.to_string());
+            if let Some(next) = chars.get(index + 1) {
+                push(escape_style, &next.to_string());
+                index += 1;
+            }
+            push("", "");
+            index += 1;
+            continue;
+        } else if character == '(' || character == ')' || character == '>' {
+            if character == '(' {
+                group_depth += 1;
+            } else if character == ')' {
+                group_depth = group_depth.saturating_sub(1);
+            } else if named_group {
+                named_group = false;
+            }
+            "\x1b[31m"
+        } else if character == '?' && chars.get(index.wrapping_sub(1)) == Some(&'(') {
+            "\x1b[31m"
+        } else if character == '=' && matches!(chars.get(index.wrapping_sub(1)), Some('?')) {
+            "\x1b[31m"
+        } else if character == '!' && chars.get(index.wrapping_sub(1)) == Some(&'?') {
+            "\x1b[31m"
+        } else if character == '<' && chars.get(index.wrapping_sub(1)) == Some(&'?') {
+            named_group = true;
+            "\x1b[31m"
+        } else if matches!(character, '^' | '$' | '|' | '*' | '+' | '?' | '.') {
+            if in_class && character == '^' {
+                if unicode {
+                    "\x1b[36m"
+                } else {
+                    "\x1b[33m"
+                }
+            } else if in_class && character == '.' {
+                "\x1b[33m"
+            } else if character == '|' {
+                if group_depth > 0 {
+                    "\x1b[32m"
+                } else {
+                    "\x1b[35m"
+                }
+            } else if group_depth > 0 && matches!(character, '*' | '+' | '?') {
+                "\x1b[32m"
+            } else if character == '.' && group_depth == 0 {
+                "\x1b[36m"
+            } else {
+                "\x1b[35m"
+            }
+        } else if character == '{' {
+            in_quantifier = true;
+            quantifier_range = chars[index + 1..]
+                .iter()
+                .position(|value| *value == '}')
+                .and_then(|end| chars.get(index + 1..index + 1 + end))
+                .is_some_and(|body| body.contains(&','));
+            if quantifier_range {
+                "\x1b[31m"
+            } else {
+                "\x1b[33m"
+            }
+        } else if character == '}' {
+            in_quantifier = false;
+            if quantifier_range {
+                "\x1b[31m"
+            } else {
+                "\x1b[33m"
+            }
+        } else if character == ',' {
+            if in_quantifier {
+                "\x1b[33m"
+            } else {
+                "\x1b[32m"
+            }
+        } else if character == '[' {
+            in_class = true;
+            "\x1b[33m"
+        } else if character == ']' {
+            in_class = false;
+            "\x1b[33m"
+        } else if character == '-' {
+            if in_class && unicode {
+                "\x1b[35m"
+            } else {
+                "\x1b[33m"
+            }
+        } else if character.is_ascii_digit() {
+            if in_quantifier {
+                if quantifier_range {
+                    "\x1b[36m"
+                } else {
+                    "\x1b[35m"
+                }
+            } else if in_class && unicode {
+                "\x1b[36m"
+            } else if in_class {
+                "\x1b[33m"
+            } else {
+                "\x1b[36m"
+            }
+        } else if named_group {
+            "\x1b[33m"
+        } else if group_depth > 0 {
+            "\x1b[36m"
         } else {
-            ("", "")
+            "\x1b[33m"
         };
-        out.push_str(start);
-        out.push(character);
-        out.push_str(end);
+        let group_prefix = character == '?' && chars.get(index.wrapping_sub(1)) == Some(&'(');
+        let force_token = matches!(character, '^' | '$' | '*' | '+' | '?' | '.' | '(' | ')')
+            || (character.is_ascii_digit() && !(in_quantifier && quantifier_range))
+            || (group_depth > 0 && !named_group && character.is_ascii_alphabetic());
+        if force_token {
+            push("", "");
+            push(style, &character.to_string());
+            if !group_prefix {
+                push("", "");
+            }
+        } else {
+            push(style, &character.to_string());
+        }
+        if character == '/' {
+            slash_count += 1;
+            flags = slash_count > 1;
+        }
+        index += 1;
+    }
+    if !last_style.is_empty() {
+        out.push_str("\x1b[39m");
     }
     out
 }
