@@ -503,7 +503,7 @@ fn construct_function(
             crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
         return finish_derived_construct(result, final_this);
     }
-    if function.instance_fields.borrow().is_empty() {
+    if function.instance_fields.borrow().is_empty() && !matches!(target, Value::Proxy(_)) {
         if let Some(object) = try_record_constructor(function, target, arguments) {
             return Ok(object);
         }
