@@ -292,7 +292,7 @@ fn parse_port(value: &Value) -> Result<u16, VmError> {
     }
     let text = execute::to_js_string(value)?;
     let Ok(port) = text.parse::<i64>() else {
-        return Err(execute::type_error("port must be a number"));
+        return Err(bad_port(value, &text));
     };
     if !(0..=u16::MAX as i64).contains(&port) {
         return Err(bad_port(value, &text));
