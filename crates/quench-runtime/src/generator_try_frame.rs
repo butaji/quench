@@ -46,7 +46,9 @@ fn resume_try_frame(
         return resume_finalizer_frame(generator, state, &frame, input);
     }
     let (completion, next) = match input {
-        crate::completion::Completion::Normal => {
+        crate::completion::Completion::Normal
+            if matches!(frame.phase, crate::machine::TryPhase::Body | crate::machine::TryPhase::Catch) =>
+        {
             let step = execute_frame_step(generator, frame.body_resume)?;
             (step.completion, Some(step.next))
         }
@@ -79,7 +81,15 @@ fn resume_finalizer_frame(
         return Ok(Some(step.completion));
     }
     generator.machine.borrow_mut().pop_frame();
-    resume_after_try(generator, state, frame.resume, step.completion).map(Some)
+    let completion = if matches!(step.completion, crate::completion::Completion::Normal) {
+        state
+            .pending_completion
+            .take()
+            .unwrap_or(crate::completion::Completion::Normal)
+    } else {
+        step.completion
+    };
+    resume_after_try(generator, state, frame.resume, completion).map(Some)
 }
 
 fn execute_frame_range(
@@ -112,7 +122,11 @@ fn complete_try_frame(
     frame: &TryFrameResume,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
-    let completion = run_try_handler(generator, state, frame, completion)?;
+    let completion = if matches!(frame.phase, crate::machine::TryPhase::Body) {
+        run_try_handler(generator, state, frame, completion)?
+    } else {
+        completion
+    };
     run_try_finalizer(generator, state, frame, completion)
 }
 
@@ -132,12 +146,16 @@ fn run_try_handler(
         crate::execute::write_value(&mut registers_mut(generator), slot, value.clone());
         crate::locals::write(slot, value);
     }
-    execute_frame_range(generator, state, handler)
+    let step = execute_frame_step(generator, handler)?;
+    if step.completion.is_suspension() {
+        advance_catch_after_yield(generator, handler, step.next)?;
+    }
+    Ok(step.completion)
 }
 
 fn run_try_finalizer(
     generator: &GeneratorData,
-    _state: &mut GeneratorState,
+    state: &mut GeneratorState,
     frame: &TryFrameResume,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
@@ -146,6 +164,7 @@ fn run_try_finalizer(
     };
     let step = execute_frame_step(generator, finalizer)?;
     if step.completion.is_suspension() {
+        state.pending_completion = Some(completion.clone());
         advance_finalizer_after_yield(generator, finalizer, step.next)?;
     }
     match step.completion {
@@ -179,6 +198,35 @@ fn advance_finalizer_after_yield(
         .machine
         .borrow_mut()
         .set_try_finally_resume(resume, *src)
+        .then_some(())
+        .ok_or(VmError::MissingReturn)
+}
+
+fn advance_catch_after_yield(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+    next: usize,
+) -> Result<(), VmError> {
+    let store = generator
+        .machine
+        .borrow()
+        .store
+        .clone()
+        .ok_or(VmError::MissingReturn)?;
+    let code = store.code(range).ok_or(VmError::MissingReturn)?;
+    let Some(crate::ops::Op::Yield { src }) = next.checked_sub(1).and_then(|index| code.cold_at(index))
+    else {
+        return Err(VmError::MissingReturn);
+    };
+    let resume = crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(next as u32),
+        end: range.end,
+    };
+    generator
+        .machine
+        .borrow_mut()
+        .set_try_catch_resume(resume, *src)
         .then_some(())
         .ok_or(VmError::MissingReturn)
 }
