@@ -6,6 +6,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::ObjectPrototypeToString => Some("Object.prototype.toString"),
         Builtin::ObjectPrototypeToLocaleString => Some("Object.prototype.toLocaleString"),
+        Builtin::ObjectPrototypeGetProto => Some("Object.prototype.__proto__ getter"),
+        Builtin::ObjectPrototypeSetProto => Some("Object.prototype.__proto__ setter"),
         Builtin::ObjectPrototypeValueOf => Some("Object.prototype.valueOf"),
         Builtin::ObjectHasOwnProperty => Some("Object.prototype.hasOwnProperty"),
         Builtin::ObjectHasOwn => Some("Object.hasOwn"),
@@ -35,6 +37,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectIsFrozen => Some("Object.isFrozen"),
         Builtin::ObjectIsSealed => Some("Object.isSealed"),
         Builtin::ObjectIsExtensible => Some("Object.isExtensible"),
+        Builtin::ObjectGetPrototypeOf => Some("Object.getPrototypeOf"),
+        Builtin::ObjectSetPrototypeOf => Some("Object.setPrototypeOf"),
         Builtin::WeakRefDeref => Some("WeakRef.prototype.deref"),
         Builtin::ProxyRevocable => Some("Proxy.revocable"),
         Builtin::ProxyRevoke => Some("revoke"),
@@ -86,6 +90,8 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::ObjectPrototypeToString => Some("toString"),
         Builtin::ObjectPrototypeToLocaleString => Some("toLocaleString"),
+        Builtin::ObjectPrototypeGetProto => Some("get __proto__"),
+        Builtin::ObjectPrototypeSetProto => Some("set __proto__"),
         Builtin::ObjectPrototypeValueOf | Builtin::BoxedValueOf | Builtin::BooleanValueOf => {
             Some("valueOf")
         }
@@ -117,6 +123,8 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectIsFrozen => Some("isFrozen"),
         Builtin::ObjectIsSealed => Some("isSealed"),
         Builtin::ObjectIsExtensible => Some("isExtensible"),
+        Builtin::ObjectGetPrototypeOf => Some("getPrototypeOf"),
+        Builtin::ObjectSetPrototypeOf => Some("setPrototypeOf"),
         Builtin::WeakRefDeref => Some("deref"),
         Builtin::ProxyRevocable => Some("revocable"),
         Builtin::ProxyRevoke => Some("revoke"),
