@@ -48,4 +48,9 @@ test('constructor mock', (t) => {
   const value = new C(42);
   assert(value instanceof Parent);
   assert.strictEqual(value.c, 42);
+  assert.strictEqual(C.mock.calls.length, 1);
+  assert.deepStrictEqual(C.mock.calls[0].arguments, [42]);
+  assert.strictEqual(C.mock.calls[0].result, value);
+  assert.strictEqual(C.mock.calls[0].target, undefined);
+  assert.strictEqual(C.mock.calls[0].this, undefined);
 });
