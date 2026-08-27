@@ -354,6 +354,9 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
         return Ok(0);
     }
     let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
+    if number.is_nan() {
+        return Ok(0);
+    }
     if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > usize::MAX as f64 {
         return Err(crate::value::error::throw_range_error(
             "offset is out of bounds",
@@ -363,18 +366,27 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
 }
 
 fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let target = receiver.ok_or_else(|| {
+    let target = crate::arrays::typed_array_receiver(receiver, "set")?;
+    if crate::arrays::typed_array_is_immutable(&target) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.set called on immutable buffer",
+        ));
+    }
+    let target_length = view_length(&target).ok_or_else(|| {
         crate::value::error::throw_type_error(
             "TypedArray.prototype.set called on incompatible receiver",
         )
     })?;
-    let Some(target_length) = view_length(target) else {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.set called on incompatible receiver",
-        ));
-    };
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let offset = set_offset(arguments)?;
+    if crate::arrays::typed_array_is_detached(&target)
+        || crate::typed_array_ops::is_view(&source)
+            && crate::arrays::typed_array_is_detached(&source)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.set called on detached buffer",
+        ));
+    }
     let source_length = if let Some(length) = view_length(&source) {
         length
     } else {
@@ -388,14 +400,25 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
             "offset is out of bounds",
         ));
     }
-    // TypedArray.prototype.set reads all source elements before writing any
-    // target element.  This is observable when source and target overlap.
-    let values = (0..source_length)
-        .map(|index| crate::execute::get_property_result(&source, &index.to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-    for (index, value) in values.iter().enumerate() {
-        if let Some(result) = set_property(target, &(offset + index).to_string(), value) {
-            result?;
+    if view_length(&source).is_some() {
+        // Typed-array sources may overlap the target, so snapshot them before
+        // the first write.
+        let values = (0..source_length)
+            .map(|index| crate::execute::get_property_result(&source, &index.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (index, value) in values.iter().enumerate() {
+            if let Some(result) = set_property(&target, &(offset + index).to_string(), value) {
+                result?;
+            }
+        }
+    } else {
+        // Ordinary array-like sources are read and written in lockstep; the
+        // ordering is observable through source getters.
+        for index in 0..source_length {
+            let value = crate::execute::get_property_result(&source, &index.to_string())?;
+            if let Some(result) = set_property(&target, &(offset + index).to_string(), &value) {
+                result?;
+            }
         }
     }
     Ok(Value::Undefined)
