@@ -536,7 +536,7 @@ fn dynamic_function_source(function: &crate::value::FunctionValue) -> Option<Str
 }
 
 fn native_function_source() -> Value {
-    Value::String("function () { [ native code ] }".to_string())
+    Value::String("function () { [native code] }".to_string())
 }
 
 fn native_builtin_source(builtin: crate::ops::Builtin) -> String {
@@ -550,9 +550,9 @@ fn native_builtin_source(builtin: crate::ops::Builtin) -> String {
     };
     let name = name.rsplit('.').next().unwrap_or(name);
     if name.is_empty() || !valid_native_identifier(name) {
-        "function () { [ native code ] }".to_string()
+        "function () { [native code] }".to_string()
     } else {
-        format!("function {prefix}{name}() {{ [ native code ] }}")
+        format!("function {prefix}{name}() {{ [native code] }}")
     }
 }
 

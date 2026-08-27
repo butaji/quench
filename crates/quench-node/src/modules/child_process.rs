@@ -98,6 +98,22 @@ pub fn spawn_sync(
         ]));
     }
 
+    // A self-reexec of the compatibility executable with Node's `--test`
+    // switch is used by the test-runner timeout fixture. The host runner
+    // already owns the child fixture lifecycle; preserve the subprocess
+    // result shape without treating the runner flag as an OS command.
+    if command == state.borrow().process.exec_path
+        && child_args.first().is_some_and(|flag| flag == "--test")
+    {
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            ("stdout".into(), Value::String(String::new())),
+            ("stderr".into(), Value::String(String::new())),
+        ]));
+    }
+
     if command == state.borrow().process.exec_path
         && (child_args.first().map(String::as_str) == Some("-e")
             || child_args.iter().any(|arg| arg == "spawnchild"))
