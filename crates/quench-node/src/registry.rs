@@ -116,6 +116,7 @@ pub const SPEC_TEST_MOCK_MODULE: NodeSpec = NodeSpec::new("test:mock:module", 0x
 pub const SPEC_TEST_CONTEXT_SKIP: NodeSpec = NodeSpec::new("test:context:skip", 0x1b1E);
 pub const SPEC_TEST_CONTEXT_TODO: NodeSpec = NodeSpec::new("test:context:todo", 0x1b1F);
 pub const SPEC_TEST_RUN_EMIT: NodeSpec = NodeSpec::new("test:run:emit", 0x1b20);
+pub const SPEC_TEST_GET_CONTEXT: NodeSpec = NodeSpec::new("test:getTestContext", 0x1b21);
 
 node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
