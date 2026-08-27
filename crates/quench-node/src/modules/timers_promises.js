@@ -43,6 +43,12 @@
     });
   }
   function setTimeout(delay, value, options) {
+    if (options && options.signal !== undefined &&
+        (!options.signal || typeof options.signal.addEventListener !== "function")) {
+      const error = new TypeError("The signal option must be an AbortSignal");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
+    }
     return promiseTimer(
       (finish) => timers.setTimeout(finish, delay),
       (timer) => timers.clearTimeout(timer), value, options);

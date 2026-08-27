@@ -5515,14 +5515,20 @@ pub fn test_mock_timers_enable(_state: &Rc<RefCell<HostState>>, _receiver: Optio
         if matches!(configured, Value::Undefined) { quench_runtime::execute::get_property(options, "timeValue") } else if matches!(configured, Value::Object(_) | Value::ObjectAlias(_)) { quench_runtime::execute::get_property(&configured, "timeValue") } else { configured }
     }).unwrap_or(Value::Number(0.0));
     let value = match now { Value::Undefined => 0.0, Value::Number(value) if value.is_finite() && value >= 0.0 => value, Value::Number(_) => return Err(crate::modules::buffer_enc::invalid_arg_value("The value of \"now\" is out of range".into()),), _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"now\" option must be a number".into()),) };
-    quench_runtime::date::set_mock_now(Some(value));
+    let apis = args.iter().rev().find(|v| matches!(v, Value::Object(_) | Value::ObjectAlias(_))).map(|options| quench_runtime::execute::get_property(options, "apis"));
+    let date = match apis { Some(Value::Array(array)) => quench_runtime::execute::get_property(&Value::Array(array), "0") == Value::String("Date".into()), _ => true };
+    if date { quench_runtime::date::set_mock_now(Some(value)); }
+    crate::modules::timers::set_mock_timer_now(Some(value.max(0.0) as u64));
     Ok(Value::Undefined)
 }
 
 pub fn test_mock_timers_tick(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
     let delta = match args.first() { Some(Value::Number(value)) if value.is_finite() => *value, _ => 0.0 };
     let now = quench_runtime::date::current_time_ms();
-    quench_runtime::date::set_mock_now(Some(now + delta));
+    if quench_runtime::date::mock_enabled() { quench_runtime::date::set_mock_now(Some(now + delta)); }
+    let timer_now = crate::modules::timers::mock_timer_now().unwrap_or(now.max(0.0) as u64).saturating_add(delta.max(0.0) as u64);
+    crate::modules::timers::set_mock_timer_now(Some(timer_now));
+    while crate::modules::pump::drain_one_tick(_state)? {}
     Ok(Value::Undefined)
 }
 
@@ -5535,6 +5541,7 @@ pub fn test_mock_timers_set_time(_state: &Rc<RefCell<HostState>>, _receiver: Opt
 
 pub fn test_mock_timers_reset(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
     quench_runtime::date::set_mock_now(None);
+    crate::modules::timers::set_mock_timer_now(None);
     Ok(Value::Undefined)
 }
 
