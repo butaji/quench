@@ -295,6 +295,7 @@ pub fn mkdir_sync(
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
     let options = parse_mkdir_options(args.get(1))?;
+    let first_created = options.recursive.then(|| first_missing_path(&path));
     let result = if options.recursive {
         std::fs::create_dir_all(Path::new(&path))
     } else {
@@ -302,7 +303,23 @@ pub fn mkdir_sync(
     };
     result.map_err(|e| super::fs_error::fs_error("mkdir", Some(&path), &e))?;
     apply_mode(&path, options.mode);
-    Ok(Value::Undefined)
+    Ok(first_created
+        .flatten()
+        .map_or(Value::Undefined, Value::String))
+}
+
+fn first_missing_path(path: &str) -> Option<String> {
+    let mut candidate = PathBuf::from(path);
+    if candidate.exists() {
+        return None;
+    }
+    while candidate
+        .parent()
+        .is_some_and(|parent| !parent.exists() && parent != Path::new(""))
+    {
+        candidate = candidate.parent()?.to_path_buf();
+    }
+    Some(candidate.to_string_lossy().into_owned())
 }
 
 pub fn unlink_sync(
