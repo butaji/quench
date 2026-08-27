@@ -536,10 +536,14 @@ fn tail_object_dispatch(
 ) -> Option<Result<Value, VmError>> {
     use crate::ops::Builtin;
     let result = match builtin {
-        Builtin::ObjectIs => Ok(Value::Boolean(crate::builtins::same_value(
-            arguments.first(),
-            Some(arguments.get(1).unwrap_or(&Value::Undefined)),
-        ))),
+        Builtin::ObjectIs => {
+            let first = arguments.first().unwrap_or(&Value::Undefined);
+            let second = arguments.get(1).unwrap_or(&Value::Undefined);
+            Ok(Value::Boolean(crate::builtins::same_value(
+                Some(first),
+                Some(second),
+            )))
+        }
         Builtin::ObjectIsExtensible => crate::properties::is_extensible_value(arguments.first()),
         Builtin::ObjectIsFrozen => crate::properties::integrity_level(arguments.first(), true),
         Builtin::ObjectIsSealed => crate::properties::integrity_level(arguments.first(), false),
