@@ -39,9 +39,9 @@ pub(crate) fn function_builtin(
             crate::builtins::array_to_spliced(receiver, arguments)
         }
         crate::ops::Builtin::ArrayWith => crate::builtins::array_with(receiver, arguments),
-        crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
-            crate::builtins::object::object_property_is_enumerable(receiver, arguments),
-        ),
+        crate::ops::Builtin::ObjectPropertyIsEnumerable => {
+            crate::builtins::object::object_property_is_enumerable(receiver, arguments)
+        }
         _ => Err(crate::execute::VmError::NotCallable),
     }
 }
