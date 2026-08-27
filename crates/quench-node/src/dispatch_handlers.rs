@@ -2410,22 +2410,68 @@ pub fn readline_create_interface(
 
 // ---- assert-independent leaf caps ----
 pub fn util_get_call_sites(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    let global = quench_runtime::vm::current_global_object();
-    let script_name = match quench_runtime::execute::get_property(&global, "\0quench_vm_filename") {
-        Value::String(value) => Value::String(value),
-        _ => Value::String(String::new()),
+    if args.len() > 1 {
+        return Err(quench_runtime::execute::type_error(
+            "The options argument must be an object",
+        ));
+    }
+    let count = match args.first() {
+        None => 10,
+        Some(Value::Number(value))
+            if value.is_finite() && *value >= 1.0 && value.fract() == 0.0 =>
+        {
+            if *value > 200.0 {
+                return Err(VmError::Thrown(Value::object(vec![
+                    ("name".into(), Value::String("RangeError".into())),
+                    ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                    (
+                        "message".into(),
+                        Value::String("The frame count must be between 1 and 200".into()),
+                    ),
+                ])));
+            }
+            *value as usize
+        }
+        Some(Value::Number(_)) => {
+            return Err(VmError::Thrown(Value::object(vec![
+                ("name".into(), Value::String("RangeError".into())),
+                ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                (
+                    "message".into(),
+                    Value::String("The frame count must be an integer between 1 and 200".into()),
+                ),
+            ])));
+        }
+        Some(_) => {
+            return Err(quench_runtime::execute::type_error(
+                "The frame count must be an integer",
+            ));
+        }
     };
-    Ok(quench_runtime::host_api::array(vec![
-        quench_runtime::host_api::object(vec![
-            ("scriptName".into(), script_name),
-            ("lineNumber".into(), Value::Number(0.0)),
-            ("columnNumber".into(), Value::Number(0.0)),
-        ]),
-    ]))
+    let script_name = state
+        .borrow()
+        .process
+        .argv
+        .get(1)
+        .cloned()
+        .map(Value::String)
+        .unwrap_or_else(|| Value::String(String::new()));
+    Ok(quench_runtime::host_api::array(
+        (0..count)
+            .map(|_| {
+                quench_runtime::host_api::object(vec![
+                    ("scriptName".into(), script_name.clone()),
+                    ("scriptId".into(), script_name.clone()),
+                    ("lineNumber".into(), Value::Number(0.0)),
+                    ("columnNumber".into(), Value::Number(0.0)),
+                ])
+            })
+            .collect(),
+    ))
 }
 
 pub fn buffer_atob(

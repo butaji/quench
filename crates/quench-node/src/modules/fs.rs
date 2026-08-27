@@ -38,9 +38,67 @@ pub(crate) struct FsOptions {
     pub signal_aborted: bool,
 }
 
-/// `path` argument: string only (Buffer/URL paths unsupported).
+/// Decode Node's shared path input contract once for every fs family.
 pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
-    crate::modules::path::validate_string(value.unwrap_or(&Value::Undefined), "path")
+    let value = value.unwrap_or(&Value::Undefined);
+    if let Ok(path) = crate::modules::path::validate_string(value, "path") {
+        return Ok(path);
+    }
+    if let Value::Uint8Array(view) = value {
+        let bytes = view.buffer.bytes.borrow();
+        let slice = &bytes[view.byte_offset..view.byte_offset + view.length];
+        return String::from_utf8(slice.to_vec()).map_err(|_| {
+            crate::modules::buffer_enc::invalid_arg_type(
+                "The \"path\" argument must be a string, Buffer, or URL".into(),
+            )
+        });
+    }
+    if crate::modules::url_whatwg::is_url_instance(value) {
+        let parsed = crate::modules::url_whatwg::parsed_of(Some(value))?;
+        if parsed.get("protocol") != "file:" || !parsed.get("hostname").is_empty() {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"path\" argument must be a file URL".into(),
+            ));
+        }
+        return decode_percent_path(&parsed.get("pathname"));
+    }
+    Err(crate::modules::buffer_enc::invalid_arg_type(
+        "The \"path\" argument must be a string, Buffer, or URL".into(),
+    ))
+}
+
+fn decode_percent_path(path: &str) -> Result<String, VmError> {
+    let mut bytes = Vec::with_capacity(path.len());
+    let raw = path.as_bytes();
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == b'%' {
+            let Some((&hi, &lo)) = raw.get(index + 1).zip(raw.get(index + 2)) else {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    "Invalid file URL path".into(),
+                ));
+            };
+            let hex = |value| match value {
+                b'0'..=b'9' => Some(value - b'0'),
+                b'a'..=b'f' => Some(value - b'a' + 10),
+                b'A'..=b'F' => Some(value - b'A' + 10),
+                _ => None,
+            };
+            let Some(hi) = hex(hi).zip(hex(lo)).map(|(hi, lo)| hi << 4 | lo) else {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(
+                    "Invalid file URL path".into(),
+                ));
+            };
+            bytes.push(hi);
+            index += 3;
+        } else {
+            bytes.push(raw[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        crate::modules::buffer_enc::invalid_arg_type("Invalid UTF-8 file URL path".into())
+    })
 }
 
 /// Parse the trailing `options` argument (string encoding or object).
