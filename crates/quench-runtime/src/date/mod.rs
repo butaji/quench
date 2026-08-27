@@ -13,6 +13,10 @@ use std::rc::Rc;
 
 use crate::value::Value;
 
+pub fn set_mock_now(value: Option<f64>) { chrono_utils::set_mock_now(value); }
+pub fn current_time_ms() -> f64 { chrono_utils::current_time_ms() }
+pub fn mock_enabled() -> bool { chrono_utils::mock_enabled() }
+
 /// Internal Date representation: milliseconds since Unix epoch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DateValue {
