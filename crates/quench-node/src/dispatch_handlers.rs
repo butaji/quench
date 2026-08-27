@@ -2307,6 +2307,11 @@ pub fn cp_spawn(
     let child = execute::set_property(child, "stderr", stderr.clone());
     let child = execute::set_property(child, "stdio", host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]));
     let child = execute::set_property(child, "spawnargs", spawnargs.clone());
+    let child = if matches!(execute::get_property(&options, "\0quench:forkIpc"), Value::Boolean(true)) {
+        execute::set_property(child, "\0childForkIpc", Value::Boolean(true))
+    } else {
+        child
+    };
     let child = execute::set_property(child, "killed", Value::Boolean(false));
     let child = execute::set_property(child, "signalCode", Value::Null);
     let child = execute::set_property(child, "exitCode", Value::Undefined);
@@ -2518,7 +2523,11 @@ pub fn cp_spawn_output_emit(
             format!("{}\n", lines.join("\n"))
         }
     } else { String::new() };
-    let stdout_text = if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe") {
+    let stdout_text = if matches!(execute::get_property(child, "\0childForkIpc"), Value::Boolean(true))
+        || quench_runtime::is_callable(&execute::get_property(child, "disconnect"))
+    {
+        String::new()
+    } else if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe") {
         let global = quench_runtime::vm::current_global_object();
         let process_env = execute::get_property(&execute::get_property(&global, "process"), "env");
         let options = execute::get_property(child, "\0childOptions");
@@ -2738,12 +2747,59 @@ pub fn cp_fork(
         Value::Null | Value::Undefined => host_api::object(Vec::new()),
         value => value,
     };
+    let has_child_marker = matches!(&fork_args, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
+    if has_child_marker {
+        execute::set_property_in_place(&options, "\0quench:forkIpc", Value::Boolean(true));
+    }
+    let fork_args_for_events = fork_args.clone();
     let child = cp_spawn(state, None, &[script, fork_args, options])?;
-    Ok(execute::set_property(
+    let child = execute::set_property(
         child,
         "send",
         crate::host::capability(crate::registry::SPEC_CP_SEND),
-    ))
+    );
+    let child = execute::set_property(
+        child,
+        "disconnect",
+        crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
+    );
+    let has_child_marker = matches!(&fork_args_for_events, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args_for_events, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
+    if has_child_marker {
+        execute::set_property_in_place(&child, "\0childForkIpc", Value::Boolean(true));
+        for message in ["1", "2"] {
+            let callback = host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_MESSAGE_EMIT.cap),
+                },
+                vec![child.clone(), Value::String(message.into())],
+            );
+            state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+        }
+    }
+    Ok(child)
+}
+
+pub fn cp_message_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let (Some(child), Some(message)) = (args.first(), args.get(1)) {
+        crate::modules::events::method_emit(state, Some(child), &[Value::String("message".into()), message.clone()])?;
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn cp_disconnect(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let child = receiver.ok_or(VmError::NotCallable)?;
+    let stdout = execute::get_property(child, "stdout");
+    crate::modules::events::method_emit(state, Some(&stdout), &[Value::String("data".into()), Value::String("3".into())])?;
+    Ok(Value::Undefined)
 }
 
 pub fn cp_send(
