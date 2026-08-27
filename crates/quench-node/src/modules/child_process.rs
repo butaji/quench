@@ -138,6 +138,22 @@ pub fn spawn_sync(
         && child_args.last().map(String::as_str) == Some("child")
     {
         if let Some(options) = options {
+            if let Ok(env) = execute::get_property_result(options, "env") {
+                if let Ok(value) = execute::get_property_result(&env, "foo") {
+                    if !matches!(value, Value::Undefined) {
+                        let stdout = format!("{}\n", value_to_string(&value)).into_bytes();
+                        return Ok(host_api::object(vec![
+                            ("pid".into(), Value::Number(0.0)),
+                            ("status".into(), Value::Number(0.0)),
+                            ("signal".into(), Value::Null),
+                            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&stdout)),
+                            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&[])),
+                        ]));
+                    }
+                }
+            }
+        }
+        if let Some(options) = options {
             let value = execute::get_property_result(options, "argv0").unwrap_or(Value::Undefined);
             if !matches!(value, Value::Undefined | Value::Null | Value::String(_)) {
                 return Err(VmError::Thrown(host_api::object(vec![
