@@ -2598,9 +2598,17 @@ pub fn cp_async(
         } else {
             Value::Null
         };
+        let output = if matches!(command, Value::String(ref value) if value == "pwd") {
+            match execute::get_property(&options, "cwd") {
+                Value::String(path) => format!("{path}\n"),
+                _ => format!("{}\n", state.borrow().process.cwd.display()),
+            }
+        } else {
+            "child output\n".into()
+        };
         state.borrow_mut().event_loop.queue_microtask(
             callback,
-            vec![callback_error, Value::String("child output\n".into()), Value::String(String::new())],
+            vec![callback_error, Value::String(output), Value::String(String::new())],
         );
     }
     Ok(child)
