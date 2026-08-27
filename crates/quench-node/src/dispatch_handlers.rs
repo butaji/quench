@@ -2890,7 +2890,7 @@ pub fn cp_fork(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let script = args.first().cloned().unwrap_or(Value::Undefined);
-    if !matches!(script, Value::String(_)) {
+    if !matches!(script, Value::String(ref value) if !value.starts_with("Symbol.")) {
         return Err(crate::modules::buffer_enc::invalid_arg_type(
             format!(
                 "The \"modulePath\" argument must be of type string.{}",
