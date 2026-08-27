@@ -29,6 +29,7 @@ pub struct ProcessState {
     pub other_handlers: Vec<(String, Value, bool)>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
+    pub deprecations_emitted: Vec<(Value, Option<String>)>,
     pub exit_handlers_ran: bool,
     pub exec_path: String,
     pub version: String,
@@ -65,6 +66,7 @@ impl ProcessState {
             unhandled_rejection_mode: UnhandledRejectionMode::Throw,
             other_handlers: Vec::new(),
             warnings_emitted: Vec::new(),
+            deprecations_emitted: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
             version: "v22.0.0".into(),
@@ -74,6 +76,21 @@ impl ProcessState {
             umask: 0o022,
         }
     }
+}
+
+pub(crate) fn mark_deprecation(state: &Rc<RefCell<HostState>>, callback: &Value, code: Option<&str>) -> bool {
+    let mut guard = state.borrow_mut();
+    let seen = guard.process.deprecations_emitted.iter().any(|(seen_callback, seen_code)| {
+        match (code, seen_code.as_deref()) {
+            (Some(code), Some(seen)) => code == seen,
+            (None, None) => callback == seen_callback,
+            _ => false,
+        }
+    });
+    if !seen {
+        guard.process.deprecations_emitted.push((callback.clone(), code.map(str::to_string)));
+    }
+    !seen
 }
 
 pub fn build(argv: &[String], exec_path: &str) -> Value {

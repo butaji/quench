@@ -536,10 +536,24 @@ pub fn util_deprecate(
             ])));
         }
     }
-    Ok(bound_custom(
+    let mut wrapper = bound_custom(
         crate::registry::SPEC_UTIL_DEPRECATED_CALL.cap,
-        vec![callback],
-    ))
+        vec![callback.clone(), args.get(1).cloned().unwrap_or(Value::String(String::new())), args.get(2).cloned().unwrap_or(Value::Undefined)],
+    );
+    let length = execute::get_property(&callback, "length");
+    wrapper = execute::set_property(wrapper, "length", length);
+    let modify = args
+        .get(3)
+        .map(|options| execute::get_property(options, "modifyPrototype"))
+        .unwrap_or(Value::Undefined);
+    if !matches!(modify, Value::Boolean(false)) {
+        let prototype = execute::get_property(&callback, "prototype");
+        wrapper = execute::set_property(wrapper, "prototype", prototype);
+        wrapper = execute::set_prototype_of(&wrapper, &callback)?;
+    } else {
+        wrapper = execute::set_property(wrapper, "prototype", quench_runtime::host_api::object(Vec::new()));
+    }
+    Ok(wrapper)
 }
 
 pub fn util_debuglog(
@@ -554,17 +568,22 @@ pub fn util_debuglog(
 }
 
 pub fn util_deprecated_call(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(callback) = args.first() else {
         return Err(VmError::NotCallable);
     };
+    let message = match args.get(1) { Some(Value::String(value)) => value.as_str(), _ => "" };
+    let code = match args.get(2) { Some(Value::String(value)) => Some(value.as_str()), _ => None };
+    if crate::modules::process::mark_deprecation(state, callback, code) {
+        crate::modules::process::emit_warning(state, "DeprecationWarning", message, code, false);
+    }
     quench_runtime::execute::call(
         callback,
         &Value::Undefined,
-        args.get(1..).unwrap_or_default(),
+        args.get(3..).unwrap_or_default(),
     )
 }
 
