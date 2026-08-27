@@ -35,6 +35,7 @@ pub(crate) struct PromiseAggregate {
     pub(crate) reject: Value,
     pub(crate) remaining: RefCell<usize>,
     pub(crate) values: RefCell<Vec<Value>>,
+    pub(crate) called: RefCell<Vec<bool>>,
     pub(crate) keys: Option<Vec<String>>,
     pub(crate) settled: RefCell<bool>,
 }

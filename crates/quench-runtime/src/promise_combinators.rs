@@ -32,35 +32,88 @@ fn promise_combinator_from_capability(
         }
     };
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let values = match crate::collections::iterator::collect_iterable_no_close(source) {
-        Ok(values) => values,
-        Err(error) => {
-            reject_with_completion_value(&capability_reject, error);
-            return Ok(result);
-        }
-    };
-    let value_count = values.len();
     let aggregate = Rc::new(PromiseAggregate {
         kind,
         resolve: capability_resolve,
         reject: capability_reject,
-        remaining: RefCell::new(values.len()),
-        values: RefCell::new(vec![Value::Undefined; values.len()]),
+        // The sentinel keeps a synchronously-settling thenable from
+        // resolving the aggregate before the iterator loop has finished.
+        remaining: RefCell::new(1),
+        values: RefCell::new(Vec::new()),
+        called: RefCell::new(Vec::new()),
         keys,
         settled: RefCell::new(false),
     });
-    for (index, value) in values.into_iter().enumerate() {
-        let value = match crate::functions::execute_target(&promise_resolve, constructor, &[value]) {
-            Ok(value) => value,
+    let iterator = match crate::collections::iterator::open(source) {
+        Ok(iterator) => iterator,
+        Err(error) => {
+            reject_with_completion_value(&aggregate.reject, error);
+            return Ok(result);
+        }
+    };
+    loop {
+        let value = match crate::collections::iterator::step_value(&iterator) {
+            Ok(Some(value)) => value,
+            Ok(None) => break,
             Err(error) => {
                 reject_with_completion_value(&aggregate.reject, error);
                 break;
             }
         };
-        register_aggregate_value(&aggregate, index, value);
+        let index = {
+            let mut values = aggregate.values.borrow_mut();
+            let index = values.len();
+            values.push(Value::Undefined);
+            aggregate.called.borrow_mut().push(false);
+            *aggregate.remaining.borrow_mut() += 1;
+            index
+        };
+        let value = match crate::functions::execute_target(&promise_resolve, constructor, &[value]) {
+            Ok(value) => value,
+            Err(error) => {
+                if let VmError::Thrown(reason) = &error {
+                    let _ = crate::collections::iterator::close(
+                        iterator.clone(),
+                        crate::completion::Completion::Throw(reason.clone()),
+                    );
+                }
+                reject_with_completion_value(&aggregate.reject, error);
+                break;
+            }
+        };
+        if let Err(error) = register_aggregate_value(&aggregate, index, value) {
+            if let VmError::Thrown(reason) = &error {
+                let _ = crate::collections::iterator::close(
+                    iterator.clone(),
+                    crate::completion::Completion::Throw(reason.clone()),
+                );
+            }
+            reject_with_completion_value(&aggregate.reject, error);
+            break;
+        }
     }
-    if value_count == 0 {
-        finish_empty_aggregate(&aggregate);
+    let remaining = *aggregate.remaining.borrow();
+    *aggregate.remaining.borrow_mut() = remaining.saturating_sub(1);
+    if *aggregate.remaining.borrow() == 0 {
+        if aggregate.values.borrow().is_empty() {
+            finish_empty_aggregate(&aggregate);
+        } else {
+            match kind {
+                PromiseAggregateKind::All | PromiseAggregateKind::AllSettled => {
+                    resolve_aggregate(&aggregate, Value::array(aggregate.values.borrow().clone()))
+                }
+                PromiseAggregateKind::Any => {
+                    let errors = Value::array(aggregate.values.borrow().clone());
+                    let error = crate::construct::construct_value(
+                        &Value::Builtin(Builtin::AggregateError),
+                        &[errors],
+                    )
+                    .unwrap_or(Value::Undefined);
+                    reject_aggregate(&aggregate, error);
+                }
+                PromiseAggregateKind::Race => {}
+            }
+        }
     }
     Ok(result)
 }
@@ -114,47 +167,51 @@ fn reject_with_completion_value(reject: &Value, error: VmError) {
     let _ = crate::functions::execute_target(reject, &Value::Undefined, &[reason]);
 }
 
-fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, value: Value) {
+fn register_aggregate_value(
+    aggregate: &Rc<PromiseAggregate>,
+    index: usize,
+    value: Value,
+) -> Result<(), VmError> {
     if aggregate.kind == PromiseAggregateKind::Race {
         if crate::value::is_object(&value) {
             match crate::execute::get_property_result(&value, "then") {
                 Ok(then) if crate::conversion::is_callable(&then) => {
-                    let _ = crate::functions::execute_target(
+                    crate::functions::execute_target(
                         &then,
                         &value,
                         &[aggregate.resolve.clone(), aggregate.reject.clone()],
-                    );
+                    )?;
                 }
                 Ok(_) => {
-                    let _ = crate::functions::execute_target(
+                    crate::functions::execute_target(
                         &aggregate.resolve,
                         &Value::Undefined,
                         &[value],
-                    );
+                    )?;
                 }
-                Err(_) => {
-                    let _ = crate::functions::execute_target(
+                Err(error) => {
+                    crate::functions::execute_target(
                         &aggregate.reject,
                         &Value::Undefined,
                         &[Value::Undefined],
-                    );
+                    )?;
+                    return Err(error);
                 }
             }
         } else {
-            let _ = crate::functions::execute_target(
+            crate::functions::execute_target(
                 &aggregate.resolve,
                 &Value::Undefined,
                 &[value],
-            );
+            )?;
         }
-        return;
+        return Ok(());
     }
     // PerformPromiseAll invokes the resolved promise's `then` method during
     // the combinator call.  Assimilation of a custom thenable may therefore
     // settle the aggregate synchronously, while native Promise reactions
     // remain queued as microtasks.
     let promise = PromiseData::allocate(PromiseState::Pending);
-    let promise_value = Value::Promise(Rc::clone(&promise));
     let resolve = bound_settler(Builtin::PromiseResolve, &promise, 1.0);
     let reject = bound_settler(Builtin::PromiseReject, &promise, 1.0);
     if crate::value::is_object(&value) {
@@ -163,7 +220,7 @@ fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, valu
                 let call_result = crate::functions::execute_target(
                     &then,
                     &value,
-                    &[resolve.clone(), reject.clone()],
+                    &[resolve.clone(), aggregate.reject.clone()],
                 );
                 if call_result.is_err() {
                     let _ = crate::functions::execute_target(
@@ -171,17 +228,19 @@ fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, valu
                         &Value::Undefined,
                         &[Value::Undefined],
                     );
+                    return call_result.map(|_| ());
                 }
             }
             Ok(_) => {
                 let _ = crate::functions::execute_target(&resolve, &Value::Undefined, &[value]);
             }
-            Err(_) => {
+            Err(error) => {
                 let _ = crate::functions::execute_target(
                     &reject,
                     &Value::Undefined,
                     &[Value::Undefined],
                 );
+                return Err(error);
             }
         }
     } else {
@@ -190,14 +249,27 @@ fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, valu
     let state = promise.state.borrow().clone();
     if !matches!(state, PromiseState::Pending) {
         aggregate_settle(aggregate, index, &state);
-        return;
+        return Ok(());
     }
     promise.add_aggregate_hook(Rc::clone(aggregate), index);
+    Ok(())
 }
 
 fn aggregate_settle(aggregate: &Rc<PromiseAggregate>, index: usize, state: &PromiseState) {
     if *aggregate.settled.borrow() {
         return;
+    }
+    let guard = matches!(aggregate.kind, PromiseAggregateKind::All | PromiseAggregateKind::AllSettled)
+        || (aggregate.kind == PromiseAggregateKind::Any
+            && matches!(state, PromiseState::Rejected(_)));
+    if guard {
+        let mut called = aggregate.called.borrow_mut();
+        if called.get(index).copied().unwrap_or(false) {
+            return;
+        }
+        if let Some(entry) = called.get_mut(index) {
+            *entry = true;
+        }
     }
     let Some(value) = settled_value(state) else { return };
     match (aggregate.kind, state) {
