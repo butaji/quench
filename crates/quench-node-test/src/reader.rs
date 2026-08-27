@@ -94,8 +94,9 @@ impl NodeRunner {
             &script,
             &fixture.argv,
         );
+        let fixture_source = strip_v8_native_probes(&fixture.source);
         self.host = host;
-        self.context = context;
+        self.context = context.with_source_text(fixture_source.clone());
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
@@ -110,7 +111,6 @@ impl NodeRunner {
             .is_some_and(|extension| extension == "mjs");
         // CJS fixtures receive Node's wrapper; ESM fixtures retain module
         // syntax so the runtime's module reducer owns import facts.
-        let fixture_source = strip_v8_native_probes(&fixture.source);
         let source = if is_module {
             quench_node::esm_imports::transform_esm_imports(&fixture_source)
                 .replace("await import(", "require(")
