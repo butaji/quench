@@ -306,7 +306,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             };
         }
         if name == "process" || name == "node:process" {
-            return Ok(process_module());
+            let process = quench_runtime::execute::get_property(
+                &quench_runtime::vm::current_global_object(),
+                "process",
+            );
+            return Ok(process);
         }
         if name == "buffer" || name == "node:buffer" {
             let buffer = buffer_module();
