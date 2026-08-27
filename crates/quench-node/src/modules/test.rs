@@ -87,6 +87,7 @@ fn context() -> Value {
             ("setter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER)),
             ("property".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY)),
             ("module".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_MODULE)),
+            ("reset".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_RESET)),
             ("timers".into(), quench_runtime::host_api::object(vec![
                 ("enable".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE)),
                 ("tick".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_TICK)),
