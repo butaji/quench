@@ -44,10 +44,10 @@ pub(crate) fn proxy_set(
                                 ));
                             }
                         } else {
-                            let getter_undefined = properties.iter().any(|(name, v)| {
-                                name == "get" && matches!(v, Value::Undefined)
+                            let setter_undefined = properties.iter().any(|(name, v)| {
+                                name == "set" && matches!(v, Value::Undefined)
                             });
-                            if getter_undefined && !matches!(value, Value::Undefined) {
+                            if setter_undefined && !matches!(value, Value::Undefined) {
                                 return Err(crate::value::error::throw_type_error(
                                     "Proxy set invariant violated",
                                 ));
