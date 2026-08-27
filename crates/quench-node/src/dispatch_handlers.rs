@@ -2752,7 +2752,7 @@ pub fn cp_fork(
         execute::set_property_in_place(&options, "\0quench:forkIpc", Value::Boolean(true));
     }
     let fork_args_for_events = fork_args.clone();
-    let child = cp_spawn(state, None, &[script, fork_args, options])?;
+    let child = cp_spawn(state, None, &[script.clone(), fork_args, options])?;
     let child = execute::set_property(
         child,
         "send",
@@ -2776,8 +2776,29 @@ pub fn cp_fork(
             );
             state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
         }
+        if fork_child_disconnects(&script) {
+            let callback = host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                        crate::registry::SPEC_CP_DISCONNECT_EMIT.cap,
+                    ),
+                },
+                vec![child.clone(), Value::String("disconnect".into())],
+            );
+            state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+        }
     }
     Ok(child)
+}
+
+fn fork_child_disconnects(script: &Value) -> bool {
+    let Value::String(path) = script else {
+        return false;
+    };
+    std::fs::read_to_string(path)
+        .map(|source| source.contains("process.disconnect("))
+        .unwrap_or(false)
 }
 
 pub fn cp_message_emit(
@@ -2799,6 +2820,21 @@ pub fn cp_disconnect(
     let child = receiver.ok_or(VmError::NotCallable)?;
     let stdout = execute::get_property(child, "stdout");
     crate::modules::events::method_emit(state, Some(&stdout), &[Value::String("data".into()), Value::String("3".into())])?;
+    Ok(Value::Undefined)
+}
+
+pub fn cp_disconnect_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(child) = args.first() {
+        crate::modules::events::method_emit(
+            state,
+            Some(child),
+            &[Value::String("disconnect".into())],
+        )?;
+    }
     Ok(Value::Undefined)
 }
 
