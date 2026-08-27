@@ -42,6 +42,7 @@ fn is_function_builtin(builtin: Builtin) -> bool {
         | Builtin::FunctionApply
         | Builtin::FunctionBind
         | Builtin::ArrayJoin
+        | Builtin::TypedArrayJoin
         | Builtin::ArrayToString
         | Builtin::ArrayPush
         | Builtin::ArrayShift

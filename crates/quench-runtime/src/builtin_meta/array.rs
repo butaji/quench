@@ -78,7 +78,9 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayToString => Some("toString"),
         Builtin::ArraySplice => Some("splice"),
         Builtin::ArrayJoin => Some("join"),
+        Builtin::TypedArrayJoin => Some("join"),
         Builtin::ArrayToLocaleString => Some("toLocaleString"),
+        Builtin::TypedArrayToLocaleString => Some("toLocaleString"),
         _ => None,
     }
 }
@@ -148,6 +150,8 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayToString
         | Builtin::ArrayToLocaleString => Some(0.0),
         Builtin::ArrayJoin => Some(1.0),
+        Builtin::TypedArrayJoin => Some(1.0),
+        Builtin::TypedArrayToLocaleString => Some(0.0),
         _ => fn_len_tail(builtin),
     }
 }

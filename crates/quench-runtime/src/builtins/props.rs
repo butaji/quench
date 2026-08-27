@@ -318,7 +318,7 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         })
         .or_else(|| {
             (builtin == Builtin::TypedArray && key == "toLocaleString")
-                .then_some(Builtin::ArrayToLocaleString)
+                .then_some(Builtin::TypedArrayToLocaleString)
         })
         .or_else(|| {
             (builtin == Builtin::TypedArray && key == "fill").then_some(Builtin::TypedArrayFill)
@@ -390,7 +390,7 @@ fn typed_array_generic_method(key: &str) -> Option<Builtin> {
         "findLastIndex" => ArrayFindLastIndex,
         "forEach" => ArrayForEach,
         "includes" => ArrayIncludes,
-        "join" => ArrayJoin,
+        "join" => TypedArrayJoin,
         "lastIndexOf" => ArrayLastIndexOf,
         "reduce" => ArrayReduce,
         "reduceRight" => ArrayReduceRight,
