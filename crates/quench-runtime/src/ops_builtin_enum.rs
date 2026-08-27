@@ -297,6 +297,7 @@ pub enum Builtin {
     ObjectDefineProperty, ObjectDefineProperties,
     ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols,
     ObjectPropertyIsEnumerable, ObjectPrototypeToString, ObjectPrototypeToLocaleString,
+    ObjectPrototypeGetProto, ObjectPrototypeSetProto,
     ObjectPrototypeValueOf, ObjectCreate,
     ObjectFreeze, ObjectSeal,
     ObjectPreventExtensions, ObjectIsFrozen,
