@@ -318,6 +318,20 @@ pub(crate) fn proxy_construct(
         }
     }
     let new_target = new_target.unwrap_or(target);
+    if let Value::Proxy(proxy) = target {
+        // A proxy without a construct trap forwards [[Construct]] to its
+        // target; recursing with the proxy itself would never reach the
+        // target's constructor (and can overflow the host stack).
+        let result = crate::construct::construct_value_with_new_target(
+            &proxy.target,
+            new_target,
+            arguments,
+        );
+        if is_revoked(proxy) {
+            return Err(crate::vm::not_callable());
+        }
+        return result;
+    }
     crate::construct::construct_value_with_new_target(target, new_target, arguments)
 }
 
