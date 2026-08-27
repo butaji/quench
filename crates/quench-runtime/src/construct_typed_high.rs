@@ -22,9 +22,10 @@ fn values_int8_array(values: &[Value]) -> Result<Value, crate::execute::VmError>
 }
 
 fn copy_int8_array(source: &crate::value::Int8ArrayData) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Int8ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Int8ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Int8Array(Rc::new(view)))
@@ -90,9 +91,10 @@ fn values_int16_array(values: &[Value]) -> Result<Value, crate::execute::VmError
 fn copy_int16_array(
     source: &crate::value::Int16ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Int16ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Int16ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Int16Array(Rc::new(view)))
@@ -143,9 +145,10 @@ fn values_int32_array(values: &[Value]) -> Result<Value, crate::execute::VmError
 fn copy_int32_array(
     source: &crate::value::Int32ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Int32ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Int32ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Int32Array(Rc::new(view)))
@@ -252,9 +255,10 @@ fn values_float32_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
 fn copy_float32_array(
     source: &crate::value::Float32ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Float32ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Float32ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(f32::NAN));
     }
     Ok(Value::Float32Array(Rc::new(view)))
@@ -311,9 +315,10 @@ fn values_float64_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
 fn copy_float64_array(
     source: &crate::value::Float64ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Float64ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Float64ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(f64::NAN));
     }
     Ok(Value::Float64Array(Rc::new(view)))
