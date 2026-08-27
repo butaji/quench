@@ -78,6 +78,7 @@ pub struct NetState {
     pub servers: HashMap<u64, Rc<RefCell<NetServer>>>,
     pub sockets: HashMap<u64, Rc<RefCell<NetSocket>>>,
     pub pending_errors: Vec<(Value, Value)>,
+    pub lookup_result: Option<Value>,
 }
 
 impl Default for NetState {
@@ -93,6 +94,7 @@ impl NetState {
             servers: HashMap::new(),
             sockets: HashMap::new(),
             pending_errors: Vec::new(),
+            lookup_result: None,
         }
     }
 }
@@ -520,18 +522,9 @@ pub fn build() -> Value {
             "createServer",
             crate::host::capability(crate::registry::SPEC_NET_SERVER),
         ),
-        (
-            "Socket",
-            socket_ctor.clone(),
-        ),
-        (
-            "Stream",
-            socket_ctor,
-        ),
-        (
-            "Server",
-            server_ctor,
-        ),
+        ("Socket", socket_ctor.clone()),
+        ("Stream", socket_ctor),
+        ("Server", server_ctor),
         (
             "BlockList",
             crate::host::capability(crate::registry::NodeSpec::new("net:BlockList", 2292)),

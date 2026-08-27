@@ -129,6 +129,54 @@ fn connect_with_receiver(
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             ])));
         }
+        if quench_runtime::is_callable(&lookup) {
+            state.borrow_mut().net.lookup_result = None;
+            let callback = crate::host::capability(crate::registry::SPEC_NET_LOOKUP_CALLBACK);
+            let result = execute::call(
+                &lookup,
+                &Value::Undefined,
+                &[
+                    execute::get_property(options, "host"),
+                    options.clone(),
+                    callback,
+                ],
+            )?;
+            let callback_result = state.borrow_mut().net.lookup_result.take();
+            if callback_result.is_none() {
+                let (object, _) = new_net_object(state, socket_props())?;
+                return Ok(object);
+            }
+            let result = callback_result.unwrap_or(result);
+            if let Some(family) = lookup_family(&result) {
+                if family != 4 && family != 6 {
+                    let host = execute::to_js_string(&execute::get_property(options, "host"))
+                        .unwrap_or_else(|_| LOCAL_HOST.into());
+                    let port = execute::to_js_string(&execute::get_property(options, "port"))
+                        .unwrap_or_else(|_| "0".into());
+                    let (object, _) = new_net_object(state, socket_props())?;
+                    let error = quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::Error,
+                        &[Value::String(format!(
+                            "Invalid address family: {family} {host}:{port}"
+                        ))],
+                    );
+                    let error = execute::set_property(
+                        error,
+                        "code",
+                        Value::String("ERR_INVALID_ADDRESS_FAMILY".into()),
+                    );
+                    let error = execute::set_property(error, "host", Value::String(host));
+                    let port_value = port.parse::<f64>().unwrap_or(0.0);
+                    let error = execute::set_property(error, "port", Value::Number(port_value));
+                    state
+                        .borrow_mut()
+                        .net
+                        .pending_errors
+                        .push((object.clone(), error));
+                    return Ok(object);
+                }
+            }
+        }
         let hints = execute::get_property(options, "hints");
         if let Value::Number(value) = hints {
             let bits = value as i64;
@@ -136,9 +184,10 @@ fn connect_with_receiver(
                 return Err(VmError::Thrown(host_api::object(vec![
                     ("name".into(), Value::String("TypeError".into())),
                     ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
-                    ("message".into(), Value::String(format!(
-                        "The argument 'hints' is invalid. Received {value}"
-                    ))),
+                    (
+                        "message".into(),
+                        Value::String(format!("The argument 'hints' is invalid. Received {value}")),
+                    ),
                 ])));
             }
         }
@@ -237,7 +286,11 @@ fn connect_refused(state: &Rc<RefCell<HostState>>, addr: &SocketAddr) -> Result<
     let error = execute::set_property(error, "code", Value::String("ECONNREFUSED".into()));
     let error = execute::set_property(error, "errno", Value::Number(-61.0));
     let error = execute::set_property(error, "syscall", Value::String("connect".into()));
-    state.borrow_mut().net.pending_errors.push((object.clone(), error));
+    state
+        .borrow_mut()
+        .net
+        .pending_errors
+        .push((object.clone(), error));
     Ok(object)
 }
 
@@ -273,6 +326,13 @@ fn connect_target(
             });
             Ok((port, host))
         }
+    }
+}
+
+fn lookup_family(result: &Value) -> Option<i64> {
+    match execute::get_property(result, "2") {
+        Value::Number(value) if value.is_finite() && value.fract() == 0.0 => Some(value as i64),
+        _ => None,
     }
 }
 
