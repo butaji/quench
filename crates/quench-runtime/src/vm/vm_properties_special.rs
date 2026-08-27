@@ -72,6 +72,14 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if let Some(override_value) = crate::vm::intrinsic_override_property(builtin, key, value) {
         return override_value;
     }
+    if builtin == Builtin::SymbolPrototype && key == "description" {
+        return crate::vm::execute_builtin_with_receiver(
+            Builtin::SymbolDescriptionGetter,
+            &[],
+            Some(value),
+        )
+        .unwrap_or(Value::Undefined);
+    }
     if key == "toString" && callable_builtin_value(value) {
         if let Some(override_value) =
             crate::builtins::read_descriptor_value(Builtin::FunctionPrototype, key)
