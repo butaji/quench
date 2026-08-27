@@ -375,6 +375,13 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = early_property_result(&value, key, receiver) {
         return result;
     }
+    if let Value::Object(properties) = &value {
+        if crate::vm::realm::id_for_global(properties).is_some()
+            || crate::vm::is_global_object(&value)
+        {
+            return Ok(crate::vm::object_property(properties, receiver, key));
+        }
+    }
     let intrinsic_bound = matches!(&value, Value::BoundFunction(bound)
         if crate::vm::is_intrinsic_bound(bound));
     if intrinsic_bound && is_boxed_primitive(receiver) {
@@ -396,6 +403,19 @@ pub(crate) fn get_property_with_receiver(
             || (crate::property_define::accessor(&value, key, "get").is_none()
                 && crate::property_define::accessor(&value, key, "set").is_none()))
     {
+        if let Value::BoundFunction(bound) = &value {
+            if matches!(bound.target, Value::Builtin(builtin) if crate::builtin_meta::is_prototype(builtin))
+            {
+                if matches!(
+                    bound.target,
+                    Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
+                ) && key == "evaluate"
+                {
+                    crate::reflect::note_shadow_method_realm(bound.realm);
+                }
+                return get_property_with_receiver(&bound.target, key, receiver);
+            }
+        }
         return Ok(crate::execute::get_property(&value, key));
     }
     if let Some(result) = array_property_result(&value, key, receiver) {

@@ -178,6 +178,27 @@ pub(crate) fn execute_bound(
         crate::value::Value::Function(function) => execute_bound_function(function, bound, &combined),
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
         crate::value::Value::Proxy(_) => {
+            let realm = bound
+                .properties
+                .borrow()
+                .iter()
+                .rev()
+                .find_map(|(key, value)| {
+                    (key == "\0realm").then(|| match value {
+                        crate::value::Value::HostCapability(token) => token.realm(),
+                        _ => crate::ops::RealmId::ROOT,
+                    })
+                });
+            if let Some(realm) = realm {
+                let caller = wrapper_caller_realm(bound).unwrap_or(crate::ops::RealmId::ROOT);
+                let call_arguments = wrap_shadow_arguments(&combined, Some(realm), caller)?;
+                let result =
+                    crate::proxy::proxy_apply(&bound.target, &bound.receiver, &call_arguments)
+                        .map_err(|_| {
+                            crate::reflect::shadow_wrapped_exception_error_for_realm(caller)
+                        })?;
+                return finish_bound_result(result, bound, Some(realm));
+            }
             crate::proxy::proxy_apply(&bound.target, &bound.receiver, &combined)
         }
         _ => Err(crate::execute::VmError::NotCallable),
@@ -242,8 +263,6 @@ fn finish_bound_result(
         Ok(result)
     }
 }
-
-
 fn execute_bound_function_in_realm(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     bound: &crate::value::BoundFunctionValue,
@@ -351,10 +370,7 @@ pub(crate) fn execute_target(
             execute_in_function_realm(function, receiver, arguments)
         }
         crate::value::Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))
-            ) =>
+            if matches!(bound.target, crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
         {
             let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) =
                 bound.target
@@ -476,17 +492,17 @@ fn execute_function_call_in_realm(
                     | crate::ops::Builtin::ErrorPrototypeStackSetter
             )
         ) {
-            return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
-        }
-        let receiver_bound = bound.properties.borrow().iter().any(|(key, value)| {
-            key == "\0receiver_bound_method" && *value == crate::value::Value::Boolean(true)
-        });
-        if receiver_bound {
             return execute_target(
                 &bound.target,
                 &this,
                 arguments.get(1..).unwrap_or_default(),
             );
+        }
+        let receiver_bound = bound.properties.borrow().iter().any(|(key, value)| {
+            key == "\0receiver_bound_method" && *value == crate::value::Value::Boolean(true)
+        });
+        if receiver_bound {
+            return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
         }
     }
     if let crate::value::Value::BoundFunction(bound) = receiver {
@@ -559,7 +575,10 @@ fn bind_function_target(
     let mut extra = arguments.get(1..).unwrap_or(&[]).to_vec();
     let (target, bound_target) = match target {
         crate::value::Value::BoundFunction(bound)
-            if matches!(bound.target, crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
+            if matches!(
+                bound.target,
+                crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))
+            ) =>
         {
             let call_target = bound.target.clone();
             let bound_receiver = bound.receiver.clone();
