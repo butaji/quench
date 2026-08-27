@@ -23,6 +23,11 @@ fn typed_array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execut
             "TypedArray iterator called on detached TypedArray",
         ));
     }
+    if crate::typed_array_prototype::is_out_of_bounds(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on out-of-bounds TypedArray",
+        ));
+    }
     Ok(crate::collections::iterator::make_typed(value.clone()))
 }
 
@@ -59,6 +64,11 @@ fn array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError
         if typed_array_is_detached(value) {
             return Err(crate::value::error::throw_type_error(
                 "Array iterator called on detached TypedArray",
+            ));
+        }
+        if crate::typed_array_prototype::is_out_of_bounds(value) {
+            return Err(crate::value::error::throw_type_error(
+                "Array iterator called on out-of-bounds TypedArray",
             ));
         }
         return Ok(crate::collections::iterator::make_typed_keys(value.clone()));
@@ -100,6 +110,11 @@ fn typed_array_entries(receiver: Option<&Value>) -> Result<Value, crate::execute
             "TypedArray iterator called on detached TypedArray",
         ));
     }
+    if crate::typed_array_prototype::is_out_of_bounds(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on out-of-bounds TypedArray",
+        ));
+    }
     Ok(crate::collections::iterator::make_typed_entries(value.clone()))
 }
 
@@ -113,6 +128,11 @@ fn typed_array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::V
     if typed_array_is_detached(value) {
         return Err(crate::value::error::throw_type_error(
             "TypedArray iterator called on detached TypedArray",
+        ));
+    }
+    if crate::typed_array_prototype::is_out_of_bounds(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray iterator called on out-of-bounds TypedArray",
         ));
     }
     Ok(crate::collections::iterator::make_typed_keys(value.clone()))
