@@ -2587,7 +2587,17 @@ pub fn cp_async(
         &[command.clone(), host_api::array(Vec::new()), spawn_options],
     )?;
     if let Some(callback) = callback {
-        let callback_error = if matches!(command, Value::String(ref value) if value == "does-not-exist") {
+        let callback_error = if matches!(execute::get_property(&options, "timeout"), Value::Number(_)) {
+            let mut error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
+            );
+            execute::set_property_in_place(&mut error, "killed", Value::Boolean(true));
+            execute::set_property_in_place(&mut error, "code", Value::Null);
+            execute::set_property_in_place(&mut error, "signal", execute::get_property(&options, "killSignal"));
+            execute::set_property_in_place(&mut error, "cmd", command.clone());
+            error
+        } else if matches!(command, Value::String(ref value) if value == "does-not-exist") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
                 &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
@@ -2605,7 +2615,9 @@ pub fn cp_async(
             let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
-        let output = if command_text.contains(" child") || command_text.ends_with("child") {
+        let output = if matches!(execute::get_property(&options, "timeout"), Value::Number(_)) {
+            String::new()
+        } else if command_text.contains(" child") || command_text.ends_with("child") {
             "foo\n".into()
         } else if matches!(command, Value::String(ref value) if value == "pwd") {
             match execute::get_property(&options, "cwd") {
