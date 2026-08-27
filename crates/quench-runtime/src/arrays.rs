@@ -45,6 +45,7 @@ fn execute_builtin_match(
         ArraySome => return Some(some(receiver, arguments)),
         ArrayEvery => return Some(every(receiver, arguments)),
         TypedArrayEvery => return Some(typed_array_every(receiver, arguments)),
+        TypedArraySome => return Some(typed_array_some(receiver, arguments)),
         ArrayFind => return Some(find(receiver, arguments)),
         TypedArrayFind => return Some(typed_array_find(receiver, arguments)),
         TypedArrayFindIndex => return Some(typed_array_find_index(receiver, arguments)),
@@ -81,36 +82,87 @@ fn typed_array_for_each(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let value = receiver.map(unwrap_binding_cells);
-    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+    let value = typed_array_receiver(receiver, "forEach")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
         return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.forEach called on incompatible receiver",
-        ));
-    };
-    if typed_array_is_detached(value) {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.forEach called on detached TypedArray",
+            "TypedArray.prototype.forEach called on out-of-bounds view",
         ));
     }
-    crate::builtins::array_for_each(Some(value), arguments)
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
+    for index in 0..length {
+        let item = crate::builtins::map_value(&value, index)?.unwrap_or(Value::Undefined);
+        crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[item, Value::Number(index as f64), value.clone()],
+        )?;
+    }
+    Ok(Value::Undefined)
 }
 
 fn typed_array_every(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let value = receiver.map(unwrap_binding_cells);
-    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+    let value = typed_array_receiver(receiver, "every")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
         return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.every called on incompatible receiver",
-        ));
-    };
-    if typed_array_is_detached(value) {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.every called on detached TypedArray",
+            "TypedArray.prototype.every called on out-of-bounds view",
         ));
     }
-    every(Some(value), arguments)
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
+    for index in 0..length {
+        let item = crate::builtins::map_value(&value, index)?.unwrap_or(Value::Undefined);
+        let result = crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[item, Value::Number(index as f64), value.clone()],
+        )?;
+        if !crate::execute::is_truthy(&result) {
+            return Ok(Value::Boolean(false));
+        }
+    }
+    Ok(Value::Boolean(true))
+}
+
+fn typed_array_some(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "some")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.some called on out-of-bounds view",
+        ));
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
+    for index in 0..length {
+        let item = crate::builtins::map_value(&value, index)?.unwrap_or(Value::Undefined);
+        let result = crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[item, Value::Number(index as f64), value.clone()],
+        )?;
+        if crate::execute::is_truthy(&result) {
+            return Ok(Value::Boolean(true));
+        }
+    }
+    Ok(Value::Boolean(false))
 }
 
 fn typed_array_receiver(
@@ -126,6 +178,11 @@ fn typed_array_receiver(
     if typed_array_is_detached(value) {
         return Err(crate::value::error::throw_type_error(
             "TypedArray method called on detached TypedArray",
+        ));
+    }
+    if crate::typed_array_prototype::is_out_of_bounds(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray method called on out-of-bounds view",
         ));
     }
     Ok(value.clone())
@@ -1025,6 +1082,58 @@ fn typed_array_is_immutable(value: &Value) -> bool {
         Value::BigUint64Array(view) => view.buffer.immutable,
         _ => false,
     }
+}
+
+fn typed_array_with(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "with")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.with called on out-of-bounds view",
+        ));
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let number = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let integer = if number.is_nan() { 0.0 } else { number.trunc() };
+    let index = if integer < 0.0 {
+        length as f64 + integer
+    } else {
+        integer
+    };
+    let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    let replacement = if matches!(value, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
+        match crate::conversion::to_primitive(&replacement, "number")? {
+            Value::BigInt(value) => Value::BigInt(value),
+            Value::String(value) => Value::BigInt(
+                crate::bigint::parse_string(&value)
+                    .ok_or_else(|| crate::value::error::throw_syntax_error("Invalid BigInt value"))?
+                    .to_string(),
+            ),
+            Value::Boolean(value) => Value::BigInt(if value { "1" } else { "0" }.to_string()),
+            _ => return Err(crate::value::error::throw_type_error("Cannot convert value to BigInt")),
+        }
+    } else {
+        Value::Number(crate::conversion::to_number(&replacement)?)
+    };
+    let current_length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    if index < 0.0 || index as usize >= current_length {
+        return Err(crate::value::error::throw_range_error("Invalid index"));
+    }
+    let mut values = Vec::with_capacity(length);
+    for current in 0..length {
+        values.push(if current == index as usize {
+            replacement.clone()
+        } else {
+            crate::execute::get_property_result(&value, &current.to_string())?
+        });
+    }
+    construct_typed_array_result(&value, values)
 }
 
 fn typed_array_compare_values(

@@ -332,6 +332,10 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
                 .then_some(Builtin::TypedArrayEvery)
         })
         .or_else(|| {
+            (builtin == Builtin::TypedArrayPrototype && key == "some")
+                .then_some(Builtin::TypedArraySome)
+        })
+        .or_else(|| {
             (builtin == Builtin::TypedArrayPrototype && key == "forEach")
                 .then_some(Builtin::TypedArrayForEach)
         })
@@ -407,7 +411,7 @@ fn typed_array_generic_method(key: &str) -> Option<Builtin> {
         "sort" => TypedArraySort,
         "toReversed" => TypedArrayToReversed,
         "toSorted" => TypedArrayToSorted,
-        "with" => ArrayWith,
+        "with" => TypedArrayWith,
         _ => return None,
     })
 }
