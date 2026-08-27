@@ -57,6 +57,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayPush => Some("push"),
         Builtin::ArrayShift => Some("shift"),
         Builtin::ArrayReverse => Some("reverse"),
+        Builtin::TypedArrayReverse => Some("reverse"),
         Builtin::ArrayFindLast => Some("findLast"),
         Builtin::TypedArrayFindLast => Some("findLast"),
         Builtin::ArrayFindLastIndex => Some("findLastIndex"),
@@ -145,6 +146,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayShift => Some(0.0),
         Builtin::ArrayFlat
         | Builtin::ArrayReverse
+        | Builtin::TypedArrayReverse
         | Builtin::ArrayPop
         | Builtin::ArrayToReversed
         | Builtin::ArrayToString
