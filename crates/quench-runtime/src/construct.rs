@@ -151,7 +151,10 @@ fn construct_builtin_target(
         let prototype = if crate::value::is_object(&prototype) {
             prototype
         } else {
-            crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype)
+            crate::vm::realm_intrinsic_for(
+                constructor_realm(new_target),
+                crate::ops::Builtin::ObjectPrototype,
+            )
         };
         return Ok(crate::value::Value::Object(std::rc::Rc::new(
             crate::value::ObjectData::new(vec![("\0prototype".into(), prototype)]),
