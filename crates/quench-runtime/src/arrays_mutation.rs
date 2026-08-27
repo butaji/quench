@@ -21,6 +21,7 @@ fn array_mutation_builtin(
         TypedArrayFindLast => Some(typed_array_find_last(receiver, arguments)),
         TypedArrayFindLastIndex => Some(typed_array_find_last_index(receiver, arguments)),
         ArrayToSorted => Some(crate::builtins::array_to_sorted(receiver, arguments)),
+        TypedArrayToSorted => Some(typed_array_to_sorted(receiver, arguments)),
         ArrayToSpliced => Some(crate::builtins::array_to_spliced(receiver, arguments)),
         ArrayWith => Some(crate::builtins::array_with(receiver, arguments)),
         _ => None,
