@@ -19,6 +19,7 @@ use crate::registry::*;
 
 thread_local! {
     static ASSERTION_ERROR_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static ASSERTION_ERROR_CONSTRUCTOR: RefCell<Option<Value>> = const { RefCell::new(None) };
     static ASSERT_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
@@ -306,15 +307,21 @@ fn pair(name: &str, spec: NodeSpec) -> (String, Value) {
 }
 
 fn assertion_error_type() -> Value {
-    let prototype = assertion_error_prototype();
-    let constructor = crate::host::capability(SPEC_ASSERTION_ERROR_CONSTRUCTOR);
-    let _ = execute::set_callable_property(
-        &constructor,
-        "name",
-        Value::String("AssertionError".into()),
-    );
-    let _ = execute::set_callable_property(&constructor, "prototype", prototype);
-    constructor
+    ASSERTION_ERROR_CONSTRUCTOR.with(|slot| {
+        if let Some(constructor) = slot.borrow().as_ref() {
+            return constructor.clone();
+        }
+        let constructor = crate::host::capability(SPEC_ASSERTION_ERROR_CONSTRUCTOR);
+        let _ = execute::set_callable_property(
+            &constructor,
+            "name",
+            Value::String("AssertionError".into()),
+        );
+        let _ =
+            execute::set_callable_property(&constructor, "prototype", assertion_error_prototype());
+        *slot.borrow_mut() = Some(constructor.clone());
+        constructor
+    })
 }
 
 pub fn assertion_error_constructor(
@@ -375,6 +382,8 @@ pub fn assertion_error(
     expected: Value,
     generated: bool,
 ) -> VmError {
+    let constructor = assertion_error_type();
+    let prototype = quench_runtime::execute::get_property(&constructor, "prototype");
     let error = host_api::object(vec![
         (
             "name".to_string(),
@@ -394,11 +403,15 @@ pub fn assertion_error(
             Value::String(format!("AssertionError: {message}")),
         ),
         ("diff".to_string(), Value::String("simple".into())),
-        ("constructor".to_string(), assertion_error_type()),
+        ("constructor".to_string(), constructor.clone()),
+        ("\0prototype".to_string(), prototype),
     ]);
     VmError::Thrown(
-        quench_runtime::execute::set_prototype_of(&error, &assertion_error_prototype())
-            .unwrap_or(error),
+        quench_runtime::execute::set_prototype_of(
+            &error,
+            &quench_runtime::execute::get_property(&constructor, "prototype"),
+        )
+        .unwrap_or(error),
     )
 }
 
