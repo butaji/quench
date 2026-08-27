@@ -263,6 +263,7 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
             }
             return Ok(Value::Boolean(success));
         }
+        return proxy_delete(&proxy.target, prop);
     }
     let (updated, deleted) = crate::builtins::delete_property(target.clone(), prop);
     crate::locals::replace_value(target, &updated);
@@ -412,6 +413,7 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
             }
             return Ok(Value::Boolean(success));
         }
+        return proxy_set_prototype_of(&proxy.target, prototype);
     }
     if prototype_matches(target, prototype)? {
         return Ok(Value::Boolean(true));
