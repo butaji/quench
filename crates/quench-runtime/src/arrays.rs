@@ -82,36 +82,57 @@ fn typed_array_for_each(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let value = receiver.map(unwrap_binding_cells);
-    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+    let value = typed_array_receiver(receiver, "forEach")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
         return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.forEach called on incompatible receiver",
-        ));
-    };
-    if typed_array_is_detached(value) {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.forEach called on detached TypedArray",
+            "TypedArray.prototype.forEach called on out-of-bounds view",
         ));
     }
-    crate::builtins::array_for_each(Some(value), arguments)
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
+    for index in 0..length {
+        let item = crate::builtins::map_value(&value, index)?.unwrap_or(Value::Undefined);
+        crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[item, Value::Number(index as f64), value.clone()],
+        )?;
+    }
+    Ok(Value::Undefined)
 }
 
 fn typed_array_every(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let value = receiver.map(unwrap_binding_cells);
-    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+    let value = typed_array_receiver(receiver, "every")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
         return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.every called on incompatible receiver",
-        ));
-    };
-    if typed_array_is_detached(value) {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.every called on detached TypedArray",
+            "TypedArray.prototype.every called on out-of-bounds view",
         ));
     }
-    every(Some(value), arguments)
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
+    for index in 0..length {
+        let item = crate::builtins::map_value(&value, index)?.unwrap_or(Value::Undefined);
+        let result = crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[item, Value::Number(index as f64), value.clone()],
+        )?;
+        if !crate::execute::is_truthy(&result) {
+            return Ok(Value::Boolean(false));
+        }
+    }
+    Ok(Value::Boolean(true))
 }
 
 fn typed_array_some(
