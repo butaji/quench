@@ -2173,10 +2173,62 @@ pub fn cp_spawn(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let command = args
-        .first()
-        .map(|value| execute::to_js_string(value).unwrap_or_default())
-        .unwrap_or_default();
+    if args.is_empty() {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String("The \"file\" argument must be of type string. Received undefined".into())),
+        ])));
+    }
+    let command = match args.first() {
+        Some(value) => execute::to_js_string(value).map_err(|_| {
+            VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The \"file\" argument must be of type string.".into())),
+            ]))
+        })?,
+        None => String::new(),
+    };
+    if command.is_empty() {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+            ("message".into(), Value::String("The \"file\" argument must be a non-empty string.".into())),
+        ])));
+    }
+    if let Some(value) = args.get(1) {
+        let valid = matches!(value, Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_));
+        let null_as_placeholder = matches!(value, Value::Null)
+            && matches!(args.get(2), Some(Value::Object(_) | Value::ObjectAlias(_)));
+        if !valid && !matches!(value, Value::Undefined) && !null_as_placeholder {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The \"args\" argument must be an instance of Array".into())),
+            ])));
+        }
+    }
+    if let Some(value) = args.get(2) {
+        if !matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The \"options\" argument must be an object".into())),
+            ])));
+        }
+        for key in ["uid", "gid"] {
+            if let Value::Number(number) = execute::get_property(value, key) {
+                if !number.is_finite() || !(0.0..=(u32::MAX as f64)).contains(&number) {
+                    return Err(VmError::Thrown(host_api::object(vec![
+                        ("name".into(), Value::String("RangeError".into())),
+                        ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                        ("message".into(), Value::String(format!("The \"options.{key}\" property is out of range."))),
+                    ])));
+                }
+            }
+        }
+    }
     let spawnargs = args
         .get(1)
         .filter(|value| matches!(value, Value::Array(_)))
@@ -2651,7 +2703,7 @@ pub fn cp_constructor(
     state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let child = cp_spawn(state, None, &[])?;
+    let child = cp_spawn(state, None, &[Value::String("__quench_child_process__".into())])?;
     let child = execute::set_property(child, "pid", Value::Number(0.0));
     let child = execute::set_property(
         child,
