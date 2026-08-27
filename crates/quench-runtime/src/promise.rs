@@ -292,7 +292,11 @@ fn process_async_continuation(
         crate::generator::resume_async_after_await(&generator, false, value)
     };
     match resume {
-        Ok(value) => resolve_promise(&result, async_result_value(value, async_function)),
+        Ok(value) => settle_async_result(
+            &result,
+            async_result_value(value, async_function),
+            async_function,
+        ),
         Err(VmError::Suspended(awaited)) => {
             register_async_generator(&awaited, generator, result, async_function);
         }
@@ -401,7 +405,11 @@ pub(crate) fn settle_async_generator_completion(
     async_function: bool,
 ) {
     match completion {
-        Ok(value) => resolve_promise(&promise, async_result_value(value, async_function)),
+        Ok(value) => settle_async_result(
+            &promise,
+            async_result_value(value, async_function),
+            async_function,
+        ),
         Err(VmError::Suspended(awaited)) => {
             register_async_generator(&awaited, generator, promise, async_function)
         }
@@ -439,6 +447,16 @@ fn async_result_value(value: Value, async_function: bool) -> Value {
     } else {
         value
     }
+}
+
+fn settle_async_result(result: &Rc<PromiseData>, value: Value, async_function: bool) {
+    if async_function {
+        if let Value::Promise(promise) = value {
+            adopt_promise(result, &promise);
+            return;
+        }
+    }
+    resolve_promise(result, value);
 }
 
 fn queue_promise(promise: &Rc<PromiseData>) {
