@@ -207,6 +207,53 @@ fn register_aggregate_value(
         }
         return Ok(());
     }
+    // Promise.any's resolve element forwards directly to the constructor
+    // capability.  A user-provided constructor resolver is observable on
+    // every invocation (even when the aggregate is already settled), while
+    // rejections still need one per-element promise to build AggregateError.
+    if aggregate.kind == PromiseAggregateKind::Any {
+        if !crate::value::is_object(&value) {
+            crate::functions::execute_target(
+                &aggregate.resolve,
+                &Value::Undefined,
+                &[value],
+            )?;
+            return Ok(());
+        }
+        let promise = PromiseData::allocate(PromiseState::Pending);
+        let reject = bound_settler(Builtin::PromiseReject, &promise, 1.0);
+        match crate::execute::get_property_result(&value, "then") {
+            Ok(then) if crate::conversion::is_callable(&then) => {
+                crate::functions::execute_target(
+                    &then,
+                    &value,
+                    &[aggregate.resolve.clone(), reject.clone()],
+                )?;
+            }
+            Ok(_) => {
+                crate::functions::execute_target(
+                    &aggregate.resolve,
+                    &Value::Undefined,
+                    &[value],
+                )?;
+            }
+            Err(error) => {
+                let _ = crate::functions::execute_target(
+                    &reject,
+                    &Value::Undefined,
+                    &[Value::Undefined],
+                );
+                return Err(error);
+            }
+        }
+        let state = promise.state.borrow().clone();
+        if !matches!(state, PromiseState::Pending) {
+            aggregate_settle(aggregate, index, &state);
+        } else {
+            promise.add_aggregate_hook(Rc::clone(aggregate), index);
+        }
+        return Ok(());
+    }
     // PerformPromiseAll invokes the resolved promise's `then` method during
     // the combinator call.  Assimilation of a custom thenable may therefore
     // settle the aggregate synchronously, while native Promise reactions
