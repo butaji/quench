@@ -164,9 +164,10 @@ pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, k
     ) {
         return None;
     }
-    match get_property(&Value::String(value.clone()), key) {
-        Value::Undefined => None,
-        indexed => Some(indexed),
+    let receiver = Value::Object(properties.clone());
+    match crate::vm::get_property_with_receiver(&Value::String(value.clone()), key, &receiver) {
+        Ok(Value::Undefined) | Err(_) => None,
+        Ok(indexed) => Some(indexed),
     }
 }
 
