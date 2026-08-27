@@ -116,6 +116,7 @@ fn typed_array_owns(value: &Value, key: &str) -> bool {
         return crate::typed_array_prototype::index_exists(value, index);
     }
     crate::typed_array_prototype::own_property(value, key).is_some()
+        || crate::typed_array_prototype::descriptor(value, key).is_some()
 }
 
 fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {

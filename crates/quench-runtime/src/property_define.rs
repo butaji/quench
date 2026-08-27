@@ -54,6 +54,14 @@ fn descriptor(
 }
 
 pub(crate) fn accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
+    if let Some(descriptor) = crate::typed_array_prototype::descriptor(value, key) {
+        if let Value::Object(fields) = descriptor {
+            return fields
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == field).then_some(value.clone()));
+        }
+    }
     if let Some(value) = crate::vm::array_accessor(value, key, field) {
         return Some(value);
     }
