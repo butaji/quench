@@ -244,7 +244,6 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 kind: HostCapabilityKind::Custom(CapabilityName::Console),
             },
         )
-        .with_host_value("process", process_module())
         .with_host_value(
             "__quench_pid",
             Value::Number(std::process::id() as f64),
