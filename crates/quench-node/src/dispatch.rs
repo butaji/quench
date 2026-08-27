@@ -471,6 +471,7 @@ const CAP_TEST_MOCK_TIMERS_ENABLE: u16 = 0x1b19;
 const CAP_TEST_MOCK_TIMERS_TICK: u16 = 0x1b1A;
 const CAP_TEST_MOCK_TIMERS_SETTIME: u16 = 0x1b1B;
 const CAP_TEST_MOCK_TIMERS_RESET: u16 = 0x1b1C;
+const CAP_TEST_MOCK_MODULE: u16 = 0x1b1D;
 
 /// Single canonical mapping from capability id to call handler.
 pub fn lookup(cap: u16) -> Option<CallHandler> {
@@ -906,6 +907,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TEST_MOCK_TIMERS_TICK => test_mock_timers_tick,
         CAP_TEST_MOCK_TIMERS_SETTIME => test_mock_timers_set_time,
         CAP_TEST_MOCK_TIMERS_RESET => test_mock_timers_reset,
+        CAP_TEST_MOCK_MODULE => test_mock_module,
         CAP_EVENT_TRUSTED_GET => event_trusted_get,
         CAP_ABORT_CONTROLLER_SIGNAL_GET => abort_controller_signal_get,
         CAP_ABORT_SIGNAL_ABORTED_GET => abort_signal_aborted_get,
