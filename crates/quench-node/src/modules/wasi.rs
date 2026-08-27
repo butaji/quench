@@ -10,8 +10,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 use crate::registry::{
-    SPEC_WASI_IMPORT_OBJECT, SPEC_WASI_INITIALIZE, SPEC_WASI_START,
-    SPEC_WASI_CONSTRUCTOR,
+    SPEC_WASI_CONSTRUCTOR, SPEC_WASI_IMPORT_OBJECT, SPEC_WASI_INITIALIZE, SPEC_WASI_START,
 };
 
 const IMPORTS: &str = "\0quench:wasi:imports";
@@ -95,10 +94,10 @@ fn invoke_export(instance: Option<&Value>, name: &str) -> Result<Value, VmError>
     let Some(instance) = instance else {
         return Err(invalid_export(name));
     };
-    let exports = execute::get_property_result(instance, "exports")
-        .map_err(|_| invalid_export(name))?;
-    let function = execute::get_property_result(&exports, name)
-        .map_err(|_| invalid_export(name))?;
+    let exports =
+        execute::get_property_result(instance, "exports").map_err(|_| invalid_export(name))?;
+    let function =
+        execute::get_property_result(&exports, name).map_err(|_| invalid_export(name))?;
     if !quench_runtime::is_callable(&function) {
         return Err(invalid_export(name));
     }

@@ -10,8 +10,8 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::registry::{
     SPEC_INSPECTOR_CLOSE, SPEC_INSPECTOR_CONNECT, SPEC_INSPECTOR_CONNECT_MAIN,
-    SPEC_INSPECTOR_DISCONNECT, SPEC_INSPECTOR_OPEN, SPEC_INSPECTOR_POST,
-    SPEC_INSPECTOR_SESSION, SPEC_INSPECTOR_WAIT,
+    SPEC_INSPECTOR_DISCONNECT, SPEC_INSPECTOR_OPEN, SPEC_INSPECTOR_POST, SPEC_INSPECTOR_SESSION,
+    SPEC_INSPECTOR_WAIT,
 };
 
 const CONNECTED: &str = "\0quench:inspector:connected";
@@ -22,7 +22,10 @@ pub fn build() -> Value {
         ("open", crate::host::capability(SPEC_INSPECTOR_OPEN)),
         ("close", crate::host::capability(SPEC_INSPECTOR_CLOSE)),
         ("url", Value::Undefined),
-        ("waitForDebugger", crate::host::capability(SPEC_INSPECTOR_WAIT)),
+        (
+            "waitForDebugger",
+            crate::host::capability(SPEC_INSPECTOR_WAIT),
+        ),
         ("console", host_api::object(Vec::new())),
     ])
     .unwrap_or_else(|_| Value::Undefined)
@@ -90,7 +93,10 @@ pub fn post(
         ]);
         return Err(VmError::Thrown(error));
     }
-    if let Some(callback) = args.get(2).filter(|value| quench_runtime::is_callable(value)) {
+    if let Some(callback) = args
+        .get(2)
+        .filter(|value| quench_runtime::is_callable(value))
+    {
         let _ = execute::call(
             callback,
             &Value::Undefined,
@@ -110,11 +116,7 @@ pub fn open(
     Ok(session)
 }
 
-pub fn noop(
-    _: &Rc<RefCell<HostState>>,
-    _: Option<&Value>,
-    _: &[Value],
-) -> Result<Value, VmError> {
+pub fn noop(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
