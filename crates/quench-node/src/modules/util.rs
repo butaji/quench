@@ -1650,9 +1650,31 @@ fn colorize_regexp(literal: &str) -> String {
         return literal.to_string();
     }
     let mut out = String::new();
-    for (index, character) in literal.chars().enumerate() {
-        let (start, end) = if index == 0 || character == '/' {
+    let chars: Vec<char> = literal.chars().collect();
+    let mut index = 0;
+    let mut flags = false;
+    let mut slash_count = 0;
+    while index < chars.len() {
+        let character = chars[index];
+        let closing_slash = character == '/' && slash_count == 1;
+        let (start, end) = if index == 0 || closing_slash {
             ("\x1b[32m", "\x1b[39m")
+        } else if flags {
+            ("\x1b[31m", "\x1b[39m")
+        } else if character == '\\' {
+            out.push_str("\x1b[36m");
+            out.push(character);
+            if let Some(next) = chars.get(index + 1) {
+                out.push(*next);
+                index += 1;
+            }
+            out.push_str("\x1b[39m");
+            index += 1;
+            continue;
+        } else if chars.get(index.wrapping_sub(1)) == Some(&'(') && character == '?' {
+            ("\x1b[31m", "\x1b[39m")
+        } else if character == '<' || character == '>' {
+            ("\x1b[31m", "\x1b[39m")
         } else if matches!(character, '^' | '$' | '|' | '*' | '+' | '?') {
             ("\x1b[35m", "\x1b[39m")
         } else if matches!(character, '(' | ')' | '[' | ']') {
@@ -1667,6 +1689,11 @@ fn colorize_regexp(literal: &str) -> String {
         out.push_str(start);
         out.push(character);
         out.push_str(end);
+        if character == '/' {
+            slash_count += 1;
+            flags = slash_count > 1;
+        }
+        index += 1;
     }
     out
 }
