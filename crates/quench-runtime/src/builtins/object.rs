@@ -66,6 +66,17 @@ fn execute_special_tail(
         Builtin::ObjectFromEntries => from_entries(arguments),
         Builtin::ObjectGroupBy => group_by(arguments),
         Builtin::ObjectCreate => create(arguments),
+        Builtin::ObjectGetPrototypeOf if arguments.is_empty() && receiver.is_some_and(|value| {
+            !matches!(value, Value::Builtin(Builtin::Object))
+        }) => get_prototype_of(receiver),
+        Builtin::ObjectGetPrototypeOf => get_prototype_of(arguments.first()),
+        Builtin::ObjectSetPrototypeOf if arguments.len() == 1 && receiver.is_some_and(|value| {
+            !matches!(value, Value::Builtin(Builtin::Object))
+        }) => {
+            let mut call_arguments = vec![receiver.cloned().unwrap_or(Value::Undefined)];
+            call_arguments.extend_from_slice(arguments);
+            set_prototype_of(&call_arguments).map(|_| Value::Undefined)
+        }
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => legacy_accessor_special(builtin, receiver, arguments),
     }
@@ -87,11 +98,22 @@ fn get_own_property_descriptors(arguments: &[Value]) -> Result<Value, VmError> {
         crate::value::error::throw_type_error("Object.getOwnPropertyDescriptors requires an object")
     })?;
     require_object_coercible(Some(target))?;
-    let names = crate::own_keys::names(Some(target))?;
-    let symbols = crate::own_keys::symbols(Some(target))?;
+    let keys = if matches!(target, Value::Proxy(_)) {
+        crate::proxy::proxy_own_keys(target)?
+    } else {
+        let names = crate::own_keys::names(Some(target))?;
+        let symbols = crate::own_keys::symbols(Some(target))?;
+        let mut keys = match names {
+            Value::Array(names) => names.snapshot(),
+            _ => Vec::new(),
+        };
+        if let Value::Array(symbols) = symbols {
+            keys.extend(symbols.snapshot());
+        }
+        Value::array(keys)
+    };
     let mut properties = Vec::new();
-    for keys in [names, symbols] {
-        let Value::Array(keys) = keys else { continue };
+    if let Value::Array(keys) = keys {
         for key in keys.snapshot() {
             let descriptor = descriptor(Some(target), Some(&key))?;
             if !matches!(descriptor, Value::Undefined) {
