@@ -1461,7 +1461,13 @@ fn validate_date_options(options: Option<&Value>, difference: bool) -> Result<()
 fn has_date_fields(object: &crate::value::ObjectData) -> bool {
     object.iter().any(|(key, value)| {
         (key == "\0prototype"
-            && value == Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype))
+            && matches!(
+                value,
+                Value::Builtin(
+                    crate::ops::Builtin::TemporalPlainDatePrototype
+                        | crate::ops::Builtin::TemporalZonedDateTimePrototype
+                )
+            ))
             || (key == "\0temporal-plain-date" && value == Value::Boolean(true))
     }) && ["year", "month", "day"].iter().all(|name| {
         object
