@@ -28,6 +28,14 @@ pub fn construct_value(
     crate::construct::construct_value(constructor, arguments)
 }
 
+pub fn construct_value_with_new_target(
+    constructor: &crate::value::Value,
+    new_target: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, VmError> {
+    crate::construct::construct_value_with_new_target(constructor, new_target, arguments)
+}
+
 pub fn set_property(
     target: crate::value::Value,
     key: &str,
@@ -60,6 +68,13 @@ pub fn set_property_in_place(
                 .push((key.to_string(), value));
             return true;
         }
+        crate::value::Value::Array(array) => {
+            unsafe {
+                (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData))
+                    .set_property(key, value);
+            }
+            return true;
+        }
         _ => return false,
     };
     // The host has exclusive semantic ownership of this identity-sensitive
@@ -84,6 +99,12 @@ pub fn set_array_element_in_place(
     unsafe {
         (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData)).set_index(index, value);
     }
+    true
+}
+
+pub fn set_array_length_in_place(target: &crate::value::Value, length: usize) -> bool {
+    let crate::value::Value::Array(array) = target else { return false };
+    unsafe { (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData)).set_length(length); }
     true
 }
 
