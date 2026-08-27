@@ -3,7 +3,7 @@
 pub enum Builtin {
     HostCapability(HostCapabilityKind), Array,
     Iterator, IteratorPrototype, IteratorConcat, IteratorFrom, IteratorZip, IteratorZipKeyed, IteratorDispose, IteratorPrototypeConstructorGetter, IteratorPrototypeConstructorSetter, IteratorPrototypeToStringTagGetter, IteratorPrototypeToStringTagSetter, IteratorToArray, IteratorMap, IteratorFilter, IteratorSome, IteratorEvery, IteratorFlatMap, IteratorDrop, IteratorTake, IteratorReduce, IteratorFind, IteratorForEach,
-    TypedArray, ArrayBuffer,
+    TypedArray, TypedArrayPrototype, ArrayBuffer,
     ArrayBufferPrototype, SharedArrayBuffer,
     SharedArrayBufferPrototype, ArrayBufferIsView,
     ArrayBufferResize, Float64Array,
