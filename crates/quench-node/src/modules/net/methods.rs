@@ -43,6 +43,13 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         }
     }
     let (object, _id) = new_net_object(state, socket_props())?;
+    let global = quench_runtime::vm::current_global_object();
+    let prototype = execute::get_property(&global, "\0quench:net:socket-prototype");
+    let object = if matches!(prototype, Value::Object(_)) {
+        execute::set_prototype_of(&object, &prototype)?
+    } else {
+        object
+    };
     let object = install_socket_counters(object)?;
     install_methods(
         object,
