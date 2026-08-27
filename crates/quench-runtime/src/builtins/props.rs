@@ -327,7 +327,8 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             (builtin == Builtin::TypedArray && key == "indexOf").then_some(Builtin::ArrayIndexOf)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "every").then_some(Builtin::ArrayEvery)
+            (builtin == Builtin::TypedArray && key == "every")
+                .then_some(Builtin::TypedArrayEvery)
         })
         .or_else(|| {
             (builtin == Builtin::TypedArray && key == "forEach")

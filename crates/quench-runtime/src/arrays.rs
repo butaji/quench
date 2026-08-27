@@ -44,6 +44,7 @@ fn execute_builtin_match(
         ArrayFilter => return Some(crate::builtins::array_filter(receiver, arguments)),
         ArraySome => return Some(some(receiver, arguments)),
         ArrayEvery => return Some(every(receiver, arguments)),
+        TypedArrayEvery => return Some(typed_array_every(receiver, arguments)),
         ArrayFind => return Some(find(receiver, arguments)),
         ArrayIncludes => return Some(includes(receiver, arguments)),
         ArrayIndexOf => return Some(index_of(receiver, arguments)),
@@ -82,6 +83,24 @@ fn typed_array_for_each(
         ));
     }
     crate::builtins::array_for_each(Some(value), arguments)
+}
+
+fn typed_array_every(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.map(unwrap_binding_cells);
+    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.every called on incompatible receiver",
+        ));
+    };
+    if typed_array_is_detached(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.every called on detached TypedArray",
+        ));
+    }
+    every(Some(value), arguments)
 }
 
 fn map_argument_error(
