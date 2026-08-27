@@ -2187,6 +2187,16 @@ pub fn cp_spawn(
         .cloned()
         .or_else(|| args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).cloned())
         .unwrap_or(Value::Undefined);
+    if let Value::Object(_) | Value::ObjectAlias(_) = options {
+        let timeout = execute::get_property(&options, "timeout");
+        if !matches!(timeout, Value::Undefined | Value::Number(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The \"options.timeout\" property must be of type number.".into())),
+            ])));
+        }
+    }
     let spawnargs = if matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
         let mut command_line = command.clone();
         if let Value::Array(array) = &spawnargs {
@@ -2268,9 +2278,22 @@ pub fn cp_spawn(
                 crate::modules::event_target::add_event_listener(
                     state,
                     Some(&signal),
-                    &[Value::String("abort".into()), listener],
+                    &[Value::String("abort".into()), listener.clone()],
                 )?;
             }
+            execute::set_property_in_place(&child, "\0childAbortSignal", signal);
+            execute::set_property_in_place(&child, "\0childAbortListener", listener);
+        }
+    }
+    if let Value::Number(timeout) = execute::get_property(&options, "timeout") {
+        if timeout.is_finite() && timeout >= 0.0 {
+            execute::set_property_in_place(&child, "killed", Value::Boolean(true));
+            let signal = execute::get_property(&options, "killSignal");
+            execute::set_property_in_place(
+                &child,
+                "signalCode",
+                if matches!(signal, Value::Undefined) { Value::String("SIGTERM".into()) } else { signal },
+            );
         }
     }
     if let Some(cwd) = execute::get_property_result(&options, "cwd").ok() {
@@ -2387,6 +2410,17 @@ pub fn cp_spawn_output_emit(
                 },
             );
         }
+    }
+    let abort_signal = execute::get_property(child, "\0childAbortSignal");
+    let abort_listener = execute::get_property(child, "\0childAbortListener");
+    if !matches!(abort_signal, Value::Undefined)
+        && !matches!(abort_listener, Value::Undefined)
+    {
+        let _ = crate::modules::event_target::remove_event_listener(
+            state,
+            Some(&abort_signal),
+            &[Value::String("abort".into()), abort_listener],
+        );
     }
     let stderr_text = if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
         "sh: fhqwhgads: command not found\n".into()
