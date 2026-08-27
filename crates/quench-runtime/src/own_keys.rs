@@ -411,7 +411,7 @@ fn boxed_string_keys<P: crate::value::PropertyEntries + ?Sized>(
         .enumerate()
         .map(|(index, _)| index.to_string())
         .collect::<Vec<_>>();
-    let ordered_keys = ordered(properties, false)
+    let ordered_keys: Vec<String> = ordered(properties, false)
         .into_iter()
         .filter(|key| !matches!(key.as_str(), "_value" | "constructor"))
         .collect();
