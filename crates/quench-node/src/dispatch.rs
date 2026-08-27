@@ -369,6 +369,8 @@ const CAP_CP_SPAWN: u16 = 0x1e06;
 const CAP_CP_SPAWN_ERROR_EMIT: u16 = 0x1e04;
 const CAP_CP_SPAWN_OUTPUT_EMIT: u16 = 0x1e05;
 const CAP_CP_KILL: u16 = crate::registry::SPEC_CP_KILL.cap;
+const CAP_CP_CONSTRUCTOR: u16 = crate::registry::SPEC_CP_CONSTRUCTOR.cap;
+const CAP_CP_INSTANCE_SPAWN: u16 = crate::registry::SPEC_CP_INSTANCE_SPAWN.cap;
 const CAP_PROCESS_UMASK: u16 = 0x0A06;
 const CAP_PROCESS_ON: u16 = 0x0A07;
 const CAP_PROCESS_ONCE: u16 = 0x0A08;
@@ -823,6 +825,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_SPAWN_ERROR_EMIT => cp_spawn_error_emit,
         CAP_CP_SPAWN_OUTPUT_EMIT => cp_spawn_output_emit,
         CAP_CP_KILL => cp_kill,
+        CAP_CP_INSTANCE_SPAWN => cp_instance_spawn,
         CAP_CP_EXECSYNC => cp_exec_sync,
         CAP_CP_EXEC => cp_async,
         CAP_CP_EXECFILE => cp_exec_file,
@@ -947,6 +950,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_CUSTOM_EVENT => handlers::custom_event_new,
         CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_new,
         CAP_ASSERTION_ERROR_CONSTRUCTOR => crate::modules::assert::assertion_error_constructor,
+        CAP_CP_CONSTRUCTOR => cp_constructor,
         0x0E03 => crate::modules::dns::dns_exception,
         _ => return None,
     })
