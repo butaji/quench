@@ -29,12 +29,6 @@ __quenchChildSpawnError.spawn = (...args) => {
       if (event === "error") return true;
       return Reflect.apply(emit, child, [event, ...values]);
     };
-    const on = child.on;
-    child.on = (event, listener) => {
-      const result = on.call(child, event, listener);
-      if (event === "error") child.emit("error");
-      return result;
-    };
   }
   return child;
 };

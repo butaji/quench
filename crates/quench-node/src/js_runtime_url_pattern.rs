@@ -1,4 +1,4 @@
-fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = arguments.get(1) {
         let string_overload = matches!(arguments.first(), Some(Value::String(_)))
             && matches!(value, Value::String(_));
@@ -179,7 +179,10 @@ fn url_pattern_test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     url_pattern_exec(receiver, arguments).map(|value| Value::Boolean(!matches!(value, Value::Null)))
 }
 
-fn url_search_params_construct(host: &QuenchNodeHost, arguments: &[Value]) -> Result<Value, VmError> {
+fn url_search_params_construct(
+    host: &QuenchNodeHost,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
     let pairs = match arguments.first() {
         Some(Value::String(value)) => query_pairs(value),
         Some(Value::Object(properties)) => read_pairs_from_object(properties),
@@ -192,15 +195,21 @@ fn url_search_params_construct(host: &QuenchNodeHost, arguments: &[Value]) -> Re
         ("size".into(), Value::Number(0.0)),
         (
             "get".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGet)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UrlSearchParamsGet,
+            )),
         ),
         (
             "getAll".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGetAll)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UrlSearchParamsGetAll,
+            )),
         ),
         (
             "set".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSet)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UrlSearchParamsSet,
+            )),
         ),
         (
             "toString".into(),

@@ -144,7 +144,7 @@ if (!globalThis.__quench_domain_promises_patched && globalThis.Promise) {
         activeDomain
           ? activeDomain.run(() => callback(...args))
           : callback(...args);
-  Promise.prototype.then = function (onFulfilled, onRejected) {
+  const domainAwareThen = function (onFulfilled, onRejected) {
     const activeDomain = globalThis.__quench_active_domain;
     return originalThen.call(
       this,
@@ -152,6 +152,11 @@ if (!globalThis.__quench_domain_promises_patched && globalThis.Promise) {
       wrap(onRejected, activeDomain),
     );
   };
+  Object.defineProperty(Promise.prototype, "then", {
+    configurable: true,
+    writable: true,
+    value: domainAwareThen,
+  });
   globalThis.__quench_domain_promises_patched = true;
 }
 globalThis.require = (specifier) => {

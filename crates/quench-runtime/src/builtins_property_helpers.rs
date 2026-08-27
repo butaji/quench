@@ -118,6 +118,28 @@ pub(crate) fn define_own_property(
     descriptor: &[(String, Value)],
 ) -> Result<Value, crate::execute::VmError> {
     let target = crate::locals::resolved_replacement(target.clone());
+    if crate::execute::get_property(&target, "\0quench:process_env")
+        == Value::Boolean(true)
+    {
+        let accessor = descriptor.iter().any(|(name, _)| name == "get" || name == "set");
+        let valid_data = descriptor.iter().any(|(name, value)| {
+            name == "configurable" && matches!(value, Value::Boolean(true))
+        }) && descriptor.iter().any(|(name, value)| {
+            name == "enumerable" && matches!(value, Value::Boolean(true))
+        }) && descriptor.iter().any(|(name, value)| {
+            name == "writable" && matches!(value, Value::Boolean(true))
+        });
+        if accessor {
+            return Err(process_env_descriptor_error(
+                "'process.env' does not accept an accessor(getter/setter) descriptor",
+            ));
+        }
+        if !valid_data {
+            return Err(process_env_descriptor_error(
+                "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+            ));
+        }
+    }
     if matches!(target, Value::Proxy(_)) {
         let desc = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
         let result = crate::proxy::proxy_define_property(&target, key, &desc)?;
@@ -191,6 +213,14 @@ pub(crate) fn define_own_property(
     }
     define_array_descriptor(&mut result, key, descriptor);
     Ok(result)
+}
+
+fn process_env_descriptor_error(message: &str) -> crate::execute::VmError {
+    crate::execute::VmError::Thrown(crate::host_api::object(vec![
+        ("code".into(), Value::String("ERR_INVALID_OBJECT_DEFINE_PROPERTY".into())),
+        ("name".into(), Value::String("TypeError".into())),
+        ("message".into(), Value::String(message.into())),
+    ]))
 }
 
 fn temporal_slot_value(target: &Value, key: &str, current: &Value) -> Option<Value> {
