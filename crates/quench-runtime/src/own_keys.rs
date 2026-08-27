@@ -411,12 +411,12 @@ fn boxed_string_keys<P: crate::value::PropertyEntries + ?Sized>(
         .enumerate()
         .map(|(index, _)| index.to_string())
         .collect::<Vec<_>>();
-    let ordered_keys = ordered(properties, false)
+    let ordered_keys: Vec<String> = ordered(properties, false)
         .into_iter()
         .filter(|key| !matches!(key.as_str(), "_value" | "constructor"))
         .collect();
-    let mut string_keys = Vec::new();
-    let mut extra_indices = Vec::new();
+    let mut string_keys: Vec<String> = Vec::new();
+    let mut extra_indices: Vec<(u32, String)> = Vec::new();
     for key in ordered_keys {
         if let Some(index) = array_index(&key) {
             if !keys.iter().any(|existing| existing == &key) {
