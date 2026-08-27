@@ -2414,13 +2414,17 @@ pub fn util_get_call_sites(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if args.len() > 1 {
+    if args.len() > 2
+        || args
+            .get(1)
+            .is_some_and(|options| !matches!(options, Value::Object(_) | Value::ObjectAlias(_)))
+    {
         return Err(quench_runtime::execute::type_error(
             "The options argument must be an object",
         ));
     }
     let count = match args.first() {
-        None => 10,
+        None | Some(Value::Undefined) | Some(Value::Object(_)) | Some(Value::ObjectAlias(_)) => 10,
         Some(Value::Number(value))
             if value.is_finite() && *value >= 1.0 && value.fract() == 0.0 =>
         {
