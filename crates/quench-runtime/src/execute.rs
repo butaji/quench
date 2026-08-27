@@ -103,8 +103,12 @@ pub fn set_array_element_in_place(
 }
 
 pub fn set_array_length_in_place(target: &crate::value::Value, length: usize) -> bool {
-    let crate::value::Value::Array(array) = target else { return false };
-    unsafe { (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData)).set_length(length); }
+    let crate::value::Value::Array(array) = target else {
+        return false;
+    };
+    unsafe {
+        (&mut *(Rc::as_ptr(array) as *mut crate::value::ArrayData)).set_length(length);
+    }
     true
 }
 

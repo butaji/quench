@@ -100,7 +100,13 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_READLINE),
         ),
         ("Interface", interface),
-        ("cursorTo", quench_runtime::host_api::bound_builtin(quench_runtime::ops::Builtin::Object, Value::Undefined)),
+        (
+            "cursorTo",
+            quench_runtime::host_api::bound_builtin(
+                quench_runtime::ops::Builtin::Object,
+                Value::Undefined,
+            ),
+        ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }
