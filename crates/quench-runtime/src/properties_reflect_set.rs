@@ -47,6 +47,7 @@ pub(crate) fn set_with_receiver(
             call_setter(&descriptor, receiver, value)
         }
         Some(descriptor) if !descriptor_writable(&descriptor)? => Ok(false),
+        _ if !crate::properties::object_is_extensible(&resolved_target) => Ok(false),
         _ => set_receiver_data(receiver, key, value),
     }
 }
