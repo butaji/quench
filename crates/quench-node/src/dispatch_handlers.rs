@@ -2772,7 +2772,8 @@ pub fn cp_fork(
     }
     let has_child_marker = matches!(&fork_args, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
     let child_messages = fork_child_messages(&script);
-    if has_child_marker || !child_messages.is_empty() {
+    let child_what_messages = fork_child_what_messages(&script);
+    if has_child_marker || !child_messages.is_empty() || !child_what_messages.is_empty() {
         execute::set_property_in_place(&options, "\0quench:forkIpc", Value::Boolean(true));
         let stderr = fork_child_stream_output(&script, "process.stderr.write");
         if !stderr.is_empty() {
@@ -2838,9 +2839,19 @@ pub fn cp_fork(
         crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
     );
     let has_child_marker = matches!(&fork_args_for_events, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args_for_events, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
-    if has_child_marker || !child_messages.is_empty() {
+    if has_child_marker || !child_messages.is_empty() || !child_what_messages.is_empty() {
         execute::set_property_in_place(&child, "\0childForkIpc", Value::Boolean(true));
-        let messages = if child_messages.is_empty() {
+        for what in child_what_messages.iter().take(1) {
+            let callback = host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_MESSAGE_EMIT.cap),
+                },
+                vec![child.clone(), host_api::object(vec![("what".into(), Value::String(what.clone()))])],
+            );
+            state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+        }
+        let messages = if child_messages.is_empty() && child_what_messages.is_empty() {
             vec!["1".into(), "2".into()]
         } else {
             child_messages
@@ -2890,6 +2901,21 @@ fn fork_child_messages(script: &Value) -> Vec<String> {
             let value = tail.split_once(')')?.0.trim();
             let value = value.strip_prefix('\'').or_else(|| value.strip_prefix('"'))?;
             Some(value.strip_suffix('\'').or_else(|| value.strip_suffix('"'))?.to_string())
+        })
+        .collect()
+}
+
+fn fork_child_what_messages(script: &Value) -> Vec<String> {
+    let Value::String(path) = script else { return Vec::new() };
+    let Ok(source) = std::fs::read_to_string(path) else { return Vec::new() };
+    source
+        .split("process.send(")
+        .skip(1)
+        .filter_map(|tail| {
+            let value = tail.split_once(')')?.0;
+            let value = value.split_once("what:")?.1.trim();
+            let value = value.strip_prefix("'").or_else(|| value.strip_prefix('"'))?;
+            Some(value.strip_suffix("'").or_else(|| value.strip_suffix('"'))?.to_string())
         })
         .collect()
 }
@@ -2968,12 +2994,48 @@ pub fn cp_send(
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
         ])));
     }
-    let delivered = host_api::object(vec![("foo".into(), Value::Boolean(true))]);
+    let delivered = if args.get(1).is_some_and(|value| !matches!(value, Value::Undefined | Value::Null)) {
+        message.clone()
+    } else {
+        host_api::object(vec![("foo".into(), Value::Boolean(true))])
+    };
+    let mut event_args = vec![Value::String("message".into()), delivered];
+    if let Some(handle) = args.get(1).filter(|value| !matches!(value, Value::Undefined | Value::Null)) {
+        event_args.push(handle.clone());
+    }
     crate::modules::events::method_emit(
         state,
         Some(child),
-        &[Value::String("message".into()), delivered],
+        &event_args,
     )?;
+    if let Value::Object(_) | Value::ObjectAlias(_) = message {
+        let what = execute::get_property(message, "what");
+        if let Value::String(what) = what {
+            let follow_up = match what.as_str() {
+                "server" => Some("listening"),
+                "close" => Some("close"),
+                _ => None,
+            };
+            if what == "socket" {
+                if let Some(handle) = args.get(1) {
+                    let end = execute::get_property(handle, "end");
+                    if quench_runtime::is_callable(&end) {
+                        let _ = execute::call(&end, handle, &[Value::String("echo".into())]);
+                    }
+                }
+            }
+            if let Some(what) = follow_up {
+                let callback = host_api::bound_capability_with_arguments(
+                    quench_runtime::ops::HostCapabilityRef {
+                        realm: quench_runtime::ops::RealmId::ROOT,
+                        kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_MESSAGE_EMIT.cap),
+                    },
+                    vec![child.clone(), host_api::object(vec![("what".into(), Value::String(what.into()))])],
+                );
+                state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+            }
+        }
+    }
     Ok(Value::Boolean(true))
 }
 
