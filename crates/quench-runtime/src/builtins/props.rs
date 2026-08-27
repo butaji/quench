@@ -324,7 +324,8 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             (builtin == Builtin::TypedArray && key == "fill").then_some(Builtin::TypedArrayFill)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "indexOf").then_some(Builtin::ArrayIndexOf)
+            (builtin == Builtin::TypedArray && key == "indexOf")
+                .then_some(Builtin::TypedArrayIndexOf)
         })
         .or_else(|| {
             (builtin == Builtin::TypedArray && key == "every")
@@ -349,6 +350,21 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         .or_else(|| {
             (builtin == Builtin::TypedArray && key == "findLastIndex")
                 .then_some(Builtin::TypedArrayFindLastIndex)
+        })
+        .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "includes")
+                .then_some(Builtin::TypedArrayIncludes)
+        })
+        .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "indexOf")
+                .then_some(Builtin::TypedArrayIndexOf)
+        })
+        .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "lastIndexOf")
+                .then_some(Builtin::TypedArrayLastIndexOf)
+        })
+        .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "at").then_some(Builtin::TypedArrayAt)
         })
         .or_else(|| {
             (builtin == Builtin::TypedArray && key == "map").then_some(Builtin::ArrayMap)
