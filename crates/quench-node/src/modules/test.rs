@@ -180,6 +180,7 @@ pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
 
 pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let name = test_name(args);
+    validate_options(args)?;
     if let Some(options) = args.iter().find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
         let signal = quench_runtime::execute::get_property(options, "signal");
         if matches!(signal, Value::Object(_) | Value::ObjectAlias(_))
@@ -261,6 +262,29 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
             Err(error)
         }
     }
+}
+
+fn validate_options(args: &[Value]) -> Result<(), VmError> {
+    let Some(options) = args.iter().find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) else { return Ok(()) };
+    let timeout = quench_runtime::execute::get_property(options, "timeout");
+    if !matches!(timeout, Value::Undefined | Value::Null | Value::Number(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type("The \"options.timeout\" property must be a number".into()));
+    }
+    if let Value::Number(value) = timeout {
+        if value.is_nan() || value.is_sign_negative() || (value.is_finite() && value > 2_f64.powi(32)) {
+            return Err(crate::modules::buffer_enc::out_of_range("options.timeout", ">= 0 && <= 4294967295", &value.to_string()));
+        }
+    }
+    let concurrency = quench_runtime::execute::get_property(options, "concurrency");
+    if !matches!(concurrency, Value::Undefined | Value::Null | Value::Boolean(_) | Value::Number(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type("The \"options.concurrency\" property must be a number or boolean".into()));
+    }
+    if let Value::Number(value) = concurrency {
+        if value.is_nan() || value <= 0.0 || value.fract() != 0.0 || value > 2_f64.powi(32) {
+            return Err(crate::modules::buffer_enc::out_of_range("options.concurrency", ">= 0 && <= 4294967295", &value.to_string()));
+        }
+    }
+    Ok(())
 }
 
 /// `test.skip` / `it.skip` — report without running the callback.
