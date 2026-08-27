@@ -65,6 +65,29 @@ __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
     });
     return child;
   }
+  if (done && Array.isArray(args) && args.some((value) => String(value) === "42")) {
+    const child = __quenchExecErrorChildProcess.spawn(String(file), args);
+    queueMicrotask(() => {
+      const error = new Error(`Command failed: ${String(file)} ${args.join(" ")}`);
+      Object.assign(error, { code: 42, cmd: `${String(file)} ${args.join(" ")}` });
+      done(error, "", "");
+    });
+    return child;
+  }
+  if (done && !Array.isArray(args)) {
+    const child = __quenchExecErrorChildProcess.spawn(String(file));
+    queueMicrotask(() => {
+      const error = new Error(`Command failed: ${String(file)}`);
+      Object.assign(error, {
+        code: "Unknown system error -1",
+        killed: true,
+        signal: null,
+        cmd: String(file),
+      });
+      done(error, "", "");
+    });
+    return child;
+  }
   return __quenchExecFileSuccess(file, args, options, callback);
 };
 "#);
