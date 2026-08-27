@@ -108,6 +108,13 @@ fn connect_with_receiver(
         .first()
         .filter(|value| matches!(value, Value::Object(_)))
     {
+        let auto_select_family = execute::get_property(options, "autoSelectFamily");
+        if !matches!(auto_select_family, Value::Undefined | Value::Boolean(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ])));
+        }
         let path = execute::get_property(options, "path");
         if !matches!(path, Value::Undefined | Value::Null) && !matches!(path, Value::String(_)) {
             return Err(VmError::Thrown(host_api::object(vec![
