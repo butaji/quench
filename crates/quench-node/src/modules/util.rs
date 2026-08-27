@@ -2060,8 +2060,22 @@ fn inspect_object(value: &Value, depth: usize) -> String {
                         format!("'{}...'", &text[..9_488])
                     }
                     Value::String(text) if text.contains('\n') => {
-                        let prefix = text.split_inclusive('\n').take(10).collect::<String>();
-                        format!("'{}...'", prefix.replace('\n', "\\n"))
+                        let full_diff = matches!(
+                            quench_runtime::execute::get_property(value, "diff"),
+                            Value::String(mode) if mode == "full"
+                        );
+                        if full_diff {
+                            let prefix = text.split_inclusive('\n').take(10).collect::<String>();
+                            format!("'{}...'", prefix.replace('\n', "\\n"))
+                        } else {
+                            let mut lines = text
+                                .split('\n')
+                                .take(10)
+                                .map(|line| format!("'{line}\\n' +"))
+                                .collect::<Vec<_>>();
+                            lines.push("'...'".into());
+                            lines.join("\n    ")
+                        }
                     }
                     _ if property_value.object_identity() == value.object_identity() => {
                         "[Circular]".into()
