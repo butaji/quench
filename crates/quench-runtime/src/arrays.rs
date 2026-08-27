@@ -46,6 +46,8 @@ fn execute_builtin_match(
         ArrayEvery => return Some(every(receiver, arguments)),
         TypedArrayEvery => return Some(typed_array_every(receiver, arguments)),
         TypedArraySome => return Some(typed_array_some(receiver, arguments)),
+        TypedArrayMap => return Some(typed_array_map(receiver, arguments)),
+        TypedArrayFilter => return Some(typed_array_filter(receiver, arguments)),
         ArrayFind => return Some(find(receiver, arguments)),
         TypedArrayFind => return Some(typed_array_find(receiver, arguments)),
         TypedArrayFindIndex => return Some(typed_array_find_index(receiver, arguments)),
@@ -163,6 +165,63 @@ fn typed_array_some(
         }
     }
     Ok(Value::Boolean(false))
+}
+
+fn typed_array_map(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "map")?;
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
+    let mapped_target = typed_array_species_create(&value, length)?;
+    let mut mapped = Vec::with_capacity(length);
+    for index in 0..length {
+        let item = crate::execute::get_property_result(&value, &index.to_string())?;
+        mapped.push(crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[item, Value::Number(index as f64), value.clone()],
+        )?);
+    }
+    for (index, item) in mapped.into_iter().enumerate() {
+        crate::properties::assign_set_property(&mapped_target, &index.to_string(), item)?;
+    }
+    Ok(mapped_target)
+}
+
+fn typed_array_filter(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "filter")?;
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
+    let mut filtered = Vec::new();
+    for index in 0..length {
+        let item = crate::execute::get_property_result(&value, &index.to_string())?;
+        let keep = crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[item.clone(), Value::Number(index as f64), value.clone()],
+        )?;
+        if crate::execute::is_truthy(&keep) {
+            filtered.push(item);
+        }
+    }
+    let result = typed_array_species_create(&value, filtered.len())?;
+    for (index, item) in filtered.into_iter().enumerate() {
+        crate::properties::assign_set_property(&result, &index.to_string(), item)?;
+    }
+    Ok(result)
 }
 
 pub(crate) fn typed_array_receiver(
@@ -1172,10 +1231,35 @@ fn typed_array_compare_values(
     }
 }
 
-fn construct_typed_array_result(
+fn typed_array_species_create(
     exemplar: &Value,
-    values: Vec<Value>,
+    length: usize,
 ) -> Result<Value, crate::execute::VmError> {
+    let default = typed_array_constructor(exemplar)?;
+    let constructor = crate::execute::get_property_result(exemplar, "constructor")?;
+    let species = if matches!(constructor, Value::Undefined) {
+        Value::Builtin(default)
+    } else {
+        if !crate::value::is_object(&constructor) {
+            return Err(crate::value::error::throw_type_error(
+                "TypedArray constructor is not an object",
+            ));
+        }
+        match crate::execute::get_property_result(&constructor, "Symbol.species")? {
+            Value::Undefined | Value::Null => Value::Builtin(default),
+            species => species,
+        }
+    };
+    let result = crate::construct::construct_value(&species, &[Value::Number(length as f64)])?;
+    if !result.is_typed_array() {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray species constructor returned a non-TypedArray",
+        ));
+    }
+    Ok(result)
+}
+
+fn typed_array_constructor(exemplar: &Value) -> Result<crate::ops::Builtin, crate::execute::VmError> {
     let constructor = match exemplar {
         Value::Float64Array(_) => crate::ops::Builtin::Float64Array,
         Value::Float32Array(_) => crate::ops::Builtin::Float32Array,
@@ -1190,6 +1274,14 @@ fn construct_typed_array_result(
         Value::BigUint64Array(_) => crate::ops::Builtin::BigUint64Array,
         _ => return Err(crate::value::error::throw_type_error("Not a TypedArray")),
     };
+    Ok(constructor)
+}
+
+fn construct_typed_array_result(
+    exemplar: &Value,
+    values: Vec<Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let constructor = typed_array_constructor(exemplar)?;
     let source = Value::Array(std::rc::Rc::new(crate::value::ArrayData::new(values)));
     crate::construct::construct_value(&Value::Builtin(constructor), &[source])
 }
