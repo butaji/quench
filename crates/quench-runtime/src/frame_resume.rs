@@ -1,4 +1,18 @@
 impl Frame {
+    pub(crate) fn set_catch_resume(&mut self, range: CodeRange, yield_dst: u16) -> bool {
+        let Self::Try {
+            phase,
+            body_resume,
+            yield_dst: dst,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        set_resume(phase, body_resume, dst, TryPhase::Catch, range, yield_dst);
+        true
+    }
+
     pub(crate) fn set_finally_resume(&mut self, range: CodeRange, yield_dst: u16) -> bool {
         let Self::Try {
             phase,

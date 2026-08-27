@@ -473,6 +473,7 @@ pub struct GeneratorState {
     pub private_environment: Option<crate::private_environment::PrivateEnvironment>,
     pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
     pub(crate) async_for_of: Option<AsyncForOfState>,
+    pub(crate) pending_completion: Option<crate::completion::Completion>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
