@@ -447,6 +447,7 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
             "resolve",
             "reject",
             "all",
+            "allKeyed",
             "allSettled",
             "any",
             "race",

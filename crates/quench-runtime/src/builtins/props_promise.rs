@@ -5,6 +5,7 @@ fn promise_method(key: &str) -> Option<Builtin> {
         "resolve" => Some(PromiseResolve),
         "reject" => Some(PromiseReject),
         "all" => Some(PromiseAll),
+        "allKeyed" => Some(PromiseAllKeyed),
         "allSettled" => Some(PromiseAllSettled),
         "allSettledKeyed" => Some(PromiseAllSettledKeyed),
         "any" => Some(PromiseAny),
