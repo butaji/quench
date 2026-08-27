@@ -484,7 +484,7 @@ fn execute_function_call_in_realm(
         if receiver_bound {
             return execute_target(
                 &bound.target,
-                &bound.receiver,
+                &this,
                 arguments.get(1..).unwrap_or_default(),
             );
         }
