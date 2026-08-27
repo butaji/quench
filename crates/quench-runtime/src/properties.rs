@@ -221,32 +221,40 @@ pub(crate) fn execute_set_named_cached(
     strict: bool,
     cache: &std::cell::Cell<u64>,
 ) -> Result<(), crate::execute::VmError> {
-    if transition_index(cache.get()).is_some()
+    let target = crate::execute::read_register(registers, object)?;
+    let regexp_target = crate::regexp::has_regexp_internal_slot(&target);
+    if !regexp_target
+        && transition_index(cache.get()).is_some()
         && try_named_write_transition_attributed(registers, object, src, key, cache)?
     {
         crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
         return Ok(());
     }
-    let target = crate::execute::read_register(registers, object)?;
     let transition = named_write_source(&target, key);
-    if let crate::value::Value::Object(data) = &target {
-        if data.has_replacement() {
-            crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
-        } else if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
-            if data.semantic_layout_id() != layout {
-                crate::execution_trace::event(
-                    crate::execution_trace::Event::NamedSetLayoutMismatch,
-                );
-            } else if let Some(word) = data.hot_properties().slot_word(slot as usize) {
-                crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetHit);
-                word.store_from_register(registers, usize::from(src))
-                    .ok_or(crate::execute::VmError::MissingReturn)?;
-                return Ok(());
+    if !regexp_target {
+        if let crate::value::Value::Object(data) = &target {
+            if data.has_replacement() {
+                crate::execution_trace::event(crate::execution_trace::Event::NamedSetReplacement);
+            } else if let Some((layout, slot)) = crate::machine::unpack_named_cache(cache.get()) {
+                if data.semantic_layout_id() != layout {
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedSetLayoutMismatch,
+                    );
+                } else if let Some(word) = data.hot_properties().slot_word(slot as usize) {
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedPropertySetHit,
+                    );
+                    word.store_from_register(registers, usize::from(src))
+                        .ok_or(crate::execute::VmError::MissingReturn)?;
+                    return Ok(());
+                } else {
+                    crate::execution_trace::event(
+                        crate::execution_trace::Event::NamedSetSlotNotCell,
+                    );
+                }
             } else {
-                crate::execution_trace::event(crate::execution_trace::Event::NamedSetSlotNotCell);
+                crate::execution_trace::event(crate::execution_trace::Event::NamedSetCacheEmpty);
             }
-        } else {
-            crate::execution_trace::event(crate::execution_trace::Event::NamedSetCacheEmpty);
         }
     }
     crate::execution_trace::event(crate::execution_trace::Event::NamedPropertySetMiss);
