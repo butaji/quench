@@ -377,6 +377,20 @@ pub(crate) fn get_property_with_receiver(
     }
     let intrinsic_bound = matches!(&value, Value::BoundFunction(bound)
         if crate::vm::is_intrinsic_bound(bound));
+    if intrinsic_bound && is_boxed_primitive(receiver) {
+        if let Value::BoundFunction(bound) = &value {
+            let deleted = crate::builtins::deleted_key(key);
+            if bound
+                .properties
+                .borrow()
+                .iter()
+                .any(|(name, _)| name == key || name == &deleted)
+            {
+                return Ok(crate::vm::get_property(&value, key));
+            }
+            return get_property_with_receiver(&bound.target, key, receiver);
+        }
+    }
     if matches!(&value, Value::BoundFunction(_))
         && (intrinsic_bound
             || (crate::property_define::accessor(&value, key, "get").is_none()
