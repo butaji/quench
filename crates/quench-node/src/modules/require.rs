@@ -526,13 +526,21 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             );
             Some(test_fn)
         }
-        "stream/web" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "ReadableStream".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "stream_web:ReadableStream",
-                0x1c00,
-            )),
-        )])),
+        "stream/web" => {
+            let global = quench_runtime::vm::current_global_object();
+            match quench_runtime::execute::get_property(&global, "__quenchWebStreams") {
+                Value::Object(_) | Value::ObjectAlias(_) => Some(
+                    quench_runtime::execute::get_property(&global, "__quenchWebStreams"),
+                ),
+                _ => Some(crate::host::namespace_object_from_pairs(vec![(
+                    "ReadableStream".to_string(),
+                    crate::host::capability(crate::registry::NodeSpec::new(
+                        "stream_web:ReadableStream",
+                        0x1c00,
+                    )),
+                )])),
+            }
+        }
         "stream/consumers" => Some(crate::host::namespace_object_from_pairs(vec![(
             "text".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(
