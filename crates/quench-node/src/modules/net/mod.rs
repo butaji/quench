@@ -490,6 +490,23 @@ fn parse_ipv6(value: &str) -> Option<std::net::Ipv6Addr> {
 }
 
 pub fn build() -> Value {
+    let socket_prototype = host_api::object(Vec::new());
+    let global = quench_runtime::vm::current_global_object();
+    execute::set_property_in_place(
+        &global,
+        "\0quench:net:socket-prototype",
+        socket_prototype.clone(),
+    );
+    let socket_ctor = execute::set_property(
+        crate::host::capability(crate::registry::SPEC_NET_SOCKET),
+        "prototype",
+        socket_prototype,
+    );
+    let server_ctor = execute::set_property(
+        crate::host::capability(crate::registry::SPEC_NET_SERVER),
+        "prototype",
+        host_api::object(Vec::new()),
+    );
     crate::host::namespace_object(vec![
         (
             "connect",
@@ -505,15 +522,15 @@ pub fn build() -> Value {
         ),
         (
             "Socket",
-            crate::host::capability(crate::registry::SPEC_NET_SOCKET),
+            socket_ctor.clone(),
         ),
         (
             "Stream",
-            crate::host::capability(crate::registry::SPEC_NET_SOCKET),
+            socket_ctor,
         ),
         (
             "Server",
-            crate::host::capability(crate::registry::SPEC_NET_SERVER),
+            server_ctor,
         ),
         (
             "BlockList",
