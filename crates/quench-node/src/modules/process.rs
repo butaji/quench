@@ -106,7 +106,9 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ("execPath", Value::String(exec_path.to_string())),
         (
             "argv0",
-            Value::String(std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| "node".into())),
+            Value::String(
+                std::env::var("QUENCH_ARGV0").unwrap_or_else(|_| exec_path.to_string()),
+            ),
         ),
         (
             "release",

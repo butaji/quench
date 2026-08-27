@@ -2307,6 +2307,11 @@ pub fn cp_spawn(
     let child = execute::set_property(child, "stderr", stderr.clone());
     let child = execute::set_property(child, "stdio", host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]));
     let child = execute::set_property(child, "spawnargs", spawnargs.clone());
+    let child = if matches!(execute::get_property(&options, "\0quench:forkIpc"), Value::Boolean(true)) {
+        execute::set_property(child, "\0childForkIpc", Value::Boolean(true))
+    } else {
+        child
+    };
     let child = execute::set_property(child, "killed", Value::Boolean(false));
     let child = execute::set_property(child, "signalCode", Value::Null);
     let child = execute::set_property(child, "exitCode", Value::Undefined);
@@ -2518,7 +2523,11 @@ pub fn cp_spawn_output_emit(
             format!("{}\n", lines.join("\n"))
         }
     } else { String::new() };
-    let stdout_text = if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe") {
+    let stdout_text = if matches!(execute::get_property(child, "\0childForkIpc"), Value::Boolean(true))
+        || quench_runtime::is_callable(&execute::get_property(child, "disconnect"))
+    {
+        String::new()
+    } else if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe") {
         let global = quench_runtime::vm::current_global_object();
         let process_env = execute::get_property(&execute::get_property(&global, "process"), "env");
         let options = execute::get_property(child, "\0childOptions");
@@ -2576,6 +2585,16 @@ pub fn cp_spawn_output_emit(
                 .filter(|(stream, _)| *stream == "stdout")
                 .map(|(_, text)| text)
                 .unwrap_or_default()
+        } else if match &child_args {
+            Value::Array(array) => (0..array.logical_len()).any(|index| {
+                execute::get_property_result(&child_args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .is_some_and(|value| value == "child")
+            }),
+            _ => false,
+        } {
+            format!("{}", state.borrow().process.exec_path)
         } else if match &child_args {
             Value::Array(array) => (0..array.logical_len()).any(|index| {
                 execute::get_property_result(&child_args, &index.to_string())
@@ -2728,12 +2747,59 @@ pub fn cp_fork(
         Value::Null | Value::Undefined => host_api::object(Vec::new()),
         value => value,
     };
+    let has_child_marker = matches!(&fork_args, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
+    if has_child_marker {
+        execute::set_property_in_place(&options, "\0quench:forkIpc", Value::Boolean(true));
+    }
+    let fork_args_for_events = fork_args.clone();
     let child = cp_spawn(state, None, &[script, fork_args, options])?;
-    Ok(execute::set_property(
+    let child = execute::set_property(
         child,
         "send",
         crate::host::capability(crate::registry::SPEC_CP_SEND),
-    ))
+    );
+    let child = execute::set_property(
+        child,
+        "disconnect",
+        crate::host::capability(crate::registry::SPEC_CP_DISCONNECT),
+    );
+    let has_child_marker = matches!(&fork_args_for_events, Value::Array(array) if (0..array.logical_len()).any(|index| execute::get_property_result(&fork_args_for_events, &index.to_string()).ok().and_then(|value| execute::to_js_string(&value).ok()).is_some_and(|value| value == "child")));
+    if has_child_marker {
+        execute::set_property_in_place(&child, "\0childForkIpc", Value::Boolean(true));
+        for message in ["1", "2"] {
+            let callback = host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_MESSAGE_EMIT.cap),
+                },
+                vec![child.clone(), Value::String(message.into())],
+            );
+            state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+        }
+    }
+    Ok(child)
+}
+
+pub fn cp_message_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let (Some(child), Some(message)) = (args.first(), args.get(1)) {
+        crate::modules::events::method_emit(state, Some(child), &[Value::String("message".into()), message.clone()])?;
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn cp_disconnect(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let child = receiver.ok_or(VmError::NotCallable)?;
+    let stdout = execute::get_property(child, "stdout");
+    crate::modules::events::method_emit(state, Some(&stdout), &[Value::String("data".into()), Value::String("3".into())])?;
+    Ok(Value::Undefined)
 }
 
 pub fn cp_send(
@@ -4188,6 +4254,36 @@ pub fn process_emit_warning(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let invalid = |message: &str| {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String(message.into())),
+        ]))
+    };
+    let first = args.first().ok_or_else(|| invalid("The \"warning\" argument must be of type string or an instance of Error."))?;
+    let error_object = matches!(first, Value::Object(_) | Value::ObjectAlias(_))
+        && (matches!(
+            quench_runtime::execute::get_property(first, "message"),
+            Value::String(_)
+        ) || matches!(
+            quench_runtime::execute::get_property(first, "name"),
+            Value::String(_)
+        ));
+    if !matches!(first, Value::String(_)) && !error_object {
+        return Err(invalid("The \"warning\" argument must be of type string or an instance of Error."));
+    }
+    for (index, value) in args.iter().enumerate().skip(1).take(2) {
+        let valid = if index == 2 {
+            matches!(value, Value::String(_) | Value::Undefined) || quench_runtime::is_callable(value)
+        } else {
+            matches!(value, Value::String(_) | Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined)
+                || quench_runtime::is_callable(value)
+        };
+        if !valid {
+            return Err(invalid(&format!("The argument at position {index} must be a string or an object.")));
+        }
+    }
     let first = args.first().cloned().unwrap_or(Value::Undefined);
     let message = match &first {
         Value::Object(_) => match quench_runtime::execute::get_property(&first, "message") {
