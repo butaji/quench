@@ -94,12 +94,22 @@ fn typed_array_accessor(
     }
     macro_rules! access {
         ($view:expr) => {
-            byte_length_getter(
-                builtin,
-                $view.buffer.byte_length(),
-                $view.byte_offset,
-                $view.byte_length(),
-            )
+            if builtin == Builtin::TypedArrayLengthGetter {
+                let out_of_bounds = $view.buffer.byte_length()
+                    < $view.byte_offset.saturating_add($view.byte_length());
+                Some(Ok(Value::Number(if out_of_bounds {
+                    0.0
+                } else {
+                    $view.logical_len() as f64
+                })))
+            } else {
+                byte_length_getter(
+                    builtin,
+                    $view.buffer.byte_length(),
+                    $view.byte_offset,
+                    $view.byte_length(),
+                )
+            }
         };
     }
     match receiver {

@@ -17,6 +17,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::DataViewByteLengthGetter => Some("get byteLength"),
         Builtin::TypedArrayByteLengthGetter => Some("get byteLength"),
         Builtin::TypedArrayByteOffsetGetter => Some("get byteOffset"),
+        Builtin::TypedArrayLengthGetter => Some("get length"),
         Builtin::TypedArrayToStringTagGetter => Some("get [Symbol.toStringTag]"),
         Builtin::DataViewByteOffsetGetter => Some("get byteOffset"),
         Builtin::SharedArrayBufferByteLengthGetter => Some("get byteLength"),
@@ -36,6 +37,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::DataViewByteLengthGetter
         | Builtin::TypedArrayByteLengthGetter
         | Builtin::TypedArrayByteOffsetGetter
+        | Builtin::TypedArrayLengthGetter
         | Builtin::TypedArrayToStringTagGetter
         | Builtin::DataViewByteOffsetGetter
         | Builtin::SharedArrayBufferByteLengthGetter => Some(0.0),
