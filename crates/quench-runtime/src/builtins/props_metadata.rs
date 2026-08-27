@@ -4,7 +4,7 @@ pub(crate) fn number_constant(key: &str) -> Option<Value> {
 
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     if key == "BYTES_PER_ELEMENT"
-        && crate::builtin_meta::prototype(_builtin) == Some(Builtin::TypedArrayPrototype)
+        && is_typed_array_bytes_builtin(_builtin)
     {
         return false;
     }
@@ -51,6 +51,34 @@ pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
         return true;
     }
     true
+}
+
+pub(crate) fn is_typed_array_bytes_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::Float64Array
+            | Builtin::Float64ArrayPrototype
+            | Builtin::Float32Array
+            | Builtin::Float32ArrayPrototype
+            | Builtin::Int8Array
+            | Builtin::Int8ArrayPrototype
+            | Builtin::Int16Array
+            | Builtin::Int16ArrayPrototype
+            | Builtin::Int32Array
+            | Builtin::Int32ArrayPrototype
+            | Builtin::Uint8Array
+            | Builtin::Uint8ArrayPrototype
+            | Builtin::Uint8ClampedArray
+            | Builtin::Uint8ClampedArrayPrototype
+            | Builtin::Uint16Array
+            | Builtin::Uint16ArrayPrototype
+            | Builtin::Uint32Array
+            | Builtin::Uint32ArrayPrototype
+            | Builtin::BigInt64Array
+            | Builtin::BigInt64ArrayPrototype
+            | Builtin::BigUint64Array
+            | Builtin::BigUint64ArrayPrototype
+    )
 }
 
 fn builtin_length(builtin: Builtin) -> f64 {
