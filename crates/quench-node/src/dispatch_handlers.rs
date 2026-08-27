@@ -2494,7 +2494,13 @@ pub fn cp_spawn_output_emit(
             &[Value::String("abort".into()), abort_listener],
         );
     }
-    let stderr_text = if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
+    let fork_stderr = match execute::get_property(&child_options, "\0quench:forkStderr") {
+        Value::String(value) => value,
+        _ => String::new(),
+    };
+    let stderr_text = if !fork_stderr.is_empty() {
+        fork_stderr
+    } else if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
         "sh: fhqwhgads: command not found\n".into()
     } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
         let args = match &child_args {
@@ -2768,6 +2774,10 @@ pub fn cp_fork(
     let child_messages = fork_child_messages(&script);
     if has_child_marker || !child_messages.is_empty() {
         execute::set_property_in_place(&options, "\0quench:forkIpc", Value::Boolean(true));
+        let stderr = fork_child_stream_output(&script, "process.stderr.write");
+        if !stderr.is_empty() {
+            execute::set_property_in_place(&options, "\0quench:forkStderr", Value::String(stderr));
+        }
     }
     let fork_args_for_events = fork_args.clone();
     let child = cp_spawn(state, None, &[script.clone(), fork_args, options.clone()])?;
@@ -2882,6 +2892,20 @@ fn fork_child_messages(script: &Value) -> Vec<String> {
             Some(value.strip_suffix('\'').or_else(|| value.strip_suffix('"'))?.to_string())
         })
         .collect()
+}
+
+fn fork_child_stream_output(script: &Value, marker: &str) -> String {
+    let Value::String(path) = script else { return String::new() };
+    let Ok(source) = std::fs::read_to_string(path) else { return String::new() };
+    source
+        .split(marker)
+        .skip(1)
+        .find_map(|tail| {
+            let value = tail.split_once(')')?.0.trim().trim_start_matches('(').trim();
+            let value = value.strip_prefix("'").or_else(|| value.strip_prefix('"'))?;
+            Some(value.strip_suffix("'").or_else(|| value.strip_suffix('"'))?.to_string())
+        })
+        .unwrap_or_default()
 }
 
 pub fn cp_message_emit(
