@@ -370,10 +370,14 @@ fn resolve_aggregate(aggregate: &PromiseAggregate, value: Value) {
     } else {
         value
     };
-    if crate::functions::execute_target(&aggregate.resolve, &Value::Undefined, &[value]).is_err()
-    {
+    if let Err(error) = crate::functions::execute_target(
+        &aggregate.resolve,
+        &Value::Undefined,
+        &[value],
+    ) {
         // A user-supplied capability resolver is allowed to throw; the
-        // reject callback remains the only observable completion path.
+        // aggregate operation then rejects through the paired capability.
+        reject_with_completion_value(&aggregate.reject, error);
     }
 }
 
