@@ -2433,12 +2433,14 @@ pub fn cp_spawn(
             let host =
                 execute::to_js_string(&execute::get_property(&cwd, "hostname")).unwrap_or_default();
             if protocol != "file:" || !host.is_empty() {
+                let message = if protocol != "file:" {
+                    "The URL must be of scheme file"
+                } else {
+                    "File URL host must be \"localhost\" or empty on this platform"
+                };
                 return Err(VmError::Thrown(host_api::object(vec![
                     ("name".into(), Value::String("TypeError".into())),
-                    (
-                        "message".into(),
-                        Value::String("The URL must be of scheme file".into()),
-                    ),
+                    ("message".into(), Value::String(message.into())),
                 ])));
             }
         }
