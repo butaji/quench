@@ -169,6 +169,11 @@ pub(crate) fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
         return false;
     }
+    if key == "BYTES_PER_ELEMENT"
+        && crate::builtin_meta::prototype(builtin) == Some(Builtin::TypedArrayPrototype)
+    {
+        return true;
+    }
     (builtin == Builtin::ObjectPrototype && key == "__proto__")
         || (builtin == Builtin::Object && key == "hasOwn")
         || crate::builtins::read_intrinsic_override(builtin, key).is_some()

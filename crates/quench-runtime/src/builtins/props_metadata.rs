@@ -3,6 +3,11 @@ pub(crate) fn number_constant(key: &str) -> Option<Value> {
 }
 
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
+    if key == "BYTES_PER_ELEMENT"
+        && crate::builtin_meta::prototype(_builtin) == Some(Builtin::TypedArrayPrototype)
+    {
+        return false;
+    }
     if _builtin == Builtin::ArrayPrototype && key == "length" {
         return false;
     }
