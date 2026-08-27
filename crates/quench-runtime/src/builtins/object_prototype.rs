@@ -180,6 +180,10 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             Value::Builtin(Builtin::SymbolPrototype)
         }
+        Value::String(_) => Value::Builtin(Builtin::StringPrototype),
+        Value::Number(_) => Value::Builtin(Builtin::NumberPrototype),
+        Value::Boolean(_) => Value::Builtin(Builtin::BooleanPrototype),
+        Value::BigInt(_) => Value::Builtin(Builtin::BigIntPrototype),
         Value::Object(properties) => {
             internal_prototype(properties.as_ref(), Builtin::ObjectPrototype)
         }
