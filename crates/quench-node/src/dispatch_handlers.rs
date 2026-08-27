@@ -5571,6 +5571,7 @@ pub fn test_mock_module(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Valu
     if (exports && named) || (exports && default_export) {
         return Err(crate::modules::buffer_enc::invalid_arg_value("The options exports fields cannot be combined".into()));
     }
+    crate::modules::test::register_module_mock(args.first().and_then(|value| if let Value::String(value) = value { Some(value.clone()) } else { None }).unwrap_or_default(), options.clone());
     Ok(Value::Undefined)
 }
 
