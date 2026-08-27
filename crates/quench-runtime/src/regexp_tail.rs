@@ -46,10 +46,12 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     let receiver = regex_receiver(receiver, "@@match")?;
     let input = to_string_argument(arguments)?;
     let flags = observable_flags(&receiver)?;
-    if !flags.contains('g') {
+    let global = observable_bool(&receiver, "global")?;
+    if !global {
         return regexp_exec(&receiver, &input);
     }
-    if !unicode_mode(&flags)
+    let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
+    if !unicode
         && extract_source(&receiver) == "."
         && builtin_regexp_exec_property(&receiver)
         && (fast_set_last_index(&receiver, &Value::Number(0.0))
@@ -58,7 +60,7 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         let units = input.encode_utf16().map(|unit| crate::strings::from_units(vec![unit])).collect();
         return Ok(Value::array(units));
     }
-    symbol_match_global(&receiver, &input, unicode_mode(&flags))
+    symbol_match_global(&receiver, &input, unicode)
 }
 
 fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value, VmError> {
@@ -166,7 +168,8 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let s = to_string_argument(arguments)?;
     let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let flags = observable_flags(&receiver)?;
-    let global = flags.contains('g');
+    let global = observable_bool(&receiver, "global")?;
+    let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
     if crate::conversion::is_callable(&replacement) {
         if dynamic_exec(&receiver, global) {
             return replace_with_exec_callable(&receiver, &s, &replacement, global);
@@ -180,7 +183,7 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         }
     }
     if let Some(target) = surrogate_alternative_pattern(&extract_source(&receiver)) {
-        if global && !unicode_mode(&flags) && !replacement.contains('$') {
+        if global && !unicode && !replacement.contains('$') {
             return replace_surrogate_units(&s, &replacement, target);
         }
     }
@@ -253,6 +256,12 @@ fn replace_surrogate_units(input: &str, replacement: &str, target: u16) -> Resul
 
 fn observable_flags(receiver: &Value) -> Result<String, VmError> {
     crate::conversion::to_string(&crate::execute::get_property_result(receiver, "flags")?)
+}
+
+fn observable_bool(receiver: &Value, key: &str) -> Result<bool, VmError> {
+    Ok(crate::conversion::to_boolean(
+        &crate::execute::get_property_result(receiver, key)?,
+    ))
 }
 
 fn dynamic_exec(receiver: &Value, global: bool) -> bool {
@@ -508,7 +517,7 @@ fn advance_empty_exec(receiver: &Value, input: &str, matched: &str) -> Result<()
         return Ok(());
     }
     let index = extract_last_index(receiver)?;
-    let unicode = unicode_mode(&extract_flags(receiver));
+    let unicode = observable_bool(receiver, "unicode")?;
     set_last_index(receiver, advance_string_index(input, index, unicode) as f64)
 }
 
