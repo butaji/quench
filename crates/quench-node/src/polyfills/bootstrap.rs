@@ -25,7 +25,6 @@ abilities!(crate::polyfills::Phase::Bootstrap;
     "path" => path,
     "support" => support,
     "events-head" => events_head,
-    "target" => target,
     "events" => events,
     "events-readable-tail" => events_readable_tail,
     "events-writable-tail" => events_writable_tail,
