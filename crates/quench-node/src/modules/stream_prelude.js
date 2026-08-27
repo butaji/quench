@@ -1801,6 +1801,41 @@
   }
   Readable.isDisturbed = isDisturbed;
   Writable.destroy = destroy;
+  // Keep the public stream module's Duplex family connected to the canonical
+  // NodeDuplex adapters installed by the bootstrap layer.
+  Duplex.from ||= (source, options = {}) => {
+    const pair = source && source.readable && source.readable.getReader
+      ? source
+      : source && source.getReader
+        ? { readable: source }
+        : null;
+    if (pair) return Duplex.fromWeb(pair, options);
+    return Readable.from(source, options);
+  };
+  Duplex.fromWeb ||= (pair, options) =>
+    (() => {
+      const readable = pair?.readable;
+      const reader = readable?.getReader?.();
+      if (!reader) return pair;
+      let reading = false;
+      return new Duplex({
+        ...options,
+        readable: true,
+        writable: false,
+        read() {
+          if (reading) return;
+          reading = true;
+          reader.read().then(({ value, done }) => {
+            reading = false;
+            if (done) this.push(null);
+            else this.push(value);
+          }, (error) => {
+            reading = false;
+            this.destroy(error);
+          });
+        }
+      });
+    })();
 
   return {
     Readable,
