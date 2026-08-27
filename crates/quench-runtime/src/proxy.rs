@@ -7,21 +7,29 @@ use std::rc::Rc;
 use std::slice;
 include!("proxy_set.rs");
 pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
-    validate_proxy_arguments(target, handler)?;
+    let target = crate::locals::resolved_replacement(
+        arguments.first().ok_or(VmError::NotCallable)?.clone(),
+    );
+    let handler = crate::locals::resolved_replacement(
+        arguments.get(1).ok_or(VmError::NotCallable)?.clone(),
+    );
+    validate_proxy_arguments(&target, &handler)?;
     let revoked = Rc::new(std::cell::RefCell::new(false));
     Ok(Value::Proxy(Rc::new(ProxyValue {
-        target: target.clone(),
-        handler: handler.clone(),
+        target,
+        handler,
         revoked,
         private_slots: Rc::new(std::cell::RefCell::new(Vec::new())),
     })))
 }
 pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
-    validate_proxy_arguments(target, handler)?;
+    let target = crate::locals::resolved_replacement(
+        arguments.first().ok_or(VmError::NotCallable)?.clone(),
+    );
+    let handler = crate::locals::resolved_replacement(
+        arguments.get(1).ok_or(VmError::NotCallable)?.clone(),
+    );
+    validate_proxy_arguments(&target, &handler)?;
     let revoked = Rc::new(std::cell::RefCell::new(false));
     let proxy = Value::Proxy(Rc::new(ProxyValue {
         target: target.clone(),
@@ -427,21 +435,24 @@ fn prototype_contains(prototype: &Value, target: &Value) -> Result<bool, VmError
 pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
+        let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
         if let Some(trap) = get_handler_trap(proxy, "isExtensible") {
-            let result = call_trap(&trap, slice::from_ref(&proxy.target), Some(&proxy.handler))?;
+            let result = call_trap(&trap, slice::from_ref(&proxy_target), Some(&proxy.handler))?;
             let reported = crate::execute::is_truthy(&result);
-            if reported != crate::properties::object_is_extensible(&proxy.target) {
+            if reported != crate::properties::object_is_extensible(&proxy_target) {
                 return Err(crate::value::error::throw_type_error(
                     "Proxy isExtensible invariant violated",
                 ));
             }
             return Ok(Value::Boolean(reported));
         }
+        return Ok(Value::Boolean(crate::properties::object_is_extensible(
+            &proxy_target,
+        )));
     }
     require_reflect_object(target)?;
-    Ok(Value::Boolean(crate::properties::object_is_extensible(
-        target,
-    )))
+    let target = crate::locals::resolved_replacement(target.clone());
+    Ok(Value::Boolean(crate::properties::object_is_extensible(&target)))
 }
 
 pub(crate) fn proxy_prevent_extensions(target: &Value) -> Result<Value, VmError> {
