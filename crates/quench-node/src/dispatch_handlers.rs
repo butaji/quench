@@ -4188,6 +4188,28 @@ pub fn process_emit_warning(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let invalid = |message: &str| {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String(message.into())),
+        ]))
+    };
+    let first = args.first().ok_or_else(|| invalid("The \"warning\" argument must be of type string or an instance of Error."))?;
+    if !matches!(first, Value::String(_) | Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(invalid("The \"warning\" argument must be of type string or an instance of Error."));
+    }
+    for (index, value) in args.iter().enumerate().skip(1).take(2) {
+        let valid = if index == 2 {
+            matches!(value, Value::String(_) | Value::Undefined) || quench_runtime::is_callable(value)
+        } else {
+            matches!(value, Value::String(_) | Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined)
+                || quench_runtime::is_callable(value)
+        };
+        if !valid {
+            return Err(invalid(&format!("The argument at position {index} must be a string or an object.")));
+        }
+    }
     let first = args.first().cloned().unwrap_or(Value::Undefined);
     let message = match &first {
         Value::Object(_) => match quench_runtime::execute::get_property(&first, "message") {
