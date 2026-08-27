@@ -2560,6 +2560,22 @@ pub fn cp_exec_file(
     // close event (not an eager success callback); this preserves kill/close
     // error identity for execFile(file, callback).
     if !args.iter().any(|value| matches!(value, Value::Array(_))) {
+        let mut error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(format!("Command failed: {}", command.as_deref().unwrap_or_default()))],
+        );
+        for (key, value) in [
+            ("code", Value::String("Unknown system error -1".into())),
+            ("killed", Value::Boolean(true)),
+            ("signal", Value::Null),
+            ("cmd", Value::String(command.clone().unwrap_or_default())),
+        ] {
+            let _ = execute::set_property_in_place(&mut error, key, value);
+        }
+        state.borrow_mut().event_loop.queue_microtask(
+            callback,
+            vec![error, Value::String(String::new()), Value::String(String::new())],
+        );
         return Ok(child);
     }
     let mut error = Value::Null;
@@ -2585,7 +2601,7 @@ pub fn cp_exec_file(
     }
     if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
         if let Some(Value::Array(values)) = args.get(1) {
-            if values.get(1).is_some_and(|value| matches!(value, Value::Number(number) if number == 42.0)) {
+            if values.get(1).is_some_and(|value| execute::to_js_string(&value).ok().as_deref() == Some("42")) {
                 let rendered = (0..values.len())
                     .filter_map(|index| values.get(index))
                     .map(|value| match value { Value::String(text) => text.clone(), Value::Number(number) => number.to_string(), _ => String::new() })
