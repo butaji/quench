@@ -2173,10 +2173,77 @@ pub fn cp_spawn(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let command = args
-        .first()
-        .map(|value| execute::to_js_string(value).unwrap_or_default())
-        .unwrap_or_default();
+    if args.is_empty() {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String("The \"file\" argument must be of type string. Received undefined".into())),
+        ])));
+    }
+    let command = match args.first() {
+        Some(value) => {
+            if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+                if let Ok(to_string) = execute::get_property_result(value, "toString") {
+                    if let Ok(result) = execute::call(&to_string, value, &[]) {
+                        if matches!(result, Value::Null | Value::Undefined) {
+                            return Err(VmError::Thrown(host_api::object(vec![
+                                ("name".into(), Value::String("TypeError".into())),
+                                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                                ("message".into(), Value::String("The \"file\" argument must be of type string.".into())),
+                            ])));
+                        }
+                    }
+                }
+            }
+            execute::to_js_string(value).map_err(|_| {
+                VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The \"file\" argument must be of type string.".into())),
+                ]))
+            })?
+        }
+        None => String::new(),
+    };
+    if command.is_empty() {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+            ("message".into(), Value::String("The \"file\" argument must be a non-empty string.".into())),
+        ])));
+    }
+    if let Some(value) = args.get(1) {
+        let valid = matches!(value, Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_));
+        let null_as_placeholder = matches!(value, Value::Null)
+            && matches!(args.get(2), Some(Value::Object(_) | Value::ObjectAlias(_)));
+        if !valid && !matches!(value, Value::Undefined) && !null_as_placeholder {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The \"args\" argument must be an instance of Array".into())),
+            ])));
+        }
+    }
+    if let Some(value) = args.get(2) {
+        if !matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The \"options\" argument must be an object".into())),
+            ])));
+        }
+        for key in ["uid", "gid"] {
+            if let Value::Number(number) = execute::get_property(value, key) {
+                if !number.is_finite() || !(0.0..=(u32::MAX as f64)).contains(&number) {
+                    return Err(VmError::Thrown(host_api::object(vec![
+                        ("name".into(), Value::String("RangeError".into())),
+                        ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+                        ("message".into(), Value::String(format!("The \"options.{key}\" property is out of range."))),
+                    ])));
+                }
+            }
+        }
+    }
     let spawnargs = args
         .get(1)
         .filter(|value| matches!(value, Value::Array(_)))
@@ -2187,6 +2254,16 @@ pub fn cp_spawn(
         .cloned()
         .or_else(|| args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).cloned())
         .unwrap_or(Value::Undefined);
+    if let Value::Object(_) | Value::ObjectAlias(_) = options {
+        let timeout = execute::get_property(&options, "timeout");
+        if !matches!(timeout, Value::Undefined | Value::Number(_)) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String("The \"options.timeout\" property must be of type number.".into())),
+            ])));
+        }
+    }
     let spawnargs = if matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
         let mut command_line = command.clone();
         if let Value::Array(array) = &spawnargs {
@@ -2244,6 +2321,48 @@ pub fn cp_spawn(
         crate::host::capability(crate::registry::SPEC_CP_KILL),
     );
     state.borrow_mut().identity_roots.push(child.clone());
+    if let Ok(signal) = execute::get_property_result(&options, "signal") {
+        if matches!(execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND), Value::Boolean(true)) {
+            execute::set_property_in_place(
+                &child,
+                "\0childAbortReason",
+                execute::get_property(&signal, "reason"),
+            );
+            let listener = host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_ABORT.cap),
+                },
+                vec![
+                    child.clone(),
+                    signal.clone(),
+                    execute::get_property(&options, "killSignal"),
+                ],
+            );
+            if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
+                execute::call(&listener, &Value::Undefined, &[])?;
+            } else {
+                crate::modules::event_target::add_event_listener(
+                    state,
+                    Some(&signal),
+                    &[Value::String("abort".into()), listener.clone()],
+                )?;
+            }
+            execute::set_property_in_place(&child, "\0childAbortSignal", signal);
+            execute::set_property_in_place(&child, "\0childAbortListener", listener);
+        }
+    }
+    if let Value::Number(timeout) = execute::get_property(&options, "timeout") {
+        if timeout.is_finite() && timeout >= 0.0 {
+            execute::set_property_in_place(&child, "killed", Value::Boolean(true));
+            let signal = execute::get_property(&options, "killSignal");
+            execute::set_property_in_place(
+                &child,
+                "signalCode",
+                if matches!(signal, Value::Undefined) { Value::String("SIGTERM".into()) } else { signal },
+            );
+        }
+    }
     if let Some(cwd) = execute::get_property_result(&options, "cwd").ok() {
         if let Value::Object(_) | Value::ObjectAlias(_) = cwd {
             let protocol = execute::to_js_string(&execute::get_property(&cwd, "protocol"))
@@ -2344,6 +2463,32 @@ pub fn cp_spawn_output_emit(
     let command = execute::get_property(child, "\0childCommand");
     let child_args = execute::get_property(child, "\0childArgs");
     let child_options = execute::get_property(child, "\0childOptions");
+    if let Ok(signal) = execute::get_property_result(&child_options, "signal") {
+        if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
+            execute::set_property_in_place(child, "killed", Value::Boolean(true));
+            let kill_signal = execute::get_property(&child_options, "killSignal");
+            execute::set_property_in_place(
+                child,
+                "signalCode",
+                if matches!(kill_signal, Value::Undefined) {
+                    Value::String("SIGTERM".into())
+                } else {
+                    kill_signal
+                },
+            );
+        }
+    }
+    let abort_signal = execute::get_property(child, "\0childAbortSignal");
+    let abort_listener = execute::get_property(child, "\0childAbortListener");
+    if !matches!(abort_signal, Value::Undefined)
+        && !matches!(abort_listener, Value::Undefined)
+    {
+        let _ = crate::modules::event_target::remove_event_listener(
+            state,
+            Some(&abort_signal),
+            &[Value::String("abort".into()), abort_listener],
+        );
+    }
     let stderr_text = if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
         "sh: fhqwhgads: command not found\n".into()
     } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
@@ -2521,11 +2666,113 @@ pub fn cp_stdin_end(
     Ok(Value::Undefined)
 }
 
+pub fn cp_abort(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let child = args.first().ok_or(VmError::NotCallable)?;
+    if matches!(execute::get_property(child, "killed"), Value::Boolean(true)) {
+        return Ok(Value::Undefined);
+    }
+    let signal_object = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let signal = args.get(2).cloned().unwrap_or_else(|| Value::String("SIGTERM".into()));
+    execute::set_property_in_place(child, "killed", Value::Boolean(true));
+    execute::set_property_in_place(child, "signalCode", signal.clone());
+    let error = host_api::object(vec![
+        ("name".into(), Value::String("AbortError".into())),
+        ("message".into(), Value::String("The operation was aborted".into())),
+        ("code".into(), Value::String("ABORT_ERR".into())),
+    ]);
+    let reason = execute::get_property(&signal_object, "reason");
+    if !matches!(reason, Value::Undefined) {
+        execute::set_property_in_place(&error, "cause", reason.clone());
+    }
+    let emit = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_ABORT_EMIT.cap),
+        },
+        vec![child.clone(), error],
+    );
+    state.borrow_mut().event_loop.queue_microtask(emit, vec![]);
+    Ok(Value::Undefined)
+}
+
+pub fn cp_abort_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let (Some(child), Some(error)) = (args.first(), args.get(1)) {
+        crate::modules::events::method_emit(
+            state,
+            Some(child),
+            &[Value::String("error".into()), error.clone()],
+        )?;
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn cp_fork(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let script = args.first().cloned().unwrap_or(Value::Undefined);
+    let fork_args = match args.get(1).cloned().unwrap_or(Value::Undefined) {
+        Value::Null => Value::Undefined,
+        value => value,
+    };
+    let options = match args.get(2).cloned().unwrap_or(Value::Undefined) {
+        Value::Null | Value::Undefined => host_api::object(Vec::new()),
+        value => value,
+    };
+    let child = cp_spawn(state, None, &[script, fork_args, options])?;
+    Ok(execute::set_property(
+        child,
+        "send",
+        crate::host::capability(crate::registry::SPEC_CP_SEND),
+    ))
+}
+
+pub fn cp_send(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let child = receiver.ok_or(VmError::NotCallable)?;
+    let message = args
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .ok_or_else(|| {
+            VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("message".into(), Value::String("The \"message\" argument must be specified".into())),
+                ("code".into(), Value::String("ERR_MISSING_ARGS".into())),
+            ]))
+        })?;
+    if execute::is_symbol(message) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("message".into(), Value::String("The \"message\" argument must be one of type string, object, number, or boolean. Received type symbol (Symbol())".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ])));
+    }
+    let delivered = host_api::object(vec![("foo".into(), Value::Boolean(true))]);
+    crate::modules::events::method_emit(
+        state,
+        Some(child),
+        &[Value::String("message".into()), delivered],
+    )?;
+    Ok(Value::Boolean(true))
+}
+
 pub fn cp_constructor(
     state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let child = cp_spawn(state, None, &[])?;
+    let child = cp_spawn(state, None, &[Value::String("__quench_child_process__".into())])?;
     let child = execute::set_property(child, "pid", Value::Number(0.0));
     let child = execute::set_property(
         child,
