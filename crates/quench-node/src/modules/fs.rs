@@ -262,9 +262,41 @@ pub fn build() -> Value {
         ("truncate", crate::host::capability(SPEC_FS_TRUNCATE)),
     ];
     props.extend(sync_props());
+    if let Ok(factory) = eval_function(
+        "(mkdtempSync, rmdirSync, resolve) => (prefix, options) => {\
+          const path = mkdtempSync(prefix, options);\
+          const removalPath = resolve(path);\
+          let removed = false;\
+          const remove = () => {\
+            if (removed) return;\
+            rmdirSync(removalPath);\
+            removed = true;\
+          };\
+          const dispose = Symbol.dispose || (Symbol.dispose = Symbol('dispose'));\
+          return { path, remove, [dispose]: remove };\
+        }",
+    ) {
+        let args = vec![
+            crate::host::capability(SPEC_FS_MKDTEMPSYNC),
+            crate::host::capability(SPEC_FS_RMDIRSYNC),
+            crate::host::capability(SPEC_PATH_RESOLVE),
+        ];
+        if let Ok(disposable) = quench_runtime::execute::call(&factory, &Value::Undefined, &args)
+        {
+            props.push(("mkdtempDisposableSync", disposable));
+        }
+    }
     props.push(("constants", constants()));
     props.push(("promises", promises()));
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
+}
+
+fn eval_function(source: &str) -> Result<Value, VmError> {
+    let program = quench_runtime::reduce::reduce_global_script_source(source)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = quench_runtime::register_file::RegisterFile::new();
+    quench_runtime::vm::execute_code_in_place_context(program.code(), &mut registers, &context)
 }
 
 pub fn validate_stream_options(
