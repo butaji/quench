@@ -3194,6 +3194,9 @@ pub fn cp_exec_file(
         .cloned()
         .map(|options| execute::set_property(options, "\0quench:suppressSpawnError", Value::Boolean(true)))
         .unwrap_or_else(|| host_api::object(vec![("\0quench:suppressSpawnError".into(), Value::Boolean(true))]));
+    let spawn_options = if !matches!(execute::get_property(&spawn_options, "signal"), Value::Undefined) {
+        execute::set_property(spawn_options, "signal", Value::Undefined)
+    } else { spawn_options };
     let spawn_args = [
         args.first().cloned().unwrap_or(Value::Undefined),
         args.iter().find(|value| matches!(value, Value::Array(_))).cloned().unwrap_or_else(|| host_api::array(Vec::new())),
@@ -3431,8 +3434,9 @@ fn cp_queue_exec_completion(
                 crate::registry::SPEC_CP_EXECFILE_ABORT.cap,
             ),
         },
-        vec![callback.clone(), done.clone()],
+        vec![callback.clone(), done.clone(), signal.clone()],
     );
+    execute::set_property_in_place(&done, "listener", abort_listener.clone());
     if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
         // An already-aborted signal never installs a listener or starts a
         // process completion path; use the same capability as a later abort.
@@ -3477,6 +3481,13 @@ pub fn cp_exec_file_abort(
         return Ok(Value::Undefined);
     }
     execute::set_property_in_place(done, "done", Value::Boolean(true));
+    if let Some(signal) = args.get(2) {
+        let _ = crate::modules::event_target::remove_event_listener(
+            state,
+            Some(signal),
+            &[Value::String("abort".into()), execute::get_property(done, "listener")],
+        );
+    }
     let mut error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::Error,
         &[Value::String("The operation was aborted".into())],
