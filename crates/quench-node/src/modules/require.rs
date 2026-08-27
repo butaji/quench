@@ -22,7 +22,13 @@ use crate::host::HostState;
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
     if let Some(mock) = crate::modules::test::mocked_module(&spec) {
-        if crate::modules::test::mock_module_cache(&spec) { let key = format!("\0mock:{spec}"); if let Some(cached) = state.borrow().module_cache.get(&key) { return Ok(cached.clone()); } state.borrow_mut().module_cache.insert(key, mock.clone()); }
+        if crate::modules::test::mock_module_cache(&spec) {
+            let key = format!("\0mock:{spec}");
+            if let Some(cached) = state.borrow().module_cache.get(&key) {
+                return Ok(cached.clone());
+            }
+            state.borrow_mut().module_cache.insert(key, mock.clone());
+        }
         return Ok(mock);
     }
     if spec == "node:url" {
@@ -476,9 +482,21 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 let _ = attach(&test_fn, alias, nested_fn.clone());
             }
             let _ = attach(&test_fn, "run", test_fn.clone());
-            let _ = attach(&test_fn, "getTestContext", crate::host::capability(crate::registry::SPEC_TEST_GET_CONTEXT));
-            let _ = attach(&test_fn, "before", crate::host::capability(crate::registry::SPEC_TEST_BEFORE_EACH));
-            let _ = attach(&test_fn, "after", crate::host::capability(crate::registry::SPEC_TEST_AFTER_EACH));
+            let _ = attach(
+                &test_fn,
+                "getTestContext",
+                crate::host::capability(crate::registry::SPEC_TEST_GET_CONTEXT),
+            );
+            let _ = attach(
+                &test_fn,
+                "before",
+                crate::host::capability(crate::registry::SPEC_TEST_BEFORE_EACH),
+            );
+            let _ = attach(
+                &test_fn,
+                "after",
+                crate::host::capability(crate::registry::SPEC_TEST_AFTER_EACH),
+            );
             let mock = quench_runtime::host_api::object(vec![
                 (
                     "fn".to_string(),

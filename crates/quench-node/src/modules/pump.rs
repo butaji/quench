@@ -125,6 +125,36 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
     }
 }
 
+pub fn await_promise_with_timeout(
+    state: &Rc<RefCell<HostState>>,
+    promise: &Value,
+    timeout_ms: f64,
+) -> Result<bool, VmError> {
+    let Value::Promise(data) = promise else {
+        return Ok(false);
+    };
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout_ms / 1000.0);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Ok(true);
+        }
+        if let Some(result) = settled(&data.state.borrow()) {
+            result?;
+            return Ok(false);
+        }
+        crate::modules::net::poll(state)?;
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
+        drain_unhandled_rejections(state)?;
+        fire_due_timers(state)?;
+        drain_immediates(state)?;
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
+        sleep_until_next(state);
+    }
+}
+
 fn settled(state: &quench_runtime::value::PromiseState) -> Option<Result<(), VmError>> {
     use quench_runtime::value::PromiseState;
     match state {
