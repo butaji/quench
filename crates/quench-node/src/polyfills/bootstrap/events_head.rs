@@ -4,6 +4,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchProcessOn = g
 const __quenchProcessAddListener = globalThis.process.addListener;
 const __quenchProcessOnce = globalThis.process.once;
 const __quenchProcessEmit = globalThis.process.emit;
+const __quenchProcessRemoveListener = globalThis.process.removeListener;
+const __quenchProcessOff = globalThis.process.off;
+const __quenchProcessRemoveAllListeners = globalThis.process.removeAllListeners;
 for (const method of "on addListener once emit removeListener off removeAllListeners listeners listenerCount".split(
   " "
 )) {
@@ -13,6 +16,9 @@ globalThis.process.on = __quenchProcessOn;
 globalThis.process.addListener = __quenchProcessAddListener;
 globalThis.process.once = __quenchProcessOnce;
 globalThis.process.emit = __quenchProcessEmit;
+globalThis.process.removeListener = __quenchProcessRemoveListener;
+globalThis.process.off = __quenchProcessOff;
+globalThis.process.removeAllListeners = __quenchProcessRemoveAllListeners;
 const __nodeWritableWriteError = (stream, callback, error) => {
   if (!callback && stream.__writeErrorEmitted) return false;
   if (!callback) stream.__writeErrorEmitted = true;
