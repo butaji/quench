@@ -276,13 +276,13 @@ fn bound_function_property(
 }
 
 fn bound_constructor_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
-    let Value::Builtin(builtin) = bound.target else {
-        return Value::Undefined;
-    };
-    let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) else {
-        return Value::Undefined;
-    };
-    crate::vm::realm_intrinsic_for(bound.realm, prototype)
+    if let Value::Builtin(builtin) = bound.target {
+        if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
+            return crate::vm::realm_intrinsic_for(bound.realm, prototype);
+        }
+    }
+    crate::execute::get_property_result(&bound.target, "prototype")
+        .unwrap_or(Value::Undefined)
 }
 
 fn intrinsic_target_is_abstract_module_source(bound: &crate::value::BoundFunctionValue) -> bool {
