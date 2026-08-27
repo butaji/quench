@@ -160,9 +160,7 @@ fn bigint_view_bounds(
         .byte_length()
         .checked_sub(offset)
         .ok_or_else(|| range_error(&format!("Invalid {name} byte offset")))?;
-    if offset % BIGINT_ELEMENT_SIZE != 0
-        || arguments.get(2).is_none() && available % BIGINT_ELEMENT_SIZE != 0
-    {
+    if offset % BIGINT_ELEMENT_SIZE != 0 {
         return Err(range_error(&format!("Invalid {name} byte offset")));
     }
     let length = match arguments.get(2) {
