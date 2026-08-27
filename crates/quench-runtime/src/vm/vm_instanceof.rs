@@ -1,6 +1,6 @@
 fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
-    let value = dereference_binding(value);
-    let constructor = dereference_binding(constructor);
+    let value = crate::locals::resolved_replacement(dereference_binding(value));
+    let constructor = crate::locals::resolved_replacement(dereference_binding(constructor));
     if !crate::value::is_object(&constructor) {
         return Err(type_error("Right-hand side of instanceof is not an object"));
     }
@@ -68,12 +68,10 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
 fn intrinsic_builtin(value: &Value) -> Option<Builtin> {
     match value {
         Value::Builtin(builtin) => Some(*builtin),
-        Value::BoundFunction(bound) if crate::vm::realm::is_intrinsic(bound) => {
-            let Value::Builtin(builtin) = &bound.target else {
-                return None;
-            };
-            Some(*builtin)
-        }
+        Value::BoundFunction(bound) => match &bound.target {
+            Value::Builtin(builtin) => Some(*builtin),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -176,6 +174,14 @@ pub(crate) fn function_has_instance(
 }
 
 fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
+    if crate::regexp::has_regexp_internal_slot(value)
+        && matches!(
+            crate::execute::get_property_result(constructor, "name"),
+            Ok(Value::String(name)) if name == "RegExp"
+        )
+    {
+        return Ok(true);
+    }
     if let Some(result) = boxed_primitive_instance(value, constructor) {
         return Ok(result);
     }
