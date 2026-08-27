@@ -506,12 +506,7 @@ fn builtin_descriptor_for_property(builtin: Builtin, key: &str) -> Option<Value>
         })?;
     let writable = builtin_property_is_writable(builtin, key);
     let configurable = builtin_property_is_configurable(builtin, key, &property);
-    Some(descriptor_object_with_flags(
-        property,
-        writable,
-        false,
-        configurable,
-    ))
+    Some(descriptor_object_with_flags(property, writable, false, configurable))
 }
 
 fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {

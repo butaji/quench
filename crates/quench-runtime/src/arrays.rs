@@ -638,12 +638,12 @@ pub(crate) fn flat_map(
         ));
     };
     let receiver = crate::construct::to_object(receiver)?;
-    let Some(callback) = arguments.first() else {
-        return Ok(receiver);
+    let Some(callback) = arguments
+        .first()
+        .filter(|value| crate::conversion::is_callable(value))
+    else {
+        return Err(crate::vm::not_callable());
     };
-    if !crate::conversion::is_callable(callback) {
-        return Ok(receiver);
-    }
     let length = crate::builtins::map_length(&receiver)?;
     let mut target = crate::builtins::array_species_create(&receiver, 0)?;
     let mut target_index = 0usize;
@@ -734,10 +734,10 @@ pub(crate) fn reduce_values(
     let receiver = crate::construct::to_object(receiver)?;
     let length = crate::builtins::map_length(&receiver)?;
     let Some(callback) = arguments.first() else {
-        return Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined));
+        return Err(crate::vm::not_callable());
     };
     if !crate::conversion::is_callable(callback) {
-        return Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined));
+        return Err(crate::vm::not_callable());
     }
     let initial = arguments.get(1).cloned();
     let mut index = if reverse { length } else { 0 };
