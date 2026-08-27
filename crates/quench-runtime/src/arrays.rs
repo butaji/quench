@@ -1027,6 +1027,58 @@ fn typed_array_is_immutable(value: &Value) -> bool {
     }
 }
 
+fn typed_array_with(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "with")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.with called on out-of-bounds view",
+        ));
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let number = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let integer = if number.is_nan() { 0.0 } else { number.trunc() };
+    let index = if integer < 0.0 {
+        length as f64 + integer
+    } else {
+        integer
+    };
+    let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    let replacement = if matches!(value, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
+        match crate::conversion::to_primitive(&replacement, "number")? {
+            Value::BigInt(value) => Value::BigInt(value),
+            Value::String(value) => Value::BigInt(
+                crate::bigint::parse_string(&value)
+                    .ok_or_else(|| crate::value::error::throw_syntax_error("Invalid BigInt value"))?
+                    .to_string(),
+            ),
+            Value::Boolean(value) => Value::BigInt(if value { "1" } else { "0" }.to_string()),
+            _ => return Err(crate::value::error::throw_type_error("Cannot convert value to BigInt")),
+        }
+    } else {
+        Value::Number(crate::conversion::to_number(&replacement)?)
+    };
+    let current_length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    if index < 0.0 || index as usize >= current_length {
+        return Err(crate::value::error::throw_range_error("Invalid index"));
+    }
+    let mut values = Vec::with_capacity(length);
+    for current in 0..length {
+        values.push(if current == index as usize {
+            replacement.clone()
+        } else {
+            crate::execute::get_property_result(&value, &current.to_string())?
+        });
+    }
+    construct_typed_array_result(&value, values)
+}
+
 fn typed_array_compare_values(
     left: &Value,
     right: &Value,

@@ -23,6 +23,7 @@ fn array_mutation_builtin(
         ArrayToSorted => Some(crate::builtins::array_to_sorted(receiver, arguments)),
         TypedArrayToSorted => Some(typed_array_to_sorted(receiver, arguments)),
         TypedArraySort => Some(typed_array_sort(receiver, arguments)),
+        TypedArrayWith => Some(typed_array_with(receiver, arguments)),
         ArrayToSpliced => Some(crate::builtins::array_to_spliced(receiver, arguments)),
         ArrayWith => Some(crate::builtins::array_with(receiver, arguments)),
         _ => None,
