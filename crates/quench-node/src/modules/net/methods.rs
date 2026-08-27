@@ -291,7 +291,13 @@ fn parse_port(value: &Value) -> Result<u16, VmError> {
         ])));
     }
     let text = execute::to_js_string(value)?;
-    let Ok(port) = text.parse::<i64>() else {
+    let trimmed = text.trim();
+    let parsed = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .and_then(|digits| (!digits.is_empty()).then(|| i64::from_str_radix(digits, 16)))
+        .unwrap_or_else(|| trimmed.parse::<i64>());
+    let Ok(port) = parsed else {
         return Err(bad_port(value, &text));
     };
     if !(0..=u16::MAX as i64).contains(&port) {
