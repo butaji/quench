@@ -392,6 +392,8 @@ const CAP_PROCESS_ON: u16 = 0x0A07;
 const CAP_PROCESS_ONCE: u16 = 0x0A08;
 const CAP_PROCESS_EMIT: u16 = 0x0A0C;
 const CAP_PROCESS_EMIT_WARNING: u16 = 0x0A0D;
+const CAP_PROCESS_EXIT_CODE_GET: u16 = 0x0A21;
+const CAP_PROCESS_EXIT_CODE_SET: u16 = 0x0A22;
 const CAP_PROCESS_REMOVE_LISTENER: u16 = 0x0A0E;
 const CAP_PROCESS_REMOVE_ALL_LISTENERS: u16 = 0x0A0F;
 const CAP_STDOUT_WRITE: u16 = 0x0A09;
@@ -777,6 +779,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_REMOVE_LISTENER => process_remove_listener,
         CAP_PROCESS_REMOVE_ALL_LISTENERS => process_remove_all_listeners,
         CAP_PROCESS_EMIT_WARNING => process_emit_warning,
+        CAP_PROCESS_EXIT_CODE_GET => process_exit_code_get,
+        CAP_PROCESS_EXIT_CODE_SET => process_exit_code_set,
         CAP_STDOUT_WRITE | CAP_STDERR_WRITE => {
             |state, _receiver, args| crate::modules::process::stream_write(state, args)
         }
