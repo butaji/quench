@@ -45,12 +45,12 @@ fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
 fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@match")?;
     let input = to_string_argument(arguments)?;
-    let _flags = observable_flags(&receiver)?;
+    let flags = observable_flags(&receiver)?;
     let global = observable_bool(&receiver, "global")?;
     if !global {
         return regexp_exec(&receiver, &input);
     }
-    let unicode = observable_bool(&receiver, "unicode")?;
+    let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
     if !unicode
         && extract_source(&receiver) == "."
         && builtin_regexp_exec_property(&receiver)
@@ -167,9 +167,9 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     let receiver = regex_receiver(receiver, "@@replace")?;
     let s = to_string_argument(arguments)?;
     let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    let _flags = observable_flags(&receiver)?;
+    let flags = observable_flags(&receiver)?;
     let global = observable_bool(&receiver, "global")?;
-    let unicode = observable_bool(&receiver, "unicode")?;
+    let unicode = observable_bool(&receiver, "unicode")? || flags.contains('v');
     if crate::conversion::is_callable(&replacement) {
         if dynamic_exec(&receiver, global) {
             return replace_with_exec_callable(&receiver, &s, &replacement, global);
