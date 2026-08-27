@@ -321,6 +321,16 @@ fn finish_set_property(
             "Cannot convert a Symbol value to a string",
         ));
     }
+    if matches!(target, crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype))
+        && key == "__proto__"
+    {
+        crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::ObjectPrototypeSetProto,
+            std::slice::from_ref(&value),
+            Some(target),
+        )?;
+        return Ok(());
+    }
     let value = if process_env {
         crate::conversion::to_string(&value)
             .map(crate::value::Value::String)
