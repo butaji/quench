@@ -90,6 +90,7 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
         Builtin::TypedArrayToLocaleString => Some("toLocaleString"),
         Builtin::TypedArrayToReversed => Some("toReversed"),
         Builtin::TypedArrayToSorted => Some("toSorted"),
+        Builtin::TypedArraySet => Some("set"),
         _ => None,
     }
 }
@@ -150,6 +151,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayFill
         | Builtin::ArrayToSorted
         | Builtin::TypedArrayToSorted => Some(1.0),
+        Builtin::TypedArraySet => Some(1.0),
         Builtin::ArrayIterator
         | Builtin::TypedArrayIterator
         | Builtin::ArrayKeys
