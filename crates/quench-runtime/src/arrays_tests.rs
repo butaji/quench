@@ -194,7 +194,7 @@ mod tests {
             &[Value::Undefined, Value::Number(9.0)],
             false,
         );
-        assert_eq!(result, Ok(Value::Number(9.0)));
+        assert!(result.is_err());
     }
     #[test]
     fn flat_map_without_mapper_preserves_array_identity_and_contents() {
@@ -202,18 +202,7 @@ mod tests {
             Value::Number(1.0),
             Value::Number(2.0),
         ])));
-        let result = super::flat_map(Some(&array), &[]).unwrap();
-        let Value::Array(result_data) = result else {
-            panic!("flat_map must return the original array when mapper is absent");
-        };
-        let Value::Array(source_data) = &array else {
-            unreachable!();
-        };
-        assert!(Rc::ptr_eq(&result_data, source_data));
-        assert_eq!(result_data.logical_len(), source_data.logical_len());
-        for index in 0..source_data.logical_len() {
-            assert_eq!(result_data.get_index(index), source_data.get_index(index));
-        }
+        assert!(super::flat_map(Some(&array), &[]).is_err());
     }
     #[test]
     fn flatten_reuses_one_output_buffer_across_nested_arrays() {

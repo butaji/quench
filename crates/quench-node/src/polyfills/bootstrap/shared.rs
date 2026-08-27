@@ -47,7 +47,7 @@ __quenchSharedChildProcess.execFile = (file, args, options, callback) => {
     return child;
   }
   const failed = values.some((value) => String(value) === "42");
-  if (done) {
+  if (done && Array.isArray(args)) {
     queueMicrotask(() => {
       if (!failed) return done(null, __quenchEchoOutput(file, values), "");
       const error = new Error(`Command failed: ${file} ${values.join(" ")}`);
@@ -57,6 +57,8 @@ __quenchSharedChildProcess.execFile = (file, args, options, callback) => {
   }
   return child;
 };
+if (typeof __quenchSharedChildProcess["\0quench:child_process_execFile"] === "function")
+  __quenchSharedChildProcess.execFile = __quenchSharedChildProcess["\0quench:child_process_execFile"];
 const __quenchSyncOutput = (file, args, options) => {
   const values = Array.isArray(args) ? args : [];
   const value = String(file).endsWith("echo")
