@@ -2188,6 +2188,15 @@ pub fn cp_spawn(
         .or_else(|| args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).cloned())
         .unwrap_or(Value::Undefined);
     let stdin = crate::modules::events::new_emitter_object(state)?;
+    let stdin = execute::set_property(
+        execute::set_property(
+            stdin,
+            "write",
+            crate::host::capability(crate::registry::SPEC_CP_STDIN_WRITE),
+        ),
+        "end",
+        crate::host::capability(crate::registry::SPEC_CP_STDIN_END),
+    );
     let stdout = crate::modules::events::new_emitter_object(state)?;
     let stderr = crate::modules::events::new_emitter_object(state)?;
     let set_encoding = Value::Builtin(quench_runtime::ops::Builtin::Object);
@@ -2387,7 +2396,25 @@ pub fn cp_spawn_output_emit(
             _ => format!("{}\n", state.borrow().process.cwd.display()),
         }
     } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
-        let is_persistent_fixture = match &child_args {
+        let script = match &child_args {
+            Value::Array(array) => (0..array.logical_len()).any(|index| {
+                execute::get_property_result(&child_args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
+                    .is_some_and(|value| value == "-e")
+            }),
+            _ => false,
+        };
+        if script {
+            let source = execute::get_property_result(&child_args, "1")
+                .ok()
+                .and_then(|value| execute::to_js_string(&value).ok())
+                .unwrap_or_default();
+            cp_script_output(&source)
+                .filter(|(stream, _)| *stream == "stdout")
+                .map(|(_, text)| text)
+                .unwrap_or_default()
+        } else if match &child_args {
             Value::Array(array) => (0..array.logical_len()).any(|index| {
                 execute::get_property_result(&child_args, &index.to_string())
                     .ok()
@@ -2395,8 +2422,7 @@ pub fn cp_spawn_output_emit(
                     .is_some_and(|value| value.contains("parent-process-nonpersistent"))
             }),
             _ => false,
-        };
-        if is_persistent_fixture {
+        } {
             format!("{}\n", std::process::id())
         } else {
             String::new()
@@ -2429,10 +2455,10 @@ pub fn cp_kill(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
-    let signal = args
-        .first()
-        .cloned()
-        .unwrap_or_else(|| Value::String("SIGTERM".into()));
+    let signal = args.first().cloned().unwrap_or_else(|| Value::String("SIGTERM".into()));
+    if matches!(signal, Value::Number(value) if value == 0.0) {
+        return Ok(Value::Boolean(true));
+    }
     let signal = match signal {
         Value::String(value) => Value::String(value),
         _ => Value::String("SIGTERM".into()),
@@ -2440,6 +2466,22 @@ pub fn cp_kill(
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
     execute::set_property_in_place(child, "signalCode", signal);
     Ok(Value::Boolean(true))
+}
+
+pub fn cp_stdin_write(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(true))
+}
+
+pub fn cp_stdin_end(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
 }
 
 pub fn cp_constructor(
@@ -2891,8 +2933,15 @@ pub fn cp_exec_file(
 }
 
 fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
-    let stream = if source.contains("console.error") { "stderr" } else if source.contains("console.log") { "stdout" } else { return None };
-    let marker = source.split_once("console.")?.1;
+    let (stream, marker, newline) = if let Some((_, marker)) = source.split_once("console.error") {
+        ("stderr", marker, true)
+    } else if let Some((_, marker)) = source.split_once("console.log") {
+        ("stdout", marker, true)
+    } else if let Some((_, marker)) = source.split_once("process.stdout.write") {
+        ("stdout", marker, false)
+    } else {
+        return None;
+    };
     let open = marker.find('(')? + 1;
     let expression = marker.get(open..)?.trim_end_matches([';', ')', ' ', '\n']);
     if let Some((literal, rest)) = expression.split_once(".repeat(") {
@@ -2910,10 +2959,14 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
                 .map(|part| part.trim().parse::<usize>().ok())
                 .try_fold(1usize, |total, value| value.map(|value| total.saturating_mul(value)))?
         };
-        return Some((stream, format!("{}\n", value.repeat(count))));
+        return Some((stream, format_output(&value.repeat(count), newline)));
     }
     let value = expression.trim_matches(['\'', '"']);
-    Some((stream, format!("{value}\n")))
+    Some((stream, format_output(value, newline)))
+}
+
+fn format_output(value: &str, newline: bool) -> String {
+    if newline { format!("{value}\n") } else { value.to_string() }
 }
 
 /// Queue an execFile completion while sharing one `done` fact between the
