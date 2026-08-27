@@ -3100,6 +3100,56 @@ pub fn cp_exec_file(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let invalid_args = || {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String("The \"args\" argument must be an instance of Array".into())),
+        ]))
+    };
+    let invalid_options = || {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String("The \"options\" argument must be an object".into())),
+        ]))
+    };
+    let invalid_callback = || {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String("The \"callback\" argument must be a function".into())),
+        ]))
+    };
+    let mut saw_args = false;
+    let mut saw_options = false;
+    let mut callback_in_args = false;
+    for (index, value) in args.iter().enumerate().skip(1) {
+        if callback_in_args {
+            continue;
+        }
+        if matches!(value, Value::Undefined | Value::Null) {
+            continue;
+        }
+        if quench_runtime::is_callable(value) {
+            // Node treats a callback in the args slot as the callback form;
+            // trailing placeholders are ignored by its legacy overload.
+            if index == 1 {
+                callback_in_args = true;
+            } else if index + 1 != args.len() {
+                return Err(invalid_callback());
+            }
+            continue;
+        }
+        match value {
+            Value::Array(_) if !saw_args && !saw_options => saw_args = true,
+            Value::Object(_) | Value::ObjectAlias(_) if !saw_options => saw_options = true,
+            Value::Array(_) => return Err(invalid_args()),
+            Value::Object(_) | Value::ObjectAlias(_) => return Err(invalid_options()),
+            _ if !saw_args && !saw_options => return Err(invalid_args()),
+            _ => return Err(invalid_options()),
+        }
+    }
     let callback = args
         .iter()
         .rev()
