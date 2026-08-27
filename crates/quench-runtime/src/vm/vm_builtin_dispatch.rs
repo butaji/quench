@@ -51,6 +51,7 @@ fn is_function_builtin(builtin: Builtin) -> bool {
         | Builtin::ArrayUnshift
         | Builtin::ArrayFill
         | Builtin::ArrayCopyWithin
+        | Builtin::TypedArrayCopyWithin
         | Builtin::ArrayFindLast
         | Builtin::ArrayFindLastIndex
         | Builtin::ArrayFindIndex

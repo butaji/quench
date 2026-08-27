@@ -38,7 +38,7 @@ fn unwrap_binding_cells(value: &Value) -> Value {
     }
 }
 
-fn typed_array_is_detached(value: &Value) -> bool {
+pub(crate) fn typed_array_is_detached(value: &Value) -> bool {
     let buffer = match value {
         Value::Float64Array(data) => &data.buffer,
         Value::Float32Array(data) => &data.buffer,
