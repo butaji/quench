@@ -16,10 +16,24 @@ fn has_own_property_result(
     receiver: Option<&Value>,
     key: Option<&Value>,
 ) -> Result<Value, VmError> {
+    has_own_property_result_order(receiver, key, receiver.is_some())
+}
+
+pub(crate) fn has_own_property_static_result(
+    target: Option<&Value>,
+    key: Option<&Value>,
+) -> Result<Value, VmError> {
+    has_own_property_result_order(target, key, false)
+}
+
+fn has_own_property_result_order(
+    receiver: Option<&Value>,
+    key: Option<&Value>,
+    key_first: bool,
+) -> Result<Value, VmError> {
     // The prototype method performs ToPropertyKey before ToObject so a
     // coercion error wins over a nullish receiver error.
-    let coerced_key = receiver
-        .is_some()
+    let coerced_key = key_first
         .then(|| key.map(crate::properties::dynamic_property_key))
         .flatten()
         .transpose()?;
@@ -29,10 +43,7 @@ fn has_own_property_result(
     let Some(key) = key else {
         return Ok(Value::Boolean(false));
     };
-    let key = coerced_key.map_or_else(
-        || crate::properties::dynamic_property_key(key),
-        Ok,
-    )?;
+    let key = coerced_key.map_or_else(|| crate::properties::dynamic_property_key(key), Ok)?;
     crate::module_bindings::exports(&receiver, &key)?;
     Ok(Value::Boolean(owns_property(&receiver, &key)?))
 }
@@ -158,7 +169,8 @@ pub(crate) fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
         return false;
     }
-    (builtin == Builtin::Object && key == "hasOwn")
+    (builtin == Builtin::ObjectPrototype && key == "__proto__")
+        || (builtin == Builtin::Object && key == "hasOwn")
         || crate::builtins::read_intrinsic_override(builtin, key).is_some()
         || super::own_property_names(builtin).contains(&key)
         || super::callable_property(builtin, key).is_some()
