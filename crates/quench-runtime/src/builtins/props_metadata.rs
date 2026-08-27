@@ -99,7 +99,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
         ArrayBuffer | Object | DataView => 1.0,
         ObjectCreate => 2.0,
         Float64Array | Float32Array | Int8Array | Int16Array | Uint16Array | Int32Array
-        | Uint32Array | Uint8ClampedArray | BigInt64Array | BigUint64Array => 3.0,
+        | Uint32Array | Uint8Array | Uint8ClampedArray | BigInt64Array | BigUint64Array => 3.0,
         MapEntries | MapKeys | MapValues | DateNow => 0.0,
         RegExp => 2.0,
         DateParse => 1.0,

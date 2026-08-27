@@ -541,6 +541,8 @@ fn is_typed_array_constructor(builtin: Builtin) -> bool {
             | Builtin::Uint16Array
             | Builtin::Uint32Array
             | Builtin::Uint8ClampedArray
+            | Builtin::BigInt64Array
+            | Builtin::BigUint64Array
     )
 }
 
