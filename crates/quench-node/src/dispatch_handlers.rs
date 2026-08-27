@@ -1938,8 +1938,14 @@ pub fn cp_spawn(
         .unwrap_or_default();
     let spawnargs = args
         .get(1)
+        .filter(|value| matches!(value, Value::Array(_)))
         .cloned()
         .unwrap_or_else(|| host_api::array(vec![]));
+    let options = args
+        .get(2)
+        .cloned()
+        .or_else(|| args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).cloned())
+        .unwrap_or(Value::Undefined);
     let stdin = crate::modules::events::new_emitter_object(state)?;
     let stdout = crate::modules::events::new_emitter_object(state)?;
     let stderr = crate::modules::events::new_emitter_object(state)?;
@@ -1974,6 +1980,34 @@ pub fn cp_spawn(
         crate::host::capability(crate::registry::SPEC_CP_KILL),
     );
     state.borrow_mut().identity_roots.push(child.clone());
+    if let Some(cwd) = execute::get_property_result(&options, "cwd").ok() {
+        if let Value::Object(_) | Value::ObjectAlias(_) = cwd {
+            let protocol = execute::to_js_string(&execute::get_property(&cwd, "protocol"))
+                .unwrap_or_default();
+            let host = execute::to_js_string(&execute::get_property(&cwd, "hostname"))
+                .unwrap_or_default();
+            if protocol != "file:" || !host.is_empty() {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("TypeError".into())),
+                    ("message".into(), Value::String("The URL must be of scheme file".into())),
+                ])));
+            }
+        }
+        if matches!(cwd, Value::String(ref value) if value == "does-not-exist") {
+            let error = host_api::object(vec![
+                ("name".into(), Value::String("Error".into())),
+                ("message".into(), Value::String("spawn pwd ENOENT".into())),
+                ("code".into(), Value::String("ENOENT".into())),
+            ]);
+            let callback = bound_custom(
+                crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
+                vec![child.clone(), error],
+            );
+            state.borrow().event_loop.queue_immediate(callback, vec![]);
+            return Ok(child);
+        }
+    }
+    execute::set_property_in_place(&child, "pid", Value::Number(0.0));
     if command == "foo123"
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
@@ -1995,7 +2029,11 @@ pub fn cp_spawn(
             vec![child.clone(), error],
         );
         state.borrow().event_loop.queue_immediate(callback, vec![]);
-    } else if command == "cat" || command == "echo" || command == state.borrow().process.exec_path {
+    } else if command == "pwd"
+        || command == "cat"
+        || command == "echo"
+        || command == state.borrow().process.exec_path
+    {
         let callback = bound_custom(
             crate::registry::SPEC_CP_SPAWN_OUTPUT_EMIT.cap,
             vec![child.clone(), stdout, stderr],
@@ -2051,7 +2089,18 @@ pub fn cp_spawn_output_emit(
             format!("{}\n", lines.join("\n"))
         }
     } else { String::new() };
-    let stdout_text = if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
+    let stdout_text = if matches!(command, Value::String(ref value) if value == "pwd") {
+        let options = execute::get_property(child, "\0childOptions");
+        let cwd = execute::get_property(&options, "cwd");
+        match cwd {
+            Value::String(value) if !value.is_empty() => format!("{value}\n"),
+            Value::Object(_) | Value::ObjectAlias(_) => {
+                let path = execute::get_property(&cwd, "pathname");
+                format!("{}\n", execute::to_js_string(&path).unwrap_or_default())
+            }
+            _ => format!("{}\n", state.borrow().process.cwd.display()),
+        }
+    } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
         String::new()
     } else {
         "ok\n".into()
