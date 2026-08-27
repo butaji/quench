@@ -67,7 +67,14 @@ fn run_uncaught_handlers(state: &Rc<RefCell<HostState>>, thrown: &Value) -> Resu
         crate::modules::timers::HandlerKind::UncaughtException,
     );
     for handler in handlers {
-        call_callback(&handler, &Value::Undefined, std::slice::from_ref(thrown))?;
+        call_callback(
+            &handler,
+            &Value::Undefined,
+            &[
+                thrown.clone(),
+                Value::String("uncaughtException".to_string()),
+            ],
+        )?;
     }
     Ok(())
 }
