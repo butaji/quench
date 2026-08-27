@@ -82,6 +82,7 @@ pub enum Builtin {
     MathF16Round, MathRandom,
     MathSumPrecise, ArrayReduce,
     ArrayReduceRight, ArrayForEach, TypedArrayEntries, TypedArrayKeys, TypedArrayForEach, TypedArrayEvery,
+    TypedArrayFind, TypedArrayFindIndex, TypedArrayFindLast, TypedArrayFindLastIndex,
     FunctionCall, FunctionApply,
     Boolean, BooleanValueOf,
     BooleanToString, Print,

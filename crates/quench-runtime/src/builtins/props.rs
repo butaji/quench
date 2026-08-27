@@ -335,6 +335,22 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
                 .then_some(Builtin::TypedArrayForEach)
         })
         .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "find")
+                .then_some(Builtin::TypedArrayFind)
+        })
+        .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "findIndex")
+                .then_some(Builtin::TypedArrayFindIndex)
+        })
+        .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "findLast")
+                .then_some(Builtin::TypedArrayFindLast)
+        })
+        .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "findLastIndex")
+                .then_some(Builtin::TypedArrayFindLastIndex)
+        })
+        .or_else(|| {
             (builtin == Builtin::TypedArray && key == "map").then_some(Builtin::ArrayMap)
         })
         .or_else(|| {
