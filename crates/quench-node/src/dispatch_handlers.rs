@@ -1313,6 +1313,60 @@ pub fn internal_js_stream_construct(
     )]))
 }
 
+fn source_text_module_requests(source: &str) -> Result<Vec<(Value, String)>, VmError> {
+    let mut requests = Vec::new();
+    for rest in source.split("import ").skip(1) {
+        let Some((quote, start)) = ['\'', '"']
+            .iter()
+            .find_map(|quote| rest.find(*quote).map(|start| (*quote, start))) else { continue };
+        let text = &rest[start + 1..];
+        let Some(end) = text.find(quote) else { continue };
+        let specifier = text[..end].to_string();
+        let phase = if rest.trim_start().starts_with("source ") {
+            "source"
+        } else {
+            "evaluation"
+        };
+        let attributes = rest
+            .get(end + 1..)
+            .and_then(|tail| tail.split(';').next())
+            .and_then(|tail| tail.split_once("with"))
+            .map(|(_, value)| value.trim().to_string())
+            .unwrap_or_default();
+        let key = format!("{specifier}\0{phase}\0{attributes}");
+        let mut attribute_values = Vec::new();
+        if let Some(body) = rest.get(end + 1..).and_then(|tail| tail.split_once("with {") )
+            .and_then(|(_, body)| body.split_once('}').map(|(body, _)| body))
+        {
+            for entry in body.split(',') {
+                let Some((name, value)) = entry.split_once(':') else { continue };
+                let value = value.trim().trim_matches(['\'', '"']);
+                attribute_values.push((name.trim().to_string(), Value::String(value.into())));
+            }
+        }
+        let attributes = quench_runtime::host_api::object(attribute_values);
+        let attributes = execute::set_prototype_of(&attributes, &Value::Null)
+            .unwrap_or(attributes);
+        let mut request = quench_runtime::host_api::object(vec![
+            ("specifier".into(), Value::String(specifier)),
+            ("attributes".into(), attributes),
+            ("phase".into(), Value::String(phase.into())),
+        ]);
+        for key in ["specifier", "attributes", "phase"] {
+            let value = execute::get_property(&request, key);
+            request = execute::define_property(request, key, host_api::object(vec![
+                ("value".into(), value),
+                ("writable".into(), Value::Boolean(false)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(false)),
+            ]))?;
+        }
+        let request = execute::set_prototype_of(&request, &Value::Null).unwrap_or(request);
+        requests.push((request, key));
+    }
+    Ok(requests)
+}
+
 pub fn vm_source_text_module_construct(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
@@ -1321,17 +1375,19 @@ pub fn vm_source_text_module_construct(
         Some(Value::String(source)) => source.clone(),
         _ => String::new(),
     };
-    let dependency_specifiers = source
-        .split("import ")
-        .skip(1)
-        .filter_map(|rest| {
-            let (quote, start) = ['\'', '"']
-                .iter()
-                .find_map(|quote| rest.find(*quote).map(|start| (*quote, start)))?;
-            let text = &rest[start + 1..];
-            let end = text.find(quote)?;
-            Some(Value::String(text[..end].to_string()))
+    let parsed_requests = source_text_module_requests(&source)?;
+    let mut seen = Vec::new();
+    let module_requests: Vec<Value> = parsed_requests
+        .iter()
+        .filter_map(|(request, key)| {
+            if seen.iter().any(|item| item == key) { return None; }
+            seen.push(key.clone());
+            Some(request.clone())
         })
+        .collect();
+    let dependency_specifiers = module_requests
+        .iter()
+        .map(|request| execute::get_property(request, "specifier"))
         .collect();
     let mut namespace = quench_runtime::host_api::object(Vec::new());
     let mut uninitialized = quench_runtime::host_api::object(Vec::new());
@@ -1374,6 +1430,10 @@ pub fn vm_source_text_module_construct(
         (
             "dependencySpecifiers".into(),
             quench_runtime::host_api::array(dependency_specifiers),
+        ),
+        (
+            "moduleRequests".into(),
+            quench_runtime::host_api::array(module_requests),
         ),
         (
             "link".into(),
