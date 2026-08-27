@@ -45,6 +45,7 @@ fn execute_builtin_match(
         ArraySome => return Some(some(receiver, arguments)),
         ArrayEvery => return Some(every(receiver, arguments)),
         TypedArrayEvery => return Some(typed_array_every(receiver, arguments)),
+        TypedArraySome => return Some(typed_array_some(receiver, arguments)),
         ArrayFind => return Some(find(receiver, arguments)),
         TypedArrayFind => return Some(typed_array_find(receiver, arguments)),
         TypedArrayFindIndex => return Some(typed_array_find_index(receiver, arguments)),
@@ -111,6 +112,36 @@ fn typed_array_every(
         ));
     }
     every(Some(value), arguments)
+}
+
+fn typed_array_some(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "some")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.some called on out-of-bounds view",
+        ));
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
+    for index in 0..length {
+        let item = crate::builtins::map_value(&value, index)?.unwrap_or(Value::Undefined);
+        let result = crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[item, Value::Number(index as f64), value.clone()],
+        )?;
+        if crate::execute::is_truthy(&result) {
+            return Ok(Value::Boolean(true));
+        }
+    }
+    Ok(Value::Boolean(false))
 }
 
 fn typed_array_receiver(
