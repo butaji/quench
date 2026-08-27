@@ -1,10 +1,10 @@
 //! VM helpers for executing residual operations.
-use std::rc::Rc;
 pub use crate::vm::{
     copy_register, execute as run_vm, execute_builtin_with_receiver, execute_code_with_context,
     execute_in_place, execute_with_context, execute_with_registers, get_property,
     get_property_result, is_truthy, read_register, write_value, VmError,
 };
+use std::rc::Rc;
 
 pub fn call(
     function: &crate::value::Value,
@@ -24,18 +24,33 @@ pub fn set_property(
 
 /// Mutate one existing ordinary-object slot while preserving object identity.
 /// Host state machines use this only where JavaScript observes identity.
-pub fn set_property_in_place(target: &crate::value::Value, key: &str, value: crate::value::Value) -> bool {
+pub fn set_property_in_place(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> bool {
     let object = match target {
         crate::value::Value::Object(object) => Rc::clone(object),
         crate::value::Value::ObjectAlias(alias) => match alias.target() {
             Some(object) => object,
             None => return false,
         },
+        crate::value::Value::BoundFunction(bound) => {
+            bound.properties.borrow_mut().push((key.to_string(), value));
+            return true;
+        }
+        crate::value::Value::Function(function) => {
+            function.properties.borrow_mut().push((key.to_string(), value));
+            return true;
+        }
         _ => return false,
     };
     // The host has exclusive semantic ownership of this identity-sensitive
     // transition; the runtime's ordinary object path remains copy-on-write.
-    unsafe { (&mut *(Rc::as_ptr(&object) as *mut crate::value::ObjectData)).set_property_in_place(key, value); }
+    unsafe {
+        (&mut *(Rc::as_ptr(&object) as *mut crate::value::ObjectData))
+            .set_property_in_place(key, value);
+    }
     true
 }
 
@@ -136,6 +151,11 @@ pub fn replace_value(old: &crate::value::Value, new: &crate::value::Value) {
 pub fn reset_replacements() {
     crate::locals::reset_replacements();
 }
+
+/// Trigger the runtime's explicit weak-reference collection boundary.
+pub fn collect_weak_refs() {
+    crate::construct::collect_weak_refs();
+}
 /// Canonical strict equality (`===`) for host code. The VM and host
 /// modules share this single semantic owner.
 pub fn strict_equal(left: &crate::value::Value, right: &crate::value::Value) -> bool {
@@ -181,7 +201,9 @@ pub fn own_keys(value: &crate::value::Value) -> Vec<crate::value::Value> {
     let Ok(crate::value::Value::Array(keys)) = crate::own_keys::all(value) else {
         return Vec::new();
     };
-    (0..keys.len()).filter_map(|index| keys.get(index)).collect()
+    (0..keys.len())
+        .filter_map(|index| keys.get(index))
+        .collect()
 }
 
 /// Validate proxy own-keys invariants before a host algorithm observes its target.
@@ -195,10 +217,13 @@ pub fn validate_proxy(value: &crate::value::Value) -> Result<(), VmError> {
 }
 
 pub fn has_own_property(value: &crate::value::Value, key: &str) -> bool {
-    matches!(crate::builtins::object::has_own_property(
-        Some(value),
-        Some(&crate::value::Value::String(key.to_string())),
-    ), crate::value::Value::Boolean(true))
+    matches!(
+        crate::builtins::object::has_own_property(
+            Some(value),
+            Some(&crate::value::Value::String(key.to_string())),
+        ),
+        crate::value::Value::Boolean(true)
+    )
 }
 
 /// Canonical JavaScript `ToString` (may run user `toString`/`valueOf`).

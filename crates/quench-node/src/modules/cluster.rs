@@ -210,7 +210,8 @@ pub fn on(
             .push(cb.clone());
         match name.as_str() {
             "online" => {
-                let _ = execute::set_property_in_place(&obj, "state", Value::String("online".into()));
+                let _ =
+                    execute::set_property_in_place(&obj, "state", Value::String("online".into()));
                 let _ = execute::call(cb, &obj, &[]);
                 let module = state.borrow().cluster.module.clone();
                 if let Some(module) = module {
@@ -222,7 +223,11 @@ pub fn on(
                 }
             }
             "listening" => {
-                let _ = execute::set_property_in_place(&obj, "state", Value::String("listening".into()));
+                let _ = execute::set_property_in_place(
+                    &obj,
+                    "state",
+                    Value::String("listening".into()),
+                );
                 let info = host_api::object(vec![
                     ("address".into(), Value::String("127.0.0.1".into())),
                     ("addressType".into(), Value::Number(4.0)),
@@ -239,8 +244,19 @@ pub fn on(
                     );
                 }
             }
-            "exit" if state.borrow().cluster.workers.get(&id).is_some_and(|w| w.dead) => {
-                let _ = execute::call(cb, &obj, &[Value::Number(0.0), Value::String("SIGTERM".into())]);
+            "exit"
+                if state
+                    .borrow()
+                    .cluster
+                    .workers
+                    .get(&id)
+                    .is_some_and(|w| w.dead) =>
+            {
+                let _ = execute::call(
+                    cb,
+                    &obj,
+                    &[Value::Number(0.0), Value::String("SIGTERM".into())],
+                );
             }
             _ => {}
         }

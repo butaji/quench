@@ -22,6 +22,37 @@ pub type ConstructHandler = fn(&Rc<RefCell<HostState>>, &[Value]) -> Result<Valu
 
 thread_local! {
     static OS_PRIORITY: Cell<i32> = const { Cell::new(0) };
+    static EVENT_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static GC_EPOCH: Cell<u64> = const { Cell::new(0) };
+}
+
+fn event_prototype() -> Value {
+    EVENT_PROTOTYPE.with(|slot| {
+        if let Some(value) = slot.borrow().clone() {
+            return value;
+        }
+        let prototype = host_api::object(Vec::new());
+        let descriptor = host_api::object(vec![
+            (
+                "get".into(),
+                crate::host::capability(crate::registry::SPEC_EVENT_TRUSTED_GET),
+            ),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]);
+        let prototype = execute::define_property(prototype, "isTrusted", descriptor)
+            .unwrap_or_else(|_| host_api::object(Vec::new()));
+        *slot.borrow_mut() = Some(prototype.clone());
+        prototype
+    })
+}
+
+pub fn event_trusted_get(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(false))
 }
 
 static PROCESS_START: OnceLock<Instant> = OnceLock::new();
@@ -173,6 +204,32 @@ pub fn util_inspect(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let arg = args.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(execute::get_property(&arg, "Symbol.toStringTag"), Value::String(ref tag) if tag == "AbortController")
+        && execute::has_own_property(&arg, "signal")
+    {
+        let depth = args.get(1).and_then(|options| {
+            let value = if matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+                execute::get_property(options, "depth")
+            } else {
+                options.clone()
+            };
+            match value {
+                Value::Null => Some(usize::MAX),
+                Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as usize),
+                _ => None,
+            }
+        });
+        let signal = execute::get_property(&arg, "signal");
+        let aborted = execute::get_property(&signal, "aborted");
+        return Ok(Value::String(if depth.is_some_and(|value| value <= 1) {
+            "AbortController { signal: [AbortSignal] }".into()
+        } else {
+            format!(
+                "AbortController {{ signal: AbortSignal {{ aborted: {} }} }}",
+                crate::modules::util::inspect(&aborted)
+            )
+        }));
+    }
     if let (Value::Object(_), Some(options)) = (&arg, args.get(1)) {
         let depth = execute::get_property(options, "depth");
         let tag = execute::get_property(&arg, "Symbol.toStringTag");
@@ -276,6 +333,87 @@ pub fn util_inspect(
     }))
 }
 
+pub fn util_aborted(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let rejected = |message: &str| {
+        let promise = Rc::new(quench_runtime::value::PromiseData::new(
+            quench_runtime::value::PromiseState::Pending,
+        ));
+        let error = host_api::object(vec![
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("name".into(), Value::String("TypeError".into())),
+            ("message".into(), Value::String(message.into())),
+        ]);
+        quench_runtime::reject_promise(&promise, error);
+        Value::Promise(promise)
+    };
+    let Some(signal) = args.first() else {
+        return Ok(rejected("The signal argument must be an AbortSignal"));
+    };
+    let Some(resource) = args.get(1) else {
+        return Ok(rejected("The resource argument must be an object"));
+    };
+    if !matches!(resource, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Ok(rejected("The resource argument must be an object"));
+    }
+    if !matches!(
+        execute::get_property(signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+        Value::Boolean(true)
+    ) {
+        return Ok(rejected("The signal argument must be an AbortSignal"));
+    }
+    let promise = Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Pending,
+    ));
+    if execute::is_truthy(&execute::get_property(signal, "aborted")) {
+        quench_runtime::resolve_promise(&promise, Value::Undefined);
+        return Ok(Value::Promise(promise));
+    }
+    let callback = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_UTIL_ABORTED_RESOLVE.cap,
+            ),
+        },
+        vec![
+            Value::Promise(promise.clone()),
+            Value::Number(GC_EPOCH.with(Cell::get) as f64),
+        ],
+    );
+    crate::modules::event_target::add_event_listener(
+        state,
+        Some(signal),
+        &[
+            Value::String("abort".into()),
+            callback,
+            host_api::object(vec![("once".into(), Value::Boolean(true))]),
+        ],
+    )?;
+    Ok(Value::Promise(promise))
+}
+
+pub fn util_aborted_resolve(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let captured = args.get(1).and_then(|value| match value {
+        Value::Number(value) => Some(*value as u64),
+        _ => None,
+    });
+    if captured != Some(GC_EPOCH.with(Cell::get)) {
+        return Ok(Value::Undefined);
+    }
+    if let Some(Value::Promise(promise)) = args.first() {
+        quench_runtime::resolve_promise(promise, Value::Undefined);
+    }
+    Ok(Value::Undefined)
+}
+
 pub fn util_parse_env(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -299,6 +437,15 @@ pub fn util_promisify(
     if let Ok(custom) = execute::get_property_result(&original, custom_key) {
         if !matches!(custom, Value::Undefined) {
             if quench_runtime::is_callable(&custom) {
+                // Node canonicalizes a custom promisifier by making the
+                // returned function idempotent: promisify(custom) returns
+                // the same identity. Keep this mutation on the existing
+                // function rather than wrapping it again.
+                let _ = execute::set_property_in_place(
+                    &custom,
+                    custom_key,
+                    custom.clone(),
+                );
                 return Ok(
                     match timer_promise_alias(&original).or_else(|| {
                         match execute::get_property(&custom, "name") {
@@ -352,11 +499,14 @@ pub fn util_promisify(
         _ => wrapper,
     };
     let custom = wrapper.clone();
-    Ok(execute::set_property(
-        wrapper,
+    if !execute::set_property_in_place(
+        &wrapper,
         crate::modules::util::PROMISIFY_CUSTOM_KEY,
         custom,
-    ))
+    ) {
+        return Err(VmError::NotCallable);
+    }
+    Ok(wrapper)
 }
 
 pub fn util_deprecate(
@@ -443,6 +593,33 @@ pub fn util_system_error_name(
         _ => return Ok(Value::String(format!("Unknown system error {errno}"))),
     };
     Ok(Value::String(name.into()))
+}
+
+pub fn util_convert_signal_to_exit_code(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::String(signal)) = args.first() else {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+            ("message".into(), Value::String("The signal argument must be a valid signal name".into())),
+        ])));
+    };
+    let number = match signal.as_str() {
+        "SIGHUP" => 1,
+        "SIGINT" => 2,
+        "SIGABRT" => 6,
+        "SIGKILL" => 9,
+        "SIGTERM" => 15,
+        _ => return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+            ("message".into(), Value::String("The signal argument must be a valid signal name".into())),
+        ]))),
+    };
+    Ok(Value::Number((128 + number) as f64))
 }
 
 pub fn util_exception_with_host_port(
@@ -947,12 +1124,19 @@ pub fn internal_binding(
     }
     if name == "constants" {
         let empty = || crate::host::null_namespace(Vec::new());
+        let signals = crate::host::null_namespace(vec![
+            ("SIGHUP".into(), Value::Number(1.0)),
+            ("SIGINT".into(), Value::Number(2.0)),
+            ("SIGABRT".into(), Value::Number(6.0)),
+            ("SIGKILL".into(), Value::Number(9.0)),
+            ("SIGTERM".into(), Value::Number(15.0)),
+        ]);
         let os = crate::host::null_namespace(vec![
             ("UV_UDP_REUSEADDR".into(), Value::Number(1.0)),
             ("dlopen".into(), empty()),
             ("errno".into(), empty()),
             ("priority".into(), empty()),
-            ("signals".into(), empty()),
+            ("signals".into(), signals),
         ]);
         return Ok(crate::host::null_namespace(vec![
             ("crypto".into(), empty()),
@@ -1648,6 +1832,34 @@ pub fn os_eol(
 ) -> Result<Value, VmError> {
     Ok(Value::String(crate::modules::os::eol()))
 }
+pub fn os_endianness(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::os::endianness(state, args)
+}
+pub fn os_version(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::os::version(state, args)
+}
+pub fn os_machine(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::os::machine(state, args)
+}
+pub fn os_user_info(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::os::user_info(state, args)
+}
 pub fn os_uptime(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -1959,7 +2171,7 @@ pub fn cp_spawn(
     let child = execute::set_property(
         child,
         "\0childOptions",
-        args.get(2).cloned().unwrap_or(Value::Undefined),
+        options.clone(),
     );
     let child = execute::set_property(child, "stdin", stdin.clone());
     let child = execute::set_property(child, "stdout", stdout.clone());
@@ -2354,6 +2566,16 @@ pub fn fetch(
     Ok(Value::Undefined)
 }
 
+pub fn gc(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    GC_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
+    quench_runtime::execute::collect_weak_refs();
+    Ok(Value::Undefined)
+}
+
 pub fn abort_controller_new(
     state: &Rc<RefCell<HostState>>,
     _args: &[Value],
@@ -2365,13 +2587,109 @@ pub fn abort_controller_new(
         crate::modules::event_target::ABORT_SIGNAL_BRAND,
         Value::Boolean(true),
     );
+    let signal = quench_runtime::execute::set_property(
+        signal,
+        "constructor",
+        crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL),
+    );
+    let signal = quench_runtime::execute::set_property(
+        signal,
+        "Symbol.toStringTag",
+        Value::String("AbortSignal".into()),
+    );
+    let signal = quench_runtime::execute::set_property(
+        signal,
+        "throwIfAborted",
+        crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_THROW_IF_ABORTED),
+    );
     Ok(quench_runtime::host_api::object(vec![
+        ("\0quench:abort:controller".into(), Value::Boolean(true)),
+        ("\0quench:abort:signal".into(), signal.clone()),
         ("signal".to_string(), signal),
+        (
+            "constructor".into(),
+            crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER),
+        ),
+        (
+            "Symbol.toStringTag".into(),
+            Value::String("AbortController".into()),
+        ),
         (
             "abort".to_string(),
             crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER_ABORT),
         ),
     ]))
+}
+
+pub fn abort_controller_signal_get(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(execute::type_error("Illegal invocation"));
+    };
+    let signal = execute::get_property(receiver, "\0quench:abort:signal");
+    if !matches!(signal, Value::Object(_))
+        || !matches!(
+            execute::get_property(receiver, "\0quench:abort:controller"),
+            Value::Boolean(true)
+        )
+    {
+        return Err(execute::type_error("Illegal invocation"));
+    }
+    Ok(signal)
+}
+
+pub fn abort_signal_aborted_get(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(execute::type_error("Illegal invocation"));
+    };
+    if !matches!(execute::get_property(receiver, "Symbol.toStringTag"), Value::String(ref tag) if tag == "AbortSignal")
+    {
+        return Err(execute::type_error("Illegal invocation"));
+    }
+    Ok(execute::get_property(receiver, "aborted"))
+}
+
+pub fn abort_signal_has_instance(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(args.first().is_some_and(|value| {
+        matches!(
+            execute::get_property(value, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+            Value::Boolean(true)
+        )
+    })))
+}
+
+pub fn abort_signal_throw_if_aborted(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(signal) = receiver else {
+        return Err(execute::type_error("Illegal invocation"));
+    };
+    if !matches!(
+        execute::get_property(signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+        Value::Boolean(true)
+    ) {
+        return Err(execute::type_error("Illegal invocation"));
+    }
+    if matches!(
+        execute::get_property(signal, "aborted"),
+        Value::Boolean(true)
+    ) {
+        return Err(VmError::Thrown(execute::get_property(signal, "reason")));
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn abort_controller_abort(
@@ -2380,9 +2698,16 @@ pub fn abort_controller_abort(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let Some(controller) = receiver else {
-        return Ok(Value::Undefined);
+        return Err(execute::type_error("Illegal invocation"));
     };
-    let original_signal = quench_runtime::execute::get_property(controller, "signal");
+    if !matches!(
+        execute::get_property(controller, "\0quench:abort:controller"),
+        Value::Boolean(true)
+    ) {
+        return Err(execute::type_error("Illegal invocation"));
+    }
+    let original_signal =
+        quench_runtime::execute::get_property(controller, "\0quench:abort:signal");
     if matches!(
         quench_runtime::execute::get_property(&original_signal, "aborted"),
         Value::Boolean(true)
@@ -2391,11 +2716,13 @@ pub fn abort_controller_abort(
     }
     let reason = args.first().cloned().unwrap_or_else(|| {
         quench_runtime::host_api::object(vec![
+            ("\0domexception".into(), Value::Boolean(true)),
             ("name".into(), Value::String("AbortError".into())),
             (
                 "message".into(),
                 Value::String("This operation was aborted".into()),
             ),
+            ("code".into(), Value::Number(20.0)),
         ])
     });
     quench_runtime::execute::set_property_in_place(
@@ -2406,11 +2733,13 @@ pub fn abort_controller_abort(
     quench_runtime::execute::set_property_in_place(&original_signal, "reason", reason);
     let event = quench_runtime::host_api::object(vec![
         ("type".into(), Value::String("abort".into())),
+        ("isTrusted".into(), Value::Boolean(true)),
         (
             "stopImmediatePropagation".into(),
             crate::host::capability(crate::registry::SPEC_ABORT_EVENT_STOP_IMMEDIATE),
         ),
     ]);
+    let event = execute::set_prototype_of(&event, &event_prototype())?;
     crate::modules::event_target::dispatch_event(state, Some(&original_signal), &[event])?;
     propagate_abort_composites(state, &original_signal)
 }
@@ -2514,7 +2843,7 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
             crate::host::capability(crate::registry::SPEC_EVENT_COMPOSED_PATH),
         ),
     ]);
-    execute::define_property(
+    let event = execute::define_property(
         event,
         "cancelBubble",
         host_api::object(vec![
@@ -2529,7 +2858,8 @@ pub fn event_new(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Valu
             ("enumerable".into(), Value::Boolean(true)),
             ("configurable".into(), Value::Boolean(true)),
         ]),
-    )
+    )?;
+    execute::set_prototype_of(&event, &event_prototype())
 }
 
 pub fn custom_event_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -2758,10 +3088,17 @@ pub fn abort_signal_new(
     _state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(quench_runtime::host_api::object(vec![(
-        "aborted".to_string(),
-        Value::Boolean(false),
-    )]))
+    Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        (
+            "code".into(),
+            Value::String("ERR_ILLEGAL_CONSTRUCTOR".into()),
+        ),
+        (
+            "message".into(),
+            Value::String("Illegal constructor".into()),
+        ),
+    ])))
 }
 
 pub fn abort_signal_abort(
@@ -2776,16 +3113,23 @@ pub fn abort_signal_abort(
         crate::modules::event_target::ABORT_SIGNAL_BRAND,
         Value::Boolean(true),
     );
+    let signal = quench_runtime::execute::set_property(
+        signal,
+        "throwIfAborted",
+        crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_THROW_IF_ABORTED),
+    );
     Ok(quench_runtime::execute::set_property(
         signal,
         "reason",
         args.first().cloned().unwrap_or_else(|| {
             quench_runtime::host_api::object(vec![
+                ("\0domexception".into(), Value::Boolean(true)),
                 ("name".into(), Value::String("AbortError".into())),
                 (
                     "message".into(),
                     Value::String("This operation was aborted".into()),
                 ),
+                ("code".into(), Value::Number(20.0)),
             ])
         }),
     ))
@@ -2845,10 +3189,14 @@ pub fn abort_signal_timeout_fire(
         "name",
         Value::String("TimeoutError".into()),
     );
+    let reason = execute::set_property(reason, "code", Value::Number(23.0));
     execute::set_property_in_place(signal, "aborted", Value::Boolean(true));
     execute::set_property_in_place(signal, "reason", reason);
-    let event =
-        quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+    let event = quench_runtime::host_api::object(vec![
+        ("type".into(), Value::String("abort".into())),
+        ("isTrusted".into(), Value::Boolean(true)),
+    ]);
+    let event = execute::set_prototype_of(&event, &event_prototype())?;
     crate::modules::event_target::dispatch_event(state, Some(signal), &[event])?;
     propagate_abort_composites(state, signal)
 }
@@ -2872,8 +3220,11 @@ fn propagate_abort_composites(
         }
         execute::set_property_in_place(&composite, "aborted", Value::Boolean(true));
         execute::set_property_in_place(&composite, "reason", reason.clone());
-        let event =
-            quench_runtime::host_api::object(vec![("type".into(), Value::String("abort".into()))]);
+        let event = quench_runtime::host_api::object(vec![
+            ("type".into(), Value::String("abort".into())),
+            ("isTrusted".into(), Value::Boolean(true)),
+        ]);
+        let event = execute::set_prototype_of(&event, &event_prototype())?;
         crate::modules::event_target::dispatch_event(state, Some(&composite), &[event])?;
         propagate_abort_composites(state, &composite)?;
     }
@@ -3114,6 +3465,47 @@ pub fn test_run(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::test::run(state, args)
+}
+
+pub fn test_mock_fn(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let implementation = args.first().cloned().unwrap_or(Value::Undefined);
+    let calls = quench_runtime::host_api::array(Vec::new());
+    let wrapper = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_TEST_MOCK_CALL.cap,
+            ),
+        },
+        vec![implementation, calls.clone()],
+    );
+    let mock = quench_runtime::host_api::object(vec![("calls".into(), calls)]);
+    Ok(quench_runtime::execute::set_property(wrapper, "mock", mock))
+}
+
+pub fn test_mock_call(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let implementation = args.first().ok_or(VmError::NotCallable)?;
+    let calls = args.get(1).ok_or(VmError::NotCallable)?;
+    let call_args = args.get(2..).unwrap_or_default();
+    let index = match quench_runtime::execute::get_property_result(calls, "length")? {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    let record = quench_runtime::host_api::object(vec![(
+        "arguments".into(),
+        quench_runtime::host_api::array(call_args.to_vec()),
+    )]);
+    let updated = quench_runtime::execute::set_property(calls.clone(), &index.to_string(), record);
+    quench_runtime::execute::replace_value(calls, &updated);
+    quench_runtime::execute::call(implementation, &Value::Undefined, call_args)
 }
 
 pub fn util_strip_vt(

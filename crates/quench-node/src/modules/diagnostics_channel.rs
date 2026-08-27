@@ -12,14 +12,14 @@ use crate::host::HostState;
 use crate::registry::{
     SPEC_DIAGNOSTICS_BOUNDED_CHANNEL, SPEC_DIAGNOSTICS_BOUNDED_RUN,
     SPEC_DIAGNOSTICS_BOUNDED_SUBSCRIBE, SPEC_DIAGNOSTICS_BOUNDED_UNSUBSCRIBE,
-    SPEC_DIAGNOSTICS_CHANNEL_SCOPE, SPEC_DIAGNOSTICS_SCOPE_DISPOSE,
     SPEC_DIAGNOSTICS_CHANNEL, SPEC_DIAGNOSTICS_CHANNEL_BIND_STORE,
     SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR, SPEC_DIAGNOSTICS_CHANNEL_PUBLISH,
-    SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE, SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE,
-    SPEC_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE, SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS,
-    SPEC_DIAGNOSTICS_SUBSCRIBE, SPEC_DIAGNOSTICS_TRACING_CHANNEL,
-    SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC,
-    SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, SPEC_DIAGNOSTICS_UNSUBSCRIBE,
+    SPEC_DIAGNOSTICS_CHANNEL_SCOPE, SPEC_DIAGNOSTICS_CHANNEL_SUBSCRIBE,
+    SPEC_DIAGNOSTICS_CHANNEL_UNBIND_STORE, SPEC_DIAGNOSTICS_CHANNEL_UNSUBSCRIBE,
+    SPEC_DIAGNOSTICS_HAS_SUBSCRIBERS, SPEC_DIAGNOSTICS_SCOPE_DISPOSE, SPEC_DIAGNOSTICS_SUBSCRIBE,
+    SPEC_DIAGNOSTICS_TRACING_CHANNEL, SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE,
+    SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC, SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE,
+    SPEC_DIAGNOSTICS_UNSUBSCRIBE,
 };
 
 const ID: &str = "\0quench:diagnostics_channel:id";
@@ -413,9 +413,9 @@ pub fn trace_sync(
     let start = execute::get_property(receiver, "start");
     let end = execute::get_property(receiver, "end");
     let error = execute::get_property(receiver, "error");
-    let tracing = TRACE_CHANNELS.iter().any(|name| {
-        channel_has_subscribers(state, &execute::get_property(receiver, name))
-    });
+    let tracing = TRACE_CHANNELS
+        .iter()
+        .any(|name| channel_has_subscribers(state, &execute::get_property(receiver, name)));
     let start_store = channel_store(state, &start);
     let previous_store = enter_store(start_store.as_ref(), &context);
     if tracing && channel_has_subscribers(state, &start) {
@@ -641,7 +641,11 @@ pub fn bind_store(
         return Err(type_error("transform"));
     }
     let mut data = data.borrow_mut();
-    if let Some(entry) = data.stores.iter_mut().find(|(current, _)| *current == store) {
+    if let Some(entry) = data
+        .stores
+        .iter_mut()
+        .find(|(current, _)| *current == store)
+    {
         entry.1 = transform;
     } else {
         data.stores.push((store, transform));
@@ -658,13 +662,16 @@ pub fn with_store_scope(
     let context = args.first().cloned().unwrap_or(Value::Undefined);
     let stores = channel_stores(state, receiver);
     if stores.is_empty() {
-        return Ok(host_api::object(vec![(
-            "dispose".into(),
-            crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
-        ), (
-            "Symbol.dispose".into(),
-            crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
-        )]));
+        return Ok(host_api::object(vec![
+            (
+                "dispose".into(),
+                crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
+            ),
+            (
+                "Symbol.dispose".into(),
+                crate::host::capability(SPEC_DIAGNOSTICS_SCOPE_DISPOSE),
+            ),
+        ]));
     }
     let mut previous_values = Vec::with_capacity(stores.len());
     let mut store_values = Vec::with_capacity(stores.len());
@@ -672,7 +679,8 @@ pub fn with_store_scope(
         let previous = execute::call(&execute::get_property(store, "getStore"), store, &[])
             .ok()
             .unwrap_or(Value::Undefined);
-        let transformed = execute::call(transform, &Value::Undefined, std::slice::from_ref(&context))?;
+        let transformed =
+            execute::call(transform, &Value::Undefined, std::slice::from_ref(&context))?;
         let _ = execute::call(
             &execute::get_property(store, "enterWith"),
             store,
@@ -731,9 +739,9 @@ pub fn unbind_store(
 ) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(|| type_error("channel"))?;
     let data = channel_data(state, receiver)?;
-    data.borrow_mut().stores.retain(|(store, _)| {
-        args.first().is_some_and(|value| *value != *store)
-    });
+    data.borrow_mut()
+        .stores
+        .retain(|(store, _)| args.first().is_some_and(|value| *value != *store));
     Ok(receiver.clone())
 }
 
@@ -741,8 +749,10 @@ fn enter_stores(stores: &[(Value, Value)], message: &Value) -> Vec<(Value, Value
     stores
         .iter()
         .filter_map(|(store, transform)| {
-            let previous = execute::call(&execute::get_property(store, "getStore"), store, &[]).ok()?;
-            let value = execute::call(transform, &Value::Undefined, std::slice::from_ref(message)).ok()?;
+            let previous =
+                execute::call(&execute::get_property(store, "getStore"), store, &[]).ok()?;
+            let value =
+                execute::call(transform, &Value::Undefined, std::slice::from_ref(message)).ok()?;
             let _ = execute::call(
                 &execute::get_property(store, "enterWith"),
                 store,
@@ -753,20 +763,14 @@ fn enter_stores(stores: &[(Value, Value)], message: &Value) -> Vec<(Value, Value
         .collect()
 }
 
-fn channel_stores(
-    state: &Rc<RefCell<HostState>>,
-    channel: &Value,
-) -> Vec<(Value, Value)> {
+fn channel_stores(state: &Rc<RefCell<HostState>>, channel: &Value) -> Vec<(Value, Value)> {
     channel_data(state, channel)
         .ok()
         .map(|data| data.borrow().stores.clone())
         .unwrap_or_default()
 }
 
-fn channel_store(
-    state: &Rc<RefCell<HostState>>,
-    channel: &Value,
-) -> Option<(Value, Value)> {
+fn channel_store(state: &Rc<RefCell<HostState>>, channel: &Value) -> Option<(Value, Value)> {
     channel_stores(state, channel).into_iter().next()
 }
 
@@ -782,11 +786,11 @@ fn enter_store(store: Option<&(Value, Value)>, message: &Value) -> Option<Value>
 fn restore_stores(previous: Option<&[(Value, Value)]>) {
     if let Some(previous) = previous {
         for (store, previous) in previous {
-        let _ = execute::call(
-            &execute::get_property(store, "enterWith"),
-            store,
-            std::slice::from_ref(&previous),
-        );
+            let _ = execute::call(
+                &execute::get_property(store, "enterWith"),
+                store,
+                std::slice::from_ref(&previous),
+            );
         }
     }
 }

@@ -190,7 +190,13 @@ fn run_handlers(handlers: &[Value], code: i32) -> Result<(), VmError> {
 
 fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
-        if !drain_one_tick(state)? {
+        let drained = match drain_one_tick(state) {
+            Ok(value) => value,
+            Err(error) => {
+                return Err(error);
+            }
+        };
+        if !drained {
             quench_runtime::drain_promise_jobs();
             return Ok(());
         }
@@ -204,7 +210,11 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             continue;
         }
         let mode = state.borrow().process.unhandled_rejection_mode;
-        let has_handlers = !state.borrow().process.unhandled_rejection_handlers.is_empty();
+        let has_handlers = !state
+            .borrow()
+            .process
+            .unhandled_rejection_handlers
+            .is_empty();
         if matches!(mode, crate::modules::process::UnhandledRejectionMode::None) {
             if has_handlers {
                 emit_unhandled_event(state, &promise, &reason)?;
@@ -218,7 +228,12 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
                 continue;
             }
             emit_uncaught_rejection(state, &reason)?;
-        } else if !state.borrow().process.uncaught_exception_handlers.is_empty() {
+        } else if !state
+            .borrow()
+            .process
+            .uncaught_exception_handlers
+            .is_empty()
+        {
             emit_uncaught_rejection(state, &reason)?;
         }
     }
@@ -250,11 +265,13 @@ fn emit_unhandled_event(
     Ok(())
 }
 
-fn emit_uncaught_rejection(
-    state: &Rc<RefCell<HostState>>,
-    reason: &Value,
-) -> Result<(), VmError> {
-    if !state.borrow().process.uncaught_exception_handlers.is_empty() {
+fn emit_uncaught_rejection(state: &Rc<RefCell<HostState>>, reason: &Value) -> Result<(), VmError> {
+    if !state
+        .borrow()
+        .process
+        .uncaught_exception_handlers
+        .is_empty()
+    {
         let error = unhandled_rejection_error(reason);
         crate::modules::process::emit(
             state,
@@ -307,7 +324,14 @@ pub(crate) fn drain_one_tick(state: &Rc<RefCell<HostState>>) -> Result<bool, VmE
     if let Some(resource) = &task.resource {
         crate::modules::async_hooks::resource_before(state, Some(resource), &[])?;
     }
-    let result = call_guarded(state, &task.callback, &Value::Undefined, &task.args);
+    let result = if let Some(domain) = task.domain.as_ref() {
+        let mut call_args = Vec::with_capacity(task.args.len() + 1);
+        call_args.push(task.callback.clone());
+        call_args.extend(task.args.iter().cloned());
+        crate::modules::domain::run(state, Some(domain), &call_args).map(|_| ())
+    } else {
+        call_guarded(state, &task.callback, &Value::Undefined, &task.args)
+    };
     if task.resource.is_some() {
         crate::modules::async_hooks::resource_after(state, None, &[])?;
     }
@@ -369,8 +393,7 @@ fn fire_one_timer(state: &Rc<RefCell<HostState>>, id: u64, now: u64) -> Result<(
     let converted = destroy
         && result.is_ok()
         && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
-            &receiver,
-            "_repeat",
+            &receiver, "_repeat",
         ));
     if converted {
         if let Some(timer) = state.borrow_mut().timers.timers.get_mut(&id) {

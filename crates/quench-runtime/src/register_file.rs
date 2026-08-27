@@ -407,9 +407,7 @@ impl SlotWord {
     }
 
     #[inline(always)]
-    pub(crate) fn object_or_null_ptr(
-        &self,
-    ) -> Option<Option<*const crate::value::ObjectData>> {
+    pub(crate) fn object_or_null_ptr(&self) -> Option<Option<*const crate::value::ObjectData>> {
         self.with_word(OwnedWord::object_or_null_ptr)
     }
 

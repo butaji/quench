@@ -206,7 +206,9 @@ fn prototype_cache_hit(
         // SAFETY: the validated chain above keeps this owner reachable from
         // `receiver` until the returned word has been copied by the caller.
         let owner = unsafe { owners[usize::from(entry.depth).checked_sub(1)?].as_ref()? };
-        let word = owner.hot_properties().slot_word(entry.value_slot as usize)?;
+        let word = owner
+            .hot_properties()
+            .slot_word(entry.value_slot as usize)?;
         word.trace_named_payload("prototype");
         Some(NamedCachedPayload::Word(word))
     })
@@ -358,10 +360,6 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
-    if matches!(value, Value::ObjectAlias(_)) {
-        let resolved = crate::builtins::object::resolve_object_alias(value.clone());
-        return get_property_with_receiver(&resolved, key, receiver);
-    }
     // Prototype mutations materialize a replacement object. Resolve it before
     // walking inherited properties so ordinary objects (including generator
     // prototypes) observe the current descriptor rather than the stale view.
@@ -486,10 +484,7 @@ fn function_inherited_property_result(
             "call" => crate::ops::Builtin::FunctionCall,
             _ => crate::ops::Builtin::FunctionBind,
         };
-        return Some(Ok(crate::vm::bind_method(
-            receiver,
-            Value::Builtin(builtin),
-        )));
+        return Some(Ok(crate::vm::bind_method(value, Value::Builtin(builtin))));
     }
     if matches!(key, "prototype") {
         return None;
@@ -756,8 +751,7 @@ fn descriptor_property_result(
             return Some(Ok(Value::Number(crate::strings::utf16_len(text) as f64)));
         }
         if let Ok(index) = key.parse::<usize>() {
-            return crate::strings::char_at_utf16(text, index)
-                .map(Ok);
+            return crate::strings::char_at_utf16(text, index).map(Ok);
         }
         return None;
     }
