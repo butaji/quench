@@ -103,6 +103,10 @@ pub(crate) fn call_trap(
         receiver.unwrap_or(&crate::value::Value::Undefined),
         arguments,
     )
+    .map_err(|error| match error {
+        VmError::NotCallable => crate::value::error::throw_type_error("Proxy trap is not callable"),
+        error => error,
+    })
 }
 
 pub(crate) fn proxy_get(
@@ -632,6 +636,31 @@ fn validate_define_invariant(
     let current =
         crate::builtins::object::descriptor(Some(target), Some(&Value::String(prop.to_string())))?;
     let fields = crate::builtins::descriptor_fields(descriptor)?;
+    let field = |name: &str| {
+        fields
+            .iter()
+            .rev()
+            .find_map(|(candidate, value)| (candidate == name).then_some(value))
+    };
+    if matches!(&current, Value::Undefined | Value::Null) {
+        if !crate::properties::object_is_extensible(target)
+            || matches!(field("configurable"), Some(Value::Boolean(false)))
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty invariant violated",
+            ));
+        }
+        return Ok(());
+    }
+    let Value::Object(current_fields) = &current else {
+        return Ok(());
+    };
+    let current_field = |name: &str| {
+        current_fields
+            .iter()
+            .rev()
+            .find_map(|(candidate, value)| (candidate == name).then_some(value))
+    };
     let non_configurable = matches!(
         &current,
         Value::Object(properties)
@@ -639,6 +668,8 @@ fn validate_define_invariant(
                 name == "configurable" && matches!(value, Value::Boolean(false))
             })
     );
+    let setting_config_false = matches!(field("configurable"), Some(Value::Boolean(false)));
+    let current_config_true = matches!(current_field("configurable"), Some(Value::Boolean(true)));
     if non_configurable
         && fields
             .iter()
@@ -648,13 +679,32 @@ fn validate_define_invariant(
             "Proxy defineProperty invariant violated",
         ));
     }
-    let non_writable = matches!(
-        &current,
-        Value::Object(properties)
-            if properties.iter().any(|(name, value)| {
-                name == "writable" && matches!(value, Value::Boolean(false))
-            })
-    );
+    if setting_config_false && current_config_true {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy defineProperty invariant violated",
+        ));
+    }
+    if non_configurable {
+        if let (Some(current_enum), Some(requested_enum)) =
+            (current_field("enumerable"), field("enumerable"))
+        {
+            if !crate::builtins::same_value(Some(&current_enum), Some(&requested_enum)) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy defineProperty invariant violated",
+                ));
+            }
+        }
+    }
+    let non_writable = matches!(current_field("writable"), Some(Value::Boolean(false)));
+    let current_writable = matches!(current_field("writable"), Some(Value::Boolean(true)));
+    if non_configurable
+        && current_writable
+        && matches!(field("writable"), Some(Value::Boolean(false)))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy defineProperty invariant violated",
+        ));
+    }
     if non_configurable && non_writable {
         let current_value = descriptor_value(&current, "value");
         let requested_value = fields
