@@ -31,8 +31,10 @@ pub(crate) enum PromiseAggregateKind {
 #[derive(Debug, PartialEq)]
 pub(crate) struct PromiseAggregate {
     pub(crate) kind: PromiseAggregateKind,
-    pub(crate) result: Rc<PromiseData>,
+    pub(crate) resolve: Value,
+    pub(crate) reject: Value,
     pub(crate) remaining: RefCell<usize>,
     pub(crate) values: RefCell<Vec<Value>>,
+    pub(crate) keys: Option<Vec<String>>,
     pub(crate) settled: RefCell<bool>,
 }
