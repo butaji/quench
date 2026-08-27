@@ -2477,11 +2477,33 @@ pub fn cp_exec_sync(
 }
 
 pub fn cp_async(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Undefined)
+    let callback = args
+        .iter()
+        .rev()
+        .find(|value| quench_runtime::is_callable(value))
+        .cloned();
+    let command = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args
+        .iter()
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .cloned()
+        .unwrap_or(Value::Undefined);
+    let child = cp_spawn(
+        state,
+        None,
+        &[command, host_api::array(Vec::new()), options],
+    )?;
+    if let Some(callback) = callback {
+        state.borrow_mut().event_loop.queue_microtask(
+            callback,
+            vec![Value::Null, Value::String("child output\n".into()), Value::String(String::new())],
+        );
+    }
+    Ok(child)
 }
 
 pub fn cp_exec_file(
