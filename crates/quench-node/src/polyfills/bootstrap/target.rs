@@ -41,6 +41,17 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.EventTarget ||= 
     return true;
   }
 };
+const __quenchEventTargetEvents = Symbol.for("quench.event_target.events");
+Object.defineProperty(EventTarget.prototype, __quenchEventTargetEvents, {
+  configurable: true,
+  get() {
+    const map = new Map();
+    for (const [name, records] of Object.entries(this._listeners || {})) {
+      map.set(name, { size: records.length });
+    }
+    return map;
+  },
+});
 globalThis.Event ||= class Event {
   constructor(type, options = {}) {
     if (type === undefined) throw new TypeError("Event type is required");
