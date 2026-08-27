@@ -27,6 +27,7 @@ fn is_simple_conversion(builtin: Builtin) -> bool {
             | Builtin::StringValueOf
             | Builtin::BoxedValueOf
             | Builtin::ObjectPrototypeToString
+            | Builtin::ObjectPrototypeToLocaleString
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
@@ -152,6 +153,9 @@ fn execute_simple_conversion(
         Builtin::StringToString | Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => crate::builtins::prototype_to_string_result(receiver),
+        Builtin::ObjectPrototypeToLocaleString => {
+            crate::builtins::prototype_to_locale_string_result(receiver)
+        }
         Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
