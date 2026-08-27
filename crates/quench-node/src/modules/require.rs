@@ -468,8 +468,12 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let test_fn = crate::host::capability(crate::registry::SPEC_TEST);
             let skip_fn = crate::host::capability(crate::registry::SPEC_TEST_SKIP);
             let _ = attach(&test_fn, "skip", skip_fn.clone());
-            for alias in ["test", "describe", "it", "suite"] {
+            for alias in ["test", "it"] {
                 let _ = attach(&test_fn, alias, test_fn.clone());
+            }
+            let nested_fn = crate::host::capability(crate::registry::SPEC_TEST_NESTED);
+            for alias in ["describe", "suite"] {
+                let _ = attach(&test_fn, alias, nested_fn.clone());
             }
             let _ = attach(&test_fn, "run", test_fn.clone());
             let _ = attach(&test_fn, "getTestContext", crate::host::capability(crate::registry::SPEC_TEST_GET_CONTEXT));
