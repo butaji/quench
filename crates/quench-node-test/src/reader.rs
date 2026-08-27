@@ -186,9 +186,9 @@ impl NodeRunner {
             ok => ok.map(|_| ()),
         };
         Self::classify(result, self.host.exit_code())
-}
+    }
 
-/// Node dispatches top-level uncaught exceptions to
+    /// Node dispatches top-level uncaught exceptions to
     /// `process.on('uncaughtException')`; a handled run continues.
     fn route_uncaught(
         &self,

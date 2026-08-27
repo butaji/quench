@@ -476,8 +476,25 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     "method".to_string(),
                     crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
                 ),
+                (
+                    "getter".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_GETTER),
+                ),
+                (
+                    "setter".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER),
+                ),
+                (
+                    "property".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY),
+                ),
             ]);
             let _ = attach(&test_fn, "mock", mock);
+            let _ = quench_runtime::execute::set_property_in_place(
+                &quench_runtime::execute::get_property(&test_fn, "mock"),
+                "reset",
+                crate::host::capability(crate::registry::SPEC_TEST_MOCK_RESET),
+            );
             Some(test_fn)
         }
         "stream/web" => Some(crate::host::namespace_object_from_pairs(vec![(
