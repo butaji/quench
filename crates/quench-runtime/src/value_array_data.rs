@@ -432,7 +432,7 @@ impl ArrayData {
         self.is_packed()
             && self.logical_len() == self.physical_len()
             && self.properties.is_empty()
-            && self.descriptors.is_empty()
+            && self.indexed_descriptors_plain()
             && self.has_default_array_prototype()
             && !self.arguments
             && self.argument_live.is_none()
@@ -446,7 +446,7 @@ impl ArrayData {
         self.is_packed()
             && self.logical_len() == self.physical_len()
             && self.properties.is_empty()
-            && self.descriptors.is_empty()
+            && self.indexed_descriptors_plain()
             && !self.arguments
             && self.argument_live.is_none()
     }
@@ -505,7 +505,7 @@ impl ArrayData {
         if index == self.length.get()
             && index == self.values.len()
             && self.properties.is_empty()
-            && self.descriptors.is_empty()
+            && self.indexed_descriptors_plain()
             && self.has_default_array_prototype()
             && !self.arguments
             && self.argument_live.is_none()
@@ -855,7 +855,7 @@ impl ArrayData {
     #[inline(always)]
     pub(crate) fn append_preallocated_f64(&self, index: usize, number: f64) -> bool {
         let plain = self.properties.is_empty()
-            && self.descriptors.is_empty()
+            && self.indexed_descriptors_plain()
             && self.has_default_array_prototype()
             && !self.arguments
             && self.argument_live.is_none();
@@ -895,6 +895,24 @@ impl ArrayData {
                 prototype,
                 Value::Builtin(crate::ops::Builtin::ArrayPrototype)
             )
+        })
+    }
+
+    /// Array length is a mandatory non-enumerable descriptor. It must not
+    /// disable indexed packed storage; only an indexed/accessor descriptor
+    /// changes the write semantics.
+    #[inline]
+    fn indexed_descriptors_plain(&self) -> bool {
+        self.descriptors.iter().all(|(key, descriptor)| {
+            if key != "length" {
+                return false;
+            }
+            let Value::Object(fields) = descriptor else {
+                return false;
+            };
+            fields.iter().rev().find_map(|(name, value)| {
+                (name == "writable").then_some(matches!(value, Value::Boolean(true)))
+            }) == Some(true)
         })
     }
 
