@@ -257,11 +257,11 @@ pub(crate) fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
-        (Builtin::TypedArray, "byteLength") => Builtin::TypedArrayByteLengthGetter,
-        (Builtin::TypedArray, "byteOffset") => Builtin::TypedArrayByteOffsetGetter,
-        (Builtin::TypedArray, "length") => Builtin::TypedArrayLengthGetter,
-        (Builtin::TypedArray, "buffer") => Builtin::DataViewBufferGetter,
-        (Builtin::TypedArray, "Symbol.toStringTag") => Builtin::TypedArrayToStringTagGetter,
+        (Builtin::TypedArrayPrototype, "byteLength") => Builtin::TypedArrayByteLengthGetter,
+        (Builtin::TypedArrayPrototype, "byteOffset") => Builtin::TypedArrayByteOffsetGetter,
+        (Builtin::TypedArrayPrototype, "length") => Builtin::TypedArrayLengthGetter,
+        (Builtin::TypedArrayPrototype, "buffer") => Builtin::DataViewBufferGetter,
+        (Builtin::TypedArrayPrototype, "Symbol.toStringTag") => Builtin::TypedArrayToStringTagGetter,
         _ => return intrinsic_getter_extended(builtin, key),
     };
     Some(getter)
