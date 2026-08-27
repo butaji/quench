@@ -74,8 +74,14 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::NodeTest) => {
                 let callback = arguments.get(1).ok_or(VmError::NotCallable)?;
-                let context =
-                    quench_runtime::host_api::object(vec![("assert".into(), assert_module())]);
+                let mock = quench_runtime::host_api::object(vec![(
+                    "fn".into(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+                )]);
+                let context = quench_runtime::host_api::object(vec![
+                    ("assert".into(), assert_module()),
+                    ("mock".into(), mock),
+                ]);
                 quench_runtime::execute::call(callback, &Value::Undefined, &[context])?;
                 Ok(Value::Undefined)
             }
