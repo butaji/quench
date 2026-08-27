@@ -451,6 +451,20 @@ impl ArrayData {
             && self.argument_live.is_none()
     }
 
+    /// Whether every logical slot is an own numeric value, even when the
+    /// monotonic kind is conservatively marked holey after a length reset.
+    /// The deleted bitmap remains the authoritative hole proof.
+    #[inline]
+    pub(crate) fn is_dense_numeric_data(&self) -> bool {
+        self.logical_len() == self.physical_len()
+            && self.deleted.iter().all(|deleted| !deleted)
+            && self.properties.is_empty()
+            && self.indexed_descriptors_plain()
+            && !self.arguments
+            && self.argument_live.is_none()
+            && matches!(self.values, DenseElements::Numbers(_))
+    }
+
     pub(crate) fn has_indexed_accessor(&self) -> bool {
         self.descriptors.iter().any(|(key, value)| {
             crate::arrays::array_index(key).is_some_and(|_| {
