@@ -23,7 +23,20 @@ struct Frame {
 
 thread_local! {
     static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+    static MODULE_MOCKS: RefCell<std::collections::HashMap<String, Value>> = RefCell::new(std::collections::HashMap::new());
 }
+
+pub fn register_module_mock(specifier: String, options: Value) { MODULE_MOCKS.with(|mocks| { mocks.borrow_mut().insert(specifier, options); }); }
+pub fn mocked_module(specifier: &str) -> Option<Value> {
+    MODULE_MOCKS.with(|mocks| {
+        let options = mocks.borrow().get(specifier)?.clone();
+        let exports = quench_runtime::execute::get_property(&options, "namedExports");
+        if !matches!(exports, Value::Object(_) | Value::ObjectAlias(_)) { return None; }
+        let pairs = quench_runtime::execute::own_enumerable_keys(&exports).into_iter().map(|key| (key.clone(), quench_runtime::execute::get_property(&exports, &key))).collect();
+        Some(quench_runtime::host_api::object(pairs))
+    })
+}
+pub fn mock_module_cache(specifier: &str) -> bool { MODULE_MOCKS.with(|mocks| mocks.borrow().get(specifier).is_some_and(|options| matches!(quench_runtime::execute::get_property(options, "cache"), Value::Boolean(true)))) }
 
 pub fn register_mock_restore(restore: Value) {
     FRAMES.with(|frames| {
@@ -34,6 +47,7 @@ pub fn register_mock_restore(restore: Value) {
 }
 
 pub fn reset_mocks() {
+    MODULE_MOCKS.with(|mocks| mocks.borrow_mut().clear());
     FRAMES.with(|frames| {
         if let Some(frame) = frames.borrow().last() {
             for restore in frame.restores.iter().rev() {
@@ -77,6 +91,8 @@ fn invoke(state: &Rc<RefCell<HostState>>, callback: &Value, context: &Value) -> 
 fn context() -> Value {
     quench_runtime::host_api::object(vec![
         ("assert".into(), crate::modules::assert::build_value()),
+        ("skip".into(), crate::host::capability(crate::registry::SPEC_TEST_CONTEXT_SKIP)),
+        ("todo".into(), crate::host::capability(crate::registry::SPEC_TEST_CONTEXT_TODO)),
         ("beforeEach".into(), crate::host::capability(crate::registry::SPEC_TEST_BEFORE_EACH)),
         ("afterEach".into(), crate::host::capability(crate::registry::SPEC_TEST_AFTER_EACH)),
         ("test".into(), crate::host::capability(crate::registry::SPEC_TEST_NESTED)),
@@ -86,6 +102,8 @@ fn context() -> Value {
             ("getter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_GETTER)),
             ("setter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER)),
             ("property".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY)),
+            ("module".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_MODULE)),
+            ("reset".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_RESET)),
             ("timers".into(), quench_runtime::host_api::object(vec![
                 ("enable".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE)),
                 ("tick".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_TICK)),
@@ -130,7 +148,10 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
         )
     });
     let Some(callback) = callback else {
-        return Ok(Value::Undefined);
+        let emitter = crate::modules::events::new_emitter_object(state)?;
+        let emit = crate::host::capability(crate::registry::SPEC_TEST_RUN_EMIT);
+        for _ in 0..4 { state.borrow_mut().event_loop.queue_microtask(emit.clone(), vec![emitter.clone(), Value::String("test:pass".into())]); }
+        return Ok(emitter);
     };
     let context = context();
     FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new() }));

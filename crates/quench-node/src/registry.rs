@@ -112,6 +112,10 @@ pub const SPEC_TEST_MOCK_TIMERS_ENABLE: NodeSpec = NodeSpec::new("test:mock:time
 pub const SPEC_TEST_MOCK_TIMERS_TICK: NodeSpec = NodeSpec::new("test:mock:timers:tick", 0x1b1A);
 pub const SPEC_TEST_MOCK_TIMERS_SETTIME: NodeSpec = NodeSpec::new("test:mock:timers:setTime", 0x1b1B);
 pub const SPEC_TEST_MOCK_TIMERS_RESET: NodeSpec = NodeSpec::new("test:mock:timers:reset", 0x1b1C);
+pub const SPEC_TEST_MOCK_MODULE: NodeSpec = NodeSpec::new("test:mock:module", 0x1b1D);
+pub const SPEC_TEST_CONTEXT_SKIP: NodeSpec = NodeSpec::new("test:context:skip", 0x1b1E);
+pub const SPEC_TEST_CONTEXT_TODO: NodeSpec = NodeSpec::new("test:context:todo", 0x1b1F);
+pub const SPEC_TEST_RUN_EMIT: NodeSpec = NodeSpec::new("test:run:emit", 0x1b20);
 
 node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
