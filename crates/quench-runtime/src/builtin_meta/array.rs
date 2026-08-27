@@ -51,6 +51,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::TypedArrayAt => Some("at"),
         Builtin::ArraySort => Some("sort"),
         Builtin::TypedArraySort => Some("sort"),
+        Builtin::TypedArrayWith => Some("with"),
         Builtin::ArrayForEach => Some("forEach"),
         Builtin::TypedArrayForEach => Some("forEach"),
         Builtin::ArrayReduce => Some("reduce"),
@@ -170,7 +171,10 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
 
 const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
     match builtin {
-        Builtin::ArrayCopyWithin | Builtin::ArrayToSpliced | Builtin::ArrayWith => Some(2.0),
+        Builtin::ArrayCopyWithin
+        | Builtin::ArrayToSpliced
+        | Builtin::ArrayWith
+        | Builtin::TypedArrayWith => Some(2.0),
         Builtin::ArraySlice | Builtin::ArraySplice => Some(2.0),
         Builtin::ArrayConcat => Some(1.0),
         _ => None,
