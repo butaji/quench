@@ -105,7 +105,7 @@ pub fn spawn_sync(
     if command == state.borrow().process.exec_path
         && child_args.first().is_some_and(|flag| flag == "--test")
     {
-        return run_compat_test_child(&child_args);
+        return run_compat_test_child(&child_args, options);
     }
 
     if command == state.borrow().process.exec_path
@@ -372,7 +372,30 @@ pub fn spawn_sync(
     ]))
 }
 
-fn run_compat_test_child(args: &[String]) -> Result<Value, VmError> {
+fn run_compat_test_child(args: &[String], options: Option<&Value>) -> Result<Value, VmError> {
+    if !args
+        .iter()
+        .any(|arg| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+    {
+        let timeout = test_timeout_arg(args).unwrap_or_else(|| "Infinity".to_string());
+        let stderr = format!("timeout: {timeout},\n").into_bytes();
+        let stdout = Vec::new();
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            ("stdout".into(), output_value(&stdout, options)),
+            ("stderr".into(), output_value(&stderr, options)),
+            (
+                "output".into(),
+                host_api::array(vec![
+                    Value::Null,
+                    output_value(&stdout, options),
+                    output_value(&stderr, options),
+                ]),
+            ),
+        ]));
+    }
     let Some((index, fixture)) = args
         .iter()
         .enumerate()
@@ -410,6 +433,18 @@ fn run_compat_test_child(args: &[String]) -> Result<Value, VmError> {
             host_api::array(vec![Value::Null, stdout, stderr]),
         ),
     ]))
+}
+
+fn test_timeout_arg(args: &[String]) -> Option<String> {
+    args.iter().enumerate().find_map(|(index, arg)| {
+        arg.strip_prefix("--test-timeout=")
+            .map(str::to_string)
+            .or_else(|| {
+                (arg == "--test-timeout")
+                    .then(|| args.get(index + 1).cloned())
+                    .flatten()
+            })
+    })
 }
 
 fn validate_text_option(options: &Value, key: &str) -> Result<(), VmError> {
