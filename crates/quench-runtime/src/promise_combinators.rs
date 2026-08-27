@@ -217,10 +217,15 @@ fn register_aggregate_value(
     if crate::value::is_object(&value) {
         match crate::execute::get_property_result(&value, "then") {
             Ok(then) if crate::conversion::is_callable(&then) => {
+                let rejection = if aggregate.kind == PromiseAggregateKind::All {
+                    aggregate.reject.clone()
+                } else {
+                    reject.clone()
+                };
                 let call_result = crate::functions::execute_target(
                     &then,
                     &value,
-                    &[resolve.clone(), aggregate.reject.clone()],
+                    &[resolve.clone(), rejection],
                 );
                 if call_result.is_err() {
                     let _ = crate::functions::execute_target(
