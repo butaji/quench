@@ -41,10 +41,16 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
         ("assert".to_string(), crate::modules::assert::build_value()),
         (
             "mock".to_string(),
-            quench_runtime::host_api::object(vec![(
-                "fn".to_string(),
-                crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
-            )]),
+            quench_runtime::host_api::object(vec![
+                (
+                    "fn".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+                ),
+                (
+                    "method".to_string(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
+                ),
+            ]),
         ),
     ]);
     match quench_runtime::vm::call_value(callback, &Value::Undefined, &[context]) {

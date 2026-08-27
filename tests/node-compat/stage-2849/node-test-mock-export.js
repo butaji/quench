@@ -51,8 +51,8 @@ test('constructor mock', (t) => {
   assert.strictEqual(C.mock.calls.length, 1);
   assert.deepStrictEqual(C.mock.calls[0].arguments, [42]);
   assert.strictEqual(C.mock.calls[0].result, value);
-  assert.strictEqual(C.mock.calls[0].target, undefined);
-  assert.strictEqual(C.mock.calls[0].this, undefined);
+  assert.strictEqual(C.mock.calls[0].target, Parent);
+  assert.strictEqual(C.mock.calls[0].this, value);
 });
 
 test('no-op mock function', (t) => {
