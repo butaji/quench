@@ -251,6 +251,7 @@ fn socket_props() -> Vec<(&'static str, Value)> {
         ("_handle", Value::Null),
         ("readable", Value::Boolean(true)),
         ("writable", Value::Boolean(true)),
+        ("allowHalfOpen", Value::Boolean(false)),
         ("destroyed", Value::Boolean(false)),
         ("connecting", Value::Boolean(false)),
         ("readyState", Value::String("open".into())),
