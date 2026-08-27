@@ -27,6 +27,7 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewByteLengthGetter
             | Builtin::TypedArrayByteLengthGetter
             | Builtin::TypedArrayByteOffsetGetter
+            | Builtin::TypedArrayLengthGetter
             | Builtin::TypedArrayToStringTagGetter
             | Builtin::DataViewByteOffsetGetter
     )
