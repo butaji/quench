@@ -90,8 +90,6 @@ const __quenchInternalStreamFallback = (normalized) => {
 const __quenchApplyFinalSurface = (normalized, result) => {
   if (normalized === "child_process" && globalThis.__nodeRequireChildProcess) {
     const childProcess = globalThis.__nodeRequireChildProcess;
-    const execFile = childProcess["\0quench:child_process_execFile"];
-    if (typeof execFile === "function") childProcess.execFile = execFile;
     const execFileSync = childProcess.execFileSync;
     childProcess.execFileSync = (file, args = [], options = {}) => {
       if (String(file).endsWith("echo")) {
