@@ -41,6 +41,18 @@ pub fn build() -> Vec<(String, Value)> {
 pub fn build_value() -> Value {
     let mut module = quench_runtime::host_api::object(build());
     if let Ok(console) = eval_function(CONSOLE_CLASS) {
+        if let Ok(prototype) = quench_runtime::execute::get_property_result(&console, "prototype") {
+            let _ = quench_runtime::execute::set_prototype_of(&module, &prototype);
+            for name in [
+                "log", "info", "dir", "time", "timeEnd", "timeLog", "trace", "assert",
+                "clear", "count", "countReset", "group", "groupEnd", "table", "debug",
+                "dirxml", "error", "groupCollapsed",
+            ] {
+                if let Ok(method) = quench_runtime::execute::get_property_result(&prototype, name) {
+                    module = quench_runtime::execute::set_property(module, name, method);
+                }
+            }
+        }
         module = quench_runtime::execute::set_property(module, "Console", console);
     }
     module
@@ -52,15 +64,15 @@ const CONSOLE_CLASS: &str = r#"(class Console {
       (stdout.stdout || stdout.stderr) ? stdout : null;
     this._stdout = options ? options.stdout : stdout;
     this._stderr = options ? options.stderr : stderr;
-    if (!this._stdout) this._stdout = globalThis.process && globalThis.process.stdout;
-    if (!this._stderr) this._stderr = globalThis.process && globalThis.process.stderr;
+    if (!this._stdout) this._stdout = globalThis?.process?.stdout;
+    if (!this._stderr) this._stderr = globalThis?.process?.stderr;
   }
   log(...args) {
     const output = this._stdout;
     if (output && typeof output.write === "function") output.write(`${args.join(" ")}\n`);
     if (!this._tickPending) {
       this._tickPending = true;
-      const tick = globalThis.process && globalThis.process.nextTick;
+      const tick = globalThis?.process?.nextTick;
       if (typeof tick === "function") tick(() => { this._tickPending = false; });
     }
   }
