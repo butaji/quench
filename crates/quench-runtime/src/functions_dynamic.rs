@@ -282,8 +282,8 @@ fn dynamic_value(
 ) -> Value {
     let captures = crate::environment::Environment::new();
     let realm = crate::vm::current_context_or_default().realm();
-    let global = crate::vm::realm_global_value(realm)
-        .unwrap_or_else(|| crate::locals::current().get(0));
+    let global =
+        crate::vm::realm_global_value(realm).unwrap_or_else(|| crate::locals::current().get(0));
     captures.set(0, global);
     let value = crate::functions::make(
         crate::machine::FunctionCode::from_ops(ops),
@@ -296,9 +296,11 @@ fn dynamic_value(
             strictness,
             is_async,
             mapped_arguments: true,
-            raytrace_pixel: false,
-            raytrace_render: None,
             direct_constructor: std::rc::Rc::default(),
+            forward_construct_call: None,
+            forward_then_call: None,
+            counted_method_loop: None,
+            direct_method: None,
         },
     );
     if let Value::Function(function) = &value {

@@ -553,6 +553,13 @@ impl AsRef<str> for PropertyName {
     }
 }
 
+impl std::borrow::Borrow<str> for PropertyName {
+    #[inline]
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl From<&str> for PropertyName {
     fn from(value: &str) -> Self {
         Self(Rc::from(value))
@@ -972,6 +979,14 @@ impl ObjectData {
         id
     }
 
+    /// Resolve a physical property slot from the immutable derived layout.
+    /// The canonical name/value vectors remain the only semantic storage;
+    /// this index is discarded whenever mutation invalidates `layout_id`.
+    #[inline]
+    pub(crate) fn physical_slot_for_name(&self, key: &str) -> Option<usize> {
+        object_layout_slot(self.semantic_layout_id(), key)
+    }
+
     pub(crate) fn invalidate_layout(&self) {
         self.layout_id.set(0);
     }
@@ -1095,24 +1110,43 @@ impl PropertyEntries for ObjectData {
     }
 }
 
+struct InternedObjectLayout {
+    names: Vec<PropertyName>,
+    slots: std::collections::HashMap<PropertyName, usize>,
+}
+
+thread_local! {
+    static OBJECT_LAYOUTS: RefCell<Vec<InternedObjectLayout>> = const { RefCell::new(Vec::new()) };
+}
+
 fn intern_object_layout(properties: &ObjectProperties) -> u32 {
-    thread_local! {
-        static LAYOUTS: RefCell<Vec<Vec<PropertyName>>> = const { RefCell::new(Vec::new()) };
-    }
-    LAYOUTS.with(|layouts| {
+    OBJECT_LAYOUTS.with(|layouts| {
         let mut layouts = layouts.borrow_mut();
         if let Some(index) = layouts.iter().position(|layout| {
-            layout.len() == properties.len()
+            layout.names.len() == properties.len()
                 && layout
+                    .names
                     .iter()
                     .zip(properties.names())
                     .all(|(left, right)| left == right)
         }) {
             return u32::try_from(index + 1).unwrap_or(u32::MAX);
         }
-        layouts.push(properties.names().cloned().collect());
+        let names = properties.names().cloned().collect::<Vec<_>>();
+        let slots = names
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(slot, name)| (name, slot))
+            .collect();
+        layouts.push(InternedObjectLayout { names, slots });
         u32::try_from(layouts.len()).unwrap_or(u32::MAX)
     })
+}
+
+fn object_layout_slot(layout: u32, key: &str) -> Option<usize> {
+    let index = usize::try_from(layout).ok()?.checked_sub(1)?;
+    OBJECT_LAYOUTS.with(|layouts| layouts.borrow().get(index)?.slots.get(key).copied())
 }
 
 fn creation_order(properties: &ObjectProperties) -> Vec<PropertyName> {
@@ -1270,21 +1304,6 @@ impl ObjectData {
             .position(|name| name == key)
     }
 
-    /// Return the physical property-vector slot for a public own name.
-    ///
-    /// Logical shape slots omit private descriptor entries, while linked
-    /// execution caches retain pointers into the canonical vector.  Keeping
-    /// this projection here prevents fast paths from reconstructing a second
-    /// property layout.
-    #[inline]
-    pub(crate) fn physical_slot_for_name(&self, key: &str) -> Option<usize> {
-        if self.shape().dictionary || key.starts_with('\0') {
-            return None;
-        }
-        self.properties
-            .names()
-            .position(|name| !name.starts_with('\0') && name == key)
-    }
     /// Check the canonical AoS projection used by shape/slot fast paths.
     ///
     /// Kept as a cheap debug-only assertion at call sites so optimized code

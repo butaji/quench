@@ -312,7 +312,14 @@ fn reduce_body_fragment(
     dst: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
     reduce_body_fragment_with_slots(
-        statement, _parent_ops, facts, next_register, next_slot, locals, dst, &mut Vec::new(),
+        statement,
+        _parent_ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+        dst,
+        &mut Vec::new(),
     )
 }
 

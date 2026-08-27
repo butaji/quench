@@ -22,6 +22,11 @@ The `quench-node` binary runs a script through the host like a Node
 binary, with genuine `process.argv` / `process.execPath` and exit
 code semantics. This is the entry point real npm apps launch under:
 
+**This crate is Node compatibility only. It contains no benchmark dispatch,
+fixture detection, score/checksum logic, or delegation to another JavaScript
+engine. Benchmark suites must execute through the same host path as every
+other script.**
+
 ```sh
 cargo run -p quench-node -- <script.js> [args...]
 # or, from a built tree:
