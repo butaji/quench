@@ -382,7 +382,8 @@ pub(crate) fn get_property_with_receiver(
             || (crate::property_define::accessor(&value, key, "get").is_none()
                 && crate::property_define::accessor(&value, key, "set").is_none()))
     {
-        return Ok(crate::execute::get_property(&value, key));
+        let property = crate::execute::get_property(&value, key);
+        return Ok(bind_receiver_property(property, receiver));
     }
     if let Some(result) = array_property_result(&value, key, receiver) {
         return result;
@@ -1012,6 +1013,12 @@ fn is_intl_number_format_property(property: &Value) -> bool {
 
 pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value {
     match property {
+        Value::BoundFunction(bound)
+            if crate::vm::is_intrinsic_bound(&bound)
+                && matches!(bound.target, Value::Builtin(builtin) if crate::conversion::is_callable(&Value::Builtin(builtin))) =>
+        {
+            bind_method(receiver, bound.target.clone())
+        }
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
                 && !is_iterator_next_builtin(builtin)
