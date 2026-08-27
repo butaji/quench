@@ -360,7 +360,7 @@ fn finish_set_property(
     }
     let inherited_blocked = {
         let _scope = crate::execution_trace::attribution_scope("SetN:inherited");
-        inherited_write_blocked(target, key)
+        !own_data_property(target, key) && inherited_write_blocked(target, key)
     };
     if inherited_blocked {
         return write_failure(strict);
