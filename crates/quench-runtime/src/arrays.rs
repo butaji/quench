@@ -49,13 +49,17 @@ fn execute_builtin_match(
         TypedArrayFind => return Some(typed_array_find(receiver, arguments)),
         TypedArrayFindIndex => return Some(typed_array_find_index(receiver, arguments)),
         ArrayIncludes => return Some(includes(receiver, arguments)),
+        TypedArrayIncludes => return Some(typed_array_includes(receiver, arguments)),
         ArrayIndexOf => return Some(index_of(receiver, arguments)),
+        TypedArrayIndexOf => return Some(typed_array_index_of(receiver, arguments)),
         ArrayLastIndexOf => return Some(last_index_of(receiver, arguments)),
+        TypedArrayLastIndexOf => return Some(typed_array_last_index_of(receiver, arguments)),
         ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
         ArrayFlat => return Some(flat(receiver, arguments)),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(at(receiver, arguments)),
+        TypedArrayAt => return Some(typed_array_at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
         ArraySplice => return Some(splice(receiver, arguments)),
@@ -153,6 +157,43 @@ fn typed_array_find_last_index(
 ) -> Result<Value, crate::execute::VmError> {
     let value = typed_array_receiver(receiver, "findLastIndex")?;
     crate::builtins::array_find_last_index(Some(&value), arguments)
+}
+
+fn typed_array_includes(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "includes")?;
+    includes(Some(&value), arguments)
+}
+
+fn typed_array_index_of(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "indexOf")?;
+    index_of(Some(&value), arguments)
+}
+
+fn typed_array_last_index_of(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "lastIndexOf")?;
+    last_index_of(Some(&value), arguments)
+}
+
+fn typed_array_at(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "at")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.at called on out-of-bounds view",
+        ));
+    }
+    at(Some(&value), arguments)
 }
 
 fn map_argument_error(
