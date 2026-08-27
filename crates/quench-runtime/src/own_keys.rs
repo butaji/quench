@@ -111,6 +111,24 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
     if let Some(keys) = script_global_view_keys(target) {
         return keys;
     }
+    if matches!(target, Value::Proxy(_)) {
+        let Ok(Value::Array(keys)) = crate::proxy::proxy_own_keys(target) else {
+            return Vec::new();
+        };
+        return keys
+            .snapshot()
+            .into_iter()
+            .filter_map(|key| match key {
+                Value::String(key) if !key.contains('\0') => Some(key),
+                _ => None,
+            })
+            .filter(|key| {
+                crate::proxy::proxy_get_own_property_descriptor(target, key)
+                    .ok()
+                    .is_some_and(|descriptor| descriptor_enumerable_value(Some(&descriptor)))
+            })
+            .collect();
+    }
     let target = crate::locals::resolved_replacement(target.clone());
     if let Some(keys) = typed_array_enumerable_keys(&target) {
         return keys;
