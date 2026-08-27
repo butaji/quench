@@ -339,13 +339,13 @@ pub(crate) fn define_legacy_accessor(
     field: &str,
 ) -> Result<Value, crate::execute::VmError> {
     let target = require_object_receiver(receiver)?;
-    let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
     let accessor = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&accessor) {
         return Err(crate::value::error::throw_type_error(
             "Accessor must be callable",
         ));
     }
+    let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
     let descriptor = vec![
         (field.to_string(), accessor),
         ("enumerable".to_string(), Value::Boolean(true)),
