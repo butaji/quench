@@ -3,6 +3,9 @@ include!("props_modules.rs");
 include!("props_own_names.rs");
 include!("props_collections.rs");
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
+    if builtin == Builtin::Date && key == "isMock" {
+        return Value::Boolean(crate::date::mock_enabled());
+    }
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
     }

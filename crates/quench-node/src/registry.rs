@@ -108,6 +108,10 @@ pub const SPEC_TEST_MOCK_RESET_ACCESSES: NodeSpec = NodeSpec::new("test:mock:res
 pub const SPEC_TEST_MOCK_PROPERTY_GET: NodeSpec = NodeSpec::new("test:mock:propertyGet", 0x1b16);
 pub const SPEC_TEST_MOCK_PROPERTY_SET: NodeSpec = NodeSpec::new("test:mock:propertySet", 0x1b17);
 pub const SPEC_TEST_MOCK_PROPERTY_ONCE: NodeSpec = NodeSpec::new("test:mock:propertyOnce", 0x1b18);
+pub const SPEC_TEST_MOCK_TIMERS_ENABLE: NodeSpec = NodeSpec::new("test:mock:timers:enable", 0x1b19);
+pub const SPEC_TEST_MOCK_TIMERS_TICK: NodeSpec = NodeSpec::new("test:mock:timers:tick", 0x1b1A);
+pub const SPEC_TEST_MOCK_TIMERS_SETTIME: NodeSpec = NodeSpec::new("test:mock:timers:setTime", 0x1b1B);
+pub const SPEC_TEST_MOCK_TIMERS_RESET: NodeSpec = NodeSpec::new("test:mock:timers:reset", 0x1b1C);
 
 node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
