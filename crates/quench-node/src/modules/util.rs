@@ -2056,8 +2056,8 @@ fn inspect_object(value: &Value, depth: usize) -> String {
             let property_value = quench_runtime::execute::get_property(value, key);
             let rendered = if matches!(key.as_str(), "actual" | "expected") {
                 match property_value {
-                    Value::String(text) if text.len() > 488 => {
-                        format!("'{}...'", &text[..488])
+                    Value::String(text) if text.len() > 9_488 => {
+                        format!("'{}...'", &text[..9_488])
                     }
                     Value::String(text) if text.contains('\n') => {
                         let mut lines = text
