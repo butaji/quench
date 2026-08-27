@@ -263,7 +263,7 @@ pub(crate) fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::TypedArrayPrototype, "byteLength") => Builtin::TypedArrayByteLengthGetter,
         (Builtin::TypedArrayPrototype, "byteOffset") => Builtin::TypedArrayByteOffsetGetter,
         (Builtin::TypedArrayPrototype, "length") => Builtin::TypedArrayLengthGetter,
-        (Builtin::TypedArrayPrototype, "buffer") => Builtin::DataViewBufferGetter,
+        (Builtin::TypedArrayPrototype, "buffer") => Builtin::TypedArrayBufferGetter,
         (Builtin::TypedArrayPrototype, "Symbol.toStringTag") => Builtin::TypedArrayToStringTagGetter,
         _ => return intrinsic_getter_extended(builtin, key),
     };
