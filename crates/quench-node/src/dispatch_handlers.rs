@@ -1960,6 +1960,19 @@ pub fn cp_spawn(
     let child = execute::set_property(child, "stderr", stderr.clone());
     let child = execute::set_property(child, "stdio", host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]));
     let child = execute::set_property(child, "spawnargs", spawnargs.clone());
+    let child = execute::set_property(child, "killed", Value::Boolean(false));
+    let child = execute::set_property(child, "signalCode", Value::Null);
+    let child = execute::set_property(child, "exitCode", Value::Undefined);
+    let child = execute::set_property(
+        child,
+        "kill",
+        crate::host::capability(crate::registry::SPEC_CP_KILL),
+    );
+    let child = execute::set_property(
+        child,
+        "Symbol.dispose",
+        crate::host::capability(crate::registry::SPEC_CP_KILL),
+    );
     state.borrow_mut().identity_roots.push(child.clone());
     if command == "foo123"
         || command == "does-not-exist"
@@ -2051,8 +2064,34 @@ pub fn cp_spawn_output_emit(
     emit(&stderr, "end", Vec::new())?;
     emit(&stdout, "close", Vec::new())?;
     emit(&stderr, "close", Vec::new())?;
-    emit(child, "exit", vec![Value::Number(0.0), Value::Null])?;
-    emit(child, "close", vec![Value::Number(0.0), Value::Null])
+    let killed = matches!(execute::get_property(child, "killed"), Value::Boolean(true));
+    let signal = execute::get_property(child, "signalCode");
+    let exit = if killed {
+        vec![Value::Null, signal]
+    } else {
+        vec![Value::Number(0.0), Value::Null]
+    };
+    emit(child, "exit", exit.clone())?;
+    emit(child, "close", exit)
+}
+
+pub fn cp_kill(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let child = receiver.ok_or(VmError::NotCallable)?;
+    let signal = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| Value::String("SIGTERM".into()));
+    let signal = match signal {
+        Value::String(value) => Value::String(value),
+        _ => Value::String("SIGTERM".into()),
+    };
+    execute::set_property_in_place(child, "killed", Value::Boolean(true));
+    execute::set_property_in_place(child, "signalCode", signal);
+    Ok(Value::Boolean(true))
 }
 
 pub fn cp_spawn_error_emit(
