@@ -15,6 +15,93 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+struct Frame {
+    before: Vec<Value>,
+    after: Vec<Value>,
+    restores: Vec<Value>,
+}
+
+thread_local! {
+    static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn register_mock_restore(restore: Value) {
+    FRAMES.with(|frames| {
+        if let Some(frame) = frames.borrow_mut().last_mut() {
+            frame.restores.push(restore);
+        }
+    });
+}
+
+pub fn reset_mocks() {
+    FRAMES.with(|frames| {
+        if let Some(frame) = frames.borrow().last() {
+            for restore in frame.restores.iter().rev() {
+                let _ = quench_runtime::vm::call_value(restore, &Value::Undefined, &[]);
+            }
+        }
+    });
+}
+
+pub fn before_each(args: &[Value]) -> Result<Value, VmError> {
+    if let Some(callback) = callback(args) {
+        FRAMES.with(|frames| {
+            if let Some(frame) = frames.borrow_mut().last_mut() {
+                frame.before.push(callback.clone());
+            }
+        });
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn after_each(args: &[Value]) -> Result<Value, VmError> {
+    if let Some(callback) = callback(args) {
+        FRAMES.with(|frames| {
+            if let Some(frame) = frames.borrow_mut().last_mut() {
+                frame.after.push(callback.clone());
+            }
+        });
+    }
+    Ok(Value::Undefined)
+}
+
+fn callback(args: &[Value]) -> Option<&Value> {
+    args.iter().find(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
+}
+
+fn invoke(state: &Rc<RefCell<HostState>>, callback: &Value, context: &Value) -> Result<(), VmError> {
+    let result = quench_runtime::vm::call_value(callback, &Value::Undefined, std::slice::from_ref(context))?;
+    crate::modules::pump::await_promise(state, &result)
+}
+
+fn context() -> Value {
+    quench_runtime::host_api::object(vec![
+        ("assert".into(), crate::modules::assert::build_value()),
+        ("beforeEach".into(), crate::host::capability(crate::registry::SPEC_TEST_BEFORE_EACH)),
+        ("afterEach".into(), crate::host::capability(crate::registry::SPEC_TEST_AFTER_EACH)),
+        ("test".into(), crate::host::capability(crate::registry::SPEC_TEST_NESTED)),
+        ("mock".into(), quench_runtime::host_api::object(vec![
+            ("fn".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN)),
+            ("method".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD)),
+            ("getter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_GETTER)),
+            ("setter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER)),
+        ])),
+    ])
+}
+
+pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let Some(callback) = callback(args).cloned() else { return Ok(Value::Undefined) };
+    let child = context();
+    let inherited = FRAMES.with(|frames| frames.borrow().last().map(|f| f.before.clone()).unwrap_or_default());
+    for hook in inherited { invoke(state, &hook, &child)?; }
+    FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new() }));
+    let result = invoke(state, &callback, &child);
+    let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
+    for hook in frame.after.iter().rev() { invoke(state, hook, &child)?; }
+    for restore in frame.restores.iter().rev() { let _ = quench_runtime::vm::call_value(restore, &Value::Undefined, &[]); }
+    result.map(|_| Value::Undefined)
+}
+
 pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let name = test_name(args);
     // `test(name, { skip: ... }, fn)` — a truthy `skip` option skips the run.
@@ -37,23 +124,12 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     let Some(callback) = callback else {
         return Ok(Value::Undefined);
     };
-    let context = quench_runtime::host_api::object(vec![
-        ("assert".to_string(), crate::modules::assert::build_value()),
-        (
-            "mock".to_string(),
-            quench_runtime::host_api::object(vec![
-                (
-                    "fn".to_string(),
-                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
-                ),
-                (
-                    "method".to_string(),
-                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
-                ),
-            ]),
-        ),
-    ]);
-    match quench_runtime::vm::call_value(callback, &Value::Undefined, &[context]) {
+    let context = context();
+    FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new() }));
+    let result = quench_runtime::vm::call_value(callback, &Value::Undefined, &[context.clone()]);
+    let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
+    for restore in frame.restores.iter().rev() { let _ = quench_runtime::vm::call_value(restore, &Value::Undefined, &[]); }
+    match result {
         Ok(result) => {
             // Async callbacks return a promise; drive the loop until it
             // settles so a rejection reports `not ok`, never a vacuous `ok`.
