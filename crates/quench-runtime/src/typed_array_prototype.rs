@@ -162,3 +162,65 @@ pub(crate) fn get(value: &Value) -> Option<Value> {
         _ => None,
     }
 }
+
+/// Resolve a runtime override of the concrete typed-array prototype's
+/// `constructor` property while preserving the instance as accessor receiver.
+pub(crate) fn constructor_override(value: &Value) -> Option<Value> {
+    let prototype = get(value).or_else(|| {
+        let builtin = match value {
+            Value::Float64Array(_) => crate::ops::Builtin::Float64ArrayPrototype,
+            Value::Float32Array(_) => crate::ops::Builtin::Float32ArrayPrototype,
+            Value::Int8Array(_) => crate::ops::Builtin::Int8ArrayPrototype,
+            Value::Int16Array(_) => crate::ops::Builtin::Int16ArrayPrototype,
+            Value::Uint16Array(_) => crate::ops::Builtin::Uint16ArrayPrototype,
+            Value::Int32Array(_) => crate::ops::Builtin::Int32ArrayPrototype,
+            Value::Uint32Array(_) => crate::ops::Builtin::Uint32ArrayPrototype,
+            Value::BigInt64Array(_) => crate::ops::Builtin::BigInt64ArrayPrototype,
+            Value::BigUint64Array(_) => crate::ops::Builtin::BigUint64ArrayPrototype,
+            Value::Uint8Array(_) => crate::ops::Builtin::Uint8ArrayPrototype,
+            Value::Uint8ClampedArray(_) => crate::ops::Builtin::Uint8ClampedArrayPrototype,
+            _ => return None,
+        };
+        Some(crate::vm::realm_intrinsic(builtin))
+    })?;
+    match prototype {
+        Value::Builtin(builtin)
+            if crate::builtins::read_intrinsic_override(builtin, "constructor").is_some() =>
+        {
+            Some(
+                crate::vm::intrinsic_override_property(builtin, "constructor", value)
+                    .unwrap_or(Value::Undefined),
+            )
+        }
+        Value::BoundFunction(bound) => {
+            let descriptor_key = crate::builtins::descriptor_key("constructor");
+            let descriptor = bound
+                .properties
+                .borrow()
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == &descriptor_key).then_some(value.clone()))?;
+            let Value::Object(fields) = descriptor else {
+                return Some(Value::Undefined);
+            };
+            if let Some(getter) = fields
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "get").then_some(value.clone()))
+            {
+                return Some(match getter {
+                    Value::Undefined => Value::Undefined,
+                    getter => crate::functions::execute_target(&getter, value, &[])
+                        .ok()
+                        .unwrap_or(Value::Undefined),
+                });
+            }
+            let value = fields
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "value").then_some(value.clone()));
+            value
+        }
+        _ => None,
+    }
+}

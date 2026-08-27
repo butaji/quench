@@ -1043,7 +1043,10 @@ fn typed_array_to_reversed(receiver: Option<&Value>) -> Result<Value, crate::exe
     let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
     let mut values = Vec::with_capacity(length);
     for index in (0..length).rev() {
-        values.push(crate::execute::get_property_result(&value, &index.to_string())?);
+        values.push(crate::execute::get_property_result(
+            &value,
+            &index.to_string(),
+        )?);
     }
     construct_typed_array_result(&value, values)
 }
@@ -1058,7 +1061,9 @@ fn typed_array_to_sorted(
             "TypedArray.prototype.toSorted called on out-of-bounds view",
         ));
     }
-    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    let compare = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined));
     if let Some(compare) = compare {
         if !crate::conversion::is_callable(compare) {
             return Err(crate::value::error::throw_type_error(
@@ -1069,7 +1074,10 @@ fn typed_array_to_sorted(
     let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
     let mut values = Vec::with_capacity(length);
     for index in 0..length {
-        values.push(crate::execute::get_property_result(&value, &index.to_string())?);
+        values.push(crate::execute::get_property_result(
+            &value,
+            &index.to_string(),
+        )?);
     }
     for index in 1..values.len() {
         let item = values[index].clone();
@@ -1096,7 +1104,9 @@ fn typed_array_sort(
             "TypedArray.prototype.sort called on invalid view",
         ));
     }
-    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    let compare = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined));
     if let Some(compare) = compare {
         if !crate::conversion::is_callable(compare) {
             return Err(crate::value::error::throw_type_error(
@@ -1175,7 +1185,11 @@ fn typed_array_with(
                     .to_string(),
             ),
             Value::Boolean(value) => Value::BigInt(if value { "1" } else { "0" }.to_string()),
-            _ => return Err(crate::value::error::throw_type_error("Cannot convert value to BigInt")),
+            _ => {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot convert value to BigInt",
+                ))
+            }
         }
     } else {
         Value::Number(crate::conversion::to_number(&replacement)?)
@@ -1201,7 +1215,8 @@ fn typed_array_compare_values(
     compare: Option<&Value>,
 ) -> Result<std::cmp::Ordering, crate::execute::VmError> {
     if let Some(compare) = compare {
-        let result = crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
+        let result =
+            crate::execute::call(compare, &Value::Undefined, &[left.clone(), right.clone()])?;
         return Ok(crate::conversion::to_number(&result)?
             .partial_cmp(&0.0)
             .unwrap_or(std::cmp::Ordering::Equal));
@@ -1211,14 +1226,13 @@ fn typed_array_compare_values(
             (true, true) => Ok(std::cmp::Ordering::Equal),
             (true, false) => Ok(std::cmp::Ordering::Greater),
             (false, true) => Ok(std::cmp::Ordering::Less),
-            (false, false) if *left == 0.0 && *right == 0.0 => Ok(match (
-                left.is_sign_negative(),
-                right.is_sign_negative(),
-            ) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => std::cmp::Ordering::Equal,
-            }),
+            (false, false) if *left == 0.0 && *right == 0.0 => {
+                Ok(match (left.is_sign_negative(), right.is_sign_negative()) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => std::cmp::Ordering::Equal,
+                })
+            }
             (false, false) => Ok(left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)),
         },
         (Value::BigInt(left), Value::BigInt(right)) => Ok(left
@@ -1236,7 +1250,7 @@ fn typed_array_species_create(
     length: usize,
 ) -> Result<Value, crate::execute::VmError> {
     let default = typed_array_constructor(exemplar)?;
-    let constructor = crate::execute::get_property_result(exemplar, "constructor")?;
+    let constructor = typed_array_species_constructor(exemplar, default)?;
     let species = if matches!(constructor, Value::Undefined) {
         Value::Builtin(default)
     } else {
@@ -1259,7 +1273,91 @@ fn typed_array_species_create(
     Ok(result)
 }
 
-fn typed_array_constructor(exemplar: &Value) -> Result<crate::ops::Builtin, crate::execute::VmError> {
+fn typed_array_species_constructor(
+    exemplar: &Value,
+    default: crate::ops::Builtin,
+) -> Result<Value, crate::execute::VmError> {
+    let has_own = crate::typed_array_prototype::own_property(exemplar, "constructor").is_some()
+        || crate::typed_array_prototype::descriptor(exemplar, "constructor").is_some();
+    if !has_own {
+        if let Some(prototype) = typed_array_prototype_builtin(default) {
+            let prototype = crate::typed_array_prototype::get(exemplar)
+                .unwrap_or_else(|| crate::vm::realm_intrinsic(prototype));
+            if let Some(result) =
+                typed_array_prototype_override(&prototype, "constructor", exemplar)
+            {
+                return result;
+            }
+        }
+    }
+    crate::execute::get_property_result(exemplar, "constructor")
+}
+
+fn typed_array_prototype_builtin(constructor: crate::ops::Builtin) -> Option<crate::ops::Builtin> {
+    use crate::ops::Builtin;
+    Some(match constructor {
+        Builtin::Float64Array => Builtin::Float64ArrayPrototype,
+        Builtin::Float32Array => Builtin::Float32ArrayPrototype,
+        Builtin::Int8Array => Builtin::Int8ArrayPrototype,
+        Builtin::Int16Array => Builtin::Int16ArrayPrototype,
+        Builtin::Int32Array => Builtin::Int32ArrayPrototype,
+        Builtin::Uint8Array => Builtin::Uint8ArrayPrototype,
+        Builtin::Uint16Array => Builtin::Uint16ArrayPrototype,
+        Builtin::Uint32Array => Builtin::Uint32ArrayPrototype,
+        Builtin::Uint8ClampedArray => Builtin::Uint8ClampedArrayPrototype,
+        Builtin::BigInt64Array => Builtin::BigInt64ArrayPrototype,
+        Builtin::BigUint64Array => Builtin::BigUint64ArrayPrototype,
+        _ => return None,
+    })
+}
+
+fn typed_array_prototype_override(
+    prototype: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, crate::execute::VmError>> {
+    if let Value::Builtin(builtin) = prototype {
+        if crate::builtins::read_intrinsic_override(*builtin, key).is_some() {
+            return Some(Ok(crate::vm::intrinsic_override_property(
+                *builtin, key, receiver,
+            )
+            .unwrap_or(Value::Undefined)));
+        }
+        return None;
+    }
+    let Value::BoundFunction(bound) = prototype else {
+        return None;
+    };
+    let descriptor_key = crate::builtins::descriptor_key(key);
+    let descriptor = bound
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == &descriptor_key).then_some(value.clone()))?;
+    let Value::Object(fields) = descriptor else {
+        return Some(Ok(Value::Undefined));
+    };
+    if let Some(getter) = fields
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "get").then_some(value.clone()))
+    {
+        return Some(match getter {
+            Value::Undefined => Ok(Value::Undefined),
+            getter => crate::functions::execute_target(&getter, receiver, &[]),
+        });
+    }
+    let value = fields
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "value").then_some(value.clone()));
+    value.map(Ok)
+}
+
+fn typed_array_constructor(
+    exemplar: &Value,
+) -> Result<crate::ops::Builtin, crate::execute::VmError> {
     let constructor = match exemplar {
         Value::Float64Array(_) => crate::ops::Builtin::Float64Array,
         Value::Float32Array(_) => crate::ops::Builtin::Float32Array,
