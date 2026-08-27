@@ -61,6 +61,15 @@ impl QuenchNodeHost {
                 HostCapabilityKind::Custom(CapabilityName::UrlPatternTest) => {
                     url_pattern_test(receiver, arguments)
                 }
+                HostCapabilityKind::Custom(CapabilityName::UrlPatternGet) => {
+                    url_pattern_get(&self.state, receiver, arguments)
+                }
+                HostCapabilityKind::Custom(CapabilityName::UrlPatternExecLegacy) => {
+                    url_pattern_exec(receiver, arguments)
+                }
+                HostCapabilityKind::Custom(CapabilityName::UrlPatternTestLegacy) => {
+                    url_pattern_test(receiver, arguments)
+                }
                 HostCapabilityKind::Custom(CapabilityName::UrlPattern) => {
                     Err(VmError::Thrown(fs_error(
                         "ERR_CONSTRUCT_CALL_REQUIRED",

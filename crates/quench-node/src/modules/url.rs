@@ -1177,7 +1177,16 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
         if quench_runtime::is_callable(&value) {
             value
         } else {
-            crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern", 2281))
+            let constructor = crate::host::capability(crate::registry::NodeSpec::new(
+                "url:URLPattern",
+                2281,
+            ));
+            let _ = execute::set_callable_property(
+                &constructor,
+                "prototype",
+                url_pattern_prototype(),
+            );
+            constructor
         }
     };
     crate::host::namespace_object(vec![
@@ -1229,27 +1238,7 @@ pub fn url_pattern_construct(
             let _ = execute::get_property_result(options, "ignoreCase")?;
         }
     }
-    let mut prototype = host_api::object(Vec::new());
-    for name in [
-        "protocol",
-        "username",
-        "password",
-        "hostname",
-        "port",
-        "pathname",
-        "search",
-        "hash",
-        "hasRegExpGroups",
-    ] {
-        prototype = execute::define_property(
-            prototype,
-            name,
-            host_api::object(vec![(
-                "get".into(),
-                crate::host::capability(crate::registry::NodeSpec::new("url:URLPattern:get", 2283)),
-            )]),
-        )?;
-    }
+    let prototype = url_pattern_prototype();
     let pattern = host_api::object(vec![
         ("\0quench:urlpattern:instance".into(), Value::Boolean(true)),
         ("protocol".into(), Value::String("*".into())),
@@ -1270,6 +1259,37 @@ pub fn url_pattern_construct(
         ),
     ]);
     execute::set_prototype_of(&pattern, &prototype)
+}
+
+fn url_pattern_prototype() -> Value {
+    let mut prototype = host_api::object(Vec::new());
+    for name in [
+        "protocol",
+        "username",
+        "password",
+        "hostname",
+        "port",
+        "pathname",
+        "search",
+        "hash",
+        "hasRegExpGroups",
+    ] {
+        prototype = match execute::define_property(
+            prototype.clone(),
+            name,
+            host_api::object(vec![(
+                "get".into(),
+                crate::host::capability(crate::registry::NodeSpec::new(
+                    "url:URLPattern:get",
+                    2286,
+                )),
+            )]),
+        ) {
+            Ok(next) => next,
+            Err(_) => break,
+        };
+    }
+    prototype
 }
 
 pub fn url_pattern_get(
