@@ -1076,6 +1076,20 @@ pub fn inspect_with_options(
     rendered
 }
 
+pub fn inspect_with_options_colors(
+    value: &Value,
+    depth: usize,
+    show_hidden: bool,
+    max_array_length: Option<usize>,
+    getters: bool,
+    colors: bool,
+) -> String {
+    COLORS_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(colors));
+    let rendered = inspect_with_options(value, depth, show_hidden, max_array_length, getters);
+    COLORS_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
+    rendered
+}
+
 pub fn inspect_proxy(value: &Value, depth: usize, show_proxy: bool) -> Option<String> {
     let Value::Proxy(proxy) = value else {
         return None;
@@ -1606,6 +1620,7 @@ fn inspect_regexp(value: &Value) -> String {
         _ => String::new(),
     };
     let literal = format!("/{source}/{flags}");
+    let literal = colorize_regexp(&literal);
     let constructor = quench_runtime::execute::get_property(value, "constructor");
     let name = match quench_runtime::execute::get_property(&constructor, "name") {
         Value::String(name) if name != "RegExp" && !name.is_empty() => Some(name),
@@ -1627,6 +1642,33 @@ fn inspect_regexp(value: &Value) -> String {
     } else {
         format!("{prefix}{literal} {{\n{}\n}}", props.join(",\n"))
     }
+}
+
+fn colorize_regexp(literal: &str) -> String {
+    let enabled = COLORS_OVERRIDE.with(|slot| slot.borrow().unwrap_or(false));
+    if !enabled {
+        return literal.to_string();
+    }
+    let mut out = String::new();
+    for (index, character) in literal.chars().enumerate() {
+        let (start, end) = if index == 0 || character == '/' {
+            ("\x1b[32m", "\x1b[39m")
+        } else if matches!(character, '^' | '$' | '|' | '*' | '+' | '?') {
+            ("\x1b[35m", "\x1b[39m")
+        } else if matches!(character, '(' | ')' | '[' | ']') {
+            ("\x1b[31m", "\x1b[39m")
+        } else if character == '\\' {
+            ("\x1b[36m", "\x1b[39m")
+        } else if character.is_ascii_alphabetic() || character.is_ascii_digit() {
+            ("\x1b[33m", "\x1b[39m")
+        } else {
+            ("", "")
+        };
+        out.push_str(start);
+        out.push(character);
+        out.push_str(end);
+    }
+    out
 }
 
 fn inspect_collection(owner: &Value, depth: usize, sorted: bool) -> String {
