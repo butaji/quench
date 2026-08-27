@@ -77,7 +77,7 @@ pub(crate) fn execute_function_apply(
     let receiver = arguments.first().unwrap_or(&Value::Undefined);
     if matches!(target, Value::Builtin(Builtin::StringFromCodePoint)) {
         if let Some(array) = arguments.get(1).and_then(|value| match value {
-            Value::Array(array) if array.is_packed_data() => Some(array),
+            Value::Array(array) if array.is_dense_numeric_data() => Some(array),
             _ => None,
         }) {
             let length = array_like_length(&crate::execute::get_property_result(
