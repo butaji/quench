@@ -51,13 +51,37 @@ fn execute_builtin_match(
         ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
         ArrayFlat => return Some(flat(receiver, arguments)),
-        ArrayFlatMap => return Some(flat_map(receiver, arguments)),
+        ArrayFlatMap => {
+            if arguments
+                .first()
+                .is_none_or(|value| !crate::conversion::is_callable(value))
+            {
+                return Some(Err(crate::vm::not_callable()));
+            }
+            return Some(flat_map(receiver, arguments));
+        }
         ArrayAt => return Some(at(receiver, arguments)),
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
         ArraySplice => return Some(splice(receiver, arguments)),
-        ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
-        ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
+        ArrayReduce => {
+            if arguments
+                .first()
+                .is_none_or(|value| !crate::conversion::is_callable(value))
+            {
+                return Some(Err(crate::vm::not_callable()));
+            }
+            return Some(reduce_values(receiver, arguments, false));
+        }
+        ArrayReduceRight => {
+            if arguments
+                .first()
+                .is_none_or(|value| !crate::conversion::is_callable(value))
+            {
+                return Some(Err(crate::vm::not_callable()));
+            }
+            return Some(reduce_values(receiver, arguments, true));
+        }
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
         _ => return None,
@@ -642,7 +666,7 @@ pub(crate) fn flat_map(
         .first()
         .filter(|value| crate::conversion::is_callable(value))
     else {
-        return Err(crate::vm::not_callable());
+        return Ok(receiver);
     };
     let length = crate::builtins::map_length(&receiver)?;
     let mut target = crate::builtins::array_species_create(&receiver, 0)?;
@@ -734,10 +758,10 @@ pub(crate) fn reduce_values(
     let receiver = crate::construct::to_object(receiver)?;
     let length = crate::builtins::map_length(&receiver)?;
     let Some(callback) = arguments.first() else {
-        return Err(crate::vm::not_callable());
+        return Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined));
     };
     if !crate::conversion::is_callable(callback) {
-        return Err(crate::vm::not_callable());
+        return Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined));
     }
     let initial = arguments.get(1).cloned();
     let mut index = if reverse { length } else { 0 };
