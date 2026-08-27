@@ -170,7 +170,7 @@ pub(crate) fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
         return false;
     }
     if key == "BYTES_PER_ELEMENT"
-        && crate::builtin_meta::prototype(builtin) == Some(Builtin::TypedArrayPrototype)
+        && crate::builtins::props::is_typed_array_bytes_builtin(builtin)
     {
         return true;
     }
