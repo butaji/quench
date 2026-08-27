@@ -21,7 +21,7 @@ use crate::host::HostState;
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
-    if let Some(mock) = crate::modules::test::mocked_module(&spec).or_else(|| crate::modules::test::mocked_module(spec.strip_prefix("node:").unwrap_or(&spec))) {
+    if let Some(mock) = crate::modules::test::mocked_module(&spec) {
         if crate::modules::test::mock_module_cache(&spec) { let key = format!("\0mock:{spec}"); if let Some(cached) = state.borrow().module_cache.get(&key) { return Ok(cached.clone()); } state.borrow_mut().module_cache.insert(key, mock.clone()); }
         return Ok(mock);
     }
