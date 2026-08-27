@@ -549,14 +549,19 @@ pub(crate) fn repeat(
     let source = receiver
         .and_then(units_of)
         .unwrap_or_else(|| value.encode_utf16().collect());
-    let total_units = source.len().checked_mul(count).ok_or_else(|| {
-        crate::value::error::throw_range_error("Invalid string length")
-    })?;
+    let total_units = source
+        .len()
+        .checked_mul(count)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid string length"))?;
     if total_units > MAX_STRING_UNITS {
-        return Err(crate::value::error::throw_range_error("Invalid string length"));
+        return Err(crate::value::error::throw_range_error(
+            "Invalid string length",
+        ));
     }
     if !units_fit_limit(total_units) {
-        return Err(crate::value::error::throw_range_error("Invalid string length"));
+        return Err(crate::value::error::throw_range_error(
+            "Invalid string length",
+        ));
     }
     // Keep ordinary one-unit strings in their compact UTF-8 representation;
     // this avoids a transient UTF-16 allocation for Node's documented maximum

@@ -525,7 +525,9 @@ impl Drop for Environment {
 }
 
 fn clone_tdz_prefix(source: &Option<Rc<TdzCells>>, count: usize) -> Option<Rc<TdzCells>> {
-    source.as_ref().map(|cells| TdzCells::clone_prefix(cells, count))
+    source
+        .as_ref()
+        .map(|cells| TdzCells::clone_prefix(cells, count))
 }
 
 fn immutable_prefix(source: &RefCell<Option<HashSet<u16>>>, limit: usize) -> Option<HashSet<u16>> {

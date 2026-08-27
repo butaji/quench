@@ -1071,10 +1071,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         Some(value @ (Value::String(_) | Value::StringUnits(_))) => {
             owned_options = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
                 ("\0prototype".into(), Value::Null),
-                (
-                    "smallestUnit".into(),
-                    value.clone(),
-                ),
+                ("smallestUnit".into(), value.clone()),
             ])));
             &owned_options
         }

@@ -78,10 +78,20 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
       let result = originalRequire(name);
       if (normalized === "os") {
         result.availableParallelism ||= () => 1;
+        result.userInfo ||= (options = {}) => ({
+          username: "unknown",
+          uid: 0,
+          gid: 0,
+          shell: "/bin/sh",
+          homedir: globalThis.process?.env?.HOME || "/"
+        });
         result.getPriority ||= () => 0;
         result.setPriority ||= () => undefined;
         result.machine ||= () => "unknown";
         result.version ||= () => "";
+        for (const name of ["hostname", "homedir", "release", "type", "endianness", "tmpdir", "arch", "platform", "version", "machine"]) {
+          if (typeof result[name] === "function") result[name].toString = () => String(result[name]());
+        }
       }
       if (normalized === "util") {
         result.parseEnv ||= __quenchParseEnv;
