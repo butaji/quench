@@ -115,6 +115,13 @@ fn connect_with_receiver(
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             ])));
         }
+        let lookup = execute::get_property(options, "lookup");
+        if !matches!(lookup, Value::Undefined) && !quench_runtime::is_callable(&lookup) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ])));
+        }
         let hints = execute::get_property(options, "hints");
         if let Value::Number(value) = hints {
             let bits = value as i64;
