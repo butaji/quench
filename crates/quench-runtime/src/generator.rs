@@ -93,6 +93,7 @@ fn initialize_parameters(
             private_environment: None,
             suspension: None,
             async_for_of: None,
+            pending_completion: None,
         }),
         registers,
         marker as u32,
@@ -277,6 +278,7 @@ pub(crate) enum Resume {
 
 pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if *generator.running.borrow() {
+        *generator.done.borrow_mut() = true;
         return Err(crate::value::error::throw_type_error(
             "Generator is already executing",
         ));
@@ -659,5 +661,6 @@ fn initialize_state(generator: &GeneratorData) {
         private_environment: None,
         suspension: None,
         async_for_of: None,
+        pending_completion: None,
     });
 }

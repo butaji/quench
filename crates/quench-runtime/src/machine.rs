@@ -1417,6 +1417,16 @@ impl Machine {
         };
         frame.set_finally_resume(resume, yield_dst)
     }
+
+    pub(crate) fn set_try_catch_resume(&mut self, resume: CodeRange, yield_dst: u16) -> bool {
+        let Some(offset) = self.frames.top_offset() else {
+            return false;
+        };
+        let Some(frame) = self.frames.frame_at_mut(offset) else {
+            return false;
+        };
+        frame.set_catch_resume(resume, yield_dst)
+    }
 }
 
 #[cfg(test)]
