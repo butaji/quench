@@ -538,7 +538,11 @@ pub fn util_deprecate(
     }
     let mut wrapper = bound_custom(
         crate::registry::SPEC_UTIL_DEPRECATED_CALL.cap,
-        vec![callback.clone(), args.get(1).cloned().unwrap_or(Value::String(String::new())), args.get(2).cloned().unwrap_or(Value::Undefined)],
+        vec![
+            callback.clone(),
+            args.get(1).cloned().unwrap_or(Value::String(String::new())),
+            args.get(2).cloned().unwrap_or(Value::Undefined),
+        ],
     );
     let length = execute::get_property(&callback, "length");
     wrapper = execute::set_property(wrapper, "length", length);
@@ -551,7 +555,11 @@ pub fn util_deprecate(
         wrapper = execute::set_property(wrapper, "prototype", prototype);
         wrapper = execute::set_prototype_of(&wrapper, &callback)?;
     } else {
-        wrapper = execute::set_property(wrapper, "prototype", quench_runtime::host_api::object(Vec::new()));
+        wrapper = execute::set_property(
+            wrapper,
+            "prototype",
+            quench_runtime::host_api::object(Vec::new()),
+        );
     }
     Ok(wrapper)
 }
@@ -575,8 +583,14 @@ pub fn util_deprecated_call(
     let Some(callback) = args.first() else {
         return Err(VmError::NotCallable);
     };
-    let message = match args.get(1) { Some(Value::String(value)) => value.as_str(), _ => "" };
-    let code = match args.get(2) { Some(Value::String(value)) => Some(value.as_str()), _ => None };
+    let message = match args.get(1) {
+        Some(Value::String(value)) => value.as_str(),
+        _ => "",
+    };
+    let code = match args.get(2) {
+        Some(Value::String(value)) => Some(value.as_str()),
+        _ => None,
+    };
     if crate::modules::process::mark_deprecation(state, callback, code) {
         crate::modules::process::emit_warning(state, "DeprecationWarning", message, code, false);
     }
@@ -1982,6 +1996,16 @@ pub fn net_connect(
     }
 }
 
+pub fn net_lookup_callback(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let result = host_api::array(args.to_vec());
+    state.borrow_mut().net.lookup_result = Some(result.clone());
+    Ok(result)
+}
+
 pub fn net_socket_call(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -2166,11 +2190,13 @@ pub fn util_get_call_sites(
         Value::String(value) => Value::String(value),
         _ => Value::String(String::new()),
     };
-    Ok(quench_runtime::host_api::array(vec![quench_runtime::host_api::object(vec![
-        ("scriptName".into(), script_name),
-        ("lineNumber".into(), Value::Number(0.0)),
-        ("columnNumber".into(), Value::Number(0.0)),
-    ])]))
+    Ok(quench_runtime::host_api::array(vec![
+        quench_runtime::host_api::object(vec![
+            ("scriptName".into(), script_name),
+            ("lineNumber".into(), Value::Number(0.0)),
+            ("columnNumber".into(), Value::Number(0.0)),
+        ]),
+    ]))
 }
 
 pub fn buffer_atob(
@@ -2783,7 +2809,9 @@ pub fn cp_spawn_output_emit(
     let simulated_exit = {
         let args = match &child_args {
             Value::Array(array) => (0..array.logical_len())
-                .filter_map(|index| execute::get_property_result(&child_args, &index.to_string()).ok())
+                .filter_map(|index| {
+                    execute::get_property_result(&child_args, &index.to_string()).ok()
+                })
                 .filter_map(|value| execute::to_js_string(&value).ok())
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
@@ -2792,7 +2820,11 @@ pub fn cp_spawn_output_emit(
             .position(|value| value.ends_with("/exit.js") || value == "exit.js")
             .and_then(|index| args.get(index + 1))
             .and_then(|value| value.parse::<f64>().ok())
-            .or_else(|| args.iter().any(|value| value.ends_with("child_process_should_emit_error.js")).then_some(1.0))
+            .or_else(|| {
+                args.iter()
+                    .any(|value| value.ends_with("child_process_should_emit_error.js"))
+                    .then_some(1.0)
+            })
             .unwrap_or(0.0)
     };
     let exit = if killed {
@@ -2823,14 +2855,27 @@ pub fn cp_kill(
         Value::String(value)
             if matches!(
                 value.as_str(),
-                "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGQUIT" | "SIGHUP" | "SIGSTOP"
-                    | "SIGCONT" | "SIGUSR1" | "SIGUSR2"
-            ) => Value::String(value),
+                "SIGTERM"
+                    | "SIGKILL"
+                    | "SIGINT"
+                    | "SIGQUIT"
+                    | "SIGHUP"
+                    | "SIGSTOP"
+                    | "SIGCONT"
+                    | "SIGUSR1"
+                    | "SIGUSR2"
+            ) =>
+        {
+            Value::String(value)
+        }
         Value::String(value) => {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
-                ("message".into(), Value::String(format!("Unknown signal: {value}"))),
+                (
+                    "message".into(),
+                    Value::String(format!("Unknown signal: {value}")),
+                ),
             ])))
         }
         _ => Value::String("SIGTERM".into()),
@@ -2919,27 +2964,30 @@ pub fn cp_fork(
 ) -> Result<Value, VmError> {
     let script = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(script, Value::String(ref value) if !value.starts_with("Symbol.")) {
-        return Err(crate::modules::buffer_enc::invalid_arg_type(
-            format!(
-                "The \"modulePath\" argument must be of type string.{}",
-                crate::modules::util::invalid_arg_received(&script)
-            ),
-        ));
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"modulePath\" argument must be of type string.{}",
+            crate::modules::util::invalid_arg_received(&script)
+        )));
     }
     let second = args.get(1).cloned().unwrap_or(Value::Undefined);
     if !matches!(
         second,
         Value::Undefined | Value::Null | Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_)
     ) {
-        return Err(crate::modules::buffer_enc::invalid_arg_type(
-            format!("The \"args\" argument must be an instance of Array.{}", crate::modules::util::invalid_arg_received(&second)),
-        ));
+        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"args\" argument must be an instance of Array.{}",
+            crate::modules::util::invalid_arg_received(&second)
+        )));
     }
     if let Some(options) = args.get(2) {
-        if !matches!(options, Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)) {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(
-                format!("The \"options\" argument must be of type object.{}", crate::modules::util::invalid_arg_received(options)),
-            ));
+        if !matches!(
+            options,
+            Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)
+        ) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"options\" argument must be of type object.{}",
+                crate::modules::util::invalid_arg_received(options)
+            )));
         }
     }
     let (fork_args, options) = if matches!(second, Value::Object(_) | Value::ObjectAlias(_)) {
@@ -3338,7 +3386,10 @@ pub fn cp_instance_spawn(
     let child = receiver.ok_or(VmError::NotCallable)?;
     let options = args.first().ok_or(VmError::NotCallable)?;
     if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
-        return Err(cp_instance_arg_error("The \"options\" argument must be of type object.", options));
+        return Err(cp_instance_arg_error(
+            "The \"options\" argument must be of type object.",
+            options,
+        ));
     }
     let file = execute::get_property(options, "file");
     if !matches!(file, Value::String(_)) {
@@ -3347,7 +3398,10 @@ pub fn cp_instance_spawn(
             &file,
         ));
     }
-    for (key, kind) in [("envPairs", "an instance of Array"), ("args", "an instance of Array")] {
+    for (key, kind) in [
+        ("envPairs", "an instance of Array"),
+        ("args", "an instance of Array"),
+    ] {
         let value = execute::get_property(options, key);
         if !matches!(value, Value::Undefined | Value::Array(_)) {
             return Err(cp_instance_arg_error(
@@ -3367,7 +3421,10 @@ fn cp_instance_arg_error(prefix: &str, value: &Value) -> VmError {
         ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
         (
             "message".into(),
-            Value::String(format!("{prefix}{}", crate::modules::util::invalid_arg_received(value))),
+            Value::String(format!(
+                "{prefix}{}",
+                crate::modules::util::invalid_arg_received(value)
+            )),
         ),
     ]))
 }
