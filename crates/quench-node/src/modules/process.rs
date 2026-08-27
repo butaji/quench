@@ -19,8 +19,8 @@ pub enum UnhandledRejectionMode {
 
 pub struct ProcessState {
     pub argv: Vec<String>,
-    pub exit_handlers: Vec<Value>,
-    pub before_exit_handlers: Vec<Value>,
+    pub exit_handlers: Vec<(Value, bool)>,
+    pub before_exit_handlers: Vec<(Value, bool)>,
     /// `(handler, once)` — `once` handlers fire a single time.
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
     pub warning_handlers: Vec<(Value, bool)>,
@@ -572,9 +572,16 @@ fn std_env(name: &str, default: &str) -> String {
 pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     if let (Some(Value::String(event)), Some(handler)) = (args.first(), args.get(1)) {
         match event.as_str() {
-            "exit" | "beforeExit" => {
-                on(state, args)?;
-            }
+            "exit" => state
+                .borrow_mut()
+                .process
+                .exit_handlers
+                .push((handler.clone(), true)),
+            "beforeExit" => state
+                .borrow_mut()
+                .process
+                .before_exit_handlers
+                .push((handler.clone(), true)),
             "uncaughtException" | "warning" | "unhandledRejection" => {
                 push_handler(state, handler, event.as_str(), true)
             }
@@ -672,12 +679,12 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
                 .borrow_mut()
                 .process
                 .exit_handlers
-                .push(handler.clone()),
+                .push((handler.clone(), false)),
             "beforeExit" => state
                 .borrow_mut()
                 .process
                 .before_exit_handlers
-                .push(handler.clone()),
+                .push((handler.clone(), false)),
             "uncaughtException" | "unhandledRejection" => {
                 push_handler(state, handler, event, false)
             }
