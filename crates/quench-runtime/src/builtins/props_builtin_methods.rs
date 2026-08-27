@@ -77,7 +77,6 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Map, "prototype") => Some(MapPrototype),
         (Set, "prototype") => Some(SetPrototype),
         (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
-        (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
         (FunctionPrototype, "Symbol.hasInstance") => Some(FunctionPrototypeHasInstance),
         (RegExpPrototype, "toString") => Some(RegExpPrototypeToString),
         _ => builtin_method3(builtin, key),

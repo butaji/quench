@@ -353,6 +353,9 @@ fn finish_set_property(
     if inherited_blocked {
         return write_failure(strict);
     }
+    if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
+        return write_failure(strict);
+    }
     if matches!(
         target,
         crate::value::Value::String(_)
