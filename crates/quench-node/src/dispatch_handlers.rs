@@ -2546,7 +2546,26 @@ pub fn cp_exec_file(
         return Ok(child);
     };
     let mut error = Value::Null;
+    let mut stdout = String::new();
     let mut stderr = String::new();
+    if command
+        .as_deref()
+        .is_some_and(|value| value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe"))
+    {
+        if let Some(Value::Array(values)) = args.iter().find(|value| matches!(value, Value::Array(_))) {
+            let parts = (0..values.len())
+                .map(|index| values.get(index).unwrap_or(Value::Undefined))
+                .map(|value| match value {
+                    Value::String(text) => Some(text.clone()),
+                    Value::Number(number) => Some(number.to_string()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(parts) = parts {
+                stdout = format!("{}\n", parts.join(" "));
+            }
+        }
+    }
     if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
         if let Some(Value::Array(values)) = args.get(1) {
             if let Ok(Value::String(flag)) =
@@ -2582,7 +2601,7 @@ pub fn cp_exec_file(
         callback.clone(),
         vec![
             error,
-            Value::String(String::new().into()),
+            Value::String(stdout.into()),
             Value::String(stderr.into()),
         ],
     );

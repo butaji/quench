@@ -57,6 +57,8 @@ __quenchSharedChildProcess.execFile = (file, args, options, callback) => {
   }
   return child;
 };
+if (typeof __quenchSharedChildProcess["\0quench:child_process_execFile"] === "function")
+  __quenchSharedChildProcess.execFile = __quenchSharedChildProcess["\0quench:child_process_execFile"];
 const __quenchSyncOutput = (file, args, options) => {
   const values = Array.isArray(args) ? args : [];
   const value = String(file).endsWith("echo")

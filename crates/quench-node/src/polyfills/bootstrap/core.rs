@@ -656,17 +656,27 @@ const __quenchChildProcessModule = () => {
       }
       const child = __quenchSpawnChild(file, args, options);
       if (typeof callback === "function") {
-        queueMicrotask(() => callback(null, "", ""));
+        const values = Array.isArray(args) ? args : [];
+        const output = String(file).endsWith("echo")
+          ? `${values.join(" ")}\n`
+          : "";
+        queueMicrotask(() => callback(null, output, ""));
       }
       return child;
     },
     execFileSync: (file, args = [], options = {}) => {
       const child = __quenchSpawnChild(file, args, options);
-      return options?.encoding ? "" : NodeBuffer.from("");
+      const values = Array.isArray(args) ? args : [];
+      const output = String(file).endsWith("echo")
+        ? `${values.join(" ")}\n`
+        : "";
+      return options?.encoding ? output : NodeBuffer.from(output);
     },
     spawnSync
   };
   globalThis.__nodeRequireChildProcess = childProcess;
+  if (typeof childProcess["\0quench:child_process_execFile"] === "function")
+    childProcess.execFile = childProcess["\0quench:child_process_execFile"];
   return childProcess;
 };
 globalThis.__quenchRequireCorePart00Base = (name) =>

@@ -46,6 +46,8 @@ __quenchChildProcess.execFile = (file, args, options, callback) => {
   }
   return child;
 };
+if (typeof __quenchChildProcess["\0quench:child_process_execFile"] === "function")
+  __quenchChildProcess.execFile = __quenchChildProcess["\0quench:child_process_execFile"];
 __quenchChildProcess.execSync = (command, options = {}) => {
   const source = String(command);
   let output = "";
