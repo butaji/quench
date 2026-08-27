@@ -268,6 +268,7 @@ pub struct PromiseData {
     pub(crate) unhandled_queued: Cell<bool>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
     pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
+    pub(crate) aggregate_hooks: RefCell<Vec<(Rc<PromiseAggregate>, usize)>>,
 }
 
 impl PromiseData {
@@ -296,6 +297,7 @@ impl PromiseData {
             unhandled_queued: Cell::new(false),
             then_actions: RefCell::new(Vec::new()),
             continuations: RefCell::new(Vec::new()),
+            aggregate_hooks: RefCell::new(Vec::new()),
         }
     }
 
@@ -323,6 +325,10 @@ impl PromiseData {
         } else {
             properties.push((key.to_string(), value));
         }
+    }
+
+    pub(crate) fn add_aggregate_hook(&self, aggregate: Rc<PromiseAggregate>, index: usize) {
+        self.aggregate_hooks.borrow_mut().push((aggregate, index));
     }
 
     pub fn rejection_handled(&self) -> bool {
