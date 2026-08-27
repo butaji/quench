@@ -35,11 +35,9 @@ pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<
 }
 
 fn descriptor_flag_via_descriptor(target: &Value, key: &str, field: &str) -> Option<bool> {
-    let descriptor = crate::builtins::object::descriptor(
-        Some(target),
-        Some(&Value::String(key.to_string())),
-    )
-    .ok()?;
+    let descriptor =
+        crate::builtins::object::descriptor(Some(target), Some(&Value::String(key.to_string())))
+            .ok()?;
     let Value::Object(properties) = descriptor else {
         return None;
     };
@@ -184,14 +182,20 @@ fn validate_redefinition(
     }
     if descriptor_value(current, "get").is_some()
         && descriptor_value_in(requested, "get").is_some_and(|requested_get| {
-            !crate::builtins::same_value(Some(&requested_get), descriptor_value(current, "get").as_ref())
+            !crate::builtins::same_value(
+                Some(&requested_get),
+                descriptor_value(current, "get").as_ref(),
+            )
         })
     {
         return Err(cannot_redefine());
     }
     if descriptor_value(current, "set").is_some()
         && descriptor_value_in(requested, "set").is_some_and(|requested_set| {
-            !crate::builtins::same_value(Some(&requested_set), descriptor_value(current, "set").as_ref())
+            !crate::builtins::same_value(
+                Some(&requested_set),
+                descriptor_value(current, "set").as_ref(),
+            )
         })
     {
         return Err(cannot_redefine());
@@ -208,7 +212,11 @@ fn validate_redefinition(
     }
     if descriptor_value(current, "writable") == Some(Value::Boolean(false))
         && descriptor_value_in(requested, "value").is_some_and(|requested_value| {
-            !crate::builtins::same_value(Some(&requested_value), descriptor_value(current, "value").as_ref())
+            let current_value = descriptor_value(current, "value");
+            let requested_value = crate::locals::resolved_replacement(requested_value);
+            let current_value = current_value.map(crate::locals::resolved_replacement);
+            let same = crate::builtins::same_value(Some(&requested_value), current_value.as_ref());
+            !same
         })
     {
         return Err(cannot_redefine());
