@@ -182,7 +182,7 @@ fn relative_index(value: Option<&Value>, length: usize) -> Result<usize, VmError
     let index = crate::conversion::to_number(value)?.trunc() as i64;
     let length = length as i64;
     Ok(if index < 0 {
-        (length + index).max(0) as usize
+        length.saturating_add(index).max(0) as usize
     } else {
         index.min(length) as usize
     })
@@ -221,7 +221,9 @@ fn typed_array_subview(value: &Value, begin: usize, length: usize) -> Value {
         ($variant:ident, $data:ty, $size:expr, $view:expr) => {
             Value::$variant(Rc::new(<$data>::new(
                 $view.buffer.clone(),
-                $view.byte_offset + begin * $size,
+                $view
+                    .byte_offset
+                    .saturating_add(begin.saturating_mul($size)),
                 length,
             )))
         };
