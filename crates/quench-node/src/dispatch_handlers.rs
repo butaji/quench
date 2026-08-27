@@ -2410,15 +2410,18 @@ pub fn readline_create_interface(
 
 // ---- assert-independent leaf caps ----
 pub fn util_get_call_sites(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let global = quench_runtime::vm::current_global_object();
-    let script_name = match quench_runtime::execute::get_property(&global, "\0quench_vm_filename") {
-        Value::String(value) => Value::String(value),
-        _ => Value::String(String::new()),
-    };
+    let script_name = state
+        .borrow()
+        .process
+        .argv
+        .get(1)
+        .cloned()
+        .map(Value::String)
+        .unwrap_or_else(|| Value::String(String::new()));
     Ok(quench_runtime::host_api::array(vec![
         quench_runtime::host_api::object(vec![
             ("scriptName".into(), script_name),
