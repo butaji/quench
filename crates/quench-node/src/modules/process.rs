@@ -96,11 +96,27 @@ pub(crate) fn mark_deprecation(state: &Rc<RefCell<HostState>>, callback: &Value,
 pub fn build(argv: &[String], exec_path: &str) -> Value {
     let mut props = info_props(argv, exec_path);
     props.extend(method_props());
-    crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
+    let process = crate::host::namespace_object(props)
+        .unwrap_or_else(|_| host_api::object(Vec::new()));
+    let descriptor = host_api::object(vec![
+        (
+            "get".into(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_GET),
+        ),
+        (
+            "set".into(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_SET),
+        ),
+        ("enumerable".into(), Value::Boolean(true)),
+        ("configurable".into(), Value::Boolean(false)),
+    ]);
+    let _ = quench_runtime::execute::define_property(process.clone(), "exitCode", descriptor);
+    process
 }
 
 fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
     vec![
+        ("Symbol.toStringTag", Value::String("process".into())),
         (
             "argv",
             host_api::array(argv.iter().cloned().map(Value::String).collect()),

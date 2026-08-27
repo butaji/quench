@@ -336,7 +336,6 @@ globalThis.process = {
     }
     return globalThis.__quench_chdir(path);
   },
-  exitCode: 0,
   exit: (code) => {
     if (globalThis.__quench_emitting_exit) return;
     process.exitCode = code;

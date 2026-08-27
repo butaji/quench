@@ -59,8 +59,13 @@ pub(crate) fn execute_delete_property(
     }
     let (result, deleted) = crate::builtins::delete_property(target.clone(), &key);
     if !deleted && *strict {
+        let tag = crate::execute::get_property(&target, "Symbol.toStringTag");
+        let label = match tag {
+            crate::value::Value::String(tag) => tag,
+            _ => "Object".to_string(),
+        };
         return Err(crate::value::error::throw_type_error(
-            "Cannot delete non-configurable property",
+            &format!("Cannot delete property '{key}' of #<{label}>"),
         ));
     }
     if deleted {

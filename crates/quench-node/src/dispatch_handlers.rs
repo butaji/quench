@@ -5392,6 +5392,59 @@ pub fn process_emit_warning(
     Ok(Value::Undefined)
 }
 
+pub fn process_exit_code_get(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(state.borrow().process.exit_code.unwrap_or(0) as f64))
+}
+
+pub fn process_exit_code_set(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(value, Value::Undefined | Value::Null) {
+        state.borrow_mut().process.exit_code = None;
+        return Ok(Value::Undefined);
+    }
+    let code = match &value {
+        Value::Number(number) if number.is_finite() && number.fract() == 0.0 => *number as i64,
+        Value::String(text) if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit()) => {
+            text.parse::<i64>().unwrap_or(-1)
+        }
+        _ => -1,
+    };
+    if !(0..=255).contains(&code) {
+        let received = match &value {
+            Value::Number(number) => {
+                let rendered = if number.is_nan() {
+                    "NaN".to_string()
+                } else if number.is_infinite() {
+                    if number.is_sign_negative() { "-Infinity" } else { "Infinity" }.to_string()
+                } else {
+                    number.to_string()
+                };
+                format!("Received {rendered}")
+            }
+            _ => crate::modules::util::invalid_arg_received(&value),
+        };
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            (
+                "message".into(),
+                Value::String(format!(
+                    "The \"code\" argument must be of type number or string. {received}"
+                )),
+            ),
+        ])));
+    }
+    state.borrow_mut().process.exit_code = Some(code as i32);
+    Ok(Value::Undefined)
+}
+
 pub fn process_getuid(
     state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
