@@ -1803,7 +1803,7 @@
   Writable.destroy = destroy;
   // Keep the public stream module's Duplex family connected to the canonical
   // NodeDuplex adapters installed by the bootstrap layer.
-  Duplex.from ||= (source, options = {}) => {
+  Duplex.from = (source, options = {}) => {
     const pair = source && source.readable && source.readable.getReader
       ? source
       : source && source.getReader
@@ -1812,7 +1812,7 @@
     if (pair) return Duplex.fromWeb(pair, options);
     return Readable.from(source, options);
   };
-  Duplex.fromWeb ||= (pair, options) =>
+  Duplex.fromWeb = (pair, options) =>
     (() => {
       const readable = pair?.readable;
       const reader = readable?.getReader?.();
@@ -1826,8 +1826,11 @@
           if (reading) return;
           reading = true;
           reader.read().then(({ value, done }) => {
-            reading = false;
-            if (done) this.push(null);
+          reading = false;
+            if (done) {
+              this.push(null);
+              this.readable = false;
+            }
             else this.push(value);
           }, (error) => {
             reading = false;
