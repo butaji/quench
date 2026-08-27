@@ -17,6 +17,12 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 ), (
                     "method".into(),
                     crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
+                ), (
+                    "getter".into(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_GETTER),
+                ), (
+                    "setter".into(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER),
                 )]),
             );
             return Some(test);

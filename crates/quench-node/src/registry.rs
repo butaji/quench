@@ -90,6 +90,18 @@ pub const SPEC_TEST_MOCK_METHOD: NodeSpec = NodeSpec::new("test:mock:method", 0x
 pub const SPEC_TEST_MOCK_RESTORE: NodeSpec = NodeSpec::new("test:mock:restore", 0x1b06);
 pub const SPEC_TEST_MOCK_BIND: NodeSpec = NodeSpec::new("test:mock:bind", 0x1b07);
 pub const SPEC_TEST_MOCK_BOUND_CALL: NodeSpec = NodeSpec::new("test:mock:bound-call", 0x1b08);
+pub const SPEC_TEST_MOCK_GETTER: NodeSpec = NodeSpec::new("test:mock:getter", 0x1b09);
+pub const SPEC_TEST_MOCK_SETTER: NodeSpec = NodeSpec::new("test:mock:setter", 0x1b0A);
+pub const SPEC_TEST_MOCK_CALL_COUNT: NodeSpec = NodeSpec::new("test:mock:callCount", 0x1b0B);
+pub const SPEC_TEST_MOCK_IMPLEMENTATION: NodeSpec =
+    NodeSpec::new("test:mock:implementation", 0x1b0C);
+pub const SPEC_TEST_MOCK_IMPLEMENTATION_ONCE: NodeSpec =
+    NodeSpec::new("test:mock:implementationOnce", 0x1b0D);
+pub const SPEC_TEST_BEFORE_EACH: NodeSpec = NodeSpec::new("test:beforeEach", 0x1b0E);
+pub const SPEC_TEST_AFTER_EACH: NodeSpec = NodeSpec::new("test:afterEach", 0x1b0F);
+pub const SPEC_TEST_NESTED: NodeSpec = NodeSpec::new("test:nested", 0x1b10);
+pub const SPEC_TEST_MOCK_RESET_CALLS: NodeSpec = NodeSpec::new("test:mock:resetCalls", 0x1b11);
+pub const SPEC_TEST_MOCK_RESET: NodeSpec = NodeSpec::new("test:mock:reset", 0x1b12);
 
 node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
