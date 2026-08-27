@@ -155,7 +155,10 @@ globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
   });
 };
 globalThis.__nodeFs.realpath = (value, options, callback) => {
-  if (typeof options === "function") callback = options;
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
   }
