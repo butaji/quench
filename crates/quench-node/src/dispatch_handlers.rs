@@ -1318,9 +1318,14 @@ fn source_text_module_requests(source: &str) -> Result<Vec<(Value, String)>, VmE
     for rest in source.split("import ").skip(1) {
         let Some((quote, start)) = ['\'', '"']
             .iter()
-            .find_map(|quote| rest.find(*quote).map(|start| (*quote, start))) else { continue };
+            .find_map(|quote| rest.find(*quote).map(|start| (*quote, start)))
+        else {
+            continue;
+        };
         let text = &rest[start + 1..];
-        let Some(end) = text.find(quote) else { continue };
+        let Some(end) = text.find(quote) else {
+            continue;
+        };
         let specifier = text[..end].to_string();
         let phase = if rest.trim_start().starts_with("source ") {
             "source"
@@ -1335,18 +1340,21 @@ fn source_text_module_requests(source: &str) -> Result<Vec<(Value, String)>, VmE
             .unwrap_or_default();
         let key = format!("{specifier}\0{phase}\0{attributes}");
         let mut attribute_values = Vec::new();
-        if let Some(body) = rest.get(end + 1..).and_then(|tail| tail.split_once("with {") )
+        if let Some(body) = rest
+            .get(end + 1..)
+            .and_then(|tail| tail.split_once("with {"))
             .and_then(|(_, body)| body.split_once('}').map(|(body, _)| body))
         {
             for entry in body.split(',') {
-                let Some((name, value)) = entry.split_once(':') else { continue };
+                let Some((name, value)) = entry.split_once(':') else {
+                    continue;
+                };
                 let value = value.trim().trim_matches(['\'', '"']);
                 attribute_values.push((name.trim().to_string(), Value::String(value.into())));
             }
         }
         let attributes = quench_runtime::host_api::object(attribute_values);
-        let attributes = execute::set_prototype_of(&attributes, &Value::Null)
-            .unwrap_or(attributes);
+        let attributes = execute::set_prototype_of(&attributes, &Value::Null).unwrap_or(attributes);
         let mut request = quench_runtime::host_api::object(vec![
             ("specifier".into(), Value::String(specifier)),
             ("attributes".into(), attributes),
@@ -1354,12 +1362,16 @@ fn source_text_module_requests(source: &str) -> Result<Vec<(Value, String)>, VmE
         ]);
         for key in ["specifier", "attributes", "phase"] {
             let value = execute::get_property(&request, key);
-            request = execute::define_property(request, key, host_api::object(vec![
-                ("value".into(), value),
-                ("writable".into(), Value::Boolean(false)),
-                ("enumerable".into(), Value::Boolean(true)),
-                ("configurable".into(), Value::Boolean(false)),
-            ]))?;
+            request = execute::define_property(
+                request,
+                key,
+                host_api::object(vec![
+                    ("value".into(), value),
+                    ("writable".into(), Value::Boolean(false)),
+                    ("enumerable".into(), Value::Boolean(true)),
+                    ("configurable".into(), Value::Boolean(false)),
+                ]),
+            )?;
         }
         let request = execute::set_prototype_of(&request, &Value::Null).unwrap_or(request);
         requests.push((request, key));
@@ -1380,7 +1392,9 @@ pub fn vm_source_text_module_construct(
     let module_requests: Vec<Value> = parsed_requests
         .iter()
         .filter_map(|(request, key)| {
-            if seen.iter().any(|item| item == key) { return None; }
+            if seen.iter().any(|item| item == key) {
+                return None;
+            }
             seen.push(key.clone());
             Some(request.clone())
         })
@@ -1392,18 +1406,26 @@ pub fn vm_source_text_module_construct(
     let mut namespace = quench_runtime::host_api::object(Vec::new());
     let mut uninitialized = quench_runtime::host_api::object(Vec::new());
     for part in source.split("export ").skip(1) {
-        let Some((kind, rest)) = part.split_once(' ') else { continue };
+        let Some((kind, rest)) = part.split_once(' ') else {
+            continue;
+        };
         let name = rest
             .split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$')
             .next()
             .unwrap_or_default();
-        if name.is_empty() { continue; }
-        namespace = execute::define_property(namespace, name, host_api::object(vec![
-            ("value".into(), Value::Undefined),
-            ("writable".into(), Value::Boolean(true)),
-            ("enumerable".into(), Value::Boolean(true)),
-            ("configurable".into(), Value::Boolean(true)),
-        ]))?;
+        if name.is_empty() {
+            continue;
+        }
+        namespace = execute::define_property(
+            namespace,
+            name,
+            host_api::object(vec![
+                ("value".into(), Value::Undefined),
+                ("writable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]),
+        )?;
         if kind == "const" {
             uninitialized = execute::set_property(uninitialized, name, Value::Boolean(true));
         }
@@ -1484,9 +1506,15 @@ pub fn vm_module_evaluate(
                 );
             }
             for part in source.split("export ").skip(1) {
-                let Some((kind, rest)) = part.split_once(' ') else { continue };
-                if kind != "const" && kind != "let" && kind != "var" { continue; }
-                let Some((name, expression)) = rest.split_once('=') else { continue };
+                let Some((kind, rest)) = part.split_once(' ') else {
+                    continue;
+                };
+                if kind != "const" && kind != "let" && kind != "var" {
+                    continue;
+                }
+                let Some((name, expression)) = rest.split_once('=') else {
+                    continue;
+                };
                 let name = name.trim();
                 let expression = expression.split(';').next().unwrap_or_default().trim();
                 if let Ok(value) = expression.parse::<f64>() {
