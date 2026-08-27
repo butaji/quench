@@ -68,6 +68,7 @@ fn execute_builtin_match(
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
         TypedArrayForEach => return Some(typed_array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
+        TypedArrayToLocaleString => return Some(typed_array_to_locale_string(receiver, arguments)),
         _ => return None,
     };
     Some(Ok(result))
@@ -194,6 +195,32 @@ fn typed_array_at(
         ));
     }
     at(Some(&value), arguments)
+}
+
+pub(crate) fn typed_array_join(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "join")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.join called on out-of-bounds view",
+        ));
+    }
+    crate::builtins::array_join(Some(&value), arguments)
+}
+
+fn typed_array_to_locale_string(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "toLocaleString")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.toLocaleString called on out-of-bounds view",
+        ));
+    }
+    array_to_locale_string(Some(&value), arguments)
 }
 
 fn map_argument_error(
