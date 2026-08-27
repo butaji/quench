@@ -510,7 +510,9 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             crate::modules::timers::build_promises()
                 .unwrap_or_else(|_| crate::host::namespace_object_from_pairs(Vec::new())),
         ),
-        "child_process" => Some(crate::host::namespace_object_from_pairs(vec![
+        "child_process" => {
+            let exec_file = crate::host::capability(crate::registry::SPEC_CP_EXECFILE);
+            Some(crate::host::namespace_object_from_pairs(vec![
             (
                 "ChildProcess".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR),
@@ -527,10 +529,8 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 "exec".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_EXEC),
             ),
-            (
-                "execFile".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXECFILE),
-            ),
+            ("execFile".to_string(), exec_file.clone()),
+            ("\0quench:child_process_execFile".to_string(), exec_file),
             (
                 "execFileSync".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
@@ -539,7 +539,8 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 "spawn".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_SPAWN),
             ),
-        ])),
+            ]))
+        }
         _ => None,
     }
 }
