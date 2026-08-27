@@ -472,6 +472,9 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 let _ = attach(&test_fn, alias, test_fn.clone());
             }
             let _ = attach(&test_fn, "run", test_fn.clone());
+            let _ = attach(&test_fn, "getTestContext", crate::host::capability(crate::registry::SPEC_TEST_GET_CONTEXT));
+            let _ = attach(&test_fn, "before", crate::host::capability(crate::registry::SPEC_TEST_BEFORE_EACH));
+            let _ = attach(&test_fn, "after", crate::host::capability(crate::registry::SPEC_TEST_AFTER_EACH));
             let mock = quench_runtime::host_api::object(vec![
                 (
                     "fn".to_string(),
