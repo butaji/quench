@@ -14,6 +14,9 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 quench_runtime::host_api::object(vec![(
                     "fn".into(),
                     crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+                ), (
+                    "method".into(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
                 )]),
             );
             return Some(test);
