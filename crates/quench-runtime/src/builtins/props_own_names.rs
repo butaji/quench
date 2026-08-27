@@ -375,6 +375,7 @@ fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
         | Builtin::Error
         | Builtin::Promise
         | Builtin::Object
+        | Builtin::Proxy
         | Builtin::ThrowTypeError => own_property_names_standard_core(builtin),
         _ => own_property_names_standard_tail(builtin),
     }
@@ -410,6 +411,7 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
             "values",
             "groupBy",
         ],
+        Builtin::Proxy => &["length", "name", "revocable"],
         Builtin::Function => &["length", "name", "prototype"],
         Builtin::AbstractModuleSource => &["length", "name", "prototype"],
         Builtin::AbstractModuleSourcePrototype => &["constructor", "Symbol.toStringTag"],
