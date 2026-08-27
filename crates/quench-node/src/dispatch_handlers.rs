@@ -826,7 +826,29 @@ pub fn util_promisified_call(
                 );
             }
         }
-        Err(VmError::Thrown(error)) => quench_runtime::reject_promise(&promise, error),
+        Err(VmError::Thrown(error)) => {
+            // execFile's Node promisifier validates its AbortSignal before
+            // creating the promise; preserve that synchronous TypeError.
+            let is_exec_file = matches!(
+                &original,
+                Value::BoundFunction(bound)
+                    if matches!(
+                        bound.target,
+                        Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+                            quench_runtime::ops::HostCapabilityKind::Custom(0x1e03)
+                        ))
+                    )
+            );
+            if is_exec_file
+                && matches!(
+                    execute::get_property(&error, "code"),
+                    Value::String(ref code) if code == "ERR_INVALID_ARG_TYPE"
+                )
+            {
+                return Err(VmError::Thrown(error));
+            }
+            quench_runtime::reject_promise(&promise, error)
+        }
         Err(_) => quench_runtime::reject_promise(&promise, Value::Undefined),
     }
     Ok(Value::Promise(promise))
@@ -2544,7 +2566,12 @@ pub fn cp_exec_file(
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
         let signal = execute::get_property(options, "signal");
-        if !matches!(signal, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+        if !matches!(signal, Value::Undefined)
+            && !matches!(
+                execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+                Value::Boolean(true)
+            )
+        {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
