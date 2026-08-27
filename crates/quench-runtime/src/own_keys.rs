@@ -411,10 +411,23 @@ fn boxed_string_keys<P: crate::value::PropertyEntries + ?Sized>(
         .enumerate()
         .map(|(index, _)| index.to_string())
         .collect::<Vec<_>>();
-    let mut string_keys: Vec<String> = ordered(properties, false)
+    let ordered_keys = ordered(properties, false)
         .into_iter()
         .filter(|key| !matches!(key.as_str(), "_value" | "constructor"))
         .collect();
+    let mut string_keys = Vec::new();
+    let mut extra_indices = Vec::new();
+    for key in ordered_keys {
+        if let Some(index) = array_index(&key) {
+            if !keys.iter().any(|existing| existing == &key) {
+                extra_indices.push((index, key));
+            }
+        } else {
+            string_keys.push(key);
+        }
+    }
+    extra_indices.sort_by_key(|(index, _)| *index);
+    keys.extend(extra_indices.into_iter().map(|(_, key)| key));
     // Ensure "length" is present and appears first among the non-index
     // string keys, in creation order. `Object.defineProperty` may have
     // re-defined or removed the own `length` slot; if it is missing,
