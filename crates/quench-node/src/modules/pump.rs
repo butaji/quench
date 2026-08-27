@@ -194,7 +194,7 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         drain_immediates(state)?;
         if !has_pending(state) {
             let handlers = state.borrow().process.before_exit_handlers.clone();
-            run_handlers(&handlers, 0)?;
+            run_lifecycle_handlers(state, &handlers, 0)?;
             if !has_pending(state) {
                 break;
             }
@@ -215,11 +215,34 @@ pub fn run_exit_handlers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> 
     }
     let code = state.borrow().process.exit_code.unwrap_or(0);
     let handlers = state.borrow().process.exit_handlers.clone();
-    run_handlers(&handlers, code)
+    run_lifecycle_handlers(state, &handlers, code)
 }
 
-fn run_handlers(handlers: &[Value], code: i32) -> Result<(), VmError> {
-    for handler in handlers {
+fn run_lifecycle_handlers(
+    state: &Rc<RefCell<HostState>>,
+    handlers: &[(Value, bool)],
+    code: i32,
+) -> Result<(), VmError> {
+    for (handler, once) in handlers {
+        if *once {
+            let mut guard = state.borrow_mut();
+            if let Some(index) = guard
+                .process
+                .exit_handlers
+                .iter()
+                .position(|(candidate, is_once)| *is_once && candidate == handler)
+            {
+                guard.process.exit_handlers.remove(index);
+            }
+            if let Some(index) = guard
+                .process
+                .before_exit_handlers
+                .iter()
+                .position(|(candidate, is_once)| *is_once && candidate == handler)
+            {
+                guard.process.before_exit_handlers.remove(index);
+            }
+        }
         call_callback(handler, &Value::Undefined, &[Value::Number(code as f64)])?;
     }
     Ok(())
