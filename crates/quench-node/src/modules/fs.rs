@@ -111,7 +111,7 @@ fn parse_option_object(options: &mut FsOptions, object: &Value) -> Result<(), Vm
         options.mode = Some(mode as u32);
     }
     let recursive = get("recursive");
-    if !matches!(recursive, Value::Undefined | Value::Null | Value::Boolean(_)) {
+    if !matches!(recursive, Value::Undefined | Value::Boolean(_)) {
         return Err(crate::modules::buffer_enc::invalid_arg_type(
             format!("The \"options.recursive\" property must be of type boolean.{}", crate::modules::util::invalid_arg_received(&recursive)),
         ));
