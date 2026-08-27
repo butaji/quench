@@ -389,14 +389,25 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
             "offset is out of bounds",
         ));
     }
-    // TypedArray.prototype.set reads all source elements before writing any
-    // target element.  This is observable when source and target overlap.
-    let values = (0..source_length)
-        .map(|index| crate::execute::get_property_result(&source, &index.to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-    for (index, value) in values.iter().enumerate() {
-        if let Some(result) = set_property(&target, &(offset + index).to_string(), value) {
-            result?;
+    if view_length(&source).is_some() {
+        // Typed-array sources may overlap the target, so snapshot them before
+        // the first write.
+        let values = (0..source_length)
+            .map(|index| crate::execute::get_property_result(&source, &index.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (index, value) in values.iter().enumerate() {
+            if let Some(result) = set_property(&target, &(offset + index).to_string(), value) {
+                result?;
+            }
+        }
+    } else {
+        // Ordinary array-like sources are read and written in lockstep; the
+        // ordering is observable through source getters.
+        for index in 0..source_length {
+            let value = crate::execute::get_property_result(&source, &index.to_string())?;
+            if let Some(result) = set_property(&target, &(offset + index).to_string(), &value) {
+                result?;
+            }
         }
     }
     Ok(Value::Undefined)
