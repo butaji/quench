@@ -28,7 +28,7 @@ pub(crate) fn execute_special(
     match builtin {
         Builtin::ObjectHasOwn => {
             let (target, key) = static_target(arguments);
-            has_own_property_result(target, key)
+            crate::builtins::object::has_own_property_static_result(target, key)
         }
         Builtin::ObjectHasOwnProperty => {
             let (target, key) = has_own_target(receiver, arguments);
@@ -192,6 +192,13 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     validate_set_prototype_value(&prototype)?;
     let current = get_prototype_of(Some(target))?;
+    if matches!(target, Value::Builtin(Builtin::ObjectPrototype))
+        && !crate::builtins::same_value(Some(&current), Some(&prototype))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot set the prototype of an immutable prototype object",
+        ));
+    }
     if !crate::builtins::same_value(Some(&current), Some(&prototype))
         && !crate::properties::object_is_extensible(target)
     {
