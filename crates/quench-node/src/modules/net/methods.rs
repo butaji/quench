@@ -249,6 +249,10 @@ fn connect_with_receiver(
         .as_deref()
         .or(host.as_deref())
         .unwrap_or(LOCAL_HOST);
+    if port == 0 {
+        let loopback = SocketAddr::new(LOCAL_HOST.parse().expect("loopback"), 0);
+        return connect_refused(state, &loopback);
+    }
     let Some(addr) = super::resolve_connect(target_host, port) else {
         let (object, _) = new_net_object(state, socket_props())?;
         let error = quench_runtime::builtins::error(
