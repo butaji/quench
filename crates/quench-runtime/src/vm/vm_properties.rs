@@ -145,6 +145,11 @@ fn get_property_value(value: &Value, key: &str) -> Value {
 
 fn get_property_value_typed_tail(value: &Value, key: &str) -> Value {
     use Value::*;
+    if key == "constructor" {
+        if let Some(result) = crate::typed_array_prototype::constructor_override(value) {
+            return result;
+        }
+    }
     match value {
         Float64Array(view) => float64_array_property(view, key),
         Float32Array(view) => float32_array_property(view, key),
