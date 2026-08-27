@@ -67,6 +67,14 @@ pub(crate) fn parse_mkdir_options(value: Option<&Value>) -> Result<FsOptions, Vm
             ..FsOptions::default()
         });
     }
+    if let Some(Value::String(mode)) = value {
+        if let Ok(mode) = u32::from_str_radix(mode, 8) {
+            return Ok(FsOptions {
+                mode: Some(mode),
+                ..FsOptions::default()
+            });
+        }
+    }
     parse_options(value)
 }
 
