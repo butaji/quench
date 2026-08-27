@@ -142,6 +142,10 @@ pub(crate) fn own_property(value: &Value, key: &str) -> Option<Value> {
     )
 }
 
+pub(crate) fn descriptor(value: &Value, key: &str) -> Option<Value> {
+    value.typed_array_meta()?.descriptor(key)
+}
+
 pub(crate) fn get(value: &Value) -> Option<Value> {
     match value {
         Value::Float64Array(data) => data.prototype(),

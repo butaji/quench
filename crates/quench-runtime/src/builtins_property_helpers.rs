@@ -373,6 +373,11 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             properties.retain(|(name, _)| name != &descriptor_key);
             properties.push((descriptor_key, metadata));
         }
+        value if key != "length" && value.typed_array_meta().is_some() => {
+            if let Some(meta) = value.typed_array_meta() {
+                meta.set_descriptor(key, metadata);
+            }
+        }
         _ => {}
     }
 }

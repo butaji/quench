@@ -67,6 +67,9 @@ fn typed_array_descriptor(value: &Value, key: &str) -> Option<Value> {
             ));
         }
     }
+    if let Some(metadata) = crate::typed_array_prototype::descriptor(value, key) {
+        return Some(public_descriptor(&metadata));
+    }
     crate::typed_array_prototype::own_property(value, key)
         .map(|property| descriptor_object(&property))
 }
