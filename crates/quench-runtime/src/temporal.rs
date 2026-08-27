@@ -13,18 +13,42 @@ pub(crate) fn zoned_construct(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let epoch = match arguments.first().unwrap_or(&crate::value::Value::Undefined) {
         crate::value::Value::BigInt(value) => value.parse::<i128>().unwrap_or(0),
+        crate::value::Value::Boolean(value) => i128::from(*value),
         _ => {
             return Err(crate::value::error::throw_type_error(
                 "Invalid epochNanoseconds",
             ))
         }
     };
-    let timezone =
-        parse_timezone_identifier(arguments.get(1).unwrap_or(&crate::value::Value::Undefined))?;
-    Ok(zoned_record(
+    let timezone_value = arguments.get(1).unwrap_or(&crate::value::Value::Undefined);
+    if matches!(timezone_value, crate::value::Value::String(_) | crate::value::Value::StringUnits(_)) {
+        let text = crate::conversion::to_string(timezone_value)?;
+        if text.contains('T') && text.contains('-') && text.bytes().any(|byte| byte.is_ascii_digit()) {
+            return Err(crate::value::error::throw_range_error("Invalid time zone"));
+        }
+    }
+    let timezone = parse_timezone_identifier(timezone_value)?;
+    let calendar = arguments
+        .get(2)
+        .filter(|value| !matches!(value, crate::value::Value::Undefined))
+        .map(|value| {
+            let calendar = parse_calendar_identifier(value)?;
+            if let crate::value::Value::String(_) | crate::value::Value::StringUnits(_) = value {
+                let text = crate::conversion::to_string(value)?;
+                let date_like = text.chars().filter(|ch| *ch == '-').count() >= 2
+                    || (text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_digit()));
+                if date_like && !text.eq_ignore_ascii_case("iso8601") {
+                    return Err(crate::value::error::throw_range_error("Invalid calendar"));
+                }
+            }
+            Ok(calendar)
+        })
+        .transpose()?
+        .unwrap_or_else(|| "iso8601".into());
+    Ok(zoned_record_with_calendar(
         epoch,
         timezone,
-        crate::ops::Builtin::TemporalZonedDateTimePrototype,
+        calendar,
     ))
 }
 
