@@ -665,6 +665,29 @@ fn descriptor_property_result(
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
     if let Value::Builtin(builtin) = value {
+        // NativeError prototypes inherit Error.prototype's stack accessor.
+        // Their intrinsic representation is a builtin value rather than an
+        // ordinary prototype-linked object, so expose that inherited getter
+        // explicitly while preserving the correct own-property descriptor.
+        if key == "stack"
+            && crate::builtins::read_intrinsic_override(*builtin, key).is_none()
+            && matches!(
+                builtin,
+                crate::ops::Builtin::EvalErrorPrototype
+                    | crate::ops::Builtin::AggregateErrorPrototype
+                    | crate::ops::Builtin::RangeErrorPrototype
+                    | crate::ops::Builtin::ReferenceErrorPrototype
+                    | crate::ops::Builtin::SyntaxErrorPrototype
+                    | crate::ops::Builtin::TypeErrorPrototype
+                    | crate::ops::Builtin::URIErrorPrototype
+                    | crate::ops::Builtin::SuppressedErrorPrototype
+            )
+        {
+            return Some(invoke_accessor(
+                &Value::Builtin(crate::ops::Builtin::ErrorPrototypeStackGetter),
+                receiver,
+            ));
+        }
         if let Some(descriptor) = crate::builtins::read_intrinsic_override(*builtin, key) {
             if let Value::Object(fields) = descriptor {
                 if let Some(getter) = fields
