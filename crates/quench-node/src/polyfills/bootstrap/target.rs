@@ -101,13 +101,12 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     this._nodeListeners = {};
   }
   addListener(name, listener, options, nodeStyle = true) {
-    const owner = this;
     const callback = typeof listener === "function"
       ? function (event) {
-        return listener.call(owner, event);
+        return listener(event);
       }
       : function (event) {
-        return listener.handleEvent.call(listener, event);
+        return listener.handleEvent(event);
       };
     (this._nodeListeners[name] ||= []).push({
       listener,
@@ -115,7 +114,13 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
       once: Boolean(options?.once),
       nodeStyle,
     });
-    super.addEventListener(name, callback, options);
+    const eventRecord = {
+      listener: callback,
+      once: Boolean(options?.once),
+      passive: Boolean(options?.passive),
+      signal: options?.signal,
+    };
+    (this._listeners[name] ||= []).push(eventRecord);
     return this;
   }
   addEventListener(name, listener, options) {
@@ -131,7 +136,9 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     const records = this._nodeListeners[name] || [];
     this._nodeListeners[name] = records.filter((record) => {
       if (record.listener !== listener) return true;
-      super.removeEventListener(name, record.callback);
+      this._listeners[name] = (this._listeners[name] || []).filter(
+        (eventRecord) => eventRecord.listener !== record.callback,
+      );
       return false;
     });
     return this;
@@ -160,7 +167,9 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
   removeAllListeners(name) {
     for (const event of name === undefined ? this.eventNames() : [name]) {
       for (const record of this._nodeListeners[event] || []) {
-        super.removeEventListener(event, record.callback);
+        this._listeners[event] = (this._listeners[event] || []).filter(
+          (eventRecord) => eventRecord.listener !== record.callback,
+        );
       }
       delete this._nodeListeners[event];
     }
