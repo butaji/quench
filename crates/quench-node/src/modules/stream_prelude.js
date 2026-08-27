@@ -279,7 +279,10 @@
             (st.awaitDrainWriters instanceof Set
               ? st.awaitDrainWriters.size > 0
               : true)) {
-          st.flowing = false;
+          if (st.flowing) {
+            st.flowing = false;
+            stream._emitter.emit("pause");
+          }
           break;
         }
       }
