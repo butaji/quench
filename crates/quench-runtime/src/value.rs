@@ -1422,19 +1422,25 @@ pub(crate) struct PrivateName {
     source: PrivateNameId,
     identity: Rc<()>,
     realm: crate::ops::RealmId,
+    label: String,
 }
 
 impl PrivateName {
-    pub(crate) fn new(source: PrivateNameId) -> Self {
+    pub(crate) fn new(source: PrivateNameId, label: &str) -> Self {
         Self {
             source,
             identity: Rc::new(()),
             realm: crate::vm::current_context_or_default().realm(),
+            label: label.to_string(),
         }
     }
 
     pub(crate) fn realm(&self) -> crate::ops::RealmId {
         self.realm
+    }
+
+    pub(crate) fn label(&self) -> &str {
+        &self.label
     }
 
     pub(crate) fn same_identity(&self, other: &Self) -> bool {

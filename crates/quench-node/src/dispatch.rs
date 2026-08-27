@@ -451,6 +451,22 @@ const CAP_TEST_MOCK_METHOD: u16 = 0x1b05;
 const CAP_TEST_MOCK_RESTORE: u16 = 0x1b06;
 const CAP_TEST_MOCK_BIND: u16 = 0x1b07;
 const CAP_TEST_MOCK_BOUND_CALL: u16 = 0x1b08;
+const CAP_TEST_MOCK_GETTER: u16 = 0x1b09;
+const CAP_TEST_MOCK_SETTER: u16 = 0x1b0A;
+const CAP_TEST_MOCK_CALL_COUNT: u16 = 0x1b0B;
+const CAP_TEST_MOCK_IMPLEMENTATION: u16 = 0x1b0C;
+const CAP_TEST_MOCK_IMPLEMENTATION_ONCE: u16 = 0x1b0D;
+const CAP_TEST_BEFORE_EACH: u16 = 0x1b0E;
+const CAP_TEST_AFTER_EACH: u16 = 0x1b0F;
+const CAP_TEST_NESTED: u16 = 0x1b10;
+const CAP_TEST_MOCK_RESET_CALLS: u16 = 0x1b11;
+const CAP_TEST_MOCK_RESET: u16 = 0x1b12;
+const CAP_TEST_MOCK_PROPERTY: u16 = 0x1b13;
+const CAP_TEST_MOCK_ACCESS_COUNT: u16 = 0x1b14;
+const CAP_TEST_MOCK_RESET_ACCESSES: u16 = 0x1b15;
+const CAP_TEST_MOCK_PROPERTY_GET: u16 = 0x1b16;
+const CAP_TEST_MOCK_PROPERTY_SET: u16 = 0x1b17;
+const CAP_TEST_MOCK_PROPERTY_ONCE: u16 = 0x1b18;
 
 /// Single canonical mapping from capability id to call handler.
 pub fn lookup(cap: u16) -> Option<CallHandler> {
@@ -866,6 +882,22 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TEST_MOCK_RESTORE => test_mock_restore,
         CAP_TEST_MOCK_BIND => test_mock_bind,
         CAP_TEST_MOCK_BOUND_CALL => test_mock_bound_call,
+        CAP_TEST_MOCK_GETTER => test_mock_getter,
+        CAP_TEST_MOCK_SETTER => test_mock_setter,
+        CAP_TEST_MOCK_CALL_COUNT => test_mock_call_count,
+        CAP_TEST_MOCK_IMPLEMENTATION => test_mock_implementation,
+        CAP_TEST_MOCK_IMPLEMENTATION_ONCE => test_mock_implementation_once,
+        CAP_TEST_BEFORE_EACH => test_before_each,
+        CAP_TEST_AFTER_EACH => test_after_each,
+        CAP_TEST_NESTED => test_nested,
+        CAP_TEST_MOCK_RESET_CALLS => test_mock_reset_calls,
+        CAP_TEST_MOCK_RESET => test_mock_reset,
+        CAP_TEST_MOCK_PROPERTY => test_mock_property,
+        CAP_TEST_MOCK_ACCESS_COUNT => test_mock_access_count,
+        CAP_TEST_MOCK_RESET_ACCESSES => test_mock_reset_accesses,
+        CAP_TEST_MOCK_PROPERTY_GET => test_mock_property_get,
+        CAP_TEST_MOCK_PROPERTY_SET => test_mock_property_set,
+        CAP_TEST_MOCK_PROPERTY_ONCE => test_mock_property_once,
         CAP_EVENT_TRUSTED_GET => event_trusted_get,
         CAP_ABORT_CONTROLLER_SIGNAL_GET => abort_controller_signal_get,
         CAP_ABORT_SIGNAL_ABORTED_GET => abort_signal_aborted_get,

@@ -34,9 +34,7 @@ pub(crate) fn execute_special(
             let (target, key) = has_own_target(receiver, arguments);
             has_own_property_result(target, key)
         }
-        Builtin::ObjectPropertyIsEnumerable => {
-            object_property_is_enumerable(receiver, arguments)
-        }
+        Builtin::ObjectPropertyIsEnumerable => object_property_is_enumerable(receiver, arguments),
         Builtin::ObjectPrototypeIsPrototypeOf => is_prototype_of(receiver, arguments),
         Builtin::ObjectGetOwnPropertyDescriptor => {
             let (target, key) = static_target(arguments);
@@ -66,16 +64,26 @@ fn execute_special_tail(
         Builtin::ObjectFromEntries => from_entries(arguments),
         Builtin::ObjectGroupBy => group_by(arguments),
         Builtin::ObjectCreate => create(arguments),
-        Builtin::ObjectGetPrototypeOf if arguments.is_empty() && receiver.is_some_and(|value| {
-            !matches!(value, Value::Builtin(Builtin::Object))
-        }) => get_prototype_of(receiver),
+        Builtin::ObjectGetPrototypeOf
+            if arguments.is_empty()
+                && receiver
+                    .is_some_and(|value| !matches!(value, Value::Builtin(Builtin::Object))) =>
+        {
+            get_prototype_of(receiver)
+        }
         Builtin::ObjectGetPrototypeOf => get_prototype_of(arguments.first()),
-        Builtin::ObjectSetPrototypeOf if arguments.is_empty() && receiver.is_some_and(|value| {
-            !matches!(value, Value::Builtin(Builtin::Object))
-        }) => Ok(Value::Undefined),
-        Builtin::ObjectSetPrototypeOf if arguments.len() == 1 && receiver.is_some_and(|value| {
-            !matches!(value, Value::Builtin(Builtin::Object))
-        }) => {
+        Builtin::ObjectSetPrototypeOf
+            if arguments.is_empty()
+                && receiver
+                    .is_some_and(|value| !matches!(value, Value::Builtin(Builtin::Object))) =>
+        {
+            Ok(Value::Undefined)
+        }
+        Builtin::ObjectSetPrototypeOf
+            if arguments.len() == 1
+                && receiver
+                    .is_some_and(|value| !matches!(value, Value::Builtin(Builtin::Object))) =>
+        {
             let mut call_arguments = vec![receiver.cloned().unwrap_or(Value::Undefined)];
             call_arguments.extend_from_slice(arguments);
             if matches!(receiver, Some(Value::Proxy(_))) {
@@ -181,9 +189,7 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Object.setPrototypeOf target must be an object",
         ));
     };
-    if !crate::value::is_object(target)
-        && !matches!(target, Value::Null | Value::Undefined)
-    {
+    if !crate::value::is_object(target) && !matches!(target, Value::Null | Value::Undefined) {
         let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
         validate_set_prototype_value(&prototype)?;
         return Ok(target.clone());

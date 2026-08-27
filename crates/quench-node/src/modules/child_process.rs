@@ -146,8 +146,14 @@ pub fn spawn_sync(
                             ("pid".into(), Value::Number(0.0)),
                             ("status".into(), Value::Number(0.0)),
                             ("signal".into(), Value::Null),
-                            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&stdout)),
-                            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&[])),
+                            (
+                                "stdout".into(),
+                                crate::modules::buffer_proto::make_buffer(&stdout),
+                            ),
+                            (
+                                "stderr".into(),
+                                crate::modules::buffer_proto::make_buffer(&[]),
+                            ),
                         ]));
                     }
                 }
@@ -190,10 +196,16 @@ pub fn spawn_sync(
     let executable = if is_host_exec {
         std::env::current_exe()
             .ok()
-            .and_then(|path| path.parent().map(|dir| {
-                let runner = dir.join("run");
-                if runner.is_file() { runner } else { dir.join("quench-node") }
-            }))
+            .and_then(|path| {
+                path.parent().map(|dir| {
+                    let runner = dir.join("run");
+                    if runner.is_file() {
+                        runner
+                    } else {
+                        dir.join("quench-node")
+                    }
+                })
+            })
             .filter(|path| path.is_file())
             .unwrap_or_else(|| std::path::PathBuf::from(&command))
     } else {
@@ -248,10 +260,7 @@ pub fn spawn_sync(
     // pass the parent as an explicit fact after option.env has been applied.
     if is_host_exec {
         cmd.env("QUENCH_CHILD_RUNNER", "1");
-        cmd.env(
-            "QUENCH_PARENT_PID",
-            std::process::id().to_string(),
-        );
+        cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
         cmd.env("QUENCH_ARGV0", &command);
     }
 

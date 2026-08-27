@@ -71,13 +71,17 @@ pub fn execute_call_continuation(
             return Ok(None);
         };
         if crate::functions::is_class_constructor(function) {
-            let error = crate::vm::with_realm(
-                crate::construct::function_realm_id(function),
-                || crate::value::error::throw_type_error("Class constructor cannot be invoked without 'new'"),
-            )
-            .unwrap_or_else(|| {
-                crate::value::error::throw_type_error("Class constructor cannot be invoked without 'new'")
-            });
+            let error =
+                crate::vm::with_realm(crate::construct::function_realm_id(function), || {
+                    crate::value::error::throw_type_error(
+                        "Class constructor cannot be invoked without 'new'",
+                    )
+                })
+                .unwrap_or_else(|| {
+                    crate::value::error::throw_type_error(
+                        "Class constructor cannot be invoked without 'new'",
+                    )
+                });
             return Err(error);
         }
         // Async and generator functions must go through the ordinary invocation
