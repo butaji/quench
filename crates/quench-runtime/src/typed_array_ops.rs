@@ -363,16 +363,17 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
 }
 
 fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let target = receiver.ok_or_else(|| {
+    let target = crate::arrays::typed_array_receiver(receiver, "set")?;
+    if crate::arrays::typed_array_is_immutable(&target) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.set called on immutable buffer",
+        ));
+    }
+    let target_length = view_length(&target).ok_or_else(|| {
         crate::value::error::throw_type_error(
             "TypedArray.prototype.set called on incompatible receiver",
         )
     })?;
-    let Some(target_length) = view_length(target) else {
-        return Err(crate::value::error::throw_type_error(
-            "TypedArray.prototype.set called on incompatible receiver",
-        ));
-    };
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let offset = set_offset(arguments)?;
     let source_length = if let Some(length) = view_length(&source) {
@@ -394,7 +395,7 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
         .map(|index| crate::execute::get_property_result(&source, &index.to_string()))
         .collect::<Result<Vec<_>, _>>()?;
     for (index, value) in values.iter().enumerate() {
-        if let Some(result) = set_property(target, &(offset + index).to_string(), value) {
+        if let Some(result) = set_property(&target, &(offset + index).to_string(), value) {
             result?;
         }
     }
