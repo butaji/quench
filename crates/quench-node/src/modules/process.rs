@@ -9,6 +9,16 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+#[cfg(unix)]
+fn process_parent_id() -> u32 {
+    std::os::unix::process::parent_id()
+}
+
+#[cfg(not(unix))]
+fn process_parent_id() -> u32 {
+    0
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnhandledRejectionMode {
     Throw,

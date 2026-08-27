@@ -330,6 +330,7 @@ pub(crate) fn execute_in_environment(
     }
 }
 
+#[inline(never)]
 pub(crate) fn execute_code_in_environment(
     code: crate::machine::CodeView<'_>,
     registers: &mut crate::register_file::RegisterFile,
@@ -629,12 +630,11 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_loop_benchmark_has_stable_checksum_and_budget() {
+    fn dispatch_loop_has_observable_result_and_budget() {
         use std::time::{Duration, Instant};
 
-        // This intentionally exercises the ordinary run_op path (rather than a
-        // native shortcut). The checksum makes the loop observable to the
-        // optimizer and catches skipped/reordered dispatches.
+        // This intentionally exercises the ordinary run_op path rather than a
+        // native shortcut. The loop's side effects keep dispatch observable.
         let source = r#"
             let value = 0;
             for (let i = 0; i < 50_000; i++) value += i;

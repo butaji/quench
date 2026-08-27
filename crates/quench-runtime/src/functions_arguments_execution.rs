@@ -46,11 +46,11 @@ pub(crate) fn function_builtin(
     }
 }
 
-pub(crate) fn execute(
+pub(crate) fn try_execute_specialized(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
-) -> Result<crate::value::Value, crate::execute::VmError> {
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     crate::execution_trace::function_call_shape(
         function.params,
         function.code.capture_slots().len(),
@@ -62,60 +62,32 @@ pub(crate) fn execute(
         ));
     }
     let receiver = crate::vm::bare_call_receiver(function, this_value);
-    if is_handler_task_candidate(function) {
-        if let Some(result) = execute_handler_task(function, &receiver, arguments)? {
-            return Ok(result);
-        }
+    if let Some(result) = execute_forward_construct_call(function, &receiver, arguments) {
+        return result.map(Some);
     }
-    if is_scheduler_hold_candidate(function) {
-        if let Some(result) = execute_scheduler_hold(function, &receiver)? {
-            return Ok(result);
-        }
+    if let Some(result) = execute_forward_then_call(function, &receiver, arguments) {
+        return result.map(Some);
     }
-    if is_worker_task_candidate(function) {
-        if let Some(result) = execute_worker_task(function, &receiver, arguments)? {
-            return Ok(result);
-        }
+    if let Some(result) = execute_slot_alu(function, &receiver, arguments) {
+        return Ok(Some(result));
     }
-    if is_device_task_candidate(function) {
-        if let Some(result) = execute_device_task(function, &receiver, arguments)? {
-            return Ok(result);
-        }
-    }
-    if is_idle_task_candidate(function) {
-        if let Some(result) = execute_idle_task(function, &receiver)? {
-            return Ok(result);
-        }
-    }
-    if is_packet_add_candidate(function) {
-        if let Some(result) = execute_packet_add(function, &receiver, arguments) {
-            return Ok(result);
-        }
-    }
-    if is_scheduler_queue_candidate(function) {
-        if let Some(result) = execute_scheduler_queue(function, &receiver, arguments)? {
-            return Ok(result);
-        }
-    }
-    if let Some(result) = execute_linked_schedule(function, &receiver)? {
-        return Ok(result);
+    if let Some(result) = execute_select_update_call(function, &receiver)? {
+        return Ok(Some(result));
     }
     if let Some(result) = execute_constraint_collection_loop(function, arguments)? {
-        return Ok(result);
+        return Ok(Some(result));
     }
     if let Some(result) = execute_plan_loop(function, &receiver)? {
-        return Ok(result);
+        return Ok(Some(result));
+    }
+    if let Some(result) = execute_counted_method_loop(function, &receiver)? {
+        return Ok(Some(result));
     }
     if let Some(result) = execute_shape_kernel(function, &receiver, arguments) {
-        return Ok(result);
-    }
-    if let Some(result) =
-        crate::loops::execute_crypto_integer_function(function, &receiver, arguments)
-    {
-        return Ok(result);
+        return Ok(Some(result));
     }
     if matches!(function.kind, FunctionKind::Generator) {
-        return crate::generator::create(function, &receiver, arguments);
+        return crate::generator::create(function, &receiver, arguments).map(Some);
     }
     if function.is_async {
         // Parameter evaluation belongs to the async call's completion. A
@@ -123,7 +95,7 @@ pub(crate) fn execute(
         // instead of escaping as a synchronous host error.
         let generator = match crate::generator::create(function, &receiver, arguments) {
             Ok(generator) => generator,
-            Err(error) => return Ok(crate::promise::from_async_completion(Err(error))),
+            Err(error) => return Ok(Some(crate::promise::from_async_completion(Err(error)))),
         };
         let generator = match generator {
             crate::value::Value::Generator(generator) => generator,
@@ -133,19 +105,44 @@ pub(crate) fn execute(
             &generator,
             crate::generator::Resume::Next(crate::value::Value::Undefined),
         );
-        return Ok(crate::promise::from_async_function_completion(
+        return Ok(Some(crate::promise::from_async_function_completion(
             completion, generator,
-        ));
+        )));
     }
-    if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
-        return result;
+    // Compact numeric leaves stay on the ordinary proven-leaf path.
+    if function.code.code().is_some_and(|code| {
+        (0..code.len()).all(|pc| {
+            code.instruction(pc)
+                .is_some_and(|op| op.opcode != crate::ir::Opcode::Slow)
+        })
+    }) {
+        if let Some(result) = execute_proven_leaf(function, &receiver, arguments) {
+            return result.map(Some);
+        }
     }
-    if let Some(result) = execute_raytrace_render_kernel(function, &receiver, arguments) {
-        return result;
+    Ok(None)
+}
+
+#[inline(never)]
+pub(crate) fn execute(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let Some(result) = try_execute_specialized(function, this_value, arguments)? {
+        return Ok(result);
     }
-    if let Some(result) = execute_raytrace_pixel_kernel(function, &receiver, arguments) {
-        return result;
-    }
+    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
+        execute_interpreter(function, this_value, arguments)
+    })
+}
+
+fn execute_interpreter(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let receiver = crate::vm::bare_call_receiver(function, this_value);
 
     // The packed continuation path intentionally omits dynamic object-scope
     // guards.  A function created inside `with` must retain that scope while a

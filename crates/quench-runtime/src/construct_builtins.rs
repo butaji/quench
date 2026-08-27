@@ -1,3 +1,29 @@
+use std::cell::RefCell;
+
+thread_local! {
+    static WEAK_REFS: RefCell<Vec<crate::value::Value>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn collect_weak_refs() {
+    WEAK_REFS.with(|refs| {
+        for weak in refs.borrow().iter() {
+            let crate::value::Value::Object(object) = weak else { continue };
+            let Some(target) = object.iter().rev().find(|(key, _)| key == "\0weakref").map(|(_, value)| value.clone()) else { continue };
+            if matches!(crate::execute::get_property(&target, "\0quench:weak-listener"), crate::value::Value::Boolean(true)) {
+                continue;
+            }
+            let listeners = crate::execute::get_property(&target, "listenerCount");
+            let active = if crate::conversion::is_callable(&listeners) {
+                crate::execute::call(&listeners, &target, &[crate::value::Value::String("abort".into())]).ok()
+                    .and_then(|value| match value { crate::value::Value::Number(n) => Some(n > 0.0), _ => None }).unwrap_or(false)
+            } else { false };
+            if !active {
+                unsafe { (&mut *(Rc::as_ptr(object) as *mut crate::value::ObjectData)).set_property_in_place("\0weakref", crate::value::Value::Undefined); }
+            }
+        }
+    });
+}
+
 fn construct_builtin_match(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
@@ -129,13 +155,16 @@ fn construct_weak_ref(arguments: &[Value]) -> Result<Value, crate::execute::VmEr
             "WeakRef target must be an object",
         ));
     };
-    Ok(Value::Object(Rc::new(ObjectData::new(vec![
+    let weak = Value::Object(Rc::new(ObjectData::new(vec![
         ("\0weakref".to_string(), target.clone()),
+        ("deref".to_string(), Value::Builtin(crate::ops::Builtin::WeakRefDeref)),
         (
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::WeakRefPrototype),
         ),
-    ]))))
+    ])));
+    WEAK_REFS.with(|refs| refs.borrow_mut().push(weak.clone()));
+    Ok(weak)
 }
 fn construct_shared_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Value::ArrayBuffer(mut buffer) = construct_array_buffer(arguments)? else {

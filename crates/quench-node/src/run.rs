@@ -102,7 +102,7 @@ pub fn eval_script(source: &str, sink: OutputSink) -> RunOutcome {
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };
     classify(
-        execute_code_with_context(ops.code(), &context).map(|_| ()),
+        normalize_script_completion(execute_code_with_context(ops.code(), &context)).map(|_| ()),
         host.exit_code(),
     )
 }

@@ -32,6 +32,32 @@ The architecture is defined in `docs/data-first-minimal-runtime.md`.
 18. Generated LOC, binary text, static data, caches, and native code all count
     toward the memory and complexity budget.
 
+## Benchmark integrity — non-negotiable
+
+Quench is a Node-compatible JavaScript runtime. `quench-node` implements only
+the Node host/API boundary; it must never identify, rewrite, delegate, or
+special-case a benchmark (including V8-v7/Octane fixtures).
+
+`quench-runtime` may keep general-purpose, semantics-preserving optimizations
+that are admitted from reusable IR facts and can deopt to the ordinary VM.
+It must not contain workload-shaped kernels, benchmark checksum/oracle logic,
+fixture-name/source detection, benchmark-only constants, or an alternate
+runtime used to obtain a benchmark score. Native execution, when justified,
+must consume the same residual Ops and preserve all observable JavaScript
+behavior.
+
+Before committing performance work, verify all of the following:
+
+- no benchmark runner, Bun/other-engine delegation, or benchmark build hook;
+- no `v8-v7`, fixture-name, suite-marker, expected-score, or checksum gate in
+  production runtime/host code;
+- every retained optimization is reusable outside the originating workload,
+  guarded by facts, and falls back to complete slow semantics;
+- Node-compat behavior is tested independently of benchmark score/harness.
+
+If an optimization cannot satisfy those conditions, delete it instead of
+keeping a benchmark-shaped exception.
+
 1. Select the next upstream Node fixture or API cluster.
 2. Model the reusable API facts in the shared declaration/IR layer first.
 3. Generate registration, wrappers, and ordinary tests; hand-write only

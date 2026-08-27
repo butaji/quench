@@ -1,5 +1,11 @@
 # L0–L4 execution profile
 
+> **Integrity rule:** performance lanes measure the same Node-compatible VM;
+> they are never benchmark dispatch. No lane may detect V8-v7/Octane source,
+> call another engine, compare an expected score/checksum, or replace a
+> workload with a benchmark-specific implementation. See
+> [`benchmark-integrity.md`](benchmark-integrity.md).
+
 Build the opt-in trace binary separately so counters cannot affect the scored
 artifact:
 
@@ -16,13 +22,14 @@ Schema 5 `lanes` contains:
 
 - `l0`: `word_reads.{fixed,local,register,owned}`, `word_copies`,
   `value_decode`, `value_decode_by_site`, property hit/miss and payload kinds,
-  and packed get/set/miss counts split by miss reason. Bounded
+  and packed get/set/miss counts split by miss reason, rejected array kind,
+  and stale/non-array word. Bounded
   `owned_word_read_by_site` and `owned_word_read_by_op` rankings attribute
   retained/cloned word materialization independently from value decoding;
   `value_decode_other_by_op` resolves the residual decode `other` site.
-- `l1`: shape hits, crypto hits/direct iterations, counted-loop admission,
-  leaf admission/rejection classes, and the top native kernel IDs with hits and
-  deopts.
+- `l1`: reusable shape hits, counted-loop admission, leaf admission/rejection
+  classes, and native kernel IDs with hits and deopts. These are observations;
+  they must not become workload-specific dispatch.
 - `l2`: handler count/share, main and leaf `Slow` gateways, the top eight
   compact opcodes for both dispatch paths, and `top_compact_sites`, the top 64
   code-id/PC/source-offset sites with a seven-opcode context window. Collection
@@ -35,11 +42,12 @@ Schema 5 `lanes` contains:
 `loop_shapes`, `function_call_shapes`, and `heap_lifecycle` remain beside
 `lanes` in the snapshot.
 
-## Executable benchmark contracts
+## Measurement contracts (diagnostic only)
 
-`quench-bench/profile-contracts.json` is the single declaration of the expected
-execution profile for every V8-v7 benchmark. Assert a real traced/untraced run
-with:
+`quench-bench/profile-contracts.json` describes optional measurements for the
+external benchmark harness. It never selects runtime behavior, and a contract
+failure must not be “fixed” with a benchmark-specific path. Assert a real
+traced/untraced run with:
 
 ```sh
 node tools/analyze-quench-bench.cjs deltablue \
@@ -57,11 +65,11 @@ node tools/assert-quench-bench-profiles.cjs deltablue -- --timeout-ms 300000
 The contract addresses any numeric field in the combined report by path and
 supports inclusive `min` and `max` bounds. Exact architectural invariants use
 the same value for both. Deterministic lane counters and normalized ratios are
-the primary contract; Score remains an untraced end-to-end gate.
+measurements only; they are not semantic or score gates.
 
 `vm_share_ppm` divides only L2 and L3 handlers. L0 operations and L1/L4 entries
 overlap those handlers and therefore must not be presented as exclusive time.
-Use untraced benchmark scores and OS hardware counters for wall time, cycles,
+Use the external harness and OS hardware counters for wall time, cycles,
 instructions, cache misses, and peak RSS; join them with this report by suite,
 binary commit, profile, and run number.
 
@@ -77,7 +85,7 @@ node tools/analyze-quench-bench.cjs deltablue --sample-seconds 3 \
 
 `sample.top_self` contains the top 32 Quench symbols with sample counts and
 normalized `share_ppm`. The sample binary is untraced but remains separate
-from the stripped Score binary, so symbols do not perturb Score/RSS evidence.
+from the measured binary, so symbols do not perturb timing/RSS evidence.
 If macOS `sample` is unavailable, `sample.available` is false and the other
 measurements remain valid.
 
@@ -99,11 +107,13 @@ node tools/assert-lane-micro.cjs u64-move getn-number call-fp
 ```
 
 Each output line contains the measured numerator, denominator, and ratio. A
-failed assertion names exactly one `<micro>.<metric>` key. Full V8-v7 Score on
-the untraced binary remains the acceptance exam after a drill turns green.
+failed assertion names exactly one `<micro>.<metric>` key. Benchmark scores may
+be recorded for comparison, but acceptance evidence is Node-compatibility
+behavior and the ordinary VM path.
 
-G1 drills also declare an `oracle.max_ratio`. Build the untraced Score binary,
-then compare each JS micro with the matching optimized Rust/C-fast algorithm:
+G1 drills also declare an `oracle.max_ratio`. Build the untraced measurement
+binary, then compare each JS micro with the matching optimized Rust/C-fast
+algorithm:
 
 ```sh
 cargo build --profile bench-throughput -p quench-node
