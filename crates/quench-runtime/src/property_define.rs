@@ -284,7 +284,9 @@ fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::TypedArrayPrototype, "byteOffset") => Builtin::TypedArrayByteOffsetGetter,
         (Builtin::TypedArrayPrototype, "length") => Builtin::TypedArrayLengthGetter,
         (Builtin::TypedArrayPrototype, "buffer") => Builtin::DataViewBufferGetter,
-        (Builtin::TypedArrayPrototype, "Symbol.toStringTag") => Builtin::TypedArrayToStringTagGetter,
+        (Builtin::TypedArrayPrototype, "Symbol.toStringTag") => {
+            Builtin::TypedArrayToStringTagGetter
+        }
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (
