@@ -22,7 +22,7 @@ impl ArrayKind {
 pub struct ArrayData {
     identity: u64,
     values: DenseElements,
-    length: usize,
+    length: std::cell::Cell<usize>,
     kind: std::cell::Cell<ArrayKind>,
     properties: Vec<(String, Value)>,
     descriptors: Vec<(String, Value)>,
@@ -37,7 +37,7 @@ pub struct ArrayData {
 impl PartialEq for ArrayData {
     fn eq(&self, other: &Self) -> bool {
         self.values == other.values
-            && self.length == other.length
+            && self.length.get() == other.length.get()
             && self.kind == other.kind
             && self.properties == other.properties
             && self.descriptors == other.descriptors
@@ -259,7 +259,7 @@ impl ArrayData {
             identity: next_array_identity(),
             kind: std::cell::Cell::new(kind),
             values: DenseElements::from_values(values),
-            length,
+            length: std::cell::Cell::new(length),
             properties: Vec::new(),
             descriptors: Vec::new(),
             arguments: false,
@@ -281,7 +281,7 @@ impl ArrayData {
         data.strict_arguments = strict;
         data.argument_live = Some(Rc::new(RefCell::new(ArgumentLive {
             values: data.values.snapshot(),
-            length: data.length,
+            length: data.length.get(),
             mapped: data.mapped.clone(),
             deleted: data.deleted.clone(),
             length_override: None,
@@ -329,9 +329,9 @@ impl ArrayData {
                     && self.prototype.borrow().is_none()
                     && !self.arguments
                 {
-                    self.length.max(self.values.len())
+                    self.length.get().max(self.values.len())
                 } else {
-                    self.length
+                    self.length.get()
                 }
             },
             |live| {
@@ -400,7 +400,7 @@ impl ArrayData {
     }
 
     pub(crate) fn sync_length_to_storage(&mut self) {
-        self.length = self.length.max(self.values.len());
+        self.length.set(self.length.get().max(self.values.len()));
     }
     /// Capacity of the dense backing store, exposed for focused allocation
     /// checks without exposing ownership of the storage itself.
@@ -433,7 +433,7 @@ impl ArrayData {
             && self.logical_len() == self.physical_len()
             && self.properties.is_empty()
             && self.descriptors.is_empty()
-            && self.prototype.borrow().is_none()
+            && self.has_default_array_prototype()
             && !self.arguments
             && self.argument_live.is_none()
     }
@@ -483,14 +483,14 @@ impl ArrayData {
             live.mapped.truncate(length);
             live.length = length;
         }
-        if length < self.length || length < self.values.len() {
+        if length < self.length.get() || length < self.values.len() {
             self.values.truncate(length);
             self.deleted.truncate(length);
             self.mapped.truncate(length);
             self.properties.retain(|(key, _)| keep_index(key, length));
             self.descriptors.retain(|(key, _)| keep_index(key, length));
         }
-        self.length = length;
+        self.length.set(length);
         self.kind.set(monotonic_kind(
             self.kind.get(),
             self.values.kind_with_holes(&self.deleted, length),
@@ -502,16 +502,16 @@ impl ArrayData {
             self.set_sparse_index(index, value);
             return;
         }
-        if index == self.length
+        if index == self.length.get()
             && index == self.values.len()
             && self.properties.is_empty()
             && self.descriptors.is_empty()
-            && self.prototype.borrow().is_none()
+            && self.has_default_array_prototype()
             && !self.arguments
             && self.argument_live.is_none()
             && matches!(&value, Value::Number(number) if self.values.append_number(*number))
         {
-            self.length += 1;
+            self.length.set(self.length.get() + 1);
             return;
         }
         if index > self.values.len() {
@@ -541,11 +541,15 @@ impl ArrayData {
             self.deleted.resize(index.saturating_add(1), false);
         }
         self.deleted[index] = false;
-        self.length = self.length.max(index.saturating_add(1));
+        self.length
+            .set(self.length.get().max(index.saturating_add(1)));
         let candidate = if self.kind.get().is_packed() {
-            appended_kind.unwrap_or_else(|| self.values.kind_with_holes(&self.deleted, self.length))
+            appended_kind.unwrap_or_else(|| {
+                self.values
+                    .kind_with_holes(&self.deleted, self.length.get())
+            })
         } else {
-            self.values.kind_with_holes(&self.deleted, self.length)
+            self.values.kind_with_holes(&self.deleted, self.length.get())
         };
         self.kind
             .set(monotonic_kind(self.kind.get(), candidate));
@@ -580,7 +584,7 @@ impl ArrayData {
             let mut live = live.borrow_mut();
             live.length = live.length.max(length);
         }
-        self.length = self.length.max(length);
+        self.length.set(self.length.get().max(length));
         self.kind.set(ArrayKind::Sparse);
     }
     pub(crate) fn append_live(&self, values: &[Value]) {
@@ -610,7 +614,8 @@ impl ArrayData {
             }
             DenseElements::Values(current) => current.borrow_mut().extend_from_slice(values),
         }
-        self.length = self.length.saturating_add(values.len());
+        self.length
+            .set(self.length.get().saturating_add(values.len()));
     }
 
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
@@ -769,13 +774,15 @@ impl ArrayData {
         }
         self.properties.clear();
         self.kind
-            .set(self.values.kind_with_holes(&self.deleted, self.length));
+            .set(self
+                .values
+                .kind_with_holes(&self.deleted, self.length.get()));
         self.is_packed_ordinary()
     }
 
     fn numeric_sparse_tail(&self, start: usize) -> Option<Vec<f64>> {
-        (start <= self.length).then_some(())?;
-        let mut tail = vec![None; self.length - start];
+        (start <= self.length.get()).then_some(())?;
+        let mut tail = vec![None; self.length.get() - start];
         for (key, value) in &self.properties {
             let index = usize::try_from(crate::arrays::array_index(key)?).ok()?;
             let Value::Number(number) = value else {
@@ -823,7 +830,8 @@ impl ArrayData {
 
     #[inline(always)]
     pub(crate) fn set_existing_f64(&self, index: usize, number: f64) -> bool {
-        let stored = self.is_packed_ordinary()
+        let stored = self.is_packed_data()
+            && self.has_default_array_prototype()
             && index < self.logical_len()
             && self.values.set_existing_number(index, number);
         if stored {
@@ -846,22 +854,48 @@ impl ArrayData {
 
     #[inline(always)]
     pub(crate) fn append_preallocated_f64(&self, index: usize, number: f64) -> bool {
+        let plain = self.properties.is_empty()
+            && self.descriptors.is_empty()
+            && self.has_default_array_prototype()
+            && !self.arguments
+            && self.argument_live.is_none();
+        // A sequential append is the common ASetI shape (for example the
+        // RegExp harness builds million-code-point strings this way). Extend
+        // the canonical numeric store and logical length in O(1), preserving
+        // array identity even when several VM words retain the same Rc.
+        if plain && index == self.physical_len() && index == self.logical_len() {
+            if !self.values.append_number_shared(number) {
+                return false;
+            }
+            self.length.set(self.length.get() + 1);
+            self.kind
+                .set(monotonic_kind(self.kind.get(), number_kind(number)));
+            return true;
+        }
         let rejected = index != self.physical_len()
             || index >= self.logical_len()
-            || !self.properties.is_empty()
-            || !self.descriptors.is_empty()
-            || self.prototype.borrow().is_some()
-            || self.arguments
-            || self.argument_live.is_some();
+            || !plain;
         if rejected {
             return false;
         }
         if !self.values.append_number_shared(number) {
             return false;
         }
-        let derived = self.values.kind_with_holes(&self.deleted, self.length);
+        let derived = self
+            .values
+            .kind_with_holes(&self.deleted, self.length.get());
         self.kind.set(derived);
         true
+    }
+
+    #[inline]
+    fn has_default_array_prototype(&self) -> bool {
+        self.prototype.borrow().as_ref().is_none_or(|prototype| {
+            matches!(
+                prototype,
+                Value::Builtin(crate::ops::Builtin::ArrayPrototype)
+            )
+        })
     }
 
     /// Append a numeric value to an ordinary packed array without cloning its
