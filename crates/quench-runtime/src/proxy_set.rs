@@ -6,7 +6,7 @@ pub(crate) fn proxy_set(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "set") {
+        if let Some(trap) = get_handler_trap(proxy, "set")? {
             let receiver = receiver.unwrap_or(target);
             let result = call_trap(
                 &trap,
