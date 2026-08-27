@@ -593,9 +593,21 @@ fn validate_get_own_property_descriptor_result(
     let Value::Object(result_fields) = result else {
         return Ok(());
     };
+    let result_configurable = result_fields
+        .iter()
+        .rev()
+        .find_map(|(n, v)| (n == "configurable").then_some(v));
     let target_configurable = target_fields
         .iter()
+        .rev()
         .find_map(|(n, v)| (n == "configurable").then_some(v));
+    if matches!(result_configurable, Some(Value::Boolean(false)))
+        && matches!(target_configurable, Some(Value::Boolean(true)))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy getOwnPropertyDescriptor invariant violated",
+        ));
+    }
     if matches!(target_configurable, Some(Value::Boolean(false))) {
         let result_configurable = result_fields
             .iter()
@@ -656,11 +668,8 @@ pub(crate) fn proxy_define_property(
             }
             return Ok(result);
         }
+        return proxy_define_property(&proxy.target, prop, descriptor);
     }
-    let target = match target {
-        Value::Proxy(proxy) => &proxy.target,
-        target => target,
-    };
     let updated = crate::builtins::define_property(&[
         target.clone(),
         Value::String(prop.to_string()),
