@@ -6,6 +6,13 @@ pub use crate::vm::{
 };
 use std::rc::Rc;
 
+pub fn get_own_property_descriptor(
+    target: &crate::value::Value,
+    key: &str,
+) -> Result<crate::value::Value, VmError> {
+    crate::proxy::proxy_get_own_property_descriptor(target, key)
+}
+
 pub fn call(
     function: &crate::value::Value,
     receiver: &crate::value::Value,
