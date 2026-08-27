@@ -180,6 +180,11 @@ fn typed_array_receiver(
             "TypedArray method called on detached TypedArray",
         ));
     }
+    if crate::typed_array_prototype::is_out_of_bounds(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray method called on out-of-bounds view",
+        ));
+    }
     Ok(value.clone())
 }
 
