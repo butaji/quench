@@ -5545,6 +5545,35 @@ pub fn test_mock_timers_reset(_state: &Rc<RefCell<HostState>>, _receiver: Option
     Ok(Value::Undefined)
 }
 
+pub fn test_mock_module(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    if !matches!(args.first(), Some(Value::String(_))) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type("The \"specifier\" argument must be of type string".into()));
+    }
+    let Some(options) = args.get(1) else { return Ok(Value::Undefined) };
+    if matches!(options, Value::Null | Value::Undefined) || !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type("The \"options\" argument must be an object".into()));
+    }
+    for key in ["cache"] {
+        let value = quench_runtime::execute::get_property(options, key);
+        if !matches!(value, Value::Undefined | Value::Boolean(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!("The \"options.{key}\" property must be of type boolean")));
+        }
+    }
+    for key in ["namedExports", "exports", "defaultExport"] {
+        let value = quench_runtime::execute::get_property(options, key);
+        if !matches!(value, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!("The \"options.{key}\" property must be an object")));
+        }
+    }
+    let exports = !matches!(quench_runtime::execute::get_property(options, "exports"), Value::Undefined);
+    let named = !matches!(quench_runtime::execute::get_property(options, "namedExports"), Value::Undefined);
+    let default_export = !matches!(quench_runtime::execute::get_property(options, "defaultExport"), Value::Undefined);
+    if (exports && named) || (exports && default_export) {
+        return Err(crate::modules::buffer_enc::invalid_arg_value("The options exports fields cannot be combined".into()));
+    }
+    Ok(Value::Undefined)
+}
+
 pub fn test_mock_property(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
