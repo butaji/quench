@@ -1995,7 +1995,7 @@ pub fn cp_spawn(
             vec![child.clone(), error],
         );
         state.borrow().event_loop.queue_immediate(callback, vec![]);
-    } else if command == "echo" || command == state.borrow().process.exec_path {
+    } else if command == "cat" || command == "echo" || command == state.borrow().process.exec_path {
         let callback = bound_custom(
             crate::registry::SPEC_CP_SPAWN_OUTPUT_EMIT.cap,
             vec![child.clone(), stdout, stderr],
