@@ -422,15 +422,17 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "setPrototypeOf") {
+            let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
             let result = call_trap(
                 &trap,
-                &[proxy.target.clone(), prototype.clone()],
+                &[proxy_target.clone(), prototype.clone()],
                 Some(&proxy.handler),
             );
             let result = result?;
             let success = crate::execute::is_truthy(&result);
-            if success && !crate::properties::object_is_extensible(&proxy.target) {
-                let current = crate::builtins::object::get_prototype_of(Some(&proxy.target))?;
+            let current_target = crate::locals::resolved_replacement(proxy.target.clone());
+            if success && !proxy_target_is_extensible(&current_target)? {
+                let current = crate::builtins::object::get_prototype_of(Some(&current_target))?;
                 if !crate::builtins::same_value(Some(&current), Some(prototype)) {
                     return Err(crate::value::error::throw_type_error(
                         "Proxy setPrototypeOf invariant violated",
@@ -454,16 +456,28 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
 
 fn prototype_matches(target: &Value, prototype: &Value) -> Result<bool, VmError> {
     let current = crate::builtins::object::get_prototype_of(Some(target))?;
-    Ok(crate::builtins::same_value(Some(&current), Some(prototype)))
+    let current = crate::locals::resolved_replacement(current);
+    let prototype = crate::locals::resolved_replacement(prototype.clone());
+    Ok(crate::builtins::same_value(Some(&current), Some(&prototype)))
+}
+
+fn proxy_target_is_extensible(target: &Value) -> Result<bool, VmError> {
+    if matches!(target, Value::Proxy(_)) {
+        return Ok(crate::execute::is_truthy(&proxy_is_extensible(target)?));
+    }
+    Ok(crate::properties::object_is_extensible(target))
 }
 
 fn prototype_contains(prototype: &Value, target: &Value) -> Result<bool, VmError> {
-    let mut current = prototype.clone();
+    let target = crate::locals::resolved_replacement(target.clone());
+    let mut current = crate::locals::resolved_replacement(prototype.clone());
     while !matches!(current, Value::Null) {
-        if crate::builtins::same_value(Some(&current), Some(target)) {
+        if crate::builtins::same_value(Some(&current), Some(&target)) {
             return Ok(true);
         }
-        current = crate::builtins::object::get_prototype_of(Some(&current))?;
+        current = crate::locals::resolved_replacement(
+            crate::builtins::object::get_prototype_of(Some(&current))?,
+        );
     }
     Ok(false)
 }
