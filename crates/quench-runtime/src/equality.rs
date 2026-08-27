@@ -163,6 +163,8 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => {
             Rc::ptr_eq(left, right)
         }
+        (Value::BigInt64Array(left), Value::BigInt64Array(right)) => Rc::ptr_eq(left, right),
+        (Value::BigUint64Array(left), Value::BigUint64Array(right)) => Rc::ptr_eq(left, right),
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),
         (Value::Generator(left), Value::Generator(right)) => Rc::ptr_eq(left, right),
