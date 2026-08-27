@@ -2,9 +2,6 @@ pub(crate) fn array_copy_within(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    if receiver.is_some_and(Value::is_typed_array) {
-        return typed_array_copy_within(receiver, arguments);
-    }
     let object = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
     let original_length = crate::arrays::array_like_length(&object)?;
     let target = copy_index(arguments.first(), original_length)?;
