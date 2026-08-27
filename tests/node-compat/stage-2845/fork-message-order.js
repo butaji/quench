@@ -1,9 +1,8 @@
 const assert = require("assert");
 const { fork } = require("child_process");
+const fixtures = require("../../node/test/common/fixtures");
 
-const child = fork(
-  require.resolve("../../node/test/fixtures/child-process-message-and-exit.js")
-);
+const child = fork(fixtures.path("child-process-message-and-exit.js"));
 const events = [];
 child.on("message", (message) => events.push(`message:${message}`));
 child.on("exit", () => events.push("exit"));
