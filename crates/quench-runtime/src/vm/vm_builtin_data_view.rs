@@ -73,6 +73,25 @@ fn typed_array_accessor(
         };
         return Some(Ok(tag.map_or(Value::Undefined, |tag| Value::String(tag.into()))));
     }
+    if builtin == Builtin::DataViewBufferGetter {
+        let buffer = match receiver {
+            Some(Value::Float64Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Float32Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Int8Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Int16Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Int32Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Uint8Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Uint8ClampedArray(view)) => Some(view.buffer.clone()),
+            Some(Value::Uint16Array(view)) => Some(view.buffer.clone()),
+            Some(Value::Uint32Array(view)) => Some(view.buffer.clone()),
+            Some(Value::BigInt64Array(view)) => Some(view.buffer.clone()),
+            Some(Value::BigUint64Array(view)) => Some(view.buffer.clone()),
+            _ => None,
+        };
+        return Some(buffer
+            .map(Value::ArrayBuffer)
+            .ok_or_else(|| type_error("TypedArray buffer getter called on incompatible receiver")));
+    }
     macro_rules! access {
         ($view:expr) => {
             byte_length_getter(
