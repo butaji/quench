@@ -365,6 +365,8 @@ const CAP_CP_SPAWNSYNC: u16 = 0x1e00;
 const CAP_CP_EXECSYNC: u16 = 0x1e01;
 const CAP_CP_EXEC: u16 = 0x1e02;
 const CAP_CP_EXECFILE: u16 = 0x1e03;
+const CAP_CP_EXECFILE_ABORT: u16 = 0x1e07;
+const CAP_CP_EXECFILE_COMPLETE: u16 = 0x1e08;
 const CAP_CP_SPAWN: u16 = 0x1e06;
 const CAP_CP_SPAWN_ERROR_EMIT: u16 = 0x1e04;
 const CAP_CP_SPAWN_OUTPUT_EMIT: u16 = 0x1e05;
@@ -829,6 +831,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_EXECSYNC => cp_exec_sync,
         CAP_CP_EXEC => cp_async,
         CAP_CP_EXECFILE => cp_exec_file,
+        CAP_CP_EXECFILE_ABORT => cp_exec_file_abort,
+        CAP_CP_EXECFILE_COMPLETE => cp_exec_file_complete,
         CAP_TEST_RUN => test_run,
         CAP_TEST_SKIP => test_skip,
         CAP_TEST_MOCK_FN => test_mock_fn,
