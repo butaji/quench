@@ -119,6 +119,7 @@ fn array_iterator_builtin(builtin: crate::ops::Builtin, receiver: Option<&Value>
         crate::ops::Builtin::TypedArrayIterator => Some(typed_array_iterator(receiver)),
         crate::ops::Builtin::ArrayKeys => Some(array_keys(receiver)),
         crate::ops::Builtin::ArrayEntries => Some(array_entries(receiver)),
+        crate::ops::Builtin::TypedArrayEntries => Some(typed_array_entries(receiver)),
         _ => None,
     }
 }

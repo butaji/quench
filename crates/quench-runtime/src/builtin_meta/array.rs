@@ -32,6 +32,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayIterator | Builtin::TypedArrayIterator => Some("values"),
         Builtin::ArrayKeys => Some("keys"),
         Builtin::ArrayEntries => Some("entries"),
+        Builtin::TypedArrayEntries => Some("entries"),
         Builtin::ArrayIncludes => Some("includes"),
         Builtin::ArrayIndexOf => Some("indexOf"),
         Builtin::ArrayLastIndexOf => Some("lastIndexOf"),
@@ -116,6 +117,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::TypedArrayIterator
         | Builtin::ArrayKeys
         | Builtin::ArrayEntries
+        | Builtin::TypedArrayEntries
         | Builtin::ArrayShift => Some(0.0),
         Builtin::ArrayFlat
         | Builtin::ArrayReverse
