@@ -359,6 +359,21 @@ fn bound_function_fallback(
         }
     }
     if matches!(result, Value::Undefined) {
+        if crate::conversion::is_callable(&bound.target) {
+            let function_prototype = crate::vm::realm_intrinsic_for(
+                bound.realm,
+                Builtin::FunctionPrototype,
+            );
+            if let Ok(inherited) = crate::vm::get_property_with_receiver(
+                &function_prototype,
+                key,
+                &receiver,
+            ) {
+                if !matches!(inherited, Value::Undefined) {
+                    return inherited;
+                }
+            }
+        }
         if bound.target != Value::Builtin(Builtin::ObjectPrototype) {
             let object_prototype = crate::vm::realm_intrinsic(Builtin::ObjectPrototype);
             if let Some(getter) = crate::property_define::accessor(&object_prototype, key, "get") {
