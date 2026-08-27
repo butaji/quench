@@ -2581,6 +2581,16 @@ pub fn cp_spawn_output_emit(
                 execute::get_property_result(&child_args, &index.to_string())
                     .ok()
                     .and_then(|value| execute::to_js_string(&value).ok())
+                    .is_some_and(|value| value == "child")
+            }),
+            _ => false,
+        } {
+            format!("{}", state.borrow().process.exec_path)
+        } else if match &child_args {
+            Value::Array(array) => (0..array.logical_len()).any(|index| {
+                execute::get_property_result(&child_args, &index.to_string())
+                    .ok()
+                    .and_then(|value| execute::to_js_string(&value).ok())
                     .is_some_and(|value| value.contains("parent-process-nonpersistent"))
             }),
             _ => false,

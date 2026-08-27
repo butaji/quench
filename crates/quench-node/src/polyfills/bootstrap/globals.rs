@@ -289,6 +289,7 @@ globalThis.process = {
     }
   ),
   argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],
+  argv0: globalThis.__quench_exec_path,
   execPath: globalThis.__quench_exec_path,
   pid: globalThis.__quench_pid,
   ppid: globalThis.__quench_ppid,
@@ -430,4 +431,5 @@ globalThis.process = {
     return [seconds, nanos];
   }
 };
+if (!globalThis.process.argv0) globalThis.process.argv0 = globalThis.process.execPath;
 "#);
