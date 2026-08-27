@@ -970,6 +970,63 @@ fn typed_array_to_sorted(
     construct_typed_array_result(&value, values)
 }
 
+fn typed_array_sort(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "sort")?;
+    if crate::typed_array_prototype::is_out_of_bounds(&value) || typed_array_is_immutable(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.sort called on invalid view",
+        ));
+    }
+    let compare = arguments.first().filter(|value| !matches!(value, Value::Undefined));
+    if let Some(compare) = compare {
+        if !crate::conversion::is_callable(compare) {
+            return Err(crate::value::error::throw_type_error(
+                "The comparison function must be either a function or undefined",
+            ));
+        }
+    }
+    let length = crate::typed_array_ops::logical_len(&value).unwrap_or(0);
+    let mut values = (0..length)
+        .map(|index| crate::execute::get_property_result(&value, &index.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    for index in 1..values.len() {
+        let item = values[index].clone();
+        let mut position = index;
+        while position > 0
+            && typed_array_compare_values(&values[position - 1], &item, compare)?
+                == std::cmp::Ordering::Greater
+        {
+            values[position] = values[position - 1].clone();
+            position -= 1;
+        }
+        values[position] = item;
+    }
+    for (index, item) in values.into_iter().enumerate() {
+        crate::properties::assign_set_property(&value, &index.to_string(), item)?;
+    }
+    Ok(value)
+}
+
+fn typed_array_is_immutable(value: &Value) -> bool {
+    match value {
+        Value::Float64Array(view) => view.buffer.immutable,
+        Value::Float32Array(view) => view.buffer.immutable,
+        Value::Int8Array(view) => view.buffer.immutable,
+        Value::Int16Array(view) => view.buffer.immutable,
+        Value::Int32Array(view) => view.buffer.immutable,
+        Value::Uint8Array(view) => view.buffer.immutable,
+        Value::Uint16Array(view) => view.buffer.immutable,
+        Value::Uint32Array(view) => view.buffer.immutable,
+        Value::Uint8ClampedArray(view) => view.buffer.immutable,
+        Value::BigInt64Array(view) => view.buffer.immutable,
+        Value::BigUint64Array(view) => view.buffer.immutable,
+        _ => false,
+    }
+}
+
 fn typed_array_compare_values(
     left: &Value,
     right: &Value,
@@ -986,6 +1043,14 @@ fn typed_array_compare_values(
             (true, true) => Ok(std::cmp::Ordering::Equal),
             (true, false) => Ok(std::cmp::Ordering::Greater),
             (false, true) => Ok(std::cmp::Ordering::Less),
+            (false, false) if *left == 0.0 && *right == 0.0 => Ok(match (
+                left.is_sign_negative(),
+                right.is_sign_negative(),
+            ) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            }),
             (false, false) => Ok(left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)),
         },
         (Value::BigInt(left), Value::BigInt(right)) => Ok(left
