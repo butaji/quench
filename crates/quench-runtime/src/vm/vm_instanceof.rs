@@ -172,7 +172,7 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
     if !crate::value::is_object(&prototype) {
         return Err(type_error("Function has non-object prototype"));
     }
-    Ok(prototype_chain_contains(value, &prototype)
+    Ok(prototype_chain_contains(value, &prototype)?
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
@@ -260,18 +260,22 @@ fn instanceof_callable(value: &Value) -> bool {
     }
 }
 
-fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
+fn prototype_chain_contains(value: &Value, expected: &Value) -> Result<bool, VmError> {
     let mut current = internal_prototype(value);
     for _ in 0..1_024 {
         let Some(prototype) = current else {
-            return false;
+            return Ok(false);
         };
         if crate::builtins::same_value(Some(&prototype), Some(expected)) {
-            return true;
+            return Ok(true);
         }
-        current = internal_prototype(&prototype);
+        current = if matches!(prototype, Value::Proxy(_)) {
+            Some(crate::builtins::object::get_prototype_of(Some(&prototype))?)
+        } else {
+            internal_prototype(&prototype)
+        };
     }
-    false
+    Ok(false)
 }
 
 fn internal_prototype(value: &Value) -> Option<Value> {
