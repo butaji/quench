@@ -5056,11 +5056,17 @@ pub fn test_mock_fn(
 ) -> Result<Value, VmError> {
     let implementation = args
         .get(1)
-        .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
+        .filter(|value| {
+            matches!(
+                value,
+                Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+            )
+        })
         .cloned()
         .or_else(|| args.first().cloned())
         .unwrap_or(Value::Undefined);
     let calls = quench_runtime::host_api::array(Vec::new());
+    let implementation_for_bind = implementation.clone();
     let wrapper = quench_runtime::host_api::bound_capability_with_arguments(
         quench_runtime::ops::HostCapabilityRef {
             realm: quench_runtime::ops::RealmId::ROOT,
@@ -5070,8 +5076,21 @@ pub fn test_mock_fn(
         },
         vec![implementation, calls.clone()],
     );
-    let mock = quench_runtime::host_api::object(vec![("calls".into(), calls)]);
-    Ok(quench_runtime::execute::set_property(wrapper, "mock", mock))
+    let mock = quench_runtime::host_api::object(vec![("calls".into(), calls.clone())]);
+    let _ = quench_runtime::execute::set_property_in_place(
+        &mock,
+        "restore",
+        crate::host::capability(crate::registry::SPEC_TEST_MOCK_RESTORE),
+    );
+    let wrapper = quench_runtime::execute::set_property(wrapper, "mock", mock);
+    let bind = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(0x1b07),
+        },
+        vec![implementation_for_bind, calls],
+    );
+    Ok(quench_runtime::execute::set_property(wrapper, "bind", bind))
 }
 
 pub fn test_mock_call(
@@ -5104,6 +5123,160 @@ pub fn test_mock_call(
     Ok(result)
 }
 
+pub fn test_mock_method(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let object = args.first().ok_or(VmError::NotCallable)?;
+    let key = match args.get(1) {
+        Some(Value::String(key)) => key,
+        _ => return Err(VmError::NotCallable),
+    };
+    if let Some(options) = args.get(2) {
+        let getter = matches!(options, Value::Object(_) | Value::ObjectAlias(_))
+            && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
+                options, "getter",
+            ));
+        let setter = matches!(options, Value::Object(_) | Value::ObjectAlias(_))
+            && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
+                options, "setter",
+            ));
+        if getter || setter {
+            let descriptor = quench_runtime::execute::get_own_property_descriptor(object, key)?;
+            let accessor = if getter { "get" } else { "set" };
+            let original = quench_runtime::execute::get_property_result(&descriptor, accessor)?;
+            let wrapper = test_mock_fn(state, None, &[original])?;
+            let other = if getter { "set" } else { "get" };
+            let replacement = quench_runtime::host_api::object(vec![
+                (accessor.into(), wrapper.clone()),
+                (
+                    other.into(),
+                    quench_runtime::execute::get_property(&descriptor, other),
+                ),
+                (
+                    "enumerable".into(),
+                    quench_runtime::execute::get_property(&descriptor, "enumerable"),
+                ),
+                (
+                    "configurable".into(),
+                    quench_runtime::execute::get_property(&descriptor, "configurable"),
+                ),
+            ]);
+            let _ = quench_runtime::execute::define_property(object.clone(), key, replacement)?;
+            let mock = quench_runtime::execute::get_property_result(&wrapper, "mock")?;
+            let restore = quench_runtime::host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(0x1b06),
+                },
+                vec![
+                    object.clone(),
+                    Value::String(key.clone()),
+                    Value::Undefined,
+                    descriptor,
+                ],
+            );
+            let _ = quench_runtime::execute::set_property_in_place(&mock, "restore", restore);
+            return Ok(wrapper);
+        }
+    }
+    let original = quench_runtime::execute::get_property_result(object, key)?;
+    let mut mock_args = vec![original];
+    if let Some(implementation) = args.get(2) {
+        mock_args.push(implementation.clone());
+    }
+    let wrapper = test_mock_fn(state, None, &mock_args)?;
+    let mock = quench_runtime::execute::get_property_result(&wrapper, "mock")?;
+    let restore = quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(0x1b06),
+        },
+        vec![
+            object.clone(),
+            Value::String(key.clone()),
+            original_for_restore(&mock_args),
+        ],
+    );
+    let _ = quench_runtime::execute::set_property_in_place(&mock, "restore", restore);
+    if !quench_runtime::execute::set_property_in_place(object, key, wrapper.clone()) {
+        return Err(VmError::NotCallable);
+    }
+    Ok(wrapper)
+}
+
+fn original_for_restore(args: &[Value]) -> Value {
+    args.first().cloned().unwrap_or(Value::Undefined)
+}
+
+pub fn test_mock_restore(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if args.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    let object = args.first().ok_or(VmError::NotCallable)?;
+    let key = match args.get(1) {
+        Some(Value::String(key)) => key,
+        _ => return Err(VmError::NotCallable),
+    };
+    if let Some(descriptor) = args.get(3) {
+        let _ = quench_runtime::execute::define_property(object.clone(), key, descriptor.clone())?;
+        return Ok(Value::Undefined);
+    }
+    let original = args.get(2).cloned().unwrap_or(Value::Undefined);
+    if !quench_runtime::execute::set_property_in_place(object, key, original) {
+        return Err(VmError::NotCallable);
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn test_mock_bind(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let implementation = args.first().ok_or(VmError::NotCallable)?.clone();
+    let calls = args.get(1).ok_or(VmError::NotCallable)?.clone();
+    let this = args.get(2).cloned().unwrap_or(Value::Undefined);
+    Ok(quench_runtime::host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(0x1b08),
+        },
+        vec![implementation, calls, this],
+    ))
+}
+
+pub fn test_mock_bound_call(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let implementation = args.first().ok_or(VmError::NotCallable)?;
+    let calls = args.get(1).ok_or(VmError::NotCallable)?;
+    let this = args.get(2).ok_or(VmError::NotCallable)?;
+    let call_args = args.get(3..).unwrap_or_default();
+    let result = quench_runtime::execute::call(implementation, this, call_args)?;
+    let index = match quench_runtime::execute::get_property_result(calls, "length")? {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    let record = quench_runtime::host_api::object(vec![
+        (
+            "arguments".into(),
+            quench_runtime::host_api::array(call_args.to_vec()),
+        ),
+        ("this".into(), this.clone()),
+        ("result".into(), result.clone()),
+    ]);
+    quench_runtime::execute::set_array_element_in_place(calls, index, record);
+    Ok(result)
+}
+
 pub fn test_mock_construct(
     _state: &Rc<RefCell<HostState>>,
     args: &[Value],
@@ -5122,8 +5295,11 @@ pub fn test_mock_construct(
             quench_runtime::host_api::array(construct_args.to_vec()),
         ),
         ("result".into(), result.clone()),
-        ("target".into(), Value::Undefined),
-        ("this".into(), Value::Undefined),
+        // A construct call preserves both the implementation target and the
+        // instance returned by the constructor.  These are observable Node
+        // mock facts, not wrapper metadata.
+        ("target".into(), implementation.clone()),
+        ("this".into(), result.clone()),
     ]);
     quench_runtime::execute::set_array_element_in_place(calls, index, record);
     Ok(result)

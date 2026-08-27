@@ -77,6 +77,9 @@ impl QuenchNodeHost {
                 let mock = quench_runtime::host_api::object(vec![(
                     "fn".into(),
                     crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+                ), (
+                    "method".into(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
                 )]);
                 let context = quench_runtime::host_api::object(vec![
                     ("assert".into(), assert_module()),
