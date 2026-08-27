@@ -291,89 +291,89 @@ fn reflect_method(key: &str) -> Option<Builtin> {
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_constructor_property(builtin, key)
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "toString")
+            (builtin == Builtin::TypedArrayPrototype && key == "toString")
                 .then_some(Builtin::ArrayToString)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "slice").then_some(Builtin::ArraySlice)
+            (builtin == Builtin::TypedArrayPrototype && key == "slice").then_some(Builtin::ArraySlice)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "values")
+            (builtin == Builtin::TypedArrayPrototype && key == "values")
                 .then_some(Builtin::TypedArrayIterator)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "Symbol.iterator")
+            (builtin == Builtin::TypedArrayPrototype && key == "Symbol.iterator")
                 .then_some(Builtin::TypedArrayIterator)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "keys")
+            (builtin == Builtin::TypedArrayPrototype && key == "keys")
                 .then_some(Builtin::TypedArrayKeys)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "entries")
+            (builtin == Builtin::TypedArrayPrototype && key == "entries")
                 .then_some(Builtin::TypedArrayEntries)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "set").then_some(Builtin::TypedArraySet)
+            (builtin == Builtin::TypedArrayPrototype && key == "set").then_some(Builtin::TypedArraySet)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "toLocaleString")
+            (builtin == Builtin::TypedArrayPrototype && key == "toLocaleString")
                 .then_some(Builtin::TypedArrayToLocaleString)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "fill").then_some(Builtin::TypedArrayFill)
+            (builtin == Builtin::TypedArrayPrototype && key == "fill").then_some(Builtin::TypedArrayFill)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "indexOf")
+            (builtin == Builtin::TypedArrayPrototype && key == "indexOf")
                 .then_some(Builtin::TypedArrayIndexOf)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "every")
+            (builtin == Builtin::TypedArrayPrototype && key == "every")
                 .then_some(Builtin::TypedArrayEvery)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "forEach")
+            (builtin == Builtin::TypedArrayPrototype && key == "forEach")
                 .then_some(Builtin::TypedArrayForEach)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "find")
+            (builtin == Builtin::TypedArrayPrototype && key == "find")
                 .then_some(Builtin::TypedArrayFind)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "findIndex")
+            (builtin == Builtin::TypedArrayPrototype && key == "findIndex")
                 .then_some(Builtin::TypedArrayFindIndex)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "findLast")
+            (builtin == Builtin::TypedArrayPrototype && key == "findLast")
                 .then_some(Builtin::TypedArrayFindLast)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "findLastIndex")
+            (builtin == Builtin::TypedArrayPrototype && key == "findLastIndex")
                 .then_some(Builtin::TypedArrayFindLastIndex)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "includes")
+            (builtin == Builtin::TypedArrayPrototype && key == "includes")
                 .then_some(Builtin::TypedArrayIncludes)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "indexOf")
+            (builtin == Builtin::TypedArrayPrototype && key == "indexOf")
                 .then_some(Builtin::TypedArrayIndexOf)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "lastIndexOf")
+            (builtin == Builtin::TypedArrayPrototype && key == "lastIndexOf")
                 .then_some(Builtin::TypedArrayLastIndexOf)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "at").then_some(Builtin::TypedArrayAt)
+            (builtin == Builtin::TypedArrayPrototype && key == "at").then_some(Builtin::TypedArrayAt)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "map").then_some(Builtin::ArrayMap)
+            (builtin == Builtin::TypedArrayPrototype && key == "map").then_some(Builtin::ArrayMap)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray && key == "filter").then_some(Builtin::ArrayFilter)
+            (builtin == Builtin::TypedArrayPrototype && key == "filter").then_some(Builtin::ArrayFilter)
         })
         .or_else(|| {
-            (builtin == Builtin::TypedArray)
+            (builtin == Builtin::TypedArrayPrototype)
                 .then(|| typed_array_generic_method(key))
                 .flatten()
         })
@@ -415,7 +415,7 @@ fn uint8_array_base64_method(builtin: Builtin, key: &str) -> Option<Builtin> {
             return Some(method);
         }
     }
-    (key == "subarray" && builtin == Builtin::TypedArray).then_some(Builtin::Uint8ArraySubarray)
+    (key == "subarray" && builtin == Builtin::TypedArrayPrototype).then_some(Builtin::Uint8ArraySubarray)
 }
 fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;
