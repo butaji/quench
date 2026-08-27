@@ -166,6 +166,13 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
       error.code = "ERR_INVALID_RETURN_VALUE";
       return Promise.reject(error);
     }
+    if (typeof input.catch !== "function") {
+      const error = new TypeError(
+        'The "promiseFn" argument must be a function or an instance of Promise'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return Promise.reject(error);
+    }
   } else {
     input = promiseOrFn;
     if (!input || typeof input.then !== "function") {
