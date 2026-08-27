@@ -383,7 +383,8 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
                 &trap,
                 &[proxy.target.clone(), prototype.clone()],
                 Some(&proxy.handler),
-            )?;
+            );
+            let result = result?;
             let success = crate::execute::is_truthy(&result);
             if success && !crate::properties::object_is_extensible(&proxy.target) {
                 let current = crate::builtins::object::get_prototype_of(Some(&proxy.target))?;
