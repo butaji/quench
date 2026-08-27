@@ -439,12 +439,10 @@ fn invoke_with_receiver(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     match callee_value {
-        Value::Function(_) => crate::functions::execute_target_with_receiver(
-            callee_value,
-            receiver,
-            arguments,
-        )
-        .map(|(value, _)| value),
+        Value::Function(_) => {
+            crate::functions::execute_target_with_receiver(callee_value, receiver, arguments)
+                .map(|(value, _)| value)
+        }
         Value::BoundFunction(bound)
             if matches!(
                 bound.target,

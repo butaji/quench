@@ -256,6 +256,13 @@ pub fn add_event_listener(
             passive: passive_option(args),
             signal,
         });
+        if !weak_option(args, receiver.expect("validated receiver")) {
+            execute::set_property_in_place(
+                receiver.expect("validated receiver"),
+                "\0quench:weak-listener",
+                Value::Boolean(true),
+            );
+        }
     }
     Ok(Value::Undefined)
 }
@@ -279,6 +286,15 @@ pub fn remove_event_listener(
                 .position(|listener| execute::same_value(&listener.callback, &callback))
             {
                 list.remove(at);
+            }
+            if list.is_empty() {
+                if let Some(receiver) = receiver {
+                    execute::set_property_in_place(
+                        receiver,
+                        "\0quench:weak-listener",
+                        Value::Boolean(false),
+                    );
+                }
             }
         }
     }
