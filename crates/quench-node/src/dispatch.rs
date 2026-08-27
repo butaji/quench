@@ -167,6 +167,7 @@ const CAP_BUFFER_NEW: u16 = 0x0805;
 const CAP_DNS_LOOKUP_ADDRESSES: u16 = 0x0E02;
 const CAP_TTY_ISATTY: u16 = 0x0900;
 const CAP_PROCESS_EXIT: u16 = 0x0A01;
+const CAP_PROCESS_KILL: u16 = 0x0A20;
 const CAP_PROCESS_CWD: u16 = 0x0A02;
 const CAP_PROCESS_CHDIR: u16 = 0x0A03;
 const CAP_PROCESS_NEXT_TICK: u16 = 0x0A04;
@@ -708,6 +709,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
         CAP_PROCESS_EXIT => process_exit,
+        CAP_PROCESS_KILL => process_kill,
         CAP_PROCESS_CWD => process_cwd,
         CAP_PROCESS_CHDIR => process_chdir,
         CAP_PROCESS_NEXT_TICK => process_next_tick,
