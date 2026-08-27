@@ -181,7 +181,7 @@ fn typed_array_map(
     let mapped_target = typed_array_species_create(&value, length)?;
     let mut mapped = Vec::with_capacity(length);
     for index in 0..length {
-        let item = crate::execute::get_property_result(&value, &index.to_string())?;
+        let item = typed_array_element_for_map(&value, index)?;
         mapped.push(crate::functions::execute_target(
             callback,
             this_arg,
@@ -207,7 +207,7 @@ fn typed_array_filter(
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |item| item);
     let mut filtered = Vec::new();
     for index in 0..length {
-        let item = crate::execute::get_property_result(&value, &index.to_string())?;
+        let item = typed_array_element_for_map(&value, index)?;
         let keep = crate::functions::execute_target(
             callback,
             this_arg,
@@ -222,6 +222,18 @@ fn typed_array_filter(
         crate::properties::assign_set_property(&result, &index.to_string(), item)?;
     }
     Ok(result)
+}
+
+fn typed_array_element_for_map(
+    value: &Value,
+    index: usize,
+) -> Result<Value, crate::execute::VmError> {
+    if crate::typed_array_prototype::is_out_of_bounds(value)
+        || crate::typed_array_ops::logical_len(value).unwrap_or(0) <= index
+    {
+        return Ok(Value::Undefined);
+    }
+    crate::execute::get_property_result(value, &index.to_string())
 }
 
 pub(crate) fn typed_array_receiver(
