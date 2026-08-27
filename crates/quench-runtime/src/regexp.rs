@@ -661,6 +661,13 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     if let Some(matched) = surrogate_property_test(arguments.first(), &source, &flags) {
         return Ok(Value::Boolean(matched));
     }
+    if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
+        if let Some(Value::StringUnits(units)) = arguments.first() {
+            if let Some(matched) = simple_character_class_test_units(&source, units) {
+                return Ok(Value::Boolean(matched));
+            }
+        }
+    }
     let s = argument_string(arguments)?;
     if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
         if let Some(matched) = simple_character_class_test(&source, &s) {
@@ -760,6 +767,34 @@ fn simple_character_class_test(source: &str, input: &str) -> Option<bool> {
         _ => false,
     };
     Some(input.chars().any(matches_class))
+}
+
+/// Test the ASCII/ECMAScript single-character classes directly against the
+/// canonical UTF-16 payload. This keeps RegExp.test on a StringUnits value at
+/// O(1) auxiliary memory instead of first materializing a lossy UTF-8 String.
+fn simple_character_class_test_units(source: &str, input: &[u16]) -> Option<bool> {
+    let class = source
+        .strip_prefix("\\\\")
+        .or_else(|| source.strip_prefix('\\'))?;
+    if !matches!(class, "d" | "D" | "s" | "S" | "w" | "W") {
+        return None;
+    }
+    let matches_class = |unit: &u16| match class {
+        "d" => (b'0' as u16..=b'9' as u16).contains(unit),
+        "D" => !(b'0' as u16..=b'9' as u16).contains(unit),
+        "s" => char::from_u32(u32::from(*unit)).is_some_and(is_ecma_whitespace),
+        "S" => !char::from_u32(u32::from(*unit)).is_some_and(is_ecma_whitespace),
+        "w" => (b'0' as u16..=b'9' as u16).contains(unit)
+            || (b'a' as u16..=b'z' as u16).contains(unit)
+            || (b'A' as u16..=b'Z' as u16).contains(unit)
+            || *unit == b'_' as u16,
+        "W" => !((b'0' as u16..=b'9' as u16).contains(unit)
+            || (b'a' as u16..=b'z' as u16).contains(unit)
+            || (b'A' as u16..=b'Z' as u16).contains(unit)
+            || *unit == b'_' as u16),
+        _ => false,
+    };
+    Some(input.iter().any(matches_class))
 }
 
 pub(crate) fn is_ecma_whitespace(character: char) -> bool {
