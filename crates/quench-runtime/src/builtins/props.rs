@@ -330,6 +330,10 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             (builtin == Builtin::TypedArray && key == "every").then_some(Builtin::ArrayEvery)
         })
         .or_else(|| {
+            (builtin == Builtin::TypedArray && key == "forEach")
+                .then_some(Builtin::TypedArrayForEach)
+        })
+        .or_else(|| {
             (builtin == Builtin::TypedArray && key == "map").then_some(Builtin::ArrayMap)
         })
         .or_else(|| {
