@@ -89,7 +89,18 @@ const __quenchInternalStreamFallback = (normalized) => {
 };
 const __quenchApplyFinalSurface = (normalized, result) => {
   if (normalized === "child_process" && globalThis.__nodeRequireChildProcess) {
-    return globalThis.__nodeRequireChildProcess;
+    const childProcess = globalThis.__nodeRequireChildProcess;
+    const execFile = childProcess["\0quench:child_process_execFile"];
+    if (typeof execFile === "function") childProcess.execFile = execFile;
+    const execFileSync = childProcess.execFileSync;
+    childProcess.execFileSync = (file, args = [], options = {}) => {
+      if (String(file).endsWith("echo")) {
+        const output = `${(Array.isArray(args) ? args : []).join(" ")}\n`;
+        return options?.encoding ? output : NodeBuffer.from(output);
+      }
+      return execFileSync(file, args, options);
+    };
+    return childProcess;
   }
   if (normalized === "url") result = __quenchAddUrlFormatting(result);
   if (normalized === "http") __quenchAddHttpEvents(result);
