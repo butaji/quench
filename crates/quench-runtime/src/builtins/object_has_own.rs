@@ -16,10 +16,24 @@ fn has_own_property_result(
     receiver: Option<&Value>,
     key: Option<&Value>,
 ) -> Result<Value, VmError> {
+    has_own_property_result_order(receiver, key, receiver.is_some())
+}
+
+pub(crate) fn has_own_property_static_result(
+    target: Option<&Value>,
+    key: Option<&Value>,
+) -> Result<Value, VmError> {
+    has_own_property_result_order(target, key, false)
+}
+
+fn has_own_property_result_order(
+    receiver: Option<&Value>,
+    key: Option<&Value>,
+    key_first: bool,
+) -> Result<Value, VmError> {
     // The prototype method performs ToPropertyKey before ToObject so a
     // coercion error wins over a nullish receiver error.
-    let coerced_key = receiver
-        .is_some()
+    let coerced_key = key_first
         .then(|| key.map(crate::properties::dynamic_property_key))
         .flatten()
         .transpose()?;
