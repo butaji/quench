@@ -5082,7 +5082,11 @@ pub fn test_mock_call(
         _ => 0,
     };
     let this = receiver.cloned().unwrap_or(Value::Undefined);
-    let result = quench_runtime::execute::call(implementation, &this, call_args)?;
+    let result = if matches!(implementation, Value::Undefined) {
+        Value::Undefined
+    } else {
+        quench_runtime::execute::call(implementation, &this, call_args)?
+    };
     let record = quench_runtime::host_api::object(vec![
         (
             "arguments".into(),
