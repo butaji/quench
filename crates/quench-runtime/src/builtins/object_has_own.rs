@@ -29,10 +29,7 @@ fn has_own_property_result(
     let Some(key) = key else {
         return Ok(Value::Boolean(false));
     };
-    let key = coerced_key.map_or_else(
-        || crate::properties::dynamic_property_key(key),
-        Ok,
-    )?;
+    let key = coerced_key.map_or_else(|| crate::properties::dynamic_property_key(key), Ok)?;
     crate::module_bindings::exports(&receiver, &key)?;
     Ok(Value::Boolean(owns_property(&receiver, &key)?))
 }
@@ -158,7 +155,8 @@ pub(crate) fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
         return false;
     }
-    (builtin == Builtin::Object && key == "hasOwn")
+    (builtin == Builtin::ObjectPrototype && key == "__proto__")
+        || (builtin == Builtin::Object && key == "hasOwn")
         || crate::builtins::read_intrinsic_override(builtin, key).is_some()
         || super::own_property_names(builtin).contains(&key)
         || super::callable_property(builtin, key).is_some()

@@ -62,9 +62,16 @@ pub(crate) fn prototype_to_string_result(
     if let Value::Builtin(builtin) = value {
         if matches!(builtin, Builtin::Math | Builtin::Json)
             && crate::builtins::read_intrinsic_override(*builtin, "Symbol.toStringTag").is_none()
-            && !crate::builtins::builtin_prototype_property_is_removed(*builtin, "Symbol.toStringTag")
+            && !crate::builtins::builtin_prototype_property_is_removed(
+                *builtin,
+                "Symbol.toStringTag",
+            )
         {
-            let tag = if *builtin == Builtin::Math { "Math" } else { "JSON" };
+            let tag = if *builtin == Builtin::Math {
+                "Math"
+            } else {
+                "JSON"
+            };
             return Ok(Value::String(format!("[object {tag}]")));
         }
     }
@@ -77,21 +84,35 @@ pub(crate) fn prototype_to_string_result(
             }
         }
     }
-    if let Value::Generator(_) = value {
+    if false {
         if let Ok(prototype) = crate::builtins::object::get_prototype_of(Some(value)) {
-            if let Some(getter) =
-                crate::property_define::accessor(&prototype, "Symbol.toStringTag", "get")
-            {
-                let tag = match getter {
-                    Value::Builtin(builtin) => {
-                        crate::vm::execute_builtin_with_receiver(builtin, &[], Some(value))?
-                    }
-                    getter => crate::functions::execute_target(&getter, value, &[])?,
-                };
-                return Ok(match tag {
-                    Value::String(tag) => Value::String(format!("[object {tag}]")),
-                    _ => Value::String("[object Object]".into()),
-                });
+            let has_data_tag = crate::builtins::object::descriptor(
+                Some(&prototype),
+                Some(&Value::String("Symbol.toStringTag".into())),
+            )
+            .ok()
+            .and_then(|descriptor| match descriptor {
+                Value::Object(fields) => {
+                    fields.iter().any(|(name, _)| name == "value").then_some(())
+                }
+                _ => None,
+            })
+            .is_some();
+            if !has_data_tag {
+                if let Some(getter) =
+                    crate::property_define::accessor(&prototype, "Symbol.toStringTag", "get")
+                {
+                    let tag = match getter {
+                        Value::Builtin(builtin) => {
+                            crate::vm::execute_builtin_with_receiver(builtin, &[], Some(value))?
+                        }
+                        getter => crate::functions::execute_target(&getter, value, &[])?,
+                    };
+                    return Ok(match tag {
+                        Value::String(tag) => Value::String(format!("[object {tag}]")),
+                        _ => Value::String("[object Object]".into()),
+                    });
+                }
             }
         }
     }
@@ -111,6 +132,9 @@ pub(crate) fn prototype_to_string_result(
         if !crate::conversion::is_symbol_string(&tag) {
             return Ok(Value::String(format!("[object {tag}]")));
         }
+    }
+    if matches!(value, Value::Generator(_)) {
+        return Ok(Value::String("[object Object]".into()));
     }
     if intrinsic_tag_is_overridden(value) || intrinsic_tag_is_removed(value) {
         return Ok(Value::String("[object Object]".into()));

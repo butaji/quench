@@ -466,8 +466,8 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::ObjectPrototype && key == "__proto__" {
         return Some(accessor_descriptor_with_setter(
-            Builtin::ObjectGetPrototypeOf,
-            Some(Builtin::ObjectSetPrototypeOf),
+            Builtin::ObjectPrototypeGetProto,
+            Some(Builtin::ObjectPrototypeSetProto),
         ));
     }
     if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
@@ -512,7 +512,12 @@ fn builtin_descriptor_for_property(builtin: Builtin, key: &str) -> Option<Value>
         })?;
     let writable = builtin_property_is_writable(builtin, key);
     let configurable = builtin_property_is_configurable(builtin, key, &property);
-    Some(descriptor_object_with_flags(property, writable, false, configurable))
+    Some(descriptor_object_with_flags(
+        property,
+        writable,
+        false,
+        configurable,
+    ))
 }
 
 fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
