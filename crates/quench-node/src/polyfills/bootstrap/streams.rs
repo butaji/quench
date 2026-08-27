@@ -249,6 +249,16 @@ Object.defineProperty(NodeAbortSignal.prototype, "aborted", {
   },
 });
 NodeAbortSignal.prototype[Symbol.toStringTag] = "AbortSignal";
+Object.defineProperty(
+  NodeAbortSignal.prototype,
+  Symbol.for("quench.event_target.events"),
+  {
+    configurable: true,
+    get() {
+      return new Map([["abort", { size: this._listeners.length }]]);
+    },
+  },
+);
 NodeAbortController.prototype[Symbol.toStringTag] = "AbortController";
 Object.defineProperty(NodeAbortController.prototype, "signal", {
   get() {
