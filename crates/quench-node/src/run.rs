@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use quench_runtime::ops::RealmId;
+use quench_runtime::value::Value;
 use quench_runtime::vm::{execute_code_with_context, OutputSink, VmContext, VmError};
 
 /// One `node <script>` run: the resolved process exit code plus an
@@ -86,6 +87,7 @@ pub fn run_script_with_sink(
         },
         ok => ok.map(|_| ()),
     };
+    sync_process_exit_code(&host);
     classify(result, host.exit_code())
 }
 
@@ -103,10 +105,19 @@ pub fn eval_script(source: &str, sink: OutputSink) -> RunOutcome {
         Ok(ops) => ops,
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
     };
+    sync_process_exit_code(&host);
     classify(
         execute_code_with_context(ops.code(), &context).map(|_| ()),
         host.exit_code(),
     )
+}
+
+fn sync_process_exit_code(host: &crate::host::NodeHost) {
+    let global = quench_runtime::vm::current_global_object();
+    let process = quench_runtime::execute::get_property(&global, "process");
+    if let Value::Number(code) = quench_runtime::execute::get_property(&process, "exitCode") {
+        host.state().borrow_mut().process.exit_code = Some(code as i32);
+    }
 }
 
 /// Node dispatches top-level uncaught exceptions to
