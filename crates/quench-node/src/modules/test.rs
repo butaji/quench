@@ -96,6 +96,12 @@ fn invoke(state: &Rc<RefCell<HostState>>, callback: &Value, context: &Value) -> 
     crate::modules::pump::await_promise(state, &result)
 }
 
+fn fulfilled_test_promise() -> Value {
+    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
+    )))
+}
+
 fn context() -> Value {
     let namespace = crate::modules::assert::build_value();
     let mut assertion_pairs = crate::modules::assert::build()
@@ -247,7 +253,7 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
             }
             CURRENT_CONTEXT.with(|current| current.replace(previous));
             report(state, &format!("ok - {name}"));
-            Ok(Value::Undefined)
+            Ok(fulfilled_test_promise())
         }
         Err(error) => {
             CURRENT_CONTEXT.with(|current| current.replace(previous));
