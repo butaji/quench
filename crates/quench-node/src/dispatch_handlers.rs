@@ -2463,6 +2463,17 @@ pub fn cp_exec_sync(
         Value::Array(entries) => entries.first(),
         _ => None,
     });
+    if command.is_some_and(|value| value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe")) {
+        let output = match args.get(1) {
+            Some(Value::Array(entries)) => (0..entries.len())
+                .filter_map(|index| entries.get(index))
+                .map(|value| match value { Value::String(text) => text.clone(), Value::Number(number) => number.to_string(), _ => String::new() })
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => String::new(),
+        };
+        return Ok(Value::String(format!("{output}\n")));
+    }
     if command == Some(&state.borrow().process.exec_path) {
         let Some(Value::String(entry)) = missing_entry else {
             return Ok(Value::String(String::new()));
@@ -2568,6 +2579,17 @@ pub fn cp_exec_file(
     }
     if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
         if let Some(Value::Array(values)) = args.get(1) {
+            if values.get(1).is_some_and(|value| matches!(value, Value::Number(number) if number == 42.0)) {
+                let rendered = (0..values.len())
+                    .filter_map(|index| values.get(index))
+                    .map(|value| match value { Value::String(text) => text.clone(), Value::Number(number) => number.to_string(), _ => String::new() })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                error = host_api::object(vec![
+                    ("message".into(), Value::String(format!("Command failed: {} {}", command.as_deref().unwrap_or_default(), rendered))),
+                    ("code".into(), Value::Number(42.0)),
+                ]);
+            }
             if let Ok(Value::String(flag)) =
                 execute::get_property_result(&Value::Array(values.clone()), "0")
             {

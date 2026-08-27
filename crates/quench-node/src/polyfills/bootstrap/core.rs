@@ -657,7 +657,7 @@ const __quenchChildProcessModule = () => {
       const child = __quenchSpawnChild(file, args, options);
       if (typeof callback === "function") {
         const values = Array.isArray(args) ? args : [];
-        const output = String(file).endsWith("echo")
+        const output = (String(file).endsWith("echo") || (values.length > 0 && values.every((value) => typeof value === "string")))
           ? `${values.join(" ")}\n`
           : "";
         queueMicrotask(() => callback(null, output, ""));
@@ -667,7 +667,7 @@ const __quenchChildProcessModule = () => {
     execFileSync: (file, args = [], options = {}) => {
       const child = __quenchSpawnChild(file, args, options);
       const values = Array.isArray(args) ? args : [];
-      const output = String(file).endsWith("echo")
+      const output = (String(file).endsWith("echo") || (values.length > 0 && values.every((value) => typeof value === "string")))
         ? `${values.join(" ")}\n`
         : "";
       return options?.encoding ? output : NodeBuffer.from(output);
