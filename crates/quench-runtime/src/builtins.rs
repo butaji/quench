@@ -330,6 +330,14 @@ pub(crate) fn builtin_prototype_property_is_removed(builtin: Builtin, key: &str)
     overrides::is_removed(builtin, key)
 }
 
+pub(crate) fn mark_builtin_non_extensible(builtin: Builtin) {
+    overrides::mark_non_extensible(builtin)
+}
+
+pub(crate) fn builtin_is_non_extensible(builtin: Builtin) -> bool {
+    overrides::is_non_extensible(builtin)
+}
+
 /// Install an override for the intrinsic `builtin`'s `[[Prototype]]` so
 /// `Object.setPrototypeOf(Number.prototype, spy)` changes the lookup chain.
 pub fn set_intrinsic_prototype_override(builtin: Builtin, value: Value) {

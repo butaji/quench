@@ -16,6 +16,7 @@ thread_local! {
         RefCell::new(HashSet::new());
     static INTRINSIC_PROTOTYPE_OVERRIDES: RefCell<HashMap<Builtin, Value>> =
         RefCell::new(HashMap::new());
+    static INTRINSIC_NON_EXTENSIBLE: RefCell<HashSet<Builtin>> = RefCell::new(HashSet::new());
     static GENERATION: Cell<u64> = const { Cell::new(1) };
 }
 
@@ -101,6 +102,17 @@ pub(crate) fn is_removed(builtin: Builtin, key: &str) -> bool {
     INTRINSIC_REMOVED.with(|removed| removed.borrow().contains(&(builtin, key.to_string())))
 }
 
+pub(crate) fn mark_non_extensible(builtin: Builtin) {
+    changed();
+    INTRINSIC_NON_EXTENSIBLE.with(|values| {
+        values.borrow_mut().insert(builtin);
+    });
+}
+
+pub(crate) fn is_non_extensible(builtin: Builtin) -> bool {
+    INTRINSIC_NON_EXTENSIBLE.with(|values| values.borrow().contains(&builtin))
+}
+
 /// Drop every cached override and recorded deletion so a fresh program can
 /// start with a clean prototype view.
 pub(crate) fn reset() {
@@ -108,4 +120,5 @@ pub(crate) fn reset() {
     INTRINSIC_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
     INTRINSIC_REMOVED.with(|removed| removed.borrow_mut().clear());
     INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
+    INTRINSIC_NON_EXTENSIBLE.with(|values| values.borrow_mut().clear());
 }

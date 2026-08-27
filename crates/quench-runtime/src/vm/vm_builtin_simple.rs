@@ -28,6 +28,8 @@ fn is_simple_conversion(builtin: Builtin) -> bool {
             | Builtin::BoxedValueOf
             | Builtin::ObjectPrototypeToString
             | Builtin::ObjectPrototypeToLocaleString
+            | Builtin::ObjectPrototypeGetProto
+            | Builtin::ObjectPrototypeSetProto
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
@@ -156,6 +158,21 @@ fn execute_simple_conversion(
         Builtin::ObjectPrototypeToLocaleString => {
             crate::builtins::prototype_to_locale_string_result(receiver)
         }
+        Builtin::ObjectPrototypeGetProto => crate::builtins::object::get_prototype_of(receiver),
+        Builtin::ObjectPrototypeSetProto => (|| {
+            let receiver = receiver.ok_or_else(crate::vm::not_callable)?;
+            if matches!(receiver, Value::Null | Value::Undefined) {
+                return Err(crate::value::error::throw_type_error(
+                    "Object.prototype.__proto__ setter called on null or undefined",
+                ));
+            }
+            let prototype = arguments.first().cloned().unwrap_or(Value::Undefined);
+            if !matches!(prototype, Value::Null) && !crate::value::is_object(&prototype) {
+                return Ok(Value::Undefined);
+            }
+            crate::builtins::object::set_prototype_of(&[receiver.clone(), prototype])
+                .map(|_| Value::Undefined)
+        })(),
         Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)

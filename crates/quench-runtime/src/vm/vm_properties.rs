@@ -124,8 +124,9 @@ fn get_property_value(value: &Value, key: &str) -> Value {
                     .prototype()
                     .map(|prototype| get_property(&prototype, key))
                     .or_else(|| {
-                        (!values.is_arguments())
-                            .then(|| get_property(&Value::Builtin(crate::ops::Builtin::ArrayPrototype), key))
+                        (!values.is_arguments()).then(|| {
+                            get_property(&Value::Builtin(crate::ops::Builtin::ArrayPrototype), key)
+                        })
                     })
                     .unwrap_or(property)
             } else {
@@ -221,7 +222,11 @@ fn set_property(data: &crate::value::SetData, key: &str) -> Value {
         return own;
     }
     if key == "constructor" {
-        return Value::Builtin(if data.weak { Builtin::WeakSet } else { Builtin::Set });
+        return Value::Builtin(if data.weak {
+            Builtin::WeakSet
+        } else {
+            Builtin::Set
+        });
     }
     if key == "size" && !data.weak {
         return Value::Number(data.values.borrow().len() as f64);
@@ -255,13 +260,16 @@ fn iterator_property(value: &Value, key: &str) -> Value {
         return get_property(&Value::Builtin(Builtin::IteratorPrototype), key);
     }
     if key == "constructor" {
-        return Value::Builtin(match crate::collections::iterator::builtin_for(
-            match value { Value::Iterator(data) => data, _ => unreachable!() },
-        ) {
-            Builtin::MapIteratorPrototype => Builtin::Map,
-            Builtin::SetIteratorPrototype => Builtin::Set,
-            _ => Builtin::Object,
-        });
+        return Value::Builtin(
+            match crate::collections::iterator::builtin_for(match value {
+                Value::Iterator(data) => data,
+                _ => unreachable!(),
+            }) {
+                Builtin::MapIteratorPrototype => Builtin::Map,
+                Builtin::SetIteratorPrototype => Builtin::Set,
+                _ => Builtin::Object,
+            },
+        );
     }
     let property = crate::collections::iterator::property_for(value, key);
     iterator_property_value(value, property)
@@ -416,6 +424,43 @@ fn primitive_constructor(value: &Value) -> Option<Builtin> {
 
 fn generator_property(value: &Value, key: &str) -> Value {
     let is_async = matches!(value, Value::Generator(generator) if generator.function.is_async);
+    if key == "Symbol.toStringTag" {
+        let prototype =
+            crate::builtins::object::get_prototype_of(Some(value)).unwrap_or_else(|_| {
+                if is_async {
+                    crate::builtins::async_generator_prototype()
+                } else {
+                    crate::builtins::generator_prototype()
+                }
+            });
+        if let Ok(Value::Object(fields)) =
+            crate::builtins::object::descriptor(Some(&prototype), Some(&Value::String(key.into())))
+        {
+            if let Some(getter) = fields
+                .iter()
+                .find_map(|(name, value)| (name == "get").then_some(value.clone()))
+            {
+                return match getter {
+                    Value::Builtin(builtin) => {
+                        crate::vm::execute_builtin_with_receiver(builtin, &[], Some(value))
+                            .unwrap_or(Value::Undefined)
+                    }
+                    getter => crate::functions::execute_target(&getter, value, &[])
+                        .unwrap_or(Value::Undefined),
+                };
+            }
+        }
+        return crate::execute::get_property_result(&prototype, key).unwrap_or_else(|_| {
+            Value::String(
+                if is_async {
+                    "AsyncGenerator"
+                } else {
+                    "Generator"
+                }
+                .into(),
+            )
+        });
+    }
     let builtin = match key {
         "next" => {
             if is_async {
@@ -523,7 +568,19 @@ fn inherited_function_property(
         );
     }
     if !matches!(prototype, Value::Builtin(Builtin::Promise))
-        || !matches!(bound.target, Value::Builtin(Builtin::PromiseResolve | Builtin::PromiseReject | Builtin::PromiseAll | Builtin::PromiseAllSettled | Builtin::PromiseAny | Builtin::PromiseRace | Builtin::PromiseWithResolvers | Builtin::PromiseTry))
+        || !matches!(
+            bound.target,
+            Value::Builtin(
+                Builtin::PromiseResolve
+                    | Builtin::PromiseReject
+                    | Builtin::PromiseAll
+                    | Builtin::PromiseAllSettled
+                    | Builtin::PromiseAny
+                    | Builtin::PromiseRace
+                    | Builtin::PromiseWithResolvers
+                    | Builtin::PromiseTry
+            )
+        )
     {
         return inherited;
     }

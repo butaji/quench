@@ -641,6 +641,9 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
     }
     match &target {
         crate::value::Value::Builtin(crate::ops::Builtin::ThrowTypeError) => false,
+        crate::value::Value::Builtin(builtin) => {
+            !crate::builtins::builtin_is_non_extensible(*builtin)
+        }
         crate::value::Value::Object(properties) => {
             !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
         }
@@ -704,6 +707,10 @@ pub(crate) fn prevent_extensions(
 
 fn mark_non_extensible(target: &crate::value::Value) -> crate::value::Value {
     match target {
+        crate::value::Value::Builtin(builtin) => {
+            crate::builtins::mark_builtin_non_extensible(*builtin);
+            target.clone()
+        }
         crate::value::Value::Object(properties) => {
             let mut sealed = properties.as_ref().clone();
             push_non_extensible(&mut sealed);
