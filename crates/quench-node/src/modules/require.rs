@@ -512,6 +512,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         ),
         "child_process" => Some(crate::host::namespace_object_from_pairs(vec![
             (
+                "ChildProcess".to_string(),
+                crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR),
+            ),
+            (
                 "spawnSync".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
             ),
