@@ -296,7 +296,7 @@ pub enum Builtin {
     Uint8ArrayToHex, Uint8ArraySubarray,
     ObjectDefineProperty, ObjectDefineProperties,
     ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols,
-    ObjectPropertyIsEnumerable, ObjectPrototypeToString,
+    ObjectPropertyIsEnumerable, ObjectPrototypeToString, ObjectPrototypeToLocaleString,
     ObjectPrototypeValueOf, ObjectCreate,
     ObjectFreeze, ObjectSeal,
     ObjectPreventExtensions, ObjectIsFrozen,
