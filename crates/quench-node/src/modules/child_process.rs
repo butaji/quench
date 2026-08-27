@@ -105,13 +105,7 @@ pub fn spawn_sync(
     if command == state.borrow().process.exec_path
         && child_args.first().is_some_and(|flag| flag == "--test")
     {
-        return Ok(host_api::object(vec![
-            ("pid".into(), Value::Number(0.0)),
-            ("status".into(), Value::Number(0.0)),
-            ("signal".into(), Value::Null),
-            ("stdout".into(), Value::String(String::new())),
-            ("stderr".into(), Value::String(String::new())),
-        ]));
+        return run_compat_test_child(&child_args);
     }
 
     if command == state.borrow().process.exec_path
@@ -375,6 +369,35 @@ pub fn spawn_sync(
             "output".to_string(),
             host_api::array(vec![Value::Null, stdout, stderr]),
         ),
+    ]))
+}
+
+fn run_compat_test_child(args: &[String]) -> Result<Value, VmError> {
+    let Some((index, fixture)) = args.iter().enumerate().find(|(_, arg)| {
+        arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs")
+    }) else {
+        return Ok(spawn_error_result("EINVAL", "--test requires a fixture"));
+    };
+    let executable = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|dir| dir.join("run")))
+        .filter(|path| path.is_file())
+        .ok_or_else(|| VmError::EvalError("compatibility runner is unavailable".into()))?;
+    let mut command = std::process::Command::new(executable);
+    command.arg(fixture).args(args.iter().skip(index + 1));
+    command.env("QUENCH_CHILD_RUNNER", "1");
+    let output = command
+        .output()
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    let stdout = crate::modules::buffer_proto::make_buffer(&output.stdout);
+    let stderr = crate::modules::buffer_proto::make_buffer(&output.stderr);
+    Ok(host_api::object(vec![
+        ("pid".into(), Value::Number(0.0)),
+        ("status".into(), output.status.code().map_or(Value::Null, |code| Value::Number(code as f64))),
+        ("signal".into(), Value::Null),
+        ("stdout".into(), stdout.clone()),
+        ("stderr".into(), stderr.clone()),
+        ("output".into(), host_api::array(vec![Value::Null, stdout, stderr])),
     ]))
 }
 
