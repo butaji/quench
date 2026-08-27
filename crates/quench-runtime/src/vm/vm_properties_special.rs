@@ -428,7 +428,6 @@ pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
         .push(("\0receiver_bound_method".to_string(), Value::Boolean(true)));
     let realm = match receiver {
         Value::BoundFunction(bound) => bound.realm,
-        Value::HostCapability(token) => token.realm(),
         _ => crate::vm::current_context_or_default().realm(),
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
