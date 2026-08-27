@@ -60,6 +60,16 @@ pub(crate) fn parse_options(value: Option<&Value>) -> Result<FsOptions, VmError>
     Ok(options)
 }
 
+pub(crate) fn parse_mkdir_options(value: Option<&Value>) -> Result<FsOptions, VmError> {
+    if let Some(Value::Number(mode)) = value {
+        return Ok(FsOptions {
+            mode: Some(*mode as u32),
+            ..FsOptions::default()
+        });
+    }
+    parse_options(value)
+}
+
 fn set_encoding(options: &mut FsOptions, encoding: &str) -> Result<(), VmError> {
     match crate::modules::buffer_enc::canonical_encoding(encoding) {
         Some(canonical) => {
