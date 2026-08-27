@@ -5049,6 +5049,14 @@ pub fn test_run(
     crate::modules::test::run(state, args)
 }
 
+pub fn test_get_context(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::test::current_context())
+}
+
 pub fn test_run_emit(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
     let emitter = args.first().cloned().unwrap_or(Value::Undefined);
     let event = args.get(1).cloned().unwrap_or(Value::String("test:pass".into()));
