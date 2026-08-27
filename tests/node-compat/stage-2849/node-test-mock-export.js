@@ -41,3 +41,11 @@ test('destructured mock', (t) => {
   assert.strictEqual(sum.mock.calls[1].this, 1000);
   assert.strictEqual(sum.mock.calls[1].result, 10);
 });
+
+test('constructor mock', (t) => {
+  class Parent { constructor(c) { this.c = c; } }
+  const C = t.mock.fn(Parent);
+  const value = new C(42);
+  assert(value instanceof Parent);
+  assert.strictEqual(value.c, 42);
+});
