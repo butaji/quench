@@ -205,9 +205,10 @@ fn values_uint16_array(values: &[Value]) -> Result<Value, crate::execute::VmErro
 fn copy_uint16_array(
     source: &crate::value::Uint16ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Uint16ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Uint16ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Uint16Array(Rc::new(view)))
@@ -265,9 +266,10 @@ fn values_uint32_array(values: &[Value]) -> Result<Value, crate::execute::VmErro
 fn copy_uint32_array(
     source: &crate::value::Uint32ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Uint32ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Uint32ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Uint32Array(Rc::new(view)))
@@ -362,9 +364,10 @@ fn values_uint8_clamped_array(values: &[Value]) -> Result<Value, crate::execute:
 fn copy_uint8_clamped_array(
     source: &crate::value::Uint8ClampedArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Uint8ClampedArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Uint8ClampedArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, f64::from(source.get(index).unwrap_or(0)));
     }
     Ok(Value::Uint8ClampedArray(Rc::new(view)))
@@ -402,9 +405,10 @@ fn view_uint8_clamped_array(
 fn copy_uint8_array(
     source: &crate::value::Uint8ArrayData,
 ) -> Result<Value, crate::execute::VmError> {
+    let length = source.logical_len();
     let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
-    let view = crate::value::Uint8ArrayData::new(buffer, 0, source.length);
-    for index in 0..source.length {
+    let view = crate::value::Uint8ArrayData::new(buffer, 0, length);
+    for index in 0..length {
         view.set(index, source.get(index).unwrap_or(0));
     }
     Ok(Value::Uint8Array(Rc::new(view)))

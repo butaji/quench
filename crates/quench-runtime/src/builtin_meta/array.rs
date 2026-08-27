@@ -38,13 +38,17 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayEntries => Some("entries"),
         Builtin::TypedArrayEntries => Some("entries"),
         Builtin::ArrayIncludes => Some("includes"),
+        Builtin::TypedArrayIncludes => Some("includes"),
         Builtin::ArrayIndexOf => Some("indexOf"),
+        Builtin::TypedArrayIndexOf => Some("indexOf"),
         Builtin::ArrayLastIndexOf => Some("lastIndexOf"),
+        Builtin::TypedArrayLastIndexOf => Some("lastIndexOf"),
         Builtin::ArraySlice => Some("slice"),
         Builtin::ArrayConcat => Some("concat"),
         Builtin::ArrayFlat => Some("flat"),
         Builtin::ArrayFlatMap => Some("flatMap"),
         Builtin::ArrayAt => Some("at"),
+        Builtin::TypedArrayAt => Some("at"),
         Builtin::ArraySort => Some("sort"),
         Builtin::ArrayForEach => Some("forEach"),
         Builtin::TypedArrayForEach => Some("forEach"),
@@ -113,10 +117,14 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayFindLastIndex
         | Builtin::TypedArrayFindLastIndex
         | Builtin::ArrayIncludes
+        | Builtin::TypedArrayIncludes
         | Builtin::ArrayIndexOf
+        | Builtin::TypedArrayIndexOf
         | Builtin::ArrayLastIndexOf
+        | Builtin::TypedArrayLastIndexOf
         | Builtin::ArrayFlatMap
         | Builtin::ArrayAt
+        | Builtin::TypedArrayAt
         | Builtin::ArraySort
         | Builtin::ArrayForEach
         | Builtin::TypedArrayForEach
