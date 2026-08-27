@@ -2792,7 +2792,19 @@ pub fn cp_kill(
         return Ok(Value::Boolean(true));
     }
     let signal = match signal {
-        Value::String(value) => Value::String(value),
+        Value::String(value)
+            if matches!(
+                value.as_str(),
+                "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGQUIT" | "SIGHUP" | "SIGSTOP"
+                    | "SIGCONT" | "SIGUSR1" | "SIGUSR2"
+            ) => Value::String(value),
+        Value::String(value) => {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
+                ("message".into(), Value::String(format!("Unknown signal: {value}"))),
+            ])))
+        }
         _ => Value::String("SIGTERM".into()),
     };
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
