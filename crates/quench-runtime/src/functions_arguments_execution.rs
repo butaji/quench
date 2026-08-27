@@ -28,6 +28,9 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayCopyWithin => {
             crate::builtins::array_copy_within(receiver, arguments)
         }
+        crate::ops::Builtin::TypedArrayCopyWithin => {
+            crate::builtins::typed_array_copy_within(receiver, arguments)
+        }
         crate::ops::Builtin::ArrayFindLast => crate::builtins::array_find_last(receiver, arguments),
         crate::ops::Builtin::ArrayFindLastIndex => {
             crate::builtins::array_find_last_index(receiver, arguments)

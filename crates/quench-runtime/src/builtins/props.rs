@@ -395,7 +395,7 @@ fn typed_array_generic_method(key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match key {
         "at" => ArrayAt,
-        "copyWithin" => ArrayCopyWithin,
+        "copyWithin" => TypedArrayCopyWithin,
         "find" => ArrayFind,
         "findIndex" => ArrayFindIndex,
         "findLast" => ArrayFindLast,

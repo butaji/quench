@@ -165,7 +165,7 @@ fn typed_array_some(
     Ok(Value::Boolean(false))
 }
 
-fn typed_array_receiver(
+pub(crate) fn typed_array_receiver(
     receiver: Option<&Value>,
     _method: &str,
 ) -> Result<Value, crate::execute::VmError> {
@@ -1067,7 +1067,7 @@ fn typed_array_sort(
     Ok(value)
 }
 
-fn typed_array_is_immutable(value: &Value) -> bool {
+pub(crate) fn typed_array_is_immutable(value: &Value) -> bool {
     match value {
         Value::Float64Array(view) => view.buffer.immutable,
         Value::Float32Array(view) => view.buffer.immutable,
