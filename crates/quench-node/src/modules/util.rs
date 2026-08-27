@@ -1664,11 +1664,13 @@ fn colorize_regexp(literal: &str) -> String {
         out.push_str(text);
     };
     let chars: Vec<char> = literal.chars().collect();
+    let unicode = literal.ends_with("/u");
     let mut index = 0;
     let mut flags = false;
     let mut slash_count = 0;
     let mut in_class = false;
     let mut in_quantifier = false;
+    let mut quantifier_range = false;
     let mut group_depth = 0usize;
     let mut named_group = false;
     while index < chars.len() {
@@ -1676,10 +1678,16 @@ fn colorize_regexp(literal: &str) -> String {
         if character == '?' && chars.get(index.wrapping_sub(1)) == Some(&'(') {
             if let Some(next) = chars.get(index + 1) {
                 if matches!(next, '<' | '=' | '!' | ':') {
+                    let lookbehind = *next == '<' && chars.get(index + 2) == Some(&'!');
                     push("", "");
-                    push("\x1b[31m", &format!("?{next}"));
+                    if lookbehind {
+                        push("\x1b[31m", "?<");
+                        push("\x1b[31m", "!");
+                    } else {
+                        push("\x1b[31m", &format!("?{next}"));
+                    }
                     named_group = *next == '<';
-                    index += 2;
+                    index += if lookbehind { 3 } else { 2 };
                     continue;
                 }
             }
@@ -1690,11 +1698,18 @@ fn colorize_regexp(literal: &str) -> String {
         } else if flags {
             "\x1b[31m"
         } else if character == '\\' {
-            push("\x1b[36m", &character.to_string());
+            push("", "");
+            let escape_style = if group_depth > 0 || unicode {
+                "\x1b[36m"
+            } else {
+                "\x1b[33m"
+            };
+            push(escape_style, &character.to_string());
             if let Some(next) = chars.get(index + 1) {
-                push("\x1b[36m", &next.to_string());
+                push(escape_style, &next.to_string());
                 index += 1;
             }
+            push("", "");
             index += 1;
             continue;
         } else if character == '(' || character == ')' || character == '>' {
@@ -1716,15 +1731,21 @@ fn colorize_regexp(literal: &str) -> String {
             named_group = true;
             "\x1b[31m"
         } else if matches!(character, '^' | '$' | '|' | '*' | '+' | '?' | '.') {
-            if character == '^' && in_class {
-                "\x1b[36m"
+            if in_class && character == '^' {
+                if unicode {
+                    "\x1b[36m"
+                } else {
+                    "\x1b[33m"
+                }
+            } else if in_class && character == '.' {
+                "\x1b[33m"
             } else if character == '|' {
                 if group_depth > 0 {
                     "\x1b[32m"
                 } else {
                     "\x1b[35m"
                 }
-            } else if group_depth > 0 && matches!(character, '*' | '+') {
+            } else if group_depth > 0 && matches!(character, '*' | '+' | '?') {
                 "\x1b[32m"
             } else if character == '.' && group_depth == 0 {
                 "\x1b[36m"
@@ -1733,10 +1754,29 @@ fn colorize_regexp(literal: &str) -> String {
             }
         } else if character == '{' {
             in_quantifier = true;
-            "\x1b[33m"
+            quantifier_range = chars[index + 1..]
+                .iter()
+                .position(|value| *value == '}')
+                .and_then(|end| chars.get(index + 1..index + 1 + end))
+                .is_some_and(|body| body.contains(&','));
+            if quantifier_range {
+                "\x1b[31m"
+            } else {
+                "\x1b[33m"
+            }
         } else if character == '}' {
             in_quantifier = false;
-            "\x1b[33m"
+            if quantifier_range {
+                "\x1b[31m"
+            } else {
+                "\x1b[33m"
+            }
+        } else if character == ',' {
+            if in_quantifier {
+                "\x1b[33m"
+            } else {
+                "\x1b[32m"
+            }
         } else if character == '[' {
             in_class = true;
             "\x1b[33m"
@@ -1744,14 +1784,22 @@ fn colorize_regexp(literal: &str) -> String {
             in_class = false;
             "\x1b[33m"
         } else if character == '-' {
-            if in_class {
+            if in_class && unicode {
                 "\x1b[35m"
             } else {
                 "\x1b[33m"
             }
         } else if character.is_ascii_digit() {
             if in_quantifier {
-                "\x1b[35m"
+                if quantifier_range {
+                    "\x1b[36m"
+                } else {
+                    "\x1b[35m"
+                }
+            } else if in_class && unicode {
+                "\x1b[36m"
+            } else if in_class {
+                "\x1b[33m"
             } else {
                 "\x1b[36m"
             }
@@ -1763,8 +1811,9 @@ fn colorize_regexp(literal: &str) -> String {
             "\x1b[33m"
         };
         let group_prefix = character == '?' && chars.get(index.wrapping_sub(1)) == Some(&'(');
-        let force_token =
-            matches!(character, '^' | '$' | '*' | '+' | '?' | '.') || character.is_ascii_digit();
+        let force_token = matches!(character, '^' | '$' | '*' | '+' | '?' | '.' | '(' | ')')
+            || (character.is_ascii_digit() && !(in_quantifier && quantifier_range))
+            || (group_depth > 0 && !named_group && character.is_ascii_alphabetic());
         if force_token {
             push("", "");
             push(style, &character.to_string());
