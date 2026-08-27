@@ -5049,6 +5049,13 @@ pub fn test_run(
     crate::modules::test::run(state, args)
 }
 
+pub fn test_run_emit(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let emitter = args.first().cloned().unwrap_or(Value::Undefined);
+    let event = args.get(1).cloned().unwrap_or(Value::String("test:pass".into()));
+    crate::modules::net::emit(state, &emitter, &quench_runtime::execute::to_js_string(&event)?, vec![quench_runtime::host_api::object(vec![("skip".into(), Value::Boolean(true))])])?;
+    Ok(Value::Undefined)
+}
+
 pub fn test_mock_fn(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -5574,6 +5581,9 @@ pub fn test_mock_module(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Valu
     crate::modules::test::register_module_mock(args.first().and_then(|value| if let Value::String(value) = value { Some(value.clone()) } else { None }).unwrap_or_default(), options.clone());
     Ok(Value::Undefined)
 }
+
+pub fn test_context_skip(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
+pub fn test_context_todo(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
 
 pub fn test_mock_property(
     _state: &Rc<RefCell<HostState>>,
