@@ -276,13 +276,13 @@ fn bound_function_property(
 }
 
 fn bound_constructor_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
-    if let Value::Builtin(builtin) = bound.target {
-        if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
-            return crate::vm::realm_intrinsic_for(bound.realm, prototype);
-        }
-    }
-    crate::execute::get_property_result(&bound.target, "prototype")
-        .unwrap_or(Value::Undefined)
+    let Value::Builtin(builtin) = bound.target else {
+        return Value::Undefined;
+    };
+    let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) else {
+        return Value::Undefined;
+    };
+    crate::vm::realm_intrinsic_for(bound.realm, prototype)
 }
 
 fn intrinsic_target_is_abstract_module_source(bound: &crate::value::BoundFunctionValue) -> bool {
@@ -359,21 +359,6 @@ fn bound_function_fallback(
         }
     }
     if matches!(result, Value::Undefined) {
-        if crate::conversion::is_callable(&bound.target) {
-            let function_prototype = crate::vm::realm_intrinsic_for(
-                bound.realm,
-                Builtin::FunctionPrototype,
-            );
-            if let Ok(inherited) = crate::vm::get_property_with_receiver(
-                &function_prototype,
-                key,
-                &receiver,
-            ) {
-                if !matches!(inherited, Value::Undefined) {
-                    return inherited;
-                }
-            }
-        }
         if bound.target != Value::Builtin(Builtin::ObjectPrototype) {
             let object_prototype = crate::vm::realm_intrinsic(Builtin::ObjectPrototype);
             if let Some(getter) = crate::property_define::accessor(&object_prototype, key, "get") {
