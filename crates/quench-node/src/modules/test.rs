@@ -174,6 +174,16 @@ pub fn nested(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, V
 
 pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let name = test_name(args);
+    if let Some(options) = args.iter().find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))) {
+        let signal = quench_runtime::execute::get_property(options, "signal");
+        if matches!(signal, Value::Object(_) | Value::ObjectAlias(_))
+            && !matches!(quench_runtime::execute::get_property(&signal, "aborted"), Value::Boolean(_))
+        {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"options.signal\" property must be an instance of AbortSignal".into(),
+            ));
+        }
+    }
     // `test(name, { skip: ... }, fn)` — a truthy `skip` option skips the run.
     let skipped = args.iter().any(|arg| {
         matches!(arg, Value::Object(_) | Value::ObjectAlias(_))
