@@ -160,6 +160,7 @@ include!("value_promise.rs");
 pub(crate) struct TypedArrayMeta {
     prototype: RefCell<Option<Value>>,
     properties: RefCell<Vec<(String, Value)>>,
+    descriptors: RefCell<Vec<(String, Value)>>,
     buffer_materialized: Cell<bool>,
 }
 
@@ -195,6 +196,24 @@ impl TypedArrayMeta {
             *current = value;
         } else {
             properties.push((key.to_string(), value));
+        }
+    }
+
+    pub(crate) fn descriptor(&self, key: &str) -> Option<Value> {
+        self.descriptors
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_descriptor(&self, key: &str, value: Value) {
+        let mut descriptors = self.descriptors.borrow_mut();
+        if let Some((_, current)) = descriptors.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            descriptors.push((key.to_string(), value));
         }
     }
 
