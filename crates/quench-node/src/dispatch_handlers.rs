@@ -1321,6 +1321,18 @@ pub fn vm_source_text_module_construct(
         Some(Value::String(source)) => source.clone(),
         _ => String::new(),
     };
+    let dependency_specifiers = source
+        .split("import ")
+        .skip(1)
+        .filter_map(|rest| {
+            let (quote, start) = ['\'', '"']
+                .iter()
+                .find_map(|quote| rest.find(*quote).map(|start| (*quote, start)))?;
+            let text = &rest[start + 1..];
+            let end = text.find(quote)?;
+            Some(Value::String(text[..end].to_string()))
+        })
+        .collect();
     let mut namespace = quench_runtime::host_api::object(Vec::new());
     let mut uninitialized = quench_runtime::host_api::object(Vec::new());
     for part in source.split("export ").skip(1) {
@@ -1359,6 +1371,10 @@ pub fn vm_source_text_module_construct(
                 .unwrap_or(Value::Undefined),
         ),
         ("namespace".into(), namespace),
+        (
+            "dependencySpecifiers".into(),
+            quench_runtime::host_api::array(dependency_specifiers),
+        ),
         (
             "link".into(),
             crate::host::capability(crate::registry::SPEC_VM_MODULE_LINK),
