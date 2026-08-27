@@ -61,16 +61,6 @@ fn array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError
         return Ok(crate::collections::iterator::make_array_keys(Rc::clone(data)));
     }
     if let Some(value) = receiver.filter(|value| is_typed_array(value)) {
-        if typed_array_is_detached(value) {
-            return Err(crate::value::error::throw_type_error(
-                "Array iterator called on detached TypedArray",
-            ));
-        }
-        if crate::typed_array_prototype::is_out_of_bounds(value) {
-            return Err(crate::value::error::throw_type_error(
-                "Array iterator called on out-of-bounds TypedArray",
-            ));
-        }
         return Ok(crate::collections::iterator::make_typed_keys(value.clone()));
     }
     let values = array_iterator_values(receiver)?;

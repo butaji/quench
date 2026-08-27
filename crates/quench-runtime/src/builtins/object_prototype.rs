@@ -486,6 +486,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
         builtin,
         Builtin::ObjectPrototype
             | Builtin::DatePrototype
+            | Builtin::RegExpPrototype
             | Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
