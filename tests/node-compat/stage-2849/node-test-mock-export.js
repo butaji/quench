@@ -63,3 +63,14 @@ test('no-op mock function', (t) => {
   assert.deepStrictEqual(fn.mock.calls[0].arguments, [3, 4]);
   assert.strictEqual(fn.mock.calls[0].result, undefined);
 });
+
+test('mock implementation override', (t) => {
+  const sum = (a, b) => a + b;
+  const difference = (a, b) => a - b;
+  const product = (a, b) => a * b;
+  const fn1 = t.mock.fn(sum, difference);
+  const fn2 = t.mock.fn(sum, product);
+  assert.strictEqual(fn1(5, 3), 2);
+  assert.strictEqual(fn2(5, 3), 15);
+  assert.strictEqual(fn2(4, 2), 8);
+});

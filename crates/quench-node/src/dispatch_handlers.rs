@@ -5054,7 +5054,12 @@ pub fn test_mock_fn(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let implementation = args.first().cloned().unwrap_or(Value::Undefined);
+    let implementation = args
+        .get(1)
+        .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
+        .cloned()
+        .or_else(|| args.first().cloned())
+        .unwrap_or(Value::Undefined);
     let calls = quench_runtime::host_api::array(Vec::new());
     let wrapper = quench_runtime::host_api::bound_capability_with_arguments(
         quench_runtime::ops::HostCapabilityRef {
