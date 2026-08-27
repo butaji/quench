@@ -14,7 +14,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.EventTarget ||= 
     if (signal?.aborted) return undefined;
     const record = { listener, once: Boolean(options.once), passive, signal };
     (this._listeners[name] ||= []).push(record);
-    if (signal) {
+    if (signal && typeof signal.addEventListener === "function") {
       record.abort = () => this.removeEventListener(name, listener);
       signal.addEventListener("abort", record.abort, { once: true });
     }
