@@ -496,6 +496,28 @@ pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execut
     collect(&iterator)
 }
 
+/// Collect an iterator for Promise combinators.  Once `IteratorStep` or
+/// `IteratorValue` throws, the Promise algorithms mark the iterator record as
+/// done and reject without performing `IteratorClose`.
+pub(crate) fn collect_iterable_no_close(
+    value: Value,
+) -> Result<Vec<Value>, crate::execute::VmError> {
+    let iterator = open(value)?;
+    let mut values = Vec::new();
+    loop {
+        match step_value(&iterator) {
+            Ok(Some(value)) => values.push(value),
+            Ok(None) => return Ok(values),
+            Err(error) => {
+                if let Value::Iterator(data) = &iterator {
+                    mark_done(data);
+                }
+                return Err(error);
+            }
+        }
+    }
+}
+
 pub(crate) fn for_each_iterable<F>(
     value: Value,
     mut callback: F,

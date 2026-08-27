@@ -32,7 +32,7 @@ fn promise_combinator_from_capability(
         }
     };
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let values = match crate::collections::iterator::collect_iterable(source) {
+    let values = match crate::collections::iterator::collect_iterable_no_close(source) {
         Ok(values) => values,
         Err(error) => {
             reject_with_completion_value(&capability_reject, error);
@@ -179,7 +179,13 @@ fn aggregate_settle(aggregate: &Rc<PromiseAggregate>, index: usize, state: &Prom
             store_aggregate(aggregate, index, value);
             decrement_aggregate(aggregate);
             if *aggregate.remaining.borrow() == 0 {
-                reject_aggregate(aggregate, Value::array(aggregate.values.borrow().clone()));
+                let errors = Value::array(aggregate.values.borrow().clone());
+                let error = crate::construct::construct_value(
+                    &Value::Builtin(Builtin::AggregateError),
+                    &[errors],
+                )
+                .unwrap_or(Value::Undefined);
+                reject_aggregate(aggregate, error);
             }
         }
         (PromiseAggregateKind::AllSettled, PromiseState::Fulfilled(_)) => {
