@@ -37,10 +37,16 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     let Some(callback) = callback else {
         return Ok(Value::Undefined);
     };
-    let context = quench_runtime::host_api::object(vec![(
-        "assert".to_string(),
-        crate::modules::assert::build_value(),
-    )]);
+    let context = quench_runtime::host_api::object(vec![
+        ("assert".to_string(), crate::modules::assert::build_value()),
+        (
+            "mock".to_string(),
+            quench_runtime::host_api::object(vec![(
+                "fn".to_string(),
+                crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+            )]),
+        ),
+    ]);
     match quench_runtime::vm::call_value(callback, &Value::Undefined, &[context]) {
         Ok(result) => {
             // Async callbacks return a promise; drive the loop until it
