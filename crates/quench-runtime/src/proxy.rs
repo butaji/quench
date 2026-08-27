@@ -50,13 +50,29 @@ fn validate_proxy_arguments(target: &Value, handler: &Value) -> Result<(), VmErr
 }
 
 fn create_revoke_function(proxy: Value) -> Value {
-    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(Builtin::ProxyRevoke),
-        receiver: proxy,
-        arguments: Vec::new(),
-        properties: std::cell::RefCell::new(Vec::new()),
-    }))
+    let revoke = crate::vm::bind_method(&proxy, Value::Builtin(Builtin::ProxyRevoke));
+    if let Value::BoundFunction(bound) = &revoke {
+        let mut properties = bound.properties.borrow_mut();
+        for (name, value) in properties.iter_mut() {
+            if name == "name" {
+                *value = Value::String(String::new());
+            } else if name == &crate::builtins::descriptor_key("name") {
+                if let Value::Object(fields) = &*value {
+                    let mut entries = fields.properties.clone();
+                    if let Some((_, mut value)) = entries.iter_mut().find(|(name, _)| name == "value") {
+                        *value = Value::String(String::new());
+                    }
+                    *value = Value::Object(Rc::new(crate::value::ObjectData::new(
+                        entries
+                            .iter()
+                            .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
+                            .collect(),
+                    )));
+                }
+            }
+        }
+    }
+    revoke
 }
 
 pub(crate) fn revoke(receiver: Option<&Value>) -> Result<Value, VmError> {
