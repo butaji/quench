@@ -394,7 +394,7 @@ fn typed_array_generic_method(key: &str) -> Option<Builtin> {
         "lastIndexOf" => ArrayLastIndexOf,
         "reduce" => ArrayReduce,
         "reduceRight" => ArrayReduceRight,
-        "reverse" => ArrayReverse,
+        "reverse" => TypedArrayReverse,
         "some" => ArraySome,
         "sort" => ArraySort,
         "toReversed" => ArrayToReversed,

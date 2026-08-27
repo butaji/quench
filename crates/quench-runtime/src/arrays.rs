@@ -223,6 +223,30 @@ fn typed_array_to_locale_string(
     array_to_locale_string(Some(&value), arguments)
 }
 
+fn typed_array_reverse(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = typed_array_receiver(receiver, "reverse")?;
+    let immutable = match &value {
+        Value::Float64Array(view) => view.buffer.immutable,
+        Value::Float32Array(view) => view.buffer.immutable,
+        Value::Int8Array(view) => view.buffer.immutable,
+        Value::Int16Array(view) => view.buffer.immutable,
+        Value::Int32Array(view) => view.buffer.immutable,
+        Value::Uint8Array(view) => view.buffer.immutable,
+        Value::Uint8ClampedArray(view) => view.buffer.immutable,
+        Value::Uint16Array(view) => view.buffer.immutable,
+        Value::Uint32Array(view) => view.buffer.immutable,
+        Value::BigInt64Array(view) => view.buffer.immutable,
+        Value::BigUint64Array(view) => view.buffer.immutable,
+        _ => false,
+    };
+    if immutable || crate::typed_array_prototype::is_out_of_bounds(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.reverse called on invalid view",
+        ));
+    }
+    crate::builtins::array_reverse(Some(&value))
+}
+
 fn map_argument_error(
     builtin: crate::ops::Builtin,
     receiver: Option<&Value>,
