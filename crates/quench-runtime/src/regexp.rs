@@ -387,6 +387,22 @@ fn find_match_utf16(
     Ok(matched)
 }
 
+/// Match a canonical UTF-16 string without first materializing a UTF-8 copy.
+/// The returned ranges are already UTF-16 offsets, which is exactly the index
+/// space used by RegExp.lastIndex and the observable `test` result.
+fn find_match_units(
+    regex: &Regex,
+    units: &[u16],
+    start: usize,
+    sticky: bool,
+) -> Result<Option<regress::Match>, VmError> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let matched = regex.find_from_utf16(units, start).next();
+        matched.filter(|found| !sticky || found.start() == start)
+    }))
+    .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+}
+
 fn utf16_range_to_bytes(text: &str, range: &std::ops::Range<usize>) -> std::ops::Range<usize> {
     crate::strings::utf16_byte_index(text, range.start)
         ..crate::strings::utf16_byte_index(text, range.end)
@@ -646,6 +662,19 @@ fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> 
         .any(|byte| *byte == b'\n' || *byte == b'\r')
 }
 
+fn anchored_match_units(source: &str, flags: &str, last_index: usize, input: &[u16]) -> bool {
+    if last_index == 0 || !source.starts_with('^') {
+        return true;
+    }
+    if !flags.contains('m') {
+        return false;
+    }
+    [last_index.saturating_sub(1), last_index]
+        .into_iter()
+        .filter_map(|index| input.get(index))
+        .any(|unit| *unit == b'\n' as u16 || *unit == b'\r' as u16)
+}
+
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
@@ -667,6 +696,30 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
                 return Ok(Value::Boolean(matched));
             }
         }
+    }
+    if let Some(Value::StringUnits(units)) = arguments.first() {
+        let global_or_sticky = flags.contains('g') || flags.contains('y');
+        if global_or_sticky && last_index > units.len() {
+            set_last_index(receiver, 0.0)?;
+            return Ok(Value::Boolean(false));
+        }
+        let search_start = if global_or_sticky { last_index } else { 0 };
+        let pattern = if source.is_empty() { "(?:)" } else { &source };
+        let re_flags = build_re_flags(&flags);
+        let found = anchored_match_units(&source, &flags, last_index, units)
+            .then(|| {
+                let regex = compiled_for(receiver, pattern, &re_flags)?;
+                find_match_units(&regex, units, search_start, flags.contains('y'))
+            })
+            .transpose()?
+            .flatten();
+        if global_or_sticky {
+            set_last_index(
+                receiver,
+                found.as_ref().map_or(0, |matched| matched.end()) as f64,
+            )?;
+        }
+        return Ok(Value::Boolean(found.is_some()));
     }
     let s = argument_string(arguments)?;
     if !flags.contains('g') && !flags.contains('y') && source.len() <= 3 {
