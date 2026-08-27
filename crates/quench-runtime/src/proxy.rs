@@ -247,7 +247,7 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
                 Some(&proxy.handler),
             )?;
             let success = crate::execute::is_truthy(&result);
-            if !success {
+            if success {
                 let descriptor = crate::builtins::object::descriptor(
                     Some(&proxy.target),
                     Some(&Value::String(prop.to_string())),
@@ -265,8 +265,9 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
         }
         return proxy_delete(&proxy.target, prop);
     }
+    let target = crate::locals::resolved_replacement(target.clone());
     let (updated, deleted) = crate::builtins::delete_property(target.clone(), prop);
-    crate::locals::replace_value(target, &updated);
+    crate::locals::replace_value(&target, &updated);
     Ok(Value::Boolean(deleted))
 }
 
