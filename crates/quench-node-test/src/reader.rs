@@ -86,6 +86,7 @@ impl NodeRunner {
     /// Run one fixture and classify the completion.
     pub fn run(&mut self, fixture: &NodeFixture) -> NodeOutcome {
         // Fresh host per fixture with `node <file>` argv semantics.
+        let _cwd_guard = FixtureCwdGuard::capture();
         let script = fixture.path.to_string_lossy().into_owned();
         let (host, context) = quench_node::host::install_script_with_args(
             RealmId::ROOT,
@@ -185,9 +186,9 @@ impl NodeRunner {
             ok => ok.map(|_| ()),
         };
         Self::classify(result, self.host.exit_code())
-    }
+}
 
-    /// Node dispatches top-level uncaught exceptions to
+/// Node dispatches top-level uncaught exceptions to
     /// `process.on('uncaughtException')`; a handled run continues.
     fn route_uncaught(
         &self,
@@ -242,6 +243,22 @@ impl NodeRunner {
                 Ok(quench_runtime::value::Value::Undefined)
             }
             result => result,
+        }
+    }
+}
+
+struct FixtureCwdGuard(Option<PathBuf>);
+
+impl FixtureCwdGuard {
+    fn capture() -> Self {
+        Self(std::env::current_dir().ok())
+    }
+}
+
+impl Drop for FixtureCwdGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.as_ref() {
+            let _ = std::env::set_current_dir(path);
         }
     }
 }
