@@ -61,20 +61,24 @@ fn run_loop(
     config: (bool, u16, &[u16], &[u16]),
     registers: &mut crate::register_file::RegisterFile,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
+        run_loop_inner(label, init, test, body, update, config, registers)
+    })
+}
+
+fn run_loop_inner(
+    label: &Option<String>,
+    init: crate::machine::CodeView<'_>,
+    test: crate::machine::CodeView<'_>,
+    body: crate::machine::CodeView<'_>,
+    update: crate::machine::CodeView<'_>,
+    config: (bool, u16, &[u16], &[u16]),
+    registers: &mut crate::register_file::RegisterFile,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
     crate::execution_trace::event(crate::execution_trace::Event::LoopEntry);
     let loop_shape = crate::execution_trace::loop_shape(body);
     let (post_test, dst, per_iteration, body_capture_slots) = config;
     run_fragment(init, registers)?;
-    if label.is_none() && !post_test && !has_immutable_marker(update) {
-        if let Some(completion) = run_montgomery_reduce_kernel(test, body, update) {
-            return Ok(completion);
-        }
-    }
-    if label.is_none() && !post_test && per_iteration.is_empty() {
-        if let Some(completion) = run_square_loop_kernel(test, body, update) {
-            return Ok(completion);
-        }
-    }
     if label.is_none() && !post_test && !has_immutable_marker(update) {
         if let Some(fact) = CountedForFact::recognize(test, update) {
             trace_counted_recognition(body, fact, per_iteration);
@@ -91,18 +95,6 @@ fn run_loop(
             if let Some(completion) =
                 run_invariant_sum_kernel(fact, body, dst, per_iteration, registers, loop_shape)
             {
-                return Ok(completion);
-            }
-            if let Some(completion) = run_crypto_integer_kernel(fact, body) {
-                return Ok(completion);
-            }
-            if let Some(completion) = run_linear_solve_kernel(fact, body, loop_shape) {
-                return Ok(completion);
-            }
-            if let Some(completion) = run_advect_kernel(fact, body, loop_shape) {
-                return Ok(completion);
-            }
-            if let Some(completion) = run_packed_loop_kernel(fact, body, loop_shape) {
                 return Ok(completion);
             }
         } else {
@@ -303,7 +295,7 @@ fn run_packed_masked_sum(
     loop_shape: u64,
 ) -> Option<CountedSumResult> {
     (fact.comparison == crate::ops::BinaryOp::LessThan && fact.step == 1.0).then_some(())?;
-    let start = kernel_index(index)?;
+    let start = exact_nonnegative_index(index)?;
     let iterations = unit_less_than_iterations(index, bound)?;
     let end = start.checked_add(iterations)?;
     (end <= i32::MAX as usize).then_some(())?;
@@ -329,6 +321,11 @@ fn run_packed_masked_sum(
         total,
         iterations,
     })
+}
+
+fn exact_nonnegative_index(value: f64) -> Option<usize> {
+    (value.is_finite() && value >= 0.0 && value.fract() == 0.0)
+        .then(|| value as usize)
 }
 
 fn unit_less_than_iterations(index: f64, bound: f64) -> Option<usize> {
@@ -429,7 +426,7 @@ fn recognize_packed_masked_sum(
     let (_, crate::ops::Constant::Number(mask)) = body.constant_at(3)? else {
         return None;
     };
-    let mask = kernel_index(*mask)?;
+    let mask = exact_nonnegative_index(*mask)?;
     (mask <= i32::MAX as usize
         && is_local_load(array)
         && is_local_load(index)

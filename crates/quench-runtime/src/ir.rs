@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub type Register = u16;
 pub const MAX_REGISTER_ID: Register = u16::MAX;
 pub type ConstantId = u16;
+pub const GETN_GLOBAL_FLAG: u8 = 1;
 macro_rules! instruction_set {
     ($($name:ident = $id:literal / $width:literal),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -391,6 +392,15 @@ impl Instruction {
             c: 0,
         }
     }
+    pub const fn jump(target: u16) -> Self {
+        Self {
+            opcode: Opcode::Jump,
+            flags: 0,
+            a: target,
+            b: 0,
+            c: 0,
+        }
+    }
 }
 impl Instruction {
     pub const fn load_local(dst: Register, slot: Register) -> Self {
@@ -440,6 +450,15 @@ impl Instruction {
             flags: 0,
             a: dst,
             b: object,
+            c: 0,
+        }
+    }
+    pub const fn get_global_named(dst: Register) -> Self {
+        Self {
+            opcode: Opcode::GetN,
+            flags: GETN_GLOBAL_FLAG,
+            a: dst,
+            b: 0,
             c: 0,
         }
     }
@@ -630,6 +649,9 @@ pub fn lower_compact(op: &crate::ops::Op) -> Option<Instruction> {
             Some(Instruction::binary(Opcode::AGetI, *dst, *object, *key))
         }
         Op::GetProperty { dst, object, .. } => Some(Instruction::get_named(*dst, *object)),
+        Op::ResolveName { dst, key } if crate::globals::builtin(key).is_some() => {
+            Some(Instruction::get_global_named(*dst))
+        }
         Op::SetProperty {
             object,
             src,
@@ -1200,6 +1222,23 @@ mod tests {
         assert!(!Opcode::Add.is_slow());
         assert_eq!(std::mem::size_of::<Register>(), 2);
         assert_eq!(MAX_REGISTER_ID, u16::MAX);
+    }
+    #[test]
+    fn proven_builtin_name_uses_compact_global_get() {
+        let instruction = lower_compact(&crate::ops::Op::ResolveName {
+            dst: 7,
+            key: "Math".to_string(),
+        })
+        .expect("known global builtin is compact");
+        assert_eq!(instruction.opcode, Opcode::GetN);
+        assert_eq!(instruction.flags, GETN_GLOBAL_FLAG);
+        assert_eq!((instruction.a, instruction.b, instruction.c), (7, 0, 0));
+
+        assert!(lower_compact(&crate::ops::Op::ResolveName {
+            dst: 7,
+            key: "userBinding".to_string(),
+        })
+        .is_none());
     }
     #[test]
     fn conditional_branch_uses_compact_register_and_target_operands() {
