@@ -685,7 +685,13 @@ pub(crate) fn prevent_extensions(
         return Ok(target.clone());
     }
     if matches!(target, crate::value::Value::Proxy(_)) {
-        return crate::proxy::proxy_prevent_extensions(target);
+        let result = crate::proxy::proxy_prevent_extensions(target)?;
+        if !crate::execute::is_truthy(&result) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy preventExtensions returned false",
+            ));
+        }
+        return Ok(target.clone());
     }
     let result = mark_non_extensible(target);
     crate::locals::replace_value(target, &result);
