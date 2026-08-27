@@ -2094,6 +2094,51 @@ pub fn cp_kill(
     Ok(Value::Boolean(true))
 }
 
+pub fn cp_constructor(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let child = cp_spawn(state, None, &[])?;
+    let child = execute::set_property(child, "pid", Value::Number(0.0));
+    let child = execute::set_property(
+        child,
+        "spawn",
+        crate::host::capability(crate::registry::SPEC_CP_INSTANCE_SPAWN),
+    );
+    Ok(child)
+}
+
+pub fn cp_instance_spawn(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let child = receiver.ok_or(VmError::NotCallable)?;
+    let options = args.first().ok_or_else(|| VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ("message".into(), Value::String("The \"options\" argument must be of type object.".into())),
+    ])))?;
+    if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String("The \"options\" argument must be of type object.".into())),
+        ])));
+    }
+    let file = execute::get_property(options, "file");
+    if !matches!(file, Value::String(_)) {
+        return Err(VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ("message".into(), Value::String("The \"options.file\" property must be of type string.".into())),
+        ])));
+    }
+    execute::set_property_in_place(child, "pid", Value::Number(0.0));
+    let _ = state;
+    Ok(Value::Undefined)
+}
+
 pub fn cp_spawn_error_emit(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
