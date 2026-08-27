@@ -404,7 +404,7 @@ fn typed_array_generic_method(key: &str) -> Option<Builtin> {
         "reduceRight" => ArrayReduceRight,
         "reverse" => TypedArrayReverse,
         "some" => ArraySome,
-        "sort" => ArraySort,
+        "sort" => TypedArraySort,
         "toReversed" => TypedArrayToReversed,
         "toSorted" => TypedArrayToSorted,
         "with" => ArrayWith,

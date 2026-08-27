@@ -85,7 +85,7 @@ pub enum Builtin {
     TypedArrayFind, TypedArrayFindIndex, TypedArrayFindLast, TypedArrayFindLastIndex,
     TypedArrayIncludes, TypedArrayIndexOf, TypedArrayLastIndexOf,
     TypedArrayAt,
-    TypedArrayJoin, TypedArrayToLocaleString, TypedArrayToReversed, TypedArrayToSorted,
+    TypedArrayJoin, TypedArrayToLocaleString, TypedArrayToReversed, TypedArrayToSorted, TypedArraySort,
     TypedArrayReverse,
     FunctionCall, FunctionApply,
     Boolean, BooleanValueOf,
