@@ -214,7 +214,10 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
                     Some(&proxy.target),
                     Some(&Value::String(prop.to_string())),
                 )?;
-                if is_non_configurable_descriptor(&descriptor) {
+                if is_non_configurable_descriptor(&descriptor)
+                    || (!crate::properties::object_is_extensible(&proxy.target)
+                        && !matches!(descriptor, Value::Undefined | Value::Null))
+                {
                     return Err(crate::value::error::throw_type_error(
                         "Proxy has invariant violated",
                     ));
@@ -222,6 +225,12 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
             }
             return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
+        if matches!(proxy.target, Value::Proxy(_)) {
+            return proxy_has(&proxy.target, prop);
+        }
+        return Ok(Value::Boolean(crate::with_scope::has_property(
+            &proxy.target, prop,
+        )?));
     }
     Ok(Value::Boolean(crate::with_scope::has_property(
         target, prop,
@@ -457,9 +466,11 @@ pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
             }
             return Ok(Value::Boolean(reported));
         }
-        return Ok(Value::Boolean(crate::properties::object_is_extensible(
-            &proxy_target,
-        )));
+        let extensible = match proxy_target {
+            Value::Proxy(_) => crate::execute::is_truthy(&proxy_is_extensible(&proxy_target)?),
+            target => crate::properties::object_is_extensible(&target),
+        };
+        return Ok(Value::Boolean(extensible));
     }
     require_reflect_object(target)?;
     let target = crate::locals::resolved_replacement(target.clone());
@@ -510,6 +521,11 @@ pub(crate) fn proxy_get_own_property_descriptor(
                 &[proxy.target.clone(), Value::String(prop.to_string())],
                 Some(&proxy.handler),
             )?;
+            if !matches!(result, Value::Null | Value::Undefined | Value::Object(_)) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy getOwnPropertyDescriptor trap must return an object or undefined",
+                ));
+            }
             let target_desc = crate::builtins::object::descriptor(
                 Some(&proxy.target),
                 Some(&Value::String(prop.to_string())),
@@ -546,6 +562,15 @@ fn validate_get_own_property_descriptor_result(
             return Err(crate::value::error::throw_type_error(
                 "Proxy getOwnPropertyDescriptor invariant violated",
             ));
+        }
+        if let Value::Object(result_fields) = result {
+            if result_fields.iter().any(|(name, value)| {
+                name == "configurable" && matches!(value, Value::Boolean(false))
+            }) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy getOwnPropertyDescriptor invariant violated",
+                ));
+            }
         }
         return Ok(());
     };
