@@ -16,13 +16,23 @@ fn has_own_property_result(
     receiver: Option<&Value>,
     key: Option<&Value>,
 ) -> Result<Value, VmError> {
+    // The prototype method performs ToPropertyKey before ToObject so a
+    // coercion error wins over a nullish receiver error.
+    let coerced_key = receiver
+        .is_some()
+        .then(|| key.map(crate::properties::dynamic_property_key))
+        .flatten()
+        .transpose()?;
     let receiver = require_object_coercible(receiver)?;
     let receiver = crate::vm::resolve_global_owner(receiver)
         .unwrap_or_else(|| crate::locals::resolved_replacement(receiver.clone()));
     let Some(key) = key else {
         return Ok(Value::Boolean(false));
     };
-    let key = crate::properties::dynamic_property_key(key)?;
+    let key = coerced_key.map_or_else(
+        || crate::properties::dynamic_property_key(key),
+        Ok,
+    )?;
     crate::module_bindings::exports(&receiver, &key)?;
     Ok(Value::Boolean(owns_property(&receiver, &key)?))
 }
