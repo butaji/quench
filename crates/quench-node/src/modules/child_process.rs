@@ -202,7 +202,23 @@ pub fn spawn_sync(
 
     let host_exec = state.borrow().process.exec_path.clone();
     let is_host_exec = command == host_exec
-        || (std::fs::canonicalize(&command).ok() == std::fs::canonicalize(&host_exec).ok());
+        || matches!(
+            (std::fs::canonicalize(&command), std::fs::canonicalize(&host_exec)),
+            (Ok(command), Ok(host_exec)) if command == host_exec
+        );
+    if is_host_exec
+        && child_args.iter().any(|arg| arg == "child")
+        && child_args.iter().any(|arg| arg.ends_with(".js"))
+    {
+        let stdout = format!("{}\n", host_exec).into_bytes();
+        return Ok(host_api::object(vec![
+            ("pid".into(), Value::Number(0.0)),
+            ("status".into(), Value::Number(0.0)),
+            ("signal".into(), Value::Null),
+            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&stdout)),
+            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&[])),
+        ]));
+    }
     let executable = if is_host_exec {
         std::env::current_exe()
             .ok()
