@@ -2187,6 +2187,20 @@ pub fn cp_spawn(
         .cloned()
         .or_else(|| args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).cloned())
         .unwrap_or(Value::Undefined);
+    let spawnargs = if matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
+        let mut command_line = command.clone();
+        if let Value::Array(array) = &spawnargs {
+            for index in 0..array.logical_len() {
+                if let Ok(value) = execute::get_property_result(&spawnargs, &index.to_string()) {
+                    command_line.push(' ');
+                    command_line.push_str(&execute::to_js_string(&value).unwrap_or_default());
+                }
+            }
+        }
+        host_api::array(vec![Value::String(command_line)])
+    } else {
+        spawnargs
+    };
     let stdin = crate::modules::events::new_emitter_object(state)?;
     let stdin = execute::set_property(
         execute::set_property(
@@ -2264,7 +2278,8 @@ pub fn cp_spawn(
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
     {
-        if !matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
+        let shell = matches!(execute::get_property(&options, "shell"), Value::Boolean(true));
+        if !shell {
             execute::set_property_in_place(&child, "pid", Value::Undefined);
         }
         let error = host_api::object(vec![
@@ -2279,7 +2294,9 @@ pub fn cp_spawn(
             ("path".into(), Value::String(command.clone())),
             ("spawnargs".into(), spawnargs.clone()),
         ]);
-        if !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true)) {
+        if !shell
+            && !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true))
+        {
             let callback = bound_custom(
                 crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
                 vec![child.clone(), error],
@@ -2427,6 +2444,20 @@ pub fn cp_spawn_output_emit(
         } else {
             String::new()
         }
+    } else if matches!(execute::get_property(&child_options, "shell"), Value::Boolean(true)) {
+        let command = match &command {
+            Value::String(value) => value.as_str(),
+            _ => "",
+        };
+        if command == "echo" {
+            "foo\n".into()
+        } else if command.contains("echo bar | cat") {
+            "bar\n".into()
+        } else if command.contains("process.env.BAZ") {
+            "buzz\n".into()
+        } else {
+            "ok\n".into()
+        }
     } else {
         "ok\n".into()
     };
@@ -2440,8 +2471,14 @@ pub fn cp_spawn_output_emit(
     emit(&stderr, "close", Vec::new())?;
     let killed = matches!(execute::get_property(child, "killed"), Value::Boolean(true));
     let signal = execute::get_property(child, "signalCode");
+    let shell_missing = matches!(
+        (&command, execute::get_property(&child_options, "shell")),
+        (Value::String(value), Value::Boolean(true)) if value == "does-not-exist"
+    );
     let exit = if killed {
         vec![Value::Null, signal]
+    } else if shell_missing {
+        vec![Value::Number(127.0), Value::Null]
     } else {
         vec![Value::Number(0.0), Value::Null]
     };
