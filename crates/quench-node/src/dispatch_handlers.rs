@@ -3296,40 +3296,40 @@ pub fn cp_instance_spawn(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
-    let options = args.first().ok_or_else(|| {
-        VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            (
-                "message".into(),
-                Value::String("The \"options\" argument must be of type object.".into()),
-            ),
-        ]))
-    })?;
+    let options = args.first().ok_or(VmError::NotCallable)?;
     if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            (
-                "message".into(),
-                Value::String("The \"options\" argument must be of type object.".into()),
-            ),
-        ])));
+        return Err(cp_instance_arg_error("The \"options\" argument must be of type object.", options));
     }
     let file = execute::get_property(options, "file");
     if !matches!(file, Value::String(_)) {
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            (
-                "message".into(),
-                Value::String("The \"options.file\" property must be of type string.".into()),
-            ),
-        ])));
+        return Err(cp_instance_arg_error(
+            "The \"options.file\" property must be of type string.",
+            &file,
+        ));
+    }
+    for (key, kind) in [("envPairs", "an instance of Array"), ("args", "an instance of Array")] {
+        let value = execute::get_property(options, key);
+        if !matches!(value, Value::Undefined | Value::Array(_)) {
+            return Err(cp_instance_arg_error(
+                &format!("The \"options.{key}\" property must be {kind}."),
+                &value,
+            ));
+        }
     }
     execute::set_property_in_place(child, "pid", Value::Number(0.0));
     let _ = state;
     Ok(Value::Undefined)
+}
+
+fn cp_instance_arg_error(prefix: &str, value: &Value) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String(format!("{prefix}{}", crate::modules::util::invalid_arg_received(value))),
+        ),
+    ]))
 }
 
 pub fn cp_spawn_error_emit(
