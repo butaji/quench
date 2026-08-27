@@ -24,20 +24,24 @@ instance.throws(() => instance.deepEqual(actual, expected), (error) => {
 
 const linesA = 'A\n'.repeat(100);
 const linesB = 'B\n'.repeat(100);
+const truncatedA = 'A\\n'.repeat(10) + '...';
+const truncatedB = 'B\\n'.repeat(10) + '...';
 instance.throws(() => instance.strictEqual(linesA, linesB), (error) => {
   assert.strictEqual(error.message.split('\n').length, 204);
   assert.strictEqual(error.actual.split('\n').length, 101);
-  assert.ok(inspect(error).includes("actual: 'A\\nA\\nA\\n"));
+  assert.ok(inspect(error).includes(`actual: '${truncatedA}`));
+  assert.ok(inspect(error).includes(`expected: '${truncatedB}`));
   return true;
 });
 instance.throws(() => instance.notStrictEqual(linesA, linesA), (error) => {
   assert.strictEqual(error.message.split('\n').length, 103);
-  assert.ok(inspect(error).includes("actual: 'A\\nA\\nA\\n"));
+  assert.ok(inspect(error).includes(`actual: '${truncatedA}`));
+  assert.ok(inspect(error).includes(`expected: '${truncatedA}`));
   return true;
 });
 instance.throws(() => instance.deepEqual(linesA, linesB), (error) => {
   assert.strictEqual(error.message.split('\n').length, 205);
-  assert.ok(inspect(error).includes("expected: 'B\\nB\\nB\\n"));
+  assert.ok(inspect(error).includes(`expected: '${truncatedB}`));
   return true;
 });
 
