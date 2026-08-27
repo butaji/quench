@@ -43,6 +43,13 @@ pub fn socket_construct(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
         }
     }
     let (object, _id) = new_net_object(state, socket_props())?;
+    let global = quench_runtime::vm::current_global_object();
+    let prototype = execute::get_property(&global, "\0quench:net:socket-prototype");
+    let object = if matches!(prototype, Value::Object(_)) {
+        execute::set_prototype_of(&object, &prototype)?
+    } else {
+        object
+    };
     let object = install_socket_counters(object)?;
     install_methods(
         object,
@@ -73,6 +80,7 @@ fn connect_with_receiver(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let mut lookup_address = None;
     if let Some(path) = args
         .first()
         .filter(|value| matches!(value, Value::String(_)))
@@ -114,6 +122,84 @@ fn connect_with_receiver(
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
             ])));
+        }
+        let lookup = execute::get_property(options, "lookup");
+        if !matches!(lookup, Value::Undefined) && !quench_runtime::is_callable(&lookup) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            ])));
+        }
+        if quench_runtime::is_callable(&lookup) {
+            state.borrow_mut().net.lookup_result = None;
+            let callback = crate::host::capability(crate::registry::SPEC_NET_LOOKUP_CALLBACK);
+            let lookup_options = if matches!(
+                execute::get_property(options, "autoSelectFamily"),
+                Value::Boolean(true)
+            ) {
+                execute::set_property(options.clone(), "all", Value::Boolean(true))
+            } else {
+                options.clone()
+            };
+            let result = execute::call(
+                &lookup,
+                &Value::Undefined,
+                &[
+                    execute::get_property(options, "host"),
+                    lookup_options,
+                    callback,
+                ],
+            )?;
+            let callback_result = state.borrow_mut().net.lookup_result.take();
+            if callback_result.is_none() {
+                let (object, _) = new_net_object(state, socket_props())?;
+                return Ok(object);
+            }
+            let result = callback_result.unwrap_or(result);
+            lookup_address = lookup_address_for(&result);
+            if let Some(family) = lookup_family(&result) {
+                if family != 4 && family != 6 {
+                    let host = execute::to_js_string(&execute::get_property(options, "host"))
+                        .unwrap_or_else(|_| LOCAL_HOST.into());
+                    let port = execute::to_js_string(&execute::get_property(options, "port"))
+                        .unwrap_or_else(|_| "0".into());
+                    let (object, _) = new_net_object(state, socket_props())?;
+                    let error = quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::Error,
+                        &[Value::String(format!(
+                            "Invalid address family: {family} {host}:{port}"
+                        ))],
+                    );
+                    let error = execute::set_property(
+                        error,
+                        "code",
+                        Value::String("ERR_INVALID_ADDRESS_FAMILY".into()),
+                    );
+                    let error = execute::set_property(error, "host", Value::String(host));
+                    let port_value = port.parse::<f64>().unwrap_or(0.0);
+                    let error = execute::set_property(error, "port", Value::Number(port_value));
+                    state
+                        .borrow_mut()
+                        .net
+                        .pending_errors
+                        .push((object.clone(), error));
+                    return Ok(object);
+                }
+            }
+        }
+        let hints = execute::get_property(options, "hints");
+        if let Value::Number(value) = hints {
+            let bits = value as i64;
+            if value.fract() != 0.0 || bits < 0 || bits & !7 != 0 {
+                return Err(VmError::Thrown(host_api::object(vec![
+                    ("name".into(), Value::String("TypeError".into())),
+                    ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+                    (
+                        "message".into(),
+                        Value::String(format!("The argument 'hints' is invalid. Received {value}")),
+                    ),
+                ])));
+            }
         }
         let path = execute::get_property(options, "path");
         if !matches!(path, Value::Undefined | Value::Null) && !matches!(path, Value::String(_)) {
@@ -159,7 +245,25 @@ fn connect_with_receiver(
             }
         }
     }
-    let addr = resolve(host.as_deref().unwrap_or(LOCAL_HOST), port);
+    let target_host = lookup_address
+        .as_deref()
+        .or(host.as_deref())
+        .unwrap_or(LOCAL_HOST);
+    let Some(addr) = super::resolve_connect(target_host, port) else {
+        let (object, _) = new_net_object(state, socket_props())?;
+        let error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::Error,
+            &[Value::String(format!("getaddrinfo ENOTFOUND {target_host}"))],
+        );
+        let error = execute::set_property(error, "code", Value::String("ENOTFOUND".into()));
+        state.borrow_mut().net.pending_events.push((
+            object.clone(),
+            "lookup".into(),
+            vec![error.clone(), Value::Undefined, Value::Undefined],
+        ));
+        state.borrow_mut().net.pending_errors.push((object.clone(), error));
+        return Ok(object);
+    };
     let stream = match TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(3000)) {
         Ok(stream) => stream,
         Err(_) => return connect_refused(state, &addr),
@@ -202,20 +306,19 @@ fn connect_with_receiver(
 /// destroyed socket (never a synchronous throw).
 fn connect_refused(state: &Rc<RefCell<HostState>>, addr: &SocketAddr) -> Result<Value, VmError> {
     let (object, _id) = new_net_object(state, socket_props())?;
-    let error = host_api::object(vec![
-        ("name".to_string(), Value::String("Error".to_string())),
-        (
-            "message".to_string(),
-            Value::String(format!("connect ECONNREFUSED {addr}")),
-        ),
-        (
-            "code".to_string(),
-            Value::String("ECONNREFUSED".to_string()),
-        ),
-        ("errno".to_string(), Value::Number(-61.0)),
-        ("syscall".to_string(), Value::String("connect".to_string())),
-    ]);
-    emit(state, &object, "error", vec![error])?;
+    let message = format!("connect ECONNREFUSED {addr}");
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message)],
+    );
+    let error = execute::set_property(error, "code", Value::String("ECONNREFUSED".into()));
+    let error = execute::set_property(error, "errno", Value::Number(-61.0));
+    let error = execute::set_property(error, "syscall", Value::String("connect".into()));
+    state
+        .borrow_mut()
+        .net
+        .pending_errors
+        .push((object.clone(), error));
     Ok(object)
 }
 
@@ -227,7 +330,7 @@ fn connect_target(
         Some(Value::Object(_)) => {
             let options = args.first().cloned().unwrap_or(Value::Undefined);
             let port_value = execute::get_property_result(&options, "port")?;
-            if matches!(port_value, Value::Undefined | Value::Null) {
+            if matches!(port_value, Value::Undefined) {
                 return Err(missing_connect_args());
             }
             let port = parse_port(&port_value)?;
@@ -241,7 +344,7 @@ fn connect_target(
             let Some(value) = args.first() else {
                 return Err(missing_connect_args());
             };
-            if matches!(value, Value::Undefined | Value::Null) {
+            if matches!(value, Value::Undefined) {
                 return Err(missing_connect_args());
             }
             let port = parse_port(value)?;
@@ -251,6 +354,45 @@ fn connect_target(
             });
             Ok((port, host))
         }
+    }
+}
+
+fn lookup_family(result: &Value) -> Option<i64> {
+    if let Value::Number(value) = execute::get_property(result, "2") {
+        if value.is_finite() && value.fract() == 0.0 {
+            return Some(value as i64);
+        }
+    }
+    let addresses = execute::get_property(result, "1");
+    let first = execute::get_property(&addresses, "0");
+    match execute::get_property(&first, "family") {
+        Value::Number(value) if value.is_finite() && value.fract() == 0.0 => Some(value as i64),
+        _ => None,
+    }
+}
+
+fn lookup_address_for(result: &Value) -> Option<String> {
+    let direct = execute::get_property(result, "1");
+    if let Value::String(address) = direct {
+        return Some(address);
+    }
+    let length = match execute::get_property(&direct, "length") {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    for index in 0..length {
+        let candidate = execute::get_property(&direct, &index.to_string());
+        if matches!(execute::get_property(&candidate, "family"), Value::Number(value) if value == 4.0)
+        {
+            if let Value::String(address) = execute::get_property(&candidate, "address") {
+                return Some(address);
+            }
+        }
+    }
+    let first = execute::get_property(&direct, "0");
+    match execute::get_property(&first, "address") {
+        Value::String(address) => Some(address),
+        _ => None,
     }
 }
 
@@ -278,8 +420,14 @@ fn parse_port(value: &Value) -> Result<u16, VmError> {
         ])));
     }
     let text = execute::to_js_string(value)?;
-    let Ok(port) = text.parse::<i64>() else {
-        return Err(execute::type_error("port must be a number"));
+    let trimmed = text.trim();
+    let parsed = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .and_then(|digits| (!digits.is_empty()).then(|| i64::from_str_radix(digits, 16)))
+        .unwrap_or_else(|| trimmed.parse::<i64>());
+    let Ok(port) = parsed else {
+        return Err(bad_port(value, &text));
     };
     if !(0..=u16::MAX as i64).contains(&port) {
         return Err(bad_port(value, &text));
