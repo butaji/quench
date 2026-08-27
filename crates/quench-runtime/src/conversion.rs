@@ -223,7 +223,7 @@ pub(crate) fn is_nullish(value: &Value) -> bool {
 /// contract is deliberately limited to these branch-light predicates; full
 /// coercion stays on the slow path below.
 #[inline]
-pub(crate) fn is_symbol(value: &Value) -> bool {
+pub fn is_symbol(value: &Value) -> bool {
     match value {
         Value::String(value) => is_symbol_string(value),
         Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin).is_some(),

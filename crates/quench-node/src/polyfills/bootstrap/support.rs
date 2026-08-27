@@ -1,6 +1,7 @@
 //! Polyfill: `support`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeCommon = {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.gc ||= function () { return undefined; };
+globalThis.__nodeCommon = {
   mustCall: (fn = () => {}, exact = 1) => {
     if (typeof fn === "number") {
       exact = fn;

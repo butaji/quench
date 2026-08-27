@@ -144,6 +144,8 @@ const __nodeValidatePriorityValue = (priority) => {
     throw Object.assign(new RangeError('The value of "priority" is out of range.'), { code: "ERR_OUT_OF_RANGE" });
   }
 };
+globalThis.__quench_cpu_count ||= 1;
+globalThis.__quench_homedir ||= globalThis.process?.env?.HOME || "/";
 const __nodeStartedAt = Date.now();
 const __nodeOsExports = {
   EOL: "\n",
@@ -154,8 +156,13 @@ const __nodeOsExports = {
   version: () => "v0.1.0",
   machine: () => process.arch,
   tmpdir: () => {
+    const env = Reflect.get(globalThis, "process")?.env || {};
+    const value = (key) => Reflect.get(env, key);
     const candidate =
-      process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
+      (value("TMPDIR") && String(value("TMPDIR")).length > 0 && value("TMPDIR")) ||
+      (value("TMP") && String(value("TMP")).length > 0 && value("TMP")) ||
+      (value("TEMP") && String(value("TEMP")).length > 0 && value("TEMP")) ||
+      "/tmp";
     return candidate.length > 1 ? candidate.replace(/\/+$/, "") : candidate;
   },
   homedir: () => globalThis.__quenchOsHomeDirectory(),

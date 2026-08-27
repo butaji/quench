@@ -30,7 +30,8 @@ pub(crate) fn execute(
                     return Err(VmError::MissingReturn);
                 };
                 let previous = bind_caught(value, *catch_slot, registers);
-                let completion = crate::vm::execute_code_completion_in_current_frame(ops, registers)?;
+                let completion =
+                    crate::vm::execute_code_completion_in_current_frame(ops, registers)?;
                 if let Some((slot, cell)) = previous {
                     crate::locals::current().restore_slot(slot, cell);
                 }

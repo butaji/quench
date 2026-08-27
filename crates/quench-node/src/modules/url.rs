@@ -26,7 +26,9 @@ thread_local! {
 
 pub(crate) fn legacy_url_prototype() -> Value {
     LEGACY_URL_PROTOTYPE.with(|slot| {
-        if let Some(value) = slot.borrow().clone() { return value; }
+        if let Some(value) = slot.borrow().clone() {
+            return value;
+        }
         let value = host_api::object(vec![
             (
                 "resolveObject".into(),
@@ -115,15 +117,26 @@ pub fn parse(
         }
     }
     if !url.contains(':') && !url.starts_with("//") {
-        let (without_hash, hash) = url.split_once('#').map_or((url.as_str(), None), |(path, hash)| (path, Some(hash)));
-        let (pathname, query) = without_hash.split_once('?').map_or((without_hash, None), |(path, query)| (path, Some(query)));
+        let (without_hash, hash) = url
+            .split_once('#')
+            .map_or((url.as_str(), None), |(path, hash)| (path, Some(hash)));
+        let (pathname, query) = without_hash
+            .split_once('?')
+            .map_or((without_hash, None), |(path, query)| (path, Some(query)));
         let pathname = encode_path_component(pathname);
         let search = query.map(|value| format!("?{}", encode_query_component(value)));
         let hash = hash.map(|value| format!("#{}", encode_path_component(value)));
         let path = format!("{}{}", pathname, search.as_deref().unwrap_or_default());
         let href = format!("{}{}", path, hash.as_deref().unwrap_or_default());
-        let mut entries = vec![("pathname".into(), Value::String(pathname)), ("path".into(), Value::String(path)), ("href".into(), Value::String(href))];
-        entries.push(("search".into(), search.clone().map_or(Value::Null, Value::String)));
+        let mut entries = vec![
+            ("pathname".into(), Value::String(pathname)),
+            ("path".into(), Value::String(path)),
+            ("href".into(), Value::String(href)),
+        ];
+        entries.push((
+            "search".into(),
+            search.clone().map_or(Value::Null, Value::String),
+        ));
         let query_value = if args.get(1).is_some_and(execute::is_truthy) {
             crate::modules::querystring_parse::parse(
                 state,
@@ -131,7 +144,9 @@ pub fn parse(
                 &[Value::String(query.unwrap_or_default().to_string())],
             )?
         } else {
-            query.map_or(Value::Null, |value| Value::String(encode_query_component(value)))
+            query.map_or(Value::Null, |value| {
+                Value::String(encode_query_component(value))
+            })
         };
         entries.push(("query".into(), query_value));
         entries.push(("hash".into(), hash.map_or(Value::Null, Value::String)));
@@ -1170,10 +1185,7 @@ pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
         spec_fn("format", "require:url:format", 0x0501),
         spec_fn("resolve", "require:url:resolve", 0x0502),
         spec_fn("resolveObject", "require:url:resolveObject", 0x0520),
-        (
-            "Url",
-            legacy_url,
-        ),
+        ("Url", legacy_url),
         ("URL", url_class),
         ("URLPattern", url_pattern),
         spec_fn("URLSearchParams", "require:url:URLSearchParams", 0x0504),

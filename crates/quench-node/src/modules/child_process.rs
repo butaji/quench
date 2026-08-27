@@ -162,8 +162,14 @@ pub fn spawn_sync(
             ("pid".into(), Value::Number(0.0)),
             ("status".into(), Value::Number(0.0)),
             ("signal".into(), Value::Null),
-            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&stdout)),
-            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&[])),
+            (
+                "stdout".into(),
+                crate::modules::buffer_proto::make_buffer(&stdout),
+            ),
+            (
+                "stderr".into(),
+                crate::modules::buffer_proto::make_buffer(&[]),
+            ),
         ]));
     }
 

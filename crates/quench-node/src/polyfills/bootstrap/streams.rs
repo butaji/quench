@@ -124,7 +124,10 @@ globalThis.__nodeFs.ReadStream.prototype = Object.create(
 globalThis.__nodeFs.ReadStream.prototype.constructor =
   globalThis.__nodeFs.ReadStream;
 class NodeAbortSignal {
-  constructor(reason) {
+  constructor(reason, internal) {
+    if (!internal) {
+      throw Object.assign(new TypeError("Illegal constructor"), { code: "ERR_ILLEGAL_CONSTRUCTOR" });
+    }
     this.aborted = false;
     this.reason = reason;
     this.onabort = null;
@@ -160,7 +163,7 @@ class NodeAbortSignal {
     if (reason === undefined) {
       reason = new DOMException("This operation was aborted", "AbortError");
     }
-    const signal = new NodeAbortSignal(reason);
+    const signal = new NodeAbortSignal(reason, true);
     signal.aborted = true;
     return signal;
   }
@@ -172,7 +175,7 @@ class NodeAbortSignal {
       throw Object.assign(new TypeError('The "signals" argument must be an instance of Array'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const values = Array.from(signals);
-    const combined = new NodeAbortSignal();
+    const combined = new NodeAbortSignal(undefined, true);
     const abort = (signal) => {
       if (combined.aborted) return;
       combined.aborted = true;
@@ -199,7 +202,7 @@ class NodeAbortSignal {
     return combined;
   }
   static timeout(milliseconds) {
-    const signal = new NodeAbortSignal();
+    const signal = new NodeAbortSignal(undefined, true);
     signal.__timeoutTimer = setTimeout(() => {
       const reason = new Error("The operation was aborted due to timeout");
       reason.name = "TimeoutError";
@@ -218,9 +221,10 @@ class NodeAbortSignal {
 }
 class NodeAbortController {
   constructor() {
-    this.signal = new NodeAbortSignal();
+    this.signal = new NodeAbortSignal(undefined, true);
   }
   abort(reason) {
+    if (!(this instanceof NodeAbortController)) throw new TypeError("Illegal invocation");
     this.signal.aborted = true;
     this.signal.reason = reason === undefined
       ? new DOMException("This operation was aborted", "AbortError")
@@ -238,6 +242,20 @@ class NodeAbortController {
     }
   }
 }
+Object.defineProperty(NodeAbortSignal.prototype, "aborted", {
+  get() {
+    if (!(this instanceof NodeAbortSignal)) throw new TypeError("Illegal invocation");
+    return this.aborted;
+  },
+});
+NodeAbortSignal.prototype[Symbol.toStringTag] = "AbortSignal";
+NodeAbortController.prototype[Symbol.toStringTag] = "AbortController";
+Object.defineProperty(NodeAbortController.prototype, "signal", {
+  get() {
+    if (!(this instanceof NodeAbortController)) throw new TypeError("Illegal invocation");
+    return this.signal;
+  },
+});
 globalThis.AbortSignal = NodeAbortSignal;
 globalThis.AbortController = NodeAbortController;
 globalThis.__nodeFs.open = (value, flags, mode, callback) => {

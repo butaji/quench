@@ -17,6 +17,7 @@ pub struct Microtask {
     pub callback: Value,
     pub args: Vec<Value>,
     pub resource: Option<Value>,
+    pub domain: Option<Value>,
 }
 
 impl Default for EventLoop {
@@ -47,6 +48,22 @@ impl EventLoop {
             callback: cb,
             args,
             resource,
+            domain: None,
+        });
+    }
+
+    pub fn queue_microtask_with_resource_domain(
+        &self,
+        cb: Value,
+        args: Vec<Value>,
+        resource: Option<Value>,
+        domain: Option<Value>,
+    ) {
+        self.microtasks.borrow_mut().push(Microtask {
+            callback: cb,
+            args,
+            resource,
+            domain,
         });
     }
 

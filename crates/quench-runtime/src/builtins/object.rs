@@ -369,9 +369,7 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
         | Value::BigInt64Array(_)
         | Value::BigUint64Array(_)
         | Value::Uint8Array(_)
-        | Value::Uint8ClampedArray(_) => {
-            typed_array_descriptor(value, key)
-        }
+        | Value::Uint8ClampedArray(_) => typed_array_descriptor(value, key),
         _ => None,
     };
     descriptor
