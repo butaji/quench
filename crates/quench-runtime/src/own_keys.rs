@@ -454,6 +454,28 @@ fn descriptor_enumerable_value(descriptor: Option<&Value>) -> bool {
 }
 
 fn keys(target: &Value, symbols: bool) -> Vec<String> {
+    if matches!(target, Value::Proxy(_)) {
+        return crate::proxy::proxy_own_keys(target)
+            .ok()
+            .and_then(|value| match value {
+                Value::Array(values) => Some(
+                    values
+                        .snapshot()
+                        .into_iter()
+                        .filter_map(|value| match value {
+                            Value::String(key)
+                                if crate::conversion::is_symbol_string(&key) == symbols =>
+                            {
+                                Some(key)
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default();
+    }
     match target {
         Value::Object(properties) => object_keys(properties.as_ref(), symbols),
         Value::ObjectAlias(alias) => alias

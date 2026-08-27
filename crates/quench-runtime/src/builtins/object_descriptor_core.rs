@@ -464,6 +464,12 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::ObjectPrototype && key == "__proto__" {
+        return Some(accessor_descriptor_with_setter(
+            Builtin::ObjectGetPrototypeOf,
+            Some(Builtin::ObjectSetPrototypeOf),
+        ));
+    }
     if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
         return Some(descriptor_object_with_flags(
             crate::builtins::generator_prototype(),

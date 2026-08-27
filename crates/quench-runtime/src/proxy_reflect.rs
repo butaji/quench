@@ -131,27 +131,21 @@ fn reflect_property(arguments: &[Value]) -> Result<String, VmError> {
 pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
+        let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
         if let Some(trap) = get_handler_trap(proxy, "ownKeys") {
             let result = call_trap(
                 &trap,
-                std::slice::from_ref(&proxy.target),
+                std::slice::from_ref(&proxy_target),
                 Some(&proxy.handler),
             )?;
             let result = own_keys_array_like(&result)?;
             validate_own_keys_result(&result)?;
-            validate_own_keys_invariants(&proxy.target, &result)?;
+            validate_own_keys_invariants(&proxy_target, &result)?;
             return Ok(result);
         }
+        return proxy_own_keys(&proxy_target);
     }
-    let target = match target {
-        Value::Proxy(proxy) => &proxy.target,
-        target => target,
-    };
-    if matches!(target, Value::Proxy(_)) {
-        proxy_own_keys(target)
-    } else {
-        crate::own_keys::all(target)
-    }
+    crate::own_keys::all(&crate::locals::resolved_replacement(target.clone()))
 }
 
 fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), VmError> {
