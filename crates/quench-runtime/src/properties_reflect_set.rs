@@ -36,12 +36,18 @@ pub(crate) fn set_with_receiver(
     if key == "length" && crate::regexp::has_regexp_internal_slot(&resolved_target) {
         return set_receiver_data(receiver, key, value);
     }
+    let parent = crate::builtins::object::get_prototype_of(Some(&resolved_target))?;
+    if matches!(parent, crate::value::Value::Proxy(_)) {
+        return crate::proxy::proxy_set(&parent, key, value, Some(receiver))
+            .map(|result| crate::execute::is_truthy(&result));
+    }
     let descriptor = inherited_descriptor(target, key)?;
     match descriptor {
         Some(descriptor) if descriptor_field_exists(&descriptor, "set") => {
             call_setter(&descriptor, receiver, value)
         }
         Some(descriptor) if !descriptor_writable(&descriptor)? => Ok(false),
+        _ if !crate::properties::object_is_extensible(&resolved_target) => Ok(false),
         _ => set_receiver_data(receiver, key, value),
     }
 }

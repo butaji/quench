@@ -55,6 +55,7 @@ fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
                     receiver => value_realm(receiver),
                 })
                 .or_else(|| value_realm(&bound.target)),
+            Value::Proxy(proxy) => value_realm(&proxy.target),
             _ => None,
         }
     }
