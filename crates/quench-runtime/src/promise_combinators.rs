@@ -115,6 +115,40 @@ fn reject_with_completion_value(reject: &Value, error: VmError) {
 }
 
 fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, value: Value) {
+    if aggregate.kind == PromiseAggregateKind::Race {
+        if crate::value::is_object(&value) {
+            match crate::execute::get_property_result(&value, "then") {
+                Ok(then) if crate::conversion::is_callable(&then) => {
+                    let _ = crate::functions::execute_target(
+                        &then,
+                        &value,
+                        &[aggregate.resolve.clone(), aggregate.reject.clone()],
+                    );
+                }
+                Ok(_) => {
+                    let _ = crate::functions::execute_target(
+                        &aggregate.resolve,
+                        &Value::Undefined,
+                        &[value],
+                    );
+                }
+                Err(_) => {
+                    let _ = crate::functions::execute_target(
+                        &aggregate.reject,
+                        &Value::Undefined,
+                        &[Value::Undefined],
+                    );
+                }
+            }
+        } else {
+            let _ = crate::functions::execute_target(
+                &aggregate.resolve,
+                &Value::Undefined,
+                &[value],
+            );
+        }
+        return;
+    }
     // PerformPromiseAll invokes the resolved promise's `then` method during
     // the combinator call.  Assimilation of a custom thenable may therefore
     // settle the aggregate synchronously, while native Promise reactions
