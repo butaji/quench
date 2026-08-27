@@ -2244,6 +2244,35 @@ pub fn cp_spawn(
         crate::host::capability(crate::registry::SPEC_CP_KILL),
     );
     state.borrow_mut().identity_roots.push(child.clone());
+    if let Ok(signal) = execute::get_property_result(&options, "signal") {
+        if matches!(execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND), Value::Boolean(true)) {
+            execute::set_property_in_place(
+                &child,
+                "\0childAbortReason",
+                execute::get_property(&signal, "reason"),
+            );
+            let listener = host_api::bound_capability_with_arguments(
+                quench_runtime::ops::HostCapabilityRef {
+                    realm: quench_runtime::ops::RealmId::ROOT,
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_ABORT.cap),
+                },
+                vec![
+                    child.clone(),
+                    signal.clone(),
+                    execute::get_property(&options, "killSignal"),
+                ],
+            );
+            if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
+                execute::call(&listener, &Value::Undefined, &[])?;
+            } else {
+                crate::modules::event_target::add_event_listener(
+                    state,
+                    Some(&signal),
+                    &[Value::String("abort".into()), listener],
+                )?;
+            }
+        }
+    }
     if let Some(cwd) = execute::get_property_result(&options, "cwd").ok() {
         if let Value::Object(_) | Value::ObjectAlias(_) = cwd {
             let protocol = execute::to_js_string(&execute::get_property(&cwd, "protocol"))
@@ -2344,6 +2373,21 @@ pub fn cp_spawn_output_emit(
     let command = execute::get_property(child, "\0childCommand");
     let child_args = execute::get_property(child, "\0childArgs");
     let child_options = execute::get_property(child, "\0childOptions");
+    if let Ok(signal) = execute::get_property_result(&child_options, "signal") {
+        if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
+            execute::set_property_in_place(child, "killed", Value::Boolean(true));
+            let kill_signal = execute::get_property(&child_options, "killSignal");
+            execute::set_property_in_place(
+                child,
+                "signalCode",
+                if matches!(kill_signal, Value::Undefined) {
+                    Value::String("SIGTERM".into())
+                } else {
+                    kill_signal
+                },
+            );
+        }
+    }
     let stderr_text = if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
         "sh: fhqwhgads: command not found\n".into()
     } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
@@ -2518,6 +2562,54 @@ pub fn cp_stdin_end(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+pub fn cp_abort(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let child = args.first().ok_or(VmError::NotCallable)?;
+    if matches!(execute::get_property(child, "killed"), Value::Boolean(true)) {
+        return Ok(Value::Undefined);
+    }
+    let signal_object = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let signal = args.get(2).cloned().unwrap_or_else(|| Value::String("SIGTERM".into()));
+    execute::set_property_in_place(child, "killed", Value::Boolean(true));
+    execute::set_property_in_place(child, "signalCode", signal.clone());
+    let error = host_api::object(vec![
+        ("name".into(), Value::String("AbortError".into())),
+        ("message".into(), Value::String("The operation was aborted".into())),
+        ("code".into(), Value::String("ABORT_ERR".into())),
+    ]);
+    let reason = execute::get_property(&signal_object, "reason");
+    if !matches!(reason, Value::Undefined) {
+        execute::set_property_in_place(&error, "cause", reason.clone());
+    }
+    let emit = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_ABORT_EMIT.cap),
+        },
+        vec![child.clone(), error],
+    );
+    state.borrow_mut().event_loop.queue_microtask(emit, vec![]);
+    Ok(Value::Undefined)
+}
+
+pub fn cp_abort_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let (Some(child), Some(error)) = (args.first(), args.get(1)) {
+        crate::modules::events::method_emit(
+            state,
+            Some(child),
+            &[Value::String("error".into()), error.clone()],
+        )?;
+    }
     Ok(Value::Undefined)
 }
 
