@@ -384,6 +384,13 @@ pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
 }
 
 pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Result<Value, VmError> {
+    if matches!(target, Value::Builtin(Builtin::ObjectPrototype)) {
+        let current = crate::builtins::object::get_prototype_of(Some(target))?;
+        return Ok(Value::Boolean(crate::builtins::same_value(
+            Some(&current),
+            Some(prototype),
+        )));
+    }
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "setPrototypeOf") {
