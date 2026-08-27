@@ -438,6 +438,19 @@ impl ArrayData {
             && self.argument_live.is_none()
     }
 
+    /// Whether every logical index is an own packed data element. Unlike
+    /// `is_packed_ordinary`, this read-only proof permits an inherited
+    /// prototype because existing own indices cannot be intercepted by it.
+    #[inline]
+    pub(crate) fn is_packed_data(&self) -> bool {
+        self.is_packed()
+            && self.logical_len() == self.physical_len()
+            && self.properties.is_empty()
+            && self.descriptors.is_empty()
+            && !self.arguments
+            && self.argument_live.is_none()
+    }
+
     pub(crate) fn has_indexed_accessor(&self) -> bool {
         self.descriptors.iter().any(|(key, value)| {
             crate::arrays::array_index(key).is_some_and(|_| {
