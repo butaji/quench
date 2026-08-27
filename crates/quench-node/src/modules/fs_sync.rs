@@ -11,7 +11,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-use super::fs::{parse_options, path_arg, FsOptions};
+use super::fs::{parse_mkdir_options, parse_options, path_arg, FsOptions};
 
 fn split(args: &[Value]) -> Result<(String, FsOptions), VmError> {
     let path = path_arg(args.first())?;
@@ -293,7 +293,8 @@ pub fn mkdir_sync(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let (path, options) = split(args)?;
+    let path = path_arg(args.first())?;
+    let options = parse_mkdir_options(args.get(1))?;
     let result = if options.recursive {
         std::fs::create_dir_all(Path::new(&path))
     } else {
