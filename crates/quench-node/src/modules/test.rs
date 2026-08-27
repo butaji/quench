@@ -23,7 +23,20 @@ struct Frame {
 
 thread_local! {
     static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+    static MODULE_MOCKS: RefCell<std::collections::HashMap<String, Value>> = RefCell::new(std::collections::HashMap::new());
 }
+
+pub fn register_module_mock(specifier: String, options: Value) { MODULE_MOCKS.with(|mocks| { mocks.borrow_mut().insert(specifier, options); }); }
+pub fn mocked_module(specifier: &str) -> Option<Value> {
+    MODULE_MOCKS.with(|mocks| {
+        let options = mocks.borrow().get(specifier)?.clone();
+        let exports = quench_runtime::execute::get_property(&options, "namedExports");
+        if !matches!(exports, Value::Object(_) | Value::ObjectAlias(_)) { return None; }
+        let pairs = quench_runtime::execute::own_enumerable_keys(&exports).into_iter().map(|key| (key.clone(), quench_runtime::execute::get_property(&exports, &key))).collect();
+        Some(quench_runtime::host_api::object(pairs))
+    })
+}
+pub fn mock_module_cache(specifier: &str) -> bool { MODULE_MOCKS.with(|mocks| mocks.borrow().get(specifier).is_some_and(|options| matches!(quench_runtime::execute::get_property(options, "cache"), Value::Boolean(true)))) }
 
 pub fn register_mock_restore(restore: Value) {
     FRAMES.with(|frames| {
@@ -34,6 +47,7 @@ pub fn register_mock_restore(restore: Value) {
 }
 
 pub fn reset_mocks() {
+    MODULE_MOCKS.with(|mocks| mocks.borrow_mut().clear());
     FRAMES.with(|frames| {
         if let Some(frame) = frames.borrow().last() {
             for restore in frame.restores.iter().rev() {
