@@ -433,12 +433,21 @@ fn check_access(path: &str, mode: u32) -> std::io::Result<()> {
 }
 
 pub fn mkdtemp_sync(
-    _s: &Rc<RefCell<HostState>>,
+    s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let prefix = path_arg(args.first())?;
     super::fs::parse_options(args.get(1))?;
+    if prefix.ends_with('X') {
+        crate::modules::process::emit_warning(
+            s,
+            "Warning",
+            "mkdtemp() templates ending with X are not portable. For details see: https://nodejs.org/api/fs.html",
+            None,
+            true,
+        );
+    }
     for attempt in 0..100u32 {
         let candidate = format!("{prefix}{:06x}", random_suffix(attempt));
         match std::fs::create_dir(Path::new(&candidate)) {
