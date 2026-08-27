@@ -170,7 +170,8 @@ fn execute_simple_conversion(
             if !matches!(prototype, Value::Null) && !crate::value::is_object(&prototype) {
                 return Ok(Value::Undefined);
             }
-            crate::builtins::object::set_prototype_of(&[receiver.clone(), prototype])
+            let target = crate::locals::resolved_replacement(receiver.clone());
+            crate::builtins::object::set_prototype_of(&[target, prototype])
                 .map(|_| Value::Undefined)
         })(),
         Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
