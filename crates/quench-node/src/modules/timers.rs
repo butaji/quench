@@ -364,6 +364,7 @@ fn emit_warning(state: &Rc<RefCell<HostState>>, name: &str, message: &str) {
 fn value_to_id(value: &Value) -> Option<u64> {
     match value {
         Value::Number(n) if n.is_finite() && *n >= 0.0 => Some(*n as u64),
+        Value::String(value) => value.parse::<u64>().ok(),
         Value::Object(_) => match quench_runtime::vm::get_property(value, TIMER_ID_PROP) {
             Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
             _ => None,
