@@ -456,7 +456,7 @@ fn random_suffix(attempt: u32) -> u32 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    now ^ std::process::id().wrapping_mul(2654435761) ^ attempt.wrapping_mul(40503)
+    (now ^ std::process::id().wrapping_mul(2654435761) ^ attempt.wrapping_mul(40503)) & 0x00ff_ffff
 }
 
 pub fn readlink_sync(
