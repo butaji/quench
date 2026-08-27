@@ -527,6 +527,11 @@ pub fn resolve_promise(promise: &Rc<PromiseData>, value: Value) {
         return;
     }
     set_promise_state(promise, PromiseState::Fulfilled(value));
+    let hooks = std::mem::take(&mut *promise.aggregate_hooks.borrow_mut());
+    let state = promise.state.borrow().clone();
+    for (aggregate, index) in hooks {
+        aggregate_settle(&aggregate, index, &state);
+    }
     promise_resolved(promise);
     queue_promise(promise);
 }
@@ -537,6 +542,11 @@ pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
         return;
     }
     set_promise_state(promise, PromiseState::Rejected(reason));
+    let hooks = std::mem::take(&mut *promise.aggregate_hooks.borrow_mut());
+    let state = promise.state.borrow().clone();
+    for (aggregate, index) in hooks {
+        aggregate_settle(&aggregate, index, &state);
+    }
     promise_resolved(promise);
     queue_promise(promise);
     if !promise.rejection_handled.get() && !promise.unhandled_queued.replace(true) {
