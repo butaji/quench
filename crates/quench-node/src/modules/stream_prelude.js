@@ -477,16 +477,16 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = st.readRequests > 0;
-        if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          requestRead(this);
-        }
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          requestRead(this);
+        }
         return chunk;
       }
       if (!st.ended && !st.reading) {
@@ -495,16 +495,16 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = st.readRequests > 0;
-        if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          requestRead(this);
-        }
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          requestRead(this);
+        }
         return chunk;
       }
       finishIfEnded();
