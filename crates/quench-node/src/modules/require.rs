@@ -343,6 +343,10 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         ])),
         // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => {
+            let global = quench_runtime::vm::current_global_object();
+            let event_target = quench_runtime::execute::get_property(&global, "EventTarget");
+            let node_event_target =
+                quench_runtime::execute::get_property(&global, "NodeEventTarget");
             let custom_event = crate::host::capability(crate::registry::SPEC_CUSTOM_EVENT);
             let _ = quench_runtime::execute::set_callable_property(
                 &custom_event,
@@ -376,20 +380,8 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                     "defineEventHandler".to_string(),
                     crate::host::capability(crate::registry::SPEC_DEFINE_EVENT_HANDLER),
                 ),
-                (
-                    "EventTarget".to_string(),
-                    crate::host::capability(crate::registry::NodeSpec::new(
-                        "events:EventTarget",
-                        0x0116,
-                    )),
-                ),
-                (
-                    "NodeEventTarget".to_string(),
-                    crate::host::capability(crate::registry::NodeSpec::new(
-                        "events:EventTarget",
-                        0x0116,
-                    )),
-                ),
+                ("EventTarget".to_string(), event_target),
+                ("NodeEventTarget".to_string(), node_event_target),
                 (
                     "kWeakHandler".to_string(),
                     Value::String("kWeakHandler\0quench".to_string()),
