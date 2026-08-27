@@ -1626,6 +1626,12 @@
     if (wantReadable) stream.once("end", () => finish(undefined, "readable"));
     if (wantWritable) stream.once("finish", () => finish(undefined, "writable"));
     stream.once("error", (error) => finish(error));
+    stream.once("close", () => {
+      if (done || (readableDone && writableDone)) return;
+      const error = new Error("Premature close");
+      error.code = "ERR_STREAM_PREMATURE_CLOSE";
+      finish(error);
+    });
     return () => {
       done = true;
     };
