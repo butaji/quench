@@ -167,7 +167,10 @@ fn inherit_prototype_property(builtin: Builtin, key: &str) -> Value {
 }
 
 fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
-    if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
+    if callable_builtin_value(value)
+        && builtin != Builtin::FunctionPrototype
+        && matches!(key, "apply" | "call" | "bind")
+    {
         return bind_function_property(value, key);
     }
     if key == "toString" && callable_builtin_value(value) {
