@@ -198,7 +198,10 @@ fn execute_module(
         .map(|pending| pending.module.clone());
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let context = quench_runtime::vm::current_context();
+    let context = quench_runtime::vm::current_context()
+        .as_ref()
+        .clone()
+        .with_source_text(source.to_owned());
     // Re-entrant execution: `execute_with_context` would reset the
     // runtime's locals state and corrupt the frame that called `require`.
     let mut registers = quench_runtime::register_file::RegisterFile::new();
