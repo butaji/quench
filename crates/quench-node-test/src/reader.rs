@@ -141,7 +141,7 @@ impl NodeRunner {
         // Node exposes WHATWG stream constructors globally. Install the
         // shared surface before the fixture so globals and `stream/web`
         // resolve to one constructor identity.
-        let web_streams_surface = ["web-streams", "web-streams-require"]
+        let web_streams_surface = ["web-streams"]
             .into_iter()
             .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
             .collect::<Vec<_>>()
