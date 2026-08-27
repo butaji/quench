@@ -208,6 +208,9 @@ fn create_result(
     for (index, value) in values.into_iter().enumerate() {
         result = write_result_element(result, index, value)?;
     }
+    if crate::typed_array_ops::is_view(&result) {
+        return Ok(result);
+    }
     result = set_result_length(result, length)?;
     Ok(result)
 }
@@ -225,6 +228,14 @@ fn write_result_element(
     value: Value,
 ) -> Result<Value, crate::execute::VmError> {
     let key = index.to_string();
+    // Typed-array elements are integer-indexed exotic properties: they are
+    // writable but non-configurable, so defining a fresh property would
+    // incorrectly trip the ordinary-object read-only check.
+    if crate::typed_array_ops::is_view(&result) {
+        let updated = crate::builtins::set_property(result.clone(), &key, value);
+        crate::locals::replace_value(&result, &updated);
+        return Ok(updated);
+    }
     let current =
         crate::builtins::object::descriptor(Some(&result), Some(&Value::String(key.clone())))?;
     if !crate::properties::object_is_extensible(&result) && matches!(current, Value::Undefined) {
