@@ -424,7 +424,7 @@ pub enum Builtin {
     SuppressedErrorPrototype, Promise,
     PromisePrototype, PromiseResolve,
     PromiseReject, PromiseAll,
-    PromiseAllSettled, PromiseAllSettledKeyed, PromiseAny,
+    PromiseAllSettled, PromiseAllKeyed, PromiseAllSettledKeyed, PromiseAny,
     PromiseRace, PromiseWithResolvers,
     PromiseTry, PromiseThen,
     PromiseCatch, PromiseFinally,

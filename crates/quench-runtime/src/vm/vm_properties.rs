@@ -574,6 +574,7 @@ fn inherited_function_property(
                 Builtin::PromiseResolve
                     | Builtin::PromiseReject
                     | Builtin::PromiseAll
+                    | Builtin::PromiseAllKeyed
                     | Builtin::PromiseAllSettled
                     | Builtin::PromiseAny
                     | Builtin::PromiseRace
