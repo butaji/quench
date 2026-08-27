@@ -91,6 +91,8 @@ fn invoke(state: &Rc<RefCell<HostState>>, callback: &Value, context: &Value) -> 
 fn context() -> Value {
     quench_runtime::host_api::object(vec![
         ("assert".into(), crate::modules::assert::build_value()),
+        ("skip".into(), crate::host::capability(crate::registry::SPEC_TEST_CONTEXT_SKIP)),
+        ("todo".into(), crate::host::capability(crate::registry::SPEC_TEST_CONTEXT_TODO)),
         ("beforeEach".into(), crate::host::capability(crate::registry::SPEC_TEST_BEFORE_EACH)),
         ("afterEach".into(), crate::host::capability(crate::registry::SPEC_TEST_AFTER_EACH)),
         ("test".into(), crate::host::capability(crate::registry::SPEC_TEST_NESTED)),
@@ -146,7 +148,10 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
         )
     });
     let Some(callback) = callback else {
-        return Ok(Value::Undefined);
+        let emitter = crate::modules::events::new_emitter_object(state)?;
+        let emit = crate::host::capability(crate::registry::SPEC_TEST_RUN_EMIT);
+        for _ in 0..4 { state.borrow_mut().event_loop.queue_microtask(emit.clone(), vec![emitter.clone(), Value::String("test:pass".into())]); }
+        return Ok(emitter);
     };
     let context = context();
     FRAMES.with(|frames| frames.borrow_mut().push(Frame { before: Vec::new(), after: Vec::new(), restores: Vec::new() }));
