@@ -1076,7 +1076,10 @@ pub fn build() -> Value {
             done = true;
             cleanup();
             const pending = waiters.splice(0);
-            pending.forEach(({ resolve, reject }) => error ? reject(error) : resolve({ value: undefined, done: true }));
+            if (error && pending.length) {
+              pending.shift().reject(error);
+            }
+            pending.forEach(({ resolve }) => resolve({ value: undefined, done: true }));
           };
           const push = (value) => {
             if (done) return;
