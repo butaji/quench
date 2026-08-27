@@ -504,7 +504,9 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         return Value::Array(values);
     }
     let Some(index) = crate::arrays::array_index(key) else {
-        Rc::make_mut(&mut values).set_property(key, value);
+        let data = Rc::make_mut(&mut values);
+        data.sync_length_to_storage();
+        data.set_property(key, value);
         publish_array_replacement(&original, &values);
         return Value::Array(values);
     };
