@@ -29,6 +29,9 @@ fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Val
         defer(state, &callback, vec![super::fs_error::abort_error()]);
         return Ok(Value::Undefined);
     }
+    let first_created = (name == "mkdir" && options.recursive)
+        .then(|| first_missing_path(leading.first()))
+        .flatten();
     let op = super::fs::sync_op(name).ok_or(VmError::NotCallable)?;
     let result = op(state, None, leading);
     let error = err_value(&result);
@@ -36,8 +39,26 @@ fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Val
         Ok(v) => v,
         Err(_) => Value::Undefined,
     };
+    let value = first_created.map(Value::String).unwrap_or(value);
     defer(state, &callback, vec![error, value]);
     Ok(Value::Undefined)
+}
+
+fn first_missing_path(value: Option<&Value>) -> Option<String> {
+    let mut candidate = match value? {
+        Value::String(path) => std::path::PathBuf::from(path),
+        _ => return None,
+    };
+    if candidate.exists() {
+        return None;
+    }
+    while candidate
+        .parent()
+        .is_some_and(|parent| !parent.exists() && parent != std::path::Path::new(""))
+    {
+        candidate = candidate.parent()?.to_path_buf();
+    }
+    Some(candidate.to_string_lossy().into_owned())
 }
 
 /// Which argument position carries `options` for this op.

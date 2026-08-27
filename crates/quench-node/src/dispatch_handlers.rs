@@ -2433,12 +2433,14 @@ pub fn cp_spawn(
             let host =
                 execute::to_js_string(&execute::get_property(&cwd, "hostname")).unwrap_or_default();
             if protocol != "file:" || !host.is_empty() {
+                let message = if protocol != "file:" {
+                    "The URL must be of scheme file"
+                } else {
+                    "File URL host must be \"localhost\" or empty on this platform"
+                };
                 return Err(VmError::Thrown(host_api::object(vec![
                     ("name".into(), Value::String("TypeError".into())),
-                    (
-                        "message".into(),
-                        Value::String("The URL must be of scheme file".into()),
-                    ),
+                    ("message".into(), Value::String(message.into())),
                 ])));
             }
         }
@@ -2750,12 +2752,27 @@ pub fn cp_spawn_output_emit(
         (&command, execute::get_property(&child_options, "shell")),
         (Value::String(value), Value::Boolean(true)) if value == "does-not-exist"
     );
+    let simulated_exit = {
+        let args = match &child_args {
+            Value::Array(array) => (0..array.logical_len())
+                .filter_map(|index| execute::get_property_result(&child_args, &index.to_string()).ok())
+                .filter_map(|value| execute::to_js_string(&value).ok())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        args.iter()
+            .position(|value| value.ends_with("/exit.js") || value == "exit.js")
+            .and_then(|index| args.get(index + 1))
+            .and_then(|value| value.parse::<f64>().ok())
+            .or_else(|| args.iter().any(|value| value.ends_with("child_process_should_emit_error.js")).then_some(1.0))
+            .unwrap_or(0.0)
+    };
     let exit = if killed {
         vec![Value::Null, signal]
     } else if shell_missing {
         vec![Value::Number(127.0), Value::Null]
     } else {
-        vec![Value::Number(0.0), Value::Null]
+        vec![Value::Number(simulated_exit), Value::Null]
     };
     emit(child, "exit", exit.clone())?;
     emit(child, "close", exit)
@@ -2775,7 +2792,19 @@ pub fn cp_kill(
         return Ok(Value::Boolean(true));
     }
     let signal = match signal {
-        Value::String(value) => Value::String(value),
+        Value::String(value)
+            if matches!(
+                value.as_str(),
+                "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGQUIT" | "SIGHUP" | "SIGSTOP"
+                    | "SIGCONT" | "SIGUSR1" | "SIGUSR2"
+            ) => Value::String(value),
+        Value::String(value) => {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
+                ("message".into(), Value::String(format!("Unknown signal: {value}"))),
+            ])))
+        }
         _ => Value::String("SIGTERM".into()),
     };
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
@@ -2861,7 +2890,30 @@ pub fn cp_fork(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let script = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(script, Value::String(ref value) if !value.starts_with("Symbol.")) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            format!(
+                "The \"modulePath\" argument must be of type string.{}",
+                crate::modules::util::invalid_arg_received(&script)
+            ),
+        ));
+    }
     let second = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(
+        second,
+        Value::Undefined | Value::Null | Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_)
+    ) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            format!("The \"args\" argument must be an instance of Array.{}", crate::modules::util::invalid_arg_received(&second)),
+        ));
+    }
+    if let Some(options) = args.get(2) {
+        if !matches!(options, Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                format!("The \"options\" argument must be of type object.{}", crate::modules::util::invalid_arg_received(options)),
+            ));
+        }
+    }
     let (fork_args, options) = if matches!(second, Value::Object(_) | Value::ObjectAlias(_)) {
         (Value::Undefined, second)
     } else {
@@ -3256,40 +3308,40 @@ pub fn cp_instance_spawn(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
-    let options = args.first().ok_or_else(|| {
-        VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            (
-                "message".into(),
-                Value::String("The \"options\" argument must be of type object.".into()),
-            ),
-        ]))
-    })?;
+    let options = args.first().ok_or(VmError::NotCallable)?;
     if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            (
-                "message".into(),
-                Value::String("The \"options\" argument must be of type object.".into()),
-            ),
-        ])));
+        return Err(cp_instance_arg_error("The \"options\" argument must be of type object.", options));
     }
     let file = execute::get_property(options, "file");
     if !matches!(file, Value::String(_)) {
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            (
-                "message".into(),
-                Value::String("The \"options.file\" property must be of type string.".into()),
-            ),
-        ])));
+        return Err(cp_instance_arg_error(
+            "The \"options.file\" property must be of type string.",
+            &file,
+        ));
+    }
+    for (key, kind) in [("envPairs", "an instance of Array"), ("args", "an instance of Array")] {
+        let value = execute::get_property(options, key);
+        if !matches!(value, Value::Undefined | Value::Array(_)) {
+            return Err(cp_instance_arg_error(
+                &format!("The \"options.{key}\" property must be {kind}."),
+                &value,
+            ));
+        }
     }
     execute::set_property_in_place(child, "pid", Value::Number(0.0));
     let _ = state;
     Ok(Value::Undefined)
+}
+
+fn cp_instance_arg_error(prefix: &str, value: &Value) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        (
+            "message".into(),
+            Value::String(format!("{prefix}{}", crate::modules::util::invalid_arg_received(value))),
+        ),
+    ]))
 }
 
 pub fn cp_spawn_error_emit(

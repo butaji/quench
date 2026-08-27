@@ -33,6 +33,9 @@ const __quenchNetModule = {
     __quenchNetAutoSelectFamilyAttemptTimeout,
   Socket: __quenchNetSocket,
   createConnection: (options, callback) => {
+    if (typeof options === "string" && options.startsWith("/")) {
+      options = { path: options };
+    }
     globalThis.__quenchValidateConnectionOptions(options);
     if (options.autoSelectFamilyAttemptTimeout !== undefined) {
       const value = options.autoSelectFamilyAttemptTimeout;
