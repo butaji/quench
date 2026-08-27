@@ -23,7 +23,13 @@ pub fn spawn_sync(
     if command.is_empty() {
         return Ok(spawn_error_result("EINVAL", "spawnSync requires a command"));
     }
-    let child_args = args.get(1).and_then(string_args).unwrap_or_default();
+    let child_args = args
+        .get(1)
+        .and_then(string_args)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|arg| arg != "--enable-source-maps")
+        .collect::<Vec<_>>();
     let options = args.get(2).or_else(|| {
         args.get(1)
             .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
@@ -215,8 +221,14 @@ pub fn spawn_sync(
             ("pid".into(), Value::Number(0.0)),
             ("status".into(), Value::Number(0.0)),
             ("signal".into(), Value::Null),
-            ("stdout".into(), crate::modules::buffer_proto::make_buffer(&stdout)),
-            ("stderr".into(), crate::modules::buffer_proto::make_buffer(&[])),
+            (
+                "stdout".into(),
+                crate::modules::buffer_proto::make_buffer(&stdout),
+            ),
+            (
+                "stderr".into(),
+                crate::modules::buffer_proto::make_buffer(&[]),
+            ),
         ]));
     }
     let executable = if is_host_exec {
