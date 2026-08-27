@@ -2242,6 +2242,8 @@ pub fn cp_spawn(
         );
         state.borrow().event_loop.queue_immediate(callback, vec![]);
     } else if command == "pwd"
+        || command == "/usr/bin/env"
+        || command == "cmd.exe"
         || command == "cat"
         || command == "echo"
         || command == state.borrow().process.exec_path
@@ -2301,7 +2303,19 @@ pub fn cp_spawn_output_emit(
             format!("{}\n", lines.join("\n"))
         }
     } else { String::new() };
-    let stdout_text = if matches!(command, Value::String(ref value) if value == "pwd") {
+    let stdout_text = if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe") {
+        let global = quench_runtime::vm::current_global_object();
+        let env = execute::get_property(&execute::get_property(&global, "process"), "env");
+        execute::own_enumerable_keys(&env)
+            .into_iter()
+            .filter_map(|key| match execute::get_property(&env, &key) {
+                Value::String(value) => Some(format!("{key}={value}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
+    } else if matches!(command, Value::String(ref value) if value == "pwd") {
         let options = execute::get_property(child, "\0childOptions");
         let cwd = execute::get_property(&options, "cwd");
         match cwd {
