@@ -61,6 +61,7 @@ pub fn run_script_with_sink(
     let mut argv = vec![exec, script_str.clone()];
     argv.extend(script_args.iter().cloned());
     let (host, context) = crate::host::install_with_argv(RealmId::ROOT, sink, argv);
+    let context = context.with_source_text(source.to_owned());
     if let Some(dir) = script.parent() {
         host.set_main_dir(dir.to_string_lossy().into_owned());
     }
@@ -97,6 +98,7 @@ pub fn eval_script(source: &str, sink: OutputSink) -> RunOutcome {
         "<eval>".to_string(),
     ];
     let (host, context) = crate::host::install_with_argv(RealmId::ROOT, sink, argv);
+    let context = context.with_source_text(source.to_owned());
     let ops = match reduce(source) {
         Ok(ops) => ops,
         Err(error) => return RunOutcome::fail(1, format!("reduce: {error}")),
