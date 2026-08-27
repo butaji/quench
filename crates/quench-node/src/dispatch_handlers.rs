@@ -2670,9 +2670,14 @@ pub fn abort_signal_timeout(
         crate::modules::event_target::ABORT_SIGNAL_BRAND,
         Value::Boolean(true),
     );
+    let signal = execute::set_property(
+        signal,
+        "throwIfAborted",
+        crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_THROW_IF_ABORTED),
+    );
     let callback = crate::host::capability(crate::registry::NodeSpec::new(
         "AbortSignal.timeout.fire",
-        0x1F31,
+        0x1F42,
     ));
     let timer = crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
     // Node's AbortSignal.timeout timer is deliberately unref'd: creating a
