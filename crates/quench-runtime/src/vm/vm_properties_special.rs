@@ -354,7 +354,17 @@ fn bound_function_fallback(
             return realm::intrinsic(bound.realm, intrinsic).unwrap_or(Value::Builtin(intrinsic));
         }
     }
-    let result = get_property(&bound.target, key);
+    let result = if realm::is_intrinsic(bound) {
+        crate::vm::with_realm(bound.realm, || get_property(&bound.target, key))
+            .unwrap_or_else(|| get_property(&bound.target, key))
+    } else {
+        get_property(&bound.target, key)
+    };
+    if realm::is_intrinsic(bound)
+        && matches!(result, Value::Builtin(builtin) if crate::conversion::is_callable(&Value::Builtin(builtin)))
+    {
+        return bind_method(&receiver, result);
+    }
     if key == "toString"
         && crate::conversion::is_callable(&bound.target)
         && matches!(result, Value::Builtin(Builtin::ObjectPrototypeToString))
