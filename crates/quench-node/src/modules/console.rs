@@ -44,9 +44,24 @@ pub fn build_value() -> Value {
         if let Ok(prototype) = quench_runtime::execute::get_property_result(&console, "prototype") {
             let _ = quench_runtime::execute::set_prototype_of(&module, &prototype);
             for name in [
-                "log", "info", "dir", "time", "timeEnd", "timeLog", "trace", "assert",
-                "clear", "count", "countReset", "group", "groupEnd", "table", "debug",
-                "dirxml", "error", "groupCollapsed",
+                "log",
+                "info",
+                "dir",
+                "time",
+                "timeEnd",
+                "timeLog",
+                "trace",
+                "assert",
+                "clear",
+                "count",
+                "countReset",
+                "group",
+                "groupEnd",
+                "table",
+                "debug",
+                "dirxml",
+                "error",
+                "groupCollapsed",
             ] {
                 if let Ok(method) = quench_runtime::execute::get_property_result(&prototype, name) {
                     module = quench_runtime::execute::set_property(module, name, method);

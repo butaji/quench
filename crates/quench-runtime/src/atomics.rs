@@ -38,13 +38,15 @@ pub(crate) fn begin_agent_callback() {
 
 pub(crate) fn agent_report_ready(index: usize) -> bool {
     let now = Instant::now();
-    AGENT_WAITERS.with(|waiters| {
-        waiters.borrow().iter().find_map(|waiter| {
-            (waiter.report == Some(index) || waiter.followups.contains(&index)).then_some(
-                waiter.woken || waiter.deadline.is_some_and(|deadline| deadline <= now),
-            )
+    AGENT_WAITERS
+        .with(|waiters| {
+            waiters.borrow().iter().find_map(|waiter| {
+                (waiter.report == Some(index) || waiter.followups.contains(&index)).then_some(
+                    waiter.woken || waiter.deadline.is_some_and(|deadline| deadline <= now),
+                )
+            })
         })
-    }).unwrap_or(true)
+        .unwrap_or(true)
 }
 
 fn has_agent_waiter() -> bool {
@@ -55,7 +57,11 @@ pub(crate) fn register_agent_report(index: usize, primary: bool) {
     let current = AGENT_CURRENT_WAITER.with(Cell::get);
     let Some(current) = current else { return };
     AGENT_WAITERS.with(|waiters| {
-        if let Some(waiter) = waiters.borrow_mut().iter_mut().find(|waiter| waiter.id == current) {
+        if let Some(waiter) = waiters
+            .borrow_mut()
+            .iter_mut()
+            .find(|waiter| waiter.id == current)
+        {
             if primary && waiter.report.is_none() {
                 waiter.report = Some(index);
             } else {
@@ -206,9 +212,10 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
                 ));
             }
             (
-                view.get(index).ok_or_else(|| {
-                    crate::value::error::throw_range_error("Atomics.wait index is out of range")
-                })?
+                view.get(index)
+                    .ok_or_else(|| {
+                        crate::value::error::throw_range_error("Atomics.wait index is out of range")
+                    })?
                     .to_string(),
                 atomic_value(arguments.get(2))?.to_string(),
                 Rc::clone(&view.buffer),
@@ -273,9 +280,9 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
         }
         Ok(Value::String("timed-out".into()))
     } else {
-        if let Some(timeout) = timeout.filter(|timeout| {
-            timeout.is_finite() && *timeout > 10.0 && *timeout < 10_000.0
-        }) {
+        if let Some(timeout) =
+            timeout.filter(|timeout| timeout.is_finite() && *timeout > 10.0 && *timeout < 10_000.0)
+        {
             AGENT_TIME_BIAS.with(|bias| bias.set(bias.get() + timeout));
         }
         let deadline = timeout.and_then(|timeout| {
@@ -338,8 +345,12 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
         }
         if !in_agent_callback() && bits == 0 && has_agent_waiter() {
             match view {
-                Value::BigInt64Array(v) => { v.set(index, 1); }
-                Value::BigUint64Array(v) => { v.set(index, 1); }
+                Value::BigInt64Array(v) => {
+                    v.set(index, 1);
+                }
+                Value::BigUint64Array(v) => {
+                    v.set(index, 1);
+                }
                 _ => {}
             }
         }
@@ -503,8 +514,8 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
             AGENT_TIME_BIAS.with(|bias| bias.set(bias.get() + timeout));
         }
     }
-    let is_async = result == "timed-out"
-        && timeout.map_or(true, |value| value.is_nan() || value > 0.0);
+    let is_async =
+        result == "timed-out" && timeout.map_or(true, |value| value.is_nan() || value > 0.0);
     let result_value = if is_async {
         crate::promise::promise_resolve(&[Value::String("ok".into())])
     } else {
@@ -546,11 +557,13 @@ pub(crate) fn execute(
     let old_number = view.get_number(index).unwrap_or(old as f64);
     if builtin == Builtin::AtomicsCompareExchange {
         let expected = view.coerce(arguments.get(2))?;
-        let escaped = in_agent_callback() && old != expected && AGENT_SPIN_COUNT.with(|count| {
-            let next = count.get().saturating_add(1);
-            count.set(next);
-            next > 1_000
-        });
+        let escaped = in_agent_callback()
+            && old != expected
+            && AGENT_SPIN_COUNT.with(|count| {
+                let next = count.get().saturating_add(1);
+                count.set(next);
+                next > 1_000
+            });
         if escaped {
             let replacement = view.coerce(arguments.get(3))?;
             view.set(index, replacement);
@@ -687,9 +700,8 @@ fn bigint_write(view: &Value, index: usize, value: &str, unchanged: bool) -> Res
 }
 
 fn bigint_argument(value: Option<&Value>) -> Result<num_bigint::BigInt, VmError> {
-    let value = value.ok_or_else(|| {
-        crate::value::error::throw_type_error("Atomics requires BigInt values")
-    })?;
+    let value = value
+        .ok_or_else(|| crate::value::error::throw_type_error("Atomics requires BigInt values"))?;
     let primitive = crate::conversion::to_primitive(value, "number")?;
     let Value::BigInt(value) = primitive else {
         return Err(crate::value::error::throw_type_error(
@@ -750,9 +762,9 @@ impl AtomicView<'_> {
     }
 
     fn coerce(&self, value: Option<&Value>) -> Result<i32, VmError> {
-        let number = crate::conversion::to_number(value.ok_or_else(|| {
-            crate::value::error::throw_type_error("Missing value")
-        })?)?;
+        let number = crate::conversion::to_number(
+            value.ok_or_else(|| crate::value::error::throw_type_error("Missing value"))?,
+        )?;
         Ok(match self {
             Self::Int8(_) => crate::construct::to_int8(number).into(),
             Self::Int16(_) => crate::construct::to_int16(number).into(),
