@@ -238,6 +238,7 @@ const CAP_HTTP_REQCLOSE: u16 = 0x0F11;
 const CAP_NET_CONNECT: u16 = 0x1000;
 const CAP_NET_SOCKET: u16 = 0x1013;
 const CAP_NET_SERVER: u16 = 0x1001;
+const CAP_NET_LOOKUP_CALLBACK: u16 = 0x1016;
 const CAP_NET_ISIP: u16 = 0x1002;
 const CAP_NET_ISIPV4: u16 = 0x1003;
 const CAP_NET_ISIPV6: u16 = 0x1004;
@@ -831,6 +832,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_RESEND => crate::modules::http_client::res_end_handler,
         CAP_HTTP_REQCLOSE => crate::modules::http_client::req_close,
         CAP_NET_CONNECT => net_connect,
+        CAP_NET_LOOKUP_CALLBACK => handlers::net_lookup_callback,
         CAP_NET_SOCKET => net_socket_call,
         CAP_NET_SERVER => net_create_server_call,
         CAP_NET_ISIP => net_is_ip,
