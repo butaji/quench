@@ -215,20 +215,15 @@ fn connect_with_receiver(
 /// destroyed socket (never a synchronous throw).
 fn connect_refused(state: &Rc<RefCell<HostState>>, addr: &SocketAddr) -> Result<Value, VmError> {
     let (object, _id) = new_net_object(state, socket_props())?;
-    let error = host_api::object(vec![
-        ("name".to_string(), Value::String("Error".to_string())),
-        (
-            "message".to_string(),
-            Value::String(format!("connect ECONNREFUSED {addr}")),
-        ),
-        (
-            "code".to_string(),
-            Value::String("ECONNREFUSED".to_string()),
-        ),
-        ("errno".to_string(), Value::Number(-61.0)),
-        ("syscall".to_string(), Value::String("connect".to_string())),
-    ]);
-    emit(state, &object, "error", vec![error])?;
+    let message = format!("connect ECONNREFUSED {addr}");
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message)],
+    );
+    let error = execute::set_property(error, "code", Value::String("ECONNREFUSED".into()));
+    let error = execute::set_property(error, "errno", Value::Number(-61.0));
+    let error = execute::set_property(error, "syscall", Value::String("connect".into()));
+    state.borrow_mut().net.pending_errors.push((object.clone(), error));
     Ok(object)
 }
 
