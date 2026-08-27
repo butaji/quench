@@ -1270,7 +1270,23 @@ fn typed_array_species_create(
             "TypedArray species constructor returned a non-TypedArray",
         ));
     }
+    validate_typed_array_species_target(&result, length)?;
     Ok(result)
+}
+
+fn validate_typed_array_species_target(
+    target: &Value,
+    length: usize,
+) -> Result<(), crate::execute::VmError> {
+    if crate::typed_array_prototype::is_out_of_bounds(target)
+        || typed_array_is_immutable(target)
+        || crate::typed_array_ops::logical_len(target).unwrap_or(0) < length
+    {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray species constructor returned an invalid target",
+        ));
+    }
+    Ok(())
 }
 
 fn typed_array_species_constructor(
