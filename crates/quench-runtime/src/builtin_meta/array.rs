@@ -44,6 +44,7 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayAt => Some("at"),
         Builtin::ArraySort => Some("sort"),
         Builtin::ArrayForEach => Some("forEach"),
+        Builtin::TypedArrayForEach => Some("forEach"),
         Builtin::ArrayReduce => Some("reduce"),
         Builtin::ArrayReduceRight => Some("reduceRight"),
         Builtin::ArrayPush => Some("push"),
@@ -108,6 +109,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayAt
         | Builtin::ArraySort
         | Builtin::ArrayForEach
+        | Builtin::TypedArrayForEach
         | Builtin::ArrayReduce
         | Builtin::ArrayReduceRight
         | Builtin::ArrayPush

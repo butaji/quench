@@ -59,10 +59,29 @@ fn execute_builtin_match(
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
+        TypedArrayForEach => return Some(typed_array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
         _ => return None,
     };
     Some(Ok(result))
+}
+
+fn typed_array_for_each(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.map(unwrap_binding_cells);
+    let Some(value) = value.as_ref().filter(|value| is_typed_array(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.forEach called on incompatible receiver",
+        ));
+    };
+    if typed_array_is_detached(value) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.forEach called on detached TypedArray",
+        ));
+    }
+    crate::builtins::array_for_each(Some(value), arguments)
 }
 
 fn map_argument_error(
