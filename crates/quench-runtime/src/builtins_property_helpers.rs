@@ -119,14 +119,18 @@ pub(crate) fn define_own_property(
 ) -> Result<Value, crate::execute::VmError> {
     let target = crate::locals::resolved_replacement(target.clone());
     if is_process_env_object(&target) {
-        let accessor = descriptor.iter().any(|(name, _)| name == "get" || name == "set");
-        let valid_data = descriptor.iter().any(|(name, value)| {
-            name == "configurable" && matches!(value, Value::Boolean(true))
-        }) && descriptor.iter().any(|(name, value)| {
-            name == "enumerable" && matches!(value, Value::Boolean(true))
-        }) && descriptor.iter().any(|(name, value)| {
-            name == "writable" && matches!(value, Value::Boolean(true))
-        });
+        let accessor = descriptor
+            .iter()
+            .any(|(name, _)| name == "get" || name == "set");
+        let valid_data = descriptor
+            .iter()
+            .any(|(name, value)| name == "configurable" && matches!(value, Value::Boolean(true)))
+            && descriptor
+                .iter()
+                .any(|(name, value)| name == "enumerable" && matches!(value, Value::Boolean(true)))
+            && descriptor
+                .iter()
+                .any(|(name, value)| name == "writable" && matches!(value, Value::Boolean(true)));
         if accessor {
             return Err(process_env_descriptor_error(
                 "'process.env' does not accept an accessor(getter/setter) descriptor",
@@ -156,6 +160,16 @@ pub(crate) fn define_own_property(
     // representative rather than the pre-coercion COW snapshot.
     let target = crate::locals::resolved_replacement(target);
     validate_array_index_length(&target, key)?;
+    if crate::typed_array_ops::is_index_key(key)
+        && crate::typed_array_ops::logical_len(&target).is_some_and(|length| {
+            crate::typed_array_prototype::is_out_of_bounds(&target)
+                || key.parse::<usize>().map_or(true, |index| index >= length)
+        })
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot define a property on an out-of-bounds typed array",
+        ));
+    }
     if let Some(result) = prepare_array_length_definition(&target, key, descriptor)? {
         return Ok(result);
     }
@@ -226,7 +240,10 @@ fn is_process_env_object(target: &Value) -> bool {
 
 fn process_env_descriptor_error(message: &str) -> crate::execute::VmError {
     crate::execute::VmError::Thrown(crate::host_api::object(vec![
-        ("code".into(), Value::String("ERR_INVALID_OBJECT_DEFINE_PROPERTY".into())),
+        (
+            "code".into(),
+            Value::String("ERR_INVALID_OBJECT_DEFINE_PROPERTY".into()),
+        ),
         ("name".into(), Value::String("TypeError".into())),
         ("message".into(), Value::String(message.into())),
     ]))

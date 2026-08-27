@@ -186,7 +186,7 @@ pub(crate) fn execute_set_property(
         let _scope = crate::execution_trace::attribution_scope("SetN:reject_new");
         rejects_new_property(&target, &key)
     };
-    if rejects_new {
+    if rejects_new && key != "__proto__" {
         return write_failure(strict);
     }
     let value = unwrap_assignment_value(&crate::execute::read_register(registers, src)?);
@@ -321,8 +321,10 @@ fn finish_set_property(
             "Cannot convert a Symbol value to a string",
         ));
     }
-    if matches!(target, crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype))
-        && key == "__proto__"
+    if matches!(
+        target,
+        crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+    ) && key == "__proto__"
     {
         crate::vm::execute_builtin_with_receiver(
             crate::ops::Builtin::ObjectPrototypeSetProto,
@@ -783,10 +785,45 @@ pub(crate) fn inherited_write_blocked(target: &crate::value::Value, key: &str) -
     {
         return true;
     }
-    matches!(
+    if matches!(
         crate::property_define::accessor(target, key, "writable"),
         Some(crate::value::Value::Boolean(false))
-    )
+    ) {
+        return true;
+    }
+    let mut prototype = crate::builtins::object::get_prototype_of(Some(target)).ok();
+    while let Some(value) = prototype {
+        if matches!(
+            value,
+            crate::value::Value::Null | crate::value::Value::Undefined
+        ) {
+            break;
+        }
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&value),
+            Some(&crate::value::Value::String(key.to_string())),
+        )
+        .ok();
+        if let Some(crate::value::Value::Object(fields)) = descriptor {
+            let field = |name: &str| {
+                fields
+                    .iter()
+                    .rev()
+                    .find_map(|(field, value)| (field == name).then_some(value.clone()))
+            };
+            if matches!(field("writable"), Some(crate::value::Value::Boolean(false))) {
+                return true;
+            }
+            if fields.iter().any(|(name, _)| name == "set")
+                && matches!(field("set"), Some(crate::value::Value::Undefined) | None)
+            {
+                return true;
+            }
+            return false;
+        }
+        prototype = crate::builtins::object::get_prototype_of(Some(&value)).ok();
+    }
+    false
 }
 fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
     if strict {

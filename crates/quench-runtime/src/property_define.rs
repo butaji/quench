@@ -97,11 +97,14 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
     match value {
         Value::Object(properties) => {
             accessor_field(properties.as_ref(), key, field).or_else(|| {
-                properties
+                let prototype = properties
                     .iter()
                     .rev()
-                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-                    .and_then(|prototype| accessor_value(&prototype, key, field))
+                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()));
+                match prototype {
+                    Some(prototype) => accessor_value(&prototype, key, field),
+                    None => accessor_builtin(Builtin::ObjectPrototype, key, field),
+                }
             })
         }
         Value::Function(function) => {
@@ -113,11 +116,14 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
         }
         Value::ObjectAlias(alias) => alias.0.borrow().upgrade().and_then(|properties| {
             accessor_field(properties.as_ref(), key, field).or_else(|| {
-                properties
+                let prototype = properties
                     .iter()
                     .rev()
-                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-                    .and_then(|prototype| accessor_value(&prototype, key, field))
+                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()));
+                match prototype {
+                    Some(prototype) => accessor_value(&prototype, key, field),
+                    None => accessor_builtin(Builtin::ObjectPrototype, key, field),
+                }
             })
         }),
         Value::Promise(promise) => accessor_field(&promise.properties.borrow()[..], key, field),
