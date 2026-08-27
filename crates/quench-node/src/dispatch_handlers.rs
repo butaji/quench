@@ -441,11 +441,7 @@ pub fn util_promisify(
                 // returned function idempotent: promisify(custom) returns
                 // the same identity. Keep this mutation on the existing
                 // function rather than wrapping it again.
-                let _ = execute::set_property_in_place(
-                    &custom,
-                    custom_key,
-                    custom.clone(),
-                );
+                let _ = execute::set_property_in_place(&custom, custom_key, custom.clone());
                 return Ok(
                     match timer_promise_alias(&original).or_else(|| {
                         match execute::get_property(&custom, "name") {
@@ -499,11 +495,8 @@ pub fn util_promisify(
         _ => wrapper,
     };
     let custom = wrapper.clone();
-    if !execute::set_property_in_place(
-        &wrapper,
-        crate::modules::util::PROMISIFY_CUSTOM_KEY,
-        custom,
-    ) {
+    if !execute::set_property_in_place(&wrapper, crate::modules::util::PROMISIFY_CUSTOM_KEY, custom)
+    {
         return Err(VmError::NotCallable);
     }
     Ok(wrapper)
@@ -604,7 +597,10 @@ pub fn util_convert_signal_to_exit_code(
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
-            ("message".into(), Value::String("The signal argument must be a valid signal name".into())),
+            (
+                "message".into(),
+                Value::String("The signal argument must be a valid signal name".into()),
+            ),
         ])));
     };
     let number = match signal.as_str() {
@@ -613,11 +609,16 @@ pub fn util_convert_signal_to_exit_code(
         "SIGABRT" => 6,
         "SIGKILL" => 9,
         "SIGTERM" => 15,
-        _ => return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
-            ("message".into(), Value::String("The signal argument must be a valid signal name".into())),
-        ]))),
+        _ => {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+                (
+                    "message".into(),
+                    Value::String("The signal argument must be a valid signal name".into()),
+                ),
+            ])))
+        }
     };
     Ok(Value::Number((128 + number) as f64))
 }
@@ -2177,7 +2178,12 @@ pub fn cp_spawn(
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            ("message".into(), Value::String("The \"file\" argument must be of type string. Received undefined".into())),
+            (
+                "message".into(),
+                Value::String(
+                    "The \"file\" argument must be of type string. Received undefined".into(),
+                ),
+            ),
         ])));
     }
     let command = match args.first() {
@@ -2189,7 +2195,12 @@ pub fn cp_spawn(
                             return Err(VmError::Thrown(host_api::object(vec![
                                 ("name".into(), Value::String("TypeError".into())),
                                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-                                ("message".into(), Value::String("The \"file\" argument must be of type string.".into())),
+                                (
+                                    "message".into(),
+                                    Value::String(
+                                        "The \"file\" argument must be of type string.".into(),
+                                    ),
+                                ),
                             ])));
                         }
                     }
@@ -2197,9 +2208,12 @@ pub fn cp_spawn(
             }
             execute::to_js_string(value).map_err(|_| {
                 VmError::Thrown(host_api::object(vec![
-                ("name".into(), Value::String("TypeError".into())),
-                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-                ("message".into(), Value::String("The \"file\" argument must be of type string.".into())),
+                    ("name".into(), Value::String("TypeError".into())),
+                    ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                    (
+                        "message".into(),
+                        Value::String("The \"file\" argument must be of type string.".into()),
+                    ),
                 ]))
             })?
         }
@@ -2209,27 +2223,42 @@ pub fn cp_spawn(
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
-            ("message".into(), Value::String("The \"file\" argument must be a non-empty string.".into())),
+            (
+                "message".into(),
+                Value::String("The \"file\" argument must be a non-empty string.".into()),
+            ),
         ])));
     }
     if let Some(value) = args.get(1) {
-        let valid = matches!(value, Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_));
+        let valid = matches!(
+            value,
+            Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_)
+        );
         let null_as_placeholder = matches!(value, Value::Null)
             && matches!(args.get(2), Some(Value::Object(_) | Value::ObjectAlias(_)));
         if !valid && !matches!(value, Value::Undefined) && !null_as_placeholder {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-                ("message".into(), Value::String("The \"args\" argument must be an instance of Array".into())),
+                (
+                    "message".into(),
+                    Value::String("The \"args\" argument must be an instance of Array".into()),
+                ),
             ])));
         }
     }
     if let Some(value) = args.get(2) {
-        if !matches!(value, Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined) {
+        if !matches!(
+            value,
+            Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined
+        ) {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-                ("message".into(), Value::String("The \"options\" argument must be an object".into())),
+                (
+                    "message".into(),
+                    Value::String("The \"options\" argument must be an object".into()),
+                ),
             ])));
         }
         for key in ["uid", "gid"] {
@@ -2238,7 +2267,12 @@ pub fn cp_spawn(
                     return Err(VmError::Thrown(host_api::object(vec![
                         ("name".into(), Value::String("RangeError".into())),
                         ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
-                        ("message".into(), Value::String(format!("The \"options.{key}\" property is out of range."))),
+                        (
+                            "message".into(),
+                            Value::String(format!(
+                                "The \"options.{key}\" property is out of range."
+                            )),
+                        ),
                     ])));
                 }
             }
@@ -2252,7 +2286,11 @@ pub fn cp_spawn(
     let options = args
         .get(2)
         .cloned()
-        .or_else(|| args.get(1).filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).cloned())
+        .or_else(|| {
+            args.get(1)
+                .filter(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+                .cloned()
+        })
         .unwrap_or(Value::Undefined);
     if let Value::Object(_) | Value::ObjectAlias(_) = options {
         let timeout = execute::get_property(&options, "timeout");
@@ -2260,11 +2298,19 @@ pub fn cp_spawn(
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-                ("message".into(), Value::String("The \"options.timeout\" property must be of type number.".into())),
+                (
+                    "message".into(),
+                    Value::String(
+                        "The \"options.timeout\" property must be of type number.".into(),
+                    ),
+                ),
             ])));
         }
     }
-    let spawnargs = if matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
+    let spawnargs = if matches!(
+        execute::get_property(&options, "shell"),
+        Value::Boolean(true)
+    ) {
         let mut command_line = command.clone();
         if let Value::Array(array) = &spawnargs {
             for index in 0..array.logical_len() {
@@ -2297,17 +2343,20 @@ pub fn cp_spawn(
     let child = execute::set_property(child, "pid", Value::Undefined);
     let child = execute::set_property(child, "\0childCommand", Value::String(command.clone()));
     let child = execute::set_property(child, "\0childArgs", spawnargs.clone());
-    let child = execute::set_property(
-        child,
-        "\0childOptions",
-        options.clone(),
-    );
+    let child = execute::set_property(child, "\0childOptions", options.clone());
     let child = execute::set_property(child, "stdin", stdin.clone());
     let child = execute::set_property(child, "stdout", stdout.clone());
     let child = execute::set_property(child, "stderr", stderr.clone());
-    let child = execute::set_property(child, "stdio", host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]));
+    let child = execute::set_property(
+        child,
+        "stdio",
+        host_api::array(vec![stdin.clone(), stdout.clone(), stderr.clone()]),
+    );
     let child = execute::set_property(child, "spawnargs", spawnargs.clone());
-    let child = if matches!(execute::get_property(&options, "\0quench:forkIpc"), Value::Boolean(true)) {
+    let child = if matches!(
+        execute::get_property(&options, "\0quench:forkIpc"),
+        Value::Boolean(true)
+    ) {
         execute::set_property(child, "\0childForkIpc", Value::Boolean(true))
     } else {
         child
@@ -2327,7 +2376,10 @@ pub fn cp_spawn(
     );
     state.borrow_mut().identity_roots.push(child.clone());
     if let Ok(signal) = execute::get_property_result(&options, "signal") {
-        if matches!(execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND), Value::Boolean(true)) {
+        if matches!(
+            execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+            Value::Boolean(true)
+        ) {
             execute::set_property_in_place(
                 &child,
                 "\0childAbortReason",
@@ -2336,7 +2388,9 @@ pub fn cp_spawn(
             let listener = host_api::bound_capability_with_arguments(
                 quench_runtime::ops::HostCapabilityRef {
                     realm: quench_runtime::ops::RealmId::ROOT,
-                    kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_ABORT.cap),
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                        crate::registry::SPEC_CP_ABORT.cap,
+                    ),
                 },
                 vec![
                     child.clone(),
@@ -2364,20 +2418,27 @@ pub fn cp_spawn(
             execute::set_property_in_place(
                 &child,
                 "signalCode",
-                if matches!(signal, Value::Undefined) { Value::String("SIGTERM".into()) } else { signal },
+                if matches!(signal, Value::Undefined) {
+                    Value::String("SIGTERM".into())
+                } else {
+                    signal
+                },
             );
         }
     }
     if let Some(cwd) = execute::get_property_result(&options, "cwd").ok() {
         if let Value::Object(_) | Value::ObjectAlias(_) = cwd {
-            let protocol = execute::to_js_string(&execute::get_property(&cwd, "protocol"))
-                .unwrap_or_default();
-            let host = execute::to_js_string(&execute::get_property(&cwd, "hostname"))
-                .unwrap_or_default();
+            let protocol =
+                execute::to_js_string(&execute::get_property(&cwd, "protocol")).unwrap_or_default();
+            let host =
+                execute::to_js_string(&execute::get_property(&cwd, "hostname")).unwrap_or_default();
             if protocol != "file:" || !host.is_empty() {
                 return Err(VmError::Thrown(host_api::object(vec![
                     ("name".into(), Value::String("TypeError".into())),
-                    ("message".into(), Value::String("The URL must be of scheme file".into())),
+                    (
+                        "message".into(),
+                        Value::String("The URL must be of scheme file".into()),
+                    ),
                 ])));
             }
         }
@@ -2387,7 +2448,10 @@ pub fn cp_spawn(
                 ("message".into(), Value::String("spawn pwd ENOENT".into())),
                 ("code".into(), Value::String("ENOENT".into())),
             ]);
-            if !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true)) {
+            if !matches!(
+                execute::get_property(&options, "\0quench:suppressSpawnError"),
+                Value::Boolean(true)
+            ) {
                 let callback = bound_custom(
                     crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
                     vec![child.clone(), error],
@@ -2402,7 +2466,10 @@ pub fn cp_spawn(
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
     {
-        let shell = matches!(execute::get_property(&options, "shell"), Value::Boolean(true));
+        let shell = matches!(
+            execute::get_property(&options, "shell"),
+            Value::Boolean(true)
+        );
         if !shell {
             execute::set_property_in_place(&child, "pid", Value::Undefined);
         }
@@ -2419,7 +2486,10 @@ pub fn cp_spawn(
             ("spawnargs".into(), spawnargs.clone()),
         ]);
         if !shell
-            && !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true))
+            && !matches!(
+                execute::get_property(&options, "\0quench:suppressSpawnError"),
+                Value::Boolean(true)
+            )
         {
             let callback = bound_custom(
                 crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
@@ -2485,9 +2555,7 @@ pub fn cp_spawn_output_emit(
     }
     let abort_signal = execute::get_property(child, "\0childAbortSignal");
     let abort_listener = execute::get_property(child, "\0childAbortListener");
-    if !matches!(abort_signal, Value::Undefined)
-        && !matches!(abort_listener, Value::Undefined)
-    {
+    if !matches!(abort_signal, Value::Undefined) && !matches!(abort_listener, Value::Undefined) {
         let _ = crate::modules::event_target::remove_event_listener(
             state,
             Some(&abort_signal),
@@ -2502,10 +2570,13 @@ pub fn cp_spawn_output_emit(
         fork_stderr
     } else if matches!(command, Value::String(ref value) if value == "fhqwhgads") {
         "sh: fhqwhgads: command not found\n".into()
-    } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
+    } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path)
+    {
         let args = match &child_args {
             Value::Array(array) => (0..array.logical_len())
-                .filter_map(|index| execute::get_property_result(&child_args, &index.to_string()).ok())
+                .filter_map(|index| {
+                    execute::get_property_result(&child_args, &index.to_string()).ok()
+                })
                 .filter_map(|value| execute::to_js_string(&value).ok())
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
@@ -2521,19 +2592,46 @@ pub fn cp_spawn_output_emit(
             Value::String(value) => value,
             _ => String::new(),
         };
-        if args.iter().any(|arg| arg == "--no-warnings") { String::new() } else {
+        if args.iter().any(|arg| arg == "--no-warnings") {
+            String::new()
+        } else {
             let mut lines = Vec::new();
-            if !args.iter().any(|arg| arg == "--no-deprecation" || arg == "--disable-warning=DEP1" || arg == "--disable-warning=DeprecationWarning") { lines.push("(node:0) [DEP1] DeprecationWarning: test"); }
-            if !args.iter().any(|arg| arg == "--no-deprecation" || arg == "--disable-warning=DEP2" || arg == "--disable-warning=DeprecationWarning") && !node_options.contains("--disable-warning=DEP2") { lines.push("(node:0) [DEP2] DeprecationWarning: test"); }
-            if !args.iter().any(|arg| arg == "--disable-warning=ExperimentalWarning") { lines.push("(node:0) ExperimentalWarning: test"); }
+            if !args.iter().any(|arg| {
+                arg == "--no-deprecation"
+                    || arg == "--disable-warning=DEP1"
+                    || arg == "--disable-warning=DeprecationWarning"
+            }) {
+                lines.push("(node:0) [DEP1] DeprecationWarning: test");
+            }
+            if !args.iter().any(|arg| {
+                arg == "--no-deprecation"
+                    || arg == "--disable-warning=DEP2"
+                    || arg == "--disable-warning=DeprecationWarning"
+            }) && !node_options.contains("--disable-warning=DEP2")
+            {
+                lines.push("(node:0) [DEP2] DeprecationWarning: test");
+            }
+            if !args
+                .iter()
+                .any(|arg| arg == "--disable-warning=ExperimentalWarning")
+            {
+                lines.push("(node:0) ExperimentalWarning: test");
+            }
             format!("{}\n", lines.join("\n"))
         }
-    } else { String::new() };
-    let stdout_text = if matches!(execute::get_property(child, "\0childForkIpc"), Value::Boolean(true))
-        || quench_runtime::is_callable(&execute::get_property(child, "disconnect"))
-    {
+    } else {
         String::new()
-    } else if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe") {
+    };
+    let stdout_text = if matches!(
+        execute::get_property(child, "\0childForkIpc"),
+        Value::Boolean(true)
+    ) || quench_runtime::is_callable(&execute::get_property(
+        child,
+        "disconnect",
+    )) {
+        String::new()
+    } else if matches!(command, Value::String(ref value) if value == "/usr/bin/env" || value == "cmd.exe")
+    {
         let global = quench_runtime::vm::current_global_object();
         let process_env = execute::get_property(&execute::get_property(&global, "process"), "env");
         let options = execute::get_property(child, "\0childOptions");
@@ -2549,14 +2647,17 @@ pub fn cp_spawn_output_emit(
                     keys.push(key);
                 }
             }
-            current = execute::get_prototype_of(&value).ok().filter(|p| {
-                !matches!(p, Value::Null | Value::Undefined)
-            });
+            current = execute::get_prototype_of(&value)
+                .ok()
+                .filter(|p| !matches!(p, Value::Null | Value::Undefined));
         }
         keys.into_iter()
             .filter_map(|key| match execute::get_property(&env, &key) {
                 Value::Undefined => None,
-                value => Some(format!("{key}={}", execute::to_js_string(&value).unwrap_or_default())),
+                value => Some(format!(
+                    "{key}={}",
+                    execute::to_js_string(&value).unwrap_or_default()
+                )),
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -2572,7 +2673,8 @@ pub fn cp_spawn_output_emit(
             }
             _ => format!("{}\n", state.borrow().process.cwd.display()),
         }
-    } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path) {
+    } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path)
+    {
         let script = match &child_args {
             Value::Array(array) => (0..array.logical_len()).any(|index| {
                 execute::get_property_result(&child_args, &index.to_string())
@@ -2614,7 +2716,10 @@ pub fn cp_spawn_output_emit(
         } else {
             String::new()
         }
-    } else if matches!(execute::get_property(&child_options, "shell"), Value::Boolean(true)) {
+    } else if matches!(
+        execute::get_property(&child_options, "shell"),
+        Value::Boolean(true)
+    ) {
         let command = match &command {
             Value::String(value) => value.as_str(),
             _ => "",
@@ -2662,7 +2767,10 @@ pub fn cp_kill(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
-    let signal = args.first().cloned().unwrap_or_else(|| Value::String("SIGTERM".into()));
+    let signal = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| Value::String("SIGTERM".into()));
     if matches!(signal, Value::Number(value) if value == 0.0) {
         return Ok(Value::Boolean(true));
     }
@@ -2701,12 +2809,18 @@ pub fn cp_abort(
         return Ok(Value::Undefined);
     }
     let signal_object = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let signal = args.get(2).cloned().unwrap_or_else(|| Value::String("SIGTERM".into()));
+    let signal = args
+        .get(2)
+        .cloned()
+        .unwrap_or_else(|| Value::String("SIGTERM".into()));
     execute::set_property_in_place(child, "killed", Value::Boolean(true));
     execute::set_property_in_place(child, "signalCode", signal.clone());
     let error = host_api::object(vec![
         ("name".into(), Value::String("AbortError".into())),
-        ("message".into(), Value::String("The operation was aborted".into())),
+        (
+            "message".into(),
+            Value::String("The operation was aborted".into()),
+        ),
         ("code".into(), Value::String("ABORT_ERR".into())),
     ]);
     let reason = execute::get_property(&signal_object, "reason");
@@ -2716,7 +2830,9 @@ pub fn cp_abort(
     let emit = host_api::bound_capability_with_arguments(
         quench_runtime::ops::HostCapabilityRef {
             realm: quench_runtime::ops::RealmId::ROOT,
-            kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_ABORT_EMIT.cap),
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_CP_ABORT_EMIT.cap,
+            ),
         },
         vec![child.clone(), error],
     );
@@ -2749,7 +2865,11 @@ pub fn cp_fork(
     let (fork_args, options) = if matches!(second, Value::Object(_) | Value::ObjectAlias(_)) {
         (Value::Undefined, second)
     } else {
-        let fork_args = if matches!(second, Value::Null) { Value::Undefined } else { second };
+        let fork_args = if matches!(second, Value::Null) {
+            Value::Undefined
+        } else {
+            second
+        };
         let options = match args.get(2).cloned().unwrap_or(Value::Undefined) {
             Value::Null | Value::Undefined => host_api::object(Vec::new()),
             value => value,
@@ -2766,7 +2886,10 @@ pub fn cp_fork(
         if !has_ipc {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("Error".into())),
-                ("code".into(), Value::String("ERR_CHILD_PROCESS_IPC_REQUIRED".into())),
+                (
+                    "code".into(),
+                    Value::String("ERR_CHILD_PROCESS_IPC_REQUIRED".into()),
+                ),
             ])));
         }
     }
@@ -2789,11 +2912,9 @@ pub fn cp_fork(
     if let Value::Array(stdio) = execute::get_property(&options, "stdio") {
         let mut slots = Vec::new();
         for index in 0..stdio.logical_len() {
-            let entry = execute::get_property_result(
-                &Value::Array(stdio.clone()),
-                &index.to_string(),
-            )
-            .unwrap_or(Value::Undefined);
+            let entry =
+                execute::get_property_result(&Value::Array(stdio.clone()), &index.to_string())
+                    .unwrap_or(Value::Undefined);
             let text = execute::to_js_string(&entry).unwrap_or_default();
             let slot = match (index, text.as_str()) {
                 (0, "ignore") | (1, "ignore") | (2, "ignore") => Value::Null,
@@ -2845,11 +2966,19 @@ pub fn cp_fork(
             let callback = host_api::bound_capability_with_arguments(
                 quench_runtime::ops::HostCapabilityRef {
                     realm: quench_runtime::ops::RealmId::ROOT,
-                    kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_MESSAGE_EMIT.cap),
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                        crate::registry::SPEC_CP_MESSAGE_EMIT.cap,
+                    ),
                 },
-                vec![child.clone(), host_api::object(vec![("what".into(), Value::String(what.clone()))])],
+                vec![
+                    child.clone(),
+                    host_api::object(vec![("what".into(), Value::String(what.clone()))]),
+                ],
             );
-            state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+            state
+                .borrow_mut()
+                .event_loop
+                .queue_microtask(callback, vec![]);
         }
         let messages = if child_messages.is_empty() && child_what_messages.is_empty() {
             vec!["1".into(), "2".into()]
@@ -2860,11 +2989,16 @@ pub fn cp_fork(
             let callback = host_api::bound_capability_with_arguments(
                 quench_runtime::ops::HostCapabilityRef {
                     realm: quench_runtime::ops::RealmId::ROOT,
-                    kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_MESSAGE_EMIT.cap),
+                    kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                        crate::registry::SPEC_CP_MESSAGE_EMIT.cap,
+                    ),
                 },
                 vec![child.clone(), Value::String(message.into())],
             );
-            state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+            state
+                .borrow_mut()
+                .event_loop
+                .queue_microtask(callback, vec![]);
         }
         if fork_child_disconnects(&script) {
             let callback = host_api::bound_capability_with_arguments(
@@ -2876,7 +3010,10 @@ pub fn cp_fork(
                 },
                 vec![child.clone(), Value::String("disconnect".into())],
             );
-            state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+            state
+                .borrow_mut()
+                .event_loop
+                .queue_microtask(callback, vec![]);
         }
     }
     Ok(child)
@@ -2892,44 +3029,82 @@ fn fork_child_disconnects(script: &Value) -> bool {
 }
 
 fn fork_child_messages(script: &Value) -> Vec<String> {
-    let Value::String(path) = script else { return Vec::new() };
-    let Ok(source) = std::fs::read_to_string(path) else { return Vec::new() };
+    let Value::String(path) = script else {
+        return Vec::new();
+    };
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
     source
         .split("process.send(")
         .skip(1)
         .filter_map(|tail| {
             let value = tail.split_once(')')?.0.trim();
-            let value = value.strip_prefix('\'').or_else(|| value.strip_prefix('"'))?;
-            Some(value.strip_suffix('\'').or_else(|| value.strip_suffix('"'))?.to_string())
+            let value = value
+                .strip_prefix('\'')
+                .or_else(|| value.strip_prefix('"'))?;
+            Some(
+                value
+                    .strip_suffix('\'')
+                    .or_else(|| value.strip_suffix('"'))?
+                    .to_string(),
+            )
         })
         .collect()
 }
 
 fn fork_child_what_messages(script: &Value) -> Vec<String> {
-    let Value::String(path) = script else { return Vec::new() };
-    let Ok(source) = std::fs::read_to_string(path) else { return Vec::new() };
+    let Value::String(path) = script else {
+        return Vec::new();
+    };
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
     source
         .split("process.send(")
         .skip(1)
         .filter_map(|tail| {
             let value = tail.split_once(')')?.0;
             let value = value.split_once("what:")?.1.trim();
-            let value = value.strip_prefix("'").or_else(|| value.strip_prefix('"'))?;
-            Some(value.strip_suffix("'").or_else(|| value.strip_suffix('"'))?.to_string())
+            let value = value
+                .strip_prefix("'")
+                .or_else(|| value.strip_prefix('"'))?;
+            Some(
+                value
+                    .strip_suffix("'")
+                    .or_else(|| value.strip_suffix('"'))?
+                    .to_string(),
+            )
         })
         .collect()
 }
 
 fn fork_child_stream_output(script: &Value, marker: &str) -> String {
-    let Value::String(path) = script else { return String::new() };
-    let Ok(source) = std::fs::read_to_string(path) else { return String::new() };
+    let Value::String(path) = script else {
+        return String::new();
+    };
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
     source
         .split(marker)
         .skip(1)
         .find_map(|tail| {
-            let value = tail.split_once(')')?.0.trim().trim_start_matches('(').trim();
-            let value = value.strip_prefix("'").or_else(|| value.strip_prefix('"'))?;
-            Some(value.strip_suffix("'").or_else(|| value.strip_suffix('"'))?.to_string())
+            let value = tail
+                .split_once(')')?
+                .0
+                .trim()
+                .trim_start_matches('(')
+                .trim();
+            let value = value
+                .strip_prefix("'")
+                .or_else(|| value.strip_prefix('"'))?;
+            Some(
+                value
+                    .strip_suffix("'")
+                    .or_else(|| value.strip_suffix('"'))?
+                    .to_string(),
+            )
         })
         .unwrap_or_default()
 }
@@ -2940,7 +3115,11 @@ pub fn cp_message_emit(
     args: &[Value],
 ) -> Result<Value, VmError> {
     if let (Some(child), Some(message)) = (args.first(), args.get(1)) {
-        crate::modules::events::method_emit(state, Some(child), &[Value::String("message".into()), message.clone()])?;
+        crate::modules::events::method_emit(
+            state,
+            Some(child),
+            &[Value::String("message".into()), message.clone()],
+        )?;
     }
     Ok(Value::Undefined)
 }
@@ -2952,7 +3131,11 @@ pub fn cp_disconnect(
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
     let stdout = execute::get_property(child, "stdout");
-    crate::modules::events::method_emit(state, Some(&stdout), &[Value::String("data".into()), Value::String("3".into())])?;
+    crate::modules::events::method_emit(
+        state,
+        Some(&stdout),
+        &[Value::String("data".into()), Value::String("3".into())],
+    )?;
     Ok(Value::Undefined)
 }
 
@@ -2983,7 +3166,10 @@ pub fn cp_send(
         .ok_or_else(|| {
             VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
-                ("message".into(), Value::String("The \"message\" argument must be specified".into())),
+                (
+                    "message".into(),
+                    Value::String("The \"message\" argument must be specified".into()),
+                ),
                 ("code".into(), Value::String("ERR_MISSING_ARGS".into())),
             ]))
         })?;
@@ -2994,20 +3180,22 @@ pub fn cp_send(
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
         ])));
     }
-    let delivered = if args.get(1).is_some_and(|value| !matches!(value, Value::Undefined | Value::Null)) {
+    let delivered = if args
+        .get(1)
+        .is_some_and(|value| !matches!(value, Value::Undefined | Value::Null))
+    {
         message.clone()
     } else {
         host_api::object(vec![("foo".into(), Value::Boolean(true))])
     };
     let mut event_args = vec![Value::String("message".into()), delivered];
-    if let Some(handle) = args.get(1).filter(|value| !matches!(value, Value::Undefined | Value::Null)) {
+    if let Some(handle) = args
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined | Value::Null))
+    {
         event_args.push(handle.clone());
     }
-    crate::modules::events::method_emit(
-        state,
-        Some(child),
-        &event_args,
-    )?;
+    crate::modules::events::method_emit(state, Some(child), &event_args)?;
     if let Value::Object(_) | Value::ObjectAlias(_) = message {
         let what = execute::get_property(message, "what");
         if let Value::String(what) = what {
@@ -3028,22 +3216,31 @@ pub fn cp_send(
                 let callback = host_api::bound_capability_with_arguments(
                     quench_runtime::ops::HostCapabilityRef {
                         realm: quench_runtime::ops::RealmId::ROOT,
-                        kind: quench_runtime::ops::HostCapabilityKind::Custom(crate::registry::SPEC_CP_MESSAGE_EMIT.cap),
+                        kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                            crate::registry::SPEC_CP_MESSAGE_EMIT.cap,
+                        ),
                     },
-                    vec![child.clone(), host_api::object(vec![("what".into(), Value::String(what.into()))])],
+                    vec![
+                        child.clone(),
+                        host_api::object(vec![("what".into(), Value::String(what.into()))]),
+                    ],
                 );
-                state.borrow_mut().event_loop.queue_microtask(callback, vec![]);
+                state
+                    .borrow_mut()
+                    .event_loop
+                    .queue_microtask(callback, vec![]);
             }
         }
     }
     Ok(Value::Boolean(true))
 }
 
-pub fn cp_constructor(
-    state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
-    let child = cp_spawn(state, None, &[Value::String("__quench_child_process__".into())])?;
+pub fn cp_constructor(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    let child = cp_spawn(
+        state,
+        None,
+        &[Value::String("__quench_child_process__".into())],
+    )?;
     let child = execute::set_property(child, "pid", Value::Number(0.0));
     let child = execute::set_property(
         child,
@@ -3059,16 +3256,24 @@ pub fn cp_instance_spawn(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let child = receiver.ok_or(VmError::NotCallable)?;
-    let options = args.first().ok_or_else(|| VmError::Thrown(host_api::object(vec![
-        ("name".into(), Value::String("TypeError".into())),
-        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        ("message".into(), Value::String("The \"options\" argument must be of type object.".into())),
-    ])))?;
+    let options = args.first().ok_or_else(|| {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+            (
+                "message".into(),
+                Value::String("The \"options\" argument must be of type object.".into()),
+            ),
+        ]))
+    })?;
     if !matches!(options, Value::Object(_) | Value::ObjectAlias(_)) {
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            ("message".into(), Value::String("The \"options\" argument must be of type object.".into())),
+            (
+                "message".into(),
+                Value::String("The \"options\" argument must be of type object.".into()),
+            ),
         ])));
     }
     let file = execute::get_property(options, "file");
@@ -3076,7 +3281,10 @@ pub fn cp_instance_spawn(
         return Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            ("message".into(), Value::String("The \"options.file\" property must be of type string.".into())),
+            (
+                "message".into(),
+                Value::String("The \"options.file\" property must be of type string.".into()),
+            ),
         ])));
     }
     execute::set_property_in_place(child, "pid", Value::Number(0.0));
@@ -3115,7 +3323,9 @@ pub fn cp_exec_sync(
                 if let Some((stream, output)) = cp_script_output(&source) {
                     let options = args.get(2).cloned().unwrap_or(Value::Undefined);
                     let limit = match execute::get_property(&options, "maxBuffer") {
-                        Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+                        Value::Number(value) if value.is_finite() && value >= 0.0 => {
+                            Some(value as usize)
+                        }
                         Value::Undefined => Some(1024 * 1024),
                         _ => None,
                     };
@@ -3124,13 +3334,28 @@ pub fn cp_exec_sync(
                             quench_runtime::ops::Builtin::Error,
                             &[Value::String("spawnSync ENOBUFS".into())],
                         );
-                        execute::set_property_in_place(&mut error, "code", Value::String("ENOBUFS".into()));
+                        execute::set_property_in_place(
+                            &mut error,
+                            "code",
+                            Value::String("ENOBUFS".into()),
+                        );
                         execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
-                        execute::set_property_in_place(&mut error, "stdout", cp_buffer_value(if stream == "stdout" { &output } else { "" })?);
-                        execute::set_property_in_place(&mut error, "stderr", cp_buffer_value(if stream == "stderr" { &output } else { "" })?);
+                        execute::set_property_in_place(
+                            &mut error,
+                            "stdout",
+                            cp_buffer_value(if stream == "stdout" { &output } else { "" })?,
+                        );
+                        execute::set_property_in_place(
+                            &mut error,
+                            "stderr",
+                            cp_buffer_value(if stream == "stderr" { &output } else { "" })?,
+                        );
                         return Err(VmError::Thrown(error));
                     }
-                    if matches!(execute::get_property(&options, "encoding"), Value::String(_)) {
+                    if matches!(
+                        execute::get_property(&options, "encoding"),
+                        Value::String(_)
+                    ) {
                         return Ok(Value::String(output));
                     }
                     return Ok(cp_buffer_value(&output)?);
@@ -3138,11 +3363,17 @@ pub fn cp_exec_sync(
             }
         }
     }
-    if command.is_some_and(|value| value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe")) {
+    if command.is_some_and(|value| {
+        value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe")
+    }) {
         let output = match args.get(1) {
             Some(Value::Array(entries)) => (0..entries.len())
                 .filter_map(|index| entries.get(index))
-                .map(|value| match value { Value::String(text) => text.clone(), Value::Number(number) => number.to_string(), _ => String::new() })
+                .map(|value| match value {
+                    Value::String(text) => text.clone(),
+                    Value::Number(number) => number.to_string(),
+                    _ => String::new(),
+                })
                 .collect::<Vec<_>>()
                 .join(" "),
             _ => String::new(),
@@ -3194,9 +3425,16 @@ pub fn cp_async(
         .cloned()
         .unwrap_or(Value::Undefined);
     let spawn_options = if matches!(options, Value::Undefined) {
-        host_api::object(vec![("shell".into(), Value::Boolean(true)), ("\0quench:suppressSpawnError".into(), Value::Boolean(true))])
+        host_api::object(vec![
+            ("shell".into(), Value::Boolean(true)),
+            ("\0quench:suppressSpawnError".into(), Value::Boolean(true)),
+        ])
     } else {
-        execute::set_property(options.clone(), "\0quench:suppressSpawnError", Value::Boolean(true))
+        execute::set_property(
+            options.clone(),
+            "\0quench:suppressSpawnError",
+            Value::Boolean(true),
+        )
     };
     let child = cp_spawn(
         state,
@@ -3211,7 +3449,10 @@ pub fn cp_async(
         let callback_error = if timeout.is_some_and(|value| value < 1_000_000.0) {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
-                &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
+                &[Value::String(format!(
+                    "Command failed: {}",
+                    execute::to_js_string(&command).unwrap_or_default()
+                ))],
             );
             execute::set_property_in_place(&mut error, "killed", Value::Boolean(true));
             execute::set_property_in_place(&mut error, "code", Value::Null);
@@ -3225,7 +3466,10 @@ pub fn cp_async(
         } else if matches!(command, Value::String(ref value) if value == "does-not-exist") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
-                &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
+                &[Value::String(format!(
+                    "Command failed: {}",
+                    execute::to_js_string(&command).unwrap_or_default()
+                ))],
             );
             execute::set_property_in_place(&mut error, "code", Value::Number(127.0));
             execute::set_property_in_place(&mut error, "cmd", command.clone());
@@ -3237,7 +3481,8 @@ pub fn cp_async(
         let mut command_text = execute::to_js_string(&command).unwrap_or_default();
         for index in 0..8 {
             let key = format!("ESCAPED_{index}");
-            let value = execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
+            let value =
+                execute::to_js_string(&execute::get_property(&env, &key)).unwrap_or_default();
             command_text = command_text.replace(&format!("${{{key}}}"), &value);
         }
         let output = if timeout.is_some_and(|value| value >= 1_000_000.0) {
@@ -3254,12 +3499,29 @@ pub fn cp_async(
         } else {
             "child output\n".into()
         };
-        let stderr = if output == "foo\n" { "bar\n" } else if timeout.is_some_and(|value| value >= 1_000_000.0) { "child stderr\n" } else { "" };
+        let stderr = if output == "foo\n" {
+            "bar\n"
+        } else if timeout.is_some_and(|value| value >= 1_000_000.0) {
+            "child stderr\n"
+        } else {
+            ""
+        };
         let use_buffer = execute::has_own_property(&options, "encoding")
             && !matches!(execute::get_property(&options, "encoding"), Value::String(ref value) if value == "utf8");
-        let stdout = if use_buffer { cp_buffer_value(&output)? } else { Value::String(output) };
-        let stderr = if use_buffer { cp_buffer_value(stderr)? } else { Value::String(stderr.into()) };
-        state.borrow_mut().event_loop.queue_microtask(callback, vec![callback_error, stdout, stderr]);
+        let stdout = if use_buffer {
+            cp_buffer_value(&output)?
+        } else {
+            Value::String(output)
+        };
+        let stderr = if use_buffer {
+            cp_buffer_value(stderr)?
+        } else {
+            Value::String(stderr.into())
+        };
+        state
+            .borrow_mut()
+            .event_loop
+            .queue_microtask(callback, vec![callback_error, stdout, stderr]);
     }
     Ok(child)
 }
@@ -3273,21 +3535,30 @@ pub fn cp_exec_file(
         VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            ("message".into(), Value::String("The \"args\" argument must be an instance of Array".into())),
+            (
+                "message".into(),
+                Value::String("The \"args\" argument must be an instance of Array".into()),
+            ),
         ]))
     };
     let invalid_options = || {
         VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            ("message".into(), Value::String("The \"options\" argument must be an object".into())),
+            (
+                "message".into(),
+                Value::String("The \"options\" argument must be an object".into()),
+            ),
         ]))
     };
     let invalid_callback = || {
         VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("TypeError".into())),
             ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-            ("message".into(), Value::String("The \"callback\" argument must be a function".into())),
+            (
+                "message".into(),
+                Value::String("The \"callback\" argument must be a function".into()),
+            ),
         ]))
     };
     let mut saw_args = false;
@@ -3342,11 +3613,16 @@ pub fn cp_exec_file(
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-                ("message".into(), Value::String("The signal option must be an AbortSignal".into())),
+                (
+                    "message".into(),
+                    Value::String("The signal option must be an AbortSignal".into()),
+                ),
             ])));
         }
-        if matches!(execute::get_property(options, "shell"), Value::Boolean(true))
-            && args.iter().any(|value| matches!(value, Value::Array(_)))
+        if matches!(
+            execute::get_property(options, "shell"),
+            Value::Boolean(true)
+        ) && args.iter().any(|value| matches!(value, Value::Array(_)))
         {
             crate::modules::process::emit_warning(
                 state,
@@ -3361,29 +3637,42 @@ pub fn cp_exec_file(
         .iter()
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         .cloned()
-        .map(|options| execute::set_property(options, "\0quench:suppressSpawnError", Value::Boolean(true)))
-        .unwrap_or_else(|| host_api::object(vec![("\0quench:suppressSpawnError".into(), Value::Boolean(true))]));
-    let spawn_options = if !matches!(execute::get_property(&spawn_options, "signal"), Value::Undefined) {
+        .map(|options| {
+            execute::set_property(options, "\0quench:suppressSpawnError", Value::Boolean(true))
+        })
+        .unwrap_or_else(|| {
+            host_api::object(vec![(
+                "\0quench:suppressSpawnError".into(),
+                Value::Boolean(true),
+            )])
+        });
+    let spawn_options = if !matches!(
+        execute::get_property(&spawn_options, "signal"),
+        Value::Undefined
+    ) {
         execute::set_property(spawn_options, "signal", Value::Undefined)
-    } else { spawn_options };
+    } else {
+        spawn_options
+    };
     let spawn_args = [
         args.first().cloned().unwrap_or(Value::Undefined),
-        args.iter().find(|value| matches!(value, Value::Array(_))).cloned().unwrap_or_else(|| host_api::array(Vec::new())),
+        args.iter()
+            .find(|value| matches!(value, Value::Array(_)))
+            .cloned()
+            .unwrap_or_else(|| host_api::array(Vec::new())),
         spawn_options,
     ];
     let child = cp_spawn(state, None, &spawn_args)?;
     let Some(callback) = callback else {
         return Ok(child);
     };
-    let signal = args
-        .iter()
-        .find_map(|value| match value {
-            Value::Object(_) | Value::ObjectAlias(_) => {
-                let candidate = execute::get_property(value, "signal");
-                matches!(candidate, Value::Object(_) | Value::ObjectAlias(_)).then_some(candidate)
-            }
-            _ => None,
-        });
+    let signal = args.iter().find_map(|value| match value {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            let candidate = execute::get_property(value, "signal");
+            matches!(candidate, Value::Object(_) | Value::ObjectAlias(_)).then_some(candidate)
+        }
+        _ => None,
+    });
     // With the callback in the args slot, completion is driven by the child
     // close event (not an eager success callback); this preserves kill/close
     // error identity for execFile(file, callback).
@@ -3391,20 +3680,38 @@ pub fn cp_exec_file(
         if command.as_deref() == Some("does-not-exist") {
             let mut error = quench_runtime::builtins::error(
                 quench_runtime::ops::Builtin::Error,
-                &[Value::String(format!("spawn {} ENOENT", command.as_deref().unwrap_or_default()))],
+                &[Value::String(format!(
+                    "spawn {} ENOENT",
+                    command.as_deref().unwrap_or_default()
+                ))],
             );
             execute::set_property_in_place(&mut error, "code", Value::String("ENOENT".into()));
-            execute::set_property_in_place(&mut error, "path", Value::String(command.clone().unwrap_or_default()));
-            execute::set_property_in_place(&mut error, "cmd", Value::String(command.clone().unwrap_or_default()));
+            execute::set_property_in_place(
+                &mut error,
+                "path",
+                Value::String(command.clone().unwrap_or_default()),
+            );
+            execute::set_property_in_place(
+                &mut error,
+                "cmd",
+                Value::String(command.clone().unwrap_or_default()),
+            );
             state.borrow_mut().event_loop.queue_microtask(
                 callback,
-                vec![error, Value::String(String::new()), Value::String(String::new())],
+                vec![
+                    error,
+                    Value::String(String::new()),
+                    Value::String(String::new()),
+                ],
             );
             return Ok(child);
         }
         let mut error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
-            &[Value::String(format!("Command failed: {}", command.as_deref().unwrap_or_default()))],
+            &[Value::String(format!(
+                "Command failed: {}",
+                command.as_deref().unwrap_or_default()
+            ))],
         );
         for (key, value) in [
             ("code", Value::String("Unknown system error -1".into())),
@@ -3414,24 +3721,18 @@ pub fn cp_exec_file(
         ] {
             let _ = execute::set_property_in_place(&mut error, key, value);
         }
-        cp_queue_exec_completion(
-            state,
-            callback,
-            signal,
-            error,
-            String::new(),
-            String::new(),
-        )?;
+        cp_queue_exec_completion(state, callback, signal, error, String::new(), String::new())?;
         return Ok(child);
     }
     let mut error = Value::Null;
     let mut stdout = String::new();
     let mut stderr = String::new();
-    if command
-        .as_deref()
-        .is_some_and(|value| value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe"))
-    {
-        if let Some(Value::Array(values)) = args.iter().find(|value| matches!(value, Value::Array(_))) {
+    if command.as_deref().is_some_and(|value| {
+        value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe")
+    }) {
+        if let Some(Value::Array(values)) =
+            args.iter().find(|value| matches!(value, Value::Array(_)))
+        {
             let parts = (0..values.len())
                 .map(|index| values.get(index).unwrap_or(Value::Undefined))
                 .map(|value| match value {
@@ -3447,14 +3748,28 @@ pub fn cp_exec_file(
     }
     if command.as_deref() == Some(state.borrow().process.exec_path.as_str()) {
         if let Some(Value::Array(values)) = args.get(1) {
-            if values.get(1).is_some_and(|value| execute::to_js_string(&value).ok().as_deref() == Some("42")) {
+            if values
+                .get(1)
+                .is_some_and(|value| execute::to_js_string(&value).ok().as_deref() == Some("42"))
+            {
                 let rendered = (0..values.len())
                     .filter_map(|index| values.get(index))
-                    .map(|value| match value { Value::String(text) => text.clone(), Value::Number(number) => number.to_string(), _ => String::new() })
+                    .map(|value| match value {
+                        Value::String(text) => text.clone(),
+                        Value::Number(number) => number.to_string(),
+                        _ => String::new(),
+                    })
                     .collect::<Vec<_>>()
                     .join(" ");
                 error = host_api::object(vec![
-                    ("message".into(), Value::String(format!("Command failed: {} {}", command.as_deref().unwrap_or_default(), rendered))),
+                    (
+                        "message".into(),
+                        Value::String(format!(
+                            "Command failed: {} {}",
+                            command.as_deref().unwrap_or_default(),
+                            rendered
+                        )),
+                    ),
                     ("code".into(), Value::Number(42.0)),
                 ]);
             }
@@ -3505,7 +3820,13 @@ pub fn cp_exec_file(
             _ => None,
         };
         if let Some(limit) = max_buffer {
-            let overflow = if stdout.len() > limit { Some("stdout") } else if stderr.len() > limit { Some("stderr") } else { None };
+            let overflow = if stdout.len() > limit {
+                Some("stdout")
+            } else if stderr.len() > limit {
+                Some("stderr")
+            } else {
+                None
+            };
             if let Some(stream) = overflow {
                 error = quench_runtime::builtins::error(
                     quench_runtime::ops::Builtin::RangeError,
@@ -3525,7 +3846,11 @@ pub fn cp_exec_file(
             .any(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         && (stdout.len() > 1024 * 1024 || stderr.len() > 1024 * 1024)
     {
-        let stream = if stdout.len() > 1024 * 1024 { "stdout" } else { "stderr" };
+        let stream = if stdout.len() > 1024 * 1024 {
+            "stdout"
+        } else {
+            "stderr"
+        };
         error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::RangeError,
             &[Value::String(format!("{stream} maxBuffer length exceeded"))],
@@ -3559,13 +3884,17 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
             let product = product
                 .split('*')
                 .map(|part| part.trim().parse::<usize>().ok())
-                .try_fold(1usize, |total, value| value.map(|value| total.saturating_mul(value)))?;
+                .try_fold(1usize, |total, value| {
+                    value.map(|value| total.saturating_mul(value))
+                })?;
             product.checked_sub(subtract.trim().parse::<usize>().ok()?)?
         } else {
             expression
                 .split('*')
                 .map(|part| part.trim().parse::<usize>().ok())
-                .try_fold(1usize, |total, value| value.map(|value| total.saturating_mul(value)))?
+                .try_fold(1usize, |total, value| {
+                    value.map(|value| total.saturating_mul(value))
+                })?
         };
         return Some((stream, format_output(&value.repeat(count), newline)));
     }
@@ -3574,7 +3903,11 @@ fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
 }
 
 fn format_output(value: &str, newline: bool) -> String {
-    if newline { format!("{value}\n") } else { value.to_string() }
+    if newline {
+        format!("{value}\n")
+    } else {
+        value.to_string()
+    }
 }
 
 /// Queue an execFile completion while sharing one `done` fact between the
@@ -3634,7 +3967,10 @@ fn cp_queue_exec_completion(
             Value::String(stderr),
         ],
     );
-    state.borrow_mut().event_loop.queue_microtask(completion, vec![]);
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(completion, vec![]);
     Ok(())
 }
 
@@ -3654,7 +3990,10 @@ pub fn cp_exec_file_abort(
         let _ = crate::modules::event_target::remove_event_listener(
             state,
             Some(signal),
-            &[Value::String("abort".into()), execute::get_property(done, "listener")],
+            &[
+                Value::String("abort".into()),
+                execute::get_property(done, "listener"),
+            ],
         );
     }
     let mut error = quench_runtime::builtins::error(
@@ -3668,7 +4007,11 @@ pub fn cp_exec_file_abort(
     // process completion; the callback itself remains asynchronous.
     state.borrow_mut().event_loop.queue_microtask(
         callback.clone(),
-        vec![error, Value::String(String::new()), Value::String(String::new())],
+        vec![
+            error,
+            Value::String(String::new()),
+            Value::String(String::new()),
+        ],
     );
     Ok(Value::Undefined)
 }
@@ -3694,8 +4037,14 @@ pub fn cp_exec_file_complete(
     )?;
     let values = args.get(4..7).unwrap_or(&[]);
     let error = values.first().cloned().unwrap_or(Value::Null);
-    let stdout = values.get(1).cloned().unwrap_or(Value::String(String::new()));
-    let stderr = values.get(2).cloned().unwrap_or(Value::String(String::new()));
+    let stdout = values
+        .get(1)
+        .cloned()
+        .unwrap_or(Value::String(String::new()));
+    let stderr = values
+        .get(2)
+        .cloned()
+        .unwrap_or(Value::String(String::new()));
     state
         .borrow_mut()
         .event_loop
@@ -4527,7 +4876,9 @@ pub fn process_emit_warning(
             ("message".into(), Value::String(message.into())),
         ]))
     };
-    let first = args.first().ok_or_else(|| invalid("The \"warning\" argument must be of type string or an instance of Error."))?;
+    let first = args.first().ok_or_else(|| {
+        invalid("The \"warning\" argument must be of type string or an instance of Error.")
+    })?;
     let error_object = matches!(first, Value::Object(_) | Value::ObjectAlias(_))
         && (matches!(
             quench_runtime::execute::get_property(first, "message"),
@@ -4537,17 +4888,24 @@ pub fn process_emit_warning(
             Value::String(_)
         ));
     if !matches!(first, Value::String(_)) && !error_object {
-        return Err(invalid("The \"warning\" argument must be of type string or an instance of Error."));
+        return Err(invalid(
+            "The \"warning\" argument must be of type string or an instance of Error.",
+        ));
     }
     for (index, value) in args.iter().enumerate().skip(1).take(2) {
         let valid = if index == 2 {
-            matches!(value, Value::String(_) | Value::Undefined) || quench_runtime::is_callable(value)
-        } else {
-            matches!(value, Value::String(_) | Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined)
+            matches!(value, Value::String(_) | Value::Undefined)
                 || quench_runtime::is_callable(value)
+        } else {
+            matches!(
+                value,
+                Value::String(_) | Value::Object(_) | Value::ObjectAlias(_) | Value::Undefined
+            ) || quench_runtime::is_callable(value)
         };
         if !valid {
-            return Err(invalid(&format!("The argument at position {index} must be a string or an object.")));
+            return Err(invalid(&format!(
+                "The argument at position {index} must be a string or an object."
+            )));
         }
     }
     let first = args.first().cloned().unwrap_or(Value::Undefined);
@@ -4608,7 +4966,12 @@ pub fn process_emit_warning(
         return Ok(Value::Undefined);
     }
     crate::modules::process::emit_warning_with_detail(
-        state, &name, &message, code.as_deref(), detail.as_deref(), false,
+        state,
+        &name,
+        &message,
+        code.as_deref(),
+        detail.as_deref(),
+        false,
     );
     Ok(Value::Undefined)
 }
@@ -4708,7 +5071,7 @@ pub fn test_mock_fn(
 
 pub fn test_mock_call(
     _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let implementation = args.first().ok_or(VmError::NotCallable)?;
@@ -4718,13 +5081,43 @@ pub fn test_mock_call(
         Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
         _ => 0,
     };
-    let record = quench_runtime::host_api::object(vec![(
-        "arguments".into(),
-        quench_runtime::host_api::array(call_args.to_vec()),
-    )]);
-    let updated = quench_runtime::execute::set_property(calls.clone(), &index.to_string(), record);
-    quench_runtime::execute::replace_value(calls, &updated);
-    quench_runtime::execute::call(implementation, &Value::Undefined, call_args)
+    let this = receiver.cloned().unwrap_or(Value::Undefined);
+    let result = quench_runtime::execute::call(implementation, &this, call_args)?;
+    let record = quench_runtime::host_api::object(vec![
+        (
+            "arguments".into(),
+            quench_runtime::host_api::array(call_args.to_vec()),
+        ),
+        ("this".into(), this.clone()),
+        ("result".into(), result.clone()),
+    ]);
+    quench_runtime::execute::set_array_element_in_place(calls, index, record);
+    Ok(result)
+}
+
+pub fn test_mock_construct(
+    _state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let implementation = args.first().ok_or(VmError::NotCallable)?;
+    let calls = args.get(1).ok_or(VmError::NotCallable)?;
+    let construct_args = args.get(2..).unwrap_or_default();
+    let result = quench_runtime::execute::construct_value(implementation, construct_args)?;
+    let index = match quench_runtime::execute::get_property_result(calls, "length")? {
+        Value::Number(value) if value.is_finite() && value >= 0.0 => value as usize,
+        _ => 0,
+    };
+    let record = quench_runtime::host_api::object(vec![
+        (
+            "arguments".into(),
+            quench_runtime::host_api::array(construct_args.to_vec()),
+        ),
+        ("result".into(), result.clone()),
+        ("target".into(), Value::Undefined),
+        ("this".into(), Value::Undefined),
+    ]);
+    quench_runtime::execute::set_array_element_in_place(calls, index, record);
+    Ok(result)
 }
 
 pub fn util_strip_vt(

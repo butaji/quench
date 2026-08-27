@@ -52,7 +52,8 @@ const CAP_UTIL_FORMAT: u16 = 0x0300;
 const CAP_UTIL_DEPRECATE: u16 = 0x0730;
 const CAP_UTIL_DEPRECATED_CALL: u16 = 0x0731;
 const CAP_UTIL_SYSTEM_ERROR_NAME: u16 = 0x0733;
-const CAP_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE: u16 = crate::registry::SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE.cap;
+const CAP_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE: u16 =
+    crate::registry::SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE.cap;
 const CAP_UTIL_DEBUGLOG: u16 = 0x0735;
 const CAP_UTIL_EXCEPTION_WITH_HOST_PORT: u16 = 0x0734;
 const CAP_INTERNAL_UTIL_EMIT_WARNING: u16 = crate::registry::SPEC_INTERNAL_UTIL_EMIT_WARNING.cap;
@@ -974,6 +975,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_CUSTOM_EVENT => handlers::custom_event_new,
         CAP_ASSERT_CONSTRUCTOR => crate::modules::assert::constructor_new,
         CAP_ASSERTION_ERROR_CONSTRUCTOR => crate::modules::assert::assertion_error_constructor,
+        CAP_TEST_MOCK_CALL => test_mock_construct,
         CAP_CP_CONSTRUCTOR => cp_constructor,
         0x0E03 => crate::modules::dns::dns_exception,
         _ => return None,
