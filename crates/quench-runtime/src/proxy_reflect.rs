@@ -132,7 +132,7 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
-        if let Some(trap) = get_handler_trap(proxy, "ownKeys") {
+        if let Some(trap) = get_handler_trap(proxy, "ownKeys")? {
             let result = call_trap(
                 &trap,
                 std::slice::from_ref(&proxy_target),
