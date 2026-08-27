@@ -27,8 +27,11 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayFilter => Some("filter"),
         Builtin::ArraySome => Some("some"),
         Builtin::ArrayEvery => Some("every"),
+        Builtin::TypedArrayEvery => Some("every"),
         Builtin::ArrayFind => Some("find"),
+        Builtin::TypedArrayFind => Some("find"),
         Builtin::ArrayFindIndex => Some("findIndex"),
+        Builtin::TypedArrayFindIndex => Some("findIndex"),
         Builtin::ArrayIterator | Builtin::TypedArrayIterator => Some("values"),
         Builtin::ArrayKeys => Some("keys"),
         Builtin::TypedArrayKeys => Some("keys"),
@@ -44,13 +47,16 @@ const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayAt => Some("at"),
         Builtin::ArraySort => Some("sort"),
         Builtin::ArrayForEach => Some("forEach"),
+        Builtin::TypedArrayForEach => Some("forEach"),
         Builtin::ArrayReduce => Some("reduce"),
         Builtin::ArrayReduceRight => Some("reduceRight"),
         Builtin::ArrayPush => Some("push"),
         Builtin::ArrayShift => Some("shift"),
         Builtin::ArrayReverse => Some("reverse"),
         Builtin::ArrayFindLast => Some("findLast"),
+        Builtin::TypedArrayFindLast => Some("findLast"),
         Builtin::ArrayFindLastIndex => Some("findLastIndex"),
+        Builtin::TypedArrayFindLastIndex => Some("findLastIndex"),
         _ => fn_name_tail(builtin),
     }
 }
@@ -97,10 +103,15 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayFilter
         | Builtin::ArraySome
         | Builtin::ArrayEvery
+        | Builtin::TypedArrayEvery
         | Builtin::ArrayFind
+        | Builtin::TypedArrayFind
         | Builtin::ArrayFindIndex
+        | Builtin::TypedArrayFindIndex
         | Builtin::ArrayFindLast
+        | Builtin::TypedArrayFindLast
         | Builtin::ArrayFindLastIndex
+        | Builtin::TypedArrayFindLastIndex
         | Builtin::ArrayIncludes
         | Builtin::ArrayIndexOf
         | Builtin::ArrayLastIndexOf
@@ -108,6 +119,7 @@ const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayAt
         | Builtin::ArraySort
         | Builtin::ArrayForEach
+        | Builtin::TypedArrayForEach
         | Builtin::ArrayReduce
         | Builtin::ArrayReduceRight
         | Builtin::ArrayPush
