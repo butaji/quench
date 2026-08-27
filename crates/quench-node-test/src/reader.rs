@@ -174,10 +174,14 @@ impl NodeRunner {
         let result = self.route_uncaught(result);
         // `process.exit` unwinds with an error; `exit` handlers still run.
         let result = match result {
-            Err(error) => match self.drive("__quench_run_exit__();") {
-                Ok(_) => Err(error),
-                Err(exit_error) => Err(exit_error),
-            },
+            Err(error) => {
+                // Preserve the original observable exception. The exit pump
+                // may itself return a control-flow completion, but replacing
+                // the assertion/error here would make every failed fixture
+                // look like an opaque `process.exit(1)`.
+                let _ = self.drive("__quench_run_exit__();");
+                Err(error)
+            }
             ok => ok.map(|_| ()),
         };
         Self::classify(result, self.host.exit_code())
