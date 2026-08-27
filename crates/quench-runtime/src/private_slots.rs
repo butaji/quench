@@ -207,12 +207,15 @@ fn private_brand_error() -> VmError {
 }
 
 fn private_brand_error_for(name: &crate::value::PrivateName) -> VmError {
-    let error = crate::builtins::error(
-        crate::ops::Builtin::TypeError,
-        &[Value::String(
-            "Private field access on an object without the required brand".to_string(),
-        )],
-    );
+    let message = if name.label().is_empty() {
+        "Private field access on an object without the required brand".to_string()
+    } else {
+        format!(
+            "Cannot read private member #{} from an object whose class did not declare it",
+            name.label()
+        )
+    };
+    let error = crate::builtins::error(crate::ops::Builtin::TypeError, &[Value::String(message)]);
     let error = if name.realm() == crate::ops::RealmId::ROOT {
         error
     } else {

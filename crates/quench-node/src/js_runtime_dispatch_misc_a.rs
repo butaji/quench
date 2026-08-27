@@ -80,6 +80,12 @@ impl QuenchNodeHost {
                 ), (
                     "method".into(),
                     crate::host::capability(crate::registry::SPEC_TEST_MOCK_METHOD),
+                ), (
+                    "getter".into(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_GETTER),
+                ), (
+                    "setter".into(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER),
                 )]);
                 let context = quench_runtime::host_api::object(vec![
                     ("assert".into(), assert_module()),
