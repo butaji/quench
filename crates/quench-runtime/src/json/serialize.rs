@@ -236,7 +236,7 @@ fn enumerable_keys(value: &Value) -> Result<Vec<String>, VmError> {
         if crate::proxy::is_revoked(proxy) {
             return Err(revoked_error());
         }
-        if crate::proxy::get_handler_trap(proxy, "ownKeys").is_some() {
+        if crate::proxy::get_handler_trap(proxy, "ownKeys")?.is_some() {
             return proxy_trapped_keys(value);
         }
         return enumerable_keys(&proxy.target.clone());
