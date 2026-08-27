@@ -15,7 +15,7 @@ pub struct FsState;
 
 impl Default for FsState {
     fn default() -> Self {
-        Self
+        Self::new()
     }
 }
 
@@ -193,12 +193,26 @@ pub fn validate_stream_options(
 }
 
 pub fn validate_watch_options(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     parse_options(args.get(1))?;
-    Ok(host_api::object(vec![("close".into(), Value::Undefined)]))
+    let watcher = crate::modules::events::new_emitter_object(state)?;
+    Ok(quench_runtime::execute::set_property(
+        watcher,
+        "close",
+        crate::host::capability(crate::registry::SPEC_FS_WATCH_CLOSE),
+    ))
+}
+
+pub fn close_watch(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let _ = (state, receiver);
+    Ok(Value::Undefined)
 }
 
 pub fn validate_directory_options(
