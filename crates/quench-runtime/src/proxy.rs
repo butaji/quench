@@ -99,13 +99,12 @@ fn check_revoked(proxy: &ProxyValue) -> Result<(), VmError> {
     }
 }
 
-pub(crate) fn get_handler_trap(proxy: &ProxyValue, trap: &str) -> Option<Value> {
-    let value =
-        crate::execute::get_property_result(&proxy.handler, trap).unwrap_or(Value::Undefined);
+pub(crate) fn get_handler_trap(proxy: &ProxyValue, trap: &str) -> Result<Option<Value>, VmError> {
+    let value = crate::execute::get_property_result(&proxy.handler, trap)?;
     if matches!(value, Value::Undefined | Value::Null) {
-        None
+        Ok(None)
     } else {
-        Some(value)
+        Ok(Some(value))
     }
 }
 
@@ -132,7 +131,7 @@ pub(crate) fn proxy_get(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "get") {
+        if let Some(trap) = get_handler_trap(proxy, "get")? {
             let receiver = receiver.unwrap_or(target);
             let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
             let result = call_trap(
@@ -219,7 +218,7 @@ fn proxy_target_property(
 pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "has") {
+        if let Some(trap) = get_handler_trap(proxy, "has")? {
             let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), Value::String(prop.to_string())],
@@ -265,7 +264,7 @@ fn is_non_configurable_descriptor(descriptor: &Value) -> bool {
 pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "deleteProperty") {
+        if let Some(trap) = get_handler_trap(proxy, "deleteProperty")? {
             let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), Value::String(prop.to_string())],
@@ -303,7 +302,7 @@ pub(crate) fn proxy_apply(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "apply") {
+        if let Some(trap) = get_handler_trap(proxy, "apply")? {
             let args_array = Value::array(arguments.to_vec());
             return call_trap(
                 &trap,
@@ -336,7 +335,7 @@ pub(crate) fn proxy_construct(
     }
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "construct") {
+        if let Some(trap) = get_handler_trap(proxy, "construct")? {
             let args_array = Value::array(arguments.to_vec());
             let new_target = new_target.unwrap_or(target);
             let result = call_trap(
@@ -389,7 +388,7 @@ fn is_constructible(value: &Value) -> bool {
 pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "getPrototypeOf") {
+        if let Some(trap) = get_handler_trap(proxy, "getPrototypeOf")? {
             let result = call_trap(&trap, slice::from_ref(&proxy.target), Some(&proxy.handler))?;
             if !matches!(result, Value::Null) && !crate::value::is_object(&result) {
                 return Err(crate::value::error::throw_type_error(
@@ -421,7 +420,7 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
     }
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "setPrototypeOf") {
+        if let Some(trap) = get_handler_trap(proxy, "setPrototypeOf")? {
             let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
             let result = call_trap(
                 &trap,
@@ -486,7 +485,7 @@ pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
-        if let Some(trap) = get_handler_trap(proxy, "isExtensible") {
+        if let Some(trap) = get_handler_trap(proxy, "isExtensible")? {
             let result = call_trap(&trap, slice::from_ref(&proxy_target), Some(&proxy.handler))?;
             let reported = crate::execute::is_truthy(&result);
             if reported != crate::properties::object_is_extensible(&proxy_target) {
@@ -512,7 +511,7 @@ pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
 pub(crate) fn proxy_prevent_extensions(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "preventExtensions") {
+        if let Some(trap) = get_handler_trap(proxy, "preventExtensions")? {
             let result = call_trap(&trap, slice::from_ref(&proxy.target), Some(&proxy.handler))?;
             let success = crate::execute::is_truthy(&result);
             if success && crate::properties::object_is_extensible(&proxy.target) {
@@ -545,13 +544,13 @@ pub(crate) fn proxy_get_own_property_descriptor(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "getOwnPropertyDescriptor") {
+        if let Some(trap) = get_handler_trap(proxy, "getOwnPropertyDescriptor")? {
             let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), Value::String(prop.to_string())],
                 Some(&proxy.handler),
             )?;
-            if !matches!(result, Value::Null | Value::Undefined | Value::Object(_)) {
+            if !matches!(result, Value::Undefined | Value::Object(_)) {
                 return Err(crate::value::error::throw_type_error(
                     "Proxy getOwnPropertyDescriptor trap must return an object or undefined",
                 ));
@@ -667,7 +666,7 @@ pub(crate) fn proxy_define_property(
 ) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "defineProperty") {
+        if let Some(trap) = get_handler_trap(proxy, "defineProperty")? {
             let result = call_trap(
                 &trap,
                 &[

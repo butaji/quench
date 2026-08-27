@@ -100,7 +100,10 @@ fn is_constructor(value: &crate::value::Value) -> bool {
             crate::builtin_meta::constructor_name(*builtin).is_some()
         }
         crate::value::Value::Proxy(proxy) => {
-            crate::proxy::get_handler_trap(proxy, "construct").is_some()
+            crate::proxy::get_handler_trap(proxy, "construct")
+                .ok()
+                .flatten()
+                .is_some()
                 || is_constructor(&proxy.target)
         }
         _ => false,
