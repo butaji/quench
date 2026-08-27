@@ -373,9 +373,11 @@ pub fn spawn_sync(
 }
 
 fn run_compat_test_child(args: &[String]) -> Result<Value, VmError> {
-    let Some((index, fixture)) = args.iter().enumerate().find(|(_, arg)| {
-        arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs")
-    }) else {
+    let Some((index, fixture)) = args
+        .iter()
+        .enumerate()
+        .find(|(_, arg)| arg.ends_with(".js") || arg.ends_with(".mjs") || arg.ends_with(".cjs"))
+    else {
         return Ok(spawn_error_result("EINVAL", "--test requires a fixture"));
     };
     let executable = std::env::current_exe()
@@ -393,11 +395,20 @@ fn run_compat_test_child(args: &[String]) -> Result<Value, VmError> {
     let stderr = crate::modules::buffer_proto::make_buffer(&output.stderr);
     Ok(host_api::object(vec![
         ("pid".into(), Value::Number(0.0)),
-        ("status".into(), output.status.code().map_or(Value::Null, |code| Value::Number(code as f64))),
+        (
+            "status".into(),
+            output
+                .status
+                .code()
+                .map_or(Value::Null, |code| Value::Number(code as f64)),
+        ),
         ("signal".into(), Value::Null),
         ("stdout".into(), stdout.clone()),
         ("stderr".into(), stderr.clone()),
-        ("output".into(), host_api::array(vec![Value::Null, stdout, stderr])),
+        (
+            "output".into(),
+            host_api::array(vec![Value::Null, stdout, stderr]),
+        ),
     ]))
 }
 

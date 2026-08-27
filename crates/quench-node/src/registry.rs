@@ -104,13 +104,15 @@ pub const SPEC_TEST_MOCK_RESET_CALLS: NodeSpec = NodeSpec::new("test:mock:resetC
 pub const SPEC_TEST_MOCK_RESET: NodeSpec = NodeSpec::new("test:mock:reset", 0x1b12);
 pub const SPEC_TEST_MOCK_PROPERTY: NodeSpec = NodeSpec::new("test:mock:property", 0x1b13);
 pub const SPEC_TEST_MOCK_ACCESS_COUNT: NodeSpec = NodeSpec::new("test:mock:accessCount", 0x1b14);
-pub const SPEC_TEST_MOCK_RESET_ACCESSES: NodeSpec = NodeSpec::new("test:mock:resetAccesses", 0x1b15);
+pub const SPEC_TEST_MOCK_RESET_ACCESSES: NodeSpec =
+    NodeSpec::new("test:mock:resetAccesses", 0x1b15);
 pub const SPEC_TEST_MOCK_PROPERTY_GET: NodeSpec = NodeSpec::new("test:mock:propertyGet", 0x1b16);
 pub const SPEC_TEST_MOCK_PROPERTY_SET: NodeSpec = NodeSpec::new("test:mock:propertySet", 0x1b17);
 pub const SPEC_TEST_MOCK_PROPERTY_ONCE: NodeSpec = NodeSpec::new("test:mock:propertyOnce", 0x1b18);
 pub const SPEC_TEST_MOCK_TIMERS_ENABLE: NodeSpec = NodeSpec::new("test:mock:timers:enable", 0x1b19);
 pub const SPEC_TEST_MOCK_TIMERS_TICK: NodeSpec = NodeSpec::new("test:mock:timers:tick", 0x1b1A);
-pub const SPEC_TEST_MOCK_TIMERS_SETTIME: NodeSpec = NodeSpec::new("test:mock:timers:setTime", 0x1b1B);
+pub const SPEC_TEST_MOCK_TIMERS_SETTIME: NodeSpec =
+    NodeSpec::new("test:mock:timers:setTime", 0x1b1B);
 pub const SPEC_TEST_MOCK_TIMERS_RESET: NodeSpec = NodeSpec::new("test:mock:timers:reset", 0x1b1C);
 pub const SPEC_TEST_MOCK_MODULE: NodeSpec = NodeSpec::new("test:mock:module", 0x1b1D);
 pub const SPEC_TEST_CONTEXT_SKIP: NodeSpec = NodeSpec::new("test:context:skip", 0x1b1E);
