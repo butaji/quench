@@ -513,6 +513,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "child_process" => {
             let exec_file = crate::host::capability(crate::registry::SPEC_CP_EXECFILE);
             Some(crate::host::namespace_object_from_pairs(vec![
+            ("fork".to_string(), crate::host::capability(crate::registry::SPEC_CP_FORK)),
             (
                 "ChildProcess".to_string(),
                 crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR),
