@@ -70,12 +70,23 @@ fn execute_special_tail(
             !matches!(value, Value::Builtin(Builtin::Object))
         }) => get_prototype_of(receiver),
         Builtin::ObjectGetPrototypeOf => get_prototype_of(arguments.first()),
+        Builtin::ObjectSetPrototypeOf if arguments.is_empty() && receiver.is_some_and(|value| {
+            !matches!(value, Value::Builtin(Builtin::Object))
+        }) => Ok(Value::Undefined),
         Builtin::ObjectSetPrototypeOf if arguments.len() == 1 && receiver.is_some_and(|value| {
             !matches!(value, Value::Builtin(Builtin::Object))
         }) => {
             let mut call_arguments = vec![receiver.cloned().unwrap_or(Value::Undefined)];
             call_arguments.extend_from_slice(arguments);
-            set_prototype_of(&call_arguments).map(|_| Value::Undefined)
+            if matches!(receiver, Some(Value::Proxy(_))) {
+                let _ = crate::proxy::proxy_set_prototype_of(
+                    receiver.expect("receiver checked above"),
+                    arguments.first().expect("argument checked above"),
+                )?;
+                Ok(Value::Undefined)
+            } else {
+                set_prototype_of(&call_arguments).map(|_| Value::Undefined)
+            }
         }
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => legacy_accessor_special(builtin, receiver, arguments),
@@ -170,6 +181,13 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Object.setPrototypeOf target must be an object",
         ));
     };
+    if !crate::value::is_object(target)
+        && !matches!(target, Value::Null | Value::Undefined)
+    {
+        let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+        validate_set_prototype_value(&prototype)?;
+        return Ok(target.clone());
+    }
     validate_set_prototype_target(target)?;
     let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     validate_set_prototype_value(&prototype)?;
@@ -192,6 +210,15 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
         }
     }
     let result = match target {
+        Value::Proxy(_) => {
+            let success = crate::proxy::proxy_set_prototype_of(target, &prototype)?;
+            if !crate::execute::is_truthy(&success) {
+                return Err(crate::value::error::throw_type_error(
+                    "Object.setPrototypeOf proxy trap returned false",
+                ));
+            }
+            target.clone()
+        }
         Value::Function(_) | Value::BoundFunction(_) => set_function_prototype(target, prototype),
         Value::Object(data) => set_object_prototype(data, prototype),
         _ => crate::builtins::set_property(target.clone(), "\0prototype", prototype),
