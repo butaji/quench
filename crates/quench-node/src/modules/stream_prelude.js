@@ -279,7 +279,10 @@
             (st.awaitDrainWriters instanceof Set
               ? st.awaitDrainWriters.size > 0
               : true)) {
-          st.flowing = false;
+          if (st.flowing) {
+            st.flowing = false;
+            stream._emitter.emit("pause");
+          }
           break;
         }
       }
@@ -474,16 +477,16 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = st.readRequests > 0;
-        if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          requestRead(this);
-        }
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          requestRead(this);
+        }
         return chunk;
       }
       if (!st.ended && !st.reading) {
@@ -492,16 +495,16 @@
       if (st.buffer.length > 0) {
         let chunk = st.buffer.shift();
         st.reading = st.readRequests > 0;
-        if (st.buffer.length === 0 && !st.ended && !st.reading) {
-          st.reading = true;
-          requestRead(this);
-        }
         if (st.decoder && typeof chunk !== "string") {
           chunk = st.decoder.write(chunk);
           while (!st.objectMode && st.buffer.length > 0) chunk += st.decoder.write(st.buffer.shift());
         }
         finishIfEnded();
         if (this.listenerCount("data") > 0) this._emitter.emit("data", chunk);
+        if (st.buffer.length === 0 && !st.ended && !st.reading) {
+          st.reading = true;
+          requestRead(this);
+        }
         return chunk;
       }
       finishIfEnded();
@@ -1803,16 +1806,21 @@
   Writable.destroy = destroy;
   // Keep the public stream module's Duplex family connected to the canonical
   // NodeDuplex adapters installed by the bootstrap layer.
-  Duplex.from ||= (source, options = {}) => {
+  const DuplexCompat = function (options = {}) {
+    return Reflect.construct(Duplex, [options], new.target || DuplexCompat);
+  };
+  DuplexCompat.prototype = Duplex.prototype;
+  Object.setPrototypeOf(DuplexCompat, Duplex);
+  DuplexCompat.from = (source, options = {}) => {
     const pair = source && source.readable && source.readable.getReader
       ? source
       : source && source.getReader
         ? { readable: source }
         : null;
-    if (pair) return Duplex.fromWeb(pair, options);
+    if (pair) return DuplexCompat.fromWeb(pair, options);
     return Readable.from(source, options);
   };
-  Duplex.fromWeb ||= (pair, options) =>
+  DuplexCompat.fromWeb = (pair, options) =>
     (() => {
       const readable = pair?.readable;
       const reader = readable?.getReader?.();
@@ -1826,8 +1834,11 @@
           if (reading) return;
           reading = true;
           reader.read().then(({ value, done }) => {
-            reading = false;
-            if (done) this.push(null);
+          reading = false;
+            if (done) {
+              this.push(null);
+              this.readable = false;
+            }
             else this.push(value);
           }, (error) => {
             reading = false;
@@ -1840,7 +1851,7 @@
   return {
     Readable,
     Writable,
-    Duplex,
+    Duplex: DuplexCompat,
     Transform,
     PassThrough,
     Stream: Readable,
