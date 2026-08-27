@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('assert');
+require('../../node/test/common');
 const nodeTest = require('node:test');
 
 assert.strictEqual(typeof nodeTest, 'function');
@@ -19,8 +20,24 @@ nodeTest('context exposes mock', (t) => {
   assert.strictEqual(add(3, 4), 7);
   assert.strictEqual(add.mock.calls.length, 1);
   assert.deepStrictEqual(add.mock.calls[0].arguments, [3, 4]);
+  assert.strictEqual(add.mock.calls[0].result, 7);
+  assert.strictEqual(add.mock.calls[0].error, undefined);
+  assert.strictEqual(add.mock.calls[0].this, undefined);
   const body = t.mock.fn(function (a, b) {
     return a + b;
   });
   assert.strictEqual(body(3, 4), 7);
+});
+
+const { mock, test } = require('node:test');
+test('destructured mock', (t) => {
+  const sum = t.mock.fn((arg1, arg2) => {
+    return arg1 + arg2;
+  });
+  assert.strictEqual(sum.mock.calls.length, 0);
+  assert.strictEqual(sum(3, 4), 7);
+  assert.strictEqual(sum.call(1000, 9, 1), 10);
+  assert.strictEqual(sum.mock.calls.length, 2);
+  assert.strictEqual(sum.mock.calls[1].this, 1000);
+  assert.strictEqual(sum.mock.calls[1].result, 10);
 });
