@@ -232,6 +232,9 @@ pub const SPEC_UTIL_EXCEPTION_WITH_HOST_PORT: NodeSpec =
 pub const SPEC_UTIL_CONVERT_SIGNAL_TO_EXIT_CODE: NodeSpec =
     NodeSpec::new("util:convertProcessSignalToExitCode", 0x2203);
 pub const SPEC_CP_KILL: NodeSpec = NodeSpec::new("child_process:ChildProcess:kill", 0x2204);
+pub const SPEC_CP_CONSTRUCTOR: NodeSpec = NodeSpec::new("child_process:ChildProcess", 0x2205);
+pub const SPEC_CP_INSTANCE_SPAWN: NodeSpec =
+    NodeSpec::new("child_process:ChildProcess:spawn", 0x2206);
 pub const SPEC_INTERNAL_UTIL_EMIT_WARNING: NodeSpec =
     NodeSpec::new("internal/util:emitExperimentalWarning", 0x2201);
 pub const SPEC_OS_GET_PRIORITY: NodeSpec = NodeSpec::new("os:getPriority", 0x0736);
