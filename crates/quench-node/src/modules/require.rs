@@ -467,6 +467,11 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             for alias in ["test", "describe", "it", "suite"] {
                 let _ = attach(&test_fn, alias, test_fn.clone());
             }
+            let mock = quench_runtime::host_api::object(vec![(
+                "fn".to_string(),
+                crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+            )]);
+            let _ = attach(&test_fn, "mock", mock);
             Some(test_fn)
         }
         "stream/web" => Some(crate::host::namespace_object_from_pairs(vec![(
@@ -513,33 +518,36 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
         "child_process" => {
             let exec_file = crate::host::capability(crate::registry::SPEC_CP_EXECFILE);
             Some(crate::host::namespace_object_from_pairs(vec![
-            ("fork".to_string(), crate::host::capability(crate::registry::SPEC_CP_FORK)),
-            (
-                "ChildProcess".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR),
-            ),
-            (
-                "spawnSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
-            ),
-            (
-                "execSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
-            ),
-            (
-                "exec".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXEC),
-            ),
-            ("execFile".to_string(), exec_file.clone()),
-            ("\0quench:child_process_execFile".to_string(), exec_file),
-            (
-                "execFileSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
-            ),
-            (
-                "spawn".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_SPAWN),
-            ),
+                (
+                    "fork".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_FORK),
+                ),
+                (
+                    "ChildProcess".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_CONSTRUCTOR),
+                ),
+                (
+                    "spawnSync".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
+                ),
+                (
+                    "execSync".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
+                ),
+                (
+                    "exec".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_EXEC),
+                ),
+                ("execFile".to_string(), exec_file.clone()),
+                ("\0quench:child_process_execFile".to_string(), exec_file),
+                (
+                    "execFileSync".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
+                ),
+                (
+                    "spawn".to_string(),
+                    crate::host::capability(crate::registry::SPEC_CP_SPAWN),
+                ),
             ]))
         }
         _ => None,
