@@ -86,6 +86,12 @@ fn context() -> Value {
             ("getter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_GETTER)),
             ("setter".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_SETTER)),
             ("property".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_PROPERTY)),
+            ("timers".into(), quench_runtime::host_api::object(vec![
+                ("enable".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_ENABLE)),
+                ("tick".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_TICK)),
+                ("setTime".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_SETTIME)),
+                ("reset".into(), crate::host::capability(crate::registry::SPEC_TEST_MOCK_TIMERS_RESET)),
+            ])),
         ])),
     ])
 }
@@ -131,6 +137,7 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     let result = quench_runtime::vm::call_value(callback, &Value::Undefined, &[context.clone()]);
     let frame = FRAMES.with(|frames| frames.borrow_mut().pop()).unwrap();
     for restore in frame.restores.iter().rev() { let _ = quench_runtime::vm::call_value(restore, &Value::Undefined, &[]); }
+    quench_runtime::date::set_mock_now(None);
     match result {
         Ok(result) => {
             // Async callbacks return a promise; drive the loop until it

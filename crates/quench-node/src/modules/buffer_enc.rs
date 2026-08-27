@@ -50,6 +50,10 @@ pub fn invalid_arg_value(message: String) -> VmError {
     coded_error("TypeError", "ERR_INVALID_ARG_VALUE", &message)
 }
 
+pub fn invalid_state(message: String) -> VmError {
+    coded_error("Error", "ERR_INVALID_STATE", &message)
+}
+
 pub fn invalid_this() -> VmError {
     coded_error(
         "TypeError",

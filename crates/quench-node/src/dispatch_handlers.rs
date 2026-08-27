@@ -5506,6 +5506,38 @@ pub fn test_mock_reset(
     Ok(Value::Undefined)
 }
 
+pub fn test_mock_timers_enable(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    if quench_runtime::date::mock_enabled() {
+        return Err(crate::modules::buffer_enc::invalid_state("Mock timers are already enabled".into()));
+    }
+    let now = args.iter().rev().find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_))).map(|options| {
+        let configured = quench_runtime::execute::get_property(options, "now");
+        if matches!(configured, Value::Undefined) { quench_runtime::execute::get_property(options, "timeValue") } else if matches!(configured, Value::Object(_) | Value::ObjectAlias(_)) { quench_runtime::execute::get_property(&configured, "timeValue") } else { configured }
+    }).unwrap_or(Value::Number(0.0));
+    let value = match now { Value::Undefined => 0.0, Value::Number(value) if value.is_finite() && value >= 0.0 => value, Value::Number(_) => return Err(crate::modules::buffer_enc::invalid_arg_value("The value of \"now\" is out of range".into()),), _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"now\" option must be a number".into()),) };
+    quench_runtime::date::set_mock_now(Some(value));
+    Ok(Value::Undefined)
+}
+
+pub fn test_mock_timers_tick(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let delta = match args.first() { Some(Value::Number(value)) if value.is_finite() => *value, _ => 0.0 };
+    let now = quench_runtime::date::current_time_ms();
+    quench_runtime::date::set_mock_now(Some(now + delta));
+    Ok(Value::Undefined)
+}
+
+pub fn test_mock_timers_set_time(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    if !quench_runtime::date::mock_enabled() { return Err(crate::modules::buffer_enc::invalid_state("Mock timers are not enabled".into())); }
+    let value = match args.first() { Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value, _ => return Err(crate::modules::buffer_enc::invalid_arg_value("The value must be a valid time".into())) };
+    quench_runtime::date::set_mock_now(Some(value));
+    Ok(Value::Undefined)
+}
+
+pub fn test_mock_timers_reset(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    quench_runtime::date::set_mock_now(None);
+    Ok(Value::Undefined)
+}
+
 pub fn test_mock_property(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
