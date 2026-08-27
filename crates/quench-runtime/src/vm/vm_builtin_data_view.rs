@@ -31,15 +31,25 @@ fn byte_length_getter(
     byte_offset: usize,
     byte_length: usize,
 ) -> Option<Result<Value, VmError>> {
-    if builtin != Builtin::TypedArrayByteLengthGetter {
-        return None;
+    match builtin {
+        Builtin::TypedArrayByteLengthGetter => {
+            let length = if buffer_length < byte_offset.saturating_add(byte_length) {
+                0.0
+            } else {
+                byte_length as f64
+            };
+            Some(Ok(Value::Number(length)))
+        }
+        Builtin::TypedArrayByteOffsetGetter => {
+            let offset = if buffer_length < byte_offset.saturating_add(byte_length) {
+                0.0
+            } else {
+                byte_offset as f64
+            };
+            Some(Ok(Value::Number(offset)))
+        }
+        _ => None,
     }
-    let length = if buffer_length < byte_offset + byte_length {
-        0.0
-    } else {
-        byte_length as f64
-    };
-    Some(Ok(Value::Number(length)))
 }
 
 fn typed_array_accessor(
