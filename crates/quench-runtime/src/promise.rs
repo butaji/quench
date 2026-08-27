@@ -156,7 +156,13 @@ fn process_promise_in_context(promise: &Rc<PromiseData>) {
     }
     let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
     for continuation in continuations {
-        process_continuation(continuation, &state);
+        if matches!(state, PromiseState::Pending)
+            && matches!(&continuation, PromiseContinuation::Aggregate { .. })
+        {
+            promise.continuations.borrow_mut().push(continuation);
+        } else {
+            process_continuation(continuation, &state);
+        }
     }
 }
 
@@ -792,6 +798,9 @@ pub fn execute_builtin(
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
         Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, receiver, arguments),
+        Builtin::PromiseAllKeyed => {
+            promise_keyed_combinator(PromiseAggregateKind::All, receiver, arguments)
+        }
         Builtin::PromiseAllSettled => {
             promise_combinator(PromiseAggregateKind::AllSettled, receiver, arguments)
         }

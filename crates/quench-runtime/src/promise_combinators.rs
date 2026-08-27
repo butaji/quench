@@ -3,44 +3,66 @@ fn promise_combinator(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let result = PromiseData::allocate(PromiseState::Pending);
+    promise_combinator_with_keys(kind, receiver, arguments, None)
+}
+
+fn promise_combinator_with_keys(
+    kind: PromiseAggregateKind,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    keys: Option<Vec<String>>,
+) -> Result<Value, VmError> {
     let constructor = receiver.ok_or(VmError::NotCallable)?;
-    let resolve = match get_promise_resolve(Some(constructor)) {
+    let capability = crate::promise::new_promise_capability(constructor)?;
+    promise_combinator_from_capability(kind, constructor, arguments, keys, capability)
+}
+
+fn promise_combinator_from_capability(
+    kind: PromiseAggregateKind,
+    constructor: &Value,
+    arguments: &[Value],
+    keys: Option<Vec<String>>,
+    (result, capability_resolve, capability_reject): (Value, Value, Value),
+) -> Result<Value, VmError> {
+    let promise_resolve = match get_promise_resolve(Some(constructor)) {
         Ok(resolve) => resolve,
         Err(error) => {
-            reject_with_completion(&result, error);
-            return Ok(Value::Promise(result));
+            reject_with_completion_value(&capability_reject, error);
+            return Ok(result);
         }
     };
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let values = match crate::collections::iterator::collect_iterable(source) {
         Ok(values) => values,
         Err(error) => {
-            reject_with_completion(&result, error);
-            return Ok(Value::Promise(result));
+            reject_with_completion_value(&capability_reject, error);
+            return Ok(result);
         }
     };
+    let value_count = values.len();
     let aggregate = Rc::new(PromiseAggregate {
         kind,
-        result: Rc::clone(&result),
+        resolve: capability_resolve,
+        reject: capability_reject,
         remaining: RefCell::new(values.len()),
         values: RefCell::new(vec![Value::Undefined; values.len()]),
+        keys,
         settled: RefCell::new(false),
     });
     for (index, value) in values.into_iter().enumerate() {
-        let value = match crate::functions::execute_target(&resolve, constructor, &[value]) {
+        let value = match crate::functions::execute_target(&promise_resolve, constructor, &[value]) {
             Ok(value) => value,
             Err(error) => {
-                reject_with_completion(&result, error);
+                reject_with_completion_value(&aggregate.reject, error);
                 break;
             }
         };
         register_aggregate_value(&aggregate, index, value);
     }
-    if *aggregate.remaining.borrow() == 0 {
+    if value_count == 0 {
         finish_empty_aggregate(&aggregate);
     }
-    Ok(Value::Promise(result))
+    Ok(result)
 }
 
 fn promise_keyed_combinator(
@@ -48,13 +70,35 @@ fn promise_keyed_combinator(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    let constructor = receiver.ok_or(VmError::NotCallable)?;
+    let capability = crate::promise::new_promise_capability(constructor)?;
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::value::is_object(&source) {
+        reject_with_completion_value(
+            &capability.2,
+            crate::value::error::throw_type_error("Promise keyed input must be an object"),
+        );
+        return Ok(capability.0);
+    }
     let keys = crate::own_keys::enumerable_key_strings(Some(&source));
-    let values = keys
-        .into_iter()
-        .map(|key: String| crate::execute::get_property_result(&source, &key))
-        .collect::<Result<Vec<_>, _>>()?;
-    promise_combinator(kind, receiver, &[Value::array(values)])
+    let values = match keys
+        .iter()
+        .map(|key| crate::execute::get_property_result(&source, key))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(values) => values,
+        Err(error) => {
+            reject_with_completion_value(&capability.2, error);
+            return Ok(capability.0);
+        }
+    };
+    promise_combinator_from_capability(
+        kind,
+        constructor,
+        &[Value::array(values)],
+        Some(keys),
+        capability,
+    )
 }
 
 fn get_promise_resolve(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -62,12 +106,12 @@ fn get_promise_resolve(receiver: Option<&Value>) -> Result<Value, VmError> {
     crate::execute::get_property_result(receiver, "resolve")
 }
 
-fn reject_with_completion(promise: &Rc<PromiseData>, error: VmError) {
+fn reject_with_completion_value(reject: &Value, error: VmError) {
     let reason = match error {
         VmError::Thrown(reason) => reason,
         _ => Value::Undefined,
     };
-    reject_promise(promise, reason);
+    let _ = crate::functions::execute_target(reject, &Value::Undefined, &[reason]);
 }
 
 fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, value: Value) {
@@ -169,12 +213,32 @@ fn finish_empty_aggregate(aggregate: &PromiseAggregate) {
 
 fn resolve_aggregate(aggregate: &PromiseAggregate, value: Value) {
     *aggregate.settled.borrow_mut() = true;
-    resolve_promise(&aggregate.result, value);
+    let value = if let Some(keys) = &aggregate.keys {
+        let values = match value {
+            Value::Array(values) => values.snapshot(),
+            _ => Vec::new(),
+        };
+        let mut properties = vec![("\0prototype".to_string(), Value::Null)];
+        properties.extend(keys.iter().enumerate().map(|(index, key)| {
+            (
+                key.clone(),
+                values.get(index).cloned().unwrap_or(Value::Undefined),
+            )
+        }));
+        Value::Object(Rc::new(crate::value::ObjectData::new(properties)))
+    } else {
+        value
+    };
+    if crate::functions::execute_target(&aggregate.resolve, &Value::Undefined, &[value]).is_err()
+    {
+        // A user-supplied capability resolver is allowed to throw; the
+        // reject callback remains the only observable completion path.
+    }
 }
 
 fn reject_aggregate(aggregate: &PromiseAggregate, value: Value) {
     *aggregate.settled.borrow_mut() = true;
-    reject_promise(&aggregate.result, value);
+    let _ = crate::functions::execute_target(&aggregate.reject, &Value::Undefined, &[value]);
 }
 
 fn settled_record(status: &str, value: Value) -> Value {

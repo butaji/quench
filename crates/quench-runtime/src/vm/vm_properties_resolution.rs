@@ -914,6 +914,7 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
                 Builtin::PromiseResolve
                     | Builtin::PromiseReject
                     | Builtin::PromiseAll
+                    | Builtin::PromiseAllKeyed
                     | Builtin::PromiseAllSettled
                     | Builtin::PromiseAllSettledKeyed
                     | Builtin::PromiseAny
