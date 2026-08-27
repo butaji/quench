@@ -140,6 +140,16 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
     ]
 }
 
+#[cfg(unix)]
+fn process_parent_id() -> u32 {
+    std::os::unix::process::parent_id()
+}
+
+#[cfg(not(unix))]
+fn process_parent_id() -> u32 {
+    0
+}
+
 pub fn features() -> Value {
     host_api::object(vec![
         ("inspector".into(), Value::Boolean(false)),
@@ -164,6 +174,9 @@ fn std_stream(is_error: bool) -> Value {
     crate::host::namespace_object_from_pairs(vec![
         ("isTTY".to_string(), Value::Boolean(false)),
         ("isRawTTY".to_string(), Value::Boolean(false)),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("fd".to_string(), Value::Number(if is_error { 2.0 } else { 1.0 })),
+        ("writeTimes".to_string(), Value::Number(0.0)),
         (
             "write".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(
@@ -422,10 +435,17 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
             let _ = quench_runtime::vm::call_value(&init, &Value::Undefined, &[]);
         }
     }
+    let domain = match quench_runtime::execute::get_property(&global, "__quench_active_domain") {
+        Value::Object(_) => Some(quench_runtime::execute::get_property(
+            &global,
+            "__quench_active_domain",
+        )),
+        _ => None,
+    };
     state
         .borrow_mut()
         .event_loop
-        .queue_microtask_with_resource(cb, rest, resource);
+        .queue_microtask_with_resource_domain(cb, rest, resource, domain);
     Ok(Value::Undefined)
 }
 

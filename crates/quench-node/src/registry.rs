@@ -526,7 +526,7 @@ pub const SPEC_CP_SPAWNSYNC: NodeSpec = NodeSpec::new("child_process:spawnSync",
 pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0x1e01);
 pub const SPEC_CP_EXEC: NodeSpec = NodeSpec::new("child_process:exec", 0x1e02);
 pub const SPEC_CP_EXECFILE: NodeSpec = NodeSpec::new("child_process:execFile", 0x1e03);
-pub const SPEC_CP_SPAWN: NodeSpec = NodeSpec::new("child_process:spawn", 0x1e03);
+pub const SPEC_CP_SPAWN: NodeSpec = NodeSpec::new("child_process:spawn", 0x1e06);
 pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
 pub const SPEC_CP_SPAWN_OUTPUT_EMIT: NodeSpec =
@@ -804,21 +804,7 @@ pub fn namespace_bindings(
     out.push(("gc".to_string(), crate::host::capability(crate::registry::SPEC_GC)));
     out.push((
         "console".to_string(),
-        crate::host::namespace_object_from_pairs(vec![
-            ("log".to_string(), crate::host::capability(SPEC_CONSOLE_LOG)),
-            (
-                "info".to_string(),
-                crate::host::capability(SPEC_CONSOLE_INFO),
-            ),
-            (
-                "warn".to_string(),
-                crate::host::capability(SPEC_CONSOLE_WARN),
-            ),
-            (
-                "error".to_string(),
-                crate::host::capability(SPEC_CONSOLE_ERROR),
-            ),
-        ]),
+        crate::modules::console::build_value(),
     ));
     out.push((
         "EventTarget".to_string(),
