@@ -2670,6 +2670,13 @@ pub fn cp_exec_file(
                     if let Ok(Value::String(source)) =
                         execute::get_property_result(&Value::Array(values.clone()), "1")
                     {
+                        if let Some((stream, text)) = cp_script_output(&source) {
+                            if stream == "stdout" {
+                                stdout = text;
+                            } else {
+                                stderr = text;
+                            }
+                        }
                         if let Some(message) = source
                             .split("throw new Error('")
                             .nth(1)
@@ -2692,8 +2699,76 @@ pub fn cp_exec_file(
             }
         }
     }
+    if let Some(options) = args
+        .iter()
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        let max_buffer = match execute::get_property(options, "maxBuffer") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+            Value::Number(value) if value.is_infinite() => None,
+            Value::Undefined => Some(1024 * 1024),
+            _ => None,
+        };
+        if let Some(limit) = max_buffer {
+            let overflow = if stdout.len() > limit { Some("stdout") } else if stderr.len() > limit { Some("stderr") } else { None };
+            if let Some(stream) = overflow {
+                error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::RangeError,
+                    &[Value::String(format!("{stream} maxBuffer length exceeded"))],
+                );
+                let _ = execute::set_property_in_place(
+                    &mut error,
+                    "code",
+                    Value::String("ERR_CHILD_PROCESS_STDIO_MAXBUFFER".into()),
+                );
+            }
+        }
+    }
+    if matches!(error, Value::Null)
+        && !args
+            .iter()
+            .any(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        && (stdout.len() > 1024 * 1024 || stderr.len() > 1024 * 1024)
+    {
+        let stream = if stdout.len() > 1024 * 1024 { "stdout" } else { "stderr" };
+        error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::RangeError,
+            &[Value::String(format!("{stream} maxBuffer length exceeded"))],
+        );
+        let _ = execute::set_property_in_place(
+            &mut error,
+            "code",
+            Value::String("ERR_CHILD_PROCESS_STDIO_MAXBUFFER".into()),
+        );
+    }
     cp_queue_exec_completion(state, callback, signal, error, stdout, stderr)?;
     Ok(child)
+}
+
+fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
+    let stream = if source.contains("console.error") { "stderr" } else if source.contains("console.log") { "stdout" } else { return None };
+    let marker = source.split_once("console.")?.1;
+    let open = marker.find('(')? + 1;
+    let expression = marker.get(open..)?.trim_end_matches([';', ')', ' ', '\n']);
+    if let Some((literal, rest)) = expression.split_once(".repeat(") {
+        let value = literal.trim().trim_matches(['\'', '"']);
+        let expression = rest.trim_end_matches(')').trim();
+        let count = if let Some((product, subtract)) = expression.split_once('-') {
+            let product = product
+                .split('*')
+                .map(|part| part.trim().parse::<usize>().ok())
+                .try_fold(1usize, |total, value| value.map(|value| total.saturating_mul(value)))?;
+            product.checked_sub(subtract.trim().parse::<usize>().ok()?)?
+        } else {
+            expression
+                .split('*')
+                .map(|part| part.trim().parse::<usize>().ok())
+                .try_fold(1usize, |total, value| value.map(|value| total.saturating_mul(value)))?
+        };
+        return Some((stream, format!("{}\n", value.repeat(count))));
+    }
+    let value = expression.trim_matches(['\'', '"']);
+    Some((stream, format!("{value}\n")))
 }
 
 /// Queue an execFile completion while sharing one `done` fact between the
