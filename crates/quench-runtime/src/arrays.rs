@@ -63,8 +63,8 @@ fn execute_builtin_match(
         ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(to_reversed(receiver)),
         ArraySplice => return Some(splice(receiver, arguments)),
-        ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
-        ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
+        ArrayReduce => return Some(reduce_values(receiver, arguments, false, false)),
+        ArrayReduceRight => return Some(reduce_values(receiver, arguments, true, false)),
         TypedArrayReduce => return Some(typed_array_reduce(receiver, arguments, false)),
         TypedArrayReduceRight => return Some(typed_array_reduce(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
@@ -260,7 +260,7 @@ fn typed_array_reduce(
             "TypedArray reduce called on out-of-bounds view",
         ));
     }
-    reduce_values(Some(&value), arguments, reverse)
+    reduce_values(Some(&value), arguments, reverse, true)
 }
 
 fn map_argument_error(
@@ -920,6 +920,7 @@ pub(crate) fn reduce_values(
     receiver: Option<&Value>,
     arguments: &[Value],
     reverse: bool,
+    typed: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
@@ -954,7 +955,13 @@ pub(crate) fn reduce_values(
             index += 1;
         }
         let position = if reverse { index } else { index - 1 };
-        if let Some(value) = crate::builtins::map_value(&receiver, position)? {
+        let value = crate::builtins::map_value(&receiver, position)?;
+        let value = if typed && value.is_none() {
+            Some(Value::Undefined)
+        } else {
+            value
+        };
+        if let Some(value) = value {
             accumulator = Some(value);
         }
     }
@@ -969,9 +976,13 @@ pub(crate) fn reduce_values(
         Box::new(index..length)
     };
     for position in indices {
-        let Some(value) = crate::builtins::map_value(&receiver, position)? else {
-            continue;
+        let value = crate::builtins::map_value(&receiver, position)?;
+        let value = if typed && value.is_none() {
+            Some(Value::Undefined)
+        } else {
+            value
         };
+        let Some(value) = value else { continue };
         let args = [
             accumulator,
             value,

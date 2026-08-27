@@ -193,6 +193,7 @@ mod tests {
             Some(&array),
             &[Value::Undefined, Value::Number(9.0)],
             false,
+            false,
         );
         assert!(result.is_err());
     }
