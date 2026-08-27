@@ -10,14 +10,34 @@ use std::sync::{Arc, Mutex};
 use quench_node_test::runner::NodeTestRunner;
 
 fn main() -> ExitCode {
-    let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let input_type = arguments
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--input-type").then(|| pair[1].as_str()));
+    if let Some(index) = arguments
+        .iter()
+        .position(|arg| arg == "--eval" || arg == "-e")
+    {
+        let source = arguments
+            .get(index + 1)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let source = if input_type == Some("module") {
+            quench_node::esm_imports::transform_esm_imports(source)
+        } else {
+            source.to_string()
+        };
+        let outcome = quench_node::run::eval_script(&source, Arc::new(|line| println!("{line}")));
+        if let Some(error) = outcome.error {
+            eprintln!("{error}");
+        }
+        return ExitCode::from(outcome.exit_code.clamp(0, 255) as u8);
+    }
+    let Some(path) = arguments.first().map(PathBuf::from) else {
         eprintln!("usage: cargo run -p quench-node-test --bin run -- <file.js>");
         return ExitCode::from(2);
     };
-    let argv = std::env::args_os()
-        .skip(2)
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect();
+    let argv = arguments.into_iter().skip(1).collect();
     let child_mode = std::env::var_os("QUENCH_CHILD_RUNNER").is_some();
     let captured = Arc::new(Mutex::new(Vec::<String>::new()));
     let sink_capture = Arc::clone(&captured);
