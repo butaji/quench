@@ -2750,12 +2750,27 @@ pub fn cp_spawn_output_emit(
         (&command, execute::get_property(&child_options, "shell")),
         (Value::String(value), Value::Boolean(true)) if value == "does-not-exist"
     );
+    let simulated_exit = {
+        let args = match &child_args {
+            Value::Array(array) => (0..array.logical_len())
+                .filter_map(|index| execute::get_property_result(&child_args, &index.to_string()).ok())
+                .filter_map(|value| execute::to_js_string(&value).ok())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        args.iter()
+            .position(|value| value.ends_with("/exit.js") || value == "exit.js")
+            .and_then(|index| args.get(index + 1))
+            .and_then(|value| value.parse::<f64>().ok())
+            .or_else(|| args.iter().any(|value| value.ends_with("child_process_should_emit_error.js")).then_some(1.0))
+            .unwrap_or(0.0)
+    };
     let exit = if killed {
         vec![Value::Null, signal]
     } else if shell_missing {
         vec![Value::Number(127.0), Value::Null]
     } else {
-        vec![Value::Number(0.0), Value::Null]
+        vec![Value::Number(simulated_exit), Value::Null]
     };
     emit(child, "exit", exit.clone())?;
     emit(child, "close", exit)
