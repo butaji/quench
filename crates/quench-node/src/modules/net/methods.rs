@@ -227,7 +227,7 @@ fn connect_target(
         Some(Value::Object(_)) => {
             let options = args.first().cloned().unwrap_or(Value::Undefined);
             let port_value = execute::get_property_result(&options, "port")?;
-            if matches!(port_value, Value::Undefined | Value::Null) {
+            if matches!(port_value, Value::Undefined) {
                 return Err(missing_connect_args());
             }
             let port = parse_port(&port_value)?;
@@ -241,7 +241,7 @@ fn connect_target(
             let Some(value) = args.first() else {
                 return Err(missing_connect_args());
             };
-            if matches!(value, Value::Undefined | Value::Null) {
+            if matches!(value, Value::Undefined) {
                 return Err(missing_connect_args());
             }
             let port = parse_port(value)?;
