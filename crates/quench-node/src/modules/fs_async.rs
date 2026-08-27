@@ -10,7 +10,7 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
-use super::fs::{async_args, defer, err_value, parse_options, path_arg};
+use super::fs::{async_args, defer, err_value, parse_mkdir_options, parse_options, path_arg};
 
 /// Run one async op: validate arguments synchronously (coded throws
 /// like Node), execute eagerly, then defer `cb(err, result)`.
@@ -20,7 +20,11 @@ fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Val
     if matches!(name, "rename" | "copyFile") {
         path_arg(leading.get(1))?;
     }
-    let options = parse_options(options_arg(name, leading))?;
+    let options = if name == "mkdir" {
+        parse_mkdir_options(options_arg(name, leading))?
+    } else {
+        parse_options(options_arg(name, leading))?
+    };
     if options.signal_aborted {
         defer(state, &callback, vec![super::fs_error::abort_error()]);
         return Ok(Value::Undefined);
