@@ -34,6 +34,19 @@ pub enum Phase {
     PostBootstrap,
 }
 
+/// How an ability is materialized at the host boundary.
+///
+/// `Rust` is the long-term form: its registration and observable algorithm
+/// live in Rust and are generated from the same declaration data. `JsBridge`
+/// is deliberately explicit for the compatibility surface that still needs
+/// VM objects/prototypes. Keeping this fact in the registry prevents a
+/// hidden second runtime and lets migration happen one ability at a time.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AbilityKind {
+    Rust,
+    JsBridge,
+}
+
 /// One installable ability: a named polyfill fragment.
 #[derive(Clone, Copy)]
 pub struct Ability {
@@ -41,6 +54,8 @@ pub struct Ability {
     pub name: &'static str,
     /// Lifecycle phase.
     pub phase: Phase,
+    /// Materialization strategy; this is data, not an implicit convention.
+    pub kind: AbilityKind,
     /// JS bridge source evaluated by the engine. The seam at which a
     /// native Rust implementation can later take over.
     pub js: &'static str,
@@ -148,7 +163,7 @@ macro_rules! abilities {
 
         /// Abilities in eval order.
         pub const ABILITIES: &[crate::polyfills::Ability] = &[
-            $(crate::polyfills::Ability { name: $name, phase: $phase, js: $module::JS }),*
+            $(crate::polyfills::Ability { name: $name, phase: $phase, kind: crate::polyfills::AbilityKind::JsBridge, js: $module::JS }),*
         ];
 
         /// Look up an ability's JS bridge by name (with or without `.js`).
@@ -173,16 +188,19 @@ mod tests {
             .add(Ability {
                 name: "a",
                 phase: Phase::Bootstrap,
+                kind: super::AbilityKind::JsBridge,
                 js: "A",
             })
             .add(Ability {
                 name: "b",
                 phase: Phase::PostBootstrap,
+                kind: super::AbilityKind::JsBridge,
                 js: "B",
             })
             .add(Ability {
                 name: "c",
                 phase: Phase::Bootstrap,
+                kind: super::AbilityKind::JsBridge,
                 js: "C",
             });
         assert_eq!(registry.bootstrap_source(), "A\nC\n");
