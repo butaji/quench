@@ -6,6 +6,16 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
             for alias in ["test", "describe", "it", "suite"] {
                 let _ = quench_runtime::execute::set_callable_property(&test, alias, test.clone());
             }
+            // Keep the callable export aligned with the module-surface
+            // fallback: runner consumers may always inspect `test.mock`.
+            let _ = quench_runtime::execute::set_callable_property(
+                &test,
+                "mock",
+                quench_runtime::host_api::object(vec![(
+                    "fn".into(),
+                    crate::host::capability(crate::registry::SPEC_TEST_MOCK_FN),
+                )]),
+            );
             return Some(test);
         }
         if name == "node:child_process" || name == "child_process" {
