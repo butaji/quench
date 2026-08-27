@@ -18,6 +18,9 @@ pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 /// Engine-facing execution contract for an external conformance runner.
 pub trait Test262Host: Send {
+    /// Configure per-test host policy before dispatch.
+    fn configure(&mut self, _metadata: &TestMetadata) {}
+
     /// Execute a complete script source.
     fn run_script(&mut self, source: &str) -> Result<(), String>;
 
@@ -66,6 +69,8 @@ pub struct TestMetadata {
     pub negative_phase: Option<String>,
     /// Expected error constructor name, when the test is negative.
     pub negative_type: Option<String>,
+    /// Whether the host permits the main agent to block in Atomics.wait.
+    pub can_block: bool,
 }
 
 impl TestMetadata {
@@ -86,6 +91,7 @@ impl TestMetadata {
                 metadata.is_async = flags.iter().any(|flag| flag == "async");
                 metadata.is_raw = flags.iter().any(|flag| flag == "raw");
                 metadata.only_strict = flags.iter().any(|flag| flag == "onlyStrict");
+                metadata.can_block = flags.iter().any(|flag| flag == "CanBlockIsTrue");
                 in_negative = false;
             } else if trimmed.starts_with("includes:") {
                 metadata.includes = list_after_colon(trimmed);
@@ -551,6 +557,7 @@ impl<H: Test262Host> Test262Runner<H> {
         metadata: &TestMetadata,
         path: Option<&Path>,
     ) -> TestOutcome {
+        self.host.configure(metadata);
         // AGENTS.md: harness fidelity is absolute; dispatch the composed sources unchanged.
         if metadata.is_module {
             if let Some(path) = path {
