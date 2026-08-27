@@ -91,9 +91,17 @@ pub(crate) fn is_revoked(proxy: &ProxyValue) -> bool {
 
 fn check_revoked(proxy: &ProxyValue) -> Result<(), VmError> {
     if is_revoked(proxy) {
-        Err(crate::value::error::throw_type_error(
-            "Cannot perform operation on revoked proxy",
-        ))
+        let realm = crate::construct::constructor_realm(&proxy.target);
+        crate::vm::with_realm(realm, || {
+            Err(crate::value::error::throw_type_error(
+                "Cannot perform operation on revoked proxy",
+            ))
+        })
+        .unwrap_or_else(|| {
+            Err(crate::value::error::throw_type_error(
+                "Cannot perform operation on revoked proxy",
+            ))
+        })
     } else {
         Ok(())
     }
