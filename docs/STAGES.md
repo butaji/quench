@@ -1,50 +1,28 @@
-# Test262 stages
+# Test262 staging rules
 
-This file defines the conformance stages for `quench`. Each stage is one
-numbered test262 directory that must reach 100% passing before the next stage
-begins. There are no skip policies and no checkpoints: each stage runs through
-the canonical `quench-test262` runner against the pinned `tests/test262` tree,
-and observable behavior is verified at execution time, never worked around.
+Test262 work is organized by dependency-ordered semantic domains. Stage names
+are planning labels, not progress totals or compatibility claims.
 
-This is a definition document only — it is not a progress ledger. Verify stages
-with the relevant commands and test262 runs at execution time.
+## Rules
 
-All stages exercise the Node-compatible runtime and ordinary VM semantics.
-Benchmark fixtures, scores, and harnesses are measurement inputs only; they
-must never introduce host dispatch or workload-specific runtime behavior. See
-[`benchmark-integrity.md`](benchmark-integrity.md) for the mandatory review
-boundary.
+- Run the canonical `quench-test262` runner against the pinned test262 tree.
+- Compose the exact declared harness; never override or replace harness code.
+- Complete language semantics before dependent built-ins, Annex B, or Intl
+  behavior.
+- Keep discovery, module ordering, isolation, and outcome classification
+  deterministic.
+- Compare observable behavior at execution time; do not infer support from
+  inventory counts or skipped assertions.
+- Proposal-only staging is not stable conformance and must not be counted as
+  such.
+- Benchmark measurements are external diagnostics and never alter execution.
 
-## Execution order
+## Canonical stage paths
 
-Stages are numbered in dependency order by domain. Dependencies are
-prerequisites, not milestone markers: a stage may be revisited whenever a later
-stage exposes a semantic gap, and the fix re-runs the earlier stage before
-moving on.
-
-0. `harness` (stage 0) — the test262 harness self-tests that validate the
-   assertion and helper libraries the runner composes.
-1. `language` (stages 1–28) — core ECMAScript syntax and semantics.
-2. `built-ins` (stages 29–92) — intrinsic objects and their methods.
-3. `annexB` (stages 93–94) — Annex B web-compat extensions (built on core language).
-4. `intl402` (stages 95–113) — ECMA-402 `Intl` (built on Number, String, Date, BigInt, Array).
-
-`staging` holds proposal work and is excluded from stable conformance coverage;
-it must not be silently counted as stable progress.
-
-## `harness` domain
-
-The test262 harness self-tests in `test/harness`. They exercise `assert`,
-`sta`, `asyncHelpers`, and the support helpers that the runner composes into
-every case; they must pass through the exact harness composition, never by
-overriding harness behavior.
+The runner reads these paths as configuration. They describe no completion
+status or historical result.
 
 - Stage 0: `test/harness`
-
-## `language` domain
-
-Core language behavior. Parse, scoping, and evaluation semantics.
-
 - Stage 1: `language/arguments-object`
 - Stage 2: `language/asi`
 - Stage 3: `language/block-scope`
@@ -73,11 +51,6 @@ Core language behavior. Parse, scoping, and evaluation semantics.
 - Stage 26: `language/statements`
 - Stage 27: `language/types`
 - Stage 28: `language/white-space`
-
-## `built-ins` domain
-
-Intrinsic objects, constructors, prototypes, and global functions.
-
 - Stage 29: `built-ins/AbstractModuleSource`
 - Stage 30: `built-ins/AggregateError`
 - Stage 31: `built-ins/Array`
@@ -142,20 +115,8 @@ Intrinsic objects, constructors, prototypes, and global functions.
 - Stage 90: `built-ins/parseFloat`
 - Stage 91: `built-ins/parseInt`
 - Stage 92: `built-ins/undefined`
-
-## `annexB` domain
-
-Annex B web-compat extensions. These depend on the core `language` and
-`built-ins` domains.
-
 - Stage 93: `annexB/built-ins`
 - Stage 94: `annexB/language`
-
-## `intl402` domain
-
-ECMA-402 `Intl` behavior. Depends on the relevant `built-ins` primitives
-(Number, String, Date, BigInt, Array).
-
 - Stage 95: `intl402/Array`
 - Stage 96: `intl402/BigInt`
 - Stage 97: `intl402/Collator`
@@ -175,7 +136,3 @@ ECMA-402 `Intl` behavior. Depends on the relevant `built-ins` primitives
 - Stage 111: `intl402/String`
 - Stage 112: `intl402/Temporal`
 - Stage 113: `intl402/TypedArray`
-
-## Excluded from stable coverage
-
-- `staging` — proposal work, not stable conformance.
