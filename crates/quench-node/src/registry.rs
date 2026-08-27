@@ -86,6 +86,10 @@ pub const SPEC_TEST_SKIP: NodeSpec = NodeSpec::new("test:skip", 0x1b01);
 pub const SPEC_TEST_MOCK_FN: NodeSpec = NodeSpec::new("test:mock:fn", 0x1b02);
 pub const SPEC_TEST_MOCK_CALL: NodeSpec = NodeSpec::new("test:mock:call", 0x1b03);
 pub const SPEC_EVENT_TRUSTED_GET: NodeSpec = NodeSpec::new("event:isTrusted:get", 0x1b04);
+pub const SPEC_TEST_MOCK_METHOD: NodeSpec = NodeSpec::new("test:mock:method", 0x1b05);
+pub const SPEC_TEST_MOCK_RESTORE: NodeSpec = NodeSpec::new("test:mock:restore", 0x1b06);
+pub const SPEC_TEST_MOCK_BIND: NodeSpec = NodeSpec::new("test:mock:bind", 0x1b07);
+pub const SPEC_TEST_MOCK_BOUND_CALL: NodeSpec = NodeSpec::new("test:mock:bound-call", 0x1b08);
 
 node_api! {
     (SPEC_DIAGNOSTICS_CHANNEL, "diagnostics_channel:channel", 0x1F00),
@@ -240,8 +244,7 @@ pub const SPEC_CP_FORK: NodeSpec = NodeSpec::new("child_process:fork", 0x1E0D);
 pub const SPEC_CP_SEND: NodeSpec = NodeSpec::new("child_process:send", 0x1E0E);
 pub const SPEC_CP_MESSAGE_EMIT: NodeSpec = NodeSpec::new("child_process:messageEmit", 0x1E0F);
 pub const SPEC_CP_DISCONNECT: NodeSpec = NodeSpec::new("child_process:disconnect", 0x1E10);
-pub const SPEC_CP_DISCONNECT_EMIT: NodeSpec =
-    NodeSpec::new("child_process:disconnectEmit", 0x1E11);
+pub const SPEC_CP_DISCONNECT_EMIT: NodeSpec = NodeSpec::new("child_process:disconnectEmit", 0x1E11);
 pub const SPEC_CP_CONSTRUCTOR: NodeSpec = NodeSpec::new("child_process:ChildProcess", 0x2205);
 pub const SPEC_CP_INSTANCE_SPAWN: NodeSpec =
     NodeSpec::new("child_process:ChildProcess:spawn", 0x2206);
@@ -358,8 +361,10 @@ pub const SPEC_PROCESS_HRTIME: NodeSpec = NodeSpec::new("process:hrtime", 0x0A05
 pub const SPEC_PROCESS_HRTIME_BIGINT: NodeSpec = NodeSpec::new("process:hrtime.bigint", 0x0A0B);
 pub const SPEC_PROCESS_CPU_USAGE: NodeSpec = NodeSpec::new("process:cpuUsage", 0x0A10);
 pub const SPEC_PROCESS_UPTIME: NodeSpec = NodeSpec::new("process:uptime", 0x0A11);
-pub const SPEC_PROCESS_AVAILABLE_MEMORY: NodeSpec = NodeSpec::new("process:availableMemory", 0x0A1B);
-pub const SPEC_PROCESS_CONSTRAINED_MEMORY: NodeSpec = NodeSpec::new("process:constrainedMemory", 0x0A1C);
+pub const SPEC_PROCESS_AVAILABLE_MEMORY: NodeSpec =
+    NodeSpec::new("process:availableMemory", 0x0A1B);
+pub const SPEC_PROCESS_CONSTRAINED_MEMORY: NodeSpec =
+    NodeSpec::new("process:constrainedMemory", 0x0A1C);
 pub const SPEC_PROCESS_GETUID: NodeSpec = NodeSpec::new("process:getuid", 0x0A12);
 pub const SPEC_PROCESS_GETGID: NodeSpec = NodeSpec::new("process:getgid", 0x0A13);
 pub const SPEC_PROCESS_GETEUID: NodeSpec = NodeSpec::new("process:geteuid", 0x0A14);
@@ -544,7 +549,8 @@ pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0
 pub const SPEC_CP_EXEC: NodeSpec = NodeSpec::new("child_process:exec", 0x1e02);
 pub const SPEC_CP_EXECFILE: NodeSpec = NodeSpec::new("child_process:execFile", 0x1e03);
 pub const SPEC_CP_EXECFILE_ABORT: NodeSpec = NodeSpec::new("child_process:execFileAbort", 0x1e07);
-pub const SPEC_CP_EXECFILE_COMPLETE: NodeSpec = NodeSpec::new("child_process:execFileComplete", 0x1e08);
+pub const SPEC_CP_EXECFILE_COMPLETE: NodeSpec =
+    NodeSpec::new("child_process:execFileComplete", 0x1e08);
 pub const SPEC_CP_SPAWN: NodeSpec = NodeSpec::new("child_process:spawn", 0x1e06);
 pub const SPEC_CP_SPAWN_ERROR_EMIT: NodeSpec =
     NodeSpec::new("child_process:spawnErrorEmit", 0x1e04);
@@ -575,11 +581,15 @@ pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1F21);
 pub const SPEC_GC: NodeSpec = NodeSpec::new("gc", 0x2117);
 pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1F22);
 pub const SPEC_ABORT_CONTROLLER_ABORT: NodeSpec = NodeSpec::new("AbortController.abort", 0x1F25);
-pub const SPEC_ABORT_CONTROLLER_SIGNAL_GET: NodeSpec = NodeSpec::new("AbortController.signal:get", 0x1F27);
+pub const SPEC_ABORT_CONTROLLER_SIGNAL_GET: NodeSpec =
+    NodeSpec::new("AbortController.signal:get", 0x1F27);
 pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1F23);
-pub const SPEC_ABORT_SIGNAL_ABORTED_GET: NodeSpec = NodeSpec::new("AbortSignal.aborted:get", 0x1F28);
-pub const SPEC_ABORT_SIGNAL_HAS_INSTANCE: NodeSpec = NodeSpec::new("AbortSignal.hasInstance", 0x1F29);
-pub const SPEC_ABORT_SIGNAL_THROW_IF_ABORTED: NodeSpec = NodeSpec::new("AbortSignal.throwIfAborted", 0x1F2A);
+pub const SPEC_ABORT_SIGNAL_ABORTED_GET: NodeSpec =
+    NodeSpec::new("AbortSignal.aborted:get", 0x1F28);
+pub const SPEC_ABORT_SIGNAL_HAS_INSTANCE: NodeSpec =
+    NodeSpec::new("AbortSignal.hasInstance", 0x1F29);
+pub const SPEC_ABORT_SIGNAL_THROW_IF_ABORTED: NodeSpec =
+    NodeSpec::new("AbortSignal.throwIfAborted", 0x1F2A);
 pub const SPEC_ABORT_SIGNAL_ABORT: NodeSpec = NodeSpec::new("AbortSignal.abort", 0x1F24);
 pub const SPEC_ABORT_SIGNAL_TIMEOUT: NodeSpec = NodeSpec::new("AbortSignal.timeout", 0x1F40);
 pub const SPEC_ABORT_SIGNAL_ANY: NodeSpec = NodeSpec::new("AbortSignal.any", 0x1F41);
@@ -790,8 +800,10 @@ pub fn namespace_bindings(
             "get".into(),
             crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER_SIGNAL_GET),
         )]),
-    ).unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
-    let abort_controller = quench_runtime::execute::set_property(abort_controller, "prototype", controller_prototype);
+    )
+    .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
+    let abort_controller =
+        quench_runtime::execute::set_property(abort_controller, "prototype", controller_prototype);
     out.push(("AbortController".to_string(), abort_controller));
     let abort_signal = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL);
     let abort = crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_ABORT);
@@ -817,10 +829,15 @@ pub fn namespace_bindings(
             "get".into(),
             crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL_ABORTED_GET),
         )]),
-    ).unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
-    let abort_signal = quench_runtime::execute::set_property(abort_signal, "prototype", signal_prototype);
+    )
+    .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
+    let abort_signal =
+        quench_runtime::execute::set_property(abort_signal, "prototype", signal_prototype);
     out.push(("AbortSignal".to_string(), abort_signal));
-    out.push(("gc".to_string(), crate::host::capability(crate::registry::SPEC_GC)));
+    out.push((
+        "gc".to_string(),
+        crate::host::capability(crate::registry::SPEC_GC),
+    ));
     out.push((
         "console".to_string(),
         crate::modules::console::build_value(),
