@@ -2887,6 +2887,21 @@ pub fn cp_fork(
         ));
     }
     let second = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(
+        second,
+        Value::Undefined | Value::Null | Value::Array(_) | Value::Object(_) | Value::ObjectAlias(_)
+    ) {
+        return Err(crate::modules::buffer_enc::invalid_arg_type(
+            format!("The \"args\" argument must be an instance of Array.{}", crate::modules::util::invalid_arg_received(&second)),
+        ));
+    }
+    if let Some(options) = args.get(2) {
+        if !matches!(options, Value::Undefined | Value::Null | Value::Object(_) | Value::ObjectAlias(_)) {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(
+                format!("The \"options\" argument must be of type object.{}", crate::modules::util::invalid_arg_received(options)),
+            ));
+        }
+    }
     let (fork_args, options) = if matches!(second, Value::Object(_) | Value::ObjectAlias(_)) {
         (Value::Undefined, second)
     } else {
