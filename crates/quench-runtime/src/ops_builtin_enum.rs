@@ -84,6 +84,7 @@ pub enum Builtin {
     ArrayReduceRight, ArrayForEach, TypedArrayEntries, TypedArrayKeys, TypedArrayForEach, TypedArrayEvery,
     TypedArrayFind, TypedArrayFindIndex, TypedArrayFindLast, TypedArrayFindLastIndex,
     TypedArrayIncludes, TypedArrayIndexOf, TypedArrayLastIndexOf,
+    TypedArrayAt,
     FunctionCall, FunctionApply,
     Boolean, BooleanValueOf,
     BooleanToString, Print,
