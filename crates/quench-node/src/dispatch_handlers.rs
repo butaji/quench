@@ -2485,6 +2485,35 @@ pub fn cp_exec_sync(
         Value::Array(entries) => entries.first(),
         _ => None,
     });
+    if command == Some(&state.borrow().process.exec_path) {
+        if let Some(Value::Array(values)) = args.get(1) {
+            if let Some(Value::String(source)) = values.get(1) {
+                if let Some((stream, output)) = cp_script_output(&source) {
+                    let options = args.get(2).cloned().unwrap_or(Value::Undefined);
+                    let limit = match execute::get_property(&options, "maxBuffer") {
+                        Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+                        Value::Undefined => Some(1024 * 1024),
+                        _ => None,
+                    };
+                    if limit.is_some_and(|limit| output.len() > limit) {
+                        let mut error = quench_runtime::builtins::error(
+                            quench_runtime::ops::Builtin::Error,
+                            &[Value::String("spawnSync ENOBUFS".into())],
+                        );
+                        execute::set_property_in_place(&mut error, "code", Value::String("ENOBUFS".into()));
+                        execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
+                        execute::set_property_in_place(&mut error, "stdout", cp_buffer_value(if stream == "stdout" { &output } else { "" })?);
+                        execute::set_property_in_place(&mut error, "stderr", cp_buffer_value(if stream == "stderr" { &output } else { "" })?);
+                        return Err(VmError::Thrown(error));
+                    }
+                    if matches!(execute::get_property(&options, "encoding"), Value::String(_)) {
+                        return Ok(Value::String(output));
+                    }
+                    return Ok(cp_buffer_value(&output)?);
+                }
+            }
+        }
+    }
     if command.is_some_and(|value| value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe")) {
         let output = match args.get(1) {
             Some(Value::Array(entries)) => (0..entries.len())
@@ -2515,6 +2544,13 @@ pub fn cp_exec_sync(
         return Err(VmError::Thrown(error));
     }
     Ok(Value::String(String::new()))
+}
+
+fn cp_buffer_value(text: &str) -> Result<Value, VmError> {
+    let global = quench_runtime::vm::current_global_object();
+    let buffer = execute::get_property(&global, "Buffer");
+    let from = execute::get_property(&buffer, "from");
+    execute::call(&from, &buffer, &[Value::String(text.into())])
 }
 
 pub fn cp_async(
