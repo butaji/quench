@@ -115,26 +115,50 @@ fn reject_with_completion_value(reject: &Value, error: VmError) {
 }
 
 fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, value: Value) {
-    let value = if crate::value::is_object(&value) {
-        resolve_value(value)
+    // PerformPromiseAll invokes the resolved promise's `then` method during
+    // the combinator call.  Assimilation of a custom thenable may therefore
+    // settle the aggregate synchronously, while native Promise reactions
+    // remain queued as microtasks.
+    let promise = PromiseData::allocate(PromiseState::Pending);
+    let promise_value = Value::Promise(Rc::clone(&promise));
+    let resolve = bound_settler(Builtin::PromiseResolve, &promise, 1.0);
+    let reject = bound_settler(Builtin::PromiseReject, &promise, 1.0);
+    if crate::value::is_object(&value) {
+        match crate::execute::get_property_result(&value, "then") {
+            Ok(then) if crate::conversion::is_callable(&then) => {
+                let call_result = crate::functions::execute_target(
+                    &then,
+                    &value,
+                    &[resolve.clone(), reject.clone()],
+                );
+                if call_result.is_err() {
+                    let _ = crate::functions::execute_target(
+                        &reject,
+                        &Value::Undefined,
+                        &[Value::Undefined],
+                    );
+                }
+            }
+            Ok(_) => {
+                let _ = crate::functions::execute_target(&resolve, &Value::Undefined, &[value]);
+            }
+            Err(_) => {
+                let _ = crate::functions::execute_target(
+                    &reject,
+                    &Value::Undefined,
+                    &[Value::Undefined],
+                );
+            }
+        }
     } else {
-        value
-    };
-    let Value::Promise(promise) = value else {
-        aggregate_settle(aggregate, index, &PromiseState::Fulfilled(value));
-        return;
-    };
-    promise
-        .continuations
-        .borrow_mut()
-        .push(PromiseContinuation::Aggregate {
-            aggregate: Rc::clone(aggregate),
-            index,
-        });
-    if !matches!(*promise.state.borrow(), PromiseState::Pending) {
-        queue_promise(&promise);
+        let _ = crate::functions::execute_target(&resolve, &Value::Undefined, &[value]);
     }
-    drain_microtasks();
+    let state = promise.state.borrow().clone();
+    if !matches!(state, PromiseState::Pending) {
+        aggregate_settle(aggregate, index, &state);
+        return;
+    }
+    promise.add_aggregate_hook(Rc::clone(aggregate), index);
 }
 
 fn aggregate_settle(aggregate: &Rc<PromiseAggregate>, index: usize, state: &PromiseState) {
