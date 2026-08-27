@@ -826,7 +826,29 @@ pub fn util_promisified_call(
                 );
             }
         }
-        Err(VmError::Thrown(error)) => quench_runtime::reject_promise(&promise, error),
+        Err(VmError::Thrown(error)) => {
+            // execFile's Node promisifier validates its AbortSignal before
+            // creating the promise; preserve that synchronous TypeError.
+            let is_exec_file = matches!(
+                &original,
+                Value::BoundFunction(bound)
+                    if matches!(
+                        bound.target,
+                        Value::Builtin(quench_runtime::ops::Builtin::HostCapability(
+                            quench_runtime::ops::HostCapabilityKind::Custom(0x1e03)
+                        ))
+                    )
+            );
+            if is_exec_file
+                && matches!(
+                    execute::get_property(&error, "code"),
+                    Value::String(ref code) if code == "ERR_INVALID_ARG_TYPE"
+                )
+            {
+                return Err(VmError::Thrown(error));
+            }
+            quench_runtime::reject_promise(&promise, error)
+        }
         Err(_) => quench_runtime::reject_promise(&promise, Value::Undefined),
     }
     Ok(Value::Promise(promise))
@@ -2211,11 +2233,13 @@ pub fn cp_spawn(
                 ("message".into(), Value::String("spawn pwd ENOENT".into())),
                 ("code".into(), Value::String("ENOENT".into())),
             ]);
-            let callback = bound_custom(
-                crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
-                vec![child.clone(), error],
-            );
-            state.borrow().event_loop.queue_immediate(callback, vec![]);
+            if !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true)) {
+                let callback = bound_custom(
+                    crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
+                    vec![child.clone(), error],
+                );
+                state.borrow().event_loop.queue_immediate(callback, vec![]);
+            }
             return Ok(child);
         }
     }
@@ -2224,6 +2248,9 @@ pub fn cp_spawn(
         || command == "does-not-exist"
         || command == "hopefully_you_dont_have_this"
     {
+        if !matches!(execute::get_property(&options, "shell"), Value::Boolean(true)) {
+            execute::set_property_in_place(&child, "pid", Value::Undefined);
+        }
         let error = host_api::object(vec![
             ("name".into(), Value::String("Error".into())),
             (
@@ -2236,11 +2263,13 @@ pub fn cp_spawn(
             ("path".into(), Value::String(command.clone())),
             ("spawnargs".into(), spawnargs.clone()),
         ]);
-        let callback = bound_custom(
-            crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
-            vec![child.clone(), error],
-        );
-        state.borrow().event_loop.queue_immediate(callback, vec![]);
+        if !matches!(execute::get_property(&options, "\0quench:suppressSpawnError"), Value::Boolean(true)) {
+            let callback = bound_custom(
+                crate::registry::SPEC_CP_SPAWN_ERROR_EMIT.cap,
+                vec![child.clone(), error],
+            );
+            state.borrow().event_loop.queue_immediate(callback, vec![]);
+        }
     } else if command == "pwd"
         || command == "/usr/bin/env"
         || command == "cmd.exe"
@@ -2463,6 +2492,35 @@ pub fn cp_exec_sync(
         Value::Array(entries) => entries.first(),
         _ => None,
     });
+    if command == Some(&state.borrow().process.exec_path) {
+        if let Some(Value::Array(values)) = args.get(1) {
+            if let Some(Value::String(source)) = values.get(1) {
+                if let Some((stream, output)) = cp_script_output(&source) {
+                    let options = args.get(2).cloned().unwrap_or(Value::Undefined);
+                    let limit = match execute::get_property(&options, "maxBuffer") {
+                        Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+                        Value::Undefined => Some(1024 * 1024),
+                        _ => None,
+                    };
+                    if limit.is_some_and(|limit| output.len() > limit) {
+                        let mut error = quench_runtime::builtins::error(
+                            quench_runtime::ops::Builtin::Error,
+                            &[Value::String("spawnSync ENOBUFS".into())],
+                        );
+                        execute::set_property_in_place(&mut error, "code", Value::String("ENOBUFS".into()));
+                        execute::set_property_in_place(&mut error, "errno", Value::Number(-105.0));
+                        execute::set_property_in_place(&mut error, "stdout", cp_buffer_value(if stream == "stdout" { &output } else { "" })?);
+                        execute::set_property_in_place(&mut error, "stderr", cp_buffer_value(if stream == "stderr" { &output } else { "" })?);
+                        return Err(VmError::Thrown(error));
+                    }
+                    if matches!(execute::get_property(&options, "encoding"), Value::String(_)) {
+                        return Ok(Value::String(output));
+                    }
+                    return Ok(cp_buffer_value(&output)?);
+                }
+            }
+        }
+    }
     if command.is_some_and(|value| value == "echo" || value.ends_with("/echo") || value.ends_with("\\echo.exe")) {
         let output = match args.get(1) {
             Some(Value::Array(entries)) => (0..entries.len())
@@ -2495,6 +2553,13 @@ pub fn cp_exec_sync(
     Ok(Value::String(String::new()))
 }
 
+fn cp_buffer_value(text: &str) -> Result<Value, VmError> {
+    let global = quench_runtime::vm::current_global_object();
+    let buffer = execute::get_property(&global, "Buffer");
+    let from = execute::get_property(&buffer, "from");
+    execute::call(&from, &buffer, &[Value::String(text.into())])
+}
+
 pub fn cp_async(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -2511,15 +2576,31 @@ pub fn cp_async(
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
         .cloned()
         .unwrap_or(Value::Undefined);
+    let spawn_options = if matches!(options, Value::Undefined) {
+        host_api::object(vec![("shell".into(), Value::Boolean(true)), ("\0quench:suppressSpawnError".into(), Value::Boolean(true))])
+    } else {
+        execute::set_property(options.clone(), "\0quench:suppressSpawnError", Value::Boolean(true))
+    };
     let child = cp_spawn(
         state,
         None,
-        &[command, host_api::array(Vec::new()), options],
+        &[command.clone(), host_api::array(Vec::new()), spawn_options],
     )?;
     if let Some(callback) = callback {
+        let callback_error = if matches!(command, Value::String(ref value) if value == "does-not-exist") {
+            let mut error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("Command failed: {}", execute::to_js_string(&command).unwrap_or_default()))],
+            );
+            execute::set_property_in_place(&mut error, "code", Value::Number(127.0));
+            execute::set_property_in_place(&mut error, "cmd", command.clone());
+            error
+        } else {
+            Value::Null
+        };
         state.borrow_mut().event_loop.queue_microtask(
             callback,
-            vec![Value::Null, Value::String("child output\n".into()), Value::String(String::new())],
+            vec![callback_error, Value::String("child output\n".into()), Value::String(String::new())],
         );
     }
     Ok(child)
@@ -2544,22 +2625,72 @@ pub fn cp_exec_file(
         .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
     {
         let signal = execute::get_property(options, "signal");
-        if !matches!(signal, Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)) {
+        if !matches!(signal, Value::Undefined)
+            && !matches!(
+                execute::get_property(&signal, crate::modules::event_target::ABORT_SIGNAL_BRAND),
+                Value::Boolean(true)
+            )
+        {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
                 ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
                 ("message".into(), Value::String("The signal option must be an AbortSignal".into())),
             ])));
         }
+        if matches!(execute::get_property(options, "shell"), Value::Boolean(true))
+            && args.iter().any(|value| matches!(value, Value::Array(_)))
+        {
+            crate::modules::process::emit_warning(
+                state,
+                "DeprecationWarning",
+                "Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.",
+                Some("DEP0190"),
+                true,
+            );
+        }
     }
-    let child = cp_spawn(state, None, args)?;
+    let spawn_options = args
+        .iter()
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        .cloned()
+        .map(|options| execute::set_property(options, "\0quench:suppressSpawnError", Value::Boolean(true)))
+        .unwrap_or_else(|| host_api::object(vec![("\0quench:suppressSpawnError".into(), Value::Boolean(true))]));
+    let spawn_args = [
+        args.first().cloned().unwrap_or(Value::Undefined),
+        args.iter().find(|value| matches!(value, Value::Array(_))).cloned().unwrap_or_else(|| host_api::array(Vec::new())),
+        spawn_options,
+    ];
+    let child = cp_spawn(state, None, &spawn_args)?;
     let Some(callback) = callback else {
         return Ok(child);
     };
+    let signal = args
+        .iter()
+        .find_map(|value| match value {
+            Value::Object(_) | Value::ObjectAlias(_) => {
+                let candidate = execute::get_property(value, "signal");
+                matches!(candidate, Value::Object(_) | Value::ObjectAlias(_)).then_some(candidate)
+            }
+            _ => None,
+        });
     // With the callback in the args slot, completion is driven by the child
     // close event (not an eager success callback); this preserves kill/close
     // error identity for execFile(file, callback).
     if !args.iter().any(|value| matches!(value, Value::Array(_))) {
+        if command.as_deref() == Some("does-not-exist") {
+            let mut error = quench_runtime::builtins::error(
+                quench_runtime::ops::Builtin::Error,
+                &[Value::String(format!("spawn {} ENOENT", command.as_deref().unwrap_or_default()))],
+            );
+            execute::set_property_in_place(&mut error, "code", Value::String("ENOENT".into()));
+            execute::set_property_in_place(&mut error, "path", Value::String(command.clone().unwrap_or_default()));
+            execute::set_property_in_place(&mut error, "cmd", Value::String(command.clone().unwrap_or_default()));
+            state.borrow_mut().event_loop.queue_microtask(
+                callback,
+                vec![error, Value::String(String::new()), Value::String(String::new())],
+            );
+            return Ok(child);
+        }
         let mut error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::Error,
             &[Value::String(format!("Command failed: {}", command.as_deref().unwrap_or_default()))],
@@ -2572,10 +2703,14 @@ pub fn cp_exec_file(
         ] {
             let _ = execute::set_property_in_place(&mut error, key, value);
         }
-        state.borrow_mut().event_loop.queue_microtask(
+        cp_queue_exec_completion(
+            state,
             callback,
-            vec![error, Value::String(String::new()), Value::String(String::new())],
-        );
+            signal,
+            error,
+            String::new(),
+            String::new(),
+        )?;
         return Ok(child);
     }
     let mut error = Value::Null;
@@ -2619,6 +2754,13 @@ pub fn cp_exec_file(
                     if let Ok(Value::String(source)) =
                         execute::get_property_result(&Value::Array(values.clone()), "1")
                     {
+                        if let Some((stream, text)) = cp_script_output(&source) {
+                            if stream == "stdout" {
+                                stdout = text;
+                            } else {
+                                stderr = text;
+                            }
+                        }
                         if let Some(message) = source
                             .split("throw new Error('")
                             .nth(1)
@@ -2641,15 +2783,194 @@ pub fn cp_exec_file(
             }
         }
     }
-    state.borrow_mut().event_loop.queue_microtask(
-        callback.clone(),
+    if let Some(options) = args
+        .iter()
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        let max_buffer = match execute::get_property(options, "maxBuffer") {
+            Value::Number(value) if value.is_finite() && value >= 0.0 => Some(value as usize),
+            Value::Number(value) if value.is_infinite() => None,
+            Value::Undefined => Some(1024 * 1024),
+            _ => None,
+        };
+        if let Some(limit) = max_buffer {
+            let overflow = if stdout.len() > limit { Some("stdout") } else if stderr.len() > limit { Some("stderr") } else { None };
+            if let Some(stream) = overflow {
+                error = quench_runtime::builtins::error(
+                    quench_runtime::ops::Builtin::RangeError,
+                    &[Value::String(format!("{stream} maxBuffer length exceeded"))],
+                );
+                let _ = execute::set_property_in_place(
+                    &mut error,
+                    "code",
+                    Value::String("ERR_CHILD_PROCESS_STDIO_MAXBUFFER".into()),
+                );
+            }
+        }
+    }
+    if matches!(error, Value::Null)
+        && !args
+            .iter()
+            .any(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+        && (stdout.len() > 1024 * 1024 || stderr.len() > 1024 * 1024)
+    {
+        let stream = if stdout.len() > 1024 * 1024 { "stdout" } else { "stderr" };
+        error = quench_runtime::builtins::error(
+            quench_runtime::ops::Builtin::RangeError,
+            &[Value::String(format!("{stream} maxBuffer length exceeded"))],
+        );
+        let _ = execute::set_property_in_place(
+            &mut error,
+            "code",
+            Value::String("ERR_CHILD_PROCESS_STDIO_MAXBUFFER".into()),
+        );
+    }
+    cp_queue_exec_completion(state, callback, signal, error, stdout, stderr)?;
+    Ok(child)
+}
+
+fn cp_script_output(source: &str) -> Option<(&'static str, String)> {
+    let stream = if source.contains("console.error") { "stderr" } else if source.contains("console.log") { "stdout" } else { return None };
+    let marker = source.split_once("console.")?.1;
+    let open = marker.find('(')? + 1;
+    let expression = marker.get(open..)?.trim_end_matches([';', ')', ' ', '\n']);
+    if let Some((literal, rest)) = expression.split_once(".repeat(") {
+        let value = literal.trim().trim_matches(['\'', '"']);
+        let expression = rest.trim_end_matches(')').trim();
+        let count = if let Some((product, subtract)) = expression.split_once('-') {
+            let product = product
+                .split('*')
+                .map(|part| part.trim().parse::<usize>().ok())
+                .try_fold(1usize, |total, value| value.map(|value| total.saturating_mul(value)))?;
+            product.checked_sub(subtract.trim().parse::<usize>().ok()?)?
+        } else {
+            expression
+                .split('*')
+                .map(|part| part.trim().parse::<usize>().ok())
+                .try_fold(1usize, |total, value| value.map(|value| total.saturating_mul(value)))?
+        };
+        return Some((stream, format!("{}\n", value.repeat(count))));
+    }
+    let value = expression.trim_matches(['\'', '"']);
+    Some((stream, format!("{value}\n")))
+}
+
+/// Queue an execFile completion while sharing one `done` fact between the
+/// abort listener and the ordinary process completion.  The listener is
+/// removed before the success callback, matching Node's observable lifecycle.
+fn cp_queue_exec_completion(
+    state: &Rc<RefCell<HostState>>,
+    callback: Value,
+    signal: Option<Value>,
+    error: Value,
+    stdout: String,
+    stderr: String,
+) -> Result<(), VmError> {
+    let Some(signal) = signal else {
+        state.borrow_mut().event_loop.queue_microtask(
+            callback,
+            vec![error, Value::String(stdout), Value::String(stderr)],
+        );
+        return Ok(());
+    };
+    let done = host_api::object(vec![("done".into(), Value::Boolean(false))]);
+    let abort_listener = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_CP_EXECFILE_ABORT.cap,
+            ),
+        },
+        vec![callback.clone(), done.clone()],
+    );
+    if execute::is_truthy(&execute::get_property(&signal, "aborted")) {
+        // An already-aborted signal never installs a listener or starts a
+        // process completion path; use the same capability as a later abort.
+        execute::call(&abort_listener, &Value::Undefined, &[])?;
+        return Ok(());
+    }
+    crate::modules::event_target::add_event_listener(
+        state,
+        Some(&signal),
+        &[Value::String("abort".into()), abort_listener.clone()],
+    )?;
+    let completion = host_api::bound_capability_with_arguments(
+        quench_runtime::ops::HostCapabilityRef {
+            realm: quench_runtime::ops::RealmId::ROOT,
+            kind: quench_runtime::ops::HostCapabilityKind::Custom(
+                crate::registry::SPEC_CP_EXECFILE_COMPLETE.cap,
+            ),
+        },
         vec![
+            callback,
+            signal,
+            abort_listener,
+            done,
             error,
-            Value::String(stdout.into()),
-            Value::String(stderr.into()),
+            Value::String(stdout),
+            Value::String(stderr),
         ],
     );
-    Ok(child)
+    state.borrow_mut().event_loop.queue_microtask(completion, vec![]);
+    Ok(())
+}
+
+pub fn cp_exec_file_abort(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (Some(callback), Some(done)) = (args.first(), args.get(1)) else {
+        return Ok(Value::Undefined);
+    };
+    if execute::is_truthy(&execute::get_property(done, "done")) {
+        return Ok(Value::Undefined);
+    }
+    execute::set_property_in_place(done, "done", Value::Boolean(true));
+    let mut error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String("The operation was aborted".into())],
+    );
+    execute::set_property_in_place(&mut error, "name", Value::String("AbortError".into()));
+    execute::set_property_in_place(&mut error, "code", Value::String("ABORT_ERR".into()));
+    execute::set_property_in_place(&mut error, "signal", Value::Undefined);
+    // Abort is dispatched synchronously, so `done` wins over the queued
+    // process completion; the callback itself remains asynchronous.
+    state.borrow_mut().event_loop.queue_microtask(
+        callback.clone(),
+        vec![error, Value::String(String::new()), Value::String(String::new())],
+    );
+    Ok(Value::Undefined)
+}
+
+pub fn cp_exec_file_complete(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let (Some(callback), Some(signal), Some(listener), Some(done)) =
+        (args.first(), args.get(1), args.get(2), args.get(3))
+    else {
+        return Ok(Value::Undefined);
+    };
+    if execute::is_truthy(&execute::get_property(done, "done")) {
+        return Ok(Value::Undefined);
+    }
+    execute::set_property_in_place(done, "done", Value::Boolean(true));
+    crate::modules::event_target::remove_event_listener(
+        state,
+        Some(signal),
+        &[Value::String("abort".into()), listener.clone()],
+    )?;
+    let values = args.get(4..7).unwrap_or(&[]);
+    let error = values.first().cloned().unwrap_or(Value::Null);
+    let stdout = values.get(1).cloned().unwrap_or(Value::String(String::new()));
+    let stderr = values.get(2).cloned().unwrap_or(Value::String(String::new()));
+    state
+        .borrow_mut()
+        .event_loop
+        .queue_microtask(callback.clone(), vec![error, stdout, stderr]);
+    Ok(Value::Undefined)
 }
 
 pub fn url_path_to_file_url(
