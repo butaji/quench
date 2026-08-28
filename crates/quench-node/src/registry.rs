@@ -813,7 +813,7 @@ pub fn namespace_bindings(
     ));
     out.push((
         "queueMicrotask".to_string(),
-        crate::host::capability(crate::registry::NodeSpec::new("queueMicrotask", 0x0707)),
+        crate::host::capability(SPEC_QUEUE_MICROTASK),
     ));
     out.push((
         "__quench_events_set_max".to_string(),
