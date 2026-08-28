@@ -544,7 +544,9 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
                 Backreference::Index(index) => index.saturating_sub(1),
                 Backreference::Name(_) => return None,
             };
-            let range = state.captures.get(index).and_then(Option::as_ref)?;
+            let Some(range) = state.captures.get(index).and_then(Option::as_ref) else {
+                return Some(state);
+            };
             let width = range.end.saturating_sub(range.start);
             let matches = input
                 .get(state.position..state.position + width)
@@ -612,7 +614,7 @@ fn match_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Vec
         } => repeat_options(body, input, state, flags, *min, *max, *greedy),
         Expr::Alternation(alternatives) => alternatives
             .iter()
-            .filter_map(|alternative| match_expr(alternative, input, state.clone(), flags))
+            .flat_map(|alternative| match_options(alternative, input, state.clone(), flags))
             .take(MAX_BACKTRACK_STATES)
             .collect(),
         Expr::Capture { index, body } => {
@@ -722,12 +724,17 @@ fn lookaround_match(
     let behind = matches!(kind, Lookaround::Behind | Lookaround::NegativeBehind);
     let negative = matches!(kind, Lookaround::NegativeAhead | Lookaround::NegativeBehind);
     let found = if behind {
-        (0..=state.position).find_map(|start| {
+        let mut starts: Box<dyn Iterator<Item = usize>> = if contains_alternation(body) {
+            Box::new((0..=state.position).rev())
+        } else {
+            Box::new(0..=state.position)
+        };
+        starts.find_map(|start| {
             let candidate = State {
                 position: start,
                 captures: state.captures.clone(),
             };
-            match_expr(
+            match_options(
                 body,
                 input,
                 candidate,
@@ -736,7 +743,8 @@ fn lookaround_match(
                     ..flags
                 },
             )
-            .filter(|result| result.position == state.position)
+            .into_iter()
+            .find(|result| result.position == state.position)
         })
     } else {
         match_expr(body, input, state.clone(), flags)
@@ -748,6 +756,18 @@ fn lookaround_match(
             position: state.position,
             captures: found.captures,
         })
+    }
+}
+
+fn contains_alternation(expr: &Expr) -> bool {
+    match expr {
+        Expr::Alternation(_) => true,
+        Expr::Sequence(parts) => parts.iter().any(contains_alternation),
+        Expr::Capture { body, .. }
+        | Expr::Repeat { body, .. }
+        | Expr::Lookaround { body, .. }
+        | Expr::Mode { body, .. } => contains_alternation(body),
+        _ => false,
     }
 }
 
@@ -986,5 +1006,12 @@ mod tests {
                 "{pattern} {input}"
             );
         }
+    }
+
+    #[test]
+    fn lookbehind_sticky_prefix() {
+        let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
+        let input = "abcdefdef".encode_utf16().collect::<Vec<_>>();
+        assert!(regex.find_from_utf16(&input, 0).next().is_some());
     }
 }
