@@ -5232,7 +5232,7 @@ pub fn abort_signal_timeout(
     );
     let callback = crate::host::capability(crate::registry::NodeSpec::new(
         "AbortSignal.timeout.fire",
-        0x1F42,
+        0x1F2B,
     ));
     let timer = crate::modules::timers::set_timeout(state, &[callback, delay, signal.clone()])?;
     // Node's AbortSignal.timeout timer is deliberately unref'd: creating a
