@@ -1748,6 +1748,9 @@ mod stubs {
                     ))
                 }
             };
+            if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
+                return Err(crate::value::error::throw_range_error("Invalid epochNanoseconds"));
+            }
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             return Ok(super::zoned_record(
                 epoch,
@@ -1806,6 +1809,27 @@ mod stubs {
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let overflow = match arguments.get(1) {
+                None | Some(Value::Undefined) => "constrain".to_string(),
+                Some(options)
+                    if crate::value::is_object(options)
+                        || matches!(options, Value::Function(_) | Value::BoundFunction(_)) =>
+                {
+                    let value = crate::execute::get_property_result(options, "overflow")?;
+                    if matches!(value, Value::Undefined) {
+                        "constrain".to_string()
+                    } else {
+                        let value = crate::conversion::to_string(&value)?;
+                        if value != "constrain" && value != "reject" {
+                            return Err(crate::value::error::throw_range_error("Invalid overflow"));
+                        }
+                        value
+                    }
+                }
+                Some(_) => {
+                    return Err(crate::value::error::throw_type_error("Options must be an object"))
+                }
+            };
             let mut duration_sign = 0_i8;
             let duration_limits = [
                 1_000_000.0,
@@ -1849,34 +1873,12 @@ mod stubs {
                     "Duration is out of range",
                 ));
             }
-            let overflow = match arguments.get(1) {
-                None | Some(Value::Undefined) => "constrain".to_string(),
-                Some(options)
-                    if crate::value::is_object(options)
-                        || matches!(options, Value::Function(_) | Value::BoundFunction(_)) =>
-                {
-                    let value = crate::execute::get_property_result(options, "overflow")?;
-                    if matches!(value, Value::Undefined) {
-                        "constrain".to_string()
-                    } else {
-                        let value = crate::conversion::to_string(&value)?;
-                        if value != "constrain" && value != "reject" {
-                            return Err(crate::value::error::throw_range_error("Invalid overflow"));
-                        }
-                        value
-                    }
-                }
-                Some(_) => {
-                    return Err(crate::value::error::throw_type_error(
-                        "Options must be an object",
-                    ))
-                }
-            };
             let sign = if builtin == crate::ops::Builtin::TemporalZonedDateTimeSubtract {
                 -1.0
             } else {
                 1.0
             };
+            let original_day = crate::conversion::to_number(&property("day")?)? as u32;
             let date = chrono::NaiveDate::from_ymd_opt(
                 crate::conversion::to_number(&property("year")?)? as i32,
                 crate::conversion::to_number(&property("month")?)? as u32,
@@ -1893,6 +1895,11 @@ mod stubs {
             } else {
                 date.checked_sub_months(chrono::Months::new(month_count.unsigned_abs() as u32))
             };
+            if overflow == "reject"
+                && date.is_some_and(|value| value.day() != original_day)
+            {
+                return Err(crate::value::error::throw_range_error("Invalid date"));
+            }
             let date = match date {
                 Some(date) => date,
                 None if overflow == "constrain" => {
@@ -1954,6 +1961,9 @@ mod stubs {
                     ))
                 }
             };
+            if epoch.unsigned_abs() > super::MAX_EPOCH_NANOSECONDS as u128 {
+                return Err(crate::value::error::throw_range_error("Invalid epochNanoseconds"));
+            }
             let timezone = crate::conversion::to_string(&property("timeZoneId")?)?;
             return Ok(super::zoned_record(
                 epoch,
