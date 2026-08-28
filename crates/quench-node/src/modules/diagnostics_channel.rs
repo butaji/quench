@@ -619,7 +619,13 @@ pub fn has_subscribers(
         channel_data(state, &execute::get_property(value, "start")).is_ok()
             && channel_data(state, &execute::get_property(value, "end")).is_ok()
     }) {
-        let active = ["start", "end"]
+        let names: &[&str] =
+            if matches!(execute::get_property(value, BOUNDED), Value::Boolean(true)) {
+                &["start", "end"]
+            } else {
+                &TRACE_CHANNELS
+            };
+        let active = names
             .iter()
             .any(|name| channel_has_subscribers(state, &execute::get_property(value, name)));
         return Ok(Value::Boolean(active));
