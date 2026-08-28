@@ -36,10 +36,21 @@ pub(crate) fn test_str(source: &str, flags: &str, input: &str, start: usize) -> 
                     .any(|window| window == pattern.as_ref())
             }
         }
-        NativePattern::CharacterClass(class) => input
-            .chars()
-            .any(|character| class_matches(class, character)),
-        NativePattern::Repeat { unit, min, max } => has_repeat(input.as_bytes(), unit, min, max),
+        NativePattern::CharacterClass(class) => {
+            let tail = input.get(start..)?;
+            if flags.contains('y') {
+                tail.chars()
+                    .next()
+                    .is_some_and(|character| class_matches(class, character))
+            } else {
+                tail.chars()
+                    .any(|character| class_matches(class, character))
+            }
+        }
+        NativePattern::Repeat { unit, min, max } => {
+            let tail = input.as_bytes().get(start..)?;
+            has_repeat(tail, unit, min, max)
+        }
     })
 }
 
@@ -64,8 +75,18 @@ pub(crate) fn test_units(source: &str, flags: &str, input: &[u16], start: usize)
                 })
             }
         }
-        NativePattern::CharacterClass(class) => input.iter().any(|unit| unit_matches(class, *unit)),
-        NativePattern::Repeat { unit, min, max } => has_repeat_units(input, unit, min, max),
+        NativePattern::CharacterClass(class) => {
+            let tail = input.get(start..)?;
+            if flags.contains('y') {
+                tail.first().is_some_and(|unit| unit_matches(class, *unit))
+            } else {
+                tail.iter().any(|unit| unit_matches(class, *unit))
+            }
+        }
+        NativePattern::Repeat { unit, min, max } => {
+            let tail = input.get(start..)?;
+            has_repeat_units(tail, unit, min, max)
+        }
     })
 }
 
@@ -220,5 +241,15 @@ mod tests {
         assert_eq!(test_str("a{3}", "", "xxaa", 0), Some(false));
         assert_eq!(test_str("a{2,4}", "", "xxaaaaa", 0), Some(true));
         assert_eq!(test_units("a*", "", &[], 0), Some(true));
+    }
+
+    #[test]
+    fn scans_begin_at_the_requested_index() {
+        assert_eq!(test_str("\\d", "", "1x", 1), Some(false));
+        assert_eq!(test_str("\\d", "", "x1", 1), Some(true));
+        assert_eq!(
+            test_units("a+", "", &[b'x' as u16, b'a' as u16], 1),
+            Some(true)
+        );
     }
 }
