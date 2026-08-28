@@ -482,7 +482,7 @@ fn calendar_difference(
     } else if largest == "month" {
         months = (end[0] as i64 - start[0] as i64) * 12 + end[1] as i64 - start[1] as i64;
     }
-    let anchor = add_months_serial(
+    let mut anchor = add_months_serial(
         start,
         years * 12 + months * if largest == "week" { 0 } else { 1 },
     );
@@ -497,6 +497,16 @@ fn calendar_difference(
     }
     let time_fraction_days =
         (time_of_day_nanos(end) - time_of_day_nanos(start)) as f64 / 86_400_000_000_000.0;
+    if time_fraction_days < 0.0 && days == 0 && matches!(largest, "year" | "month") {
+        months -= 1;
+        if sign < 0 {
+            anchor = add_months_serial(end, -(years * 12 + months));
+            days = anchor - start_serial;
+        } else {
+            anchor = add_months_serial(start, years * 12 + months);
+            days = end_serial - anchor;
+        }
+    }
     if smallest == "day" && matches!(largest, "year" | "month" | "week") {
         let rounded =
             round_quotient((days as f64 + time_fraction_days) / increment, mode) * increment;
