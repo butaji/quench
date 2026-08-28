@@ -229,6 +229,7 @@ const CAP_CLUSTER_WORKER_EMIT: u16 = crate::registry::SPEC_CLUSTER_WORKER_EMIT.c
 const CAP_CLUSTER_WORKER_DISCONNECT: u16 = crate::registry::SPEC_CLUSTER_WORKER_DISCONNECT.cap;
 const CAP_CLUSTER_WORKER_KILL: u16 = crate::registry::SPEC_CLUSTER_WORKER_KILL.cap;
 const CAP_CLUSTER_WORKER_SEND: u16 = crate::registry::SPEC_CLUSTER_WORKER_SEND.cap;
+const CAP_CLUSTER_WORKER_PROCESS_SEND: u16 = crate::registry::SPEC_CLUSTER_WORKER_PROCESS_SEND.cap;
 const CAP_DIAGNOSTICS_SCOPE_DISPOSE: u16 = crate::registry::SPEC_DIAGNOSTICS_SCOPE_DISPOSE.cap;
 const CAP_ZLIB_GZIP: u16 = 0x1700;
 const CAP_ZLIB_GUNZIP: u16 = 0x1701;
@@ -648,6 +649,7 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CLUSTER_WORKER_DISCONNECT => crate::modules::cluster::disconnect,
         CAP_CLUSTER_WORKER_KILL => crate::modules::cluster::kill,
         CAP_CLUSTER_WORKER_SEND => crate::modules::cluster::send,
+        CAP_CLUSTER_WORKER_PROCESS_SEND => crate::modules::cluster::process_send,
         CAP_DIAGNOSTICS_CHANNEL_SCOPE => crate::modules::diagnostics_channel::with_store_scope,
         CAP_DIAGNOSTICS_CHANNEL_RUN_STORES => crate::modules::diagnostics_channel::run_stores,
         CAP_DIAGNOSTICS_SCOPE_DISPOSE => crate::modules::diagnostics_channel::dispose_store_scope,
