@@ -462,6 +462,7 @@ fn calendar_difference(
 ) -> Result<Value, VmError> {
     let left_total = date_time_total_nanos(left);
     let right_total = date_time_total_nanos(right);
+    let receiver_is_end = left_total > right_total;
     let (start, end, sign) = if left_total <= right_total {
         (left, right, if direction > 0.0 { 1_i64 } else { -1_i64 })
     } else {
@@ -509,10 +510,28 @@ fn calendar_difference(
     {
         let unit_value = match smallest {
             "year" => {
-                years as f64 + months as f64 / 12.0 + (days as f64 + time_fraction_days) / 365.0
+                let (year_anchor, residual_days) = if receiver_is_end {
+                    let receiver_anchor = add_months_serial(end, -(years * 12));
+                    (receiver_anchor, (receiver_anchor - start_serial) as f64 + time_fraction_days)
+                } else {
+                    let year_anchor = add_months_serial(start, years * 12);
+                    (year_anchor, (end_serial - year_anchor) as f64 + time_fraction_days)
+                };
+                let anchor_year = start[0] as i32 + years as i32;
+                let year_days = if days_in_month(anchor_year, 2) == 29 {
+                    366.0
+                } else {
+                    365.0
+                };
+                years as f64 + residual_days / year_days
             }
             "month" => {
-                years as f64 * 12.0 + months as f64 + (days as f64 + time_fraction_days) / 30.0
+                let month_anchor = add_months_serial(start, years * 12 + months);
+                let (anchor_year, anchor_month, _) =
+                    crate::temporal::plain_date::civil_from_serial(month_anchor);
+                let month_days = days_in_month(anchor_year, anchor_month) as f64;
+                let residual_days = (end_serial - month_anchor) as f64 + time_fraction_days;
+                years as f64 * 12.0 + months as f64 + residual_days / month_days
             }
             _ => (weeks as f64) + (days as f64 + time_fraction_days) / 7.0,
         };
@@ -548,7 +567,48 @@ fn calendar_difference(
             }
         }
     }
-    let mut time_remainder = if matches!(smallest, "year" | "month" | "week" | "day") {
+    let mut carried_year = false;
+    if largest == "year"
+        && !matches!(smallest, "year" | "month" | "week" | "day")
+        && matches!(mode, "ceil" | "expand" | "halfExpand" | "halfCeil")
+    {
+        let year_length = if days_in_month(start[0] as i32 + years as i32, 2) == 29 {
+            366_i128
+        } else {
+            365_i128
+        };
+        let smallest_scale = match smallest {
+            "hour" => 3_600_000_000_000_i128,
+            "minute" => 60_000_000_000,
+            "second" => 1_000_000_000,
+            "millisecond" => 1_000_000,
+            "microsecond" => 1_000,
+            _ => 1,
+        };
+        let year_anchor = if receiver_is_end {
+            add_months_serial(end, -(years * 12))
+        } else {
+            add_months_serial(start, years * 12)
+        };
+        let residual_days = if receiver_is_end {
+            year_anchor - start_serial
+        } else {
+            end_serial - year_anchor
+        };
+        let residual = i128::from(residual_days) * 86_400_000_000_000
+            + time_of_day_nanos(end)
+            - time_of_day_nanos(start);
+        let rounded_residual = round_integer(residual, smallest_scale * increment as i128, mode);
+        if rounded_residual >= year_length * 86_400_000_000_000 {
+            years += 1;
+            months = 0;
+            days = 0;
+            carried_year = true;
+        }
+    }
+    let mut time_remainder = if carried_year
+        || matches!(smallest, "year" | "month" | "week" | "day")
+    {
         0
     } else {
         time_of_day_nanos(end) - time_of_day_nanos(start)
@@ -1252,6 +1312,17 @@ fn round_quotient(value: f64, mode: &str) -> f64 {
                 floor
             } else {
                 ceil
+            }
+        }
+        "halfExpand" => {
+            if fraction > 0.5 {
+                ceil
+            } else if fraction < 0.5 {
+                floor
+            } else if value >= 0.0 {
+                ceil
+            } else {
+                floor
             }
         }
         _ => {
