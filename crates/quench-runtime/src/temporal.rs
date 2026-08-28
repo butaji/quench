@@ -1367,12 +1367,13 @@ mod stubs {
                 return Err(crate::value::error::throw_type_error("Invalid date-time-like"));
             }
             let options = arguments.get(1);
-            if options.is_some_and(|value| {
+            let primitive_options = options.is_some_and(|value| {
                 !matches!(value, Value::Undefined) && !crate::value::is_object(value)
-            }) {
-                return Err(crate::value::error::throw_type_error("Invalid options"));
-            }
+            });
             let option_string = |name: &str, allowed: &[&str], default: &str| {
+                if primitive_options {
+                    return Ok(default.to_string());
+                }
                 let value = options
                     .filter(|value| !matches!(value, Value::Undefined))
                     .map(|value| crate::execute::get_property_result(value, name))
@@ -1491,7 +1492,11 @@ mod stubs {
                 0
             };
             if let Some((_, day)) = fields.iter_mut().find(|(name, _)| name == "day") {
-                let day_number = crate::conversion::to_number(day)? as u32;
+                let day_number_value = crate::conversion::to_number(day)?;
+                if primitive_options && (!day_number_value.is_finite() || day_number_value < 1.0) {
+                    return Err(crate::value::error::throw_range_error("Invalid date"));
+                }
+                let day_number = day_number_value as u32;
                 let validation_month = month.clamp(1, 12);
                 if chrono::NaiveDate::from_ymd_opt(year, validation_month, day_number).is_none() {
                     if overflow == "reject" {
@@ -1505,6 +1510,9 @@ mod stubs {
                     }
                     *day = Value::Number(constrained as f64);
                 }
+            }
+            if primitive_options {
+                return Err(crate::value::error::throw_type_error("Invalid options"));
             }
             let field_entries = fields.clone();
             let field_value = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(fields)));
