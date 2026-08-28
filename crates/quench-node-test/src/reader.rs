@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use quench_node::NodeHost;
 use quench_runtime::ops::RealmId;
+use quench_runtime::value::Value;
 use quench_runtime::vm::VmContext;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,7 +97,16 @@ impl NodeRunner {
         );
         let fixture_source = strip_v8_native_probes(&fixture.source);
         self.host = host;
-        self.context = context.with_source_text(fixture_source.clone());
+        self.context = context
+            .with_source_text(fixture_source.clone())
+            .with_host_value(
+                "__quench_script_source".to_string(),
+                Value::String(fixture_source.clone()),
+            )
+            .with_host_value(
+                "__quench_script_filename".to_string(),
+                Value::String(script.clone()),
+            );
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
@@ -176,9 +186,10 @@ impl NodeRunner {
                 };
             }
         };
-        let result = normalize_script_completion(
-            quench_runtime::vm::execute_code_with_context(program.code(), &self.context),
-        )
+        let result = normalize_script_completion(quench_runtime::vm::execute_code_with_context(
+            program.code(),
+            &self.context,
+        ))
         .and_then(|_| self.drive("__quench_run_loop__();"));
         // Promise jobs may surface an uncaught rejection while the loop is
         // draining. Route that lifecycle event before checking harness call
