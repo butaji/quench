@@ -42,16 +42,18 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.EventTarget ||= 
   }
 };
 const __quenchEventTargetEvents = Symbol.for("quench.event_target.events");
-Object.defineProperty(EventTarget.prototype, __quenchEventTargetEvents, {
-  configurable: true,
-  get() {
-    const map = new Map();
-    for (const [name, records] of Object.entries(this._listeners || {})) {
-      map.set(name, { size: records.length });
-    }
-    return map;
-  },
-});
+if (EventTarget.prototype) {
+  Object.defineProperty(EventTarget.prototype, __quenchEventTargetEvents, {
+    configurable: true,
+    get() {
+      const map = new Map();
+      for (const [name, records] of Object.entries(this._listeners || {})) {
+        map.set(name, { size: records.length });
+      }
+      return map;
+    },
+  });
+}
 globalThis.Event ||= class Event {
   constructor(type, options = {}) {
     if (type === undefined) throw new TypeError("Event type is required");
@@ -95,9 +97,9 @@ globalThis.CustomEvent ||= class CustomEvent extends Event {
     return "CustomEvent";
   }
 };
-globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
+globalThis.NodeEventTarget ||= class NodeEventTarget {
   constructor() {
-    super();
+    this._listeners = {};
     this._nodeListeners = {};
   }
   addListener(name, listener, options, nodeStyle = true) {
@@ -147,7 +149,13 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     return this.removeListener(name, listener);
   }
   dispatchEvent(event) {
-    const result = super.dispatchEvent(event);
+    for (const record of [...(this._listeners[event.type] || [])]) {
+      if (!this._listeners[event.type]?.includes(record)) continue;
+      if (record.once) this.removeEventListener(event.type, record.listener);
+      record.listener.call(this, event);
+      if (event._quenchImmediatePropagationStopped) break;
+    }
+    const result = true;
     for (const record of this._nodeListeners[event.type] || []) {
       if (record.once) this.removeListener(event.type, record.listener);
     }

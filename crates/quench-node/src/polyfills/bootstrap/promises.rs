@@ -47,6 +47,7 @@ globalThis.__nodeTimersPromises = {
         const error = new Error("The operation was aborted");
         error.name = "AbortError";
         error.code = "ABORT_ERR";
+        if (signal?.reason !== undefined) error.cause = signal.reason;
         reject(error);
       };
       if (signal?.aborted) {
@@ -76,6 +77,7 @@ globalThis.__nodeTimersPromises = {
           const error = new Error("The operation was aborted");
           error.name = "AbortError";
           error.code = "ABORT_ERR";
+          if (options.signal.reason !== undefined) error.cause = options.signal.reason;
           reject(error);
           return;
         }
