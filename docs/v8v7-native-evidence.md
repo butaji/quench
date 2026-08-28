@@ -19,9 +19,33 @@ measurement is named, and only `Proven` semantic facts may enter a fast path.
 | Splay | valid, 37.4, 36022.4 ms |
 | Navier-Stokes | valid, 166.0, 31516.5 ms |
 
-The aggregate score is therefore unproven.  RegExp and Earley-Boyer are the
-only two immediately score-blocking workloads.  Do not derive a score from a
+That historical aggregate score was unproven.  Do not derive a score from a
 partial suite.
+
+## Current valid native baseline
+
+The current dirty worktree was built in an isolated target directory with the
+production profile plus `target-cpu=native`, DWARF level 2, and no stripping.
+The executable and dSYM share UUID `258F94E4-A527-30FB-9251-C948A6E9DD3E`.
+DeltaBlue first passed directly at 56.7.  Its subsequent complete-suite run
+was:
+
+| fixture | validity | score | wall time |
+| --- | --- | ---: | ---: |
+| Richards | valid | 96.5 | 3.142 s |
+| DeltaBlue | valid | 55.1 | 5.451 s |
+| Crypto | valid | 83.0 | 38.079 s |
+| Raytrace | valid | 114.0 | 22.021 s |
+| Earley-Boyer | valid | 105.0 | 90.755 s |
+| RegExp | **timeout** | — | 240.003 s |
+| Splay | valid | 116.0 | 9.454 s |
+| Navier-Stokes | valid | 242.0 | 20.911 s |
+
+The end-to-end command took 450.37 s.  macOS `/usr/bin/time -l` reported
+1,684,062,208 bytes as maximum resident set size and 16,845,080 bytes as peak
+memory footprint.  The former covers the benchmark runner process tree and
+must not be misreported as Quench-alone RSS.  RegExp is the only remaining
+aggregate-score blocker; Earley-Boyer is no longer one.
 
 ## Compiler and profiler artifacts
 
