@@ -81,7 +81,17 @@ fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
     let length = typed_array_length(value)?;
     let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
     if let Some(meta) = value.typed_array_meta() {
-        for (key, _) in meta.own_properties() {
+        let mut names: Vec<String> = meta
+            .own_properties()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        for key in meta.descriptor_keys() {
+            if !names.iter().any(|current| current == &key) {
+                names.push(key);
+            }
+        }
+        for key in names {
             let enumerable = meta
                 .descriptor(&key)
                 .and_then(|descriptor| match descriptor {
@@ -576,7 +586,13 @@ fn typed_array_own_keys(value: &Value, symbols: bool) -> Vec<String> {
     }
     let mut keys: Vec<String> = (0..length).map(|index| index.to_string()).collect();
     if let Some(meta) = value.typed_array_meta() {
-        let extras: Vec<String> = ordered(&meta.own_properties()[..], false)
+        let mut names = meta.own_properties();
+        names.extend(
+            meta.descriptor_keys()
+                .into_iter()
+                .map(|key| (key, Value::Undefined)),
+        );
+        let extras: Vec<String> = ordered(&names[..], false)
             .into_iter()
             .filter(|key| !crate::conversion::is_symbol_string(key))
             .filter(|key| !keys.iter().any(|current| current == key))

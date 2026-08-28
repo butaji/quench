@@ -173,15 +173,48 @@ pub(crate) fn define_own_property(
     // representative rather than the pre-coercion COW snapshot.
     let target = crate::locals::resolved_replacement(target);
     validate_array_index_length(&target, key)?;
-    if crate::typed_array_ops::is_index_key(key)
-        && crate::typed_array_ops::logical_len(&target).is_some_and(|length| {
-            crate::typed_array_prototype::is_out_of_bounds(&target)
-                || key.parse::<usize>().map_or(true, |index| index >= length)
-        })
+    // Integer-indexed exotic objects reserve every CanonicalNumericIndexString
+    // key, including invalid indices such as -0, -1, 0.1, and Infinity.
+    // These keys never become ordinary properties; Reflect.defineProperty
+    // converts this rejection to false while Object.defineProperty throws.
+    let is_typed_array = target.typed_array_meta().is_some();
+    if is_typed_array
+        && crate::typed_array_ops::canonical_numeric_index(key)
+        && crate::typed_array_ops::typed_array_index(key).is_none()
     {
         return Err(crate::value::error::throw_type_error(
-            "Cannot define a property on an out-of-bounds typed array",
+            "Cannot define a property on an integer-indexed exotic object",
         ));
+    }
+    if is_typed_array {
+        if let Some(index) = crate::typed_array_ops::typed_array_index(key) {
+            if crate::typed_array_prototype::is_out_of_bounds(&target)
+                || crate::typed_array_ops::logical_len(&target)
+                    .is_some_and(|length| index >= length)
+            {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot define a property on an out-of-bounds typed array",
+                ));
+            }
+            let accessor = descriptor
+                .iter()
+                .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
+            let restricted = descriptor.iter().any(|(name, value)| {
+                matches!(name.as_str(), "configurable" | "enumerable" | "writable")
+                    && matches!(value, Value::Boolean(false))
+            });
+            if accessor || restricted {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot define a property on an integer-indexed exotic object",
+                ));
+            }
+            if let Some((_, value)) = descriptor.iter().rev().find(|(name, _)| name == "value") {
+                if let Some(updated) = crate::typed_array_ops::set_property(&target, key, value) {
+                    return updated;
+                }
+            }
+            return Ok(target);
+        }
     }
     if let Some(result) = prepare_array_length_definition(&target, key, descriptor)? {
         return Ok(result);

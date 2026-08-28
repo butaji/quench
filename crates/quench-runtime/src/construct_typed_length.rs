@@ -13,10 +13,9 @@ fn object_array_like(
             prototype,
             crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
         )
-    })
-        && !properties.iter().any(|(name, _)| {
-            name.starts_with('\0') || name == "Symbol.iterator"
-    });
+    }) && !properties
+        .iter()
+        .any(|(name, _)| name.starts_with('\0') || name == "Symbol.iterator");
     if plain {
         let length = properties.value_for_key("length");
         let Some(length) = length else {
@@ -68,7 +67,10 @@ fn object_array_like(
         .try_reserve_exact(length)
         .map_err(|_| range_error("Typed-array length is too large"))?;
     for index in 0..length {
-        values.push(crate::execute::get_property_result(&object, &index.to_string())?);
+        values.push(crate::execute::get_property_result(
+            &object,
+            &index.to_string(),
+        )?);
     }
     Ok(Some(values))
 }
@@ -110,8 +112,18 @@ macro_rules! dense_numeric_constructor {
     };
 }
 
-dense_numeric_constructor!(dense_float64_array, Float64Array, Float64ArrayData, identity_number);
-dense_numeric_constructor!(dense_float32_array, Float32Array, Float32ArrayData, |number| number as f32);
+dense_numeric_constructor!(
+    dense_float64_array,
+    Float64Array,
+    Float64ArrayData,
+    identity_number
+);
+dense_numeric_constructor!(
+    dense_float32_array,
+    Float32Array,
+    Float32ArrayData,
+    |number| number as f32
+);
 dense_numeric_constructor!(dense_int8_array, Int8Array, Int8ArrayData, to_int8);
 dense_numeric_constructor!(dense_int16_array, Int16Array, Int16ArrayData, to_int16);
 dense_numeric_constructor!(dense_int32_array, Int32Array, Int32ArrayData, to_int32);
