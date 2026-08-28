@@ -762,11 +762,18 @@ fn repeat_options(
         min: usize,
         limit: usize,
         greedy: bool,
-    ) -> Vec<State> {
-        let mut result = Vec::new();
-        let continuations = if count >= limit {
-            Vec::new()
-        } else {
+        output: &mut Vec<State>,
+    ) {
+        if output.len() >= MAX_BACKTRACK_STATES {
+            return;
+        }
+        if !greedy && count >= min {
+            output.push(state.clone());
+            if output.len() >= MAX_BACKTRACK_STATES {
+                return;
+            }
+        }
+        if count < limit {
             let mut iteration_state = state.clone();
             if !flags.reverse {
                 for index in capture_indices(body) {
@@ -775,29 +782,42 @@ fn repeat_options(
                     }
                 }
             }
-            match_options(body, input, iteration_state, flags)
-                .into_iter()
-                .filter(|next| next.position != state.position || count < min)
-                .flat_map(|next| visit(body, input, next, flags, count + 1, min, limit, greedy))
-                .collect()
-        };
-        if greedy {
-            result.extend(continuations);
-            if count >= min {
-                result.push(state);
+            for next in match_options(body, input, iteration_state, flags) {
+                if next.position != state.position || count < min {
+                    visit(
+                        body,
+                        input,
+                        next,
+                        flags,
+                        count + 1,
+                        min,
+                        limit,
+                        greedy,
+                        output,
+                    );
+                    if output.len() >= MAX_BACKTRACK_STATES {
+                        return;
+                    }
+                }
             }
-        } else {
-            if count >= min {
-                result.push(state.clone());
-            }
-            result.extend(continuations);
         }
-        result
+        if greedy && count >= min && output.len() < MAX_BACKTRACK_STATES {
+            output.push(state);
+        }
     }
-    visit(body, input, state, flags, 0, min, limit, greedy)
-        .into_iter()
-        .take(MAX_BACKTRACK_STATES)
-        .collect()
+    let mut output = Vec::new();
+    visit(
+        body,
+        input,
+        state,
+        flags,
+        0,
+        min,
+        limit,
+        greedy,
+        &mut output,
+    );
+    output
 }
 
 fn repeat_simple_options(
@@ -1101,34 +1121,54 @@ fn reverse_repeat_options(
         min: usize,
         limit: usize,
         greedy: bool,
-    ) -> Vec<State> {
-        let mut result = Vec::new();
-        let continuations = if count >= limit {
-            Vec::new()
-        } else {
-            reverse_options(body, input, state.clone(), flags)
-                .into_iter()
-                .filter(|next| next.position != state.position || count < min)
-                .flat_map(|next| visit(body, input, next, flags, count + 1, min, limit, greedy))
-                .collect()
-        };
-        if greedy {
-            result.extend(continuations);
-            if count >= min {
-                result.push(state);
-            }
-        } else {
-            if count >= min {
-                result.push(state.clone());
-            }
-            result.extend(continuations);
+        output: &mut Vec<State>,
+    ) {
+        if output.len() >= MAX_BACKTRACK_STATES {
+            return;
         }
-        result
+        if !greedy && count >= min {
+            output.push(state.clone());
+            if output.len() >= MAX_BACKTRACK_STATES {
+                return;
+            }
+        }
+        if count < limit {
+            for next in reverse_options(body, input, state.clone(), flags) {
+                if next.position != state.position || count < min {
+                    visit(
+                        body,
+                        input,
+                        next,
+                        flags,
+                        count + 1,
+                        min,
+                        limit,
+                        greedy,
+                        output,
+                    );
+                    if output.len() >= MAX_BACKTRACK_STATES {
+                        return;
+                    }
+                }
+            }
+        }
+        if greedy && count >= min && output.len() < MAX_BACKTRACK_STATES {
+            output.push(state);
+        }
     }
-    visit(body, input, state, flags, 0, min, limit, greedy)
-        .into_iter()
-        .take(MAX_BACKTRACK_STATES)
-        .collect()
+    let mut output = Vec::new();
+    visit(
+        body,
+        input,
+        state,
+        flags,
+        0,
+        min,
+        limit,
+        greedy,
+        &mut output,
+    );
+    output
 }
 
 fn merge_flags(flags: Flags, local: ModeFlags) -> Flags {
