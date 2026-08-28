@@ -142,6 +142,34 @@ pub(crate) fn own_property(value: &Value, key: &str) -> Option<Value> {
     )
 }
 
+pub(crate) fn remove_own_property(value: &Value, key: &str) -> bool {
+    macro_rules! remove {
+        ($($variant:ident),+) => {
+            match value {
+                $(Value::$variant(data) => {
+                    let existed = data.meta.property(key).is_some() || data.meta.descriptor(key).is_some();
+                    data.meta.remove_property(key);
+                    existed
+                },)+
+                _ => return false,
+            }
+        };
+    }
+    remove!(
+        Float64Array,
+        Float32Array,
+        Int8Array,
+        Int16Array,
+        Uint16Array,
+        Int32Array,
+        Uint32Array,
+        BigInt64Array,
+        BigUint64Array,
+        Uint8Array,
+        Uint8ClampedArray
+    )
+}
+
 pub(crate) fn descriptor(value: &Value, key: &str) -> Option<Value> {
     value.typed_array_meta()?.descriptor(key)
 }
