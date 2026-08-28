@@ -1,13 +1,5 @@
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
-macro_rules! fill_view {
-    ($view:expr, $value:expr, $convert:expr) => {{
-        for index in 0..$view.length {
-            $view.set(index, $convert($value));
-        }
-    }};
-}
-
 macro_rules! set_number_view {
     ($target:expr, $key:expr, $value:expr, $variant:ident, $convert:expr) => {
         if let Value::$variant(view) = $target {
@@ -357,12 +349,13 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
     if number.is_nan() {
         return Ok(0);
     }
-    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > usize::MAX as f64 {
+    let integer = number.trunc();
+    if !number.is_finite() || integer < 0.0 || integer > usize::MAX as f64 {
         return Err(crate::value::error::throw_range_error(
             "offset is out of bounds",
         ));
     }
-    Ok(number as usize)
+    Ok(integer as usize)
 }
 
 fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -425,33 +418,65 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let receiver = receiver.ok_or_else(|| {
-        crate::value::error::throw_type_error(
-            "TypedArray.prototype.fill called on incompatible receiver",
-        )
-    })?;
+    let receiver = crate::arrays::typed_array_receiver(receiver, "fill")?;
+    if crate::arrays::typed_array_is_immutable(&receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.fill called on immutable buffer",
+        ));
+    }
+    let length = logical_len(&receiver).unwrap_or(0);
     if matches!(receiver, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
         let bits = crate::construct::bigint_bits(
             arguments.first().unwrap_or(&Value::BigInt("0".to_string())),
         )?;
-        match receiver {
-            Value::BigInt64Array(view) => fill_view!(view, bits, |value| value as i64),
-            Value::BigUint64Array(view) => fill_view!(view, bits, |value| value),
+        let start = fill_index(arguments.get(1), length, 0)?;
+        let end = fill_index(
+            arguments.get(2).filter(|value| !matches!(value, Value::Undefined)),
+            length,
+            length,
+        )?;
+        if crate::arrays::typed_array_is_detached(&receiver)
+            || crate::typed_array_prototype::is_out_of_bounds(&receiver)
+        {
+            return Err(crate::value::error::throw_type_error(
+                "TypedArray.prototype.fill called on detached buffer",
+            ));
+        }
+        match &receiver {
+            Value::BigInt64Array(view) => {
+                for index in start..end { view.set(index, bits as i64); }
+            }
+            Value::BigUint64Array(view) => {
+                for index in start..end { view.set(index, bits); }
+            }
             _ => unreachable!(),
         }
         return Ok(receiver.clone());
     }
     let number = crate::intl::tolocale::value::to_number_result(arguments.first())?;
-    match receiver {
-        Value::Float64Array(view) => fill_view!(view, number, |value| value),
-        Value::Float32Array(view) => fill_view!(view, number, |value| value as f32),
-        Value::Int8Array(view) => fill_view!(view, number, crate::construct::to_int8),
-        Value::Int16Array(view) => fill_view!(view, number, crate::construct::to_int16),
-        Value::Int32Array(view) => fill_view!(view, number, crate::construct::to_int32),
-        Value::Uint8Array(view) => fill_view!(view, number, crate::construct::to_uint8),
-        Value::Uint16Array(view) => fill_view!(view, number, crate::construct::to_uint16),
-        Value::Uint32Array(view) => fill_view!(view, number, crate::construct::to_uint32),
-        Value::Uint8ClampedArray(view) => fill_view!(view, number, |value| value),
+    let start = fill_index(arguments.get(1), length, 0)?;
+    let end = fill_index(
+        arguments.get(2).filter(|value| !matches!(value, Value::Undefined)),
+        length,
+        length,
+    )?;
+    if crate::arrays::typed_array_is_detached(&receiver)
+        || crate::typed_array_prototype::is_out_of_bounds(&receiver)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.prototype.fill called on detached buffer",
+        ));
+    }
+    match &receiver {
+        Value::Float64Array(view) => for index in start..end { view.set(index, number); },
+        Value::Float32Array(view) => for index in start..end { view.set(index, number as f32); },
+        Value::Int8Array(view) => for index in start..end { view.set(index, crate::construct::to_int8(number)); },
+        Value::Int16Array(view) => for index in start..end { view.set(index, crate::construct::to_int16(number)); },
+        Value::Int32Array(view) => for index in start..end { view.set(index, crate::construct::to_int32(number)); },
+        Value::Uint8Array(view) => for index in start..end { view.set(index, crate::construct::to_uint8(number)); },
+        Value::Uint16Array(view) => for index in start..end { view.set(index, crate::construct::to_uint16(number)); },
+        Value::Uint32Array(view) => for index in start..end { view.set(index, crate::construct::to_uint32(number)); },
+        Value::Uint8ClampedArray(view) => for index in start..end { view.set(index, number); },
         _ => {
             return Err(crate::value::error::throw_type_error(
                 "TypedArray.prototype.fill called on incompatible receiver",
@@ -459,6 +484,15 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
         }
     }
     Ok(receiver.clone())
+}
+
+fn fill_index(value: Option<&Value>, length: usize, default: usize) -> Result<usize, VmError> {
+    let Some(value) = value else { return Ok(default); };
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number == 0.0 || number == f64::NEG_INFINITY { return Ok(0); }
+    if number == f64::INFINITY { return Ok(length); }
+    if number.is_sign_negative() { return Ok(length.saturating_sub(number.abs().trunc() as usize)); }
+    Ok((number.trunc() as usize).min(length))
 }
 
 #[cfg(test)]
