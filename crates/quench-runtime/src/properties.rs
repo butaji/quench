@@ -190,7 +190,6 @@ pub(crate) fn execute_set_property(
         if crate::typed_array_ops::canonical_numeric_index(&key)
             && !crate::typed_array_ops::is_index_key(&key)
         {
-            crate::conversion::to_number(&value)?;
             return Ok(());
         }
         if crate::typed_array_ops::is_index_key(&key) {
@@ -387,6 +386,16 @@ fn finish_set_property(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
+    // A typed-array prototype consumes numeric keys before ordinary accessor
+    // lookup.  Route this shape through the receiver-aware path so a setter
+    // installed on `%TypedArray%.prototype` cannot observe the write.
+    let parent = crate::builtins::object::get_prototype_of(Some(target))?;
+    if parent.typed_array_meta().is_some()
+        && (crate::typed_array_ops::is_index_key(key)
+            || crate::typed_array_ops::canonical_numeric_index(key))
+    {
+        return ordinary_set(registers, object, target, key, value, strict);
+    }
     let process_env = crate::execute::get_property(target, "\0quench:process_env")
         == crate::value::Value::Boolean(true);
     if process_env && key.is_empty() {

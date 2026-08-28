@@ -43,9 +43,17 @@ bigint_property!(
 );
 
 pub(super) fn property(value: &Value, key: &str) -> Value {
-    match value {
+    let property = match value {
         Value::BigInt64Array(view) => signed_property(view, key),
         Value::BigUint64Array(view) => unsigned_property(view, key),
         _ => Value::Undefined,
+    };
+    if !matches!(property, Value::Undefined) {
+        return property;
     }
+    // BigInt typed-array prototypes inherit the shared %TypedArray%.prototype.
+    // Keep that inherited override lookup receiver-aware so non-canonical
+    // numeric keys (for example "+1") remain ordinary properties.
+    crate::vm::intrinsic_override_property(Builtin::TypedArrayPrototype, key, value)
+        .unwrap_or(property)
 }
